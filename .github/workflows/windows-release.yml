@@ -81,7 +81,13 @@ jobs:
             still verifies the artifact with the Atsumi updater key.
           releaseDraft: true
           prerelease: false
-          uploadUpdaterJson: true
+          includeUpdaterJson: true
           updaterJsonPreferNsis: true
-          uploadUpdaterSignatures: false
-          releaseAssetNamePattern: Atsumi-Setup[ext]
+          assetNamePattern: Atsumi-Setup[ext]
+
+      - name: Remove standalone updater signature asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          gh release delete-asset "v$packageVersion" "Atsumi-Setup.exe.sig" --repo "$env:GITHUB_REPOSITORY" --yes
