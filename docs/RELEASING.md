@@ -16,7 +16,7 @@ Atsumi Next는 유료 Windows 코드 서명(Authenticode) 인증서 없이 배�
 1. `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`의 버전을 같은 값으로 올린다.
 2. `tools/verify.ps1 -SkipInstall`로 현재 소스를 검증한다.
 3. 검토가 끝난 commit에 정확히 `v<버전>` 태그를 push하거나 GitHub Actions의 `Windows Release`를 수동 실행한다.
-4. workflow는 Windows NSIS 설치 파일, Tauri 업데이트 서명과 `latest.json`을 포함한 **draft release**를 만든다.
+4. workflow는 `Atsumi-Setup.exe`와 서명이 포함된 `latest.json`을 **draft release**에 올린다. 별도의 `.sig`와 MSI는 사용자 혼동을 줄이기 위해 업로드하지 않는다.
 5. draft의 파일과 설명을 확인한 뒤 GitHub에서 Publish한다. draft 상태에서는 앱의 `releases/latest/download/latest.json` 주소에 새 버전이 노출되지 않는다.
 
 앱은 시작할 때 최신 release 정보를 확인한다. 새 버전이 있으면 사용자에게 묻고, 동의할 때만 다운로드·서명 검증·passive 설치 후 재시작한다. 거절한 사용자는 `설정 > 일반 > 프로그램 정보 > 업데이트 확인`에서 다시 확인할 수 있다. 시작 확인의 네트워크 실패는 앱 실행을 방해하지 않는다.

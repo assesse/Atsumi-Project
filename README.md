@@ -10,7 +10,7 @@ Atsumi Next는 Windows에서 Hitomi 갤러리를 탐색하고 다운로드한 �
 
 [GitHub Releases](https://github.com/assesse/Atsumi-Project/releases)에서 최신 버전을 받을 수 있습니다.
 
-일반적인 설치에는 이름이 `x64-setup_windows.exe`로 끝나는 파일을 권장합니다. MSI 설치가 필요한 경우 `x64_en-US_windows.msi` 파일을 사용할 수 있습니다.
+일반 사용자는 **`Atsumi-Setup.exe` 하나만 받으면 됩니다.** `latest.json`과 Source code 파일은 앱의 자동 업데이트 및 소스 공개를 위한 파일이므로 직접 받을 필요가 없습니다.
 
 ### Windows 보안 경고
 
