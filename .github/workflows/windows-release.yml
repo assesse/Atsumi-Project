@@ -42,7 +42,7 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          cache: true
+          cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install frontend dependencies
