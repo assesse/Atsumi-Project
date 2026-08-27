@@ -1,0 +1,7 @@
+<!-- Hand-authored CSS-free flag geometry; public-domain source, no third-party asset. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 20" role="img" aria-labelledby="title">
+  <title id="title">中文</title>
+  <rect width="30" height="20" fill="#de2910"/>
+  <path fill="#ffde00" d="m5 2 0.55 1.7h1.8L5.9 4.75l.55 1.7L5 5.4 3.55 6.45l.55-1.7L2.65 3.7h1.8z"/>
+  <path fill="#ffde00" d="m10.9 1.6.22.68h.72l-.58.42.22.68-.58-.42-.58.42.22-.68-.58-.42h.72zM13 4.1l.22.68h.72l-.58.42.22.68-.58-.42-.58.42.22-.68-.58-.42h.72zM12.3 7.2l.22.68h.72l-.58.42.22.68-.58-.42-.58.42.22-.68-.58-.42h.72zM10.4 9.4l.22.68h.72l-.58.42.22.68-.58-.42-.58.42.22-.68-.58-.42h.72z"/>
+</svg>

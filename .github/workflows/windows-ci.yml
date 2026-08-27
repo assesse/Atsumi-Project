@@ -1,0 +1,92 @@
+name: Windows CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Full Windows verification
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      CI: true
+      CARGO_INCREMENTAL: "0"
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Verify JavaScript toolchain
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          $expectedPnpm = "11.16.0"
+          $actualPnpm = (pnpm --version).Trim()
+          if ($actualPnpm -ne $expectedPnpm) {
+            throw "Expected pnpm $expectedPnpm, but found $actualPnpm."
+          }
+
+          $nodeVersion = [Version]((node --version).TrimStart("v").Split("-")[0])
+          if ($nodeVersion.Major -ne 24) {
+            throw "Expected Node.js 24.x, but found $nodeVersion."
+          }
+
+          Write-Host "Node.js $nodeVersion"
+          Write-Host "pnpm $actualPnpm"
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Rust stable toolchain
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = "Stop"
+
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy --no-self-update
+          rustc +stable --version
+          cargo +stable --version
+
+      - name: Cache Cargo dependencies and build output
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git/db
+            src-tauri/target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-stable-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-stable-
+
+      - name: Run the repository verification gate
+        run: ./tools/verify.ps1 -SkipInstall

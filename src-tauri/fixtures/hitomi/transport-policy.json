@@ -1,0 +1,5 @@
+[
+  {"case":"deadline","kind":"timeout","expected":"timeout","retryable":true},
+  {"case":"dns","kind":"dns","expected":"transport","retryable":true},
+  {"case":"connection","kind":"connection","expected":"transport","retryable":true}
+]

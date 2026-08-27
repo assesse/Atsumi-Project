@@ -1,0 +1,6 @@
+[
+  {"case":"success","status":200,"expected":"ok","retryable":false},
+  {"case":"missing","status":404,"expected":"not_found","retryable":false},
+  {"case":"rate-limit","status":429,"retryAfterSeconds":17,"expected":"rate_limited","retryable":true},
+  {"case":"service-unavailable","status":503,"expected":"temporarily_unavailable","retryable":true}
+]

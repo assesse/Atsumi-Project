@@ -1,0 +1,52 @@
+[package]
+name = "atsumi-next"
+version = "1.0.0"
+description = "Atsumi Next desktop backend"
+authors = ["Atsumi Next contributors"]
+edition = "2021"
+rust-version = "1.88.0"
+
+[lib]
+name = "atsumi_next_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# MIT-licensed pure-Rust AVIF stack (avif-rust and bin-rs). Pinned because the
+# decoder is experimental and remote-image changes require explicit review.
+avif-rust = "=0.0.6"
+bin-rs = { version = "=0.0.10", features = ["stream", "util"] }
+image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-process = "2.3"
+tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2.10"
+thiserror = "2"
+tokio = { version = "1", features = ["time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+unicode-normalization = "0.1"
+uuid = { version = "1", features = ["v4"] }
+windows = { version = "0.61.3", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# The current-source launcher uses the dev profile. Image decode/encode and
+# SHA-256 live mostly in dependencies, so keep app iteration fast while making
+# download throughput representative of a production build.
+[profile.dev.package."*"]
+opt-level = 3

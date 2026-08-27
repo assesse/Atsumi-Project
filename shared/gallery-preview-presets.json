@@ -1,0 +1,9 @@
+[
+  { "key": "compact", "width": 160, "legacyMax": 175, "maxTagRows": 2, "titlePx": 14, "bodyPx": 11, "tagPx": 11, "footerPx": 10.5, "titleLinePx": 18, "bodyLinePx": 15, "tagLinePx": 15, "footerLinePx": 15, "chipHeightPx": 22, "paddingPx": 9, "gapPx": 3 },
+  { "key": "small", "width": 190, "legacyMax": 205, "maxTagRows": 2, "titlePx": 15, "bodyPx": 11.5, "tagPx": 11, "footerPx": 11, "titleLinePx": 19, "bodyLinePx": 16, "tagLinePx": 15, "footerLinePx": 15, "chipHeightPx": 22, "paddingPx": 10, "gapPx": 4 },
+  { "key": "standard", "width": 220, "legacyMax": 235, "maxTagRows": 3, "titlePx": 16, "bodyPx": 12, "tagPx": 12, "footerPx": 12, "titleLinePx": 20, "bodyLinePx": 16, "tagLinePx": 16, "footerLinePx": 16, "chipHeightPx": 24, "paddingPx": 12, "gapPx": 4 },
+  { "key": "comfortable", "width": 250, "legacyMax": 265, "maxTagRows": 4, "titlePx": 17, "bodyPx": 12.5, "tagPx": 12.5, "footerPx": 12, "titleLinePx": 21, "bodyLinePx": 17, "tagLinePx": 17, "footerLinePx": 16, "chipHeightPx": 25, "paddingPx": 13, "gapPx": 5 },
+  { "key": "large", "width": 280, "legacyMax": 305, "maxTagRows": 5, "titlePx": 18, "bodyPx": 13, "tagPx": 13, "footerPx": 12.5, "titleLinePx": 22, "bodyLinePx": 18, "tagLinePx": 18, "footerLinePx": 17, "chipHeightPx": 26, "paddingPx": 14, "gapPx": 5 },
+  { "key": "xlarge", "width": 320, "legacyMax": 340, "maxTagRows": 6, "titlePx": 19, "bodyPx": 14, "tagPx": 14, "footerPx": 13, "titleLinePx": 24, "bodyLinePx": 19, "tagLinePx": 19, "footerLinePx": 18, "chipHeightPx": 28, "paddingPx": 15, "gapPx": 6 },
+  { "key": "maximum", "width": 360, "maxTagRows": 7, "titlePx": 20, "bodyPx": 15, "tagPx": 15, "footerPx": 14, "titleLinePx": 25, "bodyLinePx": 20, "tagLinePx": 20, "footerLinePx": 19, "chipHeightPx": 30, "paddingPx": 16, "gapPx": 6 }
+]

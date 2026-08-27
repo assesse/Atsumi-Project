@@ -1,0 +1,39 @@
+{
+  "name": "atsumi-next",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.16.0",
+  "engines": {
+    "node": "^22.13.0 || >=24.0.0",
+    "pnpm": "11.16.0"
+  },
+  "scripts": {
+    "dev": "powershell.exe -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 dev",
+    "build": "powershell.exe -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 build",
+    "preview": "powershell.exe -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 preview",
+    "test": "powershell.exe -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 test",
+    "test:watch": "powershell.exe -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 test-watch",
+    "typecheck": "powershell.exe -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 typecheck",
+    "tauri": "powershell.exe -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 tauri"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-process": "2.3.1",
+    "@tauri-apps/plugin-updater": "2.10.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "@testing-library/jest-dom": "7.0.1",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.4",
+    "@vitejs/plugin-react": "6.0.5",
+    "esbuild": "0.28.2",
+    "jsdom": "30.0.1",
+    "typescript": "7.0.2",
+    "vite": "8.2.1",
+    "vitest": "4.1.10"
+  }
+}

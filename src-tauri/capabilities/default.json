@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the Atsumi Next main window",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:default",
+    "core:window:allow-is-maximized",
+    "core:window:allow-outer-position",
+    "core:window:allow-outer-size",
+    "core:window:allow-set-position",
+    "core:window:allow-set-size",
+    "core:window:allow-maximize",
+    "process:allow-restart",
+    "updater:default"
+  ]
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 24">
+  <rect width="36" height="24" rx="4" fill="#fff"/>
+  <rect x=".5" y=".5" width="35" height="23" rx="3.5" fill="none" stroke="#d9e1e4"/>
+  <circle cx="13" cy="12" r="5.2" fill="#cd2e3a"/>
+  <path d="M13 12a5.2 5.2 0 0 1 5.2 5.2A5.2 5.2 0 0 1 13 12z" fill="#0047a0"/>
+  <path d="M13 12a5.2 5.2 0 0 0-5.2-5.2A5.2 5.2 0 0 0 13 12z" fill="#0047a0"/>
+  <text x="22.2" y="15.6" font-family="Segoe UI, Arial, sans-serif" font-size="8" font-weight="700" fill="#172126">KR</text>
+</svg>

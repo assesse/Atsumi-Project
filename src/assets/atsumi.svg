@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Atsumi icon">
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="#34313D"/>
+  <circle cx="128" cy="128" r="77" fill="#FFFFFF"/>
+  <path d="M106 214 L128 184 L150 214 Z" fill="#34313D"/>
+  <circle cx="128" cy="128" r="43" fill="#D97A8D"/>
+</svg>
