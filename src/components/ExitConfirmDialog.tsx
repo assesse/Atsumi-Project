@@ -132,7 +132,7 @@ export function ExitConfirmDialog({ open, snapshot, statusError, onClose, onMini
           <button ref={trayButton} type="button" className="exit-choice primary-choice" disabled={actionPending} onClick={onMinimizeToTray}>
             트레이로 보내기
           </button>
-          <button type="button" className="exit-choice quit-choice" title={activeWork ? "진행 중인 작업을 안전하게 중단하고 종료" : "Atsumi Next 완전히 종료"} disabled={actionPending || (snapshot === null && !statusError)} onClick={onQuit}>
+          <button type="button" className="exit-choice quit-choice" title={activeWork ? "진행 중인 작업을 안전하게 중단하고 종료" : "Atsumi 완전히 종료"} disabled={actionPending || (snapshot === null && !statusError)} onClick={onQuit}>
             {quitLabel}
           </button>
         </div>

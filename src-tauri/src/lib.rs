@@ -244,17 +244,17 @@ fn tray_work_status_label(work: Option<TrayWorkCounts>) -> String {
 
 fn restore_main_window(app: &tauri::AppHandle, action: &str) -> Option<tauri::WebviewWindow> {
     let Some(window) = app.get_webview_window("main") else {
-        tracing::warn!("could not {action}; the main Atsumi Next window is unavailable");
+        tracing::warn!("could not {action}; the main Atsumi window is unavailable");
         return None;
     };
     if let Err(error) = window.show() {
-        tracing::warn!(error = %error, "could not show Atsumi Next from the tray");
+        tracing::warn!(error = %error, "could not show Atsumi from the tray");
     }
     if let Err(error) = window.unminimize() {
-        tracing::warn!(error = %error, "could not unminimize Atsumi Next from the tray");
+        tracing::warn!(error = %error, "could not unminimize Atsumi from the tray");
     }
     if let Err(error) = window.set_focus() {
-        tracing::warn!(error = %error, "could not focus Atsumi Next from the tray");
+        tracing::warn!(error = %error, "could not focus Atsumi from the tray");
     }
     Some(window)
 }
@@ -393,7 +393,7 @@ pub fn run() -> tauri::Result<()> {
                     .and_then(|_| window.unminimize())
                     .and_then(|_| window.set_focus())
                 {
-                    tracing::warn!(error = %error, "could not focus the existing Atsumi Next window");
+                    tracing::warn!(error = %error, "could not focus the existing Atsumi window");
                 }
             }
         }))
@@ -423,7 +423,7 @@ pub fn run() -> tauri::Result<()> {
             if !restore {
                 return;
             }
-            restore_main_window(app, "restore Atsumi Next from the tray");
+            restore_main_window(app, "restore Atsumi from the tray");
         })
         .on_window_event(|window, event| {
             if window.label() != "main" {
@@ -690,7 +690,7 @@ pub fn run() -> tauri::Result<()> {
                 reconciled_internal_pages,
                 startup_recovery_issues,
                 resumed_jobs,
-                "Atsumi Next backend initialized"
+                "Atsumi backend initialized"
             );
             Ok(())
         })
@@ -758,7 +758,7 @@ pub fn run() -> tauri::Result<()> {
         .run(tauri::generate_context!());
 
     if let Err(ref error) = result {
-        tracing::error!(error_type = %std::any::type_name_of_val(error), "Atsumi Next exited with an error");
+        tracing::error!(error_type = %std::any::type_name_of_val(error), "Atsumi exited with an error");
     }
     result
 }

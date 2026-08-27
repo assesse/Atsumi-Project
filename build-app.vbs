@@ -16,9 +16,9 @@ command = Quote(powershellPath) & _
 exitCode = shell.Run(command, 0, True)
 
 If exitCode <> 0 Then
-  MsgBox "Atsumi Next could not be rebuilt." & vbCrLf & vbCrLf & _
+  MsgBox "Atsumi could not be rebuilt." & vbCrLf & vbCrLf & _
     "Details were saved here:" & vbCrLf & logPath, _
-    vbCritical + vbOKOnly, "Atsumi Next"
+    vbCritical + vbOKOnly, "Atsumi"
 End If
 
 WScript.Quit exitCode

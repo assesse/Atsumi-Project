@@ -91,7 +91,7 @@ export function UpdateDialog({ open, state, onLater, onInstall }: UpdateDialogPr
         ) : null}
 
         <p className="update-security-note">
-          Windows 게시자 인증서는 사용하지 않지만, 업데이트 파일은 Atsumi Next 전용 업데이트 키로 검증한 뒤 설치합니다.
+          Windows 게시자 인증서는 사용하지 않지만, 업데이트 파일은 Atsumi 전용 업데이트 키로 검증한 뒤 설치합니다.
         </p>
 
         {busy ? (

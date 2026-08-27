@@ -13,13 +13,13 @@ runnerPath = fileSystem.BuildPath(projectRoot, "tools\start_app_hidden.ps1")
 logPath = fileSystem.BuildPath(projectRoot, ".runtime\app-launch.log")
 
 If Not fileSystem.FileExists(powershellPath) Then
-  MsgBox "Windows PowerShell was not found.", vbCritical + vbOKOnly, "Atsumi Next"
+  MsgBox "Windows PowerShell was not found.", vbCritical + vbOKOnly, "Atsumi"
   WScript.Quit 1
 End If
 
 If Not fileSystem.FileExists(runnerPath) Then
-  MsgBox "The Atsumi Next launcher is incomplete:" & vbCrLf & runnerPath, _
-    vbCritical + vbOKOnly, "Atsumi Next"
+  MsgBox "The Atsumi launcher is incomplete:" & vbCrLf & runnerPath, _
+    vbCritical + vbOKOnly, "Atsumi"
   WScript.Quit 1
 End If
 
@@ -40,12 +40,12 @@ End If
 exitCode = shell.Run(command, 0, True)
 
 If exitCode = 73 Then
-  MsgBox "Atsumi Next is already starting or running.", _
-    vbInformation + vbOKOnly, "Atsumi Next"
+  MsgBox "Atsumi is already starting or running.", _
+    vbInformation + vbOKOnly, "Atsumi"
 ElseIf exitCode <> 0 Then
-  MsgBox "Atsumi Next could not be started." & vbCrLf & vbCrLf & _
+  MsgBox "Atsumi could not be started." & vbCrLf & vbCrLf & _
     "Details were saved here:" & vbCrLf & logPath, _
-    vbCritical + vbOKOnly, "Atsumi Next"
+    vbCritical + vbOKOnly, "Atsumi"
 End If
 
 WScript.Quit exitCode

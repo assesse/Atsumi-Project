@@ -11,9 +11,9 @@ use std::{
 const STARTUP_FAILURE_EXIT_CODE: i32 = 1;
 
 fn main() {
-    if let Err(error) = atsumi_next_lib::run() {
+    if let Err(error) = atsumi_lib::run() {
         let diagnostic = redact_startup_diagnostic(&error.to_string());
-        eprintln!("Atsumi Next could not be started: {diagnostic}");
+        eprintln!("Atsumi could not be started: {diagnostic}");
         let log_path = persist_startup_failure(&diagnostic)
             .unwrap_or_else(|| PathBuf::from(".runtime").join("app-launch.log"));
         show_startup_failure(&startup_failure_message(&log_path));
@@ -50,9 +50,7 @@ fn redact_startup_diagnostic_with_profile(value: &str, profile: Option<&str>) ->
 
 fn persist_startup_failure(error: &impl Display) -> Option<PathBuf> {
     let local_app_data = std::env::var_os("LOCALAPPDATA")?;
-    let log_directory = PathBuf::from(local_app_data)
-        .join("Atsumi Next")
-        .join("Logs");
+    let log_directory = PathBuf::from(local_app_data).join("Atsumi").join("Logs");
     std::fs::create_dir_all(&log_directory).ok()?;
     let log_path = log_directory.join("startup-error.log");
     let mut log = OpenOptions::new()
@@ -64,13 +62,13 @@ fn persist_startup_failure(error: &impl Display) -> Option<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or_default();
-    writeln!(log, "{timestamp} Atsumi Next startup failure: {error}").ok()?;
+    writeln!(log, "{timestamp} Atsumi startup failure: {error}").ok()?;
     Some(log_path)
 }
 
 fn startup_failure_message(log_path: &Path) -> String {
     format!(
-        "Atsumi Next를 시작하지 못했습니다.\n\n다른 버전에서 만든 데이터이거나 마이그레이션 백업에 실패했을 수 있습니다. 원본 데이터는 변경하지 않았습니다.\n\n자세한 기록:\n{}",
+        "Atsumi를 시작하지 못했습니다.\n\n다른 버전에서 만든 데이터이거나 마이그레이션 백업에 실패했을 수 있습니다. 원본 데이터는 변경하지 않았습니다.\n\n자세한 기록:\n{}",
         log_path.display()
     )
 }
@@ -95,7 +93,7 @@ fn show_startup_failure(message: &str) {
         .encode_utf16()
         .chain(iter::once(0))
         .collect::<Vec<_>>();
-    let caption = "Atsumi Next"
+    let caption = "Atsumi"
         .encode_utf16()
         .chain(iter::once(0))
         .collect::<Vec<_>>();

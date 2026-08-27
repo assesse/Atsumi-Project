@@ -247,6 +247,107 @@ fn structured_artist_search_accepts_canonical_and_escaped_underscores() {
 }
 
 #[test]
+fn structured_search_intersects_artist_and_gender_tag_indexes() {
+    let transport = Arc::new(FakeTransport::default());
+    let origin = HITOMI_METADATA_ORIGIN;
+    transport.respond(
+        format!("{origin}/n/index-korean.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[1001, 1002]),
+    );
+    transport.respond(
+        format!("{origin}/n/artist/healthyman-all.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[1001, 1002]),
+    );
+    transport.respond(
+        format!("{origin}/n/tag/female%3Aahegao-all.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[1001]),
+    );
+    transport.respond(
+        galleryinfo_script_url(1001).unwrap(),
+        "text/javascript",
+        gallery_script(1001, "Healthyman Fixture", "[]").into_bytes(),
+    );
+    let adapter = HitomiLiveAdapter::with_transport(
+        HitomiLiveConfig {
+            request_start_interval: Duration::ZERO,
+            ..HitomiLiveConfig::default()
+        },
+        transport,
+    );
+
+    let result = adapter
+        .search_submit(&SearchRequest {
+            text: "artist:healthyman female:ahegao".into(),
+            include_tags: Vec::new(),
+            exclude_tags: Vec::new(),
+            languages: vec![Language::Korean],
+            sort: SearchSort::Recent,
+            page_size: 20,
+        })
+        .unwrap();
+
+    assert_eq!(
+        result
+            .first_page
+            .items
+            .iter()
+            .map(|gallery| gallery.id.get())
+            .collect::<Vec<_>>(),
+        vec![1001]
+    );
+}
+
+#[test]
+fn exact_seven_digit_search_bypasses_language_index_and_honors_global_tags() {
+    let transport = Arc::new(FakeTransport::default());
+    let origin = HITOMI_METADATA_ORIGIN;
+    transport.respond(
+        format!("{origin}/n/tag/landscape-all.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[4_051_038]),
+    );
+    transport.respond(
+        format!("{origin}/n/tag/female%3Aahegao-all.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[]),
+    );
+    transport.respond(
+        galleryinfo_script_url(4_051_038).unwrap(),
+        "text/javascript",
+        gallery_script(4_051_038, "Direct ID Fixture", "[]").into_bytes(),
+    );
+    let adapter = HitomiLiveAdapter::with_transport(
+        HitomiLiveConfig {
+            request_start_interval: Duration::ZERO,
+            ..HitomiLiveConfig::default()
+        },
+        transport.clone(),
+    );
+
+    let result = adapter
+        .search_submit(&SearchRequest {
+            text: "4051038".into(),
+            include_tags: vec!["landscape".into()],
+            exclude_tags: vec!["female:ahegao".into()],
+            languages: vec![Language::Japanese],
+            sort: SearchSort::PopularWeek,
+            page_size: 20,
+        })
+        .unwrap();
+
+    assert_eq!(result.first_page.items[0].id.get(), 4_051_038);
+    assert!(!transport.was_called(&format!(
+        "{}/n/index-japanese.nozomi",
+        HITOMI_METADATA_ORIGIN
+    )));
+    assert!(transport.was_called(&format!("{origin}/n/tag/landscape-all.nozomi")));
+    assert!(transport.was_called(&format!("{origin}/n/tag/female%3Aahegao-all.nozomi")));
+}
+
+#[test]
 fn auto_find_filters_nozomi_ids_before_metadata_and_reports_the_bounded_plan() {
     let transport = Arc::new(FakeTransport::default());
     let origin = HITOMI_METADATA_ORIGIN;

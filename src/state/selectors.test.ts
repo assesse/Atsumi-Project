@@ -30,6 +30,42 @@ describe("gallery selectors", () => {
     },
   );
 
+  it("ANDs multiple structured tokens instead of treating the tail as one artist value", () => {
+    const searched = uiReducer(initialUiState, {
+      type: "search.commit",
+      view: "explore",
+      value: "artist:healthyman female:ahegao",
+    });
+    const matching = {
+      ...mockGalleries[0]!,
+      artist: "healthyman",
+      tags: ["female:ahegao", "full_color"],
+    };
+    const missingTag = { ...mockGalleries[1]!, artist: "healthyman" };
+
+    expect(visibleGalleries(searched, [matching, missingTag])).toEqual([matching]);
+  });
+
+  it("applies negative structured tokens alongside positive tokens", () => {
+    const searched = uiReducer(initialUiState, {
+      type: "search.commit",
+      view: "explore",
+      value: "artist:healthyman female:ahegao -male:glasses",
+    });
+    const included = {
+      ...mockGalleries[0]!,
+      artist: "healthyman",
+      tags: ["female:ahegao"],
+    };
+    const excluded = {
+      ...mockGalleries[1]!,
+      artist: "healthyman",
+      tags: ["female:ahegao", "male:glasses"],
+    };
+
+    expect(visibleGalleries(searched, [included, excluded])).toEqual([included]);
+  });
+
   it("keeps each view's search independently", () => {
     const downloads = uiReducer(initialUiState, { type: "navigate", view: "downloads" });
     const searched = uiReducer(downloads, {
@@ -53,11 +89,22 @@ describe("gallery selectors", () => {
     expect(visibleGalleries(searched, mockGalleries).map((gallery) => gallery.id)).toEqual([4050974]);
   });
 
+  it("does not hide an exact seven-digit Explore ID behind the language filter", () => {
+    const searched = uiReducer(initialUiState, {
+      type: "search.commit",
+      view: "explore",
+      value: "4050974",
+    });
+    const englishGallery = { ...mockGalleries[2]!, language: "english" as const };
+
+    expect(visibleGalleries(searched, [englishGallery])).toEqual([englishGallery]);
+  });
+
   it("understands optional group searches", () => {
     const searched = uiReducer(initialUiState, {
       type: "search.commit",
       view: "explore",
-      value: "group:paper studio",
+      value: "group:paper_studio",
     });
     expect(visibleGalleries(searched, mockGalleries).map((gallery) => gallery.title)).toEqual([
       "The Green Window",

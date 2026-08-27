@@ -366,7 +366,7 @@ impl From<RepositoryError> for ApiError {
                 latest_supported,
             } => Self {
                 code: "DATABASE_SCHEMA_NEWER".into(),
-                message: "이 데이터는 더 새로운 Atsumi Next에서 만들어졌습니다. 앱을 업데이트하거나 백업본으로 복구하세요.".into(),
+                message: "이 데이터는 더 새로운 Atsumi에서 만들어졌습니다. 앱을 업데이트하거나 백업본으로 복구하세요.".into(),
                 retryable: false,
                 action: Some(ApiAction::Review),
                 details: Some(BTreeMap::from([

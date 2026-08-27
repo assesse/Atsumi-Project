@@ -2306,6 +2306,152 @@ dialog::backdrop {
   overflow: auto;
 }
 
+.tutorial-dialog {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.tutorial-body {
+  display: grid;
+  gap: 20px;
+  padding: 24px;
+}
+
+.tutorial-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.tutorial-header span {
+  color: var(--primary-strong);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.tutorial-header h2 {
+  margin: 4px 0 6px;
+  font-size: 25px;
+}
+
+.tutorial-header p,
+.tutorial-steps p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.tutorial-close {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  color: var(--text-soft);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.tutorial-steps {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.tutorial-steps section {
+  position: relative;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 4px 12px;
+  min-width: 0;
+  padding: 16px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.tutorial-steps section > .fluent {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  color: var(--primary-strong);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  font-size: 17px;
+}
+
+.tutorial-step-number {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tutorial-steps h3 {
+  margin: 0 22px 4px 0;
+  font-size: 15px;
+}
+
+.tutorial-steps p {
+  font-size: 13px;
+}
+
+.tutorial-steps code {
+  display: inline-block;
+  max-width: 100%;
+  margin-top: 10px;
+  padding: 5px 7px;
+  overflow: hidden;
+  color: var(--text-soft);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tutorial-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 2px;
+}
+
+.tutorial-footer label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.tutorial-footer input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--primary);
+}
+
+.tutorial-footer > button {
+  min-width: 140px;
+  min-height: 42px;
+  justify-content: center;
+}
+
 .keyboard-shortcuts-body {
   display: grid;
   gap: 18px;
@@ -2413,6 +2559,10 @@ dialog::backdrop {
 }
 
 @media (max-width: 760px) {
+  .tutorial-steps {
+    grid-template-columns: 1fr;
+  }
+
   .keyboard-shortcuts-groups {
     grid-template-columns: 1fr;
   }

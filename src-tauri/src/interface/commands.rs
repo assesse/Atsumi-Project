@@ -1391,7 +1391,7 @@ pub async fn app_minimize_to_tray(window: WebviewWindow) -> Result<ApiResult<()>
         Ok(()) => Ok(ApiResult::success(())),
         Err(error) => Ok(ApiResult::failure(ApiError {
             code: "WINDOW_HIDE_FAILED".into(),
-            message: format!("could not hide Atsumi Next to the tray: {error}"),
+            message: format!("could not hide Atsumi to the tray: {error}"),
             retryable: true,
             action: Some(super::ApiAction::Retry),
             details: None,

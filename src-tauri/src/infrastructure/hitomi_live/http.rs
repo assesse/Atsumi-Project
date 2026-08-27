@@ -25,7 +25,7 @@ use crate::{
 };
 
 const USER_AGENT_VALUE: &str = concat!(
-    "Atsumi-Next/",
+    "Atsumi/",
     env!("CARGO_PKG_VERSION"),
     " (+desktop source adapter)"
 );

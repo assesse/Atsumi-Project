@@ -40,7 +40,7 @@ in this file before release.
 
 ## Experimental AVIF decoder dependencies
 
-Atsumi Next currently pins the following pure-Rust crates for bounded, experimental AVIF
+Atsumi currently pins the following pure-Rust crates for bounded, experimental AVIF
 decoding. Both are distributed under the MIT License:
 
 - `avif-rust` 0.0.6 — <https://github.com/mith-mmk/avif-rust> — MIT, Copyright (c) 2023 MITH@mmk

@@ -109,8 +109,8 @@ describe("SettingsDialog operational boundaries", () => {
       expect(container.querySelectorAll('[data-settings-scroll-root="true"]')).toHaveLength(1);
       expect(container.querySelector(".settings-dialog > .settings-form")).not.toBeNull();
       const about = container.querySelector<HTMLElement>(".settings-about-panel");
-      expect(about).toHaveTextContent("Atsumi Next");
-      expect(about).toHaveTextContent("assesse · Atsumi Next contributors");
+      expect(about).toHaveTextContent("Atsumi");
+      expect(about).toHaveTextContent("assesse · Atsumi contributors");
       expect(about).toHaveTextContent("앨범 제목, 태그, 파일 경로, 데이터베이스 내용이 포함되지 않습니다");
       const aboutButtons = [...about?.querySelectorAll<HTMLButtonElement>("button") ?? []];
       await act(async () => aboutButtons.find((button) => button.textContent === "업데이트 확인")?.click());

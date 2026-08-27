@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $frontendRunner = Join-Path $PSScriptRoot "run_frontend.ps1"
 $runtimeDirectory = Join-Path $projectRoot ".runtime"
-$releaseExecutable = Join-Path $projectRoot "src-tauri\target\release\atsumi-next.exe"
+$releaseExecutable = Join-Path $projectRoot "src-tauri\target\release\atsumi.exe"
 $logName = if ($CheckOnly) { "launcher-check.log" } else { "app-launch.log" }
 $logPath = Join-Path $runtimeDirectory $logName
 $launcherMutex = $null
@@ -60,7 +60,7 @@ New-Item -ItemType Directory -Force -Path $runtimeDirectory | Out-Null
 
 $mode = if ($CheckOnly) { "launcher check" } else { "desktop app" }
 $header = @(
-  "Atsumi Next - $mode"
+  "Atsumi - $mode"
   "Started: $([DateTimeOffset]::Now.ToString('O'))"
   ""
 )
@@ -146,7 +146,7 @@ try {
   }
 
   if (-not (Test-Path -LiteralPath $releaseExecutable -PathType Leaf)) {
-    "No local release exists. Run build-app.vbs once to create src-tauri\target\release\atsumi-next.exe." |
+    "No local release exists. Run build-app.vbs once to create src-tauri\target\release\atsumi.exe." |
       Add-Content -LiteralPath $logPath -Encoding UTF8
     exit 1
   }

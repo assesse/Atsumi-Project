@@ -33,7 +33,7 @@ const shortcutGroups = [
       ["Ctrl+Tab", "다음 화면"],
       ["Ctrl+Shift+Tab", "이전 화면"],
       ["Esc", "선택·패널 닫기 또는 종료 확인"],
-      ["?", "이 도움말"],
+      ["? · /", "이 도움말"],
     ],
   },
 ] as const;

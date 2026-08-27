@@ -88,8 +88,12 @@ impl HitomiLiveAdapter {
         &self,
         request: &SearchRequest,
     ) -> Result<Arc<QuerySnapshot>, SourceContractError> {
+        let direct_gallery_id = direct_gallery_id(request);
         let languages = requested_languages(request);
-        let mut ordered = self.order_ids(request.sort, &languages)?;
+        let mut ordered = match direct_gallery_id {
+            Some(gallery_id) => vec![gallery_id],
+            None => self.order_ids(request.sort, &languages)?,
+        };
         let language_ids = ordered.iter().copied().collect::<HashSet<_>>();
         let mut structured = Vec::new();
         let mut residual_terms = Vec::new();
@@ -100,7 +104,11 @@ impl HitomiLiveAdapter {
         for value in &request.exclude_tags {
             structured.push((tag_nozomi_path(value), true));
         }
-        for token in request.text.split_whitespace() {
+        for token in request
+            .text
+            .split_whitespace()
+            .filter(|_| direct_gallery_id.is_none())
+        {
             let (negative, token) = token
                 .strip_prefix('-')
                 .map_or((false, token), |value| (true, value));
@@ -431,6 +439,13 @@ impl AutoFindSource for HitomiLiveAdapter {
             Err(error) => Err(error.into()),
         }
     }
+}
+
+fn direct_gallery_id(request: &SearchRequest) -> Option<u64> {
+    let text = request.text.trim();
+    (text.len() == 7 && text.bytes().all(|byte| byte.is_ascii_digit()))
+        .then(|| text.parse().ok())
+        .flatten()
 }
 
 fn check_auto_find_cancelled(cancellation: &CancellationToken) -> Result<(), SourceContractError> {

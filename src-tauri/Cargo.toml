@@ -1,13 +1,13 @@
 [package]
-name = "atsumi-next"
+name = "atsumi"
 version = "1.0.0"
-description = "Atsumi Next desktop backend"
-authors = ["Atsumi Next contributors"]
+description = "Atsumi desktop backend"
+authors = ["Atsumi contributors"]
 edition = "2021"
 rust-version = "1.88.0"
 
 [lib]
-name = "atsumi_next_lib"
+name = "atsumi_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

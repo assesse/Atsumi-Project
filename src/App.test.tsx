@@ -16,6 +16,7 @@ import type {
 import { galleryId } from "./core/types";
 import { mockGalleries } from "./data/mockGalleries";
 import { browserFixtureThumbnailAdapter, ThumbnailClient, ThumbnailProvider } from "./thumbnail";
+import { isTutorialDismissed, setTutorialDismissed } from "./tutorial/tutorialPreference";
 
 const testThumbnailClient = new ThumbnailClient(browserFixtureThumbnailAdapter);
 const TestApp = () => <ThumbnailProvider client={testThumbnailClient}><App /></ThumbnailProvider>;
@@ -72,6 +73,7 @@ const submitExploreSearch = async (container: HTMLElement, delay = 20): Promise<
 
 describe("App Phase 3A backend flow", () => {
   beforeEach(() => {
+    setTutorialDismissed(true);
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     class TestResizeObserver {
       observe() {}
@@ -87,6 +89,51 @@ describe("App Phase 3A backend flow", () => {
     testThumbnailClient.dispose();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("shows the tutorial on first launch and persists the explicit do-not-show-again choice", async () => {
+    setTutorialDismissed(false);
+    const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    const previousClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "close");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value() { this.setAttribute("open", ""); },
+    });
+    Object.defineProperty(HTMLDialogElement.prototype, "close", {
+      configurable: true,
+      value() { this.removeAttribute("open"); },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      const tutorial = container.querySelector<HTMLDialogElement>(".tutorial-dialog");
+      expect(tutorial).toHaveAttribute("open");
+      expect(tutorial).toHaveTextContent("Atsumi 시작하기");
+
+      await act(async () => tutorial?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click());
+      await act(async () => {
+        [...(tutorial?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+          .find((button) => button.textContent === "Atsumi 시작")?.click();
+        await settle();
+      });
+
+      expect(tutorial).not.toHaveAttribute("open");
+      expect(isTutorialDismissed()).toBe(true);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
+      else delete (HTMLDialogElement.prototype as unknown as { showModal?: unknown }).showModal;
+      if (previousClose) Object.defineProperty(HTMLDialogElement.prototype, "close", previousClose);
+      else delete (HTMLDialogElement.prototype as unknown as { close?: unknown }).close;
+      setTutorialDismissed(true);
+    }
   });
 
   it("persists the global privacy toggle and scopes the preview mask to the app document", async () => {
@@ -503,12 +550,13 @@ describe("App Phase 3A backend flow", () => {
       expect(container.querySelectorAll(".gallery-card.is-selected")).toHaveLength(2);
 
       await act(async () => {
-        refreshedFirst.dispatchEvent(new KeyboardEvent("keydown", { key: "?", code: "Slash", shiftKey: true, bubbles: true }));
+        refreshedFirst.dispatchEvent(new KeyboardEvent("keydown", { key: "/", code: "Slash", bubbles: true }));
         await settle();
       });
       const shortcuts = container.querySelector<HTMLDialogElement>(".keyboard-shortcuts-dialog");
       expect(shortcuts).toHaveAttribute("open");
       expect(shortcuts).toHaveTextContent("이전 화면");
+      expect(shortcuts).toHaveTextContent("? · /");
       await act(async () => {
         container.querySelector<HTMLButtonElement>('button[aria-label="단축키 도움말 닫기"]')?.click();
         await settle();

@@ -130,7 +130,7 @@ if (($env:Path -split ";") -notcontains $nodeDirectory) {
   $env:Path = "$nodeDirectory;$env:Path"
 }
 
-Write-VerificationLog "Atsumi Next verification"
+Write-VerificationLog "Atsumi verification"
 Write-VerificationLog "Started: $([DateTimeOffset]::Now.ToString('O'))"
 Write-VerificationLog "Node.js: $($node.Version)"
 Write-VerificationLog "pnpm: $($pnpm.Version)"

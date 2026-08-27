@@ -7,7 +7,7 @@ static TRACING_INITIALIZED: OnceLock<()> = OnceLock::new();
 pub fn init() {
     TRACING_INITIALIZED.get_or_init(|| {
         let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("atsumi_next=info,tauri=info"));
+            .unwrap_or_else(|_| EnvFilter::new("atsumi=info,tauri=info"));
 
         if let Err(error) = tracing_subscriber::fmt()
             .with_env_filter(filter)

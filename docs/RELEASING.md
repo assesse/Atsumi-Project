@@ -1,12 +1,12 @@
 # Windows 배포와 앱 업데이트
 
-Atsumi Next는 유료 Windows 코드 서명(Authenticode) 인증서 없이 배포한다. 따라서 새 PC에서 설치 프로그램을 직접 실행하면 Windows가 `알 수 없는 게시자` 또는 SmartScreen 안내를 표시할 수 있다. 이 안내를 숨기는 기능은 구현하지 않는다.
+Atsumi는 유료 Windows 코드 서명(Authenticode) 인증서 없이 배포한다. 따라서 새 PC에서 설치 프로그램을 직접 실행하면 Windows가 `알 수 없는 게시자` 또는 SmartScreen 안내를 표시할 수 있다. 이 안내를 숨기는 기능은 구현하지 않는다.
 
 앱 내부 업데이트는 별도의 무료 Tauri 업데이트 키로 서명을 검증한다. 이 서명은 Windows 게시자 신원을 인증하지는 않지만, 앱이 받은 설치 파일이 프로젝트에서 만든 파일이며 전송 중 바뀌지 않았는지는 검증한다. 업데이트 서명 검증은 끌 수 없다.
 
 ## 최초 1회 준비
 
-1. 현재 공개 키와 짝을 이루는 updater 개인 키를 저장소 밖의 안전한 위치에 보관한다. 로컬 빌드에서 `.runtime/updater-secrets/atsumi-next.key`를 사용할 수 있지만 `.runtime/`은 Git에서 제외된다.
+1. 현재 공개 키와 짝을 이루는 updater 개인 키를 저장소 밖의 안전한 위치에 보관한다. 로컬 빌드에서 `.runtime/updater-secrets/atsumi.key`를 사용할 수 있지만 `.runtime/`은 Git에서 제외된다.
 2. 개인 키 파일을 암호화된 별도 저장소에 백업한다. 이 키를 잃으면 기존 설치본이 이후 업데이트를 받아들이지 못하므로 새 키를 임의로 생성하지 않는다.
 3. 개인 키의 **내용**을 GitHub 저장소 Actions secret `TAURI_SIGNING_PRIVATE_KEY`로 등록한다. 파일 내용은 이 문서, issue, 로그, commit에 복사하지 않는다.
 4. 공개 키는 `src-tauri/tauri.conf.json`에 들어 있으며 공개되어도 안전하다.

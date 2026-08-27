@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Atsumi Next",
+  "productName": "Atsumi",
   "version": "1.0.0",
   "identifier": "local.atsumi.next",
   "build": {
@@ -13,13 +13,13 @@
     "trayIcon": {
       "id": "main",
       "iconPath": "icons/icon.ico",
-      "tooltip": "Atsumi Next",
+      "tooltip": "Atsumi",
       "showMenuOnLeftClick": false
     },
     "windows": [
       {
         "label": "main",
-        "title": "Atsumi Next",
+        "title": "Atsumi",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

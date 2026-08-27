@@ -214,7 +214,7 @@ export function SettingsDialog({
     const value = kind === "feedback"
       ? FEEDBACK_URL
       : [
-          "Atsumi Next diagnostic summary",
+          "Atsumi diagnostic summary",
           `version=${packageMetadata.version}`,
           `runtime=${"__TAURI_INTERNALS__" in window ? "desktop" : "browser-preview"}`,
           `project=${PROJECT_URL}`,
@@ -476,8 +476,8 @@ export function SettingsDialog({
                     <span className="settings-about-version">v{packageMetadata.version}</span>
                   </header>
                   <dl className="settings-about-details">
-                    <div><dt>프로그램</dt><dd>Atsumi Next</dd></div>
-                    <div><dt>제작</dt><dd>assesse · Atsumi Next contributors</dd></div>
+                    <div><dt>프로그램</dt><dd>Atsumi</dd></div>
+                    <div><dt>제작</dt><dd>assesse · Atsumi contributors</dd></div>
                     <div><dt>프로젝트</dt><dd>github.com/assesse/Atsumi-Project</dd></div>
                   </dl>
                   <p>버그와 기능 제안은 GitHub Issues에서 받습니다. 복사되는 진단 정보에는 앨범 제목, 태그, 파일 경로, 데이터베이스 내용이 포함되지 않습니다.</p>

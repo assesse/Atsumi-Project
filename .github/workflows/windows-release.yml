@@ -73,12 +73,12 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           tagName: v__VERSION__
-          releaseName: Atsumi Next v__VERSION__
+          releaseName: Atsumi v__VERSION__
           releaseBody: |
-            Atsumi Next Windows update.
+            Atsumi Windows update.
 
             This build is unsigned for Windows Authenticode. The in-app updater
-            still verifies the artifact with the Atsumi Next updater key.
+            still verifies the artifact with the Atsumi updater key.
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true

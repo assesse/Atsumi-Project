@@ -1,34 +1,58 @@
 import type { Gallery, GalleryId, UiState } from "../core/types";
 import { normalizeTokenValue } from "../search/searchTokens";
 
-const matchesQuery = (gallery: Gallery, query: string): boolean => {
-  const needle = query.trim().toLocaleLowerCase();
-  if (!needle) return true;
+const galleryHaystack = (gallery: Gallery): string => normalizeTokenValue([
+  String(gallery.id),
+  gallery.title,
+  gallery.subtitle,
+  gallery.artist,
+  gallery.group ?? "",
+  ...(gallery.series ?? []),
+  ...(gallery.characters ?? []),
+  ...gallery.tags,
+].join(" "));
 
-  const separator = needle.indexOf(":");
+const matchesSearchToken = (gallery: Gallery, rawToken: string): boolean => {
+  const negative = rawToken.startsWith("-");
+  const token = negative ? rawToken.slice(1) : rawToken;
+  if (!token) return true;
+
+  const separator = token.indexOf(":");
+  let matched: boolean;
   if (separator > 0) {
-    const namespace = needle.slice(0, separator);
-    const value = needle.slice(separator + 1);
-    const metadataValue = normalizeTokenValue(value);
-    if (namespace === "artist") return normalizeTokenValue(gallery.artist).includes(metadataValue);
-    if (namespace === "group") return gallery.group ? normalizeTokenValue(gallery.group).includes(metadataValue) : false;
-    if (namespace === "series") {
-      return (gallery.series ?? []).some((item) => normalizeTokenValue(item).includes(metadataValue));
-    }
-    if (namespace === "character") {
-      return (gallery.characters ?? []).some((item) => normalizeTokenValue(item).includes(metadataValue));
-    }
-    if (namespace === "language") return gallery.language.includes(value);
-    if (namespace === "tag") {
-      return gallery.tags.some((tag) => normalizeTokenValue(tag.replace(/^tag:/, "")).includes(metadataValue));
-    }
-    return gallery.tags.some((tag) => tag.toLocaleLowerCase().includes(needle));
+    const namespace = token.slice(0, separator).toLocaleLowerCase();
+    const metadataValue = normalizeTokenValue(token.slice(separator + 1));
+    if (!metadataValue) return true;
+    if (namespace === "artist") matched = normalizeTokenValue(gallery.artist).includes(metadataValue);
+    else if (namespace === "group") matched = gallery.group ? normalizeTokenValue(gallery.group).includes(metadataValue) : false;
+    else if (namespace === "series") {
+      matched = (gallery.series ?? []).some((item) => normalizeTokenValue(item).includes(metadataValue));
+    } else if (namespace === "character") {
+      matched = (gallery.characters ?? []).some((item) => normalizeTokenValue(item).includes(metadataValue));
+    } else if (namespace === "language") matched = gallery.language.includes(metadataValue);
+    else if (namespace === "tag") {
+      matched = gallery.tags.some((tag) => {
+        const normalized = tag.toLocaleLowerCase();
+        return !normalized.startsWith("female:")
+          && !normalized.startsWith("male:")
+          && normalizeTokenValue(normalized.replace(/^tag:/, "")).includes(metadataValue);
+      });
+    } else if (namespace === "female" || namespace === "male") {
+      matched = gallery.tags.some((tag) => {
+        const normalized = tag.toLocaleLowerCase();
+        return normalized.startsWith(`${namespace}:`)
+          && normalizeTokenValue(normalized.slice(normalized.indexOf(":") + 1)).includes(metadataValue);
+      });
+    } else matched = galleryHaystack(gallery).includes(normalizeTokenValue(token));
+  } else {
+    matched = galleryHaystack(gallery).includes(normalizeTokenValue(token));
   }
+  return negative ? !matched : matched;
+};
 
-  return [String(gallery.id), gallery.title, gallery.subtitle, gallery.artist, gallery.group ?? "", ...(gallery.series ?? []), ...(gallery.characters ?? []), ...gallery.tags]
-    .join(" ")
-    .toLocaleLowerCase()
-    .includes(needle);
+const matchesQuery = (gallery: Gallery, query: string): boolean => {
+  const tokens = query.trim().split(/\s+/).filter(Boolean);
+  return tokens.every((token) => matchesSearchToken(gallery, token));
 };
 
 const matchesDownloadFilter = (gallery: Gallery, state: UiState): boolean => {
@@ -51,7 +75,8 @@ const matchesDownloadFilter = (gallery: Gallery, state: UiState): boolean => {
 
 export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>): Gallery[] {
   const search = state.search[state.view];
-  let items = [...galleries].filter((gallery) => search.languages.includes(gallery.language));
+  const directExploreId = state.view === "explore" && /^\d{7}$/.test(search.committed.trim());
+  let items = [...galleries].filter((gallery) => directExploreId || search.languages.includes(gallery.language));
 
   if (state.view === "auto-find") {
     items = items.filter((gallery) => gallery.favorite && gallery.download?.state !== "quarantined");

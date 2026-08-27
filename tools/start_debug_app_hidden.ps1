@@ -15,7 +15,7 @@ $ownsLauncherMutex = $false
 
 New-Item -ItemType Directory -Force -Path $runtimeDirectory | Out-Null
 @(
-  "Atsumi Next - current-source development app"
+  "Atsumi - current-source development app"
   "Started: $([DateTimeOffset]::Now.ToString('O'))"
   "Branch: $(git -C $projectRoot branch --show-current)"
   "Commit: $(git -C $projectRoot rev-parse --short HEAD)"
@@ -39,9 +39,9 @@ if ($CheckOnly) {
   exit 0
 }
 
-$runningApp = Get-Process -Name "atsumi-next" -ErrorAction SilentlyContinue
+$runningApp = Get-Process -Name "atsumi" -ErrorAction SilentlyContinue
 if ($runningApp) {
-  "An Atsumi Next process is already running. Close it before starting the current-source app." |
+  "An Atsumi process is already running. Close it before starting the current-source app." |
     Add-Content -LiteralPath $logPath -Encoding UTF8
   exit 74
 }

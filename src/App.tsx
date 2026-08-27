@@ -46,6 +46,7 @@ import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { SettingsDialog } from "./components/SettingsDialog";
 import { SideRail } from "./components/SideRail";
+import { TutorialDialog } from "./components/TutorialDialog";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { ViewHeader, type SearchSuggestion } from "./components/ViewHeader";
 import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryId, type SearchSort, type ViewId } from "./core/types";
@@ -68,6 +69,7 @@ import { visibleGalleries } from "./state/selectors";
 import { galleryGroupStorageKey, groupGalleries, type GalleryGroup, type GalleryGrouping } from "./state/galleryGrouping";
 import { initialUiState, uiReducer } from "./state/uiState";
 import { useThumbnailClient } from "./thumbnail";
+import { isTutorialDismissed, setTutorialDismissed } from "./tutorial/tutorialPreference";
 import { useAppUpdater } from "./update/useAppUpdater";
 
 const viewConfig: Record<ViewId, { eyebrow: string; title: string }> = {
@@ -216,6 +218,7 @@ export default function App() {
   const [toast, setToast] = useState<Toast>(null);
   const [keyboardFocusId, setKeyboardFocusId] = useState<GalleryId | null>(null);
   const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = useState(false);
+  const [tutorialOpen, setTutorialOpen] = useState(() => !isTutorialDismissed());
   const [lastUndoAction, setLastUndoAction] = useState<UndoAction | null>(null);
   const [reconcilingArtifacts, setReconcilingArtifacts] = useState(false);
   const [settingsPreview, setSettingsPreview] = useState<{ maxColumns: number; previewWidth: number } | null>(null);
@@ -302,6 +305,11 @@ export default function App() {
     window.clearTimeout(toastTimer.current);
     setToast({ id: Date.now(), message });
     toastTimer.current = window.setTimeout(() => setToast(null), 2400);
+  }, []);
+
+  const closeTutorial = useCallback((doNotShowAgain: boolean) => {
+    if (doNotShowAgain) setTutorialDismissed(true);
+    setTutorialOpen(false);
   }, []);
 
   const persistListPreferences = useCallback((patch: SettingsPatch) => {
@@ -1957,7 +1965,7 @@ export default function App() {
 
       if (textEditing) return;
 
-      if ((event.key === "?" || (event.code === "Slash" && event.shiftKey)) && !primaryModifier && !event.altKey && !event.repeat) {
+      if ((event.key === "?" || event.key === "/" || event.code === "Slash") && !primaryModifier && !event.altKey && !event.repeat) {
         event.preventDefault();
         setKeyboardShortcutsOpen(true);
         return;
@@ -2352,11 +2360,13 @@ export default function App() {
       />
 
       <UpdateDialog
-        open={appUpdater.state.info !== null && ["available", "downloading", "installing", "error"].includes(appUpdater.state.phase)}
+        open={!tutorialOpen && appUpdater.state.info !== null && ["available", "downloading", "installing", "error"].includes(appUpdater.state.phase)}
         state={appUpdater.state}
         onLater={appUpdater.dismissUpdate}
         onInstall={() => void appUpdater.installUpdate()}
       />
+
+      <TutorialDialog open={tutorialOpen} onClose={closeTutorial} />
 
       <KeyboardShortcutsDialog
         open={keyboardShortcutsOpen}

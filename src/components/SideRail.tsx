@@ -29,7 +29,7 @@ export function SideRail({
 }: SideRailProps) {
   return (
     <aside className="sidebar" aria-label="주 메뉴">
-      <div className="brand" title="Atsumi Next">
+      <div className="brand" title="Atsumi">
         <img src={atsumiLogo} alt="" />
         <div className="brand-copy">
           <strong>Atsumi</strong>
