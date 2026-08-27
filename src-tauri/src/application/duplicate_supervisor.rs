@@ -1113,7 +1113,7 @@ mod tests {
         let bytes = {
             use image::{codecs::png::PngEncoder, ExtendedColorType, ImageEncoder};
             let mut rgba = vec![0_u8; 64 * 96 * 4];
-            for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+            for (index, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let value = (index % 251) as u8;
                 pixel.copy_from_slice(&[value, value.rotate_left(2), 255 - value, 255]);
             }
@@ -1155,7 +1155,7 @@ mod tests {
 
         const PAGE_COUNT: u32 = 96;
         let mut rgba = vec![0_u8; 640 * 960 * 4];
-        for (index, pixel) in rgba.chunks_exact_mut(4).enumerate() {
+        for (index, pixel) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let value = (index % 251) as u8;
             pixel.copy_from_slice(&[value, value.rotate_left(2), 255 - value, 255]);
         }
