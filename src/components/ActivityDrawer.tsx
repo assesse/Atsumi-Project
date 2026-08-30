@@ -5,12 +5,24 @@ import { FluentIcon } from "./FluentIcon";
 type ActivityDrawerProps = {
   open: boolean;
   galleries: Gallery[];
+  duplicateExcludedGalleryIds?: ReadonlySet<GalleryId>;
   onClose: () => void;
   onReview: (id: GalleryId) => void;
   onRetry: (id: GalleryId) => void;
   onCancel: (id: GalleryId) => void;
   pendingEntryIds?: ReadonlySet<string>;
 };
+
+const runningDownloadStates = new Set([
+  "queued",
+  "resolving_metadata",
+  "downloading",
+  "hashing",
+  "verifying",
+  "retry_wait",
+]);
+
+const duplicateProcessedDetail = "중복 검토 완료 · 탐색 및 다운로드 목록에서 제외됨";
 
 const stateDetail: Partial<Record<NonNullable<Gallery["download"]>["state"], string>> = {
   queued: "다운로드 대기",
@@ -42,6 +54,7 @@ const displayedProgress = (download: NonNullable<Gallery["download"]>): number =
 export function ActivityDrawer({
   open,
   galleries,
+  duplicateExcludedGalleryIds = new Set(),
   onClose,
   onReview,
   onRetry,
@@ -59,7 +72,12 @@ export function ActivityDrawer({
     .filter((gallery) => gallery.download)
     .sort((left, right) => {
       const order = { failed: 0, review_required: 1, downloading: 2, queued: 3, completed: 4 } as const;
-      return (order[left.download?.state as keyof typeof order] ?? 3) - (order[right.download?.state as keyof typeof order] ?? 3);
+      const leftProcessed = duplicateExcludedGalleryIds.has(left.id)
+        && !runningDownloadStates.has(left.download!.state);
+      const rightProcessed = duplicateExcludedGalleryIds.has(right.id)
+        && !runningDownloadStates.has(right.download!.state);
+      return (leftProcessed ? 5 : order[left.download?.state as keyof typeof order] ?? 3)
+        - (rightProcessed ? 5 : order[right.download?.state as keyof typeof order] ?? 3);
     });
 
   return (
@@ -75,7 +93,11 @@ export function ActivityDrawer({
       }}
     >
       <div className="sr-only" role="status" aria-live="polite">
-        {activities.map((gallery) => `${gallery.title}: ${downloadDetail(gallery.download!)}`).join(", ")}
+        {activities.map((gallery) => {
+          const processed = duplicateExcludedGalleryIds.has(gallery.id)
+            && !runningDownloadStates.has(gallery.download!.state);
+          return `${gallery.title}: ${processed ? duplicateProcessedDetail : downloadDetail(gallery.download!)}`;
+        }).join(", ")}
       </div>
       <header>
         <div>
@@ -89,25 +111,26 @@ export function ActivityDrawer({
       <div className="activity-list">
         {activities.map((gallery) => {
           const download = gallery.download!;
-          const running = ["queued", "resolving_metadata", "downloading", "hashing", "verifying", "retry_wait"].includes(download.state);
-          const complete = download.state === "completed";
-          const warning = ["review_required", "failed", "interrupted"].includes(download.state);
-          const retryable = ["failed", "interrupted", "cancelled"].includes(download.state);
-          const cancellable = running || warning;
+          const running = runningDownloadStates.has(download.state);
+          const duplicateProcessed = duplicateExcludedGalleryIds.has(gallery.id) && !running;
+          const complete = download.state === "completed" || duplicateProcessed;
+          const warning = !duplicateProcessed && ["review_required", "failed", "interrupted"].includes(download.state);
+          const retryable = !duplicateProcessed && ["failed", "interrupted", "cancelled"].includes(download.state);
+          const cancellable = !duplicateProcessed && (running || warning);
           const pending = pendingEntryIds.has(download.entryId);
           const progress = displayedProgress(download);
           return (
             <article
               key={download.entryId}
-              className={`activity-item${warning ? " warning" : ""}${complete ? " complete" : ""}`}
+              className={`activity-item${warning ? " warning" : ""}${complete ? " complete" : ""}${duplicateProcessed ? " duplicate-resolved" : ""}`}
             >
               <span className={`activity-icon${running ? " is-running" : ""}`}>
                 {running ? <span className="spinner" /> : <FluentIcon glyph={complete ? "\uE73E" : "\uE7BA"} />}
               </span>
               <div>
                 <strong>{gallery.title}</strong>
-                <span>{downloadDetail(download)}</span>
-                {download.attempt || download.errorCode ? (
+                <span>{duplicateProcessed ? duplicateProcessedDetail : downloadDetail(download)}</span>
+                {!duplicateProcessed && (download.attempt || download.errorCode) ? (
                   <small>
                     {download.attempt ? `시도 ${download.attempt}` : ""}
                     {download.attempt && download.errorCode ? " · " : ""}
@@ -116,7 +139,8 @@ export function ActivityDrawer({
                 ) : null}
               </div>
               <div className="activity-actions">
-                {download.state === "review_required" ? (
+                {duplicateProcessed ? <b className="activity-resolution">처리 완료</b> : null}
+                {!duplicateProcessed && download.state === "review_required" ? (
                   <button type="button" className="mini-command" disabled={pending} onClick={() => onReview(gallery.id)}>검토</button>
                 ) : null}
                 {retryable ? (
@@ -125,7 +149,7 @@ export function ActivityDrawer({
                 {cancellable ? (
                   <button type="button" className="mini-command" disabled={pending} onClick={() => onCancel(gallery.id)}>취소</button>
                 ) : null}
-                {!warning && !retryable ? (
+                {!duplicateProcessed && !warning && !retryable ? (
                   <b
                     role="progressbar"
                     aria-label={`${gallery.title} 진행률`}

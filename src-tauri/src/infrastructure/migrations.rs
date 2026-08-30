@@ -1593,6 +1593,112 @@ pub const MIGRATIONS: &[Migration] = &[
             DROP TABLE download_overlap_candidates_v29;
         "#,
     },
+    Migration {
+        version: 30,
+        name: "persist_removed_incoming_overlap_exclusions",
+        sql: r#"
+            INSERT INTO duplicate_hidden_galleries (
+                gallery_id, decision_id, created_at
+            )
+            SELECT review.incoming_gallery_id, decision.decision_id,
+                   decision.created_at
+            FROM download_overlap_decisions decision
+            JOIN download_overlap_reviews review
+              ON review.review_id = decision.review_id
+            WHERE decision.action IN ('cancel_incoming', 'remove_incoming')
+              AND decision.decision_id = (
+                  SELECT latest.decision_id
+                  FROM download_overlap_decisions latest
+                  JOIN download_overlap_reviews latest_review
+                    ON latest_review.review_id = latest.review_id
+                  WHERE latest_review.incoming_gallery_id = review.incoming_gallery_id
+                    AND latest.action IN ('cancel_incoming', 'remove_incoming')
+                  ORDER BY latest.created_at DESC, latest.decision_id DESC
+                  LIMIT 1
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM duplicate_hidden_galleries hidden
+                  WHERE hidden.gallery_id = review.incoming_gallery_id
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM exploration_restored_galleries restored
+                  WHERE restored.gallery_id = review.incoming_gallery_id
+                    AND restored.restored_at >= decision.created_at
+              );
+
+            DELETE FROM exploration_restored_galleries
+            WHERE EXISTS (
+                SELECT 1 FROM duplicate_hidden_galleries hidden
+                WHERE hidden.gallery_id = exploration_restored_galleries.gallery_id
+                  AND hidden.created_at > exploration_restored_galleries.restored_at
+            );
+        "#,
+    },
+    Migration {
+        version: 31,
+        name: "persist_removed_existing_overlap_exclusions",
+        sql: r#"
+            INSERT INTO duplicate_hidden_galleries (
+                gallery_id, decision_id, created_at
+            )
+            SELECT candidate.existing_gallery_id, decision.decision_id,
+                   decision.created_at
+            FROM download_overlap_decisions decision
+            JOIN download_overlap_candidates candidate
+              ON candidate.candidate_id = decision.candidate_id
+             AND candidate.review_id = decision.review_id
+            WHERE decision.action = 'remove_existing_continue'
+              AND decision.decision_id = (
+                  SELECT latest.decision_id
+                  FROM download_overlap_decisions latest
+                  JOIN download_overlap_candidates latest_candidate
+                    ON latest_candidate.candidate_id = latest.candidate_id
+                   AND latest_candidate.review_id = latest.review_id
+                  WHERE latest.action = 'remove_existing_continue'
+                    AND latest_candidate.existing_gallery_id =
+                        candidate.existing_gallery_id
+                  ORDER BY latest.created_at DESC, latest.decision_id DESC
+                  LIMIT 1
+              )
+              AND NOT EXISTS (
+                  SELECT 1 FROM exploration_restored_galleries restored
+                  WHERE restored.gallery_id = candidate.existing_gallery_id
+                    AND restored.restored_at >= decision.created_at
+              )
+            ON CONFLICT(gallery_id) DO UPDATE SET
+                decision_id = excluded.decision_id,
+                created_at = excluded.created_at
+            WHERE excluded.created_at > duplicate_hidden_galleries.created_at
+               OR (
+                    excluded.created_at = duplicate_hidden_galleries.created_at
+                    AND excluded.decision_id > duplicate_hidden_galleries.decision_id
+               );
+
+            DELETE FROM exploration_restored_galleries AS restored
+            WHERE EXISTS (
+                SELECT 1
+                FROM download_overlap_decisions decision
+                JOIN download_overlap_candidates candidate
+                  ON candidate.candidate_id = decision.candidate_id
+                 AND candidate.review_id = decision.review_id
+                WHERE decision.action = 'remove_existing_continue'
+                  AND candidate.existing_gallery_id = restored.gallery_id
+                  AND restored.restored_at < decision.created_at
+                  AND decision.decision_id = (
+                      SELECT latest.decision_id
+                      FROM download_overlap_decisions latest
+                      JOIN download_overlap_candidates latest_candidate
+                        ON latest_candidate.candidate_id = latest.candidate_id
+                       AND latest_candidate.review_id = latest.review_id
+                      WHERE latest.action = 'remove_existing_continue'
+                        AND latest_candidate.existing_gallery_id =
+                            candidate.existing_gallery_id
+                      ORDER BY latest.created_at DESC, latest.decision_id DESC
+                      LIMIT 1
+                  )
+            );
+        "#,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1880,7 +1986,7 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v14 to v15");
         assert_eq!(
             report.applied_versions,
-            vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+            vec![15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         );
         let historical_import_tables: i64 = connection
             .query_row(
@@ -1977,9 +2083,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v11 to v12");
         assert_eq!(
             report.applied_versions,
-            vec![12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+            vec![12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         );
-        assert_eq!(report.current_version, 29);
+        assert_eq!(report.current_version, 31);
         let favorite: String = connection
             .query_row(
                 "SELECT value FROM favorites WHERE namespace = 'artist'",
@@ -2034,7 +2140,7 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v21 to v22");
         assert_eq!(
             report.applied_versions,
-            vec![22, 23, 24, 25, 26, 27, 28, 29]
+            vec![22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
         );
         let columns = connection
             .prepare(
@@ -2086,8 +2192,11 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v22 to v23");
-        assert_eq!(report.applied_versions, vec![23, 24, 25, 26, 27, 28, 29]);
-        assert_eq!(report.current_version, 29);
+        assert_eq!(
+            report.applied_versions,
+            vec![23, 24, 25, 26, 27, 28, 29, 30, 31]
+        );
+        assert_eq!(report.current_version, 31);
         let settings: (i64, i64) = connection
             .query_row(
                 "SELECT max_columns, privacy_mode FROM settings WHERE singleton = 1",
@@ -2159,8 +2268,11 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v23 to v24");
-        assert_eq!(report.applied_versions, vec![24, 25, 26, 27, 28, 29]);
-        assert_eq!(report.current_version, 29);
+        assert_eq!(
+            report.applied_versions,
+            vec![24, 25, 26, 27, 28, 29, 30, 31]
+        );
+        assert_eq!(report.current_version, 31);
         let preserved: (String, i64, i64, i64) = connection
             .query_row(
                 r#"SELECT e.canonical_token, s.revision, s.artist_count, s.group_count
@@ -2241,8 +2353,8 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v25 to v26");
-        assert_eq!(report.applied_versions, vec![26, 27, 28, 29]);
-        assert_eq!(report.current_version, 29);
+        assert_eq!(report.applied_versions, vec![26, 27, 28, 29, 30, 31]);
+        assert_eq!(report.current_version, 31);
         let preserved: String = connection
             .query_row(
                 "SELECT title FROM galleries WHERE gallery_id=42",
@@ -2306,8 +2418,8 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v26 to current");
-        assert_eq!(report.applied_versions, vec![27, 28, 29]);
-        assert_eq!(report.current_version, 29);
+        assert_eq!(report.applied_versions, vec![27, 28, 29, 30, 31]);
+        assert_eq!(report.current_version, 31);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, search_include_tags_json, search_exclude_tags_json FROM settings WHERE singleton = 1",
@@ -2364,8 +2476,8 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v27 to v28");
-        assert_eq!(report.applied_versions, vec![28, 29]);
-        assert_eq!(report.current_version, 29);
+        assert_eq!(report.applied_versions, vec![28, 29, 30, 31]);
+        assert_eq!(report.current_version, 31);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, auto_find_grouping, downloads_grouping FROM settings WHERE singleton = 1",
@@ -2383,5 +2495,214 @@ mod tests {
         assert!(connection
             .execute("UPDATE settings SET downloads_grouping = 'invalid'", [],)
             .is_err());
+    }
+
+    #[test]
+    fn removed_incoming_overlap_decisions_are_backfilled_as_hidden_galleries() {
+        let mut connection = Connection::open_in_memory().expect("open v29 migration database");
+        connection
+            .execute_batch(
+                r#"
+                    PRAGMA foreign_keys = ON;
+                    CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL DEFAULT (
+                            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                        )
+                    ) STRICT;
+                "#,
+            )
+            .unwrap();
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 29)
+        {
+            connection.execute_batch(migration.sql).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                    params![migration.version, migration.name],
+                )
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                r#"
+                    INSERT INTO download_entries (
+                        entry_id, gallery_id, revision, state, progress,
+                        review_kind, review_id, created_at, updated_at
+                    ) VALUES (
+                        'removed-incoming-entry', 3668987, 1, 'cancelled', 100,
+                        NULL, NULL, '2026-08-28T13:49:58Z', '2026-08-28T13:51:09Z'
+                    );
+                    INSERT INTO download_overlap_reviews (
+                        review_id, entry_id, incoming_gallery_id, revision,
+                        state, profile_version, policy_version,
+                        incoming_fingerprint, created_at, updated_at, resolved_at
+                    ) VALUES (
+                        'removed-incoming-review', 'removed-incoming-entry',
+                        3668987, 1, 'cancelled', 1, 1,
+                        lower(hex(zeroblob(32))),
+                        '2026-08-28T13:50:06Z', '2026-08-28T13:51:09Z',
+                        '2026-08-28T13:51:09Z'
+                    );
+                    INSERT INTO download_overlap_decisions (
+                        decision_id, review_id, review_revision,
+                        candidate_id, action, created_at
+                    ) VALUES (
+                        'removed-incoming-decision', 'removed-incoming-review',
+                        0, NULL, 'remove_incoming', '2026-08-28T13:51:09Z'
+                    );
+                    INSERT INTO exploration_restored_galleries (gallery_id, restored_at)
+                    VALUES (3668987, '2026-08-28T13:40:00Z');
+                "#,
+            )
+            .unwrap();
+
+        let report = MigrationRunner::run(&mut connection).expect("migrate v29 to current");
+        assert_eq!(report.applied_versions, vec![30, 31]);
+        assert_eq!(report.current_version, 31);
+        let hidden: (i64, String) = connection
+            .query_row(
+                "SELECT gallery_id, decision_id FROM duplicate_hidden_galleries WHERE gallery_id=3668987",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("backfilled hidden gallery");
+        assert_eq!(hidden, (3_668_987, "removed-incoming-decision".into()));
+        let restored: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM exploration_restored_galleries WHERE gallery_id=3668987",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(restored, 0);
+    }
+
+    #[test]
+    fn removed_existing_backfill_targets_only_the_selected_candidate_and_respects_restoration() {
+        let mut connection = Connection::open_in_memory().expect("open v30 migration database");
+        connection
+            .execute_batch(
+                r#"
+                    PRAGMA foreign_keys = ON;
+                    CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL DEFAULT (
+                            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                        )
+                    ) STRICT;
+                "#,
+            )
+            .unwrap();
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 30)
+        {
+            connection.execute_batch(migration.sql).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                    params![migration.version, migration.name],
+                )
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                r#"
+                    INSERT INTO download_entries (
+                        entry_id, gallery_id, revision, state, progress,
+                        review_kind, review_id, created_at, updated_at
+                    ) VALUES
+                        ('incoming-one', 4200001, 1, 'completed', 100, NULL, NULL,
+                         '2026-08-28T09:00:00Z', '2026-08-28T10:00:00Z'),
+                        ('selected-prior', 4100001, 1, 'cancelled', 100, NULL, NULL,
+                         '2026-08-28T09:00:00Z', '2026-08-28T10:00:00Z'),
+                        ('automatic-peer', 4100002, 1, 'quarantined', 100, NULL, NULL,
+                         '2026-08-28T09:00:00Z', '2026-08-28T10:00:00Z'),
+                        ('incoming-two', 4200002, 1, 'completed', 100, NULL, NULL,
+                         '2026-08-28T09:00:00Z', '2026-08-28T10:00:00Z'),
+                        ('selected-restored', 4100003, 1, 'cancelled', 100, NULL, NULL,
+                         '2026-08-28T09:00:00Z', '2026-08-28T10:00:00Z');
+
+                    INSERT INTO download_overlap_reviews (
+                        review_id, entry_id, incoming_gallery_id, revision,
+                        state, profile_version, policy_version,
+                        incoming_fingerprint, created_at, updated_at, resolved_at
+                    ) VALUES
+                        ('review-one', 'incoming-one', 4200001, 2, 'resolved', 1, 1,
+                         lower(hex(zeroblob(32))), '2026-08-28T09:30:00Z',
+                         '2026-08-28T10:00:00Z', '2026-08-28T10:00:00Z'),
+                        ('review-two', 'incoming-two', 4200002, 1, 'resolved', 1, 1,
+                         lower(hex(zeroblob(32))), '2026-08-28T09:30:00Z',
+                         '2026-08-28T10:00:00Z', '2026-08-28T10:00:00Z');
+
+                    INSERT INTO download_overlap_candidates (
+                        candidate_id, review_id, existing_entry_id,
+                        existing_gallery_id, existing_fingerprint, relation,
+                        confidence, matched_pages, exact_pages, visual_pages,
+                        existing_coverage, incoming_coverage,
+                        existing_unique_pages, incoming_unique_pages,
+                        longest_aligned_run, rank, decision
+                    ) VALUES
+                        ('selected-one', 'review-one', 'selected-prior', 4100001,
+                         lower(hex(zeroblob(32))), 'near_equivalent', 1, 1, 1, 0,
+                         1, 1, 0, 0, 1, 1, 'existing_removed'),
+                        ('automatic-one', 'review-one', 'automatic-peer', 4100002,
+                         lower(hex(zeroblob(32))), 'near_equivalent', 1, 1, 1, 0,
+                         1, 1, 0, 0, 1, 2, 'existing_removed'),
+                        ('selected-two', 'review-two', 'selected-restored', 4100003,
+                         lower(hex(zeroblob(32))), 'near_equivalent', 1, 1, 1, 0,
+                         1, 1, 0, 0, 1, 1, 'existing_removed');
+
+                    INSERT INTO download_overlap_decisions (
+                        decision_id, review_id, review_revision,
+                        candidate_id, action, created_at
+                    ) VALUES
+                        ('decision-selected-one', 'review-one', 0, 'selected-one',
+                         'remove_existing_continue', '2026-08-28T10:00:00Z'),
+                        ('decision-selected-two', 'review-two', 0, 'selected-two',
+                         'remove_existing_continue', '2026-08-28T10:00:00Z');
+
+                    INSERT INTO exploration_restored_galleries (gallery_id, restored_at)
+                    VALUES
+                        (4100001, '2026-08-28T09:00:00Z'),
+                        (4100002, '2026-08-28T09:00:00Z'),
+                        (4100003, '2026-08-28T11:00:00Z');
+                "#,
+            )
+            .unwrap();
+
+        let report = MigrationRunner::run(&mut connection).expect("migrate v30 to current");
+        assert_eq!(report.applied_versions, vec![31]);
+        assert_eq!(report.current_version, 31);
+
+        let hidden = connection
+            .prepare(
+                "SELECT gallery_id, decision_id FROM duplicate_hidden_galleries ORDER BY gallery_id",
+            )
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            hidden,
+            vec![(4_100_001, "decision-selected-one".to_owned())]
+        );
+
+        let restored = connection
+            .prepare("SELECT gallery_id FROM exploration_restored_galleries ORDER BY gallery_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(restored, vec![4_100_002, 4_100_003]);
     }
 }

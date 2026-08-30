@@ -61,6 +61,7 @@ export type UiAction =
     }
   | { type: "selection.clear" }
   | { type: "selection.retain"; ids: GalleryId[] }
+  | { type: "selection.restore"; ids: GalleryId[]; anchorId: GalleryId | null }
   | { type: "selection.all"; ids: GalleryId[] }
   | { type: "detail.open"; id: GalleryId; parentId?: GalleryId }
   | { type: "detail.activate"; id: GalleryId }
@@ -200,6 +201,16 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
         : null;
       if (ids.size === state.selection.ids.size && anchorId === state.selection.anchorId) return state;
       return { ...state, selection: { ids, anchorId } };
+    }
+    case "selection.restore": {
+      const ids = new Set(action.ids);
+      return {
+        ...state,
+        selection: {
+          ids,
+          anchorId: action.anchorId !== null && ids.has(action.anchorId) ? action.anchorId : null,
+        },
+      };
     }
     case "selection.all":
       return { ...state, selection: { ids: new Set(action.ids), anchorId: action.ids.at(0) ?? null } };

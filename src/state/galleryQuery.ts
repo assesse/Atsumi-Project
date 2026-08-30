@@ -27,6 +27,7 @@ export type GalleryQueryAction =
   | { type: "page.started"; queryId: string; page: number }
   | { type: "page.succeeded"; queryId: string; page: GalleryPage }
   | { type: "page.failed"; queryId: string; page: number; error: ApiError }
+  | { type: "restore"; state: GalleryQueryState }
   | { type: "reset" };
 
 export function galleryQueryReducer(
@@ -72,6 +73,8 @@ export function galleryQueryReducer(
         action.page !== state.pendingPage
       ) return state;
       return { ...state, phase: "error", pendingPage: null, error: action.error };
+    case "restore":
+      return action.state;
     case "reset":
       return { ...initialGalleryQueryState, submitToken: state.submitToken + 1 };
   }

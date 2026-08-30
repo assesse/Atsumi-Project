@@ -1340,6 +1340,31 @@ impl DownloadRepository for SqliteRepository {
                 return Ok(DownloadMutationOutcome::EntryNotFound(entry_id.clone()));
             };
 
+            let duplicate_hidden = transaction
+                .query_row(
+                    r#"
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM duplicate_hidden_galleries hidden
+                            WHERE hidden.gallery_id = ?1
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM exploration_restored_galleries restored
+                                  WHERE restored.gallery_id = hidden.gallery_id
+                              )
+                        )
+                    "#,
+                    [target.gallery_id],
+                    |row| row.get::<_, bool>(0),
+                )
+                .map_err(map_sqlite_error)?;
+            if duplicate_hidden {
+                return Ok(DownloadMutationOutcome::InvalidState {
+                    entry_id: entry_id.clone(),
+                    state: target.state,
+                });
+            }
+
             if target.state.is_active() {
                 job_refs.push(JobRef {
                     job_id: target.job_id,
@@ -3835,6 +3860,7 @@ impl DownloadOverlapRepository for SqliteRepository {
                             "download overlap candidate target disappeared".into(),
                         )
                     })?;
+                    let existing_gallery_id = existing_target.gallery_id;
                     match existing_target.state {
                         JobState::Quarantined => {
                             // The supervisor moved a verified complete artifact before
@@ -3874,6 +3900,27 @@ impl DownloadOverlapRepository for SqliteRepository {
                     }
                     transaction
                         .execute(
+                            "DELETE FROM exploration_restored_galleries WHERE gallery_id=?1",
+                            [existing_gallery_id],
+                        )
+                        .map_err(map_sqlite_error)?;
+                    transaction
+                        .execute(
+                            r#"
+                                INSERT INTO duplicate_hidden_galleries (
+                                    gallery_id, decision_id, created_at
+                                ) VALUES (
+                                    ?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                                )
+                                ON CONFLICT(gallery_id) DO UPDATE SET
+                                    decision_id = excluded.decision_id,
+                                    created_at = excluded.created_at
+                            "#,
+                            params![existing_gallery_id, decision_id],
+                        )
+                        .map_err(map_sqlite_error)?;
+                    transaction
+                        .execute(
                             "UPDATE download_overlap_candidates SET decision='existing_removed' WHERE candidate_id=?1 AND decision IS NULL",
                             [candidate_id],
                         )
@@ -3908,6 +3955,27 @@ impl DownloadOverlapRepository for SqliteRepository {
                         .execute(
                             "UPDATE download_attempts SET finished_at=COALESCE(finished_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')), outcome_state='cancelled' WHERE job_id=?1 AND attempt=?2",
                             params![descriptor.job_id, to_sql_integer(descriptor.worker_attempt, "download attempt")?],
+                        )
+                        .map_err(map_sqlite_error)?;
+                    transaction
+                        .execute(
+                            "DELETE FROM exploration_restored_galleries WHERE gallery_id=?1",
+                            [target.gallery_id],
+                        )
+                        .map_err(map_sqlite_error)?;
+                    transaction
+                        .execute(
+                            r#"
+                                INSERT INTO duplicate_hidden_galleries (
+                                    gallery_id, decision_id, created_at
+                                ) VALUES (
+                                    ?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                                )
+                                ON CONFLICT(gallery_id) DO UPDATE SET
+                                    decision_id = excluded.decision_id,
+                                    created_at = excluded.created_at
+                            "#,
+                            params![target.gallery_id, decision_id],
                         )
                         .map_err(map_sqlite_error)?;
                     cancelled = true;
@@ -7867,6 +7935,387 @@ fn map_migration_error(error: MigrationError) -> RepositoryError {
         MigrationError::NonContiguousHistory { .. } | MigrationError::NameMismatch { .. } => {
             RepositoryError::Corrupt(error.to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod download_repository_tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_hidden_download_cannot_retry_until_explicitly_restored() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        let gallery_id = GalleryId::new(4_100_101).unwrap();
+        let added = repository
+            .download_queue_add("hidden-retry", &[gallery_id])
+            .expect("queue retry fixture");
+        let DownloadQueueAddOutcome::Added(added) = added else {
+            panic!("new request should add a download");
+        };
+        let entry_id = added.entries[0].entry_id.clone();
+        {
+            let connection = repository.connection().expect("lock repository");
+            connection
+                .execute(
+                    "UPDATE download_entries SET state='failed' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE download_jobs SET state='failed' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    r#"
+                        INSERT INTO duplicate_hidden_galleries (
+                            gallery_id, decision_id, created_at
+                        ) VALUES (?1, 'selected-overlap-removal', '2026-08-28T10:00:00Z')
+                    "#,
+                    [gallery_id.get()],
+                )
+                .unwrap();
+        }
+
+        let blocked = repository
+            .download_retry(std::slice::from_ref(&entry_id))
+            .expect("hidden retry has a typed outcome");
+        assert!(matches!(
+            blocked,
+            DownloadMutationOutcome::InvalidState {
+                entry_id: ref blocked_entry,
+                state: JobState::Failed,
+            } if blocked_entry == &entry_id
+        ));
+
+        {
+            let connection = repository.connection().expect("lock repository");
+            connection
+                .execute(
+                    "UPDATE download_entries SET state='queued' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE download_jobs SET state='queued' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+        }
+        let active_blocked = repository
+            .download_retry(std::slice::from_ref(&entry_id))
+            .expect("active hidden retry has a typed outcome");
+        assert!(matches!(
+            active_blocked,
+            DownloadMutationOutcome::InvalidState {
+                entry_id: ref blocked_entry,
+                state: JobState::Queued,
+            } if blocked_entry == &entry_id
+        ));
+        {
+            let connection = repository.connection().expect("lock repository");
+            connection
+                .execute(
+                    "UPDATE download_entries SET state='failed' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE download_jobs SET state='failed' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+        }
+
+        repository
+            .exploration_exclusions_restore(&[gallery_id])
+            .expect("restore duplicate exclusion");
+        let allowed = repository
+            .download_retry(std::slice::from_ref(&entry_id))
+            .expect("restored retry succeeds");
+        let DownloadMutationOutcome::Applied(jobs) = allowed else {
+            panic!("restored download should be retryable");
+        };
+        assert_eq!(jobs.len(), 1);
+        assert!(!jobs[0].reused);
+
+        let state: String = repository
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT state FROM download_entries WHERE entry_id=?1",
+                [entry_id.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "queued");
+    }
+
+    #[test]
+    fn remove_existing_hides_only_the_selected_candidate_and_clears_its_prior_restoration() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        let incoming_gallery = GalleryId::new(4_200_101).unwrap();
+        let selected_gallery = GalleryId::new(4_100_201).unwrap();
+        let automatic_gallery = GalleryId::new(4_100_202).unwrap();
+        let remaining_gallery = GalleryId::new(4_100_203).unwrap();
+        let queued = repository
+            .download_queue_add(
+                "selected-overlap-hide",
+                &[
+                    incoming_gallery,
+                    selected_gallery,
+                    automatic_gallery,
+                    remaining_gallery,
+                ],
+            )
+            .expect("queue overlap fixtures");
+        let DownloadQueueAddOutcome::Added(queued) = queued else {
+            panic!("new request should add overlap fixtures");
+        };
+        let entry_for = |gallery_id: GalleryId| {
+            queued
+                .entries
+                .iter()
+                .find(|entry| entry.gallery_id == gallery_id)
+                .expect("queued gallery has an entry")
+                .entry_id
+                .clone()
+        };
+        let incoming_entry = entry_for(incoming_gallery);
+        let selected_entry = entry_for(selected_gallery);
+        let automatic_entry = entry_for(automatic_gallery);
+        let remaining_entry = entry_for(remaining_gallery);
+        let review_id = "selected-overlap-review";
+        let incoming_fingerprint = "a".repeat(64);
+        let candidates = [
+            (
+                "selected-overlap-candidate",
+                &selected_entry,
+                selected_gallery,
+                "b".repeat(64),
+                1_i64,
+            ),
+            (
+                "automatic-overlap-candidate",
+                &automatic_entry,
+                automatic_gallery,
+                "c".repeat(64),
+                2_i64,
+            ),
+            (
+                "remaining-overlap-candidate",
+                &remaining_entry,
+                remaining_gallery,
+                "d".repeat(64),
+                3_i64,
+            ),
+        ];
+
+        {
+            let connection = repository.connection().expect("lock repository");
+            for gallery_id in [
+                incoming_gallery,
+                selected_gallery,
+                automatic_gallery,
+                remaining_gallery,
+            ] {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO galleries (
+                                gallery_id, revision, title, source_page_count
+                            ) VALUES (?1, 0, ?2, 1)
+                        "#,
+                        params![gallery_id.get(), format!("Gallery {}", gallery_id.get())],
+                    )
+                    .unwrap();
+            }
+            for (entry_id, state, review_kind, stored_review_id) in [
+                (
+                    &incoming_entry,
+                    "review_required",
+                    Some("gallery_duplicate"),
+                    Some(review_id),
+                ),
+                (&selected_entry, "cancelled", None, None),
+                (&automatic_entry, "quarantined", None, None),
+                (&remaining_entry, "completed", None, None),
+            ] {
+                connection
+                    .execute(
+                        r#"
+                            UPDATE download_entries
+                            SET state=?1, progress=100, review_kind=?2, review_id=?3
+                            WHERE entry_id=?4
+                        "#,
+                        params![state, review_kind, stored_review_id, entry_id.as_str()],
+                    )
+                    .unwrap();
+                connection
+                    .execute(
+                        "UPDATE download_jobs SET state=?1 WHERE entry_id=?2",
+                        params![state, entry_id.as_str()],
+                    )
+                    .unwrap();
+            }
+            for (entry_id, gallery_id, artifact_state) in [
+                (&incoming_entry, incoming_gallery, "incomplete"),
+                (&selected_entry, selected_gallery, "incomplete"),
+                (&automatic_entry, automatic_gallery, "quarantined"),
+                (&remaining_entry, remaining_gallery, "complete"),
+            ] {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO download_artifacts (
+                                entry_id, gallery_id, revision, relative_directory,
+                                expected_page_count, state
+                            ) VALUES (?1, ?2, 0, ?3, 1, ?4)
+                        "#,
+                        params![
+                            entry_id.as_str(),
+                            gallery_id.get(),
+                            format!("overlap-{}", gallery_id.get()),
+                            artifact_state,
+                        ],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    r#"
+                        INSERT INTO download_overlap_reviews (
+                            review_id, entry_id, incoming_gallery_id, revision,
+                            state, profile_version, policy_version,
+                            incoming_fingerprint, created_at, updated_at
+                        ) VALUES (
+                            ?1, ?2, ?3, 0, 'pending', 1, 1, ?4,
+                            '2026-08-28T10:00:00Z', '2026-08-28T10:00:00Z'
+                        )
+                    "#,
+                    params![
+                        review_id,
+                        incoming_entry.as_str(),
+                        incoming_gallery.get(),
+                        incoming_fingerprint,
+                    ],
+                )
+                .unwrap();
+            for (candidate_id, entry_id, gallery_id, fingerprint, rank) in &candidates {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO download_overlap_candidates (
+                                candidate_id, review_id, existing_entry_id,
+                                existing_gallery_id, existing_fingerprint, relation,
+                                confidence, matched_pages, exact_pages, visual_pages,
+                                existing_coverage, incoming_coverage,
+                                existing_unique_pages, incoming_unique_pages,
+                                longest_aligned_run, rank, decision
+                            ) VALUES (
+                                ?1, ?2, ?3, ?4, ?5, 'near_equivalent',
+                                1, 1, 1, 0, 1, 1, 0, 0, 1, ?6, NULL
+                            )
+                        "#,
+                        params![
+                            candidate_id,
+                            review_id,
+                            entry_id.as_str(),
+                            gallery_id.get(),
+                            fingerprint,
+                            rank,
+                        ],
+                    )
+                    .unwrap();
+            }
+            for gallery_id in [selected_gallery, automatic_gallery] {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO exploration_restored_galleries (
+                                gallery_id, restored_at
+                            ) VALUES (?1, '2026-08-27T00:00:00Z')
+                        "#,
+                        [gallery_id.get()],
+                    )
+                    .unwrap();
+            }
+        }
+
+        let verified_existing = candidates
+            .iter()
+            .map(|(candidate_id, _, _, fingerprint, _)| {
+                ((*candidate_id).to_owned(), fingerprint.clone())
+            })
+            .collect::<Vec<_>>();
+        let outcome = repository
+            .overlap_decision_apply(
+                &DownloadOverlapDecisionRequest {
+                    review_id: review_id.to_owned(),
+                    expected_revision: 0,
+                    action: DownloadOverlapDecisionAction::RemoveExistingContinue,
+                    candidate_id: Some("selected-overlap-candidate".to_owned()),
+                },
+                &incoming_fingerprint,
+                &verified_existing,
+            )
+            .expect("apply selected existing removal");
+        let DownloadOverlapDecisionApplyOutcome::Applied(applied) = outcome else {
+            panic!("selected existing removal should apply");
+        };
+        assert!(!applied.result.resumed);
+        assert!(!applied.result.cancelled);
+
+        let connection = repository.connection().expect("inspect overlap decision");
+        let hidden = connection
+            .prepare("SELECT gallery_id FROM duplicate_hidden_galleries ORDER BY gallery_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(hidden, vec![selected_gallery.get()]);
+        let restored = connection
+            .prepare("SELECT gallery_id FROM exploration_restored_galleries ORDER BY gallery_id")
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(restored, vec![automatic_gallery.get()]);
+        let automatic_decision: String = connection
+            .query_row(
+                "SELECT decision FROM download_overlap_candidates WHERE candidate_id='automatic-overlap-candidate'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(automatic_decision, "existing_removed");
+        drop(connection);
+
+        let blocked = repository
+            .download_retry(std::slice::from_ref(&selected_entry))
+            .expect("selected removal retry has a typed outcome");
+        assert!(matches!(
+            blocked,
+            DownloadMutationOutcome::InvalidState {
+                state: JobState::Cancelled,
+                ..
+            }
+        ));
+        repository
+            .exploration_exclusions_restore(&[selected_gallery])
+            .expect("restore selected gallery exclusion");
+        assert!(matches!(
+            repository
+                .download_retry(std::slice::from_ref(&selected_entry))
+                .expect("retry restored selected gallery"),
+            DownloadMutationOutcome::Applied(_)
+        ));
     }
 }
 

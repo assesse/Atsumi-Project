@@ -1397,6 +1397,19 @@ describe("browser backend active-work exit contract", () => {
         ]),
       },
     });
+    await expect(backend.downloadRetry([removable.data.entryId])).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "INVALID_DOWNLOAD_STATE",
+        retryable: false,
+        details: { reason: "duplicate_excluded" },
+      },
+    });
+    await backend.explorationExclusionsRestore([removable.data.incoming.galleryId]);
+    await expect(backend.downloadRetry([removable.data.entryId])).resolves.toMatchObject({
+      ok: true,
+      data: [{ reused: false }],
+    });
   });
 
   it("cancels only a chained staging review when it is removed from a newer overlap review", async () => {
@@ -1440,6 +1453,18 @@ describe("browser backend active-work exit contract", () => {
     });
     expect(state.downloadOverlapReviews.get(chained.reviewId)).toMatchObject({ state: "cancelled" });
     expect(state.downloadOverlapReviews.get(currentResult.data.reviewId)).toMatchObject({ state: "pending" });
+    const exclusions = await backend.explorationExclusionsList();
+    if (!exclusions.ok) throw new Error(exclusions.error.message);
+    expect(exclusions.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        galleryId: selected.existing.galleryId,
+        reasons: expect.arrayContaining([expect.objectContaining({ kind: "duplicate_hidden" })]),
+      }),
+    ]));
+    await expect(backend.downloadRetry([selected.existing.entryId])).resolves.toMatchObject({
+      ok: false,
+      error: { code: "INVALID_DOWNLOAD_STATE", details: { reason: "duplicate_excluded" } },
+    });
     await expect(backend.downloadEntriesList({ page: 1, pageSize: 200 })).resolves.toMatchObject({
       ok: true,
       data: {
@@ -1447,6 +1472,11 @@ describe("browser backend active-work exit contract", () => {
           expect.objectContaining({ entryId: selected.existing.entryId }),
         ]),
       },
+    });
+    await backend.explorationExclusionsRestore([selected.existing.galleryId]);
+    await expect(backend.downloadRetry([selected.existing.entryId])).resolves.toMatchObject({
+      ok: true,
+      data: [{ reused: false }],
     });
   });
 
@@ -1527,6 +1557,10 @@ describe("browser backend active-work exit contract", () => {
       },
     });
     expect(state.downloadEntries.get(failedEntryId)).toMatchObject({ state: "cancelled" });
+    const exclusions = await backend.explorationExclusionsList();
+    if (!exclusions.ok) throw new Error(exclusions.error.message);
+    expect(exclusions.data.some((item) => item.galleryId === failedCandidate.existing.galleryId)).toBe(true);
+    expect(exclusions.data.some((item) => item.galleryId === quarantinedCandidate.existing.galleryId)).toBe(false);
     await expect(backend.downloadEntriesList({ page: 1, pageSize: 200 })).resolves.toMatchObject({
       ok: true,
       data: {
@@ -1535,5 +1569,6 @@ describe("browser backend active-work exit contract", () => {
         ]),
       },
     });
+    await backend.explorationExclusionsRestore([failedCandidate.existing.galleryId]);
   });
 });

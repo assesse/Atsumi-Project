@@ -1,7 +1,9 @@
 import {
   cloneElement,
+  useCallback,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -9,6 +11,7 @@ import {
   type CSSProperties,
   type ReactElement,
 } from "react";
+import { createPortal } from "react-dom";
 import type {
   DownloadOverlapCandidate,
   DownloadOverlapDecisionRequest,
@@ -21,7 +24,8 @@ import {
   formatPageRanges,
   uniquePagesForSide,
 } from "../downloadOverlap/alignment";
-import { artifactPageThumbnailKey, type ThumbnailClient } from "../thumbnail";
+import { galleryPreviewPreset } from "../layout/galleryPreviewPresets";
+import { artifactPageThumbnailKey, type ThumbnailClient, type ThumbnailKey } from "../thumbnail";
 import { FluentIcon } from "./FluentIcon";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 
@@ -32,6 +36,7 @@ type Props = {
   error?: string | null;
   decisionPending?: boolean;
   browserFixture?: boolean;
+  previewWidth: number;
   thumbnailClient?: ThumbnailClient;
   onClose: () => void;
   onRetry: () => void;
@@ -47,6 +52,131 @@ const relationLabel: Record<DownloadOverlapCandidate["relation"], string> = {
 };
 
 const percent = (value: number) => `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+
+type PageHoverPreview = {
+  anchor: HTMLElement;
+  portalHost: HTMLDialogElement;
+  thumbnailKey: ThumbnailKey;
+  alt: string;
+  caption: string;
+  identity: string;
+};
+
+type PreviewDimensions = { width: number; height: number };
+
+const HOVER_PREVIEW_GAP = 12;
+const HOVER_PREVIEW_MARGIN = 10;
+
+const hoverPreviewLayout = (
+  preview: PageHoverPreview,
+  desiredWidth: number,
+  intrinsic: PreviewDimensions,
+) => {
+  const viewport = {
+    left: 0,
+    top: 0,
+    right: Math.max(1, window.innerWidth),
+    bottom: Math.max(1, window.innerHeight),
+  };
+  const dialogRect = preview.portalHost.getBoundingClientRect();
+  const hasDialogBounds = dialogRect.width > 0 && dialogRect.height > 0;
+  const bounds = hasDialogBounds ? {
+    left: Math.max(viewport.left, dialogRect.left),
+    top: Math.max(viewport.top, dialogRect.top),
+    right: Math.min(viewport.right, dialogRect.right),
+    bottom: Math.min(viewport.bottom, dialogRect.bottom),
+  } : viewport;
+  const availableWidth = Math.max(1, bounds.right - bounds.left - HOVER_PREVIEW_MARGIN * 2);
+  const availableHeight = Math.max(1, bounds.bottom - bounds.top - HOVER_PREVIEW_MARGIN * 2);
+  const aspectRatio = intrinsic.width > 0 && intrinsic.height > 0
+    ? intrinsic.width / intrinsic.height
+    : 2 / 3;
+  let width = Math.min(desiredWidth, availableWidth);
+  let height = width / aspectRatio;
+  if (height > availableHeight) {
+    height = availableHeight;
+    width = height * aspectRatio;
+  }
+
+  const anchor = preview.anchor.getBoundingClientRect();
+  const minimumLeft = bounds.left + HOVER_PREVIEW_MARGIN;
+  const maximumLeft = bounds.right - HOVER_PREVIEW_MARGIN - width;
+  const preferredRight = anchor.right + HOVER_PREVIEW_GAP;
+  const preferredLeft = anchor.left - HOVER_PREVIEW_GAP - width;
+  const left = preferredRight + width <= bounds.right - HOVER_PREVIEW_MARGIN
+    ? preferredRight
+    : preferredLeft >= minimumLeft
+      ? preferredLeft
+      : Math.max(minimumLeft, Math.min(anchor.left + anchor.width / 2 - width / 2, maximumLeft));
+  const minimumTop = bounds.top + HOVER_PREVIEW_MARGIN;
+  const maximumTop = bounds.bottom - HOVER_PREVIEW_MARGIN - height;
+  const top = Math.max(
+    minimumTop,
+    Math.min(anchor.top + anchor.height / 2 - height / 2, maximumTop),
+  );
+
+  return { left, top, width, height };
+};
+
+function PageHoverPreviewLayer({ preview, previewWidth, thumbnailClient }: {
+  preview: PageHoverPreview;
+  previewWidth: number;
+  thumbnailClient?: ThumbnailClient;
+}) {
+  const [intrinsic, setIntrinsic] = useState<PreviewDimensions>({ width: 2, height: 3 });
+  const [, setLayoutRevision] = useState(0);
+  const normalizedPreviewWidth = galleryPreviewPreset(previewWidth).width;
+  const layout = hoverPreviewLayout(preview, normalizedPreviewWidth, intrinsic);
+  const handleTerminalSnapshot = useCallback((snapshot: {
+    status: "resolved" | "error";
+    width?: number;
+    height?: number;
+  }) => {
+    const width = snapshot.width;
+    const height = snapshot.height;
+    if (snapshot.status !== "resolved" || !width || !height) return;
+    setIntrinsic((current) => current.width === width && current.height === height
+      ? current
+      : { width, height });
+  }, []);
+
+  useLayoutEffect(() => {
+    const refresh = () => setLayoutRevision((revision) => revision + 1);
+    window.addEventListener("resize", refresh);
+    document.addEventListener("scroll", refresh, true);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(refresh) : null;
+    observer?.observe(preview.anchor);
+    observer?.observe(preview.portalHost);
+    return () => {
+      window.removeEventListener("resize", refresh);
+      document.removeEventListener("scroll", refresh, true);
+      observer?.disconnect();
+    };
+  }, [preview.anchor, preview.portalHost]);
+
+  return (
+    <GalleryThumbnail
+      className="download-overlap-page-hover-preview"
+      thumbnailKey={preview.thumbnailKey}
+      consumer="review"
+      priority="critical"
+      client={thumbnailClient}
+      alt={preview.alt}
+      aria-hidden="true"
+      data-preview-width={normalizedPreviewWidth}
+      onTerminalSnapshot={handleTerminalSnapshot}
+      style={{
+        position: "fixed",
+        left: layout.left,
+        top: layout.top,
+        width: layout.width,
+        height: layout.height,
+      }}
+    >
+      <span className="download-overlap-page-hover-caption">{preview.caption}</span>
+    </GalleryThumbnail>
+  );
+}
 
 function ArtifactSummary({ gallery, label, page, thumbnailClient }: {
   gallery: DownloadOverlapGalleryRef;
@@ -74,13 +204,15 @@ function ArtifactSummary({ gallery, label, page, thumbnailClient }: {
   );
 }
 
-function PageCell({ entryId, page, side, pair, index, thumbnailClient }: {
+function PageCell({ entryId, page, side, pair, index, thumbnailClient, onPreviewOpen, onPreviewClose }: {
   entryId: string;
   page?: number;
   side: "existing" | "incoming";
   pair?: DownloadOverlapPagePair;
   index: number;
   thumbnailClient?: ThumbnailClient;
+  onPreviewOpen: (preview: PageHoverPreview) => void;
+  onPreviewClose: () => void;
 }) {
   if (!page) {
     return <div className="download-overlap-page-cell is-gap" aria-label="이 판본에는 대응 페이지 없음"><span>—</span></div>;
@@ -90,15 +222,29 @@ function PageCell({ entryId, page, side, pair, index, thumbnailClient }: {
     ? pair.exactSha256 ? "SHA-256 일치" : `시각 ${percent(pair.visualSimilarity)}`
     : "이 판본에만 있음";
   const sideLabel = side === "existing" ? "기존 A" : "신규 B";
+  const thumbnailKey = artifactPageThumbnailKey(entryId, page, index);
   return (
     <GalleryThumbnail
       className={`download-overlap-page-cell ${matched ? "is-matched" : "is-unique"}`}
-      thumbnailKey={artifactPageThumbnailKey(entryId, page, index)}
+      thumbnailKey={thumbnailKey}
       consumer="review"
       priority={index < 6 ? "visible" : "prefetch"}
       client={thumbnailClient}
       alt={`${sideLabel} ${page}페이지`}
-      title={`${sideLabel} ${page}p · ${matchLabel}`}
+      aria-label={`${sideLabel} ${page}페이지 · ${matchLabel}`}
+      onMouseEnter={(event) => {
+        const portalHost = event.currentTarget.closest("dialog");
+        if (!portalHost) return;
+        onPreviewOpen({
+          anchor: event.currentTarget,
+          portalHost,
+          thumbnailKey,
+          alt: `${sideLabel} ${page}페이지 확대 미리보기`,
+          caption: `${sideLabel} ${page}p · ${matchLabel}`,
+          identity: `${side}:${entryId}:${page}`,
+        });
+      }}
+      onMouseLeave={onPreviewClose}
     >
       <span className="download-overlap-page-number">{sideLabel} {page}p</span>
       <span className="download-overlap-page-status">{matched ? "일치" : "추가"}</span>
@@ -106,11 +252,13 @@ function PageCell({ entryId, page, side, pair, index, thumbnailClient }: {
   );
 }
 
-function PageAlignment({ candidate, incoming, thumbnailClient }: {
+function PageAlignment({ candidate, incoming, previewWidth, thumbnailClient }: {
   candidate: DownloadOverlapCandidate;
   incoming: DownloadOverlapGalleryRef;
+  previewWidth: number;
   thumbnailClient?: ThumbnailClient;
 }) {
+  const [hoverPreview, setHoverPreview] = useState<PageHoverPreview | null>(null);
   const columns = useMemo(
     () => buildDownloadOverlapAlignment(candidate, incoming.pageCount),
     [candidate, incoming.pageCount],
@@ -119,36 +267,49 @@ function PageAlignment({ candidate, incoming, thumbnailClient }: {
   const incomingUnique = uniquePagesForSide(columns, "incoming");
   const gridStyle = { "--overlap-page-columns": columns.length } as CSSProperties;
 
+  useEffect(() => setHoverPreview(null), [candidate.candidateId, incoming.entryId]);
+
   return (
-    <section className="download-overlap-page-map" aria-labelledby="download-overlap-page-map-title">
-      <header>
-        <div>
-          <strong id="download-overlap-page-map-title">판본 페이지 정렬 · {candidate.pagePairs.length}쌍 일치</strong>
-          <span>
-            기존 A에만 {formatPageRanges(existingUnique)} · {existingUnique.length}장
-            <b aria-hidden="true"> / </b>
-            신규 B에만 {formatPageRanges(incomingUnique)} · {incomingUnique.length}장
-          </span>
+    <>
+      <section className="download-overlap-page-map" aria-labelledby="download-overlap-page-map-title">
+        <header>
+          <div>
+            <strong id="download-overlap-page-map-title">판본 페이지 정렬 · {candidate.pagePairs.length}쌍 일치</strong>
+            <span>
+              기존 A에만 {formatPageRanges(existingUnique)} · {existingUnique.length}장
+              <b aria-hidden="true"> / </b>
+              신규 B에만 {formatPageRanges(incomingUnique)} · {incomingUnique.length}장
+            </span>
+          </div>
+          <div className="download-overlap-page-legend" aria-label="페이지 표시 범례">
+            <span className="is-matched">일치</span>
+            <span className="is-unique">한쪽에만 있음</span>
+            <span className="is-gap">대응 없음</span>
+          </div>
+        </header>
+        <div className="download-overlap-alignment-scroll" data-thumbnail-scroll-root tabIndex={0} aria-label="기존 A와 신규 B 페이지 정렬표">
+          <div className="download-overlap-alignment-grid" style={gridStyle}>
+            <strong className="download-overlap-row-label">기존 A</strong>
+            {columns.map((column, index) => (
+              <PageCell key={`existing:${column.key}`} entryId={candidate.existing.entryId} page={column.existingPage} side="existing" pair={column.pair} index={index} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} />
+            ))}
+            <strong className="download-overlap-row-label">신규 B</strong>
+            {columns.map((column, index) => (
+              <PageCell key={`incoming:${column.key}`} entryId={incoming.entryId} page={column.incomingPage} side="incoming" pair={column.pair} index={index} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} />
+            ))}
+          </div>
         </div>
-        <div className="download-overlap-page-legend" aria-label="페이지 표시 범례">
-          <span className="is-matched">일치</span>
-          <span className="is-unique">한쪽에만 있음</span>
-          <span className="is-gap">대응 없음</span>
-        </div>
-      </header>
-      <div className="download-overlap-alignment-scroll" data-thumbnail-scroll-root tabIndex={0} aria-label="기존 A와 신규 B 페이지 정렬표">
-        <div className="download-overlap-alignment-grid" style={gridStyle}>
-          <strong className="download-overlap-row-label">기존 A</strong>
-          {columns.map((column, index) => (
-            <PageCell key={`existing:${column.key}`} entryId={candidate.existing.entryId} page={column.existingPage} side="existing" pair={column.pair} index={index} thumbnailClient={thumbnailClient} />
-          ))}
-          <strong className="download-overlap-row-label">신규 B</strong>
-          {columns.map((column, index) => (
-            <PageCell key={`incoming:${column.key}`} entryId={incoming.entryId} page={column.incomingPage} side="incoming" pair={column.pair} index={index} thumbnailClient={thumbnailClient} />
-          ))}
-        </div>
-      </div>
-    </section>
+      </section>
+      {hoverPreview ? createPortal(
+        <PageHoverPreviewLayer
+          key={hoverPreview.identity}
+          preview={hoverPreview}
+          previewWidth={previewWidth}
+          thumbnailClient={thumbnailClient}
+        />,
+        hoverPreview.portalHost,
+      ) : null}
+    </>
   );
 }
 
@@ -165,7 +326,7 @@ function ReviewAction({ help, children }: {
   );
 }
 
-export function DownloadOverlapReviewDialog({ open, review, loading = false, error = null, decisionPending = false, browserFixture = false, thumbnailClient, onClose, onRetry, onDecision }: Props) {
+export function DownloadOverlapReviewDialog({ open, review, loading = false, error = null, decisionPending = false, browserFixture = false, previewWidth, thumbnailClient, onClose, onRetry, onDecision }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -272,7 +433,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
               <div><dt>고유 페이지</dt><dd>기존 A {candidate.existingUniquePages} · 신규 B {candidate.incomingUniquePages}</dd></div>
             </dl>
 
-            <PageAlignment candidate={candidate} incoming={review.incoming} thumbnailClient={thumbnailClient} />
+            <PageAlignment candidate={candidate} incoming={review.incoming} previewWidth={previewWidth} thumbnailClient={thumbnailClient} />
           </div>
         ) : null}
 

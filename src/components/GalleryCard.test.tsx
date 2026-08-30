@@ -93,6 +93,37 @@ describe("GalleryCard event projection", () => {
     }
   });
 
+  it("blinds a duplicate-removed Explore result even without a quarantined artifact", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const gallery: Gallery = {
+      ...mockGalleries[0]!,
+      download: { entryId: "removed-staging-entry", state: "failed", progress: 100 },
+    };
+    try {
+      await act(async () => root.render(
+        <GalleryCard
+          gallery={gallery}
+          view="explore"
+          explorationExcluded
+          selected={false}
+          selectionContext={false}
+          favoriteMetadata={new Set()}
+          {...callbacks}
+        />,
+      ));
+      const article = container.querySelector<HTMLElement>("article")!;
+      expect(article).toHaveClass("is-exploration-blind");
+      expect(article).toHaveAttribute("aria-disabled", "true");
+      expect(article).toHaveAccessibleName(expect.stringContaining("중복 판정으로 제외, 내용 가림"));
+      expect(container.querySelector(".quarantined-blind-overlay")).toHaveTextContent("중복 판정으로 제외");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("does not render an untouched memoized card for a target-only download event", async () => {
     const container = document.createElement("div");
     document.body.append(container);

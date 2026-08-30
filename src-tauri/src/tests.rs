@@ -97,7 +97,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29
+            27, 28, 29, 30, 31
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -181,7 +181,8 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
     assert_eq!(
         report.applied_versions,
         vec![
-            7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29
+            7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+            29, 30, 31
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -290,7 +291,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
     let report = MigrationRunner::run(&mut connection).expect("apply visible metadata migration");
     assert_eq!(
         report.applied_versions,
-        vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+        vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
     );
     let metadata: (String, String) = connection
         .query_row(
@@ -353,7 +354,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29
+            26, 27, 28, 29, 30, 31
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection

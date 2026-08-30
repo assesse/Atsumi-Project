@@ -121,4 +121,36 @@ describe("ActivityDrawer download controls", () => {
     await act(async () => root.unmount());
     container.remove();
   });
+
+  it("marks a duplicate-excluded download as processed without retry controls", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onRetry = vi.fn();
+    const onCancel = vi.fn();
+
+    await act(async () => root.render(
+      <ActivityDrawer
+        open
+        galleries={[failedGallery]}
+        duplicateExcludedGalleryIds={new Set([failedGallery.id])}
+        onClose={vi.fn()}
+        onReview={vi.fn()}
+        onRetry={onRetry}
+        onCancel={onCancel}
+      />,
+    ));
+
+    expect(container).toHaveTextContent("중복 검토 완료 · 탐색 및 다운로드 목록에서 제외됨");
+    expect(container).toHaveTextContent("처리 완료");
+    expect(container).not.toHaveTextContent("SOURCE_TIMEOUT");
+    expect(container).not.toHaveTextContent("재시도");
+    expect(container).not.toHaveTextContent("취소");
+    expect(container.querySelector('[role="progressbar"]')).toBeNull();
+    expect(onRetry).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
 });

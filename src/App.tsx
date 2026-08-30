@@ -16,6 +16,7 @@ import type {
   FavoriteKey,
   FavoriteNamespace,
   FavoriteRecord,
+  GalleryPage,
   InternalDuplicateReview,
   InternalDuplicateSnapshot,
   InternalArtifactScanProgress,
@@ -36,6 +37,7 @@ import { ActivityDrawer } from "./components/ActivityDrawer";
 import { DetailWorkspace } from "./components/DetailWorkspace";
 import { DuplicateReviewDialog } from "./components/DuplicateReviewDialog";
 import { DownloadOverlapReviewDialog } from "./components/DownloadOverlapReviewDialog";
+import { ExploreContextBar, type ExploreContextTab } from "./components/ExploreContextBar";
 import { InternalDuplicateDialog } from "./components/InternalDuplicateDialog";
 import { ExitConfirmDialog } from "./components/ExitConfirmDialog";
 import { FluentIcon } from "./components/FluentIcon";
@@ -49,7 +51,7 @@ import { SideRail } from "./components/SideRail";
 import { TutorialDialog } from "./components/TutorialDialog";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { ViewHeader, type SearchSuggestion } from "./components/ViewHeader";
-import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryId, type SearchSort, type ViewId } from "./core/types";
+import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryId, type Language, type SearchSort, type ViewId } from "./core/types";
 import { useSettings } from "./hooks/useSettings";
 import { useWindowPlacement } from "./hooks/useWindowPlacement";
 import { resolveGalleryColumns } from "./layout/galleryColumns";
@@ -63,7 +65,7 @@ import {
   validDuplicateRun,
 } from "./state/duplicateProjection";
 import { mergeDownloadEntries, mergeGalleryDetail, mergeGalleryPage } from "./state/galleryProjection";
-import { galleryQueryReducer, initialGalleryQueryState } from "./state/galleryQuery";
+import { galleryQueryReducer, initialGalleryQueryState, type GalleryQueryState } from "./state/galleryQuery";
 import { ExplorePageSession } from "./state/explorePageSession";
 import { visibleGalleries } from "./state/selectors";
 import { galleryGroupStorageKey, groupGalleries, type GalleryGroup, type GalleryGrouping } from "./state/galleryGrouping";
@@ -108,6 +110,43 @@ type Toast = { id: number; message: string } | null;
 type UndoAction =
   | { kind: "auto-find-exclusion"; galleryIds: GalleryId[] }
   | { kind: "download-quarantine"; entryIds: string[] };
+
+type ExploreContext = {
+  id: string;
+  label: string;
+  root: boolean;
+  session: ExplorePageSession;
+  request: SearchRequest | null;
+  requestKey: string | null;
+  displayValue: string;
+  languages: Language[];
+  sort: SearchSort;
+  query: GalleryQueryState;
+  exploreIds: GalleryId[];
+  scrollTop: number;
+  keyboardFocusId: GalleryId | null;
+  selectionIds: GalleryId[];
+  selectionAnchorId: GalleryId | null;
+  lastAccessed: number;
+};
+
+const maximumExploreContexts = 5;
+
+const cloneSearchRequest = (request: SearchRequest): SearchRequest => ({
+  ...request,
+  includeTags: [...request.includeTags],
+  excludeTags: [...request.excludeTags],
+  languages: [...request.languages],
+});
+
+const searchRequestKey = (request: SearchRequest): string => JSON.stringify({
+  text: request.text.trim().toLocaleLowerCase(),
+  includeTags: [...request.includeTags].map(normalizeMetadataToken).sort(),
+  excludeTags: [...request.excludeTags].map(normalizeMetadataToken).sort(),
+  languages: [...request.languages].sort(),
+  sort: request.sort,
+  pageSize: request.pageSize,
+});
 
 const normalizeMetadataToken = (value: string): string => value.trim().toLocaleLowerCase();
 
@@ -171,10 +210,12 @@ export default function App() {
   const [galleries, setGalleries] = useState<ReadonlyMap<GalleryId, Gallery>>(() => new Map());
   const [exploreIds, setExploreIds] = useState<GalleryId[]>([]);
   const [downloadIds, setDownloadIds] = useState<GalleryId[]>([]);
+  const [duplicateHiddenGalleryIds, setDuplicateHiddenGalleryIds] = useState<ReadonlySet<GalleryId>>(() => new Set());
   const [downloadsLoading, setDownloadsLoading] = useState(true);
   const [downloadsError, setDownloadsError] = useState<string | null>(null);
   const [searchRefresh, setSearchRefresh] = useState(0);
-  const [exploreSearchOverride, setExploreSearchOverride] = useState<SearchRequest | null>(null);
+  const [exploreContextIds, setExploreContextIds] = useState<string[]>([]);
+  const [activeExploreContextId, setActiveExploreContextId] = useState<string | null>(null);
   const [downloadsRefresh, setDownloadsRefresh] = useState(0);
   const [favoriteMetadata, setFavoriteMetadata] = useState<ReadonlySet<string>>(() => new Set());
   const [favoriteRecords, setFavoriteRecords] = useState<FavoriteRecord[]>([]);
@@ -258,26 +299,59 @@ export default function App() {
   const activityOpener = useRef<HTMLElement | null>(null);
   const galleryViewport = useRef<HTMLElement>(null);
   const explorePageSession = useRef<ExplorePageSession | null>(null);
+  const exploreContexts = useRef(new Map<string, ExploreContext>());
+  const exploreContextIdsRef = useRef<string[]>([]);
+  const activeExploreContextIdRef = useRef<string | null>(null);
+  const exploreContextSequence = useRef(0);
+  const exploreContextAccessSequence = useRef(0);
+  const queryRef = useRef(query);
+  const exploreIdsRef = useRef(exploreIds);
+  const keyboardFocusIdRef = useRef(keyboardFocusId);
+  const uiRef = useRef(ui);
+  const pendingExploreSearch = useRef<{
+    generation: number;
+    token: number;
+    contextId: string;
+    request: SearchRequest;
+  } | null>(null);
+  const exploreSearchGeneration = useRef(0);
   const exploreNavigationToken = useRef(0);
   const exploreRestoreFrame = useRef<number | null>(null);
-  if (!explorePageSession.current) {
-    explorePageSession.current = new ExplorePageSession({
-      fetchPage: (queryId, page, requestId) => backend.searchPageGet(queryId, page, requestId),
-      cancelPage: (requestId) => backend.searchPageCancel(requestId),
-      warmPage: (page) => {
-        const releases = page.items.map((item, index) => thumbnailClient.subscribe({
+  exploreContextIdsRef.current = exploreContextIds;
+  activeExploreContextIdRef.current = activeExploreContextId;
+  queryRef.current = query;
+  exploreIdsRef.current = exploreIds;
+  keyboardFocusIdRef.current = keyboardFocusId;
+  uiRef.current = ui;
+
+  const createExplorePageSession = useCallback(() => {
+    const subscribePage = (page: GalleryPage, resolvedOnly: boolean) => {
+      const releases = page.items.flatMap((item, index) => {
+        const request = {
           key: {
             kind: "gallery-cover" as const,
             galleryId: item.id,
             ...(item.thumbnailKey?.trim() ? { sourceKey: item.thumbnailKey.trim() } : {}),
             fallback: { kind: "fixture-sheet-cell" as const, index: index % 6 },
           },
-          consumer: "explore",
-          priority: "prefetch",
-        }, () => undefined));
-        return () => releases.forEach((release) => release());
-      },
+          consumer: "explore" as const,
+          priority: "prefetch" as const,
+        };
+        if (resolvedOnly && thumbnailClient.getSnapshot(request.key).status !== "resolved") return [];
+        return [thumbnailClient.subscribe(request, () => undefined)];
+      });
+      return () => releases.forEach((release) => release());
+    };
+    return new ExplorePageSession({
+      fetchPage: (queryId, page, requestId) => backend.searchPageGet(queryId, page, requestId),
+      cancelPage: (requestId) => backend.searchPageCancel(requestId),
+      warmPage: (page) => subscribePage(page, false),
+      retainPage: (page) => subscribePage(page, true),
     });
+  }, [thumbnailClient]);
+
+  if (!explorePageSession.current) {
+    explorePageSession.current = createExplorePageSession();
   }
   const { settings, loading: settingsLoading, error: settingsError, save: saveSettings } = useSettings();
   const appUpdater = useAppUpdater(backend.runtime);
@@ -297,7 +371,8 @@ export default function App() {
   useWindowPlacement();
 
   useEffect(() => () => {
-    explorePageSession.current?.clear();
+    for (const context of exploreContexts.current.values()) context.session.clear();
+    if (exploreContexts.current.size === 0) explorePageSession.current?.clear();
     if (exploreRestoreFrame.current !== null) window.cancelAnimationFrame(exploreRestoreFrame.current);
   }, []);
 
@@ -306,6 +381,190 @@ export default function App() {
     setToast({ id: Date.now(), message });
     toastTimer.current = window.setTimeout(() => setToast(null), 2400);
   }, []);
+
+  const replaceExploreContextIds = useCallback((ids: string[]) => {
+    exploreContextIdsRef.current = ids;
+    setExploreContextIds(ids);
+  }, []);
+
+  const replaceActiveExploreContextId = useCallback((id: string | null) => {
+    activeExploreContextIdRef.current = id;
+    setActiveExploreContextId(id);
+  }, []);
+
+  const ensureActiveExploreContext = useCallback((): ExploreContext => {
+    const activeId = activeExploreContextIdRef.current;
+    const active = activeId ? exploreContexts.current.get(activeId) : undefined;
+    if (active) return active;
+
+    const id = `explore-context-${++exploreContextSequence.current}`;
+    const context: ExploreContext = {
+      id,
+      label: "전체 탐색",
+      root: true,
+      session: explorePageSession.current ?? createExplorePageSession(),
+      request: null,
+      requestKey: null,
+      displayValue: uiRef.current.search.explore.committed,
+      languages: [...uiRef.current.search.explore.languages],
+      sort: uiRef.current.exploreSort,
+      query: queryRef.current,
+      exploreIds: [...exploreIdsRef.current],
+      scrollTop: galleryViewport.current?.scrollTop ?? 0,
+      keyboardFocusId: keyboardFocusIdRef.current,
+      selectionIds: [...uiRef.current.selection.ids],
+      selectionAnchorId: uiRef.current.selection.anchorId,
+      lastAccessed: ++exploreContextAccessSequence.current,
+    };
+    explorePageSession.current = context.session;
+    exploreContexts.current.set(id, context);
+    replaceExploreContextIds([id]);
+    replaceActiveExploreContextId(id);
+    return context;
+  }, [createExplorePageSession, replaceActiveExploreContextId, replaceExploreContextIds]);
+
+  const snapshotActiveExploreContext = useCallback((park = true): ExploreContext | null => {
+    const activeId = activeExploreContextIdRef.current;
+    const context = activeId ? exploreContexts.current.get(activeId) : undefined;
+    if (!context) return null;
+
+    const currentQuery = queryRef.current.phase === "loading-page" && queryRef.current.page
+      ? { ...queryRef.current, phase: "ready" as const, pendingPage: null, error: null }
+      : queryRef.current.phase === "submitting"
+        ? {
+          ...initialGalleryQueryState,
+          phase: "error" as const,
+          submitToken: queryRef.current.submitToken,
+          error: {
+            code: "SEARCH_CONTEXT_PAUSED",
+            message: "다른 탐색으로 이동해 검색이 중단되었습니다. 다시 시도해 주세요.",
+            retryable: true,
+            action: "retry" as const,
+          },
+        }
+        : queryRef.current;
+    const viewportScroll = uiRef.current.view === "explore"
+      ? galleryViewport.current?.scrollTop ?? context.scrollTop
+      : context.scrollTop;
+    if (currentQuery.page && uiRef.current.view === "explore") {
+      context.session.recordScroll(currentQuery.page.page, viewportScroll);
+    }
+    context.query = currentQuery;
+    context.exploreIds = [...exploreIdsRef.current];
+    context.displayValue = uiRef.current.search.explore.committed;
+    context.languages = [...uiRef.current.search.explore.languages];
+    context.sort = uiRef.current.exploreSort;
+    context.scrollTop = viewportScroll;
+    if (uiRef.current.view === "explore") {
+      context.keyboardFocusId = keyboardFocusIdRef.current;
+      context.selectionIds = [...uiRef.current.selection.ids];
+      context.selectionAnchorId = uiRef.current.selection.anchorId;
+    }
+    context.lastAccessed = ++exploreContextAccessSequence.current;
+    if (park) context.session.park();
+    return context;
+  }, []);
+
+  const restoreExploreContext = useCallback((context: ExploreContext) => {
+    if (exploreRestoreFrame.current !== null) {
+      window.cancelAnimationFrame(exploreRestoreFrame.current);
+      exploreRestoreFrame.current = null;
+    }
+    context.lastAccessed = ++exploreContextAccessSequence.current;
+    explorePageSession.current = context.session;
+    context.session.resume();
+    replaceActiveExploreContextId(context.id);
+    queryRef.current = context.query;
+    exploreIdsRef.current = [...context.exploreIds];
+    keyboardFocusIdRef.current = context.keyboardFocusId;
+    dispatch({ type: "navigate", view: "explore" });
+    dispatch({ type: "search.languages", view: "explore", languages: [...context.languages] });
+    dispatch({ type: "sort.set", sort: context.sort });
+    dispatch({ type: "search.commit", view: "explore", value: context.displayValue });
+    dispatch({
+      type: "selection.restore",
+      ids: [...context.selectionIds],
+      anchorId: context.selectionAnchorId,
+    });
+    dispatchQuery({ type: "restore", state: context.query });
+    setExploreIds([...context.exploreIds]);
+    setKeyboardFocusId(context.keyboardFocusId);
+    exploreRestoreFrame.current = window.requestAnimationFrame(() => {
+      if (activeExploreContextIdRef.current === context.id && galleryViewport.current) {
+        galleryViewport.current.scrollTop = context.scrollTop;
+      }
+      context.session.releaseRetainedPage();
+      exploreRestoreFrame.current = null;
+    });
+  }, [replaceActiveExploreContextId]);
+
+  const activateExploreContext = useCallback((id: string) => {
+    const target = exploreContexts.current.get(id);
+    if (!target) return;
+    if (activeExploreContextIdRef.current === id) {
+      if (uiRef.current.view !== "explore") restoreExploreContext(target);
+      return;
+    }
+    searchToken.current += 1;
+    exploreNavigationToken.current += 1;
+    snapshotActiveExploreContext(true);
+    restoreExploreContext(target);
+  }, [restoreExploreContext, snapshotActiveExploreContext]);
+
+  const closeExploreContext = useCallback((id: string) => {
+    const context = exploreContexts.current.get(id);
+    if (!context || context.root) return;
+    const ids = exploreContextIdsRef.current;
+    const closingIndex = ids.indexOf(id);
+    const nextIds = ids.filter((contextId) => contextId !== id);
+    searchToken.current += 1;
+    exploreNavigationToken.current += 1;
+    context.session.clear();
+    exploreContexts.current.delete(id);
+    replaceExploreContextIds(nextIds);
+    if (activeExploreContextIdRef.current !== id) return;
+    const fallbackId = nextIds[Math.max(0, closingIndex - 1)] ?? nextIds[0];
+    const fallback = fallbackId ? exploreContexts.current.get(fallbackId) : undefined;
+    if (fallback) restoreExploreContext(fallback);
+    else replaceActiveExploreContextId(null);
+  }, [replaceActiveExploreContextId, replaceExploreContextIds, restoreExploreContext]);
+
+  const navigateView = useCallback((view: ViewId) => {
+    if (view === uiRef.current.view) return;
+    if (uiRef.current.view === "explore") snapshotActiveExploreContext(true);
+    if (view === "explore") {
+      const activeId = activeExploreContextIdRef.current;
+      const active = activeId ? exploreContexts.current.get(activeId) : undefined;
+      if (active) {
+        restoreExploreContext(active);
+        return;
+      }
+    }
+    dispatch({ type: "navigate", view });
+  }, [restoreExploreContext, snapshotActiveExploreContext]);
+
+  const loadExplorationExclusionsAndSync = useCallback(async () => {
+    const result = await loadExplorationExclusions();
+    if (result.ok) {
+      setDuplicateHiddenGalleryIds(new Set(result.data
+        .filter((item) => item.reasons.some((reason) => reason.kind === "duplicate_hidden"))
+        .map((item) => item.galleryId)));
+    }
+    return result;
+  }, []);
+
+  const restoreExplorationExclusionsAndSync = useCallback(async (galleryIds: GalleryId[]) => {
+    const result = await restoreExplorationExclusions(galleryIds);
+    if (result.ok) {
+      const restored = new Set(result.data.restoredGalleryIds);
+      setDuplicateHiddenGalleryIds((current) => new Set([...current].filter((id) => !restored.has(id))));
+    }
+    return result;
+  }, []);
+
+  useEffect(() => {
+    void loadExplorationExclusionsAndSync().catch(() => undefined);
+  }, [downloadsRefresh, loadExplorationExclusionsAndSync]);
 
   const closeTutorial = useCallback((doNotShowAgain: boolean) => {
     if (doNotShowAgain) setTutorialDismissed(true);
@@ -374,7 +633,8 @@ export default function App() {
       if (!result.ok) return result;
       if (action.kind === "quickRepair" || (action.kind === "rebuildLibrary" && action.rebuildThumbnailData)) {
         thumbnailClient.clearRetainedCache();
-        explorePageSession.current?.clear();
+        for (const context of exploreContexts.current.values()) context.session.clear();
+        if (exploreContexts.current.size === 0) explorePageSession.current?.clear();
       }
       return result;
     } catch {
@@ -706,70 +966,118 @@ export default function App() {
     };
   }, []);
 
-  const beginExploreSearch = useCallback(() => {
-    // Invalidate the previous projection before React paints the new search
-    // state. Metadata chips may be clicked while an Explore page is visible;
-    // retaining those IDs until the effect starts makes that old page look
-    // like a transient, local re-filter of the new query.
+  const startExploreSearch = useCallback((
+    sourceRequest: SearchRequest,
+    options: { displayValue: string; label?: string },
+  ) => {
+    const context = ensureActiveExploreContext();
+    const request = cloneSearchRequest(sourceRequest);
     const token = ++searchToken.current;
+    const generation = ++exploreSearchGeneration.current;
     exploreNavigationToken.current += 1;
     if (exploreRestoreFrame.current !== null) {
       window.cancelAnimationFrame(exploreRestoreFrame.current);
       exploreRestoreFrame.current = null;
     }
-    explorePageSession.current?.clear();
+    context.session.clear();
+    explorePageSession.current = context.session;
+    context.request = request;
+    context.requestKey = searchRequestKey(request);
+    context.displayValue = options.displayValue.trim();
+    context.languages = [...request.languages];
+    context.sort = request.sort;
+    if (!context.root && options.label?.trim()) context.label = options.label.trim();
+    context.scrollTop = 0;
+    context.keyboardFocusId = null;
+    context.selectionIds = [];
+    context.selectionAnchorId = null;
+    const submitting: GalleryQueryState = {
+      phase: "submitting",
+      submitToken: token,
+      queryId: null,
+      page: null,
+      pendingPage: null,
+      error: null,
+    };
+    context.query = submitting;
+    context.exploreIds = [];
+    queryRef.current = submitting;
+    exploreIdsRef.current = [];
+    keyboardFocusIdRef.current = null;
+    pendingExploreSearch.current = { generation, token, contextId: context.id, request };
+    dispatch({ type: "selection.clear" });
+    dispatchQuery({ type: "restore", state: submitting });
     setExploreIds([]);
-    dispatchQuery({ type: "submit.started", token });
-  }, []);
+    setKeyboardFocusId(null);
+    if (uiRef.current.view === "explore" && galleryViewport.current) galleryViewport.current.scrollTop = 0;
+    setSearchRefresh(generation);
+  }, [ensureActiveExploreContext]);
 
   useEffect(() => {
-    // Keep Explore idle until a form/suggestion/metadata search explicitly advances this generation.
-    if (searchRefresh === 0) return;
+    const pending = pendingExploreSearch.current;
+    if (!pending || pending.generation !== searchRefresh) return;
     let cancelled = false;
-    const token = ++searchToken.current;
-    exploreNavigationToken.current += 1;
-    if (exploreRestoreFrame.current !== null) {
-      window.cancelAnimationFrame(exploreRestoreFrame.current);
-      exploreRestoreFrame.current = null;
-    }
-    const request: SearchRequest = exploreSearchOverride ?? {
-      text: ui.search.explore.committed,
-      includeTags: [],
-      excludeTags: [],
-      languages: ui.search.explore.languages,
-      sort: ui.exploreSort,
-      pageSize: 50,
-    };
-    explorePageSession.current?.clear();
-    dispatchQuery({ type: "submit.started", token });
+    const { token, contextId, request } = pending;
     void backend.searchSubmit(request).then((result) => {
-      if (cancelled || token !== searchToken.current) return;
+      const context = exploreContexts.current.get(contextId);
+      if (cancelled || token !== searchToken.current || !context || activeExploreContextIdRef.current !== contextId) return;
       if (!result.ok) {
-        dispatchQuery({ type: "submit.failed", token, error: result.error });
+        const failed: GalleryQueryState = {
+          ...context.query,
+          phase: "error",
+          error: result.error,
+        };
+        context.query = failed;
+        queryRef.current = failed;
+        dispatchQuery({ type: "restore", state: failed });
         return;
       }
-      dispatchQuery({ type: "submit.succeeded", token, submission: result.data });
-      explorePageSession.current?.start(result.data.queryId, result.data.firstPage);
-      setExploreIds(result.data.firstPage.items.map((item) => item.id));
+      const ready: GalleryQueryState = {
+        phase: "ready",
+        submitToken: token,
+        queryId: result.data.queryId,
+        page: result.data.firstPage,
+        pendingPage: null,
+        error: null,
+      };
+      const resultIds = result.data.firstPage.items.map((item) => item.id);
+      context.query = ready;
+      context.exploreIds = resultIds;
+      context.scrollTop = 0;
+      queryRef.current = ready;
+      exploreIdsRef.current = resultIds;
+      dispatchQuery({ type: "restore", state: ready });
+      context.session.start(result.data.queryId, result.data.firstPage);
+      setExploreIds(resultIds);
       setGalleries((current) => mergeGalleryPage(current, result.data.firstPage).galleries);
-      if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
-      explorePageSession.current?.prefetchAdjacent();
+      if (uiRef.current.view === "explore") {
+        if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
+        context.session.prefetchAdjacent();
+      } else {
+        context.session.park();
+      }
       if (request.text.trim() || request.includeTags.length || request.excludeTags.length) {
         void hydrateSearchHistory();
       }
     }).catch(() => {
-      if (!cancelled && token === searchToken.current) {
-        dispatchQuery({
-          type: "submit.failed",
-          token,
+      const context = exploreContexts.current.get(contextId);
+      if (!cancelled && token === searchToken.current && context && activeExploreContextIdRef.current === contextId) {
+        const failed: GalleryQueryState = {
+          ...context.query,
+          phase: "error",
           error: { code: "BACKEND_UNAVAILABLE", message: "검색 backend에 연결하지 못했습니다.", retryable: true, action: "retry" },
-        });
+        };
+        context.query = failed;
+        queryRef.current = failed;
+        dispatchQuery({ type: "restore", state: failed });
       }
+    }).finally(() => {
+      if (pendingExploreSearch.current?.generation === pending.generation) pendingExploreSearch.current = null;
     });
     return () => {
       cancelled = true;
     };
-  }, [exploreSearchOverride, hydrateSearchHistory, searchRefresh, ui.exploreSort, ui.search.explore.committed, ui.search.explore.languages]);
+  }, [hydrateSearchHistory, searchRefresh]);
 
   useEffect(() => {
     let cancelled = false;
@@ -867,8 +1175,11 @@ export default function App() {
   }, [autoFindIds, displayGalleries, downloadIds, exploreIds, ui.view]);
   const visible = useMemo(() => visibleGalleries(ui, scopedGalleries), [ui, scopedGalleries]);
   const actionableVisibleIds = useMemo(
-    () => visible.filter((gallery) => gallery.download?.state !== "quarantined").map((gallery) => gallery.id),
-    [visible],
+    () => visible
+      .filter((gallery) => gallery.download?.state !== "quarantined"
+        && !(ui.view === "explore" && duplicateHiddenGalleryIds.has(gallery.id)))
+      .map((gallery) => gallery.id),
+    [duplicateHiddenGalleryIds, ui.view, visible],
   );
   galleriesRef.current = displayGalleries;
   visibleIdsRef.current = actionableVisibleIds;
@@ -894,8 +1205,9 @@ export default function App() {
     [autoFindIds, displayGalleries],
   );
   const attentionCount = useMemo(
-    () => allGalleries.filter((gallery) => ["failed", "interrupted", "review_required"].includes(gallery.download?.state ?? "")).length,
-    [allGalleries],
+    () => allGalleries.filter((gallery) => !duplicateHiddenGalleryIds.has(gallery.id)
+      && ["failed", "interrupted", "review_required"].includes(gallery.download?.state ?? "")).length,
+    [allGalleries, duplicateHiddenGalleryIds],
   );
   const activeDownloadCount = useMemo(
     () => allGalleries.filter((gallery) => gallery.download && activeDownloadStates.has(gallery.download.state)).length,
@@ -1127,6 +1439,14 @@ export default function App() {
         return;
       }
       setDownloadOverlapReview(result.data.review);
+      const excludedGalleryId = request.action === "remove_incoming"
+        ? result.data.review.incoming.galleryId
+        : request.action === "remove_existing_continue"
+          ? result.data.review.candidates.find((candidate) => candidate.candidateId === request.candidateId)?.existing.galleryId
+          : undefined;
+      if (excludedGalleryId !== undefined) {
+        setDuplicateHiddenGalleryIds((current) => new Set([...current, excludedGalleryId]));
+      }
       setDownloadsRefresh((value) => value + 1);
       if (result.data.resumed || result.data.cancelled) {
         closeDownloadOverlapReview();
@@ -1391,18 +1711,79 @@ export default function App() {
         pageSize: 50,
       };
     if (!kind && !target.displayToken) return;
-    // This must be a new request object even for a repeated token, so the
-    // search effect cannot reuse a previous Explore session or projection.
-    explorePageSession.current?.clear();
-    setExploreSearchOverride({ ...request, includeTags: [...request.includeTags], excludeTags: [...request.excludeTags] });
+
+    const key = searchRequestKey(request);
+    const existing = [...exploreContexts.current.values()].find((context) => (
+      context.requestKey === key && context.query.page !== null
+    ));
+    if (existing) {
+      dispatch({ type: "detail.minimize", minimized: true });
+      activateExploreContext(existing.id);
+      return;
+    }
+
+    const parent = activeExploreContextIdRef.current
+      ? exploreContexts.current.get(activeExploreContextIdRef.current)
+      : undefined;
+    if (parent) {
+      snapshotActiveExploreContext(true);
+      let ids = [...exploreContextIdsRef.current];
+      if (ids.length >= maximumExploreContexts) {
+        const oldest = ids
+          .map((id) => exploreContexts.current.get(id))
+          .filter((context): context is ExploreContext => Boolean(context && !context.root && context.id !== parent.id))
+          .sort((left, right) => left.lastAccessed - right.lastAccessed)[0];
+        if (oldest) {
+          oldest.session.clear();
+          exploreContexts.current.delete(oldest.id);
+          ids = ids.filter((id) => id !== oldest.id);
+        }
+      }
+      const id = `explore-context-${++exploreContextSequence.current}`;
+      const context: ExploreContext = {
+        id,
+        label: target.displayToken,
+        root: false,
+        session: createExplorePageSession(),
+        request: cloneSearchRequest(request),
+        requestKey: key,
+        displayValue: target.displayToken,
+        languages: [...request.languages],
+        sort: request.sort,
+        query: initialGalleryQueryState,
+        exploreIds: [],
+        scrollTop: 0,
+        keyboardFocusId: null,
+        selectionIds: [],
+        selectionAnchorId: null,
+        lastAccessed: ++exploreContextAccessSequence.current,
+      };
+      exploreContexts.current.set(id, context);
+      explorePageSession.current = context.session;
+      replaceExploreContextIds([...ids, id]);
+      replaceActiveExploreContextId(id);
+    } else {
+      ensureActiveExploreContext();
+    }
+
     dispatch({ type: "navigate", view: "explore" });
     dispatch({ type: "selection.clear" });
     dispatch({ type: "detail.minimize", minimized: true });
+    dispatch({ type: "search.languages", view: "explore", languages: [...request.languages] });
+    dispatch({ type: "sort.set", sort: request.sort });
     dispatch({ type: "search.commit", view: "explore", value: target.displayToken });
-    if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
-    beginExploreSearch();
-    setSearchRefresh((current) => current + 1);
-  }, [beginExploreSearch, ui.exploreSort, ui.search.explore.languages]);
+    startExploreSearch(request, { displayValue: target.displayToken, label: target.displayToken });
+  }, [
+    activateExploreContext,
+    createExplorePageSession,
+    ensureActiveExploreContext,
+    replaceActiveExploreContextId,
+    replaceExploreContextIds,
+    snapshotActiveExploreContext,
+    startExploreSearch,
+    ui.exploreSort,
+    ui.search.explore.languages,
+  ]);
 
   const searchMetadata = startFreshMetadataSearch;
 
@@ -1439,7 +1820,7 @@ export default function App() {
 
   const queueGalleries = useCallback(
     async (ids: GalleryId[]) => {
-      const uniqueIds = [...new Set(ids)];
+      const uniqueIds = [...new Set(ids)].filter((id) => !duplicateHiddenGalleryIds.has(id));
       const newGalleryIds = uniqueIds.filter((id) => !galleries.get(id)?.download);
       const retryEntryIds = uniqueIds.flatMap((id) => {
         const download = galleries.get(id)?.download;
@@ -1478,12 +1859,16 @@ export default function App() {
       }
       dispatch({ type: "selection.clear" });
     },
-    [galleries, showToast],
+    [duplicateHiddenGalleryIds, galleries, showToast],
   );
 
   const retryGallery = useCallback(
     async (id: GalleryId) => {
       const download = galleriesRef.current.get(id)?.download;
+      if (duplicateHiddenGalleryIds.has(id)) {
+        showToast("중복 검토에서 제외 처리된 항목입니다. 설정에서 복원한 뒤 다시 다운로드할 수 있습니다.");
+        return;
+      }
       if (!download || !retryableDownloadStates.has(download.state)) {
         showToast("현재 상태에서는 이 항목을 재시도할 수 없습니다.");
         return;
@@ -1503,7 +1888,7 @@ export default function App() {
         finishDownloadMutation(download.entryId);
       }
     },
-    [beginDownloadMutation, finishDownloadMutation, showToast],
+    [beginDownloadMutation, duplicateHiddenGalleryIds, finishDownloadMutation, showToast],
   );
 
   const cancelGallery = useCallback(async (id: GalleryId) => {
@@ -1758,30 +2143,56 @@ export default function App() {
   }, [duplicateRun?.state, hydrateDuplicateSnapshot, showToast]);
 
   const loadExplorePage = useCallback(async (page: number) => {
-    if (!query.queryId || page < 1) return;
-    const queryId = query.queryId;
+    const contextId = activeExploreContextIdRef.current;
+    const context = contextId ? exploreContexts.current.get(contextId) : undefined;
+    const currentQuery = queryRef.current;
+    if (!context || !currentQuery.queryId || page < 1) return;
     const navigationToken = ++exploreNavigationToken.current;
     if (exploreRestoreFrame.current !== null) {
       window.cancelAnimationFrame(exploreRestoreFrame.current);
       exploreRestoreFrame.current = null;
     }
-    if (query.page && galleryViewport.current) {
-      explorePageSession.current?.recordScroll(query.page.page, galleryViewport.current.scrollTop);
+    if (currentQuery.page && galleryViewport.current) {
+      context.session.recordScroll(currentQuery.page.page, galleryViewport.current.scrollTop);
+      context.scrollTop = galleryViewport.current.scrollTop;
     }
-    dispatchQuery({ type: "page.started", queryId, page });
-    const result = await explorePageSession.current?.open(page);
-    if (!result || result.status === "stale" || navigationToken !== exploreNavigationToken.current) return;
+    const loading: GalleryQueryState = {
+      ...currentQuery,
+      phase: "loading-page",
+      pendingPage: page,
+      error: null,
+    };
+    context.query = loading;
+    queryRef.current = loading;
+    dispatchQuery({ type: "restore", state: loading });
+    const result = await context.session.open(page);
+    if (
+      result.status === "stale"
+      || navigationToken !== exploreNavigationToken.current
+      || activeExploreContextIdRef.current !== contextId
+    ) return;
     if (result.status === "failed") {
-      dispatchQuery({
-        type: "page.failed",
-        queryId,
-        page,
-        error: result.error,
-      });
+      const failed: GalleryQueryState = { ...loading, phase: "error", pendingPage: null, error: result.error };
+      context.query = failed;
+      queryRef.current = failed;
+      dispatchQuery({ type: "restore", state: failed });
       return;
     }
-    dispatchQuery({ type: "page.succeeded", queryId, page: result.page });
-    setExploreIds(result.page.items.map((item) => item.id));
+    const ready: GalleryQueryState = {
+      ...loading,
+      phase: "ready",
+      page: result.page,
+      pendingPage: null,
+      error: null,
+    };
+    const resultIds = result.page.items.map((item) => item.id);
+    context.query = ready;
+    context.exploreIds = resultIds;
+    context.scrollTop = result.scrollTop;
+    queryRef.current = ready;
+    exploreIdsRef.current = resultIds;
+    dispatchQuery({ type: "restore", state: ready });
+    setExploreIds(resultIds);
     setGalleries((current) => mergeGalleryPage(current, result.page).galleries);
     exploreRestoreFrame.current = window.requestAnimationFrame(() => {
       if (navigationToken === exploreNavigationToken.current && galleryViewport.current) {
@@ -1789,7 +2200,7 @@ export default function App() {
       }
       exploreRestoreFrame.current = null;
     });
-  }, [query.page, query.queryId]);
+  }, []);
 
   const selectedIds = useMemo(() => [...ui.selection.ids], [ui.selection.ids]);
   const multiSelectionMode = ui.selection.ids.size >= 2;
@@ -1873,12 +2284,13 @@ export default function App() {
   }, []);
   const refreshCurrentView = useCallback(() => {
     if (ui.view === "explore") {
-      if (searchRefresh === 0) {
+      const activeId = activeExploreContextIdRef.current;
+      const context = activeId ? exploreContexts.current.get(activeId) : undefined;
+      if (!context?.request) {
         showToast("새로고침할 검색 결과가 없습니다. 먼저 검색해 주세요.");
         return;
       }
-      beginExploreSearch();
-      setSearchRefresh((current) => current + 1);
+      startExploreSearch(context.request, { displayValue: context.displayValue, label: context.label });
       return;
     }
     if (ui.view === "auto-find") {
@@ -1886,7 +2298,7 @@ export default function App() {
       return;
     }
     setDownloadsRefresh((current) => current + 1);
-  }, [beginExploreSearch, hydrateAutoFind, searchRefresh, showToast, ui.view]);
+  }, [hydrateAutoFind, showToast, startExploreSearch, ui.view]);
   const allVisibleGroupsCollapsed = groupedStorageKeys.length > 0
     && groupedStorageKeys.every((key) => collapsedGroupKeys.has(key));
   const toggleGroupCollapsed = useCallback((key: string) => {
@@ -1942,7 +2354,7 @@ export default function App() {
         const offset = event.shiftKey ? -1 : 1;
         const nextView = viewOrder[(currentIndex + offset + viewOrder.length) % viewOrder.length]!;
         setKeyboardFocusId(null);
-        dispatch({ type: "navigate", view: nextView });
+        navigateView(nextView);
         window.requestAnimationFrame(() => {
           document.querySelector<HTMLInputElement>('.view-header input[aria-label="검색"]')?.focus();
         });
@@ -2030,13 +2442,33 @@ export default function App() {
     };
     window.addEventListener("keydown", keyDown);
     return () => window.removeEventListener("keydown", keyDown);
-  }, [actionableVisibleIds, closeActivity, effectiveKeyboardFocusId, excludeAutoFindCandidates, focusGalleryCard, galleryColumns, keyboardNavigableIds, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, selectedIds, showToast, ui.detail.activeId, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction]);
+  }, [actionableVisibleIds, closeActivity, effectiveKeyboardFocusId, excludeAutoFindCandidates, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, selectedIds, showToast, ui.detail.activeId, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction]);
 
   const config = viewConfig[ui.view];
   const resultSourceLabel = backend.runtime === "tauri" ? "Hitomi 실데이터" : "브라우저 fixture";
   const currentAutoFindStatus = autoFindStatusLabel(autoFindLoading, autoFindError, autoFindSnapshot.run);
   const currentDuplicateStatus = duplicateStatusLabel(duplicateLoading, duplicateError, duplicateRun);
   const currentInternalStatus = internalStatusLabel(internalLoading, internalError, internalRun);
+  const exploreContextTabs = useMemo<ExploreContextTab[]>(() => exploreContextIds.flatMap((id) => {
+    const context = exploreContexts.current.get(id);
+    if (!context) return [];
+    const contextQuery = id === activeExploreContextId ? query : context.query;
+    return [{
+      id,
+      label: context.label,
+      ...(contextQuery.page ? {
+        page: contextQuery.page.page,
+        totalPages: contextQuery.page.totalPages,
+      } : {}),
+      root: context.root,
+      busy: contextQuery.phase === "submitting" || contextQuery.phase === "loading-page",
+    }];
+  }), [activeExploreContextId, exploreContextIds, query]);
+  const returnToPreviousExploreContext = useCallback(() => {
+    const activeIndex = exploreContextIdsRef.current.indexOf(activeExploreContextIdRef.current ?? "");
+    const previousId = activeIndex > 0 ? exploreContextIdsRef.current[activeIndex - 1] : undefined;
+    if (previousId) activateExploreContext(previousId);
+  }, [activateExploreContext]);
   const renderGalleryGrid = (items: Gallery[], ariaLabel: string) => (
     <GalleryGrid
       columns={galleryColumns}
@@ -2050,6 +2482,7 @@ export default function App() {
           gallery={gallery}
           thumbnailPriority={index < galleryColumns ? "visible" : "prefetch"}
           view={ui.view}
+          explorationExcluded={duplicateHiddenGalleryIds.has(gallery.id)}
           selected={ui.selection.ids.has(gallery.id)}
           selectionContext={multiSelectionMode}
           favoriteMetadata={favoriteMetadataForDisplay}
@@ -2063,7 +2496,9 @@ export default function App() {
             && gallery.id === internalArtifactProgress.galleryId
             ? internalArtifactProgress
             : undefined}
-          keyboardFocusable={gallery.download?.state !== "quarantined" && gallery.id === effectiveKeyboardFocusId}
+          keyboardFocusable={gallery.download?.state !== "quarantined"
+            && !duplicateHiddenGalleryIds.has(gallery.id)
+            && gallery.id === effectiveKeyboardFocusId}
           onKeyboardFocus={setKeyboardFocusId}
           onSelect={selectGallery}
           onOpenDetail={openDetail}
@@ -2088,7 +2523,7 @@ export default function App() {
           autoFindCount={autoFindCount}
           attentionCount={attentionCount}
           sourceLabel={backend.runtime === "tauri" ? "Hitomi live" : "Browser fixture"}
-          onNavigate={(view) => dispatch({ type: "navigate", view })}
+          onNavigate={navigateView}
           onToggle={() => dispatch({ type: "rail.toggle" })}
         />
         <main className="workspace">
@@ -2102,24 +2537,33 @@ export default function App() {
             onSuggestions={(open, active) => dispatch({ type: "search.suggestions", view: ui.view, open, active })}
             onCommit={(value) => {
               if (ui.view === "explore") {
-                setExploreSearchOverride(null);
-                beginExploreSearch();
-                setSearchRefresh((current) => current + 1);
+                const displayValue = (value ?? ui.search.explore.draft).trim();
+                startExploreSearch({
+                  text: displayValue,
+                  includeTags: [],
+                  excludeTags: [],
+                  languages: [...ui.search.explore.languages],
+                  sort: ui.exploreSort,
+                  pageSize: 50,
+                }, { displayValue, label: displayValue || "새 탐색" });
               }
               dispatch({ type: "search.commit", view: ui.view, value });
               if (ui.view !== "explore") showToast("현재 결과를 필터했습니다.");
             }}
             onSelectSuggestion={(suggestion, value) => {
               if (ui.view === "explore" && suggestion.request) {
-                setExploreSearchOverride(suggestion.request);
                 dispatch({ type: "search.languages", view: "explore", languages: suggestion.request.languages });
                 dispatch({ type: "sort.set", sort: suggestion.request.sort });
+                startExploreSearch(suggestion.request, { displayValue: value, label: value || "새 탐색" });
               } else if (ui.view === "explore") {
-                setExploreSearchOverride(null);
-              }
-              if (ui.view === "explore") {
-                beginExploreSearch();
-                setSearchRefresh((current) => current + 1);
+                startExploreSearch({
+                  text: value.trim(),
+                  includeTags: [],
+                  excludeTags: [],
+                  languages: [...ui.search.explore.languages],
+                  sort: ui.exploreSort,
+                  pageSize: 50,
+                }, { displayValue: value, label: value || "새 탐색" });
               }
               dispatch({ type: "search.commit", view: ui.view, value });
             }}
@@ -2128,7 +2572,6 @@ export default function App() {
               dispatch({ type: "search.suggestions", view: ui.view, open: false });
             }}
             onLanguages={(languages) => {
-              if (ui.view === "explore") setExploreSearchOverride(null);
               dispatch({ type: "search.languages", view: ui.view, languages });
             }}
             onTagSuggestionQuery={requestTagSuggestions}
@@ -2174,6 +2617,15 @@ export default function App() {
               ) : null}
             </div>
           </section>
+          {ui.view === "explore" && activeExploreContextId ? (
+            <ExploreContextBar
+              tabs={exploreContextTabs}
+              activeId={activeExploreContextId}
+              onActivate={activateExploreContext}
+              onBack={returnToPreviousExploreContext}
+              onClose={closeExploreContext}
+            />
+          ) : null}
           <section className="context-row">
             <div className="context-left">
               {(ui.view === "auto-find" || ui.view === "downloads") ? (
@@ -2195,7 +2647,7 @@ export default function App() {
                 </div>
               ) : null}
               {ui.view === "explore" ? (
-                <div className="select-control explore-sort-control"><label htmlFor="sort-select">정렬</label><select id="sort-select" value={ui.exploreSort} onChange={(event) => { setExploreSearchOverride(null); dispatch({ type: "sort.set", sort: event.target.value as SearchSort }); }}>{sortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
+                <div className="select-control explore-sort-control"><label htmlFor="sort-select">정렬</label><select id="sort-select" value={ui.exploreSort} onChange={(event) => dispatch({ type: "sort.set", sort: event.target.value as SearchSort })}>{sortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
               ) : ui.view === "auto-find" ? (
                 <div className="auto-find-evidence">
                   <span className={`context-summary auto-find-status is-${autoFindSnapshot.run?.state ?? "idle"}`} role="status">{currentAutoFindStatus}</span>
@@ -2278,7 +2730,7 @@ export default function App() {
                 ? void excludeAutoFindCandidates(selectedIds)
                 : showToast("후보 제외는 Auto Find 화면에서 사용할 수 있습니다.")}
           />
-          <section ref={galleryViewport} className="gallery-viewport">
+          <section id="gallery-viewport" ref={galleryViewport} className="gallery-viewport">
             {settingsLoading ? (
               <div className="loading-state" role="status"><span className="spinner" /> 저장된 화면 설정을 불러오는 중</div>
             ) : ((ui.view === "explore" && query.phase === "submitting" && !visible.length)
@@ -2288,7 +2740,11 @@ export default function App() {
             ) : ui.view === "explore" && query.phase === "idle" ? (
               <div className="empty-state"><FluentIcon glyph="\uE721" /><h2>검색을 시작해 주세요</h2><p>검색어와 언어·정렬 필터를 정한 뒤 검색 버튼을 눌러 주세요.</p></div>
             ) : ui.view === "explore" && query.error && !query.page ? (
-              <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>검색 결과를 불러오지 못했습니다</h2><p>{query.error.message}</p><button type="button" className="text-button" onClick={() => { beginExploreSearch(); setSearchRefresh((value) => value + 1); }}>다시 시도</button></div>
+              <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>검색 결과를 불러오지 못했습니다</h2><p>{query.error.message}</p><button type="button" className="text-button" onClick={() => {
+                const activeId = activeExploreContextIdRef.current;
+                const context = activeId ? exploreContexts.current.get(activeId) : undefined;
+                if (context?.request) startExploreSearch(context.request, { displayValue: context.displayValue, label: context.label });
+              }}>다시 시도</button></div>
             ) : ui.view === "downloads" && downloadsError ? (
               <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>다운로드 목록을 불러오지 못했습니다</h2><p>{downloadsError}</p><button type="button" className="text-button" onClick={() => setDownloadsRefresh((value) => value + 1)}>다시 시도</button></div>
             ) : ui.view === "auto-find" && autoFindError && !autoFindSnapshot.candidates.length ? (
@@ -2315,6 +2771,7 @@ export default function App() {
         <ActivityDrawer
           open={ui.overlays.activityOpen}
           galleries={allGalleries}
+          duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
           onClose={closeActivity}
           onReview={openReview}
           onRetry={(id) => void retryGallery(id)}
@@ -2355,8 +2812,8 @@ export default function App() {
         onPreviewFolderName={previewFolderNameTemplate}
         onMaintenance={runMaintenance}
         onCheckForUpdates={() => appUpdater.checkForUpdates("manual")}
-        onLoadExplorationExclusions={loadExplorationExclusions}
-        onRestoreExplorationExclusions={restoreExplorationExclusions}
+        onLoadExplorationExclusions={loadExplorationExclusionsAndSync}
+        onRestoreExplorationExclusions={restoreExplorationExclusionsAndSync}
       />
 
       <UpdateDialog
@@ -2394,6 +2851,7 @@ export default function App() {
         error={downloadOverlapError}
         decisionPending={downloadOverlapDecisionPending}
         browserFixture={backend.runtime === "browser-mock"}
+        previewWidth={previewWidth}
         thumbnailClient={thumbnailClient}
         onClose={closeDownloadOverlapReview}
         onRetry={() => downloadOverlapReviewId && void hydrateDownloadOverlapReview(downloadOverlapReviewId)}

@@ -29,6 +29,7 @@ export type ExplorePageSessionOptions = {
   fetchPage: (queryId: string, page: number, requestId: string) => Promise<ApiResult<GalleryPage>>;
   cancelPage?: (requestId: string) => void | Promise<unknown>;
   warmPage?: (page: GalleryPage, priority: Exclude<ExplorePagePriority, "foreground">) => void | (() => void);
+  retainPage?: (page: GalleryPage) => void | (() => void);
   promotePage?: (queryId: string, page: number) => void;
   maxSettledPages?: number;
   now?: () => number;
@@ -38,6 +39,7 @@ export type ExplorePageSessionOptions = {
 export class ExplorePageSession {
   private readonly fetchPage: ExplorePageSessionOptions["fetchPage"];
   private readonly warmPage?: ExplorePageSessionOptions["warmPage"];
+  private readonly retainPage?: ExplorePageSessionOptions["retainPage"];
   private readonly cancelPage?: ExplorePageSessionOptions["cancelPage"];
   private readonly promotePage?: ExplorePageSessionOptions["promotePage"];
   private readonly maxSettledPages: number;
@@ -52,10 +54,13 @@ export class ExplorePageSession {
   private failures = new Map<number, FailedPrefetch>();
   private inFlight = new Map<number, InFlightPage>();
   private scrollPositions = new Map<number, number>();
+  private parked = false;
+  private releaseRetainedPageLease?: () => void;
 
   constructor(options: ExplorePageSessionOptions) {
     this.fetchPage = options.fetchPage;
     this.warmPage = options.warmPage;
+    this.retainPage = options.retainPage;
     this.cancelPage = options.cancelPage;
     this.promotePage = options.promotePage;
     this.maxSettledPages = options.maxSettledPages ?? 5;
@@ -77,6 +82,39 @@ export class ExplorePageSession {
   clear(): void {
     this.reset();
     this.generation += 1;
+  }
+
+  park(): void {
+    if (this.parked || !this.queryId) return;
+    this.parked = true;
+    this.generation += 1;
+    this.foregroundIntent += 1;
+
+    const current = this.pages.get(this.currentPage);
+    if (current && this.retainPage && !this.releaseRetainedPageLease) {
+      const release = this.retainPage(current.page);
+      if (release) this.releaseRetainedPageLease = release;
+    }
+
+    this.releaseWarmups();
+    if (this.cancelPage) {
+      for (const request of this.inFlight.values()) {
+        void Promise.resolve(this.cancelPage(request.requestId)).catch(() => undefined);
+      }
+    }
+    this.inFlight.clear();
+  }
+
+  resume(): void {
+    if (!this.parked) return;
+    this.parked = false;
+    this.syncWarmups();
+  }
+
+  releaseRetainedPage(): void {
+    const release = this.releaseRetainedPageLease;
+    this.releaseRetainedPageLease = undefined;
+    release?.();
   }
 
   recordScroll(page: number, scrollTop: number): void {
@@ -102,7 +140,7 @@ export class ExplorePageSession {
   }
 
   prefetchAdjacent(): void {
-    if (!this.queryId || !this.pages.has(this.currentPage)) return;
+    if (this.parked || !this.queryId || !this.pages.has(this.currentPage)) return;
     const next = this.currentPage + 1;
     const previous = this.currentPage - 1;
     // Forward navigation is intentionally submitted before back navigation.
@@ -224,7 +262,7 @@ export class ExplorePageSession {
   }
 
   private syncWarmups(): void {
-    if (!this.warmPage) return;
+    if (this.parked || !this.warmPage) return;
     for (const [pageNumber, entry] of this.pages) {
       const distance = pageNumber - this.currentPage;
       if (distance === 0 || Math.abs(distance) > 1) {
@@ -281,7 +319,8 @@ export class ExplorePageSession {
   }
 
   private reset(): void {
-    for (const entry of this.pages.values()) entry.releaseWarmup?.();
+    this.releaseRetainedPage();
+    this.releaseWarmups();
     if (this.cancelPage) {
       for (const request of this.inFlight.values()) {
         void Promise.resolve(this.cancelPage(request.requestId)).catch(() => undefined);
@@ -294,5 +333,14 @@ export class ExplorePageSession {
     this.failures.clear();
     this.inFlight.clear();
     this.scrollPositions.clear();
+    this.parked = false;
+  }
+
+  private releaseWarmups(): void {
+    for (const entry of this.pages.values()) {
+      if (!entry.releaseWarmup) continue;
+      entry.releaseWarmup();
+      delete entry.releaseWarmup;
+    }
   }
 }

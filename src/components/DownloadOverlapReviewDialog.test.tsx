@@ -86,6 +86,7 @@ describe("DownloadOverlapReviewDialog", () => {
       <DownloadOverlapReviewDialog
         open={false}
         review={review}
+        previewWidth={220}
         thumbnailClient={client}
         onClose={vi.fn()}
         onRetry={vi.fn()}
@@ -128,6 +129,7 @@ describe("DownloadOverlapReviewDialog", () => {
       <DownloadOverlapReviewDialog
         open={false}
         review={fixture()}
+        previewWidth={220}
         thumbnailClient={client}
         onClose={vi.fn()}
         onRetry={vi.fn()}
@@ -173,5 +175,68 @@ describe("DownloadOverlapReviewDialog", () => {
     client.dispose();
     container.remove();
     confirm.mockRestore();
+  });
+
+  it("enlarges aligned pages on hover using the configured card preview width without leaving the dialog", async () => {
+    const resolve = vi.fn((_request: ThumbnailRequest) => ({
+      kind: "image" as const,
+      url: "data:image/png;base64,fixture",
+      width: 800,
+      height: 1200,
+    }));
+    const client = new ThumbnailClient({ resolve });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.matches("dialog.download-overlap-dialog")) {
+        return { x: 20, y: 20, width: 500, height: 700, top: 20, right: 520, bottom: 720, left: 20, toJSON: () => ({}) };
+      }
+      if (this.classList.contains("download-overlap-page-cell")) {
+        return { x: 425, y: 590, width: 82, height: 112, top: 590, right: 507, bottom: 702, left: 425, toJSON: () => ({}) };
+      }
+      return { x: 0, y: 0, width: 0, height: 0, top: 0, right: 0, bottom: 0, left: 0, toJSON: () => ({}) };
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => root.render(
+        <DownloadOverlapReviewDialog
+          open={false}
+          review={fixture()}
+          previewWidth={280}
+          thumbnailClient={client}
+          onClose={vi.fn()}
+          onRetry={vi.fn()}
+          onDecision={vi.fn()}
+        />,
+      ));
+      const dialog = container.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
+      const page = container.querySelector<HTMLElement>(".download-overlap-page-cell:not(.is-gap)")!;
+
+      await act(async () => page.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+
+      const enlarged = dialog.querySelector<HTMLElement>(".download-overlap-page-hover-preview")!;
+      expect(enlarged).not.toBeNull();
+      expect(enlarged.parentElement).toBe(dialog);
+      expect(enlarged).toHaveAttribute("data-preview-width", "280");
+      expect(enlarged.style.position).toBe("fixed");
+      expect(enlarged.style.width).toBe("280px");
+      expect(enlarged.style.height).toBe("420px");
+      expect(enlarged.textContent).toContain("기존 A 1p · 시각 93%");
+      expect(Number.parseFloat(enlarged.style.left) + Number.parseFloat(enlarged.style.width)).toBeLessThanOrEqual(510);
+      expect(Number.parseFloat(enlarged.style.top) + Number.parseFloat(enlarged.style.height)).toBeLessThanOrEqual(710);
+
+      await act(async () => page.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })));
+      expect(dialog.querySelector(".download-overlap-page-hover-preview")).toBeNull();
+
+      const gap = container.querySelector<HTMLElement>(".download-overlap-page-cell.is-gap")!;
+      await act(async () => gap.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+      expect(dialog.querySelector(".download-overlap-page-hover-preview")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+      rect.mockRestore();
+    }
   });
 });

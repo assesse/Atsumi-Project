@@ -1885,7 +1885,7 @@ mod tests {
     use super::*;
     use crate::{
         application::{
-            ApplicationService, DownloadGallerySnapshot, DownloadPagePayload,
+            ApplicationService, AutomationRepository, DownloadGallerySnapshot, DownloadPagePayload,
             DownloadSourceImageFormat, DownloadSourcePage,
         },
         domain::{
@@ -2401,6 +2401,15 @@ mod tests {
             .unwrap();
         assert!(cancelled.entries.is_empty());
         assert_eq!(cancelled.total_items, 0);
+        let exclusions = repository
+            .exploration_exclusions_list()
+            .expect("list overlap removal exclusions");
+        assert!(exclusions.iter().any(|exclusion| {
+            exclusion.gallery_id.get() == 552
+                && exclusion.reasons.iter().any(|reason| {
+                    reason.kind == crate::domain::ExplorationExclusionKind::DuplicateHidden
+                })
+        }));
         supervisor.shutdown_and_wait();
     }
 
@@ -2451,7 +2460,11 @@ mod tests {
             decided.review.candidates[0].decision,
             Some(DownloadOverlapPairDecision::ExistingRemoved)
         );
-        wait_for_state(&service, &existing_id, JobState::Quarantined, 100.0);
+        wait_for_stored_state(
+            &root.join("state.sqlite3"),
+            &existing_id,
+            JobState::Quarantined,
+        );
         wait_for_state(&service, &incoming_id, JobState::Completed, 100.0);
         assert!(!root
             .join("downloads")

@@ -28,6 +28,7 @@ type GalleryCardProps = {
   thumbnailPriority?: ThumbnailPriority;
   thumbnailClient?: ThumbnailClient;
   view: ViewId;
+  explorationExcluded?: boolean;
   selected: boolean;
   /** True only for the derived two-or-more-card batch selection mode. */
   selectionContext: boolean;
@@ -68,6 +69,7 @@ function GalleryCardComponent({
   thumbnailPriority = "prefetch",
   thumbnailClient,
   view,
+  explorationExcluded = false,
   selected,
   selectionContext,
   favoriteMetadata,
@@ -87,7 +89,11 @@ function GalleryCardComponent({
   onMetadataFavorite,
 }: GalleryCardProps) {
   const download = gallery.download;
-  const isQuarantinedBlind = view === "explore" && download?.state === "quarantined";
+  const isExplorationBlind = view === "explore"
+    && (download?.state === "quarantined" || explorationExcluded);
+  const explorationBlindLabel = download?.state === "quarantined"
+    ? "격리된 앨범"
+    : "중복 판정으로 제외";
   const gestureSelectionContext = useRef(selectionContext);
   useEffect(() => {
     gestureSelectionContext.current = selectionContext;
@@ -162,8 +168,8 @@ function GalleryCardComponent({
   }, []);
 
   useLayoutEffect(() => {
-    if (cardRef.current) cardRef.current.inert = isQuarantinedBlind;
-  }, [isQuarantinedBlind]);
+    if (cardRef.current) cardRef.current.inert = isExplorationBlind;
+  }, [isExplorationBlind]);
 
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -219,7 +225,7 @@ function GalleryCardComponent({
     selectionContext || event.ctrlKey || event.shiftKey;
 
   const selectFromInteractiveTarget = (event: MouseEvent<HTMLElement>) => {
-    if (isQuarantinedBlind) {
+    if (isExplorationBlind) {
       event.preventDefault();
       event.stopPropagation();
       return true;
@@ -234,7 +240,7 @@ function GalleryCardComponent({
   };
 
   const openStatus = (event: MouseEvent<HTMLButtonElement>) => {
-    if (isQuarantinedBlind) return;
+    if (isExplorationBlind) return;
     if (selectFromInteractiveTarget(event)) return;
     event.stopPropagation();
     if (showsGlobalDuplicate || download?.state === "review_required") onOpenReview(gallery.id);
@@ -242,7 +248,7 @@ function GalleryCardComponent({
   };
 
   const selectFromKeyboard = (event: KeyboardEvent<HTMLElement>) => {
-    if (isQuarantinedBlind) return;
+    if (isExplorationBlind) return;
     if (event.target !== event.currentTarget) return;
     if (event.key === " ") {
       event.preventDefault();
@@ -261,32 +267,32 @@ function GalleryCardComponent({
 
   return (
     <article
-      className={`gallery-card${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isQuarantinedBlind ? " is-quarantined-blind" : ""}`}
+      className={`gallery-card${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
       ref={cardRef}
       data-gallery-id={gallery.id}
       style={{ "--download-progress": `${progress}%` } as CSSProperties}
       role="listitem"
-      tabIndex={keyboardFocusable && !isQuarantinedBlind ? 0 : -1}
-      aria-disabled={isQuarantinedBlind || undefined}
+      tabIndex={keyboardFocusable && !isExplorationBlind ? 0 : -1}
+      aria-disabled={isExplorationBlind || undefined}
       aria-label={[
         gallery.title,
         subtitle || null,
         download?.state === "completed" ? "다운로드 완료" : null,
         visibleInternalDuplicateProgress ? `내부 중복 검사 ${internalScanPercent}%` : null,
-        isQuarantinedBlind ? "격리된 앨범, 내용 가림" : null,
+        isExplorationBlind ? `${explorationBlindLabel}, 내용 가림` : null,
         selected ? "선택됨" : "선택 안 됨",
       ].filter(Boolean).join(", ")}
       onKeyDown={selectFromKeyboard}
       onFocus={() => onKeyboardFocus?.(gallery.id)}
       onClick={(event) => {
-        if (isQuarantinedBlind) return;
+        if (isExplorationBlind) return;
         if ((event.target as Element).closest("button")) return;
         if (event.detail > 1) return;
         gestureSelectionContext.current = selectsInsteadOfActivating(event);
         onSelect(gallery.id, event);
       }}
       onDoubleClick={(event) => {
-        if (isQuarantinedBlind) return;
+        if (isExplorationBlind) return;
         if ((event.target as Element).closest("button")) return;
         if (gestureSelectionContext.current || event.ctrlKey || event.shiftKey) {
           gestureSelectionContext.current = false;
@@ -298,7 +304,7 @@ function GalleryCardComponent({
         else onOpenDetail(gallery.id);
       }}
       onContextMenu={(event) => {
-        if (isQuarantinedBlind) {
+        if (isExplorationBlind) {
           event.preventDefault();
           return;
         }
@@ -469,10 +475,10 @@ function GalleryCardComponent({
           <span>#{gallery.id}</span>
         </div>
       </div>
-      {isQuarantinedBlind ? (
+      {isExplorationBlind ? (
         <div className="quarantined-blind-overlay" aria-hidden="true">
           <GalleryStatusIcon kind="warning" />
-          <strong>격리된 앨범</strong>
+          <strong>{explorationBlindLabel}</strong>
           <span>검색 결과 위치만 유지됩니다</span>
         </div>
       ) : null}

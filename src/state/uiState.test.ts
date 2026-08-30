@@ -142,6 +142,24 @@ describe("uiReducer selection", () => {
     expect([...retained.selection.ids]).toEqual([ids[0]]);
     expect(retained.selection.anchorId).toBeNull();
   });
+
+  it("restores a parked context selection and rejects an anchor outside it", () => {
+    const restored = uiReducer(initialUiState, {
+      type: "selection.restore",
+      ids: [ids[0]!, ids[2]!],
+      anchorId: ids[2]!,
+    });
+    expect([...restored.selection.ids]).toEqual([ids[0], ids[2]]);
+    expect(restored.selection.anchorId).toBe(ids[2]);
+
+    const staleAnchor = uiReducer(restored, {
+      type: "selection.restore",
+      ids: [ids[0]!],
+      anchorId: ids[3]!,
+    });
+    expect([...staleAnchor.selection.ids]).toEqual([ids[0]]);
+    expect(staleAnchor.selection.anchorId).toBeNull();
+  });
 });
 
 describe("uiReducer gallery grouping", () => {

@@ -153,4 +153,41 @@ describe("gallery selectors", () => {
     const downloads = uiReducer(initialUiState, { type: "navigate", view: "downloads" });
     expect(visibleGalleries(downloads, [quarantined])).toEqual([]);
   });
+
+  it("shows the most recently added download first only in the flat all view", () => {
+    const older = {
+      ...mockGalleries[0]!,
+      download: {
+        entryId: "older-download",
+        state: "completed" as const,
+        progress: 100,
+        createdAt: "2026-08-20T10:00:00Z",
+      },
+    };
+    const newer = {
+      ...mockGalleries[1]!,
+      download: {
+        entryId: "newer-download",
+        state: "completed" as const,
+        progress: 100,
+        createdAt: "2026-08-28T10:00:00Z",
+      },
+    };
+    const downloads = uiReducer(initialUiState, { type: "navigate", view: "downloads" });
+
+    expect(visibleGalleries(downloads, [older, newer]).map((gallery) => gallery.id)).toEqual([
+      newer.id,
+      older.id,
+    ]);
+
+    const artistGrouping = uiReducer(downloads, {
+      type: "grouping.set",
+      view: "downloads",
+      grouping: "artist",
+    });
+    expect(visibleGalleries(artistGrouping, [older, newer]).map((gallery) => gallery.id)).toEqual([
+      older.id,
+      newer.id,
+    ]);
+  });
 });

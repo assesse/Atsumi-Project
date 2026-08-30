@@ -80,4 +80,17 @@ describe("gallery query state", () => {
     expect(failed.page).toEqual(firstPage);
     expect(failed.error).toEqual(error);
   });
+
+  it("restores a parked query snapshot without starting another request", () => {
+    const parked = {
+      phase: "ready" as const,
+      submitToken: 7,
+      queryId: "parked-query",
+      page: { ...firstPage, page: 2 },
+      pendingPage: null,
+      error: null,
+    };
+
+    expect(galleryQueryReducer(initialGalleryQueryState, { type: "restore", state: parked })).toBe(parked);
+  });
 });

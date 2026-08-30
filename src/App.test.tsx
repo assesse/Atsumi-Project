@@ -370,6 +370,58 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it("blinds an Explore result whose incoming overlap edition was removed", async () => {
+    const hidden = mockGalleries[2]!;
+    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({
+      ok: true,
+      data: [{
+        galleryId: hidden.id,
+        title: hidden.title,
+        artist: hidden.artist,
+        reasons: [{
+          kind: "duplicate_hidden",
+          detail: "다운로드 판본 검토에서 신규 앨범 제거",
+          excludedAt: "2026-08-28T13:51:09.774Z",
+        }],
+      }],
+    });
+    vi.spyOn(backend, "searchSubmit").mockResolvedValue({
+      ok: true,
+      data: {
+        queryId: "removed-overlap-explore",
+        firstPage: {
+          page: 1,
+          totalPages: 1,
+          items: [{
+            ...hidden,
+            publishedRank: Number(hidden.publishedAt.replaceAll("-", "")),
+            popularity: hidden.score,
+            thumbnailWidth: hidden.thumbnailWidth ?? 512,
+            thumbnailHeight: hidden.thumbnailHeight ?? 768,
+          }],
+        },
+      },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await submitExploreSearch(container);
+
+      const card = container.querySelector<HTMLElement>(`[data-gallery-id="${Number(hidden.id)}"]`);
+      await vi.waitFor(() => expect(card).toHaveClass("is-exploration-blind"));
+      expect(card).toHaveAttribute("aria-disabled", "true");
+      expect(card).toHaveTextContent("중복 판정으로 제외");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("shows batch controls only while two or more gallery cards are selected", async () => {
     vi.spyOn(backend, "searchSubmit").mockResolvedValue({
       ok: true,
@@ -778,6 +830,142 @@ describe("App Phase 3A backend flow", () => {
     container.remove();
   });
 
+  it("restores parked root and child Explore contexts without repeating backend searches", async () => {
+    const contextPage = (
+      scope: "Root" | "Artist",
+      page: number,
+      totalPages: number,
+      idBase: number,
+      artist: string,
+    ): GalleryPage => ({
+      page,
+      totalPages,
+      items: [{
+        id: galleryId(idBase + page),
+        title: `${scope} page ${page}`,
+        artist,
+        pages: 1,
+        language: "korean",
+        tags: [],
+        series: [],
+        characters: [],
+        publishedRank: 20260820,
+        popularity: 0,
+        thumbnailWidth: 512,
+        thumbnailHeight: 768,
+      }],
+    });
+    const rootPage = (page: number) => contextPage("Root", page, 20, 8_100_000, "root artist");
+    const artistPage = (page: number) => contextPage("Artist", page, 5, 8_200_000, "root artist");
+    const searchSubmit = vi.spyOn(backend, "searchSubmit")
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { queryId: "query-root", firstPage: rootPage(1) },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { queryId: "query-artist", firstPage: artistPage(1) },
+      });
+    const searchPageGet = vi.spyOn(backend, "searchPageGet").mockImplementation(async (queryId, page) => {
+      if (queryId === "query-root") return { ok: true, data: rootPage(page) };
+      if (queryId === "query-artist") return { ok: true, data: artistPage(page) };
+      throw new Error(`Unexpected Explore query ${queryId}`);
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await submitExploreSearch(container);
+      await act(async () => {
+        clickButtonContaining(container, "다음");
+        await settle();
+      });
+      await act(async () => {
+        clickButtonContaining(container, "다음");
+        await settle();
+      });
+
+      const viewport = container.querySelector<HTMLElement>(".gallery-viewport");
+      const rootCard = container.querySelector<HTMLElement>('[data-gallery-id="8100003"]');
+      const rootArtist = rootCard?.querySelector<HTMLButtonElement>(".byline");
+      if (!viewport || !rootCard || !rootArtist) throw new Error("Root Explore page 3 fixture was not rendered");
+      expect(container).toHaveTextContent("Root page 3");
+      expect(container.querySelector(".pager")).toHaveTextContent("3 / 20");
+      viewport.scrollTop = 417;
+
+      await act(async () => {
+        rootArtist.click();
+        await settle();
+      });
+      expect(searchSubmit).toHaveBeenCalledTimes(2);
+      expect(container).toHaveTextContent("Artist page 1");
+      expect(container.querySelector('[data-gallery-id="8100003"]')).toBeNull();
+      expect(container.querySelector(".explore-context-bar")).not.toBeNull();
+
+      await act(async () => {
+        clickButtonContaining(container, "다음");
+        await settle();
+      });
+      expect(container).toHaveTextContent("Artist page 2");
+      expect(container.querySelector(".pager")).toHaveTextContent("2 / 5");
+      viewport.scrollTop = 88;
+
+      const callsBeforeSwitching = {
+        submit: searchSubmit.mock.calls.length,
+        page: searchPageGet.mock.calls.length,
+      };
+      const findContextTab = (label: string): HTMLButtonElement => {
+        const tab = [...container.querySelectorAll<HTMLButtonElement>(".explore-context-bar [role='tab']")]
+          .find((item) => item.textContent?.includes(label));
+        if (!tab) throw new Error(`Explore context tab ${label} was not rendered`);
+        return tab;
+      };
+
+      await act(async () => {
+        findContextTab("전체 탐색").click();
+        await settle();
+      });
+      expect(container).toHaveTextContent("Root page 3");
+      expect(container.querySelector(".pager")).toHaveTextContent("3 / 20");
+      expect(container.querySelector('[data-gallery-id="8100003"]')).not.toBeNull();
+      expect(container.querySelector('[data-gallery-id="8200002"]')).toBeNull();
+      expect(findContextTab("전체 탐색")).toHaveAttribute("aria-selected", "true");
+      await vi.waitFor(() => expect(viewport.scrollTop).toBe(417));
+      expect(searchSubmit).toHaveBeenCalledTimes(callsBeforeSwitching.submit);
+      expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
+
+      await act(async () => {
+        findContextTab("artist:root_artist").click();
+        await settle();
+      });
+      expect(container).toHaveTextContent("Artist page 2");
+      expect(container.querySelector(".pager")).toHaveTextContent("2 / 5");
+      expect(container.querySelector('[data-gallery-id="8200002"]')).not.toBeNull();
+      expect(container.querySelector('[data-gallery-id="8100003"]')).toBeNull();
+      await vi.waitFor(() => expect(viewport.scrollTop).toBe(88));
+      expect(searchSubmit).toHaveBeenCalledTimes(callsBeforeSwitching.submit);
+      expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="이전 탐색으로 돌아가기"]')?.click();
+        await settle();
+      });
+      expect(container).toHaveTextContent("Root page 3");
+      expect(container.querySelector(".pager")).toHaveTextContent("3 / 20");
+      await vi.waitFor(() => expect(viewport.scrollTop).toBe(417));
+      expect(searchSubmit).toHaveBeenCalledTimes(callsBeforeSwitching.submit);
+      expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("does not search while typing and faithfully replays a structured history request", async () => {
     const replayRequest = {
       text: "archive",
@@ -839,7 +1027,8 @@ describe("App Phase 3A backend flow", () => {
       refreshedMetadata.click();
       await settle();
     });
-    expect(search.mock.calls).toHaveLength(callsBeforeMetadata + 2);
+    expect(search.mock.calls).toHaveLength(callsBeforeMetadata + 1);
+    expect(container.querySelectorAll(".explore-context-bar [role='tab']")).toHaveLength(2);
 
     const callsAfterReplay = search.mock.calls.length;
     const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -927,7 +1116,7 @@ describe("App Phase 3A backend flow", () => {
           .find((chip) => chip.querySelector(".tag-label")?.textContent === "coat")?.click();
         await settle();
       });
-      expect(search.mock.calls).toHaveLength(callsBeforeRepeat + 2);
+      expect(search.mock.calls).toHaveLength(callsBeforeRepeat + 1);
       expectFreshTagRequest("female:coat");
     } finally {
       await act(async () => root.unmount());
@@ -1679,10 +1868,20 @@ describe("App Phase 3A backend flow", () => {
   });
 
   it("recovers a failed snapshot, scans and cancels explicitly, then reviews real evidence with CAS reload", async () => {
-    await backend.downloadQueueAdd(
+    const seededDownloads = await backend.downloadQueueAdd(
       [galleryId(4051038), galleryId(4050754)],
       "app-duplicate-review-downloads",
     );
+    if (!seededDownloads.ok) throw new Error(seededDownloads.error.message);
+    const removedCandidateEntry = seededDownloads.data.find((entry) => entry.galleryId === galleryId(4050754));
+    if (!removedCandidateEntry) throw new Error("duplicate candidate download fixture missing");
+    const browserState = backend as unknown as { downloadEntries: Map<string, DownloadEntry> };
+    browserState.downloadEntries.set(removedCandidateEntry.entryId, {
+      ...removedCandidateEntry,
+      state: "failed",
+      errorCode: "DOWNLOAD_OVERLAP_CHECK_FAILED",
+      errorMessage: "The verified download could not be compared safely with owned editions",
+    });
     const snapshot = vi.spyOn(backend, "duplicateSnapshot").mockResolvedValueOnce({
       ok: false,
       error: {
@@ -1780,6 +1979,18 @@ describe("App Phase 3A backend flow", () => {
     expect(container.querySelector(".decision-history")).toHaveTextContent("귀속 작품 숨김");
     expect(container.textContent).toContain("자동으로 파일을 삭제하지 않으며");
     expect(quarantine).not.toHaveBeenCalled();
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('.review-dialog button[aria-label="닫기"]')?.click();
+      await settle();
+      container.querySelector<HTMLButtonElement>('button[aria-label="작업 상태"]')?.click();
+      await settle();
+    });
+    const processedActivity = [...container.querySelectorAll<HTMLElement>("#activity-panel .activity-item")]
+      .find((item) => item.textContent?.includes("The Last Tram"));
+    expect(processedActivity).toHaveTextContent("중복 검토 완료");
+    expect(processedActivity).toHaveTextContent("처리 완료");
+    expect(processedActivity).not.toHaveTextContent("재시도");
 
     await act(async () => root.unmount());
     container.remove();

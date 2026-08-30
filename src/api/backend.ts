@@ -1064,6 +1064,8 @@ class BrowserMockBackend implements BackendClient {
       current.reasons.push(reason);
       grouped.set(galleryId, current);
     };
+    const hasDuplicateReason = (galleryId: GalleryId): boolean =>
+      grouped.get(galleryId)?.reasons.some((reason) => reason.kind === "duplicate_hidden") ?? false;
     for (const [galleryId, exclusion] of this.autoFindExclusions) {
       addReason(galleryId, exclusion.title, exclusion.artist, {
         kind: "manual",
@@ -1089,6 +1091,34 @@ class BrowserMockBackend implements BackendClient {
           });
         }
       }
+    }
+    for (const review of this.downloadOverlapReviews.values()) {
+      for (const candidate of review.candidates) {
+        const galleryId = candidate.existing.galleryId;
+        if (candidate.decision !== "existing_removed"
+          || !this.duplicateHiddenGalleryIds.has(galleryId)
+          || this.explorationRestoredGalleryIds.has(galleryId)
+          || hasDuplicateReason(galleryId)) {
+          continue;
+        }
+        addReason(galleryId, candidate.existing.title, candidate.existing.artists.join(", "), {
+          kind: "duplicate_hidden",
+          detail: "다운로드 판본 검토에서 기존 앨범 제거",
+          excludedAt: review.resolvedAt ?? review.updatedAt,
+        });
+      }
+      const galleryId = review.incoming.galleryId;
+      if (review.state !== "cancelled"
+        || !this.duplicateHiddenGalleryIds.has(galleryId)
+        || this.explorationRestoredGalleryIds.has(galleryId)
+        || hasDuplicateReason(galleryId)) {
+        continue;
+      }
+      addReason(galleryId, review.incoming.title, review.incoming.artists.join(", "), {
+        kind: "duplicate_hidden",
+        detail: "다운로드 판본 검토에서 신규 앨범 제거",
+        excludedAt: review.resolvedAt ?? review.updatedAt,
+      });
     }
     return ok([...grouped.values()]
       .map((item) => ({ ...item, reasons: item.reasons.map((reason) => ({ ...reason })) }))
@@ -1384,7 +1414,13 @@ class BrowserMockBackend implements BackendClient {
       ...(!pending ? { resolvedAt: new Date().toISOString() } : {}),
     };
     this.downloadOverlapReviews.set(request.reviewId, next);
+    if (cancelled) {
+      this.explorationRestoredGalleryIds.delete(review.incoming.galleryId);
+      this.duplicateHiddenGalleryIds.add(review.incoming.galleryId);
+    }
     if (request.action === "remove_existing_continue" && selectedCandidate && existingEntry) {
+      this.explorationRestoredGalleryIds.delete(selectedCandidate.existing.galleryId);
+      this.duplicateHiddenGalleryIds.add(selectedCandidate.existing.galleryId);
       if (existingEntry.state === "review_required" && chainedReview) {
         const now = new Date().toISOString();
         this.downloadOverlapReviews.set(chainedReview.reviewId, {
@@ -1802,6 +1838,26 @@ class BrowserMockBackend implements BackendClient {
       return notFoundError("DOWNLOAD_ENTRY_NOT_FOUND", "The download entry does not exist", {
         entryId: normalized[missingIndex],
       });
+    }
+    const duplicateExcluded = entries.find((entry) => entry
+      && this.duplicateHiddenGalleryIds.has(entry.galleryId)
+      && !this.explorationRestoredGalleryIds.has(entry.galleryId));
+    if (duplicateExcluded) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_DOWNLOAD_STATE",
+          message: `Download entry ${duplicateExcluded.entryId} was excluded after duplicate review and must be restored before retry`,
+          retryable: false,
+          action: "review",
+          details: {
+            entryId: duplicateExcluded.entryId,
+            state: duplicateExcluded.state,
+            operation: "retry",
+            reason: "duplicate_excluded",
+          },
+        },
+      };
     }
     const invalid = entries.find((entry) => entry && !activeDownloadStates.has(entry.state)
       && !["failed", "interrupted", "cancelled"].includes(entry.state));

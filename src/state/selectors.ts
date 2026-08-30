@@ -94,6 +94,12 @@ export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>): 
     } else if (state.exploreSort === "random") {
       items.sort((left, right) => ((left.id * 2654435761) >>> 0) - ((right.id * 2654435761) >>> 0));
     }
+  } else if (state.view === "downloads" && state.grouping.downloads === "all") {
+    items.sort((left, right) => {
+      const leftCreatedAt = left.download?.createdAt ?? left.download?.updatedAt ?? left.publishedAt;
+      const rightCreatedAt = right.download?.createdAt ?? right.download?.updatedAt ?? right.publishedAt;
+      return rightCreatedAt.localeCompare(leftCreatedAt) || right.id - left.id;
+    });
   }
   return items;
 }

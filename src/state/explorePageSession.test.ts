@@ -176,4 +176,130 @@ describe("ExplorePageSession", () => {
     expect(session.cachedPageNumbers()).toEqual([18, 19, 20]);
     expect(released.length).toBeGreaterThan(0);
   });
+
+  it("parks without discarding cached pages or scroll and makes cancelled work stale", async () => {
+    const pending = new Map<number, (result: ApiResult<GalleryPage>) => void>();
+    const fetchPage = vi.fn((_queryId: string, pageNumber: number, _requestId: string) => {
+      if (pageNumber === 5) {
+        return new Promise<ApiResult<GalleryPage>>((resolve) => pending.set(pageNumber, resolve));
+      }
+      return Promise.resolve<ApiResult<GalleryPage>>({ ok: true, data: page(pageNumber) });
+    });
+    const cancelPage = vi.fn();
+    const warmReleases = new Map<number, ReturnType<typeof vi.fn>>();
+    const warmPage = vi.fn((loaded: GalleryPage) => {
+      const release = vi.fn();
+      warmReleases.set(loaded.page, release);
+      return release;
+    });
+    const retainedRelease = vi.fn();
+    const retainPage = vi.fn(() => retainedRelease);
+    const session = new ExplorePageSession({ fetchPage, cancelPage, warmPage, retainPage });
+    session.start("query-a", page(3));
+    session.recordScroll(3, 417);
+    session.prefetchAdjacent();
+    await vi.waitFor(() => expect(session.cachedPageNumbers()).toEqual([2, 3, 4]));
+
+    const opening = session.open(5);
+    await flush();
+    const requestId = fetchPage.mock.calls.find(([, pageNumber]) => pageNumber === 5)?.[2];
+
+    session.park();
+    session.park();
+
+    expect(retainPage).toHaveBeenCalledOnce();
+    expect(retainPage).toHaveBeenCalledWith(page(3));
+    expect(warmReleases.get(2)).toHaveBeenCalledOnce();
+    expect(warmReleases.get(4)).toHaveBeenCalledOnce();
+    expect(cancelPage).toHaveBeenCalledOnce();
+    expect(cancelPage).toHaveBeenCalledWith(requestId);
+    expect(session.cachedPageNumbers()).toEqual([2, 3, 4]);
+    expect(session.scrollFor(3)).toBe(417);
+    expect(retainedRelease).not.toHaveBeenCalled();
+
+    pending.get(5)?.({ ok: true, data: page(5) });
+    await expect(opening).resolves.toEqual({ status: "stale" });
+    expect(session.cachedPageNumbers()).toEqual([2, 3, 4]);
+  });
+
+  it("resumes cached warmups without fetching and keeps the retained page until explicitly released", async () => {
+    const fetchPage = vi.fn(async (_queryId: string, pageNumber: number): Promise<ApiResult<GalleryPage>> => ({
+      ok: true,
+      data: page(pageNumber),
+    }));
+    const warmPage = vi.fn(() => vi.fn());
+    const retainedRelease = vi.fn();
+    const session = new ExplorePageSession({
+      fetchPage,
+      warmPage,
+      retainPage: () => retainedRelease,
+    });
+    session.start("query-a", page(3));
+    session.recordScroll(3, 92);
+    session.prefetchAdjacent();
+    await vi.waitFor(() => expect(session.cachedPageNumbers()).toEqual([2, 3, 4]));
+    const fetchesBeforePark = fetchPage.mock.calls.length;
+    const warmupsBeforePark = warmPage.mock.calls.length;
+
+    session.park();
+    session.prefetchAdjacent();
+    expect(fetchPage).toHaveBeenCalledTimes(fetchesBeforePark);
+
+    session.resume();
+    session.resume();
+
+    expect(fetchPage).toHaveBeenCalledTimes(fetchesBeforePark);
+    expect(warmPage).toHaveBeenCalledTimes(warmupsBeforePark + 2);
+    expect(retainedRelease).not.toHaveBeenCalled();
+
+    const restored = await session.open(3);
+    expect(restored).toMatchObject({ status: "ready", source: "cache", scrollTop: 92 });
+    expect(fetchPage).toHaveBeenCalledTimes(fetchesBeforePark);
+
+    session.releaseRetainedPage();
+    session.releaseRetainedPage();
+    expect(retainedRelease).toHaveBeenCalledOnce();
+  });
+
+  it("does not prefetch an uncached adjacent page while parked", async () => {
+    const fetchPage = vi.fn(async (_queryId: string, pageNumber: number): Promise<ApiResult<GalleryPage>> => ({
+      ok: true,
+      data: page(pageNumber),
+    }));
+    const session = new ExplorePageSession({ fetchPage });
+    session.start("query-a", page(1));
+    session.park();
+
+    session.prefetchAdjacent();
+    await flush();
+    expect(fetchPage).not.toHaveBeenCalled();
+
+    session.resume();
+    session.prefetchAdjacent();
+    await vi.waitFor(() => expect(fetchPage).toHaveBeenCalledOnce());
+    expect(fetchPage).toHaveBeenCalledWith("query-a", 2, expect.any(String));
+  });
+
+  it("releases a parked page lease when a session is restarted or cleared", () => {
+    const releases: Array<ReturnType<typeof vi.fn>> = [];
+    const session = new ExplorePageSession({
+      fetchPage: async (_queryId, pageNumber) => ({ ok: true, data: page(pageNumber) }),
+      retainPage: () => {
+        const release = vi.fn();
+        releases.push(release);
+        return release;
+      },
+    });
+    session.start("query-a", page(1));
+    session.park();
+
+    session.start("query-b", page(2));
+    expect(releases[0]).toHaveBeenCalledOnce();
+    expect(session.cachedPageNumbers()).toEqual([2]);
+
+    session.park();
+    session.clear();
+    expect(releases[1]).toHaveBeenCalledOnce();
+    expect(session.cachedPageNumbers()).toEqual([]);
+  });
 });
