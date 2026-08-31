@@ -459,6 +459,9 @@ pub fn run() -> tauri::Result<()> {
                 .with_search_repository(live_source.clone())
                 .with_automation_repository(repository.clone())
                 .with_tag_catalog(repository.clone(), live_source.clone());
+            let danbooru = Arc::new(interface::DanbooruClient::new().map_err(|_| {
+                std::io::Error::other("could not initialize the Danbooru client")
+            })?);
             let recovered_entries = service.download_recover_interrupted()?;
             let automation_repository: Arc<dyn AutomationRepository> = repository.clone();
             let auto_find_settings: Arc<dyn StateRepository> = repository.clone();
@@ -646,6 +649,7 @@ pub fn run() -> tauri::Result<()> {
                 };
             app.manage(AppState::new(
                 service,
+                danbooru,
                 thumbnails,
                 thumbnail_completion_tx,
                 detail_originals,
@@ -703,6 +707,11 @@ pub fn run() -> tauri::Result<()> {
         })
         .invoke_handler(tauri::generate_handler![
             interface::commands::settings_get,
+            interface::danbooru::danbooru_search,
+            interface::danbooru::danbooru_random,
+            interface::danbooru::danbooru_autocomplete,
+            interface::danbooru::danbooru_download,
+            interface::danbooru::danbooru_downloads_list,
             interface::commands::settings_update,
             interface::commands::storage_usage_get,
             interface::commands::folder_name_template_preview,

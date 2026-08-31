@@ -1,5 +1,6 @@
 mod api;
 pub(crate) mod commands;
+pub(crate) mod danbooru;
 mod storage_usage;
 
 pub use api::{
@@ -24,5 +25,9 @@ pub use commands::{
     tag_suggestions_search, thumbnail_cache_clear, thumbnail_cancel, thumbnail_invalidate,
     thumbnail_reprioritize, thumbnail_request, thumbnail_stats, window_placement_get,
     window_placement_update, AppState,
+};
+pub use danbooru::{
+    danbooru_autocomplete, danbooru_download, danbooru_downloads_list, danbooru_random,
+    danbooru_search, DanbooruClient,
 };
 pub use storage_usage::{StorageAreaUsage, StorageUsageSnapshot, StorageVolumeUsage};

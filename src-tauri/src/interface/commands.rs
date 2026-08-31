@@ -236,6 +236,7 @@ fn quit_rejection_reason(
 
 pub struct AppState {
     service: ApplicationService,
+    pub(crate) danbooru: Arc<super::danbooru::DanbooruClient>,
     thumbnails: ThumbnailCoordinator,
     thumbnail_completions: Sender<ThumbnailCompletionEventDto>,
     detail_originals: DetailOriginalSupervisor,
@@ -323,6 +324,7 @@ impl AppState {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         service: ApplicationService,
+        danbooru: Arc<super::danbooru::DanbooruClient>,
         thumbnails: ThumbnailCoordinator,
         thumbnail_completions: Sender<ThumbnailCompletionEventDto>,
         detail_originals: DetailOriginalSupervisor,
@@ -337,6 +339,7 @@ impl AppState {
     ) -> Self {
         Self {
             service,
+            danbooru,
             thumbnails,
             thumbnail_completions,
             detail_originals,
@@ -352,6 +355,10 @@ impl AppState {
             maintenance_previews: Mutex::new(HashMap::new()),
             managed_work: ManagedWorkGate::default(),
         }
+    }
+
+    pub(crate) fn settings_snapshot(&self) -> Result<SettingsSnapshot, ApplicationError> {
+        self.service.settings_get()
     }
 
     pub(crate) fn active_work_snapshot(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {

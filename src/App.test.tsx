@@ -2469,4 +2469,44 @@ describe("App Phase 3A backend flow", () => {
       }
     }
   });
+
+  it("switches sources from the Atsumi banner and restores the Hitomi workspace", async () => {
+    window.localStorage.removeItem("atsumi.content-source.v1");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle(50);
+      });
+      const openSourceMenu = async () => {
+        const banner = container.querySelector<HTMLButtonElement>('.brand[aria-haspopup="menu"]');
+        if (!banner) throw new Error("source banner missing");
+        await act(async () => banner.click());
+      };
+      await openSourceMenu();
+      const danbooru = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+        .find((button) => button.textContent?.includes("Danbooru"));
+      await act(async () => {
+        danbooru?.click();
+        await settle(40);
+      });
+      expect(container).toHaveTextContent("Danbooru post 탐색");
+      expect(window.localStorage.getItem("atsumi.content-source.v1")).toBe("danbooru");
+
+      await openSourceMenu();
+      const hitomi = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+        .find((button) => button.textContent?.includes("Hitomi"));
+      await act(async () => {
+        hitomi?.click();
+        await settle(20);
+      });
+      expect(container).toHaveTextContent("갤러리 탐색");
+      expect(window.localStorage.getItem("atsumi.content-source.v1")).toBe("hitomi");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
 });

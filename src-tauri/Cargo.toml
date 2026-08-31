@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 avif-rust = "=0.0.6"
 bin-rs = { version = "=0.0.10", features = ["stream", "util"] }
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
+md-5 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }

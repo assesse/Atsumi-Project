@@ -12,6 +12,68 @@ export type ApiError = {
 
 export type ApiResult<T> = { ok: true; data: T } | { ok: false; error: ApiError };
 
+export type DanbooruPost = {
+  id: number;
+  createdAt: string;
+  rating: string;
+  score: number;
+  favoriteCount: number;
+  imageWidth: number;
+  imageHeight: number;
+  fileExt: string;
+  fileSize: number;
+  md5?: string;
+  source?: string;
+  previewUrl?: string;
+  largeUrl?: string;
+  fileUrl?: string;
+  artists: string[];
+  copyrights: string[];
+  characters: string[];
+  tags: string[];
+  parentId?: number;
+  hasChildren: boolean;
+};
+
+export type DanbooruSearchRequest = {
+  tags: string;
+  page: number;
+  pageSize: number;
+};
+
+export type DanbooruSearchPage = {
+  items: DanbooruPost[];
+  page: number;
+  hasMore: boolean;
+};
+
+export type DanbooruAutocompleteItem = {
+  label: string;
+  value: string;
+  category: number;
+  postCount: number;
+};
+
+export type DanbooruDownloadRecord = {
+  post: DanbooruPost;
+  fileName: string;
+  downloadedAt: string;
+  bytes: number;
+};
+
+export type DanbooruDownloadsRequest = {
+  page: number;
+  pageSize: number;
+  query: string;
+};
+
+export type DanbooruDownloadsPage = {
+  items: DanbooruDownloadRecord[];
+  page: number;
+  total: number;
+  totalPages: number;
+};
+
 export type AppActiveWorkSnapshot = {
   queriedAt: string;
   workSetFingerprint: string;

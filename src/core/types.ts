@@ -1,6 +1,7 @@
 export type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
 export type GalleryId = Brand<number, "GalleryId">;
+export type ContentSource = "hitomi" | "danbooru";
 export type ViewId = "explore" | "auto-find" | "downloads";
 export type GalleryDisplayMode = "detail" | "compact";
 export type Language = "korean" | "japanese" | "chinese" | "english";

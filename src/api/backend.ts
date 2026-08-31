@@ -16,6 +16,13 @@ import type {
   AutoFindRun,
   AutoFindSnapshot,
   DownloadChangedEvent,
+  DanbooruAutocompleteItem,
+  DanbooruDownloadRecord,
+  DanbooruDownloadsPage,
+  DanbooruDownloadsRequest,
+  DanbooruPost,
+  DanbooruSearchPage,
+  DanbooruSearchRequest,
   DetailOriginalPrepareRequest,
   DetailOriginalPrepared,
   DownloadEntry,
@@ -107,6 +114,11 @@ export interface BackendClient {
   settingsGet(): Promise<ApiResult<SettingsSnapshot>>;
   settingsUpdate(patch: SettingsPatch, expectedRevision: number): Promise<ApiResult<SettingsSnapshot>>;
   storageUsageGet(): Promise<ApiResult<StorageUsageSnapshot>>;
+  danbooruSearch(request: DanbooruSearchRequest): Promise<ApiResult<DanbooruSearchPage>>;
+  danbooruRandom(): Promise<ApiResult<DanbooruPost>>;
+  danbooruAutocomplete(query: string, limit: number): Promise<ApiResult<DanbooruAutocompleteItem[]>>;
+  danbooruDownload(postId: number): Promise<ApiResult<DanbooruDownloadRecord>>;
+  danbooruDownloadsList(request: DanbooruDownloadsRequest): Promise<ApiResult<DanbooruDownloadsPage>>;
   tagCatalogStatus(): Promise<ApiResult<import("./contracts").TagCatalogStatus>>;
   tagCatalogRefresh(): Promise<ApiResult<import("./contracts").TagCatalogStatus>>;
   tagSuggestionsSearch(request: import("./contracts").TagSuggestionRequest): Promise<ApiResult<import("./contracts").TagSuggestion[]>>;
@@ -689,6 +701,39 @@ const cloneDownloadOverlapReview = (review: DownloadOverlapReview): DownloadOver
   })),
 });
 
+const danbooruFixtureImage = (id: number, accent: string): string => `data:image/svg+xml,${encodeURIComponent(`
+  <svg xmlns="http://www.w3.org/2000/svg" width="360" height="480" viewBox="0 0 360 480">
+    <rect width="360" height="480" fill="#17262d"/>
+    <circle cx="180" cy="190" r="112" fill="${accent}" opacity=".72"/>
+    <path d="M70 390L180 250l110 140" fill="none" stroke="#eaf7f9" stroke-width="18" stroke-linecap="round"/>
+    <text x="180" y="442" fill="#eaf7f9" text-anchor="middle" font-family="sans-serif" font-size="24">POST #${id}</text>
+  </svg>
+`)}`;
+
+const browserDanbooruPosts: DanbooruPost[] = Array.from({ length: 18 }, (_, index) => {
+  const id = 12_000_000 + index;
+  const previewUrl = danbooruFixtureImage(id, ["#ef8098", "#58c6cd", "#f0ad5b"][index % 3]!);
+  return {
+    id,
+    createdAt: new Date(Date.UTC(2026, 7, 31, 18, index)).toISOString(),
+    rating: index % 4 === 0 ? "s" : "g",
+    score: 120 - index,
+    favoriteCount: 40 + index,
+    imageWidth: index % 2 ? 1600 : 1200,
+    imageHeight: index % 2 ? 1200 : 1800,
+    fileExt: "jpg",
+    fileSize: 2_000_000 + index * 1_000,
+    previewUrl,
+    largeUrl: previewUrl,
+    fileUrl: previewUrl,
+    artists: [`fixture_artist_${index % 3 + 1}`],
+    copyrights: [index % 2 ? "original" : "atsumi_fixture"],
+    characters: index % 2 ? [`sample_character_${index % 4 + 1}`] : [],
+    tags: ["blue_sky", index % 2 ? "landscape" : "portrait"],
+    hasChildren: index % 5 === 0,
+  };
+});
+
 class BrowserMockBackend implements BackendClient {
   readonly runtime = "browser-mock" as const;
   private settings = readPersistedBrowserSettings();
@@ -708,6 +753,7 @@ class BrowserMockBackend implements BackendClient {
   private downloadEntries = new Map<string, DownloadEntry>();
   private activeDownloadEntryByGallery = new Map<number, string>();
   private downloadQueueRequests = new Map<string, { gallerySetKey: string; entries: DownloadEntry[] }>();
+  private danbooruDownloads = new Map<number, DanbooruDownloadRecord>();
   private nextDownloadEntryId = 1;
   private nextThumbnailRequestId = 1;
   private pendingThumbnailRequests = new Map<string, ThumbnailRequestDto>();
@@ -873,6 +919,94 @@ class BrowserMockBackend implements BackendClient {
       volumes,
       warnings: [],
     });
+  }
+
+  async danbooruSearch(request: DanbooruSearchRequest): Promise<ApiResult<DanbooruSearchPage>> {
+    if (!Number.isInteger(request.page) || request.page < 1 || request.page > 1_000) {
+      return validationError("page", "must be between 1 and 1000");
+    }
+    if (!Number.isInteger(request.pageSize) || request.pageSize < 1 || request.pageSize > 100) {
+      return validationError("pageSize", "must be between 1 and 100");
+    }
+    const tags = request.tags.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (tags.length > 2) {
+      return {
+        ok: false,
+        error: {
+          code: "DANBOORU_TAG_LIMIT",
+          message: "Danbooru 비로그인 검색은 태그를 최대 2개까지 사용할 수 있습니다.",
+          retryable: false,
+          action: "none",
+        },
+      };
+    }
+    const numeric = /^\d+$/.test(request.tags.trim()) ? Number(request.tags.trim()) : null;
+    const filtered = numeric === null
+      ? browserDanbooruPosts.filter((post) => tags.every((tag) => [
+          ...post.artists,
+          ...post.copyrights,
+          ...post.characters,
+          ...post.tags,
+        ].some((value) => value.includes(tag.replace(/^-/, "")))))
+      : browserDanbooruPosts.filter((post) => post.id === numeric);
+    const offset = (request.page - 1) * request.pageSize;
+    return ok({
+      items: filtered.slice(offset, offset + request.pageSize).map((post) => ({ ...post })),
+      page: request.page,
+      hasMore: offset + request.pageSize < filtered.length,
+    });
+  }
+
+  async danbooruRandom(): Promise<ApiResult<DanbooruPost>> {
+    const index = Math.floor(Math.random() * browserDanbooruPosts.length);
+    return ok({ ...browserDanbooruPosts[index]! });
+  }
+
+  async danbooruAutocomplete(query: string, limit: number): Promise<ApiResult<DanbooruAutocompleteItem[]>> {
+    const normalized = query.trim().toLowerCase();
+    if (normalized.length < 2) return ok([]);
+    const tags = [...new Set(browserDanbooruPosts.flatMap((post) => [
+      ...post.artists,
+      ...post.copyrights,
+      ...post.characters,
+      ...post.tags,
+    ]))];
+    return ok(tags
+      .filter((tag) => tag.includes(normalized))
+      .slice(0, Math.max(1, Math.min(10, limit)))
+      .map((tag, index) => ({ label: tag, value: tag, category: index % 5, postCount: 1000 - index })));
+  }
+
+  async danbooruDownload(postId: number): Promise<ApiResult<DanbooruDownloadRecord>> {
+    const existing = this.danbooruDownloads.get(postId);
+    if (existing) return ok({ ...existing, post: { ...existing.post } });
+    const post = browserDanbooruPosts.find((candidate) => candidate.id === postId);
+    if (!post) return notFoundError("DANBOORU_POST_NOT_FOUND", "해당 Danbooru post를 찾을 수 없습니다.");
+    const record: DanbooruDownloadRecord = {
+      post: { ...post },
+      fileName: `${post.id}.${post.fileExt}`,
+      downloadedAt: String(Date.now()),
+      bytes: post.fileSize,
+    };
+    this.danbooruDownloads.set(post.id, record);
+    return ok({ ...record, post: { ...record.post } });
+  }
+
+  async danbooruDownloadsList(request: DanbooruDownloadsRequest): Promise<ApiResult<DanbooruDownloadsPage>> {
+    const query = request.query.trim().toLowerCase();
+    const records = [...this.danbooruDownloads.values()]
+      .filter((record) => !query || [
+        String(record.post.id),
+        ...record.post.artists,
+        ...record.post.copyrights,
+        ...record.post.characters,
+        ...record.post.tags,
+      ].some((value) => value.toLowerCase().includes(query)))
+      .sort((left, right) => Number(right.downloadedAt) - Number(left.downloadedAt));
+    const totalPages = Math.max(1, Math.ceil(records.length / request.pageSize));
+    const page = Math.max(1, Math.min(totalPages, request.page));
+    const offset = (page - 1) * request.pageSize;
+    return ok({ items: records.slice(offset, offset + request.pageSize), page, total: records.length, totalPages });
   }
 
   async tagCatalogStatus(): Promise<ApiResult<TagCatalogStatus>> { return ok({ ...this.tagCatalogStatusValue }); }
@@ -2656,6 +2790,26 @@ class TauriBackend implements BackendClient {
 
   storageUsageGet(): Promise<ApiResult<StorageUsageSnapshot>> {
     return invoke("storage_usage_get");
+  }
+
+  danbooruSearch(request: DanbooruSearchRequest): Promise<ApiResult<DanbooruSearchPage>> {
+    return invoke("danbooru_search", { request });
+  }
+
+  danbooruRandom(): Promise<ApiResult<DanbooruPost>> {
+    return invoke("danbooru_random");
+  }
+
+  danbooruAutocomplete(query: string, limit: number): Promise<ApiResult<DanbooruAutocompleteItem[]>> {
+    return invoke("danbooru_autocomplete", { query, limit });
+  }
+
+  danbooruDownload(postId: number): Promise<ApiResult<DanbooruDownloadRecord>> {
+    return invoke("danbooru_download", { postId });
+  }
+
+  danbooruDownloadsList(request: DanbooruDownloadsRequest): Promise<ApiResult<DanbooruDownloadsPage>> {
+    return invoke("danbooru_downloads_list", { request });
   }
 
   tagCatalogStatus(): Promise<ApiResult<TagCatalogStatus>> { return invoke("tag_catalog_status"); }

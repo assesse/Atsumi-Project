@@ -38,6 +38,7 @@ import type {
 import { ActivityDrawer } from "./components/ActivityDrawer";
 import { AutoFindPager } from "./components/AutoFindPager";
 import { DetailWorkspace } from "./components/DetailWorkspace";
+import { DanbooruWorkspace } from "./components/DanbooruWorkspace";
 import { DuplicateReviewDialog } from "./components/DuplicateReviewDialog";
 import { DownloadOverlapReviewDialog } from "./components/DownloadOverlapReviewDialog";
 import { ExploreContextBar, type ExploreContextTab } from "./components/ExploreContextBar";
@@ -57,7 +58,7 @@ import { SideRail } from "./components/SideRail";
 import { TutorialDialog } from "./components/TutorialDialog";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { ViewHeader, type SearchSuggestion } from "./components/ViewHeader";
-import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryDisplayMode, type GalleryId, type Language, type SearchSort, type ViewId } from "./core/types";
+import { galleryId, retryableDownloadStates, type ContentSource, type DownloadFilter, type DownloadState, type Gallery, type GalleryDisplayMode, type GalleryId, type Language, type SearchSort, type ViewId } from "./core/types";
 import { useSettings } from "./hooks/useSettings";
 import { useProgressiveGalleryWindow } from "./hooks/useProgressiveGalleryWindow";
 import { useWindowPlacement } from "./hooks/useWindowPlacement";
@@ -83,6 +84,7 @@ import {
   DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
 } from "./state/downloadOverlapAuto";
 import { initialUiState, uiReducer } from "./state/uiState";
+import { loadContentSource, saveContentSource } from "./state/sourcePreference";
 import { useThumbnailClient } from "./thumbnail";
 import { isTutorialDismissed, setTutorialDismissed } from "./tutorial/tutorialPreference";
 import { useAppUpdater } from "./update/useAppUpdater";
@@ -218,6 +220,7 @@ const internalStatusLabel = (loading: boolean, error: string | null, run?: Inter
 
 export default function App() {
   const thumbnailClient = useThumbnailClient();
+  const [contentSource, setContentSource] = useState<ContentSource>(loadContentSource);
   const [ui, dispatch] = useReducer(uiReducer, initialUiState);
   const [query, dispatchQuery] = useReducer(galleryQueryReducer, initialGalleryQueryState);
   const [galleries, setGalleries] = useState<ReadonlyMap<GalleryId, Gallery>>(() => new Map());
@@ -2643,6 +2646,7 @@ export default function App() {
   }, [collapsedGroupKeys, groupedStorageKeys, persistCollapsedGroupKeys]);
 
   useEffect(() => {
+    if (contentSource !== "hitomi") return;
     const keyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement
         ? event.target
@@ -2768,7 +2772,7 @@ export default function App() {
     };
     window.addEventListener("keydown", keyDown);
     return () => window.removeEventListener("keydown", keyDown);
-  }, [closeActivity, effectiveKeyboardFocusId, excludeAutoFindCandidates, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, renderedActionableIds, selectedIds, showToast, ui.detail.activeId, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction]);
+  }, [closeActivity, contentSource, effectiveKeyboardFocusId, excludeAutoFindCandidates, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, renderedActionableIds, selectedIds, showToast, ui.detail.activeId, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction]);
 
   const config = viewConfig[ui.view];
   const resultSourceLabel = backend.runtime === "tauri" ? "Hitomi 실데이터" : "브라우저 fixture";
@@ -2795,6 +2799,11 @@ export default function App() {
     const previousId = activeIndex > 0 ? exploreContextIdsRef.current[activeIndex - 1] : undefined;
     if (previousId) activateExploreContext(previousId);
   }, [activateExploreContext]);
+  const switchContentSource = useCallback((source: ContentSource) => {
+    saveContentSource(source);
+    setContentSource(source);
+    dispatch({ type: "selection.clear" });
+  }, []);
   const renderGalleryGrid = (items: Gallery[], ariaLabel: string) => (
     <GalleryGrid
       columns={galleryColumns}
@@ -2854,6 +2863,18 @@ export default function App() {
 
   return (
     <>
+      {contentSource === "danbooru" ? (
+        <DanbooruWorkspace
+          backend={backend}
+          railCollapsed={ui.railCollapsed}
+          pageSize={settings.explorePageSize}
+          previewWidth={settings.previewWidth}
+          onToggleRail={() => dispatch({ type: "rail.toggle" })}
+          onSourceChange={switchContentSource}
+          onOpenSettings={() => dispatch({ type: "overlay.settings", open: true })}
+        />
+      ) : (
+        <>
       <div className={`app-shell${ui.railCollapsed ? " sidebar-collapsed" : ""}`}>
         <SideRail
           view={ui.view}
@@ -2861,7 +2882,9 @@ export default function App() {
           autoFindCount={autoFindCount}
           attentionCount={attentionCount}
           sourceLabel={backend.runtime === "tauri" ? "Hitomi live" : "Browser fixture"}
+          source="hitomi"
           onNavigate={navigateView}
+          onSourceChange={switchContentSource}
           onToggle={() => dispatch({ type: "rail.toggle" })}
         />
         <main className="workspace">
@@ -3163,6 +3186,8 @@ export default function App() {
         onMetadataSearch={searchMetadata}
         onMetadataFavorite={toggleMetadataFavorite}
       />
+        </>
+      )}
 
       <SettingsDialog
         open={ui.overlays.settingsOpen}
