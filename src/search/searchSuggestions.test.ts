@@ -8,6 +8,16 @@ describe("search suggestion catalog", () => {
     expect(catalog).toHaveLength(1);
     expect(catalog[0]?.token).toBe("tag:story_arc");
   });
+
+  it("does not duplicate the same search when only its saved page size changed", () => {
+    const catalog = buildSearchSuggestionCatalog([
+      { historyId: 2, text: "archive", includeTags: [], excludeTags: [], languages: ["korean"], sort: "recent", pageSize: 80, useCount: 2, lastUsedAt: "2026-08-31" },
+      { historyId: 1, text: "archive", includeTags: [], excludeTags: [], languages: ["korean"], sort: "recent", pageSize: 50, useCount: 1, lastUsedAt: "2026-08-30" },
+    ]);
+
+    expect(catalog).toHaveLength(1);
+    expect(catalog[0]?.request?.pageSize).toBe(80);
+  });
   it("adapts only SQLite tag suggestions and never creates synthetic candidates", () => {
     expect(catalogSuggestion({ namespace: "female", name: "big balls", token: "female:big_balls", galleryCount: 4822, favorite: true })).toMatchObject({ type: "FEMALE", label: "big balls", favorite: true, galleryCount: 4822 });
   });

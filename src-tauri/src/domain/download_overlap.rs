@@ -192,6 +192,23 @@ impl DownloadOverlapDecisionAction {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DownloadOverlapDecisionActor {
+    #[default]
+    Human,
+    Automation,
+}
+
+impl DownloadOverlapDecisionActor {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Human => "human",
+            Self::Automation => "automation",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DownloadOverlapDecisionRequest {
@@ -200,6 +217,14 @@ pub struct DownloadOverlapDecisionRequest {
     pub action: DownloadOverlapDecisionAction,
     #[serde(default)]
     pub candidate_id: Option<String>,
+    #[serde(default)]
+    pub actor: DownloadOverlapDecisionActor,
+    #[serde(default)]
+    pub reason_code: Option<String>,
+    #[serde(default)]
+    pub rule_version: Option<u32>,
+    #[serde(default)]
+    pub feature_snapshot_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

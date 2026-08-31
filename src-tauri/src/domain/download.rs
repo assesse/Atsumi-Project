@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::{DownloadEntryId, GalleryId, JobState, ValidationError};
+use super::{DownloadEntryId, GalleryId, JobState, Language, ValidationError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -75,4 +75,41 @@ pub struct DownloadPage {
     pub page: u32,
     pub total_items: u64,
     pub entries: Vec<DownloadEntry>,
+}
+
+/// Locally persisted gallery fields sufficient to paint the Downloads list
+/// without issuing one live gallery-detail request per entry. Optional fields
+/// are expected for queued jobs and databases created before the presentation
+/// metadata migration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadLibraryGallery {
+    pub id: GalleryId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artist: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<Language>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_rank: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadLibraryItem {
+    pub gallery: DownloadLibraryGallery,
+    pub download: DownloadEntry,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadLibraryPage {
+    pub page: u32,
+    pub total_items: u64,
+    pub items: Vec<DownloadLibraryItem>,
 }

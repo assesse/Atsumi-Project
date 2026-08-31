@@ -1,5 +1,6 @@
 import type {
   DownloadFilter,
+  GalleryDisplayMode,
   GalleryId,
   Language,
   SearchSort,
@@ -26,6 +27,7 @@ export const initialUiState: UiState = {
   exploreSort: "recent",
   downloadsFilter: "all",
   grouping: { "auto-find": "all", downloads: "all" },
+  displayMode: { explore: "detail", "auto-find": "detail", downloads: "detail" },
   selection: { ids: new Set(), anchorId: null },
   detail: { tabs: [], activeId: null, minimized: false },
   overlays: {
@@ -46,6 +48,7 @@ export type UiAction =
   | { type: "sort.set"; sort: SearchSort }
   | { type: "downloads.filter"; filter: DownloadFilter }
   | { type: "grouping.set"; view: "auto-find" | "downloads"; grouping: "all" | "day" | "artist" }
+  | { type: "displayMode.set"; view: ViewId; mode: GalleryDisplayMode }
   | {
       type: "selection.click";
       id: GalleryId;
@@ -63,7 +66,7 @@ export type UiAction =
   | { type: "selection.retain"; ids: GalleryId[] }
   | { type: "selection.restore"; ids: GalleryId[]; anchorId: GalleryId | null }
   | { type: "selection.all"; ids: GalleryId[] }
-  | { type: "detail.open"; id: GalleryId; parentId?: GalleryId }
+  | { type: "detail.open"; id: GalleryId; parentId?: GalleryId; activate?: boolean }
   | { type: "detail.activate"; id: GalleryId }
   | { type: "detail.close"; id: GalleryId }
   | { type: "detail.closeAll" }
@@ -179,6 +182,8 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
       };
     case "grouping.set":
       return { ...state, grouping: { ...state.grouping, [action.view]: action.grouping } };
+    case "displayMode.set":
+      return { ...state, displayMode: { ...state.displayMode, [action.view]: action.mode } };
     case "selection.click":
       return selectFromClick(state, action);
     case "selection.range": {
@@ -216,12 +221,16 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
       return { ...state, selection: { ids: new Set(action.ids), anchorId: action.ids.at(0) ?? null } };
     case "detail.open": {
       if (state.detail.tabs.includes(action.id)) {
+        if (action.activate === false) return state;
         return { ...state, detail: { ...state.detail, activeId: action.id, minimized: false } };
       }
       const tabs = [...state.detail.tabs];
       const parentIndex = action.parentId === undefined ? -1 : tabs.indexOf(action.parentId);
       if (parentIndex >= 0) tabs.splice(parentIndex + 1, 0, action.id);
       else tabs.push(action.id);
+      if (action.activate === false) {
+        return { ...state, detail: { ...state.detail, tabs } };
+      }
       return { ...state, detail: { tabs, activeId: action.id, minimized: false } };
     }
     case "detail.activate":

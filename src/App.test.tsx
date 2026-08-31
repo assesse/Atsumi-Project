@@ -6,6 +6,7 @@ import { backend, type BackendEventMap } from "./api/backend";
 import type {
   AppActiveWorkSnapshot,
   DownloadEntry,
+  DownloadLibraryPage,
   DownloadPage,
   GalleryPage,
   InternalArtifactScanProgress,
@@ -54,6 +55,28 @@ const selectionFixturePage = (): GalleryPage => ({
   })),
 });
 
+const libraryPageFromEntries = (page: DownloadPage): DownloadLibraryPage => ({
+  page: page.page,
+  totalItems: page.totalItems,
+  items: page.entries.map((download) => {
+    const gallery = mockGalleries.find((candidate) => candidate.id === download.galleryId);
+    return {
+      gallery: {
+        id: download.galleryId,
+        ...(gallery ? {
+          title: gallery.title,
+          artist: gallery.artist,
+          ...(gallery.group ? { group: gallery.group } : {}),
+          pages: gallery.pages,
+          language: gallery.language,
+          publishedRank: Number(gallery.publishedAt.replaceAll("-", "")),
+        } : {}),
+      },
+      download,
+    };
+  }),
+});
+
 const clickButtonContaining = (container: HTMLElement, label: string): HTMLButtonElement => {
   const button = [...container.querySelectorAll<HTMLButtonElement>("button")]
     .find((item) => item.textContent?.includes(label));
@@ -83,6 +106,10 @@ describe("App Phase 3A backend flow", () => {
     vi.stubGlobal("ResizeObserver", TestResizeObserver);
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => window.setTimeout(() => callback(Date.now()), 0));
     vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
+    vi.spyOn(backend, "downloadLibraryPageList").mockImplementation(async (request) => {
+      const result = await backend.downloadEntriesList(request);
+      return result.ok ? { ok: true, data: libraryPageFromEntries(result.data) } : result;
+    });
   });
 
   afterEach(() => {
@@ -179,7 +206,7 @@ describe("App Phase 3A backend flow", () => {
   it("keeps Explore idle through sort, language, and draft edits until an explicit search", async () => {
     const searchSubmit = vi.spyOn(backend, "searchSubmit").mockImplementation(() => new Promise(() => undefined));
     const searchPageGet = vi.spyOn(backend, "searchPageGet");
-    vi.spyOn(backend, "downloadEntriesList").mockImplementation(() => new Promise(() => undefined));
+    vi.spyOn(backend, "downloadLibraryPageList").mockImplementation(() => new Promise(() => undefined));
     vi.spyOn(backend, "autoFindSnapshot").mockImplementation(() => new Promise(() => undefined));
     const container = document.createElement("div");
     document.body.append(container);
@@ -609,6 +636,10 @@ describe("App Phase 3A backend flow", () => {
       expect(shortcuts).toHaveAttribute("open");
       expect(shortcuts).toHaveTextContent("이전 화면");
       expect(shortcuts).toHaveTextContent("? · /");
+      expect(shortcuts).toHaveTextContent("Floating Detail");
+      expect(shortcuts).toHaveTextContent("Q · E");
+      expect(shortcuts).toHaveTextContent("추가 미리보기 이전·다음 묶음");
+      expect(shortcuts).toHaveTextContent("PAGE PREVIEW 이전·다음 페이지");
       await act(async () => {
         container.querySelector<HTMLButtonElement>('button[aria-label="단축키 도움말 닫기"]')?.click();
         await settle();
@@ -830,7 +861,144 @@ describe("App Phase 3A backend flow", () => {
     container.remove();
   });
 
+  it("opens a random gallery from the source, visible Auto Find candidates, and completed downloads", async () => {
+    const asSummary = (index: number) => {
+      const { download: _download, subtitle: _subtitle, coverIndex: _coverIndex, favorite: _favorite, ...gallery } = mockGalleries[index]!;
+      return {
+        ...gallery,
+        publishedRank: Number(gallery.publishedAt.replaceAll("-", "")),
+        popularity: gallery.score,
+        thumbnailWidth: gallery.thumbnailWidth ?? 512,
+        thumbnailHeight: gallery.thumbnailHeight ?? 768,
+      };
+    };
+    const randomSummary = asSummary(3);
+    const autoFindSummary = asSummary(4);
+    const completedSummary = asSummary(2);
+    const searchSubmit = vi.spyOn(backend, "searchSubmit").mockResolvedValue({
+      ok: true,
+      data: { queryId: "random-source-query", firstPage: { page: 1, totalPages: 1, items: [randomSummary] } },
+    });
+    vi.spyOn(backend, "favoritesList").mockResolvedValue({
+      ok: true,
+      data: [{ namespace: "artist", value: autoFindSummary.artist, revision: 1, createdAt: "2026-08-30T00:00:00Z", updatedAt: "2026-08-30T00:00:00Z" }],
+    });
+    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({ ok: true, data: [] });
+    vi.spyOn(backend, "autoFindSnapshot").mockResolvedValue({
+      ok: true,
+      data: {
+        candidates: [{
+          ...autoFindSummary,
+          runId: "random-auto-find-run",
+          matchedFavorite: { namespace: "artist", value: autoFindSummary.artist },
+          discoveredAt: "2026-08-30T00:00:00Z",
+        }],
+        cutoffEvidence: [],
+        truncations: [],
+      },
+    });
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({
+      ok: true,
+      data: {
+        page: 1,
+        totalItems: 2,
+        entries: [
+          { entryId: "random-completed", galleryId: completedSummary.id, revision: 1, state: "completed", progress: 100 },
+          { entryId: "random-active", galleryId: mockGalleries[1]!.id, revision: 1, state: "downloading", progress: 20 },
+        ],
+      },
+    });
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle(80);
+      });
+
+      const randomButton = () => container.querySelector<HTMLButtonElement>('button[aria-label="랜덤 열기"]');
+      expect(randomButton()).toBeEnabled();
+      await act(async () => {
+        randomButton()?.click();
+        await settle(40);
+      });
+      expect(searchSubmit).toHaveBeenCalledWith({
+        text: "",
+        includeTags: [],
+        excludeTags: [],
+        languages: ["korean", "japanese", "chinese", "english"],
+        sort: "random",
+        pageSize: 1,
+      });
+      expect(container.querySelector(".detail-workspace")).toHaveAttribute("aria-label", `${randomSummary.title} 상세`);
+
+      await act(async () => {
+        clickButtonContaining(container, "Auto Find");
+        await settle();
+      });
+      expect(randomButton()).toBeEnabled();
+      await act(async () => {
+        randomButton()?.click();
+        await settle();
+      });
+      expect(searchSubmit).toHaveBeenCalledTimes(1);
+      expect(container.querySelector(".detail-workspace")).toHaveAttribute("aria-label", `${autoFindSummary.title} 상세`);
+
+      await act(async () => {
+        clickButtonContaining(container, "Downloads");
+        await settle();
+      });
+      expect(randomButton()).toBeEnabled();
+      await act(async () => {
+        randomButton()?.click();
+        await settle();
+      });
+      expect(searchSubmit).toHaveBeenCalledTimes(1);
+      expect(container.querySelector(".detail-workspace")).toHaveAttribute("aria-label", `${completedSummary.title} 상세`);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("uses the persisted Explore page size for each new search", async () => {
+    const original = await backend.settingsGet();
+    if (!original.ok) throw new Error(original.error.message);
+    const configured = await backend.settingsUpdate(
+      { explorePageSize: 80 },
+      original.data.revision,
+    );
+    if (!configured.ok) throw new Error(configured.error.message);
+    const search = vi.spyOn(backend, "searchSubmit");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await submitExploreSearch(container);
+      expect(search).toHaveBeenLastCalledWith(expect.objectContaining({ pageSize: 80 }));
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      const latest = await backend.settingsGet();
+      if (latest.ok) {
+        await backend.settingsUpdate(
+          { explorePageSize: original.data.explorePageSize },
+          latest.data.revision,
+        );
+      }
+    }
+  });
+
   it("restores parked root and child Explore contexts without repeating backend searches", async () => {
+    const originalSettings = await backend.settingsGet();
+    if (!originalSettings.ok) throw new Error(originalSettings.error.message);
     const contextPage = (
       scope: "Root" | "Artist",
       page: number,
@@ -960,13 +1128,41 @@ describe("App Phase 3A backend flow", () => {
       await vi.waitFor(() => expect(viewport.scrollTop).toBe(417));
       expect(searchSubmit).toHaveBeenCalledTimes(callsBeforeSwitching.submit);
       expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
+
+      const latestSettings = await backend.settingsGet();
+      if (!latestSettings.ok) throw new Error(latestSettings.error.message);
+      await act(async () => {
+        const updated = await backend.settingsUpdate(
+          { explorePageSize: latestSettings.data.explorePageSize === 80 ? 70 : 80 },
+          latestSettings.data.revision,
+        );
+        if (!updated.ok) throw new Error(updated.error.message);
+        await settle();
+      });
+      const restoredRootArtist = container.querySelector<HTMLElement>('[data-gallery-id="8100003"]')
+        ?.querySelector<HTMLButtonElement>(".byline");
+      if (!restoredRootArtist) throw new Error("Root artist action was not restored");
+      await act(async () => {
+        restoredRootArtist.click();
+        await settle();
+      });
+      expect(container).toHaveTextContent("Artist page 2");
+      expect(searchSubmit).toHaveBeenCalledTimes(callsBeforeSwitching.submit);
+      expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
     } finally {
       await act(async () => root.unmount());
       container.remove();
+      const latestSettings = await backend.settingsGet();
+      if (latestSettings.ok) {
+        await backend.settingsUpdate(
+          { explorePageSize: originalSettings.data.explorePageSize },
+          latestSettings.data.revision,
+        );
+      }
     }
   });
 
-  it("does not search while typing and faithfully replays a structured history request", async () => {
+  it("does not search while typing and replays structured history with the current page size", async () => {
     const replayRequest = {
       text: "archive",
       includeTags: ["full_color"],
@@ -1000,7 +1196,11 @@ describe("App Phase 3A backend flow", () => {
       historySuggestion.click();
       await settle();
     });
-    expect(search).toHaveBeenLastCalledWith({ ...replayRequest, languages: ["korean", "english"] });
+    expect(search).toHaveBeenLastCalledWith({
+      ...replayRequest,
+      languages: ["korean", "english"],
+      pageSize: 50,
+    });
 
     const viewport = container.querySelector<HTMLElement>(".gallery-viewport");
     const metadata = container.querySelector<HTMLButtonElement>(".gallery-card .byline");
@@ -1346,6 +1546,7 @@ describe("App Phase 3A backend flow", () => {
     const first = await backend.favoriteSet({ namespace: "artist", value: "serein" }, true);
     const second = await backend.favoriteSet({ namespace: "artist", value: "mizuno" }, true);
     if (!first.ok || !second.ok) throw new Error("Could not prepare Auto Find favorites");
+    await backend.explorationExclusionsRestore([galleryId(4051038)]);
     const seeded = await backend.downloadQueueAdd([galleryId(4051038)], "daily-group-fixture");
     if (!seeded.ok) throw new Error(seeded.error.message);
     const settingsUpdate = vi.spyOn(backend, "settingsUpdate");
@@ -1868,6 +2069,7 @@ describe("App Phase 3A backend flow", () => {
   });
 
   it("recovers a failed snapshot, scans and cancels explicitly, then reviews real evidence with CAS reload", async () => {
+    await backend.explorationExclusionsRestore([galleryId(4051038), galleryId(4050754)]);
     const seededDownloads = await backend.downloadQueueAdd(
       [galleryId(4051038), galleryId(4050754)],
       "app-duplicate-review-downloads",
@@ -2165,6 +2367,106 @@ describe("App Phase 3A backend flow", () => {
       container.remove();
       if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
       else delete (HTMLDialogElement.prototype as unknown as { showModal?: unknown }).showModal;
+    }
+  });
+
+  it("paginates Auto Find locally while retaining selection and resetting page focus and scroll", async () => {
+    const originalSettings = await backend.settingsGet();
+    if (!originalSettings.ok) throw new Error(originalSettings.error.message);
+    const configured = await backend.settingsUpdate({ explorePageSize: 10 }, originalSettings.data.revision);
+    if (!configured.ok) throw new Error(configured.error.message);
+
+    const base = mockGalleries[4]!;
+    const candidates = Array.from({ length: 12 }, (_, index) => ({
+      id: galleryId(5_100_000 + index),
+      title: `Auto Find page candidate ${index + 1}`,
+      artist: base.artist,
+      ...(base.group ? { group: base.group } : {}),
+      pages: base.pages,
+      language: base.language,
+      tags: [...base.tags],
+      series: [...base.series],
+      characters: [...base.characters],
+      publishedRank: 20260830 - index,
+      popularity: base.score,
+      thumbnailWidth: 512,
+      thumbnailHeight: 768,
+      runId: "auto-find-pagination-run",
+      matchedFavorite: { namespace: "artist" as const, value: base.artist },
+      discoveredAt: `2026-08-${String(30 - index).padStart(2, "0")}T00:00:00Z`,
+    }));
+    vi.spyOn(backend, "favoritesList").mockResolvedValue({
+      ok: true,
+      data: [{ namespace: "artist", value: base.artist, revision: 1, createdAt: "2026-08-01T00:00:00Z", updatedAt: "2026-08-01T00:00:00Z" }],
+    });
+    vi.spyOn(backend, "autoFindSnapshot").mockResolvedValue({
+      ok: true,
+      data: { candidates, cutoffEvidence: [], truncations: [] },
+    });
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({
+      ok: true,
+      data: { page: 1, totalItems: 0, entries: [] },
+    });
+    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({ ok: true, data: [] });
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle(80);
+      });
+      await act(async () => {
+        clickButtonContaining(container, "Auto Find");
+        await settle(40);
+      });
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(10);
+      expect(container.querySelector(".auto-find-pager")).toHaveTextContent("1 / 2");
+
+      const firstPageCards = container.querySelectorAll<HTMLElement>(".gallery-card");
+      await act(async () => {
+        firstPageCards[0]?.focus();
+        firstPageCards[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+        firstPageCards[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+        await settle();
+      });
+      expect(container.querySelector(".selection-toolbar")).toHaveTextContent("2개 선택됨");
+      const viewport = container.querySelector<HTMLElement>(".gallery-viewport");
+      if (!viewport) throw new Error("gallery viewport missing");
+      viewport.scrollTop = 420;
+
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>(".auto-find-pager button")]
+          .find((button) => button.textContent === "다음")
+          ?.click();
+        await settle();
+      });
+      expect(viewport.scrollTop).toBe(0);
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(2);
+      expect(container.querySelector(".auto-find-pager")).toHaveTextContent("2 / 2");
+      expect(container.querySelector(".selection-toolbar")).toHaveTextContent("2개 선택됨");
+      expect(container.querySelector<HTMLElement>(".gallery-card")?.tabIndex).toBe(0);
+
+      const searchInput = container.querySelector<HTMLInputElement>('input[aria-label="검색"]');
+      const searchButton = container.querySelector<HTMLButtonElement>('button[type="submit"][aria-label="검색"]');
+      if (!searchInput || !searchButton) throw new Error("Auto Find search controls were not rendered");
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(searchInput, "candidate");
+        searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+        searchButton.click();
+        await settle();
+      });
+      expect(container.querySelector(".auto-find-pager")).toHaveTextContent("1 / 2");
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(10);
+      expect(container.querySelectorAll(".gallery-card.is-selected")).toHaveLength(0);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      const latest = await backend.settingsGet();
+      if (latest.ok) {
+        await backend.settingsUpdate({ explorePageSize: originalSettings.data.explorePageSize }, latest.data.revision);
+      }
     }
   });
 });

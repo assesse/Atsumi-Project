@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { DownloadEntry, GalleryDetail, GalleryPage, GallerySummary } from "../api/contracts";
+import type { DownloadEntry, DownloadLibraryPage, GalleryDetail, GalleryPage, GallerySummary } from "../api/contracts";
 import { galleryId, type Gallery } from "../core/types";
-import { mergeDownloadEntries, mergeGalleryDetail, mergeGalleryPage, projectGallerySummary } from "./galleryProjection";
+import { mergeDownloadEntries, mergeDownloadLibraryPage, mergeGalleryDetail, mergeGalleryPage, projectGallerySummary } from "./galleryProjection";
 
 const summary = (idValue: number, title = `Gallery ${idValue}`): GallerySummary => ({
   id: galleryId(idValue),
@@ -144,6 +144,80 @@ describe("gallery API projection", () => {
       state: "queued",
       progress: 0,
     });
+  });
+
+  it("projects download library summaries without discarding existing hydrated metadata", () => {
+    const hydrated: Gallery = {
+      ...projectGallerySummary(summary(1)),
+      tags: ["favorite-tag"],
+      series: ["series-one"],
+      characters: ["character-one"],
+    };
+    const page: DownloadLibraryPage = {
+      page: 1,
+      totalItems: 1,
+      items: [{
+        gallery: {
+          id: galleryId(1),
+          title: "Fresh title",
+          artist: "fresh artist",
+          pages: 24,
+          language: "japanese",
+          publishedRank: 20260831,
+        },
+        download: {
+          entryId: "entry-library",
+          galleryId: galleryId(1),
+          revision: 4,
+          state: "completed",
+          progress: 100,
+        },
+      }],
+    };
+
+    const projected = mergeDownloadLibraryPage(new Map([[hydrated.id, hydrated]]), page).galleries;
+
+    expect(projected.get(hydrated.id)).toMatchObject({
+      title: "Fresh title",
+      artist: "fresh artist",
+      publishedAt: "2026-08-31",
+      download: {
+        entryId: "entry-library",
+        state: "completed",
+        progress: 100,
+      },
+      tags: ["favorite-tag"],
+      series: ["series-one"],
+      characters: ["character-one"],
+    });
+  });
+
+  it("marks a legacy download language unknown until local detail metadata hydrates it", () => {
+    const page: DownloadLibraryPage = {
+      page: 1,
+      totalItems: 1,
+      items: [{
+        gallery: { id: galleryId(77), title: "Legacy local album", artist: "local artist" },
+        download: {
+          entryId: "entry-legacy",
+          galleryId: galleryId(77),
+          revision: 0,
+          state: "completed",
+          progress: 100,
+        },
+      }],
+    };
+
+    const summarized = mergeDownloadLibraryPage(new Map(), page).galleries;
+    expect(summarized.get(galleryId(77))?.languageKnown).toBe(false);
+
+    const hydrated = mergeGalleryDetail(summarized, {
+      ...summary(77),
+      related: [],
+      pageDimensions: [],
+    });
+    expect(hydrated.get(galleryId(77))?.language).toBe("japanese");
+    expect(hydrated.get(galleryId(77))?.languageKnown).not.toBe(false);
   });
 
   it("does not let an older list snapshot overwrite a newer event projection", () => {

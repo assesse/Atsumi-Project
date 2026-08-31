@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import type { Language, SearchUi, ViewId } from "../core/types";
 import { languageOrder, languagePresentation } from "../data/languages";
-import type { TagCatalogStatus, TagNamespace } from "../api/contracts";
+import type { TagNamespace } from "../api/contracts";
 import type { SearchSuggestion } from "../search/searchSuggestions";
 import { activeSearchToken, replaceActiveSearchToken, searchTokenKind } from "../search/searchTokens";
 import { FluentIcon } from "./FluentIcon";
@@ -23,6 +23,7 @@ const placeholders: Record<ViewId, string> = {
 type ViewHeaderProps = {
   view: ViewId;
   search: SearchUi;
+  searchPending?: boolean;
   suggestions: SearchSuggestion[];
   activityCount: number;
   activityOpen: boolean;
@@ -32,11 +33,11 @@ type ViewHeaderProps = {
   onSelectSuggestion: (suggestion: SearchSuggestion, value: string) => void;
   onCompleteSuggestion: (value: string) => void;
   onLanguages: (languages: Language[]) => void;
-  onTagCatalogRefresh: () => void;
-  tagCatalogStatus?: TagCatalogStatus;
-  tagCatalogRefreshing: boolean;
   tagCatalogRevision?: number;
   onTagSuggestionQuery: (query: string, namespace?: TagNamespace) => void;
+  onRandomOpen: () => void;
+  randomOpenPending: boolean;
+  randomOpenAvailable: boolean;
   onActivity: () => void;
   privacyMode: boolean;
   privacyModePending?: boolean;
@@ -47,6 +48,7 @@ type ViewHeaderProps = {
 export function ViewHeader({
   view,
   search,
+  searchPending = false,
   suggestions,
   activityCount,
   activityOpen,
@@ -56,11 +58,11 @@ export function ViewHeader({
   onSelectSuggestion,
   onCompleteSuggestion,
   onLanguages,
-  onTagCatalogRefresh,
-  tagCatalogStatus,
-  tagCatalogRefreshing,
   tagCatalogRevision,
   onTagSuggestionQuery,
+  onRandomOpen,
+  randomOpenPending,
+  randomOpenAvailable,
   onActivity,
   privacyMode,
   privacyModePending = false,
@@ -74,9 +76,11 @@ export function ViewHeader({
   const [languageOpen, setLanguageOpen] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const visibleSuggestions = suggestions;
-  const catalogIncomplete = !tagCatalogStatus?.entryCount
-    || tagCatalogStatus.artistCount === 0
-    || tagCatalogStatus.groupCount === 0;
+  const randomOpenDescription = view === "explore"
+    ? "Hitomi 전체 범위에서 랜덤 갤러리 열기"
+    : view === "auto-find"
+      ? "현재 로드된 Auto Find 후보에서 랜덤 열기"
+      : "다운로드 완료 앨범에서 랜덤 열기";
 
   useEffect(() => {
     if (search.activeSuggestion !== null && search.activeSuggestion >= visibleSuggestions.length) {
@@ -196,6 +200,7 @@ export function ViewHeader({
           aria-activedescendant={
             search.activeSuggestion === null ? undefined : `search-suggestion-${search.activeSuggestion}`
           }
+          disabled={searchPending}
           onFocus={(event) => {
             setSelection({ start: event.currentTarget.selectionStart ?? 0, end: event.currentTarget.selectionEnd ?? 0 });
             onSuggestions(true);
@@ -238,7 +243,7 @@ export function ViewHeader({
           </div>
         ) : null}
       </form>
-      <button type="submit" form="gallery-search-form" className="icon-button primary-soft" title="검색" aria-label="검색">
+      <button type="submit" form="gallery-search-form" className="icon-button primary-soft" title="검색" aria-label="검색" disabled={searchPending}>
         <FluentIcon glyph="\uE721" />
       </button>
       <div className="menu-anchor">
@@ -276,22 +281,15 @@ export function ViewHeader({
       </div>
       <button
         type="button"
-        className={`icon-button tag-catalog-refresh${tagCatalogRefreshing ? " is-refreshing" : ""}`}
-        title={tagCatalogRefreshing
-          ? "검색 자동완성 최신화 중 · Hitomi 태그·작가·그룹 목록을 가져오는 중"
-          : tagCatalogStatus?.entryCount && !catalogIncomplete
-            ? `검색 자동완성 최신화 · ${tagCatalogStatus.entryCount.toLocaleString()}개`
-            : tagCatalogStatus?.entryCount
-              ? "검색 자동완성 최신화 · 작가·그룹 데이터 없음"
-              : "검색 자동완성 최신화 · 데이터 없음"}
-        aria-label={tagCatalogRefreshing ? "검색 자동완성 최신화 중" : "검색 자동완성 최신화"}
-        aria-busy={tagCatalogRefreshing || undefined}
-        disabled={tagCatalogRefreshing}
-        onClick={onTagCatalogRefresh}
+        className={`icon-button random-open-button${randomOpenPending ? " is-pending" : ""}`}
+        title={randomOpenPending ? "랜덤 갤러리를 찾는 중" : randomOpenDescription}
+        aria-label={randomOpenPending ? "랜덤 열기 중" : "랜덤 열기"}
+        aria-busy={randomOpenPending || undefined}
+        disabled={randomOpenPending || !randomOpenAvailable}
+        onClick={onRandomOpen}
       >
-        {tagCatalogRefreshing ? <span className="spinner catalog-refresh-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE72C" />}
-        {tagCatalogRefreshing ? <span className="sr-only">Hitomi 태그·작가·그룹 목록을 최신화하는 중</span> : null}
-        {catalogIncomplete ? <span className="catalog-warning" aria-hidden="true">!</span> : null}
+        {randomOpenPending ? <span className="spinner random-open-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE8B1" />}
+        {randomOpenPending ? <span className="sr-only">랜덤 갤러리를 찾는 중</span> : null}
       </button>
       <button
         type="button"

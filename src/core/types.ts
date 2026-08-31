@@ -2,6 +2,7 @@ export type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
 export type GalleryId = Brand<number, "GalleryId">;
 export type ViewId = "explore" | "auto-find" | "downloads";
+export type GalleryDisplayMode = "detail" | "compact";
 export type Language = "korean" | "japanese" | "chinese" | "english";
 export type SearchSort =
   | "recent"
@@ -36,6 +37,8 @@ export type Gallery = {
   publishedAt: string;
   coverIndex: number;
   language: Language;
+  /** False only while a legacy local download summary has not resolved its language yet. */
+  languageKnown?: boolean;
   tags: string[];
   series: string[];
   characters: string[];
@@ -95,6 +98,7 @@ export type UiState = {
   exploreSort: SearchSort;
   downloadsFilter: DownloadFilter;
   grouping: Record<"auto-find" | "downloads", "all" | "day" | "artist">;
+  displayMode: Record<ViewId, GalleryDisplayMode>;
   selection: SelectionState;
   detail: DetailState;
   overlays: {

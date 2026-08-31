@@ -6,12 +6,12 @@ use std::{
 use crate::domain::{
     download_root_for_display, plan_artifact_relative_directory, AutoFindExclusionResult,
     AutoFindSnapshot, DownloadEntry, DownloadEntryId, DownloadJobDescriptor, DownloadJobProjection,
-    DownloadListRequest, DownloadPage, ExplorationDataResetRequest, ExplorationDataResetResult,
-    ExplorationExclusion, ExplorationExclusionRestoreResult, FavoriteKey, FavoriteMutationResult,
-    FavoriteRecord, FixtureDownloadJobStep, Gallery, GalleryDetail, GalleryId, GalleryMetadata,
-    GalleryPage, JobRef, SearchHistoryEntry, SearchRequest, SearchSubmission, SettingsPatch,
-    SettingsSnapshot, TagCatalogStatus, TagSuggestion, TagSuggestionRequest, ValidationError,
-    WindowPlacement, WindowPlacementSnapshot,
+    DownloadLibraryPage, DownloadListRequest, DownloadPage, ExplorationDataResetRequest,
+    ExplorationDataResetResult, ExplorationExclusion, ExplorationExclusionRestoreResult,
+    FavoriteKey, FavoriteMutationResult, FavoriteRecord, FixtureDownloadJobStep, Gallery,
+    GalleryDetail, GalleryId, GalleryMetadata, GalleryPage, JobRef, SearchHistoryEntry,
+    SearchRequest, SearchSubmission, SettingsPatch, SettingsSnapshot, TagCatalogStatus,
+    TagSuggestion, TagSuggestionRequest, ValidationError, WindowPlacement, WindowPlacementSnapshot,
 };
 
 use super::{
@@ -225,6 +225,16 @@ impl ApplicationService {
         let request = request.normalized()?;
         self.download_repository()?
             .download_entries_list(&request)
+            .map_err(Into::into)
+    }
+
+    pub fn download_library_page_list(
+        &self,
+        request: DownloadListRequest,
+    ) -> Result<DownloadLibraryPage, ApplicationError> {
+        let request = request.normalized()?;
+        self.download_repository()?
+            .download_library_page_list(&request)
             .map_err(Into::into)
     }
 

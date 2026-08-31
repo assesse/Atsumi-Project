@@ -18,6 +18,7 @@ import type {
   DownloadOverlapGalleryRef,
   DownloadOverlapPagePair,
   DownloadOverlapReview,
+  SettingsSnapshot,
 } from "../api/contracts";
 import {
   buildDownloadOverlapAlignment,
@@ -25,6 +26,7 @@ import {
   uniquePagesForSide,
 } from "../downloadOverlap/alignment";
 import { galleryPreviewPreset } from "../layout/galleryPreviewPresets";
+import { buildStrictOverlapPlan } from "../state/downloadOverlapAuto";
 import { artifactPageThumbnailKey, type ThumbnailClient, type ThumbnailKey } from "../thumbnail";
 import { FluentIcon } from "./FluentIcon";
 import { GalleryThumbnail } from "./GalleryThumbnail";
@@ -36,6 +38,7 @@ type Props = {
   error?: string | null;
   decisionPending?: boolean;
   browserFixture?: boolean;
+  autoMode?: SettingsSnapshot["downloadOverlapAutoMode"];
   previewWidth: number;
   thumbnailClient?: ThumbnailClient;
   onClose: () => void;
@@ -326,7 +329,7 @@ function ReviewAction({ help, children }: {
   );
 }
 
-export function DownloadOverlapReviewDialog({ open, review, loading = false, error = null, decisionPending = false, browserFixture = false, previewWidth, thumbnailClient, onClose, onRetry, onDecision }: Props) {
+export function DownloadOverlapReviewDialog({ open, review, loading = false, error = null, decisionPending = false, browserFixture = false, autoMode = "off", previewWidth, thumbnailClient, onClose, onRetry, onDecision }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -339,6 +342,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
   const candidate = review?.candidates.find((item) => item.candidateId === candidateId)
     ?? pendingCandidates[0]
     ?? review?.candidates[0];
+  const autoPlan = useMemo(() => review ? buildStrictOverlapPlan(review) : null, [review]);
 
   useEffect(() => {
     setCandidateId(review?.candidates.find((item) => item.decision === undefined)?.candidateId ?? review?.candidates[0]?.candidateId ?? null);
@@ -407,6 +411,20 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
                 {browserFixture ? " · 브라우저 검토 fixture" : ""}
               </span>
             </div>
+
+            {autoMode !== "off" && autoPlan ? (
+              <div className={`download-overlap-auto-recommendation${autoMode === "strict_quarantine" ? " is-automatic" : ""}`} role="status">
+                <FluentIcon glyph={autoPlan.winner === "incoming" ? "\uE73A" : "\uE74D"} />
+                <div>
+                  <strong>{autoMode === "strict_quarantine" ? "엄격 기준 자동 격리 대상" : "엄격 기준 추천"}</strong>
+                  <span>{autoPlan.summary}</span>
+                  <small>
+                    포함률 99.5% 이상 · 작은 판본 고유 페이지 0장 · 정확 일치 90% 이상 · 충분한 추가 페이지를 모두 확인했습니다.
+                    {autoMode === "strict_quarantine" ? " 이 창을 닫으면 기존 재검증 후 복구 가능한 격리로 처리합니다." : " 최종 선택은 직접 적용해 주세요."}
+                  </small>
+                </div>
+              </div>
+            ) : null}
 
             {review.candidates.length > 1 ? (
               <div className="download-overlap-candidate-tabs" role="tablist" aria-label="겹침 후보">

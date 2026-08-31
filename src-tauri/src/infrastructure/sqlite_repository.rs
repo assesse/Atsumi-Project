@@ -27,16 +27,18 @@ use crate::{
         AutoFindExclusionResult, AutoFindHistoryMode, AutoFindRun, AutoFindRunState,
         AutoFindSnapshot, AutoFindTruncation, DownloadArtifact, DownloadArtifactState,
         DownloadChangedEvent, DownloadEntry, DownloadEntryId, DownloadJobDescriptor,
-        DownloadJobProjection, DownloadListRequest, DownloadOverlapCandidate,
+        DownloadJobProjection, DownloadLibraryGallery, DownloadLibraryItem, DownloadLibraryPage,
+        DownloadListRequest, DownloadOverlapAutoMode, DownloadOverlapCandidate,
         DownloadOverlapCandidateIdentity, DownloadOverlapDecisionAction,
-        DownloadOverlapDecisionApplied, DownloadOverlapDecisionApplyOutcome,
-        DownloadOverlapDecisionRequest, DownloadOverlapDecisionResult, DownloadOverlapGalleryRef,
-        DownloadOverlapPagePair, DownloadOverlapPairDecision, DownloadOverlapRelation,
-        DownloadOverlapReview, DownloadOverlapReviewDraft, DownloadOverlapReviewState,
-        DownloadPage, DownloadReviewKind, DuplicateCandidate, DuplicateCandidateRecord,
-        DuplicateDecisionAction, DuplicateDecisionApplyOutcome, DuplicateDecisionHistory,
-        DuplicateDecisionRequest, DuplicateEvidence, DuplicateEvidenceKind, DuplicateGalleryRef,
-        DuplicatePageHash, DuplicatePagePair, DuplicateRelation, DuplicateReview, DuplicateScanRun,
+        DownloadOverlapDecisionActor, DownloadOverlapDecisionApplied,
+        DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionRequest,
+        DownloadOverlapDecisionResult, DownloadOverlapGalleryRef, DownloadOverlapPagePair,
+        DownloadOverlapPairDecision, DownloadOverlapRelation, DownloadOverlapReview,
+        DownloadOverlapReviewDraft, DownloadOverlapReviewState, DownloadPage, DownloadReviewKind,
+        DuplicateCandidate, DuplicateCandidateRecord, DuplicateDecisionAction,
+        DuplicateDecisionApplyOutcome, DuplicateDecisionHistory, DuplicateDecisionRequest,
+        DuplicateEvidence, DuplicateEvidenceKind, DuplicateGalleryRef, DuplicatePageHash,
+        DuplicatePagePair, DuplicateRelation, DuplicateReview, DuplicateScanRun,
         DuplicateScanState, DuplicateSnapshot, ExplorationDataResetResult, ExplorationExclusion,
         ExplorationExclusionKind, ExplorationExclusionReason, ExplorationExclusionRestoreResult,
         FavoriteKey, FavoriteMutationResult, FavoriteNamespace, FavoriteRecord,
@@ -50,6 +52,8 @@ use crate::{
 };
 
 use super::migrations::{MigrationError, MigrationRunner};
+
+const DOWNLOAD_OVERLAP_AUTOMATION_DAILY_DECISION_LIMIT: i64 = 10;
 
 pub struct SqliteRepository {
     connection: Mutex<Connection>,
@@ -277,8 +281,13 @@ impl StateRepository for SqliteRepository {
                         privacy_mode = ?13,
                         collapsed_group_keys_json = ?14,
                         search_include_tags_json = ?15,
-                        search_exclude_tags_json = ?16
-                    WHERE singleton = 1 AND revision = ?17
+                        search_exclude_tags_json = ?16,
+                        explore_page_size = ?17,
+                        download_overlap_auto_mode = ?18,
+                        explore_display_mode = ?19,
+                        auto_find_display_mode = ?20,
+                        downloads_display_mode = ?21
+                    WHERE singleton = 1 AND revision = ?22
                 "#,
                 params![
                     to_sql_integer(next.revision, "settings revision")?,
@@ -297,6 +306,11 @@ impl StateRepository for SqliteRepository {
                     serde_json::to_string(&next.collapsed_group_keys).map_err(domain_corruption)?,
                     serde_json::to_string(&next.search_include_tags).map_err(domain_corruption)?,
                     serde_json::to_string(&next.search_exclude_tags).map_err(domain_corruption)?,
+                    i64::from(next.explore_page_size),
+                    next.download_overlap_auto_mode.as_str(),
+                    next.explore_display_mode.as_str(),
+                    next.auto_find_display_mode.as_str(),
+                    next.downloads_display_mode.as_str(),
                     to_sql_integer(expected_revision, "expected settings revision")?,
                 ],
             )
@@ -1219,7 +1233,18 @@ impl DownloadRepository for SqliteRepository {
                         j.last_error_retryable, d.created_at, d.updated_at
                     FROM download_entries d
                     JOIN download_jobs j
-                      ON j.entry_id = d.entry_id AND j.gallery_id = d.gallery_id
+                      ON j.job_id = (
+                          SELECT job.job_id
+                          FROM download_jobs job
+                          WHERE job.entry_id = d.entry_id
+                            AND job.gallery_id = d.gallery_id
+                          ORDER BY
+                              job.created_at DESC,
+                              job.updated_at DESC,
+                              job.revision DESC,
+                              job.job_id DESC
+                          LIMIT 1
+                      )
                     WHERE (?1 IS NULL OR d.state = ?1)
                       AND NOT (
                           d.state = 'cancelled'
@@ -1276,6 +1301,190 @@ impl DownloadRepository for SqliteRepository {
             page: request.page,
             total_items,
             entries,
+        })
+    }
+
+    fn download_library_page_list(
+        &self,
+        request: &DownloadListRequest,
+    ) -> Result<DownloadLibraryPage, RepositoryError> {
+        let connection = self.connection()?;
+        let state = request.state.map(|state| state.to_string());
+        let query = request.query.as_deref();
+        let total_items = connection
+            .query_row(
+                r#"
+                    WITH ranked_downloads AS (
+                        SELECT
+                            d.entry_id,
+                            d.gallery_id,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY d.gallery_id
+                                ORDER BY
+                                    d.created_at DESC,
+                                    d.updated_at DESC,
+                                    d.revision DESC,
+                                    d.entry_id DESC
+                            ) AS library_rank
+                        FROM download_entries d
+                        WHERE EXISTS (
+                            SELECT 1
+                            FROM download_jobs job
+                            WHERE job.entry_id = d.entry_id
+                              AND job.gallery_id = d.gallery_id
+                        )
+                          AND NOT (
+                              d.state = 'cancelled'
+                              AND (
+                                  EXISTS (
+                                      SELECT 1
+                                      FROM download_overlap_reviews overlap_review
+                                      WHERE overlap_review.entry_id = d.entry_id
+                                        AND overlap_review.state = 'cancelled'
+                                  )
+                                  OR EXISTS (
+                                      SELECT 1
+                                      FROM download_overlap_candidates overlap_candidate
+                                      WHERE overlap_candidate.existing_entry_id = d.entry_id
+                                        AND overlap_candidate.decision = 'existing_removed'
+                                  )
+                              )
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM duplicate_hidden_galleries hidden
+                              WHERE hidden.gallery_id = d.gallery_id
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM exploration_restored_galleries restored
+                                    WHERE restored.gallery_id = d.gallery_id
+                                )
+                          )
+                    )
+                    SELECT COUNT(*)
+                    FROM ranked_downloads ranked
+                    JOIN download_entries d
+                      ON d.entry_id = ranked.entry_id
+                     AND d.gallery_id = ranked.gallery_id
+                    LEFT JOIN galleries g ON g.gallery_id = d.gallery_id
+                    WHERE ranked.library_rank = 1
+                      AND (?1 IS NULL OR d.state = ?1)
+                      AND (
+                          ?2 IS NULL
+                          OR instr(lower(d.entry_id), ?2) > 0
+                          OR instr(CAST(d.gallery_id AS TEXT), ?2) > 0
+                          OR instr(lower(COALESCE(g.title, '')), ?2) > 0
+                          OR instr(lower(COALESCE(g.primary_artist, '')), ?2) > 0
+                          OR instr(lower(COALESCE(g.primary_group, '')), ?2) > 0
+                      )
+                "#,
+                params![state, query],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(map_sqlite_error)?;
+        let total_items = stored_u64(total_items, "download library total items")?;
+        let offset = u64::from(request.page - 1)
+            .checked_mul(u64::from(request.page_size))
+            .ok_or_else(|| RepositoryError::Other("download library offset overflowed".into()))?;
+
+        let mut statement = connection
+            .prepare(
+                r#"
+                    WITH ranked_downloads AS (
+                        SELECT
+                            d.entry_id,
+                            d.gallery_id,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY d.gallery_id
+                                ORDER BY
+                                    d.created_at DESC,
+                                    d.updated_at DESC,
+                                    d.revision DESC,
+                                    d.entry_id DESC
+                            ) AS library_rank
+                        FROM download_entries d
+                        WHERE EXISTS (
+                            SELECT 1
+                            FROM download_jobs job
+                            WHERE job.entry_id = d.entry_id
+                              AND job.gallery_id = d.gallery_id
+                        )
+                          AND NOT (
+                              d.state = 'cancelled'
+                              AND (
+                                  EXISTS (
+                                      SELECT 1
+                                      FROM download_overlap_reviews overlap_review
+                                      WHERE overlap_review.entry_id = d.entry_id
+                                        AND overlap_review.state = 'cancelled'
+                                  )
+                                  OR EXISTS (
+                                      SELECT 1
+                                      FROM download_overlap_candidates overlap_candidate
+                                      WHERE overlap_candidate.existing_entry_id = d.entry_id
+                                        AND overlap_candidate.decision = 'existing_removed'
+                                  )
+                              )
+                          )
+                          AND NOT EXISTS (
+                              SELECT 1 FROM duplicate_hidden_galleries hidden
+                              WHERE hidden.gallery_id = d.gallery_id
+                                AND NOT EXISTS (
+                                    SELECT 1 FROM exploration_restored_galleries restored
+                                    WHERE restored.gallery_id = d.gallery_id
+                                )
+                          )
+                    )
+                    SELECT
+                        d.entry_id, d.gallery_id, d.revision, d.state, d.progress,
+                        d.review_kind, d.review_id,
+                        j.attempt, j.last_error_code, j.last_error_message,
+                        j.last_error_retryable, d.created_at, d.updated_at,
+                        g.title, g.primary_artist, g.primary_group,
+                        g.source_page_count, g.language, g.published_rank
+                    FROM ranked_downloads ranked
+                    JOIN download_entries d
+                      ON d.entry_id = ranked.entry_id
+                     AND d.gallery_id = ranked.gallery_id
+                    JOIN download_jobs j
+                      ON j.entry_id = d.entry_id AND j.gallery_id = d.gallery_id
+                    LEFT JOIN galleries g ON g.gallery_id = d.gallery_id
+                    WHERE ranked.library_rank = 1
+                      AND (?1 IS NULL OR d.state = ?1)
+                      AND (
+                          ?2 IS NULL
+                          OR instr(lower(d.entry_id), ?2) > 0
+                          OR instr(CAST(d.gallery_id AS TEXT), ?2) > 0
+                          OR instr(lower(COALESCE(g.title, '')), ?2) > 0
+                          OR instr(lower(COALESCE(g.primary_artist, '')), ?2) > 0
+                          OR instr(lower(COALESCE(g.primary_group, '')), ?2) > 0
+                      )
+                    ORDER BY
+                        d.created_at DESC,
+                        d.gallery_id DESC,
+                        d.entry_id DESC
+                    LIMIT ?3 OFFSET ?4
+                "#,
+            )
+            .map_err(map_sqlite_error)?;
+        let rows = statement
+            .query_map(
+                params![
+                    state,
+                    query,
+                    i64::from(request.page_size),
+                    to_sql_integer(offset, "download library offset")?,
+                ],
+                stored_download_library_item,
+            )
+            .map_err(map_sqlite_error)?;
+        let mut items = Vec::new();
+        for row in rows {
+            items.push(row.map_err(map_sqlite_error)?.try_into_domain()?);
+        }
+
+        Ok(DownloadLibraryPage {
+            page: request.page,
+            total_items,
+            items,
         })
     }
 
@@ -1793,14 +2002,16 @@ impl ArtifactRepository for SqliteRepository {
                 r#"
                     INSERT INTO galleries (
                         gallery_id, revision, title, primary_artist, primary_group,
-                        source_page_count
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                        source_page_count, language, published_rank
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                     ON CONFLICT (gallery_id) DO UPDATE SET
                         revision = excluded.revision,
                         title = excluded.title,
                         primary_artist = excluded.primary_artist,
                         primary_group = excluded.primary_group,
-                        source_page_count = excluded.source_page_count
+                        source_page_count = excluded.source_page_count,
+                        language = COALESCE(excluded.language, galleries.language),
+                        published_rank = COALESCE(excluded.published_rank, galleries.published_rank)
                 "#,
                 params![
                     bundle.gallery.id.get(),
@@ -1809,6 +2020,8 @@ impl ArtifactRepository for SqliteRepository {
                     bundle.gallery.metadata.primary_artist,
                     bundle.gallery.metadata.primary_group,
                     i64::from(bundle.gallery.metadata.source_page_count),
+                    bundle.gallery.metadata.language.map(language_text),
+                    bundle.gallery.metadata.published_rank.map(i64::from),
                 ],
             )
             .map_err(map_sqlite_error)?;
@@ -1962,6 +2175,8 @@ impl ArtifactRepository for SqliteRepository {
                         g.primary_artist,
                         g.primary_group,
                         g.source_page_count,
+                        g.language,
+                        g.published_rank,
                         a.revision,
                         a.relative_directory,
                         a.expected_page_count,
@@ -1986,7 +2201,7 @@ impl ArtifactRepository for SqliteRepository {
 
         let gallery_id = GalleryId::new(stored.gallery_id).map_err(domain_corruption)?;
         let artists = read_owned_gallery_artists(&connection, gallery_id)?;
-        let metadata = GalleryMetadata::new(
+        let mut metadata = GalleryMetadata::new(
             stored.title,
             stored.primary_artist,
             stored.primary_group,
@@ -1994,6 +2209,11 @@ impl ArtifactRepository for SqliteRepository {
         )
         .map(|metadata| metadata.with_artists(artists))
         .map_err(domain_corruption)?;
+        metadata.language = stored.language.as_deref().map(parse_language).transpose()?;
+        metadata.published_rank = stored
+            .published_rank
+            .map(|value| stored_u32(value, "gallery published rank"))
+            .transpose()?;
         let gallery = Gallery::new(
             gallery_id,
             stored_u64(stored.gallery_revision, "gallery revision")?,
@@ -2197,15 +2417,17 @@ impl DownloadPipelineRepository for SqliteRepository {
                 r#"
                     INSERT INTO galleries (
                         gallery_id, revision, title, primary_artist, primary_group,
-                        source_page_count, source_revision
-                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                        source_page_count, source_revision, language, published_rank
+                    ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
                     ON CONFLICT (gallery_id) DO UPDATE SET
                         revision = excluded.revision,
                         title = excluded.title,
                         primary_artist = excluded.primary_artist,
                         primary_group = excluded.primary_group,
                         source_page_count = excluded.source_page_count,
-                        source_revision = excluded.source_revision
+                        source_revision = excluded.source_revision,
+                        language = COALESCE(excluded.language, galleries.language),
+                        published_rank = COALESCE(excluded.published_rank, galleries.published_rank)
                 "#,
                 params![
                     plan.gallery.id.get(),
@@ -2215,6 +2437,8 @@ impl DownloadPipelineRepository for SqliteRepository {
                     plan.gallery.metadata.primary_group,
                     i64::from(plan.gallery.metadata.source_page_count),
                     source_revision,
+                    plan.gallery.metadata.language.map(language_text),
+                    plan.gallery.metadata.published_rank.map(i64::from),
                 ],
             )
             .map_err(map_sqlite_error)?;
@@ -3702,6 +3926,25 @@ impl DownloadOverlapRepository for SqliteRepository {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(map_sqlite_error)?;
+            if request.actor == DownloadOverlapDecisionActor::Automation {
+                let automatic_decisions: i64 = transaction
+                    .query_row(
+                        r#"
+                            SELECT COUNT(*)
+                            FROM download_overlap_decisions
+                            WHERE actor = 'automation'
+                              AND created_at >= strftime('%Y-%m-%dT00:00:00Z', 'now')
+                        "#,
+                        [],
+                        |row| row.get(0),
+                    )
+                    .map_err(map_sqlite_error)?;
+                if automatic_decisions >= DOWNLOAD_OVERLAP_AUTOMATION_DAILY_DECISION_LIMIT {
+                    return Err(RepositoryError::Other(format!(
+                        "Automatic overlap quarantine reached its daily safety limit of {DOWNLOAD_OVERLAP_AUTOMATION_DAILY_DECISION_LIMIT} decisions"
+                    )));
+                }
+            }
             let stored = transaction
                 .query_row(
                     r#"
@@ -4005,9 +4248,10 @@ impl DownloadOverlapRepository for SqliteRepository {
                     r#"
                         INSERT INTO download_overlap_decisions (
                             decision_id, review_id, review_revision,
-                            candidate_id, action, created_at
+                            candidate_id, action, actor, reason_code,
+                            rule_version, feature_snapshot_json, created_at
                         ) VALUES (
-                            ?1, ?2, ?3, ?4, ?5,
+                            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
                             strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                         )
                     "#,
@@ -4017,6 +4261,10 @@ impl DownloadOverlapRepository for SqliteRepository {
                         to_sql_integer(request.expected_revision, "overlap review revision")?,
                         request.candidate_id,
                         request.action.as_str(),
+                        request.actor.as_str(),
+                        request.reason_code,
+                        request.rule_version.map(i64::from),
+                        request.feature_snapshot_json,
                     ],
                 )
                 .map_err(map_sqlite_error)?;
@@ -6425,6 +6673,50 @@ fn stored_download_entry(row: &Row<'_>) -> rusqlite::Result<StoredDownloadEntry>
     })
 }
 
+struct StoredDownloadLibraryItem {
+    download: StoredDownloadEntry,
+    title: Option<String>,
+    artist: Option<String>,
+    group: Option<String>,
+    pages: Option<i64>,
+    language: Option<String>,
+    published_rank: Option<i64>,
+}
+
+impl StoredDownloadLibraryItem {
+    fn try_into_domain(self) -> Result<DownloadLibraryItem, RepositoryError> {
+        let download = self.download.try_into_domain()?;
+        let gallery = DownloadLibraryGallery {
+            id: download.gallery_id,
+            title: self.title,
+            artist: self.artist,
+            group: self.group,
+            pages: self
+                .pages
+                .map(|value| stored_u32(value, "download library page count"))
+                .transpose()?,
+            language: self.language.as_deref().map(parse_language).transpose()?,
+            published_rank: self
+                .published_rank
+                .map(|value| stored_u32(value, "download library published rank"))
+                .transpose()?,
+        };
+        Ok(DownloadLibraryItem { gallery, download })
+    }
+}
+
+fn stored_download_library_item(row: &Row<'_>) -> rusqlite::Result<StoredDownloadLibraryItem> {
+    Ok(StoredDownloadLibraryItem {
+        download: stored_download_entry(row)?,
+        title: row.get(13)?,
+        artist: row.get(14)?,
+        group: row.get(15)?,
+        pages: row.get(16)?,
+        language: row.get(17)?,
+        published_rank: row.get(18)?,
+    })
+}
+
 fn canonical_overlap_fingerprints<'a>(
     left: &'a str,
     right: &'a str,
@@ -6972,6 +7264,8 @@ struct StoredArtifactBundle {
     primary_artist: Option<String>,
     primary_group: Option<String>,
     source_page_count: i64,
+    language: Option<String>,
+    published_rank: Option<i64>,
     artifact_revision: i64,
     relative_directory: String,
     expected_page_count: i64,
@@ -6991,15 +7285,17 @@ fn stored_artifact_bundle(row: &Row<'_>) -> rusqlite::Result<StoredArtifactBundl
         primary_artist: row.get(3)?,
         primary_group: row.get(4)?,
         source_page_count: row.get(5)?,
-        artifact_revision: row.get(6)?,
-        relative_directory: row.get(7)?,
-        expected_page_count: row.get(8)?,
-        artifact_state: row.get(9)?,
-        manifest_relative_path: row.get(10)?,
-        manifest_schema_version: row.get(11)?,
-        writer_version: row.get(12)?,
-        hash_profile_version: row.get(13)?,
-        completed_at: row.get(14)?,
+        language: row.get(6)?,
+        published_rank: row.get(7)?,
+        artifact_revision: row.get(8)?,
+        relative_directory: row.get(9)?,
+        expected_page_count: row.get(10)?,
+        artifact_state: row.get(11)?,
+        manifest_relative_path: row.get(12)?,
+        manifest_schema_version: row.get(13)?,
+        writer_version: row.get(14)?,
+        hash_profile_version: row.get(15)?,
+        completed_at: row.get(16)?,
     })
 }
 
@@ -7765,7 +8061,9 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                        request_start_interval_ms, auto_find_history_mode,
                        auto_find_grouping, downloads_grouping, privacy_mode,
                        collapsed_group_keys_json, search_include_tags_json,
-                       search_exclude_tags_json
+                       search_exclude_tags_json, explore_page_size,
+                       download_overlap_auto_mode, explore_display_mode,
+                       auto_find_display_mode, downloads_display_mode
                 FROM settings
                 WHERE singleton = 1
             "#,
@@ -7788,6 +8086,11 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                     row.get::<_, String>(13)?,
                     row.get::<_, String>(14)?,
                     row.get::<_, String>(15)?,
+                    row.get::<_, i64>(16)?,
+                    row.get::<_, String>(17)?,
+                    row.get::<_, String>(18)?,
+                    row.get::<_, String>(19)?,
+                    row.get::<_, String>(20)?,
                 ))
             },
         )
@@ -7797,6 +8100,7 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
         revision: stored_u64(values.0, "settings revision")?,
         download_root: values.1,
         folder_name_template: values.2,
+        explore_page_size: stored_u32(values.16, "Explore page size")?,
         max_columns: stored_u32(values.3, "max columns")?,
         preview_width: crate::domain::normalize_gallery_preview_width(stored_u32(
             values.4,
@@ -7812,6 +8116,35 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                 values.9
             ))
         })?,
+        download_overlap_auto_mode: DownloadOverlapAutoMode::from_database(&values.17).ok_or_else(
+            || {
+                RepositoryError::Corrupt(format!(
+                    "Download overlap auto mode {:?} is unsupported",
+                    values.17
+                ))
+            },
+        )?,
+        explore_display_mode: crate::domain::GalleryDisplayMode::from_database(&values.18)
+            .ok_or_else(|| {
+                RepositoryError::Corrupt(format!(
+                    "Explore display mode {:?} is unsupported",
+                    values.18
+                ))
+            })?,
+        auto_find_display_mode: crate::domain::GalleryDisplayMode::from_database(&values.19)
+            .ok_or_else(|| {
+                RepositoryError::Corrupt(format!(
+                    "Auto Find display mode {:?} is unsupported",
+                    values.19
+                ))
+            })?,
+        downloads_display_mode: crate::domain::GalleryDisplayMode::from_database(&values.20)
+            .ok_or_else(|| {
+                RepositoryError::Corrupt(format!(
+                    "Downloads display mode {:?} is unsupported",
+                    values.20
+                ))
+            })?,
         auto_find_grouping: GalleryGroupingMode::from_database(&values.10).ok_or_else(|| {
             RepositoryError::Corrupt(format!(
                 "Auto Find grouping mode {:?} is unsupported",
@@ -8259,6 +8592,10 @@ mod download_repository_tests {
                     expected_revision: 0,
                     action: DownloadOverlapDecisionAction::RemoveExistingContinue,
                     candidate_id: Some("selected-overlap-candidate".to_owned()),
+                    actor: DownloadOverlapDecisionActor::Automation,
+                    reason_code: Some("strict_extra_pages_v1".to_owned()),
+                    rule_version: Some(1),
+                    feature_snapshot_json: Some("{\"fixture\":true}".to_owned()),
                 },
                 &incoming_fingerprint,
                 &verified_existing,
@@ -8295,6 +8632,26 @@ mod download_repository_tests {
             )
             .unwrap();
         assert_eq!(automatic_decision, "existing_removed");
+        let audit: (String, String, i64, String) = connection
+            .query_row(
+                r#"
+                    SELECT actor, reason_code, rule_version, feature_snapshot_json
+                    FROM download_overlap_decisions
+                    WHERE review_id = ?1
+                "#,
+                [review_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            audit,
+            (
+                "automation".to_owned(),
+                "strict_extra_pages_v1".to_owned(),
+                1,
+                "{\"fixture\":true}".to_owned(),
+            )
+        );
         drop(connection);
 
         let blocked = repository

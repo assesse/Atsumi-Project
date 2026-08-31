@@ -68,6 +68,10 @@ export type SettingsSnapshot = {
   downloadRoot: string;
   folderNameTemplate: string;
   autoFindHistoryMode: AutoFindHistoryMode;
+  /** Controls conservative containment recommendations and optional quarantine automation. */
+  downloadOverlapAutoMode: "off" | "recommend" | "strict_quarantine";
+  /** Number of albums requested for each Explore result page. */
+  explorePageSize: number;
   maxColumns: number;
   previewWidth: number;
   relatedPreviewWidth: number;
@@ -79,6 +83,10 @@ export type SettingsSnapshot = {
   autoFindGrouping: "all" | "day" | "artist";
   /** Persisted Downloads list projection; defaults to the flat list. */
   downloadsGrouping: "all" | "day" | "artist";
+  /** Card density is persisted independently because each view serves a different browsing flow. */
+  exploreDisplayMode: "detail" | "compact";
+  autoFindDisplayMode: "detail" | "compact";
+  downloadsDisplayMode: "detail" | "compact";
   /** Persisted accordion sections for Auto Find and Downloads. */
   collapsedGroupKeys: string[];
   /** Tags that are added to every Explore search. */
@@ -88,6 +96,34 @@ export type SettingsSnapshot = {
 };
 
 export type SettingsPatch = Partial<Omit<SettingsSnapshot, "revision">>;
+
+export type StorageAreaUsage = {
+  bytes: number;
+  exists: boolean;
+  scanComplete: boolean;
+  volumeRoot?: string;
+};
+
+export type StorageVolumeUsage = {
+  root: string;
+  totalBytes?: number;
+  availableBytes?: number;
+  /** Unique bytes below the configured Atsumi-managed paths on this volume. */
+  atsumiBytes: number;
+};
+
+export type StorageUsageSnapshot = {
+  /** In-process thumbnail cache; this does not consume disk space. */
+  memoryCacheBytes: number;
+  /** Temporary original images retained while a page preview is open. */
+  diskCache: StorageAreaUsage;
+  /** Database, migration backups, and other durable app-owned data. */
+  appData: StorageAreaUsage;
+  /** All physical files under the configured download root. */
+  downloads: StorageAreaUsage;
+  volumes: StorageVolumeUsage[];
+  warnings: string[];
+};
 
 export type ThumbnailCacheClearResult = {
   successEntriesRemoved: number;
@@ -238,6 +274,8 @@ export type DetailOriginalPrepareRequest = {
   requestId: string;
   galleryId: GalleryId;
   sourcePage: number;
+  /** Completed download entry used to serve the verified local original. */
+  entryId?: string;
 };
 
 /** Opaque custom-protocol URL only; no filesystem path is exposed to the UI. */
@@ -626,6 +664,10 @@ export type DownloadOverlapDecisionRequest = {
     | "remove_existing_continue"
     | "remove_incoming";
   candidateId?: string;
+  actor?: "human" | "automation";
+  reasonCode?: string;
+  ruleVersion?: number;
+  featureSnapshotJson?: string;
 };
 
 export type DownloadOverlapDecisionResult = {
@@ -826,6 +868,29 @@ export type DownloadPage = {
   page: number;
   totalItems: number;
   entries: DownloadEntry[];
+};
+
+/** Locally persisted Downloads list metadata. Fields are optional for queued
+ * jobs and legacy rows that have not yet been enriched from source metadata. */
+export type DownloadLibraryGallery = {
+  id: GalleryId;
+  title?: string;
+  artist?: string;
+  group?: string;
+  pages?: number;
+  language?: Language;
+  publishedRank?: number;
+};
+
+export type DownloadLibraryItem = {
+  gallery: DownloadLibraryGallery;
+  download: DownloadEntry;
+};
+
+export type DownloadLibraryPage = {
+  page: number;
+  totalItems: number;
+  items: DownloadLibraryItem[];
 };
 
 export type ReconcileIssue = {

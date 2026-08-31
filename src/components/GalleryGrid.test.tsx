@@ -55,4 +55,56 @@ describe("GalleryGrid row coordinator", () => {
       globalThis.ResizeObserver = originalResizeObserver;
     }
   });
+
+  it("keeps compact cards at the saved preview width and skips row-height coordination", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <GalleryGrid columns={4} previewWidth={220} selectionContext={false} ariaLabel="compact grid" displayMode="compact">
+          <article className="gallery-card" data-row-height="300px" style={{ "--gallery-card-height": "300px" } as React.CSSProperties} />
+        </GalleryGrid>,
+      ));
+      const grid = container.querySelector<HTMLElement>(".gallery-grid");
+      const card = container.querySelector<HTMLElement>(".gallery-card");
+      expect(grid).toHaveClass("is-compact");
+      expect(grid).toHaveAttribute("data-display-mode", "compact");
+      expect(grid?.style.gridTemplateColumns).toContain("220px");
+      expect(card?.style.getPropertyValue("--gallery-card-height")).toBe("");
+      expect(card).not.toHaveAttribute("data-row-height");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("retains a measured progressive slot height while its full card is offscreen", async () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      callback(0);
+      return 1;
+    });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const width = this.classList.contains("cover") ? 200 : 0;
+        return { x: 0, y: 0, width, height: 0, top: 0, right: width, bottom: 0, left: 0, toJSON: () => ({}) };
+      });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <GalleryGrid columns={1} previewWidth={220} selectionContext={false} ariaLabel="progressive grid">
+          <div className="progressive-gallery-slot is-placeholder" style={{ "--gallery-card-height": "300px" } as React.CSSProperties}>
+            <article className="gallery-card"><div className="cover" /></article>
+          </div>
+        </GalleryGrid>,
+      ));
+      const slot = container.querySelector<HTMLElement>(".progressive-gallery-slot");
+      const card = container.querySelector<HTMLElement>(".gallery-card");
+      expect(slot?.style.getPropertyValue("--gallery-card-height")).toBe("300px");
+      expect(card?.style.getPropertyValue("--gallery-card-height")).toBe("300px");
+    } finally {
+      await act(async () => root.unmount());
+      rect.mockRestore();
+      raf.mockRestore();
+    }
+  });
 });

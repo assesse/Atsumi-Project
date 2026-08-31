@@ -26,6 +26,14 @@ const shortcutGroups = [
     ],
   },
   {
+    title: "Floating Detail",
+    shortcuts: [
+      ["Q · E", "이전·다음 상세 탭"],
+      ["A · D", "추가 미리보기 이전·다음 묶음"],
+      ["A · D", "PAGE PREVIEW 이전·다음 페이지"],
+    ],
+  },
+  {
     title: "앱 이동",
     shortcuts: [
       ["Ctrl+F", "현재 화면 검색으로 이동"],
@@ -94,7 +102,7 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
               <h3>{group.title}</h3>
               <dl>
                 {group.shortcuts.map(([keys, description]) => (
-                  <div key={keys}>
+                  <div key={`${keys}:${description}`}>
                     <dt>{keys.split("+").map((key) => <kbd key={key}>{key}</kbd>)}</dt>
                     <dd>{description}</dd>
                   </div>

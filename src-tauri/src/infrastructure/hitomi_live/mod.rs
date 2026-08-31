@@ -480,7 +480,14 @@ impl DownloadSourcePort for HitomiLiveAdapter {
             metadata.groups.first().cloned(),
             source_page_count,
         )
-        .map(|gallery| gallery.with_artists(metadata.artists.clone()))
+        .map(|gallery| {
+            gallery
+                .with_artists(metadata.artists.clone())
+                .with_list_presentation(
+                    download_list_language(metadata.language.as_deref()),
+                    download_list_published_rank(metadata.published_at.as_deref()),
+                )
+        })
         .map_err(|error| {
             SourceContractError::invalid_data("gallery metadata", error.to_string())
         })?;
@@ -618,6 +625,34 @@ impl DownloadSourcePort for HitomiLiveAdapter {
             diagnostics,
         ))
     }
+}
+
+fn download_list_language(value: Option<&str>) -> Option<crate::domain::Language> {
+    match value
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "korean" => Some(crate::domain::Language::Korean),
+        "japanese" => Some(crate::domain::Language::Japanese),
+        "chinese" => Some(crate::domain::Language::Chinese),
+        "english" => Some(crate::domain::Language::English),
+        _ => None,
+    }
+}
+
+fn download_list_published_rank(value: Option<&str>) -> Option<u32> {
+    let digits = value
+        .unwrap_or_default()
+        .chars()
+        .filter(char::is_ascii_digit)
+        .take(8)
+        .collect::<String>();
+    (digits.len() == 8)
+        .then(|| digits.parse::<u32>().ok())
+        .flatten()
+        .filter(|rank| *rank > 0)
 }
 
 fn candidate_fallback_allowed(error: &SourceContractError) -> bool {

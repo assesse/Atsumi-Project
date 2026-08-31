@@ -22,6 +22,32 @@ const searchRequest = (patch: Partial<SearchRequest> = {}): SearchRequest => ({
 });
 
 describe("browser backend settings contract", () => {
+  it("reports memory, disk, download, and volume usage separately", async () => {
+    const original = await backend.settingsGet();
+    if (!original.ok) throw new Error(original.error.message);
+    const configured = await backend.settingsUpdate({ downloadRoot: "D:\\Atsumi" }, original.data.revision);
+    if (!configured.ok) throw new Error(configured.error.message);
+    try {
+      const result = await backend.storageUsageGet();
+      expect(result).toMatchObject({
+        ok: true,
+        data: {
+          memoryCacheBytes: expect.any(Number),
+          diskCache: { bytes: expect.any(Number), scanComplete: true },
+          appData: { bytes: expect.any(Number), scanComplete: true },
+          downloads: { bytes: expect.any(Number), scanComplete: true, volumeRoot: "D:\\" },
+          volumes: [
+            { root: "C:\\", totalBytes: expect.any(Number), availableBytes: expect.any(Number) },
+            { root: "D:\\", totalBytes: expect.any(Number), availableBytes: expect.any(Number) },
+          ],
+        },
+      });
+    } finally {
+      const latest = await backend.settingsGet();
+      if (latest.ok) await backend.settingsUpdate({ downloadRoot: original.data.downloadRoot }, latest.data.revision);
+    }
+  });
+
   it("rejects values outside the approved settings ranges", async () => {
     expect(backend.runtime).toBe("browser-mock");
     const current = await backend.settingsGet();
@@ -41,6 +67,57 @@ describe("browser backend settings contract", () => {
       ok: false,
       error: { code: "VALIDATION_ERROR", details: { field: "previewWidth" } },
     });
+
+    await expect(backend.settingsUpdate(
+      { explorePageSize: 9 },
+      current.data.revision,
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", details: { field: "explorePageSize" } },
+    });
+  });
+
+  it("persists the Explore page size used by new searches", async () => {
+    const current = await backend.settingsGet();
+    if (!current.ok) throw new Error(current.error.message);
+    const nextPageSize = current.data.explorePageSize === 80 ? 70 : 80;
+    const updated = await backend.settingsUpdate(
+      { explorePageSize: nextPageSize },
+      current.data.revision,
+    );
+    expect(updated).toMatchObject({ ok: true, data: { explorePageSize: nextPageSize } });
+    if (!updated.ok) return;
+    expect(JSON.parse(window.localStorage.getItem("atsumi.browser.settings.v1") ?? "{}"))
+      .toMatchObject({ explorePageSize: nextPageSize });
+
+    const restored = await backend.settingsUpdate(
+      { explorePageSize: current.data.explorePageSize },
+      updated.data.revision,
+    );
+    expect(restored).toMatchObject({ ok: true, data: { explorePageSize: current.data.explorePageSize } });
+  });
+
+  it("persists only supported overlap automation modes", async () => {
+    const current = await backend.settingsGet();
+    if (!current.ok) throw new Error(current.error.message);
+    const nextMode = current.data.downloadOverlapAutoMode === "recommend" ? "off" : "recommend";
+    const updated = await backend.settingsUpdate(
+      { downloadOverlapAutoMode: nextMode },
+      current.data.revision,
+    );
+    expect(updated).toMatchObject({ ok: true, data: { downloadOverlapAutoMode: nextMode } });
+    if (!updated.ok) return;
+    await expect(backend.settingsUpdate(
+      { downloadOverlapAutoMode: "unsafe" as "off" },
+      updated.data.revision,
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", details: { field: "downloadOverlapAutoMode" } },
+    });
+    await expect(backend.settingsUpdate(
+      { downloadOverlapAutoMode: current.data.downloadOverlapAutoMode },
+      updated.data.revision,
+    )).resolves.toMatchObject({ ok: true });
   });
 
   it("emits the new revision when settings change", async () => {
@@ -130,6 +207,46 @@ describe("browser backend settings contract", () => {
     await expect(backend.settingsUpdate({
       autoFindGrouping: current.data.autoFindGrouping,
       downloadsGrouping: current.data.downloadsGrouping,
+    }, updated.data.revision)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("persists detail and compact gallery modes independently per view", async () => {
+    const current = await backend.settingsGet();
+    if (!current.ok) throw new Error(current.error.message);
+
+    const updated = await backend.settingsUpdate({
+      exploreDisplayMode: "compact",
+      autoFindDisplayMode: "detail",
+      downloadsDisplayMode: "compact",
+    }, current.data.revision);
+    expect(updated).toMatchObject({
+      ok: true,
+      data: {
+        exploreDisplayMode: "compact",
+        autoFindDisplayMode: "detail",
+        downloadsDisplayMode: "compact",
+      },
+    });
+    if (!updated.ok) return;
+    expect(JSON.parse(window.localStorage.getItem("atsumi.browser.settings.v1") ?? "{}"))
+      .toMatchObject({
+        exploreDisplayMode: "compact",
+        autoFindDisplayMode: "detail",
+        downloadsDisplayMode: "compact",
+      });
+
+    await expect(backend.settingsUpdate(
+      { downloadsDisplayMode: "dense" as "detail" },
+      updated.data.revision,
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", details: { field: "downloadsDisplayMode" } },
+    });
+
+    await expect(backend.settingsUpdate({
+      exploreDisplayMode: current.data.exploreDisplayMode,
+      autoFindDisplayMode: current.data.autoFindDisplayMode,
+      downloadsDisplayMode: current.data.downloadsDisplayMode,
     }, updated.data.revision)).resolves.toMatchObject({ ok: true });
   });
 
@@ -698,6 +815,77 @@ describe("browser backend download contract", () => {
     expect(completed.data).toMatchObject({ totalItems: 0, entries: [] });
   });
 
+  it("projects locally known gallery metadata with each download entry", async () => {
+    const knownGallery = galleryId(4_050_642);
+    const queued = await backend.downloadQueueAdd([knownGallery], "queue-library-projection");
+    if (!queued.ok) throw new Error(queued.error.message);
+
+    const result = await backend.downloadLibraryPageList({
+      query: "blue lane",
+      page: 1,
+      pageSize: 20,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        totalItems: 1,
+        items: [{
+          gallery: {
+            id: knownGallery,
+            title: "Blue Lane",
+            artist: "mizuno",
+            pages: 48,
+            language: "english",
+            publishedRank: 20260809,
+          },
+          download: {
+            entryId: queued.data[0]!.entryId,
+            galleryId: knownGallery,
+          },
+        }],
+      },
+    });
+    await backend.downloadCancel([queued.data[0]!.entryId]);
+  });
+
+  it("projects one canonical latest entry for a gallery with download history", async () => {
+    const target = galleryId(7_100_041);
+    const browserState = backend as unknown as { downloadEntries: Map<string, DownloadEntry> };
+    const first = await backend.downloadQueueAdd([target], "queue-library-canonical-first");
+    if (!first.ok) throw new Error(first.error.message);
+    const older = first.data[0]!;
+    browserState.downloadEntries.set(older.entryId, {
+      ...older,
+      state: "completed",
+      progress: 100,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-01T00:00:00.000Z",
+    });
+
+    const second = await backend.downloadQueueAdd([target], "queue-library-canonical-second");
+    if (!second.ok) throw new Error(second.error.message);
+    const newer = second.data[0]!;
+    browserState.downloadEntries.set(newer.entryId, {
+      ...newer,
+      createdAt: "2026-08-02T00:00:00.000Z",
+      updatedAt: "2026-08-02T00:00:00.000Z",
+    });
+
+    const result = await backend.downloadLibraryPageList({
+      query: String(target),
+      page: 1,
+      pageSize: 20,
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      data: {
+        totalItems: 1,
+        items: [{ download: { entryId: newer.entryId, galleryId: target } }],
+      },
+    });
+  });
+
   it("rejects list queries longer than 500 UTF-8 bytes after normalization", async () => {
     const result = await backend.downloadEntriesList({
       query: `  ${"가".repeat(167)}  `,
@@ -1133,6 +1321,58 @@ describe("browser backend detail original contract", () => {
     await expect(backend.detailOriginalPrepare({ requestId: "not-a-uuid", galleryId: galleryId(4051038), sourcePage: 1 }))
       .resolves.toMatchObject({ ok: false, error: { code: "VALIDATION_ERROR" } });
   });
+
+  it("allows later pages only for the matching completed local entry", async () => {
+    const state = backend as unknown as { downloadEntries: Map<string, DownloadEntry> };
+    const entryId = "browser-local-original";
+    const previous = state.downloadEntries.get(entryId);
+    const requestId = "550e8400-e29b-41d4-a716-446655440001";
+    const gallery = galleryId(4051038);
+    try {
+      state.downloadEntries.set(entryId, {
+        entryId,
+        galleryId: gallery,
+        revision: 1,
+        state: "completed",
+        progress: 100,
+      });
+
+      await expect(backend.detailOriginalPrepare({
+        requestId,
+        galleryId: gallery,
+        sourcePage: 7,
+        entryId,
+      })).resolves.toMatchObject({
+        ok: true,
+        data: { requestId, galleryId: gallery, sourcePage: 7, contentType: "image/png" },
+      });
+      await expect(backend.detailOriginalPrepare({
+        requestId,
+        galleryId: galleryId(4050974),
+        sourcePage: 7,
+        entryId,
+      })).resolves.toMatchObject({ ok: false, error: { code: "DETAIL_ORIGINAL_UNAVAILABLE" } });
+
+      state.downloadEntries.set(entryId, {
+        ...state.downloadEntries.get(entryId)!,
+        state: "failed",
+      });
+      await expect(backend.detailOriginalPrepare({
+        requestId,
+        galleryId: gallery,
+        sourcePage: 7,
+        entryId,
+      })).resolves.toMatchObject({ ok: false, error: { code: "DETAIL_ORIGINAL_UNAVAILABLE" } });
+      await expect(backend.detailOriginalPrepare({
+        requestId,
+        galleryId: gallery,
+        sourcePage: 2,
+      })).resolves.toMatchObject({ ok: false, error: { code: "VALIDATION_ERROR" } });
+    } finally {
+      if (previous) state.downloadEntries.set(entryId, previous);
+      else state.downloadEntries.delete(entryId);
+    }
+  });
 });
 
 describe("browser backend active-work exit contract", () => {
@@ -1326,6 +1566,19 @@ describe("browser backend active-work exit contract", () => {
     if (!review.ok) return;
     const firstCandidate = review.data.candidates[0];
     if (!firstCandidate) throw new Error("browser overlap fixture must include candidates");
+    await expect(backend.downloadOverlapDecisionApply({
+      reviewId: review.data.reviewId,
+      expectedRevision: review.data.revision,
+      action: "remove_existing_continue",
+      candidateId: firstCandidate.candidateId,
+      actor: "automation",
+      reasonCode: "strict_extra_pages_v1",
+      ruleVersion: 1,
+      featureSnapshotJson: "[]",
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", details: { field: "request.featureSnapshotJson" } },
+    });
     await expect(backend.downloadOverlapDecisionApply({
       reviewId: review.data.reviewId,
       expectedRevision: 99,

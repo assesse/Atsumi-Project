@@ -1,6 +1,6 @@
 [package]
 name = "atsumi"
-version = "1.0.1"
+version = "1.1.0"
 description = "Atsumi desktop backend"
 authors = ["Atsumi contributors"]
 edition = "2021"

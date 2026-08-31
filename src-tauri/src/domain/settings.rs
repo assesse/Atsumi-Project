@@ -12,6 +12,7 @@ pub const DEFAULT_PREVIEW_WIDTH: u32 = 220;
 /// The related-gallery strip lives inside the floating detail view, so it has
 /// its own size preference instead of inheriting the dense Explore card size.
 pub const DEFAULT_RELATED_PREVIEW_WIDTH: u32 = 240;
+pub const DEFAULT_EXPLORE_PAGE_SIZE: u32 = 50;
 pub const DEFAULT_CACHE_LIMIT_GB: u32 = 10;
 pub const DEFAULT_CONCURRENT_IMAGE_REQUESTS: u32 = 5;
 pub const DEFAULT_REQUEST_START_INTERVAL_MS: u64 = 25;
@@ -142,6 +143,34 @@ impl AutoFindHistoryMode {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum DownloadOverlapAutoMode {
+    #[default]
+    Off,
+    Recommend,
+    StrictQuarantine,
+}
+
+impl DownloadOverlapAutoMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Recommend => "recommend",
+            Self::StrictQuarantine => "strict_quarantine",
+        }
+    }
+
+    pub fn from_database(value: &str) -> Option<Self> {
+        match value {
+            "off" => Some(Self::Off),
+            "recommend" => Some(Self::Recommend),
+            "strict_quarantine" => Some(Self::StrictQuarantine),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum GalleryGroupingMode {
     #[default]
     All,
@@ -168,12 +197,38 @@ impl GalleryGroupingMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GalleryDisplayMode {
+    #[default]
+    Detail,
+    Compact,
+}
+
+impl GalleryDisplayMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Detail => "detail",
+            Self::Compact => "compact",
+        }
+    }
+
+    pub fn from_database(value: &str) -> Option<Self> {
+        match value {
+            "detail" => Some(Self::Detail),
+            "compact" => Some(Self::Compact),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
     pub revision: u64,
     pub download_root: String,
     pub folder_name_template: String,
+    pub explore_page_size: u32,
     pub max_columns: u32,
     pub preview_width: u32,
     pub related_preview_width: u32,
@@ -182,8 +237,12 @@ pub struct SettingsSnapshot {
     pub concurrent_image_requests: u32,
     pub request_start_interval_ms: u64,
     pub auto_find_history_mode: AutoFindHistoryMode,
+    pub download_overlap_auto_mode: DownloadOverlapAutoMode,
     pub auto_find_grouping: GalleryGroupingMode,
     pub downloads_grouping: GalleryGroupingMode,
+    pub explore_display_mode: GalleryDisplayMode,
+    pub auto_find_display_mode: GalleryDisplayMode,
+    pub downloads_display_mode: GalleryDisplayMode,
     pub collapsed_group_keys: Vec<String>,
     pub search_include_tags: Vec<String>,
     pub search_exclude_tags: Vec<String>,
@@ -195,6 +254,7 @@ impl Default for SettingsSnapshot {
             revision: 0,
             download_root: String::new(),
             folder_name_template: DEFAULT_FOLDER_NAME_TEMPLATE.to_owned(),
+            explore_page_size: DEFAULT_EXPLORE_PAGE_SIZE,
             max_columns: DEFAULT_MAX_COLUMNS,
             preview_width: DEFAULT_PREVIEW_WIDTH,
             related_preview_width: DEFAULT_RELATED_PREVIEW_WIDTH,
@@ -203,8 +263,12 @@ impl Default for SettingsSnapshot {
             concurrent_image_requests: DEFAULT_CONCURRENT_IMAGE_REQUESTS,
             request_start_interval_ms: DEFAULT_REQUEST_START_INTERVAL_MS,
             auto_find_history_mode: AutoFindHistoryMode::default(),
+            download_overlap_auto_mode: DownloadOverlapAutoMode::default(),
             auto_find_grouping: GalleryGroupingMode::default(),
             downloads_grouping: GalleryGroupingMode::default(),
+            explore_display_mode: GalleryDisplayMode::default(),
+            auto_find_display_mode: GalleryDisplayMode::default(),
+            downloads_display_mode: GalleryDisplayMode::default(),
             collapsed_group_keys: Vec::new(),
             search_include_tags: Vec::new(),
             search_exclude_tags: Vec::new(),
@@ -217,6 +281,7 @@ impl Default for SettingsSnapshot {
 pub struct SettingsPatch {
     pub download_root: Option<String>,
     pub folder_name_template: Option<String>,
+    pub explore_page_size: Option<u32>,
     pub max_columns: Option<u32>,
     pub preview_width: Option<u32>,
     pub related_preview_width: Option<u32>,
@@ -225,8 +290,12 @@ pub struct SettingsPatch {
     pub concurrent_image_requests: Option<u32>,
     pub request_start_interval_ms: Option<u64>,
     pub auto_find_history_mode: Option<AutoFindHistoryMode>,
+    pub download_overlap_auto_mode: Option<DownloadOverlapAutoMode>,
     pub auto_find_grouping: Option<GalleryGroupingMode>,
     pub downloads_grouping: Option<GalleryGroupingMode>,
+    pub explore_display_mode: Option<GalleryDisplayMode>,
+    pub auto_find_display_mode: Option<GalleryDisplayMode>,
+    pub downloads_display_mode: Option<GalleryDisplayMode>,
     pub collapsed_group_keys: Option<Vec<String>>,
     pub search_include_tags: Option<Vec<String>>,
     pub search_exclude_tags: Option<Vec<String>>,
@@ -263,6 +332,9 @@ impl SettingsSnapshot {
         if let Some(value) = patch.folder_name_template {
             next.folder_name_template = value;
         }
+        if let Some(value) = patch.explore_page_size {
+            next.explore_page_size = value;
+        }
         if let Some(value) = patch.max_columns {
             next.max_columns = value;
         }
@@ -287,11 +359,23 @@ impl SettingsSnapshot {
         if let Some(value) = patch.auto_find_history_mode {
             next.auto_find_history_mode = value;
         }
+        if let Some(value) = patch.download_overlap_auto_mode {
+            next.download_overlap_auto_mode = value;
+        }
         if let Some(value) = patch.auto_find_grouping {
             next.auto_find_grouping = value;
         }
         if let Some(value) = patch.downloads_grouping {
             next.downloads_grouping = value;
+        }
+        if let Some(value) = patch.explore_display_mode {
+            next.explore_display_mode = value;
+        }
+        if let Some(value) = patch.auto_find_display_mode {
+            next.auto_find_display_mode = value;
+        }
+        if let Some(value) = patch.downloads_display_mode {
+            next.downloads_display_mode = value;
         }
         if let Some(value) = patch.collapsed_group_keys {
             next.collapsed_group_keys = normalize_collapsed_group_keys(value)?;
@@ -317,6 +401,12 @@ impl SettingsSnapshot {
 
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_folder_name_template(&self.folder_name_template)?;
+        if !(10..=200).contains(&self.explore_page_size) {
+            return Err(ValidationError::new(
+                "explorePageSize",
+                "must be between 10 and 200",
+            ));
+        }
         if !(1..=4).contains(&self.max_columns) {
             return Err(ValidationError::new(
                 "maxColumns",

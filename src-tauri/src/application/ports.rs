@@ -2,10 +2,10 @@ use crate::domain::{
     ArtifactBundle, AutoFindCandidateRecord, AutoFindCutoffEvidence, AutoFindExclusionResult,
     AutoFindHistoryMode, AutoFindRun, AutoFindRunState, AutoFindSnapshot, AutoFindTruncation,
     DownloadEntry, DownloadEntryId, DownloadJobDescriptor, DownloadJobProjection,
-    DownloadListRequest, DownloadPage, DuplicateCandidateRecord, DuplicateDecisionApplyOutcome,
-    DuplicateDecisionRequest, DuplicatePageHash, DuplicateReview, DuplicateScanRun,
-    DuplicateScanState, DuplicateSnapshot, ExplorationDataResetResult, ExplorationExclusion,
-    ExplorationExclusionRestoreResult, ExternalRelationEvidence, FavoriteKey,
+    DownloadLibraryPage, DownloadListRequest, DownloadPage, DuplicateCandidateRecord,
+    DuplicateDecisionApplyOutcome, DuplicateDecisionRequest, DuplicatePageHash, DuplicateReview,
+    DuplicateScanRun, DuplicateScanState, DuplicateSnapshot, ExplorationDataResetResult,
+    ExplorationExclusion, ExplorationExclusionRestoreResult, ExternalRelationEvidence, FavoriteKey,
     FavoriteMutationResult, FavoriteRecord, FixtureDownloadJobStep, GalleryDetail, GalleryId,
     GalleryPage, InternalDuplicateReview, InternalDuplicateSnapshot, InternalGroupRecord,
     InternalRemovalPlan, InternalRemovalSelection, InternalScanRun, InternalScanState, JobRef,
@@ -387,6 +387,11 @@ pub trait DownloadRepository: Send + Sync {
         &self,
         request: &DownloadListRequest,
     ) -> Result<DownloadPage, RepositoryError>;
+
+    fn download_library_page_list(
+        &self,
+        request: &DownloadListRequest,
+    ) -> Result<DownloadLibraryPage, RepositoryError>;
 
     fn download_active_count(&self) -> Result<u64, RepositoryError>;
 

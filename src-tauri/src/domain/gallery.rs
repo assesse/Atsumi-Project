@@ -2,7 +2,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-use super::ValidationError;
+use super::{Language, ValidationError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
@@ -68,6 +68,11 @@ pub struct GalleryMetadata {
     pub artists: Vec<String>,
     pub primary_group: Option<String>,
     pub source_page_count: u32,
+    /// Persisted list presentation metadata. Legacy artifacts legitimately
+    /// omit these values and are enriched when their source metadata is next
+    /// resolved.
+    pub language: Option<Language>,
+    pub published_rank: Option<u32>,
 }
 
 impl GalleryMetadata {
@@ -96,7 +101,21 @@ impl GalleryMetadata {
             primary_artist,
             primary_group,
             source_page_count,
+            language: None,
+            published_rank: None,
         })
+    }
+
+    /// Adds source presentation fields without widening the artifact naming
+    /// contract. They are used by the local Downloads list projection only.
+    pub fn with_list_presentation(
+        mut self,
+        language: Option<Language>,
+        published_rank: Option<u32>,
+    ) -> Self {
+        self.language = language;
+        self.published_rank = published_rank;
+        self
     }
 
     /// Replaces the source artist list while retaining the established primary

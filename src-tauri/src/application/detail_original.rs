@@ -1,20 +1,28 @@
 use std::{
+    collections::HashMap,
     fs,
+    io::Cursor,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
+use image::{ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::{
-    domain::{GalleryId, SourcePageNumber},
+    domain::{
+        ArtifactBundle, DownloadArtifactState, DownloadEntryId, GalleryId, PageArtifact,
+        SourcePageNumber,
+    },
     infrastructure::normalized_webp_bytes,
     thumbnail::CancellationToken,
 };
 
-use super::{DownloadSourceImageFormat, DownloadSourcePort};
+use super::{
+    ArtifactStore, DownloadPipelineRepository, DownloadSourceImageFormat, DownloadSourcePort,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +30,8 @@ pub struct DetailOriginalPrepareRequest {
     pub request_id: String,
     pub gallery_id: i64,
     pub source_page: u32,
+    #[serde(default)]
+    pub entry_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -51,12 +61,16 @@ pub enum DetailOriginalError {
     WriteFailed,
     #[error("the prepared original file could not be finalized")]
     Unavailable,
+    #[error("the verified local artifact page is unavailable")]
+    ArtifactUnavailable,
 }
 
 impl DetailOriginalError {
     pub const fn code(&self) -> &'static str {
         match self {
-            Self::InvalidRequest | Self::Unavailable => "DETAIL_ORIGINAL_UNAVAILABLE",
+            Self::InvalidRequest | Self::Unavailable | Self::ArtifactUnavailable => {
+                "DETAIL_ORIGINAL_UNAVAILABLE"
+            }
             Self::Cancelled => "DETAIL_ORIGINAL_CANCELLED",
             Self::SourceFailed { .. } => "DETAIL_ORIGINAL_SOURCE_FAILED",
             Self::ConversionFailed => "DETAIL_ORIGINAL_CONVERSION_FAILED",
@@ -71,26 +85,139 @@ struct StoredOriginal {
     content_type: String,
 }
 struct ActiveOriginal {
-    request_id: String,
+    generation: u64,
     token: CancellationToken,
     stored: Option<StoredOriginal>,
 }
 #[derive(Default)]
 struct DetailOriginalState {
-    active: Option<ActiveOriginal>,
+    active: HashMap<String, ActiveOriginal>,
+    next_generation: u64,
 }
 
-/// One app-wide detail original at a time. It bypasses the thumbnail cache and
-/// is visible only through a request-ID custom-protocol URL.
+struct OriginalMediaPayload {
+    bytes: Vec<u8>,
+    content_type: String,
+    extension: &'static str,
+    width: u32,
+    height: u32,
+}
+
+trait DetailOriginalArtifactSource: Send + Sync {
+    fn load(
+        &self,
+        entry_id: &DownloadEntryId,
+        gallery_id: GalleryId,
+        source_page: SourcePageNumber,
+        cancellation: &CancellationToken,
+    ) -> Result<OriginalMediaPayload, DetailOriginalError>;
+}
+
+struct ManagedDetailOriginalArtifactSource {
+    repository: Arc<dyn DownloadPipelineRepository>,
+    store: Arc<dyn ArtifactStore>,
+}
+
+impl DetailOriginalArtifactSource for ManagedDetailOriginalArtifactSource {
+    fn load(
+        &self,
+        entry_id: &DownloadEntryId,
+        gallery_id: GalleryId,
+        source_page: SourcePageNumber,
+        cancellation: &CancellationToken,
+    ) -> Result<OriginalMediaPayload, DetailOriginalError> {
+        if cancellation.is_cancelled() {
+            return Err(DetailOriginalError::Cancelled);
+        }
+        let bundle = self
+            .repository
+            .pipeline_artifact_bundle(entry_id)
+            .map_err(|_| DetailOriginalError::ArtifactUnavailable)?
+            .ok_or(DetailOriginalError::ArtifactUnavailable)?;
+        let page = completed_artifact_page(&bundle, entry_id, gallery_id, source_page)
+            .ok_or(DetailOriginalError::ArtifactUnavailable)?;
+        let root = self
+            .repository
+            .pipeline_artifact_root(entry_id)
+            .map_err(|_| DetailOriginalError::ArtifactUnavailable)?;
+        let bytes = self
+            .store
+            .read_verified_page_bytes(&root, page)
+            .map_err(|_| DetailOriginalError::ArtifactUnavailable)?;
+        if cancellation.is_cancelled() {
+            return Err(DetailOriginalError::Cancelled);
+        }
+        let (width, height) =
+            ImageReader::with_format(Cursor::new(bytes.as_slice()), ImageFormat::WebP)
+                .into_dimensions()
+                .map_err(|_| DetailOriginalError::ArtifactUnavailable)?;
+        Ok(OriginalMediaPayload {
+            bytes,
+            content_type: "image/webp".into(),
+            extension: "webp",
+            width,
+            height,
+        })
+    }
+}
+
+fn completed_artifact_page<'a>(
+    bundle: &'a ArtifactBundle,
+    entry_id: &DownloadEntryId,
+    gallery_id: GalleryId,
+    source_page: SourcePageNumber,
+) -> Option<&'a PageArtifact> {
+    if bundle.artifact.state != DownloadArtifactState::Complete
+        || &bundle.artifact.entry_id != entry_id
+        || bundle.artifact.gallery_id != gallery_id
+        || bundle.gallery.id != gallery_id
+    {
+        return None;
+    }
+    bundle.pages.iter().find(|page| {
+        &page.entry_id == entry_id
+            && page.page_id.gallery_id == gallery_id
+            && page.page_id.source_page_number == source_page
+    })
+}
+
+/// Original media bypasses the thumbnail cache and is visible only through
+/// request-ID custom-protocol URLs. Independent request slots let the retained
+/// detail hero and a page-preview dialog remain valid at the same time.
 #[derive(Clone)]
 pub struct DetailOriginalSupervisor {
     source: Arc<dyn DownloadSourcePort>,
+    artifact_source: Option<Arc<dyn DetailOriginalArtifactSource>>,
     root: PathBuf,
     state: Arc<Mutex<DetailOriginalState>>,
 }
 
 impl DetailOriginalSupervisor {
     pub fn new(source: Arc<dyn DownloadSourcePort>, data_dir: &Path) -> std::io::Result<Self> {
+        Self::new_with_artifact_source(source, None, data_dir)
+    }
+
+    pub fn new_with_artifacts(
+        source: Arc<dyn DownloadSourcePort>,
+        repository: Arc<dyn DownloadPipelineRepository>,
+        store: Arc<dyn ArtifactStore>,
+        data_dir: &Path,
+    ) -> std::io::Result<Self> {
+        Self::new_with_artifact_source(
+            source,
+            Some(Arc::new(ManagedDetailOriginalArtifactSource {
+                repository,
+                store,
+            })),
+            data_dir,
+        )
+    }
+
+    fn new_with_artifact_source(
+        source: Arc<dyn DownloadSourcePort>,
+        artifact_source: Option<Arc<dyn DetailOriginalArtifactSource>>,
+        data_dir: &Path,
+    ) -> std::io::Result<Self> {
         let root = data_dir.join("detail-original");
         fs::create_dir_all(&root)?;
         for entry in fs::read_dir(&root)? {
@@ -101,6 +228,7 @@ impl DetailOriginalSupervisor {
         }
         Ok(Self {
             source,
+            artifact_source,
             root,
             state: Arc::new(Mutex::new(DetailOriginalState::default())),
         })
@@ -115,25 +243,46 @@ impl DetailOriginalSupervisor {
             GalleryId::new(request.gallery_id).map_err(|_| DetailOriginalError::InvalidRequest)?;
         let source_page = SourcePageNumber::new(request.source_page)
             .map_err(|_| DetailOriginalError::InvalidRequest)?;
-        if source_page.get() != 1 {
+        let entry_id = request
+            .entry_id
+            .as_ref()
+            .map(|entry_id| DownloadEntryId::new(entry_id.clone()))
+            .transpose()
+            .map_err(|_| DetailOriginalError::InvalidRequest)?;
+        if entry_id.is_none() && source_page.get() != 1 {
             return Err(DetailOriginalError::InvalidRequest);
         }
 
-        self.dispose_active();
         let cancellation = CancellationToken::new();
-        self.state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .active = Some(ActiveOriginal {
-            request_id: request_id.clone(),
-            token: cancellation.clone(),
-            stored: None,
-        });
-        tracing::info!(request_id = %request_id, gallery_id = request.gallery_id, source_page = 1, "detail original prepare_started");
-        let result = self.prepare_registered(&request_id, gallery_id, source_page, &cancellation);
+        let (generation, replaced) = {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            state.next_generation = state.next_generation.wrapping_add(1).max(1);
+            let generation = state.next_generation;
+            let replaced = state.active.insert(
+                request_id.clone(),
+                ActiveOriginal {
+                    generation,
+                    token: cancellation.clone(),
+                    stored: None,
+                },
+            );
+            (generation, replaced)
+        };
+        if let Some(replaced) = replaced {
+            cleanup_active_original(replaced);
+        }
+        tracing::info!(request_id = %request_id, gallery_id = request.gallery_id, source_page = request.source_page, local_artifact = entry_id.is_some(), "detail original prepare_started");
+        let result = self.prepare_registered(
+            &request_id,
+            generation,
+            gallery_id,
+            source_page,
+            entry_id.as_ref(),
+            &cancellation,
+        );
         if let Err(error) = &result {
-            tracing::warn!(request_id = %request_id, gallery_id = request.gallery_id, source_page = 1, code = error.code(), "detail original prepare_failed");
-            self.dispose(&request_id);
+            tracing::warn!(request_id = %request_id, gallery_id = request.gallery_id, source_page = request.source_page, local_artifact = entry_id.is_some(), code = error.code(), "detail original prepare_failed");
+            self.dispose_generation(&request_id, generation);
         }
         result
     }
@@ -144,21 +293,10 @@ impl DetailOriginalSupervisor {
         };
         let active = {
             let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-            if state
-                .active
-                .as_ref()
-                .is_some_and(|active| active.request_id == request_id)
-            {
-                state.active.take()
-            } else {
-                None
-            }
+            state.active.remove(&request_id)
         };
         if let Some(active) = active {
-            active.token.cancel();
-            if let Some(stored) = active.stored {
-                let _ = fs::remove_file(stored.path);
-            }
+            cleanup_active_original(active);
             tracing::info!(request_id = %request_id, "detail original disposed");
         }
         true // repeated React cleanup is deliberately idempotent
@@ -173,8 +311,8 @@ impl DetailOriginalSupervisor {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .active
-            .as_ref()
-            .filter(|active| active.request_id == request_id && !active.token.is_cancelled())?
+            .get(&request_id)
+            .filter(|active| !active.token.is_cancelled())?
             .stored
             .clone()?;
         let root = fs::canonicalize(&self.root).ok()?;
@@ -183,52 +321,72 @@ impl DetailOriginalSupervisor {
             .then_some((path, stored.content_type))
     }
 
-    fn dispose_active(&self) {
-        let request_id = self
-            .state
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-            .active
-            .as_ref()
-            .map(|active| active.request_id.clone());
-        if let Some(request_id) = request_id {
-            self.dispose(&request_id);
+    fn dispose_generation(&self, request_id: &str, generation: u64) {
+        let active = {
+            let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+            if state
+                .active
+                .get(request_id)
+                .is_some_and(|active| active.generation == generation)
+            {
+                state.active.remove(request_id)
+            } else {
+                None
+            }
+        };
+        if let Some(active) = active {
+            cleanup_active_original(active);
         }
     }
 
     fn prepare_registered(
         &self,
         request_id: &str,
+        generation: u64,
         gallery_id: GalleryId,
         source_page: SourcePageNumber,
+        entry_id: Option<&DownloadEntryId>,
         cancellation: &CancellationToken,
     ) -> Result<DetailOriginalPrepared, DetailOriginalError> {
-        let payload = self
-            .source
-            .download_page(gallery_id, source_page, cancellation)
-            .map_err(|error| DetailOriginalError::SourceFailed {
-                source_code: error.code.as_str().into(),
-            })?;
-        if cancellation.is_cancelled() {
-            return Err(DetailOriginalError::Cancelled);
-        }
-        tracing::info!(request_id = %request_id, gallery_id = gallery_id.get(), source_page = 1, "detail original source_resolved");
-        let width = payload.width;
-        let height = payload.height;
-        let (bytes, content_type, extension) = match payload.source_format {
-            DownloadSourceImageFormat::Avif => normalized_webp_bytes(&payload)
-                .map(|bytes| (bytes.into_owned(), "image/webp".to_owned(), "webp"))
-                .map_err(|_| DetailOriginalError::ConversionFailed)?,
-            DownloadSourceImageFormat::Webp => (payload.bytes, "image/webp".to_owned(), "webp"),
-            DownloadSourceImageFormat::Jpeg => (payload.bytes, "image/jpeg".to_owned(), "jpg"),
-            DownloadSourceImageFormat::Png => (payload.bytes, "image/png".to_owned(), "png"),
+        let payload = if let Some(entry_id) = entry_id {
+            self.artifact_source
+                .as_ref()
+                .ok_or(DetailOriginalError::ArtifactUnavailable)?
+                .load(entry_id, gallery_id, source_page, cancellation)?
+        } else {
+            let payload = self
+                .source
+                .download_page(gallery_id, source_page, cancellation)
+                .map_err(|error| DetailOriginalError::SourceFailed {
+                    source_code: error.code.as_str().into(),
+                })?;
+            let width = payload.width;
+            let height = payload.height;
+            let (bytes, content_type, extension) = match payload.source_format {
+                DownloadSourceImageFormat::Avif => normalized_webp_bytes(&payload)
+                    .map(|bytes| (bytes.into_owned(), "image/webp".to_owned(), "webp"))
+                    .map_err(|_| DetailOriginalError::ConversionFailed)?,
+                DownloadSourceImageFormat::Webp => (payload.bytes, "image/webp".to_owned(), "webp"),
+                DownloadSourceImageFormat::Jpeg => (payload.bytes, "image/jpeg".to_owned(), "jpg"),
+                DownloadSourceImageFormat::Png => (payload.bytes, "image/png".to_owned(), "png"),
+            };
+            OriginalMediaPayload {
+                bytes,
+                content_type,
+                extension,
+                width,
+                height,
+            }
         };
         if cancellation.is_cancelled() {
             return Err(DetailOriginalError::Cancelled);
         }
-        let temporary_path = self.root.join(format!("{request_id}.part"));
-        let final_path = self.root.join(format!("{request_id}.{extension}"));
-        if fs::write(&temporary_path, bytes).is_err() {
+        tracing::info!(request_id = %request_id, gallery_id = gallery_id.get(), source_page = source_page.get(), local_artifact = entry_id.is_some(), "detail original source_resolved");
+        let temporary_path = self.root.join(format!("{request_id}.{generation}.part"));
+        let final_path = self
+            .root
+            .join(format!("{request_id}.{generation}.{}", payload.extension));
+        if fs::write(&temporary_path, payload.bytes).is_err() {
             let _ = fs::remove_file(&temporary_path);
             return Err(DetailOriginalError::WriteFailed);
         }
@@ -245,12 +403,12 @@ impl DetailOriginalSupervisor {
             .lock()
             .unwrap_or_else(|error| error.into_inner())
             .active
-            .as_mut()
+            .get_mut(request_id)
         {
-            Some(active) if active.request_id == request_id && !active.token.is_cancelled() => {
+            Some(active) if active.generation == generation && !active.token.is_cancelled() => {
                 active.stored = Some(StoredOriginal {
                     path: final_path.clone(),
-                    content_type: content_type.clone(),
+                    content_type: payload.content_type.clone(),
                 });
                 true
             }
@@ -260,16 +418,23 @@ impl DetailOriginalSupervisor {
             let _ = fs::remove_file(final_path);
             return Err(DetailOriginalError::Cancelled);
         }
-        tracing::info!(request_id = %request_id, gallery_id = gallery_id.get(), source_page = 1, "detail original file_prepared");
+        tracing::info!(request_id = %request_id, gallery_id = gallery_id.get(), source_page = source_page.get(), local_artifact = entry_id.is_some(), "detail original file_prepared");
         Ok(DetailOriginalPrepared {
             request_id: request_id.into(),
             gallery_id: gallery_id.get(),
             source_page: source_page.get(),
             media_url: detail_original_media_url(request_id),
-            content_type,
-            width,
-            height,
+            content_type: payload.content_type,
+            width: payload.width,
+            height: payload.height,
         })
+    }
+}
+
+fn cleanup_active_original(active: ActiveOriginal) {
+    active.token.cancel();
+    if let Some(stored) = active.stored {
+        let _ = fs::remove_file(stored.path);
     }
 }
 
@@ -303,6 +468,10 @@ mod tests {
 
     use crate::{
         application::{DownloadGallerySnapshot, DownloadPagePayload},
+        domain::{
+            ArtifactRelativePath, ArtifactSha256, ArtifactStorageFormat, DownloadArtifact, Gallery,
+            GalleryMetadata, PageArtifactState,
+        },
         source::SourceContractError,
     };
 
@@ -316,6 +485,39 @@ mod tests {
     struct FixtureSource {
         mode: FixtureMode,
         started: Arc<AtomicBool>,
+    }
+
+    struct FixtureArtifactSource {
+        calls: Arc<Mutex<Vec<(String, i64, u32)>>>,
+    }
+
+    impl DetailOriginalArtifactSource for FixtureArtifactSource {
+        fn load(
+            &self,
+            entry_id: &DownloadEntryId,
+            gallery_id: GalleryId,
+            source_page: SourcePageNumber,
+            cancellation: &CancellationToken,
+        ) -> Result<OriginalMediaPayload, DetailOriginalError> {
+            if cancellation.is_cancelled() {
+                return Err(DetailOriginalError::Cancelled);
+            }
+            self.calls
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push((
+                    entry_id.as_str().into(),
+                    gallery_id.get(),
+                    source_page.get(),
+                ));
+            Ok(OriginalMediaPayload {
+                bytes: b"verified-local-webp".to_vec(),
+                content_type: "image/webp".into(),
+                extension: "webp",
+                width: 1_600,
+                height: 900,
+            })
+        }
     }
 
     impl DownloadSourcePort for FixtureSource {
@@ -381,7 +583,50 @@ mod tests {
             request_id: request_id.into(),
             gallery_id: 4_133_977,
             source_page: 1,
+            entry_id: None,
         }
+    }
+
+    fn fixture_artifact_bundle(state: DownloadArtifactState) -> ArtifactBundle {
+        let entry_id = DownloadEntryId::new("entry-local-original").unwrap();
+        let gallery_id = GalleryId::new(4_133_977).unwrap();
+        let gallery = Gallery::new(
+            gallery_id,
+            0,
+            GalleryMetadata::new("Local original", Some("artist".into()), None, 1).unwrap(),
+        );
+        let directory = ArtifactRelativePath::new("local-original").unwrap();
+        let mut artifact =
+            DownloadArtifact::new(entry_id.clone(), gallery_id, 0, directory.clone(), 1, state)
+                .unwrap();
+        let page = PageArtifact::new(
+            entry_id,
+            gallery_id,
+            SourcePageNumber::new(1).unwrap(),
+            ArtifactRelativePath::new("local-original/0001.webp").unwrap(),
+            PageArtifactState::Present,
+            Some(4),
+        )
+        .unwrap()
+        .with_verification(
+            ArtifactSha256::new("0".repeat(64)).unwrap(),
+            ArtifactStorageFormat::Webp,
+            "source-v1",
+            "2026-08-31T00:00:00Z",
+        )
+        .unwrap();
+        if state == DownloadArtifactState::Complete {
+            artifact = artifact
+                .with_manifest(
+                    ArtifactRelativePath::new("local-original/manifest.json").unwrap(),
+                    1,
+                    "test-writer",
+                    1,
+                    "2026-08-31T00:00:01Z",
+                )
+                .unwrap();
+        }
+        ArtifactBundle::new(gallery, artifact, vec![page]).unwrap()
     }
 
     #[test]
@@ -451,6 +696,110 @@ mod tests {
     }
 
     #[test]
+    fn completed_artifact_selection_requires_exact_entry_gallery_and_page() {
+        let complete = fixture_artifact_bundle(DownloadArtifactState::Complete);
+        let entry_id = DownloadEntryId::new("entry-local-original").unwrap();
+        let gallery_id = GalleryId::new(4_133_977).unwrap();
+        assert!(completed_artifact_page(
+            &complete,
+            &entry_id,
+            gallery_id,
+            SourcePageNumber::new(1).unwrap(),
+        )
+        .is_some());
+        assert!(completed_artifact_page(
+            &complete,
+            &entry_id,
+            GalleryId::new(4_133_978).unwrap(),
+            SourcePageNumber::new(1).unwrap(),
+        )
+        .is_none());
+        assert!(completed_artifact_page(
+            &complete,
+            &entry_id,
+            gallery_id,
+            SourcePageNumber::new(2).unwrap(),
+        )
+        .is_none());
+
+        let incomplete = fixture_artifact_bundle(DownloadArtifactState::Incomplete);
+        assert!(completed_artifact_page(
+            &incomplete,
+            &entry_id,
+            gallery_id,
+            SourcePageNumber::new(1).unwrap(),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn local_page_and_remote_hero_keep_independent_request_lifecycles() {
+        let temp = tempfile::tempdir().unwrap();
+        let started = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let supervisor = DetailOriginalSupervisor::new_with_artifact_source(
+            Arc::new(FixtureSource {
+                mode: FixtureMode::Png,
+                started: started.clone(),
+            }),
+            Some(Arc::new(FixtureArtifactSource {
+                calls: calls.clone(),
+            })),
+            temp.path(),
+        )
+        .unwrap();
+        let hero_id = "550e8400-e29b-41d4-a716-446655440000";
+        let page_id = "550e8400-e29b-41d4-a716-446655440001";
+
+        let hero = supervisor.prepare(fixture_request(hero_id)).unwrap();
+        let page = supervisor
+            .prepare(DetailOriginalPrepareRequest {
+                request_id: page_id.into(),
+                gallery_id: 4_133_977,
+                source_page: 7,
+                entry_id: Some("entry-local-original".into()),
+            })
+            .unwrap();
+
+        assert!(started.load(Ordering::Acquire));
+        assert_eq!(hero.source_page, 1);
+        assert_eq!(hero.content_type, "image/png");
+        assert_eq!(page.source_page, 7);
+        assert_eq!(page.content_type, "image/webp");
+        assert_eq!(page.width, 1_600);
+        assert_eq!(page.height, 900);
+        assert_eq!(
+            calls
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .as_slice(),
+            [("entry-local-original".into(), 4_133_977, 7)]
+        );
+        assert!(supervisor.media_file(hero_id).is_some());
+        let (page_path, _) = supervisor.media_file(page_id).unwrap();
+        assert_eq!(fs::read(page_path).unwrap(), b"verified-local-webp");
+
+        assert!(supervisor.dispose(page_id));
+        assert!(supervisor.media_file(page_id).is_none());
+        assert!(supervisor.media_file(hero_id).is_some());
+        assert!(supervisor.dispose(hero_id));
+    }
+
+    #[test]
+    fn remote_original_remains_page_one_only() {
+        let temp = tempfile::tempdir().unwrap();
+        let (supervisor, started) = fixture_supervisor(FixtureMode::Png, temp.path());
+        let mut request = fixture_request("550e8400-e29b-41d4-a716-446655440000");
+        request.source_page = 2;
+
+        assert_eq!(
+            supervisor.prepare(request),
+            Err(DetailOriginalError::InvalidRequest)
+        );
+        assert!(!started.load(Ordering::Acquire));
+    }
+
+    #[test]
     fn dispose_cancels_an_inflight_prepare_without_leaving_a_file() {
         let temp = tempfile::tempdir().unwrap();
         let (supervisor, started) =
@@ -475,11 +824,13 @@ mod tests {
             })
         );
         assert!(supervisor.media_file(request_id).is_none());
-        assert!(!temp
-            .path()
-            .join("detail-original")
-            .join(format!("{request_id}.part"))
-            .exists());
+        assert!(fs::read_dir(temp.path().join("detail-original"))
+            .unwrap()
+            .all(|entry| entry
+                .unwrap()
+                .path()
+                .extension()
+                .is_none_or(|extension| extension != "part")));
     }
 
     #[test]

@@ -6,7 +6,7 @@ import type { Gallery, GalleryId } from "../core/types";
 import { mockGalleries } from "../data/mockGalleries";
 import { applyDownloadChanged } from "../state/downloadProjection";
 import { browserFixtureThumbnailAdapter, ThumbnailClient } from "../thumbnail";
-import { GalleryCard } from "./GalleryCard";
+import { GalleryCard, compactFavoriteTagValues } from "./GalleryCard";
 import { fitTagChips, sortGalleryTags, splitGalleryTitle } from "./galleryCardLayout";
 
 const defaultThumbnailClient = new ThumbnailClient(browserFixtureThumbnailAdapter);
@@ -43,6 +43,77 @@ describe("GalleryCard event projection", () => {
     } finally {
       await act(async () => root.unmount());
       container.remove();
+    }
+  });
+
+  it("renders a preview-first compact card without the ordinary tag and metadata DOM", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const gallery: Gallery = {
+      ...mockGalleries[0]!,
+      tags: ["female:glasses", "female:long_hair", "full_color", "mystery"],
+      download: { entryId: "compact-complete", state: "completed", progress: 100 },
+    };
+    try {
+      await act(async () => root.render(
+        <GalleryCard
+          gallery={gallery}
+          view="downloads"
+          displayMode="compact"
+          selected={false}
+          selectionContext={false}
+          favoriteMetadata={new Set()}
+          {...callbacks}
+        />,
+      ));
+      const card = container.querySelector<HTMLElement>(".gallery-card");
+      expect(card).toHaveClass("is-compact");
+      expect(card).toHaveAttribute("data-display-mode", "compact");
+      expect(container.querySelector(".card-content")).toBeNull();
+      expect(container.querySelector(".tag-list")).toBeNull();
+      expect(container.querySelector(".compact-favorite-tags")).toBeNull();
+      expect(container.querySelector(".compact-card-summary")).toHaveTextContent(gallery.title.split("|")[0]!.trim());
+      expect(container.querySelector(".compact-card-summary")).toHaveTextContent(gallery.artist);
+      expect(container.querySelector(".compact-card-summary")).toHaveTextContent(`${gallery.pages}p · #${gallery.id}`);
+      expect(container.querySelector(".compact-card-summary")).toHaveTextContent("완료");
+
+      await act(async () => card?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
+      expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, { ctrlKey: true, shiftKey: false });
+      await act(async () => card?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 })));
+      expect(callbacks.onOpenArtifact).toHaveBeenCalledWith(gallery.id);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("projects at most three favorite tags into the fixed compact overlay", async () => {
+    const tags = ["female:a", "female:b", "male:c", "neutral_d", "neutral_e"];
+    const favorites = new Set(tags.slice(0, 4));
+    expect(compactFavoriteTagValues(tags, favorites)).toEqual(tags.slice(0, 3));
+
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <GalleryCard
+          gallery={{ ...mockGalleries[0]!, tags }}
+          view="explore"
+          displayMode="compact"
+          selected={false}
+          selectionContext={false}
+          favoriteMetadata={favorites}
+          {...callbacks}
+        />,
+      ));
+      const rendered = [...container.querySelectorAll<HTMLButtonElement>(".compact-favorite-tags .tag")];
+      expect(rendered).toHaveLength(3);
+      expect(rendered.map((tag) => tag.getAttribute("aria-label"))).toEqual([
+        expect.stringContaining("a, Female 태그, 즐겨찾기"),
+        expect.stringContaining("b, Female 태그, 즐겨찾기"),
+        expect.stringContaining("c, Male 태그, 즐겨찾기"),
+      ]);
+    } finally {
+      await act(async () => root.unmount());
     }
   });
 

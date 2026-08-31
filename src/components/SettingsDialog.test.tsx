@@ -8,6 +8,7 @@ import type {
   MaintenanceAction,
   MaintenanceResult,
   SettingsSnapshot,
+  StorageUsageSnapshot,
 } from "../api/contracts";
 import { galleryId, type GalleryId } from "../core/types";
 import { SettingsDialog } from "./SettingsDialog";
@@ -17,6 +18,8 @@ const settings: SettingsSnapshot = {
   downloadRoot: "C:\\Atsumi",
   folderNameTemplate: "[{artist}] {title} [{group}] {id}",
   autoFindHistoryMode: "include_all_history",
+  explorePageSize: 50,
+  downloadOverlapAutoMode: "off",
   maxColumns: 3,
   previewWidth: 220,
   relatedPreviewWidth: 240,
@@ -26,6 +29,9 @@ const settings: SettingsSnapshot = {
   requestStartIntervalMs: 25,
   autoFindGrouping: "all",
   downloadsGrouping: "all",
+  exploreDisplayMode: "detail",
+  autoFindDisplayMode: "detail",
+  downloadsDisplayMode: "detail",
   collapsedGroupKeys: [],
   searchIncludeTags: [],
   searchExcludeTags: [],
@@ -60,6 +66,23 @@ describe("SettingsDialog operational boundaries", () => {
       data: { action, completedSteps: ["done"], warnings: [], restartRequired: false },
     }));
     const onCheckForUpdates = vi.fn(async () => ({ status: "current" } as const));
+    const onTagCatalogRefresh = vi.fn(async () => undefined);
+    const onLoadStorageUsage = vi.fn(async (): Promise<ApiResult<StorageUsageSnapshot>> => ({
+      ok: true,
+      data: {
+        memoryCacheBytes: 18 * 1024 * 1024,
+        diskCache: { bytes: 6 * 1024 * 1024, exists: true, scanComplete: true, volumeRoot: "C:\\" },
+        appData: { bytes: 164 * 1024 * 1024, exists: true, scanComplete: true, volumeRoot: "C:\\" },
+        downloads: { bytes: 37 * 1024 * 1024 * 1024, exists: true, scanComplete: true, volumeRoot: "D:\\" },
+        volumes: [{
+          root: "D:\\",
+          totalBytes: 2 * 1024 * 1024 * 1024 * 1024,
+          availableBytes: 1_163 * 1024 * 1024 * 1024,
+          atsumiBytes: 37 * 1024 * 1024 * 1024,
+        }],
+        warnings: [],
+      },
+    }));
     const excludedGalleryId = galleryId(4_113_714);
     const onLoadExplorationExclusions = vi.fn(async (): Promise<ApiResult<ExplorationExclusion[]>> => ({
       ok: true,
@@ -91,10 +114,14 @@ describe("SettingsDialog operational boundaries", () => {
           error={null}
           onClose={vi.fn()}
           onSave={onSave}
+          onLoadStorageUsage={onLoadStorageUsage}
           onPreviewLayout={vi.fn()}
           onPreviewFolderName={onPreviewFolderName}
           onMaintenance={onMaintenance}
           onCheckForUpdates={onCheckForUpdates}
+          onTagCatalogRefresh={onTagCatalogRefresh}
+          tagCatalogStatus={{ revision: 3, entryCount: 10_000, neutralCount: 4_000, femaleCount: 3_000, maleCount: 1_000, artistCount: 1_500, groupCount: 500 }}
+          tagCatalogRefreshing={false}
           onLoadExplorationExclusions={onLoadExplorationExclusions}
           onRestoreExplorationExclusions={onRestoreExplorationExclusions}
         />,
@@ -108,6 +135,24 @@ describe("SettingsDialog operational boundaries", () => {
       expect(container.textContent).not.toContain("다음 단계");
       expect(container.querySelectorAll('[data-settings-scroll-root="true"]')).toHaveLength(1);
       expect(container.querySelector(".settings-dialog > .settings-form")).not.toBeNull();
+      const storage = container.querySelector<HTMLElement>(".storage-usage-panel");
+      expect(onLoadStorageUsage).toHaveBeenCalledTimes(1);
+      expect(storage).toHaveTextContent("메모리 미리보기 캐시");
+      expect(storage).toHaveTextContent("18 MB");
+      expect(storage).toHaveTextContent("다운로드 폴더");
+      expect(storage).toHaveTextContent("37 GB");
+      expect(storage).toHaveTextContent("D:\\ 디스크");
+      expect(storage?.querySelector(".storage-volume-meter")).toHaveAttribute(
+        "aria-label",
+        expect.stringContaining("Atsumi 관리 경로 37 GB"),
+      );
+      await act(async () => {
+        [...storage?.querySelectorAll<HTMLButtonElement>("button") ?? []]
+          .find((button) => button.textContent === "새로고침")
+          ?.click();
+        await Promise.resolve();
+      });
+      expect(onLoadStorageUsage).toHaveBeenCalledTimes(2);
       const about = container.querySelector<HTMLElement>(".settings-about-panel");
       expect(about).toHaveTextContent("Atsumi");
       expect(about).toHaveTextContent("assesse · Atsumi contributors");
@@ -156,6 +201,19 @@ describe("SettingsDialog operational boundaries", () => {
       expect(template?.value).toBe("[{artist}] {title} [{group}] {id}");
       const historyMode = container.querySelector<HTMLSelectElement>('[aria-label="Auto Find 기록 기준"]');
       expect(historyMode?.value).toBe("include_all_history");
+      expect(historyMode?.closest(".settings-select-control")?.querySelector(".fluent")).not.toBeNull();
+      const explorePageSize = container.querySelector<HTMLInputElement>('[aria-label="Explore 페이지당 앨범 수"]');
+      expect(explorePageSize?.min).toBe("10");
+      expect(explorePageSize?.max).toBe("200");
+      expect(explorePageSize?.step).toBe("10");
+      expect(explorePageSize?.value).toBe("50");
+      await act(async () => {
+        if (!explorePageSize) throw new Error("Explore page size input missing");
+        const setRangeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setRangeValue?.call(explorePageSize, "80");
+        explorePageSize.dispatchEvent(new Event("input", { bubbles: true }));
+        explorePageSize.dispatchEvent(new Event("change", { bubbles: true }));
+      });
       const previewRange = container.querySelector<HTMLInputElement>('[aria-label="앨범 미리보기 크기"]');
       expect(previewRange?.min).toBe("0");
       expect(previewRange?.max).toBe("6");
@@ -201,6 +259,17 @@ describe("SettingsDialog operational boundaries", () => {
         await Promise.resolve();
       });
       expect(onLoadExplorationExclusions).toHaveBeenCalledTimes(1);
+      const searchCatalog = container.querySelector<HTMLElement>(".search-catalog-panel");
+      expect(searchCatalog).toHaveTextContent("검색어 자동완성 데이터");
+      expect(searchCatalog).toHaveTextContent("10,000개 항목 저장됨");
+      expect(searchCatalog).toHaveTextContent("작가 1,500 · 그룹 500");
+      await act(async () => {
+        [...searchCatalog?.querySelectorAll<HTMLButtonElement>("button") ?? []]
+          .find((button) => button.textContent?.includes("지금 최신화"))
+          ?.click();
+        await Promise.resolve();
+      });
+      expect(onTagCatalogRefresh).toHaveBeenCalledOnce();
       const includeTags = container.querySelector<HTMLTextAreaElement>('[aria-label="모든 검색 필수 포함 태그"]');
       const excludeTags = container.querySelector<HTMLTextAreaElement>('[aria-label="모든 검색 제외 태그"]');
       await act(async () => {
@@ -229,6 +298,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
         folderNameTemplate: "[{artist}] {title} [{group}] {id}",
         autoFindHistoryMode: "include_all_history",
+        explorePageSize: 50,
         relatedPreviewWidth: 240,
         privacyMode: true,
         searchIncludeTags: ["female:glasses", "webtoon"],
@@ -248,6 +318,66 @@ describe("SettingsDialog operational boundaries", () => {
         Reflect.deleteProperty(navigator, "clipboard");
       }
       confirm.mockRestore();
+    }
+  });
+
+  it("keeps autocomplete refresh status and busy state inside Search management", async () => {
+    const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value() { this.setAttribute("open", ""); },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <SettingsDialog
+          open
+          settings={settings}
+          loading={false}
+          error={null}
+          onClose={vi.fn()}
+          onSave={vi.fn(async () => false)}
+          onLoadStorageUsage={vi.fn(async () => ({
+            ok: true as const,
+            data: {
+              memoryCacheBytes: 0,
+              diskCache: { bytes: 0, exists: false, scanComplete: true },
+              appData: { bytes: 0, exists: false, scanComplete: true },
+              downloads: { bytes: 0, exists: false, scanComplete: true },
+              volumes: [],
+              warnings: [],
+            },
+          }))}
+          onPreviewLayout={vi.fn()}
+          onPreviewFolderName={vi.fn(async () => ({ ok: true as const, data: "preview" }))}
+          onMaintenance={vi.fn()}
+          onCheckForUpdates={vi.fn()}
+          onTagCatalogRefresh={vi.fn()}
+          tagCatalogStatus={{ revision: 2, entryCount: 0, neutralCount: 0, femaleCount: 0, maleCount: 0, artistCount: 0, groupCount: 0 }}
+          tagCatalogRefreshing
+          onLoadExplorationExclusions={vi.fn(async () => ({ ok: true as const, data: [] }))}
+          onRestoreExplorationExclusions={vi.fn()}
+        />,
+      ));
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+          .find((button) => button.textContent === "검색 관리")
+          ?.click();
+        await Promise.resolve();
+      });
+      const refresh = [...container.querySelectorAll<HTMLButtonElement>(".search-catalog-panel button")]
+        .find((button) => button.textContent?.includes("최신화 중"));
+      expect(refresh).toBeDisabled();
+      expect(refresh).toHaveAttribute("aria-busy", "true");
+      expect(refresh?.querySelector(".catalog-refresh-spinner")).not.toBeNull();
+      expect(container.querySelector(".search-catalog-status")).toHaveTextContent("저장된 자동완성 데이터 없음");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
     }
   });
 });

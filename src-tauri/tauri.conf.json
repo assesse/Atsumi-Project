@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Atsumi",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "identifier": "local.atsumi.next",
   "build": {
     "beforeDevCommand": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 dev",

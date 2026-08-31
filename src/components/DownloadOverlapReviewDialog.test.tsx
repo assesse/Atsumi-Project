@@ -59,6 +59,54 @@ const fixture = (): DownloadOverlapReview => ({
 });
 
 describe("DownloadOverlapReviewDialog", () => {
+  it("shows a conservative extra-page recommendation only for an eligible review", async () => {
+    const review = fixture();
+    review.incoming.pageCount = 30;
+    const eligible = review.candidates[1]!;
+    eligible.existing.pageCount = 20;
+    eligible.matchedPages = 20;
+    eligible.exactPages = 20;
+    eligible.visualPages = 0;
+    eligible.existingCoverage = 1;
+    eligible.incomingCoverage = 2 / 3;
+    eligible.existingUniquePages = 0;
+    eligible.incomingUniquePages = 10;
+    eligible.longestAlignedRun = 20;
+    eligible.pagePairs = Array.from({ length: 20 }, (_, index) => ({
+      ...eligible.pagePairs[0]!,
+      incomingSourcePage: index + 1,
+      existingSourcePage: index + 1,
+      exactSha256: true,
+      lowInformation: false,
+    }));
+    review.candidates = [eligible];
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => root.render(
+      <DownloadOverlapReviewDialog
+        open={false}
+        review={review}
+        autoMode="recommend"
+        previewWidth={220}
+        thumbnailClient={client}
+        onClose={vi.fn()}
+        onRetry={vi.fn()}
+        onDecision={vi.fn()}
+      />,
+    ));
+
+    expect(container.querySelector(".download-overlap-auto-recommendation")?.textContent)
+      .toContain("엄격 기준 추천");
+    expect(container.textContent).toContain("신규 앨범 B가 기존 앨범 A의 실질 페이지를 모두 포함");
+
+    await act(async () => root.unmount());
+    client.dispose();
+    container.remove();
+  });
+
   it("renders dark-theme-ready vertical A/B summaries and an aligned page lane", async () => {
     const resolve = vi.fn((_request: ThumbnailRequest) => ({ kind: "missing" as const, reason: "fixture" }));
     const client = new ThumbnailClient({ resolve });

@@ -28,7 +28,7 @@ export function buildSearchSuggestionCatalog(history: readonly SearchHistoryEntr
   const entries = new Map<string, SearchSuggestion>();
   for (const entry of history) {
     const token = historyDisplayToken(entry); if (!token) continue;
-    const key = JSON.stringify([entry.text, entry.includeTags, entry.excludeTags, entry.languages, entry.sort, entry.pageSize]);
+    const key = JSON.stringify([entry.text, entry.includeTags, entry.excludeTags, entry.languages, entry.sort]);
     const existing = entries.get(key); if (existing && (existing.historyUseCount ?? 0) >= entry.useCount) continue;
     const conditions = entry.includeTags.length + entry.excludeTags.length;
     entries.set(key, { type: "HISTORY", token, label: token, extra: `최근 검색 · ${entry.useCount}회${conditions ? ` · 태그 조건 ${conditions}개` : ""}`, historyUseCount: entry.useCount, lastUsedAt: entry.lastUsedAt, request: { text: entry.text, includeTags: [...entry.includeTags], excludeTags: [...entry.excludeTags], languages: [...entry.languages], sort: entry.sort, pageSize: entry.pageSize } });

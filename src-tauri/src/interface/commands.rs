@@ -22,7 +22,7 @@ use crate::{
     },
     domain::{
         AutoFindExclusionResult, AutoFindRun, AutoFindSnapshot, DownloadChangedEvent,
-        DownloadEntry, DownloadListRequest, DownloadOverlapDecisionRequest,
+        DownloadEntry, DownloadLibraryPage, DownloadListRequest, DownloadOverlapDecisionRequest,
         DownloadOverlapDecisionResult, DownloadOverlapReview, DownloadPage,
         DuplicateDecisionRequest, DuplicateReview, DuplicateScanRun, DuplicateSnapshot,
         ExplorationDataResetRequest, ExplorationDataResetResult, FavoriteKey,
@@ -44,6 +44,7 @@ use crate::{
     },
 };
 
+use super::storage_usage::{collect_storage_usage, StorageUsageSnapshot};
 use super::{
     api::{
         AppActiveAutoFindSnapshot, AppActiveDownloadsSnapshot, AppActiveDuplicateScanSnapshot,
@@ -570,6 +571,7 @@ fn detail_original_api_error(
         DetailOriginalError::ConversionFailed => "conversion",
         DetailOriginalError::WriteFailed => "write",
         DetailOriginalError::Unavailable => "finalize",
+        DetailOriginalError::ArtifactUnavailable => "artifact",
     };
     let mut details = std::collections::BTreeMap::from([
         ("requestId".into(), json!(request.request_id)),
@@ -579,6 +581,9 @@ fn detail_original_api_error(
     ]);
     if let Some(source_code) = source_code {
         details.insert("sourceCode".into(), json!(source_code));
+    }
+    if let Some(entry_id) = request.entry_id.as_ref() {
+        details.insert("entryId".into(), json!(entry_id));
     }
     ApiError {
         code: error.code().into(),
@@ -924,6 +929,31 @@ pub async fn settings_get(
 }
 
 #[tauri::command]
+pub async fn storage_usage_get(
+    state: State<'_, AppState>,
+) -> Result<ApiResult<StorageUsageSnapshot>, ApiError> {
+    let settings = match state.service.settings_get() {
+        Ok(settings) => settings,
+        Err(error) => return Ok(ApiResult::failure(error.into())),
+    };
+    let data_dir = state.data_dir.clone();
+    let download_root =
+        (!settings.download_root.trim().is_empty()).then(|| PathBuf::from(settings.download_root));
+    let memory_cache_bytes =
+        u64::try_from(state.thumbnails.stats().success_cache_bytes).unwrap_or(u64::MAX);
+    Ok(
+        match tauri::async_runtime::spawn_blocking(move || {
+            collect_storage_usage(&data_dir, download_root.as_deref(), memory_cache_bytes)
+        })
+        .await
+        {
+            Ok(snapshot) => ApiResult::success(snapshot),
+            Err(error) => ApiResult::failure(blocking_task_error("storage_usage_get", &error)),
+        },
+    )
+}
+
+#[tauri::command]
 pub async fn folder_name_template_preview(
     state: State<'_, AppState>,
     template: String,
@@ -1020,6 +1050,20 @@ pub async fn download_entries_list(
     request: DownloadListRequest,
 ) -> Result<ApiResult<DownloadPage>, ApiError> {
     Ok(state.service.download_entries_list(request).into())
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn download_library_page_list(
+    state: State<'_, AppState>,
+    request: DownloadListRequest,
+) -> Result<ApiResult<DownloadLibraryPage>, ApiError> {
+    let service = state.service.clone();
+    Ok(
+        run_application_blocking("download_library_page_list", move || {
+            service.download_library_page_list(request)
+        })
+        .await,
+    )
 }
 
 #[tauri::command(rename_all = "camelCase")]

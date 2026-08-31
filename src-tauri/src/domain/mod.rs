@@ -29,14 +29,18 @@ pub use auto_find::{
     ExplorationExclusionKind, ExplorationExclusionReason, ExplorationExclusionRestoreResult,
     FavoriteKey, FavoriteMutationResult, FavoriteNamespace, FavoriteRecord, SearchHistoryEntry,
 };
-pub use download::{DownloadEntry, DownloadListRequest, DownloadPage, DownloadReviewKind};
+pub use download::{
+    DownloadEntry, DownloadLibraryGallery, DownloadLibraryItem, DownloadLibraryPage,
+    DownloadListRequest, DownloadPage, DownloadReviewKind,
+};
 pub use download_overlap::{
     DownloadOverlapCandidate, DownloadOverlapCandidateIdentity, DownloadOverlapDecisionAction,
-    DownloadOverlapDecisionApplied, DownloadOverlapDecisionApplyOutcome,
-    DownloadOverlapDecisionRequest, DownloadOverlapDecisionResult, DownloadOverlapGalleryRef,
-    DownloadOverlapPagePair, DownloadOverlapPairDecision, DownloadOverlapRelation,
-    DownloadOverlapReview, DownloadOverlapReviewDraft, DownloadOverlapReviewState,
-    DOWNLOAD_OVERLAP_MAX_STORED_PAGE_PAIRS, DOWNLOAD_OVERLAP_POLICY_VERSION,
+    DownloadOverlapDecisionActor, DownloadOverlapDecisionApplied,
+    DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionRequest,
+    DownloadOverlapDecisionResult, DownloadOverlapGalleryRef, DownloadOverlapPagePair,
+    DownloadOverlapPairDecision, DownloadOverlapRelation, DownloadOverlapReview,
+    DownloadOverlapReviewDraft, DownloadOverlapReviewState, DOWNLOAD_OVERLAP_MAX_STORED_PAGE_PAIRS,
+    DOWNLOAD_OVERLAP_POLICY_VERSION,
 };
 pub use duplicate::{
     DuplicateCandidate, DuplicateCandidateRecord, DuplicateDecisionAction,
@@ -72,7 +76,8 @@ pub use search::{
 pub use settings::{
     download_root_for_display, gallery_preview_preset_widths, is_gallery_preview_width,
     normalize_collapsed_group_keys, normalize_gallery_preview_width, windows_path_for_display,
-    AutoFindHistoryMode, GalleryGroupingMode, SettingsPatch, SettingsSnapshot,
+    AutoFindHistoryMode, DownloadOverlapAutoMode, GalleryDisplayMode, GalleryGroupingMode,
+    SettingsPatch, SettingsSnapshot,
 };
 pub use tag_catalog::{
     canonical_tag_token, normalize_tag_name, TagCatalogEntry, TagCatalogStatus, TagNamespace,

@@ -100,6 +100,24 @@ describe("gallery selectors", () => {
     expect(visibleGalleries(searched, [englishGallery])).toEqual([englishGallery]);
   });
 
+  it("keeps unresolved legacy download summaries visible until their language hydrates", () => {
+    const downloads = uiReducer(initialUiState, { type: "navigate", view: "downloads" });
+    const japaneseOnly = uiReducer(downloads, {
+      type: "search.languages",
+      view: "downloads",
+      languages: ["japanese"],
+    });
+    const unresolved = {
+      ...mockGalleries[0]!,
+      language: "korean" as const,
+      languageKnown: false,
+      download: { entryId: "legacy-entry", state: "completed" as const, progress: 100 },
+    };
+
+    expect(visibleGalleries(japaneseOnly, [unresolved])).toEqual([unresolved]);
+    expect(visibleGalleries(japaneseOnly, [{ ...unresolved, languageKnown: true }])).toEqual([]);
+  });
+
   it("understands optional group searches", () => {
     const searched = uiReducer(initialUiState, {
       type: "search.commit",

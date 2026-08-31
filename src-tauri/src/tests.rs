@@ -15,10 +15,10 @@ use crate::{
         windows_path_for_display, ArtifactBundle, ArtifactRelativePath, AutoFindHistoryMode,
         AutoFindRunState, DownloadArtifact, DownloadArtifactState, DownloadEntry, DownloadEntryId,
         DownloadListRequest, ExplorationDataResetRequest, FavoriteKey, FavoriteNamespace,
-        FixtureDownloadJobStep, Gallery, GalleryGroupingMode, GalleryId, GalleryMetadata, JobRef,
-        JobState, Language, PageArtifact, PageArtifactState, SearchRequest, SearchSort,
-        SettingsPatch, SettingsSnapshot, SourcePageNumber, WindowPlacement,
-        WindowPlacementSnapshot,
+        FixtureDownloadJobStep, Gallery, GalleryDisplayMode, GalleryGroupingMode, GalleryId,
+        GalleryMetadata, JobRef, JobState, Language, PageArtifact, PageArtifactState,
+        SearchRequest, SearchSort, SettingsPatch, SettingsSnapshot, SourcePageNumber,
+        WindowPlacement, WindowPlacementSnapshot,
     },
     infrastructure::{FixtureSearchRepository, MigrationRunner, SqliteRepository, MIGRATIONS},
     interface::{ApiAction, ApiError, ApiResult},
@@ -97,7 +97,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31
+            27, 28, 29, 30, 31, 32, 33, 34, 35
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -182,7 +182,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31
+            29, 30, 31, 32, 33, 34, 35
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -291,7 +291,10 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
     let report = MigrationRunner::run(&mut connection).expect("apply visible metadata migration");
     assert_eq!(
         report.applied_versions,
-        vec![11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]
+        vec![
+            11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+            33, 34, 35
+        ]
     );
     let metadata: (String, String) = connection
         .query_row(
@@ -354,7 +357,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -396,6 +399,7 @@ fn default_settings_match_the_approved_foundation_values() {
             "revision": 0,
             "downloadRoot": "",
             "folderNameTemplate": "[{artist}] {title} [{group}] {id}",
+            "explorePageSize": 50,
             "maxColumns": 3,
             "previewWidth": 220,
             "relatedPreviewWidth": 240,
@@ -404,8 +408,12 @@ fn default_settings_match_the_approved_foundation_values() {
             "concurrentImageRequests": 5,
             "requestStartIntervalMs": 25,
             "autoFindHistoryMode": "include_all_history",
+            "downloadOverlapAutoMode": "off",
             "autoFindGrouping": "all",
             "downloadsGrouping": "all",
+            "exploreDisplayMode": "detail",
+            "autoFindDisplayMode": "detail",
+            "downloadsDisplayMode": "detail",
             "collapsedGroupKeys": [],
             "searchIncludeTags": [],
             "searchExcludeTags": []
@@ -545,6 +553,7 @@ fn settings_validation_matches_the_approved_ui_ranges() {
         revision: 0,
         download_root: String::new(),
         folder_name_template: "[{artist}] {title} [{group}] {id}".into(),
+        explore_page_size: 200,
         max_columns: 4,
         preview_width: 360,
         related_preview_width: 320,
@@ -553,8 +562,12 @@ fn settings_validation_matches_the_approved_ui_ranges() {
         concurrent_image_requests: 30,
         request_start_interval_ms: 5_000,
         auto_find_history_mode: AutoFindHistoryMode::IncludeAllHistory,
+        download_overlap_auto_mode: Default::default(),
         auto_find_grouping: GalleryGroupingMode::All,
         downloads_grouping: GalleryGroupingMode::All,
+        explore_display_mode: Default::default(),
+        auto_find_display_mode: Default::default(),
+        downloads_display_mode: Default::default(),
         collapsed_group_keys: Vec::new(),
         search_include_tags: Vec::new(),
         search_exclude_tags: Vec::new(),
@@ -567,6 +580,9 @@ fn settings_validation_matches_the_approved_ui_ranges() {
     }
 
     let mut invalid = limits.clone();
+    invalid.explore_page_size = 9;
+    assert!(invalid.validate().is_err());
+    invalid = limits.clone();
     invalid.max_columns = 5;
     assert!(invalid.validate().is_err());
     invalid = limits.clone();
@@ -621,16 +637,24 @@ fn settings_update_rejects_a_stale_revision() {
     let updated = service
         .settings_update(
             SettingsPatch {
+                explore_page_size: Some(80),
                 max_columns: Some(4),
                 privacy_mode: Some(true),
+                explore_display_mode: Some(GalleryDisplayMode::Compact),
+                auto_find_display_mode: Some(GalleryDisplayMode::Detail),
+                downloads_display_mode: Some(GalleryDisplayMode::Compact),
                 ..SettingsPatch::default()
             },
             0,
         )
         .expect("update current settings");
     assert_eq!(updated.revision, 1);
+    assert_eq!(updated.explore_page_size, 80);
     assert_eq!(updated.max_columns, 4);
     assert!(updated.privacy_mode);
+    assert_eq!(updated.explore_display_mode, GalleryDisplayMode::Compact);
+    assert_eq!(updated.auto_find_display_mode, GalleryDisplayMode::Detail);
+    assert_eq!(updated.downloads_display_mode, GalleryDisplayMode::Compact);
 
     let error = service
         .settings_update(
@@ -651,8 +675,15 @@ fn settings_update_rejects_a_stale_revision() {
         }
     ));
     let persisted = service.settings_get().expect("reload settings");
+    assert_eq!(persisted.explore_page_size, 80);
     assert_eq!(persisted.preview_width, 220);
     assert!(persisted.privacy_mode);
+    assert_eq!(persisted.explore_display_mode, GalleryDisplayMode::Compact);
+    assert_eq!(persisted.auto_find_display_mode, GalleryDisplayMode::Detail);
+    assert_eq!(
+        persisted.downloads_display_mode,
+        GalleryDisplayMode::Compact
+    );
 }
 
 #[test]
@@ -818,6 +849,121 @@ fn duplicate_hidden_downloads_are_omitted_until_the_user_restores_them() {
         .entries
         .iter()
         .any(|entry| entry.gallery_id.get() == 2_232_736));
+}
+
+#[test]
+fn download_library_projection_joins_local_gallery_metadata_without_live_detail_calls() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().expect("create repository"));
+    let service =
+        ApplicationService::new(repository.clone()).with_download_repository(repository.clone());
+    service
+        .download_queue_add(
+            vec![7_010_001, 7_010_002],
+            "download-library-summary".into(),
+        )
+        .expect("seed download entries");
+    repository
+        .connection()
+        .expect("open repository connection")
+        .execute_batch(
+            r#"
+                INSERT INTO galleries (
+                    gallery_id, revision, title, primary_artist, primary_group,
+                    source_page_count, language, published_rank
+                ) VALUES
+                    (7010001, 0, 'Local first title', 'first artist',
+                     'first circle', 21, 'japanese', 20260801),
+                    (7010002, 0, 'Local second title', 'second artist',
+                     NULL, 34, 'english', 20260802);
+            "#,
+        )
+        .expect("seed local gallery presentation metadata");
+
+    let page = service
+        .download_library_page_list(DownloadListRequest {
+            state: Some(JobState::Queued),
+            query: Some("first circle".into()),
+            page: 1,
+            page_size: 20,
+        })
+        .expect("load local download library projection");
+
+    assert_eq!(page.total_items, 1);
+    assert_eq!(page.items.len(), 1);
+    let item = &page.items[0];
+    assert_eq!(item.download.gallery_id.get(), 7_010_001);
+    assert_eq!(item.gallery.id.get(), 7_010_001);
+    assert_eq!(item.gallery.title.as_deref(), Some("Local first title"));
+    assert_eq!(item.gallery.artist.as_deref(), Some("first artist"));
+    assert_eq!(item.gallery.group.as_deref(), Some("first circle"));
+    assert_eq!(item.gallery.pages, Some(21));
+    assert_eq!(item.gallery.language, Some(Language::Japanese));
+    assert_eq!(item.gallery.published_rank, Some(20_260_801));
+    assert_eq!(item.download.state, JobState::Queued);
+    assert!(item.download.created_at.is_some());
+
+    let wire = serde_json::to_value(&page).expect("serialize local download library projection");
+    assert_eq!(wire["totalItems"], json!(1));
+    assert_eq!(
+        wire["items"][0]["gallery"]["publishedRank"],
+        json!(20_260_801)
+    );
+    assert_eq!(wire["items"][0]["download"]["galleryId"], json!(7_010_001));
+    assert!(wire["items"][0]["gallery"].get("published_rank").is_none());
+}
+
+#[test]
+fn download_library_projection_keeps_one_latest_entry_per_gallery() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().expect("create repository"));
+    let service =
+        ApplicationService::new(repository.clone()).with_download_repository(repository.clone());
+    let gallery_id = GalleryId::new(7_010_010).expect("valid gallery id");
+    let first = service
+        .download_queue_add(vec![gallery_id.get()], "download-library-first".into())
+        .expect("queue first download");
+    let first_entry_id = first.entries[0].entry_id.clone();
+    {
+        let connection = repository.connection().expect("open repository connection");
+        connection
+            .execute(
+                "UPDATE download_entries SET state='completed', progress=100.0, created_at='2026-08-01T00:00:00.000Z', updated_at='2026-08-01T00:00:00.000Z' WHERE entry_id=?1",
+                [first_entry_id.as_str()],
+            )
+            .expect("complete older entry");
+        connection
+            .execute(
+                "UPDATE download_jobs SET state='completed', completed_units=total_units, created_at='2026-08-01T00:00:00.000Z', updated_at='2026-08-01T00:00:00.000Z' WHERE entry_id=?1",
+                [first_entry_id.as_str()],
+            )
+            .expect("complete older job");
+    }
+
+    let second = service
+        .download_queue_add(vec![gallery_id.get()], "download-library-second".into())
+        .expect("queue newer download");
+    let second_entry_id = second.entries[0].entry_id.clone();
+    repository
+        .connection()
+        .expect("open repository connection")
+        .execute(
+            "UPDATE download_entries SET created_at='2026-08-02T00:00:00.000Z', updated_at='2026-08-02T00:00:00.000Z' WHERE entry_id=?1",
+            [second_entry_id.as_str()],
+        )
+        .expect("date newer entry");
+
+    let page = service
+        .download_library_page_list(DownloadListRequest {
+            state: None,
+            query: Some(gallery_id.get().to_string()),
+            page: 1,
+            page_size: 20,
+        })
+        .expect("load canonical download library row");
+
+    assert_eq!(page.total_items, 1);
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].download.entry_id, second_entry_id);
+    assert_eq!(page.items[0].download.state, JobState::Queued);
 }
 
 #[test]

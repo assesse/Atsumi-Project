@@ -9,7 +9,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from "react";
-import type { Gallery, GalleryId, ViewId } from "../core/types";
+import type { Gallery, GalleryDisplayMode, GalleryId, ViewId } from "../core/types";
 import type { InternalArtifactScanProgress } from "../api/contracts";
 import { languagePresentation } from "../data/languages";
 import {
@@ -28,6 +28,7 @@ type GalleryCardProps = {
   thumbnailPriority?: ThumbnailPriority;
   thumbnailClient?: ThumbnailClient;
   view: ViewId;
+  displayMode?: GalleryDisplayMode;
   explorationExcluded?: boolean;
   selected: boolean;
   /** True only for the derived two-or-more-card batch selection mode. */
@@ -64,11 +65,21 @@ const workLabel: Partial<Record<NonNullable<Gallery["download"]>["state"], strin
   cancelled: "취소됨",
 };
 
+export function compactFavoriteTagValues(
+  tags: readonly string[],
+  favoriteMetadata: ReadonlySet<string>,
+  limit = 3,
+): string[] {
+  if (limit <= 0) return [];
+  return tags.filter((tag) => favoriteMetadata.has(tag)).slice(0, limit);
+}
+
 function GalleryCardComponent({
   gallery,
   thumbnailPriority = "prefetch",
   thumbnailClient,
   view,
+  displayMode = "detail",
   explorationExcluded = false,
   selected,
   selectionContext,
@@ -103,11 +114,16 @@ function GalleryCardComponent({
     Math.max(0, download?.state === "completed" ? 100 : download?.progress ?? 0),
   );
   const statusClass = ["failed", "interrupted"].includes(download?.state ?? "") ? " failed" : "";
-  const language = languagePresentation[gallery.language];
+  const language = gallery.languageKnown === false
+    ? { label: "언어 확인 중", icon: null, fallback: "?" }
+    : languagePresentation[gallery.language];
   const { primary: displayTitle, secondary: subtitle } = splitGalleryTitle(gallery.title, gallery.subtitle);
   const thumbnailKey = galleryCoverThumbnailKey(gallery);
   const thumbnailConsumer = thumbnailConsumerForView(view);
-  const sortedTags = sortGalleryTags(gallery.tags, favoriteMetadata);
+  const sortedTags = displayMode === "detail" ? sortGalleryTags(gallery.tags, favoriteMetadata) : [];
+  const compactFavoriteTags = displayMode === "compact"
+    ? compactFavoriteTagValues(gallery.tags, favoriteMetadata)
+    : [];
   const tagLayoutKey = `${gallery.title}\u0000${gallery.subtitle ?? ""}\u0000${sortedTags
     .map((tag) => `${tag.namespace}:${Number(tag.favorite)}:${tag.value}`)
     .join("\u0001")}`;
@@ -162,6 +178,13 @@ function GalleryCardComponent({
     : download?.state === "review_required"
       ? `${gallery.title}, ${isDownloadOverlapReview ? "다운로드 판본 중복" : "중복 의심"}, 검토 열기`
       : download ? `${gallery.title}, ${workLabel[download.state]}, 작업 상태 열기` : "";
+  const compactStatusLabel = visibleInternalDuplicateProgress
+    ? `내부 검사 ${internalScanPercent}%`
+    : showsGlobalDuplicate
+      ? `중복 ${duplicateCandidateCount}`
+      : download
+        ? workLabel[download.state] ?? download.state
+        : view === "auto-find" ? "후보" : "탐색";
 
   const invalidateTagLayout = useCallback(() => {
     setTagLayout((current) => current ? null : current);
@@ -267,9 +290,10 @@ function GalleryCardComponent({
 
   return (
     <article
-      className={`gallery-card${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
+      className={`gallery-card${displayMode === "compact" ? " is-compact" : ""}${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
       ref={cardRef}
       data-gallery-id={gallery.id}
+      data-display-mode={displayMode}
       style={{ "--download-progress": `${progress}%` } as CSSProperties}
       role="listitem"
       tabIndex={keyboardFocusable && !isExplorationBlind ? 0 : -1}
@@ -374,8 +398,49 @@ function GalleryCardComponent({
             <span style={{ width: `${progress}%` }} />
           </div>
         ) : null}
+        {displayMode === "compact" && compactFavoriteTags.length ? (
+          <div className="compact-favorite-tags" aria-label={`즐겨찾기 태그: ${compactFavoriteTags.join(", ")}`}>
+            {compactFavoriteTags.map((tag) => (
+              <MetadataChip
+                key={tag}
+                value={tag}
+                favorite
+                kind="tag"
+                onClickCapture={selectFromInteractiveTarget}
+                onSearch={onMetadataSearch}
+                onToggleFavorite={onMetadataFavorite}
+              />
+            ))}
+          </div>
+        ) : null}
+        {displayMode === "compact" ? (
+          <div className="compact-card-summary">
+            <strong title={gallery.title}>{displayTitle}</strong>
+            <span title={gallery.artist}>{gallery.artist || "작가 정보 없음"}</span>
+            <small>
+              <span>{gallery.pages}p · #{gallery.id}</span>
+              <b className={`is-${download?.state ?? (view === "auto-find" ? "candidate" : "explore")}`}>{compactStatusLabel}</b>
+            </small>
+          </div>
+        ) : null}
+        {displayMode === "compact" && hasInternalDuplicateResult ? (
+          <button
+            type="button"
+            className="compact-internal-result-badge"
+            aria-label={`${gallery.title}, 내부 중복 검토 결과 ${internalDuplicateResultCount}개 열기`}
+            title={`내부 중복 검토 결과 ${internalDuplicateResultCount}개 · 클릭하여 검토`}
+            onClick={(event) => {
+              if (selectFromInteractiveTarget(event)) return;
+              event.stopPropagation();
+              onOpenInternalReview?.(download.entryId!);
+            }}
+          >
+            <GalleryStatusIcon kind="warning" />
+            <span>{internalDuplicateResultCount}</span>
+          </button>
+        ) : null}
       </GalleryThumbnail>
-      <div ref={contentRef} className={`card-content${visibleInternalDuplicateProgress ? " has-internal-scan" : ""}`}>
+      {displayMode === "detail" ? <div ref={contentRef} className={`card-content${visibleInternalDuplicateProgress ? " has-internal-scan" : ""}`}>
         <div className="card-title" title={gallery.title}>
           <strong title={gallery.title}>{displayTitle}</strong>
           {subtitle ? <span className="title-sub">{subtitle}</span> : null}
@@ -474,7 +539,7 @@ function GalleryCardComponent({
           <span>{gallery.pages}p</span>
           <span>#{gallery.id}</span>
         </div>
-      </div>
+      </div> : null}
       {isExplorationBlind ? (
         <div className="quarantined-blind-overlay" aria-hidden="true">
           <GalleryStatusIcon kind="warning" />

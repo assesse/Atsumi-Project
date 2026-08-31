@@ -190,4 +190,49 @@ describe("uiReducer detail tabs", () => {
     expect(duplicate.detail.tabs).toEqual([ids[0], ids[1], ids[2]]);
     expect(duplicate.detail.activeId).toBe(ids[0]);
   });
+
+  it("opens related tabs in the background without changing the active or minimized state", () => {
+    const first = uiReducer(initialUiState, { type: "detail.open", id: ids[0]! });
+    const minimized = uiReducer(first, { type: "detail.minimize", minimized: true });
+    const backgroundChild = uiReducer(minimized, {
+      type: "detail.open",
+      id: ids[1]!,
+      parentId: ids[0]!,
+      activate: false,
+    });
+    const backgroundExisting = uiReducer(backgroundChild, {
+      type: "detail.open",
+      id: ids[1]!,
+      parentId: ids[0]!,
+      activate: false,
+    });
+
+    expect(backgroundChild.detail).toEqual({
+      tabs: [ids[0], ids[1]],
+      activeId: ids[0],
+      minimized: true,
+    });
+    expect(backgroundExisting).toBe(backgroundChild);
+  });
+});
+
+describe("uiReducer gallery display mode", () => {
+  it("keeps detail and compact choices independent for every view", () => {
+    const compactExplore = uiReducer(initialUiState, {
+      type: "displayMode.set",
+      view: "explore",
+      mode: "compact",
+    });
+    const compactDownloads = uiReducer(compactExplore, {
+      type: "displayMode.set",
+      view: "downloads",
+      mode: "compact",
+    });
+
+    expect(compactDownloads.displayMode).toEqual({
+      explore: "compact",
+      "auto-find": "detail",
+      downloads: "compact",
+    });
+  });
 });

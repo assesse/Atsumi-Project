@@ -8,6 +8,7 @@ describe("ViewHeader language filter", () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
+    const onRandomOpen = vi.fn();
     try {
       await act(async () => root.render(
         <ViewHeader
@@ -22,11 +23,11 @@ describe("ViewHeader language filter", () => {
           onSelectSuggestion={vi.fn()}
           onCompleteSuggestion={vi.fn()}
           onLanguages={vi.fn()}
-          onTagCatalogRefresh={vi.fn()}
-          tagCatalogStatus={{ revision: 0, entryCount: 0, neutralCount: 0, femaleCount: 0, maleCount: 0, artistCount: 0, groupCount: 0 }}
-          tagCatalogRefreshing={false}
           tagCatalogRevision={0}
           onTagSuggestionQuery={vi.fn()}
+          onRandomOpen={onRandomOpen}
+          randomOpenPending={false}
+          randomOpenAvailable
           onActivity={vi.fn()}
           privacyMode={false}
           onPrivacyModeToggle={vi.fn()}
@@ -36,13 +37,17 @@ describe("ViewHeader language filter", () => {
       const languageButton = container.querySelector('button[aria-label="언어 필터"]');
       expect(languageButton?.querySelector(".icon-dot")).toBeNull();
       expect(container.querySelector(".activity-count")).toHaveTextContent("3");
+      const randomOpen = container.querySelector<HTMLButtonElement>('button[aria-label="랜덤 열기"]');
+      expect(randomOpen).toHaveAttribute("title", "Hitomi 전체 범위에서 랜덤 갤러리 열기");
+      await act(async () => randomOpen?.click());
+      expect(onRandomOpen).toHaveBeenCalledOnce();
     } finally {
       await act(async () => root.unmount());
       container.remove();
     }
   });
 
-  it("shows an in-button busy indicator while the global tag catalog refresh runs", async () => {
+  it("opens a random gallery and shows an in-button busy indicator while it loads", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -60,22 +65,22 @@ describe("ViewHeader language filter", () => {
           onSelectSuggestion={vi.fn()}
           onCompleteSuggestion={vi.fn()}
           onLanguages={vi.fn()}
-          onTagCatalogRefresh={vi.fn()}
-          tagCatalogStatus={{ revision: 1, entryCount: 10_000, neutralCount: 4_000, femaleCount: 3_000, maleCount: 1_000, artistCount: 1_500, groupCount: 500 }}
-          tagCatalogRefreshing
           tagCatalogRevision={1}
           onTagSuggestionQuery={vi.fn()}
+          onRandomOpen={vi.fn()}
+          randomOpenPending
+          randomOpenAvailable
           onActivity={vi.fn()}
           privacyMode={false}
           onPrivacyModeToggle={vi.fn()}
           onSettings={vi.fn()}
         />,
       ));
-      const button = container.querySelector<HTMLButtonElement>('button[aria-label="검색 자동완성 최신화 중"]');
+      const button = container.querySelector<HTMLButtonElement>('button[aria-label="랜덤 열기 중"]');
       expect(button).toBeDisabled();
       expect(button).toHaveAttribute("aria-busy", "true");
-      expect(button).toHaveClass("is-refreshing");
-      expect(button?.querySelector(".catalog-refresh-spinner")).not.toBeNull();
+      expect(button).toHaveClass("is-pending");
+      expect(button?.querySelector(".random-open-spinner")).not.toBeNull();
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -91,7 +96,7 @@ describe("ViewHeader language filter", () => {
     const suggestion = { type: "TAG" as const, token: "tag:full_color", label: "full color", extra: "태그" };
     try {
       await act(async () => root.render(
-        <ViewHeader view="explore" search={{ draft: "artist:mizuno tag:full", committed: "", languages: [], suggestionsOpen: true, activeSuggestion: 0 }} suggestions={[suggestion]} activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={vi.fn()} onSelectSuggestion={onSelectSuggestion} onCompleteSuggestion={onCompleteSuggestion} onLanguages={vi.fn()} onTagCatalogRefresh={vi.fn()} tagCatalogStatus={{ revision: 1, entryCount: 11, neutralCount: 1, femaleCount: 5, maleCount: 1, artistCount: 2, groupCount: 2 }} tagCatalogRefreshing={false} tagCatalogRevision={1} onTagSuggestionQuery={vi.fn()} onActivity={vi.fn()} privacyMode={false} onPrivacyModeToggle={vi.fn()} onSettings={vi.fn()} />,
+        <ViewHeader view="explore" search={{ draft: "artist:mizuno tag:full", committed: "", languages: [], suggestionsOpen: true, activeSuggestion: 0 }} suggestions={[suggestion]} activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={vi.fn()} onSelectSuggestion={onSelectSuggestion} onCompleteSuggestion={onCompleteSuggestion} onLanguages={vi.fn()} tagCatalogRevision={1} onTagSuggestionQuery={vi.fn()} onRandomOpen={vi.fn()} randomOpenPending={false} randomOpenAvailable onActivity={vi.fn()} privacyMode={false} onPrivacyModeToggle={vi.fn()} onSettings={vi.fn()} />,
       ));
       const input = container.querySelector<HTMLInputElement>('input[aria-label="검색"]');
       if (!input) throw new Error("search input missing");
@@ -129,11 +134,11 @@ describe("ViewHeader language filter", () => {
           onSelectSuggestion={vi.fn()}
           onCompleteSuggestion={vi.fn()}
           onLanguages={vi.fn()}
-          onTagCatalogRefresh={vi.fn()}
-          tagCatalogStatus={{ revision: 1, entryCount: 11, neutralCount: 1, femaleCount: 5, maleCount: 1, artistCount: 2, groupCount: 2 }}
-          tagCatalogRefreshing={false}
           tagCatalogRevision={1}
           onTagSuggestionQuery={onTagSuggestionQuery}
+          onRandomOpen={vi.fn()}
+          randomOpenPending={false}
+          randomOpenAvailable
           onActivity={vi.fn()}
           privacyMode={false}
           onPrivacyModeToggle={vi.fn()}
@@ -182,11 +187,11 @@ describe("ViewHeader language filter", () => {
           onSelectSuggestion={vi.fn()}
           onCompleteSuggestion={vi.fn()}
           onLanguages={vi.fn()}
-          onTagCatalogRefresh={vi.fn()}
-          tagCatalogStatus={{ revision: 1, entryCount: 3, neutralCount: 1, femaleCount: 0, maleCount: 0, artistCount: 1, groupCount: 1 }}
-          tagCatalogRefreshing={false}
           tagCatalogRevision={1}
           onTagSuggestionQuery={vi.fn()}
+          onRandomOpen={vi.fn()}
+          randomOpenPending={false}
+          randomOpenAvailable
           onActivity={vi.fn()}
           privacyMode
           onPrivacyModeToggle={onPrivacyModeToggle}
@@ -212,11 +217,11 @@ describe("ViewHeader language filter", () => {
           onSelectSuggestion={vi.fn()}
           onCompleteSuggestion={vi.fn()}
           onLanguages={vi.fn()}
-          onTagCatalogRefresh={vi.fn()}
-          tagCatalogStatus={{ revision: 1, entryCount: 3, neutralCount: 1, femaleCount: 0, maleCount: 0, artistCount: 1, groupCount: 1 }}
-          tagCatalogRefreshing={false}
           tagCatalogRevision={1}
           onTagSuggestionQuery={vi.fn()}
+          onRandomOpen={vi.fn()}
+          randomOpenPending={false}
+          randomOpenAvailable
           onActivity={vi.fn()}
           privacyMode
           privacyModePending

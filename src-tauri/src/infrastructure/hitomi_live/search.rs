@@ -145,7 +145,12 @@ impl HitomiLiveAdapter {
 
         ordered.dedup();
         if request.sort == SearchSort::Random {
-            ordered.sort_by_key(|id| stable_random_rank(*id));
+            // Keep paging stable inside one query snapshot while giving every new
+            // random search an independent ordering across the full source index.
+            // The previous fixed rank made a "random" first page repeat forever.
+            let uuid = Uuid::new_v4().as_u128();
+            let seed = uuid as u64 ^ (uuid >> 64) as u64;
+            ordered.sort_by_key(|id| stable_random_rank(*id ^ seed));
         }
         ordered.truncate(self.config.max_candidate_ids);
 

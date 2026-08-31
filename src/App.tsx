@@ -7,6 +7,8 @@ import type {
   AutoFindSnapshot,
   DownloadChangedEvent,
   DownloadEntry,
+  DownloadLibraryPage,
+  DownloadPage,
   DownloadOverlapDecisionRequest,
   DownloadOverlapReview,
   DuplicateDecisionRequest,
@@ -34,6 +36,7 @@ import type {
   TagSuggestion,
 } from "./api/contracts";
 import { ActivityDrawer } from "./components/ActivityDrawer";
+import { AutoFindPager } from "./components/AutoFindPager";
 import { DetailWorkspace } from "./components/DetailWorkspace";
 import { DuplicateReviewDialog } from "./components/DuplicateReviewDialog";
 import { DownloadOverlapReviewDialog } from "./components/DownloadOverlapReviewDialog";
@@ -44,6 +47,9 @@ import { FluentIcon } from "./components/FluentIcon";
 import { GalleryCard } from "./components/GalleryCard";
 import { GalleryGrid } from "./components/GalleryGrid";
 import { GalleryGridSkeleton } from "./components/GalleryGridSkeleton";
+import { GalleryDisplayModeControl } from "./components/GalleryDisplayModeControl";
+import { GalleryScrollPositionHint } from "./components/GalleryScrollPositionHint";
+import { ProgressiveGallerySlot } from "./components/ProgressiveGallerySlot";
 import { KeyboardShortcutsDialog } from "./components/KeyboardShortcutsDialog";
 import { SelectionToolbar } from "./components/SelectionToolbar";
 import { SettingsDialog } from "./components/SettingsDialog";
@@ -51,24 +57,31 @@ import { SideRail } from "./components/SideRail";
 import { TutorialDialog } from "./components/TutorialDialog";
 import { UpdateDialog } from "./components/UpdateDialog";
 import { ViewHeader, type SearchSuggestion } from "./components/ViewHeader";
-import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryId, type Language, type SearchSort, type ViewId } from "./core/types";
+import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryDisplayMode, type GalleryId, type Language, type SearchSort, type ViewId } from "./core/types";
 import { useSettings } from "./hooks/useSettings";
+import { useProgressiveGalleryWindow } from "./hooks/useProgressiveGalleryWindow";
 import { useWindowPlacement } from "./hooks/useWindowPlacement";
-import { resolveGalleryColumns } from "./layout/galleryColumns";
+import { resolveCompactGalleryColumns, resolveGalleryColumns } from "./layout/galleryColumns";
 import { buildSearchSuggestionCatalog, catalogSuggestion } from "./search/searchSuggestions";
 import { activeSearchToken, metadataSearchToken, searchTokenKind } from "./search/searchTokens";
 import { applyDownloadChanged } from "./state/downloadProjection";
+import { paginateAutoFindItems } from "./state/autoFindPagination";
 import {
   duplicateEventNeedsSnapshot,
   duplicateRunIsNewer,
   mergeHydratedDuplicateSnapshot,
   validDuplicateRun,
 } from "./state/duplicateProjection";
-import { mergeDownloadEntries, mergeGalleryDetail, mergeGalleryPage } from "./state/galleryProjection";
+import { mergeDownloadEntries, mergeDownloadLibraryPage, mergeGalleryDetail, mergeGalleryPage } from "./state/galleryProjection";
 import { galleryQueryReducer, initialGalleryQueryState, type GalleryQueryState } from "./state/galleryQuery";
 import { ExplorePageSession } from "./state/explorePageSession";
 import { visibleGalleries } from "./state/selectors";
 import { galleryGroupStorageKey, groupGalleries, type GalleryGroup, type GalleryGrouping } from "./state/galleryGrouping";
+import {
+  buildStrictOverlapPlan,
+  DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
+  DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
+} from "./state/downloadOverlapAuto";
 import { initialUiState, uiReducer } from "./state/uiState";
 import { useThumbnailClient } from "./thumbnail";
 import { isTutorialDismissed, setTutorialDismissed } from "./tutorial/tutorialPreference";
@@ -92,6 +105,7 @@ const sortOptions: Array<{ value: SearchSort; label: string }> = [
 ];
 
 const previewFolderNameTemplate = (template: string) => backend.folderNameTemplatePreview(template);
+const loadStorageUsage = () => backend.storageUsageGet();
 const loadExplorationExclusions = () => backend.explorationExclusionsList();
 const restoreExplorationExclusions = (galleryIds: GalleryId[]) =>
   backend.explorationExclusionsRestore(galleryIds);
@@ -145,7 +159,6 @@ const searchRequestKey = (request: SearchRequest): string => JSON.stringify({
   excludeTags: [...request.excludeTags].map(normalizeMetadataToken).sort(),
   languages: [...request.languages].sort(),
   sort: request.sort,
-  pageSize: request.pageSize,
 });
 
 const normalizeMetadataToken = (value: string): string => value.trim().toLocaleLowerCase();
@@ -222,11 +235,14 @@ export default function App() {
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
   const [tagCatalogStatus, setTagCatalogStatus] = useState<TagCatalogStatus | undefined>(undefined);
   const [tagCatalogRefreshing, setTagCatalogRefreshing] = useState(false);
+  const [randomOpenPending, setRandomOpenPending] = useState(false);
   const [privacyModePending, setPrivacyModePending] = useState(false);
   const [tagSuggestions, setTagSuggestions] = useState<TagSuggestion[]>([]);
   const tagSuggestionSequence = useRef(0);
   const [autoFindSnapshot, setAutoFindSnapshot] = useState<AutoFindSnapshot>({ candidates: [], cutoffEvidence: [], truncations: [] });
   const [autoFindIds, setAutoFindIds] = useState<GalleryId[]>([]);
+  const [autoFindPage, setAutoFindPage] = useState(1);
+  const autoFindPageContext = useRef<string | null>(null);
   const [autoFindLoading, setAutoFindLoading] = useState(true);
   const [autoFindError, setAutoFindError] = useState<string | null>(null);
   const [autoFindPending, setAutoFindPending] = useState(false);
@@ -282,6 +298,8 @@ export default function App() {
   const duplicateDecisionPendingRef = useRef(false);
   const downloadOverlapReviewToken = useRef(0);
   const downloadOverlapDecisionPendingRef = useRef(false);
+  const automaticOverlapInFlightRef = useRef(false);
+  const automaticOverlapAttemptedRef = useRef(new Set<string>());
   const internalHydrationToken = useRef(0);
   const internalReviewToken = useRef(0);
   const internalRunRef = useRef<InternalScanRun | undefined>(undefined);
@@ -294,7 +312,35 @@ export default function App() {
   const pendingFavoriteTokens = useRef(new Set<string>());
   const openingDownloadFolders = useRef(new Set<string>());
   const hydratedDetails = useRef(new Set<GalleryId>());
+  const hydratingDetails = useRef(new Set<GalleryId>());
+  const hydratedCardDetails = useRef(new Set<GalleryId>());
+  const hydratingCardDetails = useRef(new Set<GalleryId>());
+  const nearbyDetailQueue = useRef<GalleryId[]>([]);
+  const nearbyDetailQueued = useRef(new Set<GalleryId>());
+  const nearbyDetailWorkers = useRef(0);
+  const nearbyDetailPump = useRef<() => void>(() => undefined);
   const galleriesRef = useRef(galleries);
+  const gallerySummaryFromCurrent = useCallback((gallery: Gallery | undefined, id: GalleryId) => {
+    if (!gallery) return { id };
+    const publishedRank = Number(gallery.publishedAt.replaceAll("-", ""));
+    return {
+      id: gallery.id,
+      title: gallery.title,
+      artist: gallery.artist,
+      ...(gallery.group ? { group: gallery.group } : {}),
+      pages: gallery.pages,
+      language: gallery.language,
+      ...(Number.isFinite(publishedRank) ? { publishedRank } : {}),
+    };
+  }, []);
+  const downloadLibraryPageFromEntries = useCallback((page: DownloadPage): DownloadLibraryPage => ({
+    page: page.page,
+    totalItems: page.totalItems,
+    items: page.entries.map((download) => ({
+      gallery: gallerySummaryFromCurrent(galleriesRef.current.get(download.galleryId), download.galleryId),
+      download,
+    })),
+  }), [gallerySummaryFromCurrent]);
   const visibleIdsRef = useRef<GalleryId[]>([]);
   const activityOpener = useRef<HTMLElement | null>(null);
   const galleryViewport = useRef<HTMLElement>(null);
@@ -354,6 +400,7 @@ export default function App() {
     explorePageSession.current = createExplorePageSession();
   }
   const { settings, loading: settingsLoading, error: settingsError, save: saveSettings } = useSettings();
+  const currentGalleryDisplayMode = ui.displayMode[ui.view];
   const appUpdater = useAppUpdater(backend.runtime);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<ReadonlySet<string>>(() => new Set());
   const listPreferencePersistence = useRef<{ active: boolean; queued: SettingsPatch | null }>({ active: false, queued: null });
@@ -604,13 +651,26 @@ export default function App() {
     if (listPreferencePersistence.current.active || listPreferencePersistence.current.queued !== null) return;
     dispatch({ type: "grouping.set", view: "auto-find", grouping: settings.autoFindGrouping });
     dispatch({ type: "grouping.set", view: "downloads", grouping: settings.downloadsGrouping });
-  }, [settings.autoFindGrouping, settings.downloadsGrouping]);
+    dispatch({ type: "displayMode.set", view: "explore", mode: settings.exploreDisplayMode });
+    dispatch({ type: "displayMode.set", view: "auto-find", mode: settings.autoFindDisplayMode });
+    dispatch({ type: "displayMode.set", view: "downloads", mode: settings.downloadsDisplayMode });
+  }, [settings.autoFindDisplayMode, settings.autoFindGrouping, settings.downloadsDisplayMode, settings.downloadsGrouping, settings.exploreDisplayMode]);
 
   const persistGalleryGrouping = useCallback((view: "auto-find" | "downloads", grouping: GalleryGrouping) => {
     dispatch({ type: "grouping.set", view, grouping });
     const patch: SettingsPatch = view === "auto-find"
       ? { autoFindGrouping: grouping }
       : { downloadsGrouping: grouping };
+    persistListPreferences(patch);
+  }, [persistListPreferences]);
+
+  const persistGalleryDisplayMode = useCallback((view: ViewId, mode: GalleryDisplayMode) => {
+    dispatch({ type: "displayMode.set", view, mode });
+    const patch: SettingsPatch = view === "explore"
+      ? { exploreDisplayMode: mode }
+      : view === "auto-find"
+        ? { autoFindDisplayMode: mode }
+        : { downloadsDisplayMode: mode };
     persistListPreferences(patch);
   }, [persistListPreferences]);
 
@@ -834,7 +894,9 @@ export default function App() {
     const viewport = galleryViewport.current;
     if (!viewport) return;
     const update = () => {
-      const next = resolveGalleryColumns(viewport.clientWidth, maximumColumns, previewWidth);
+      const next = currentGalleryDisplayMode === "compact"
+        ? resolveCompactGalleryColumns(viewport.clientWidth, previewWidth)
+        : resolveGalleryColumns(viewport.clientWidth, maximumColumns, previewWidth);
       setGalleryColumns((current) => current === next ? current : next);
     };
     update();
@@ -842,7 +904,7 @@ export default function App() {
     const observer = new ResizeObserver(update);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [maximumColumns, previewWidth, settingsLoading]);
+  }, [currentGalleryDisplayMode, maximumColumns, previewWidth, settingsLoading]);
 
   useEffect(() => {
     let disposed = false;
@@ -1085,45 +1147,42 @@ export default function App() {
     setDownloadsLoading(true);
     setDownloadsError(null);
     void (async () => {
-      const entries: DownloadEntry[] = [];
+      const nextIds: GalleryId[] = [];
+      const nextIdSet = new Set<GalleryId>();
       let page = 1;
       let totalItems = 0;
+      let loadedItems = 0;
       do {
-        const result = await backend.downloadEntriesList({ page, pageSize: 200 });
-        if (cancelled || token !== downloadHydrationToken.current) return;
-        if (!result.ok) {
-          setDownloadsError(result.error.message);
-          return;
+        let result: DownloadLibraryPage | null = null;
+        try {
+          const loaded = await backend.downloadLibraryPageList({ page, pageSize: 200 });
+          if (loaded.ok) result = loaded.data;
+        } catch {
+          result = null;
         }
-        if (result.data.entries.length === 0 && entries.length < result.data.totalItems) {
-          throw new Error("download pagination ended before totalItems");
-        }
-        entries.push(...result.data.entries);
-        totalItems = result.data.totalItems;
-        page += 1;
-      } while (entries.length < totalItems);
-
-      setGalleries((current) => mergeDownloadEntries(current, entries));
-      const galleryIds = [...new Set(entries.map((entry) => entry.galleryId))];
-      setDownloadIds(galleryIds);
-      setDownloadsLoading(false);
-
-      for (let offset = 0; offset < galleryIds.length; offset += 32) {
-        const detailResults = await Promise.allSettled(
-          galleryIds.slice(offset, offset + 32).map((id) => backend.galleryDetailGet(id)),
-        );
-        if (cancelled || token !== downloadHydrationToken.current) return;
-        setGalleries((current) => {
-          let next: ReadonlyMap<GalleryId, Gallery> = current;
-          for (const detailResult of detailResults) {
-            if (detailResult.status === "fulfilled" && detailResult.value.ok) {
-              hydratedDetails.current.add(detailResult.value.data.id);
-              next = mergeGalleryDetail(next, detailResult.value.data);
-            }
+        if (!result) {
+          const fallback = await backend.downloadEntriesList({ page, pageSize: 200 });
+          if (cancelled || token !== downloadHydrationToken.current) return;
+          if (!fallback.ok) {
+            setDownloadsError(fallback.error.message);
+            return;
           }
-          return next;
-        });
-      }
+          result = downloadLibraryPageFromEntries(fallback.data);
+        }
+        if (cancelled || token !== downloadHydrationToken.current) return;
+        if (result.items.length === 0) break;
+        loadedItems += result.items.length;
+        setGalleries((current) => mergeDownloadLibraryPage(current, result).galleries);
+        for (const item of result.items) {
+          const id = item.gallery.id;
+          if (nextIdSet.has(id)) continue;
+          nextIdSet.add(id);
+          nextIds.push(id);
+        }
+        setDownloadIds([...nextIds]);
+        totalItems = result.totalItems;
+        page += 1;
+      } while (loadedItems < totalItems);
     })().catch(() => {
       if (!cancelled && token === downloadHydrationToken.current) {
         setDownloadsError("다운로드 목록 backend에 연결하지 못했습니다.");
@@ -1182,7 +1241,6 @@ export default function App() {
     [duplicateHiddenGalleryIds, ui.view, visible],
   );
   galleriesRef.current = displayGalleries;
-  visibleIdsRef.current = actionableVisibleIds;
   const allGalleries = useMemo(() => [...displayGalleries.values()], [displayGalleries]);
   const duplicateCandidateCounts = useMemo(() => {
     const counts = new Map<GalleryId, number>();
@@ -1245,17 +1303,14 @@ export default function App() {
     exitActionPendingRef.current = false;
     setExitActionPending(false);
     dispatch({ type: "overlay.exit", open: true });
-  }, []);
+    void refreshExitWorkSnapshot();
+  }, [refreshExitWorkSnapshot]);
   const closeExitConfirm = useCallback(() => {
     if (exitActionPendingRef.current) return;
     exitSnapshotSequence.current += 1;
     exitConfirmOpenRef.current = false;
     dispatch({ type: "overlay.exit", open: false });
   }, []);
-
-  useEffect(() => {
-    if (ui.overlays.exitConfirmOpen) void refreshExitWorkSnapshot();
-  }, [refreshExitWorkSnapshot, ui.overlays.exitConfirmOpen]);
 
   useEffect(() => {
     let disposed = false;
@@ -1283,26 +1338,156 @@ export default function App() {
     dispatch({ type: "selection.retain", ids: actionableVisibleIds });
   }, [actionableVisibleIds]);
 
-  const hydrateDetail = useCallback(async (id: GalleryId) => {
-    if (hydratedDetails.current.has(id)) return;
+  const hydrateDetail = useCallback(async (id: GalleryId, options?: { silent?: boolean }) => {
+    if (hydratedDetails.current.has(id) || hydratingDetails.current.has(id)) return;
+    hydratingDetails.current.add(id);
     try {
       const result = await backend.galleryDetailGet(id);
       if (!result.ok) {
-        showToast(result.error.message);
+        if (!options?.silent) showToast(result.error.message);
         return;
       }
       hydratedDetails.current.add(id);
       setGalleries((current) => mergeGalleryDetail(current, result.data));
     } catch {
-      showToast("상세 정보를 불러오지 못했습니다.");
+      if (!options?.silent) showToast("상세 정보를 불러오지 못했습니다.");
+    } finally {
+      hydratingDetails.current.delete(id);
     }
   }, [showToast]);
+  const hydrateDownloadCardDetail = useCallback(async (id: GalleryId) => {
+    if (hydratedDetails.current.has(id)
+      || hydratingDetails.current.has(id)
+      || hydratedCardDetails.current.has(id)
+      || hydratingCardDetails.current.has(id)) return;
+    hydratingCardDetails.current.add(id);
+    try {
+      const result = await backend.galleryDetailGet(id);
+      if (!result.ok) return;
+      hydratedCardDetails.current.add(id);
+      setGalleries((current) => mergeGalleryPage(current, {
+        page: 1,
+        totalPages: 1,
+        items: [result.data],
+      }).galleries);
+    } catch {
+      // The durable local summary remains usable; a later viewport entry can retry.
+    } finally {
+      hydratingCardDetails.current.delete(id);
+    }
+  }, []);
+  const pumpNearbyDownloadDetails = useCallback(() => {
+    while (nearbyDetailWorkers.current < 6 && nearbyDetailQueue.current.length) {
+      const id = nearbyDetailQueue.current.shift();
+      if (id === undefined) break;
+      if (!nearbyDetailQueued.current.delete(id)) continue;
+      if (hydratedDetails.current.has(id)
+        || hydratingDetails.current.has(id)
+        || hydratedCardDetails.current.has(id)
+        || hydratingCardDetails.current.has(id)) continue;
+      nearbyDetailWorkers.current += 1;
+      void hydrateDownloadCardDetail(id).finally(() => {
+        nearbyDetailWorkers.current = Math.max(0, nearbyDetailWorkers.current - 1);
+        nearbyDetailPump.current();
+      });
+    }
+  }, [hydrateDownloadCardDetail]);
+  nearbyDetailPump.current = pumpNearbyDownloadDetails;
+  const hydrateNearbyDownloadDetails = useCallback((ids: readonly GalleryId[]) => {
+    for (const id of [...ids].reverse()) {
+      if (hydratedDetails.current.has(id)
+        || hydratingDetails.current.has(id)
+        || hydratedCardDetails.current.has(id)
+        || hydratingCardDetails.current.has(id)
+        || nearbyDetailQueued.current.has(id)) continue;
+      nearbyDetailQueued.current.add(id);
+      nearbyDetailQueue.current.unshift(id);
+    }
+    nearbyDetailPump.current();
+  }, []);
+  const discardNearbyDownloadDetails = useCallback((ids: readonly GalleryId[]) => {
+    for (const id of ids) nearbyDetailQueued.current.delete(id);
+  }, []);
+  useEffect(() => {
+    if (ui.view === "downloads") return;
+    nearbyDetailQueued.current.clear();
+    nearbyDetailQueue.current = [];
+  }, [ui.view]);
   const openDetail = useCallback((id: GalleryId) => {
     dispatch({ type: "detail.open", id });
     void hydrateDetail(id);
   }, [hydrateDetail]);
-  const openRelatedDetail = useCallback((id: GalleryId, parentId: GalleryId) => {
-    dispatch({ type: "detail.open", id, parentId });
+  const randomOpenAvailable = useMemo(() => {
+    if (ui.view === "explore") return true;
+    if (ui.view === "auto-find") {
+      return autoFindIds.some((id) => displayGalleries.get(id)?.download?.state !== "quarantined"
+        && displayGalleries.has(id)
+        && !duplicateHiddenGalleryIds.has(id));
+    }
+    return downloadIds.some((id) => displayGalleries.get(id)?.download?.state === "completed"
+      && !duplicateHiddenGalleryIds.has(id));
+  }, [autoFindIds, displayGalleries, downloadIds, duplicateHiddenGalleryIds, ui.view]);
+  const openRandomGallery = useCallback(async () => {
+    if (randomOpenPending) return;
+
+    let candidates: Gallery[] = [];
+    if (ui.view === "auto-find") {
+      candidates = autoFindIds.flatMap((id) => {
+        const gallery = displayGalleries.get(id);
+        return gallery && gallery.download?.state !== "quarantined" && !duplicateHiddenGalleryIds.has(id)
+          ? [gallery]
+          : [];
+      });
+    } else if (ui.view === "downloads") {
+      candidates = downloadIds.flatMap((id) => {
+        const gallery = displayGalleries.get(id);
+        return gallery?.download?.state === "completed" && !duplicateHiddenGalleryIds.has(id)
+          ? [gallery]
+          : [];
+      });
+    }
+
+    if (ui.view !== "explore") {
+      const gallery = candidates[Math.floor(Math.random() * candidates.length)];
+      if (!gallery) {
+        showToast(ui.view === "auto-find"
+          ? "현재 로드된 Auto Find 후보가 없습니다."
+          : "다운로드가 완료된 앨범이 없습니다.");
+        return;
+      }
+      openDetail(gallery.id);
+      return;
+    }
+
+    setRandomOpenPending(true);
+    try {
+      const result = await backend.searchSubmit({
+        text: "",
+        includeTags: [],
+        excludeTags: [],
+        languages: ["korean", "japanese", "chinese", "english"],
+        sort: "random",
+        pageSize: 1,
+      });
+      if (!result.ok) {
+        showToast(result.error.message);
+        return;
+      }
+      const summary = result.data.firstPage.items[0];
+      if (!summary) {
+        showToast("현재 검색 규칙에 맞는 랜덤 갤러리를 찾지 못했습니다.");
+        return;
+      }
+      setGalleries((current) => mergeGalleryPage(current, result.data.firstPage).galleries);
+      openDetail(summary.id);
+    } catch {
+      showToast("랜덤 갤러리를 불러오지 못했습니다.");
+    } finally {
+      setRandomOpenPending(false);
+    }
+  }, [autoFindIds, displayGalleries, downloadIds, duplicateHiddenGalleryIds, openDetail, randomOpenPending, showToast, ui.view]);
+  const openRelatedDetail = useCallback((id: GalleryId, parentId: GalleryId, options?: { activate?: boolean }) => {
+    dispatch({ type: "detail.open", id, parentId, activate: options?.activate });
     void hydrateDetail(id);
   }, [hydrateDetail]);
   const hydrateDuplicateReview = useCallback(async (candidateId: string) => {
@@ -1467,6 +1652,71 @@ export default function App() {
       setDownloadOverlapDecisionPending(false);
     }
   }, [closeDownloadOverlapReview, hydrateDownloadOverlapReview, showToast]);
+
+  useEffect(() => {
+    if (settingsLoading
+      || settings.downloadOverlapAutoMode !== "strict_quarantine"
+      || automaticOverlapInFlightRef.current
+      || downloadOverlapDecisionPendingRef.current) return;
+
+    const reviewId = allGalleries.find((gallery) => gallery.download?.state === "review_required"
+      && gallery.download.reviewKind === "gallery_duplicate"
+      && gallery.download.reviewId
+      && gallery.download.reviewId !== downloadOverlapReviewId)?.download?.reviewId;
+    if (!reviewId) return;
+
+    automaticOverlapInFlightRef.current = true;
+    void (async () => {
+      try {
+        const loaded = await backend.downloadOverlapReviewGet(reviewId);
+        if (!loaded.ok) return;
+        let current = loaded.data;
+        const attemptKey = `${current.reviewId}:${current.revision}`;
+        if (automaticOverlapAttemptedRef.current.has(attemptKey)) return;
+        automaticOverlapAttemptedRef.current.add(attemptKey);
+        const plan = buildStrictOverlapPlan(current);
+        if (!plan) return;
+
+        const excludedGalleryIds: GalleryId[] = [];
+        for (const step of plan.steps) {
+          const featureSnapshotJson = JSON.stringify({
+            ...(JSON.parse(step.featureSnapshotJson) as Record<string, unknown>),
+            reviewRevision: current.revision,
+          });
+          const result = await backend.downloadOverlapDecisionApply({
+            reviewId: current.reviewId,
+            expectedRevision: current.revision,
+            action: step.action,
+            candidateId: step.candidateId,
+            actor: "automation",
+            reasonCode: DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
+            ruleVersion: DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
+            featureSnapshotJson,
+          });
+          if (!result.ok) {
+            showToast(`자동 판본 판정을 중단했습니다. 직접 검토해 주세요. · ${result.error.message}`);
+            return;
+          }
+          const decidedCandidate = current.candidates.find((candidate) => candidate.candidateId === step.candidateId);
+          if (step.action === "remove_incoming") excludedGalleryIds.push(current.incoming.galleryId);
+          else if (decidedCandidate) excludedGalleryIds.push(decidedCandidate.existing.galleryId);
+          current = result.data.review;
+        }
+
+        if (excludedGalleryIds.length) {
+          setDuplicateHiddenGalleryIds((known) => new Set([...known, ...excludedGalleryIds]));
+        }
+        setDownloadsRefresh((value) => value + 1);
+        showToast(plan.winner === "incoming"
+          ? `엄격한 포함 규칙으로 기존 판본 ${plan.steps.length}개를 복구 가능한 격리로 이동했습니다.`
+          : "엄격한 포함 규칙으로 신규 판본을 취소 상태로 보존했습니다.");
+      } catch {
+        showToast("자동 판본 판정을 완료하지 못했습니다. 직접 검토해 주세요.");
+      } finally {
+        automaticOverlapInFlightRef.current = false;
+      }
+    })();
+  }, [allGalleries, downloadOverlapReviewId, settings.downloadOverlapAutoMode, settingsLoading, showToast]);
 
   const hydrateInternalReview = useCallback(async (entryId: string) => {
     const token = ++internalReviewToken.current;
@@ -1700,7 +1950,7 @@ export default function App() {
         excludeTags: [],
         languages: ui.search.explore.languages,
         sort: ui.exploreSort,
-        pageSize: 50,
+        pageSize: settings.explorePageSize,
       }
       : {
         text: target.displayToken,
@@ -1708,7 +1958,7 @@ export default function App() {
         excludeTags: [],
         languages: ui.search.explore.languages,
         sort: ui.exploreSort,
-        pageSize: 50,
+        pageSize: settings.explorePageSize,
       };
     if (!kind && !target.displayToken) return;
 
@@ -1781,6 +2031,7 @@ export default function App() {
     replaceExploreContextIds,
     snapshotActiveExploreContext,
     startExploreSearch,
+    settings.explorePageSize,
     ui.exploreSort,
     ui.search.explore.languages,
   ]);
@@ -2248,26 +2499,94 @@ export default function App() {
   const autoFindDiscoveryDates = useMemo(() => new Map(
     autoFindSnapshot.candidates.map((candidate) => [candidate.id, candidate.discoveredAt]),
   ), [autoFindSnapshot.candidates]);
+  const autoFindFullGroups = useMemo(() => {
+    if (ui.view !== "auto-find" || ui.grouping["auto-find"] === "all") return [];
+    return groupGalleries(
+      visible,
+      ui.grouping["auto-find"],
+      (gallery) => autoFindDiscoveryDates.get(gallery.id) ?? gallery.publishedAt,
+    );
+  }, [autoFindDiscoveryDates, ui.grouping, ui.view, visible]);
+  const autoFindPageContextKey = useMemo(() => [
+    autoFindSnapshot.run?.runId ?? "",
+    ui.search["auto-find"].committed.trim(),
+    [...ui.search["auto-find"].languages].sort().join(","),
+    ui.grouping["auto-find"],
+    settings.explorePageSize,
+  ].join("\u001f"), [
+    autoFindSnapshot.run?.runId,
+    settings.explorePageSize,
+    ui.grouping,
+    ui.search,
+  ]);
+  useEffect(() => {
+    const previous = autoFindPageContext.current;
+    autoFindPageContext.current = autoFindPageContextKey;
+    if (previous === null || previous === autoFindPageContextKey) return;
+    setAutoFindPage(1);
+    setKeyboardFocusId(null);
+    if (ui.view === "auto-find" && galleryViewport.current) galleryViewport.current.scrollTop = 0;
+  }, [autoFindPageContextKey, ui.view]);
+  const autoFindPaginationSource = useMemo(() => {
+    if (ui.view !== "auto-find") return [];
+    return ui.grouping["auto-find"] === "all"
+      ? visible
+      : autoFindFullGroups.flatMap((group) => group.items);
+  }, [autoFindFullGroups, ui.grouping, ui.view, visible]);
+  const autoFindPagination = useMemo(
+    () => paginateAutoFindItems(autoFindPaginationSource, autoFindPage, settings.explorePageSize),
+    [autoFindPage, autoFindPaginationSource, settings.explorePageSize],
+  );
+  const renderedVisible = ui.view === "auto-find" ? autoFindPagination.items : visible;
+  const renderedActionableIds = useMemo(() => {
+    if (ui.view !== "auto-find") return actionableVisibleIds;
+    return renderedVisible
+      .filter((gallery) => gallery.download?.state !== "quarantined"
+        && !duplicateHiddenGalleryIds.has(gallery.id))
+      .map((gallery) => gallery.id);
+  }, [actionableVisibleIds, duplicateHiddenGalleryIds, renderedVisible, ui.view]);
+  visibleIdsRef.current = renderedActionableIds;
+
+  useEffect(() => {
+    if (ui.view !== "auto-find" || autoFindPage === autoFindPagination.page) return;
+    setAutoFindPage(autoFindPagination.page);
+    setKeyboardFocusId(null);
+    if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
+  }, [autoFindPage, autoFindPagination.page, ui.view]);
+
   const groupedVisible = useMemo(() => {
     if (ui.view !== "auto-find" && ui.view !== "downloads") return [];
     const grouping = ui.grouping[ui.view] as GalleryGrouping;
     if (grouping === "all") return [];
-    return groupGalleries(visible, grouping, (gallery) => ui.view === "auto-find"
+    return groupGalleries(renderedVisible, grouping, (gallery) => ui.view === "auto-find"
       ? autoFindDiscoveryDates.get(gallery.id) ?? gallery.publishedAt
       : gallery.download?.updatedAt ?? gallery.download?.createdAt ?? gallery.publishedAt);
-  }, [autoFindDiscoveryDates, ui.grouping, ui.view, visible]);
+  }, [autoFindDiscoveryDates, renderedVisible, ui.grouping, ui.view]);
   const groupedStorageKeys = useMemo(() => groupedVisible.map((group) => galleryGroupStorageKey(
     ui.view === "auto-find" ? "auto-find" : "downloads",
     group,
   )), [groupedVisible, ui.view]);
+  const progressiveDownloadsObserveKey = useMemo(() => {
+    if (ui.view !== "downloads") return "inactive";
+    const collapsed = [...collapsedGroupKeys].sort().join("\u001f");
+    return `${currentGalleryDisplayMode}\u001e${ui.grouping.downloads}\u001e${collapsed}\u001e${renderedVisible.map((gallery) => gallery.id).join(",")}`;
+  }, [collapsedGroupKeys, currentGalleryDisplayMode, renderedVisible, ui.grouping.downloads, ui.view]);
+  const nearbyDownloadIds = useProgressiveGalleryWindow({
+    rootRef: galleryViewport,
+    enabled: ui.view === "downloads",
+    observeKey: progressiveDownloadsObserveKey,
+    onEnter: hydrateNearbyDownloadDetails,
+    onLeave: discardNearbyDownloadDetails,
+    overscanPixels: currentGalleryDisplayMode === "compact" ? 900 : 1200,
+  });
   const keyboardNavigableIds = useMemo(() => {
-    if (ui.view === "explore" || ui.grouping[ui.view] === "all") return actionableVisibleIds;
+    if (ui.view === "explore" || ui.grouping[ui.view] === "all") return renderedActionableIds;
     const groupedView = ui.view;
     return groupedVisible.flatMap((group) => {
       const key = galleryGroupStorageKey(groupedView, group);
       return collapsedGroupKeys.has(key) ? [] : group.items.map((gallery) => gallery.id);
     });
-  }, [actionableVisibleIds, collapsedGroupKeys, groupedVisible, ui.grouping, ui.view]);
+  }, [collapsedGroupKeys, groupedVisible, renderedActionableIds, ui.grouping, ui.view]);
   const effectiveKeyboardFocusId = useMemo(() => {
     if (keyboardFocusId !== null && keyboardNavigableIds.includes(keyboardFocusId)) return keyboardFocusId;
     return selectedIds.find((id) => keyboardNavigableIds.includes(id))
@@ -2277,10 +2596,17 @@ export default function App() {
   const focusGalleryCard = useCallback((id: GalleryId) => {
     setKeyboardFocusId(id);
     window.requestAnimationFrame(() => {
-      const card = galleryViewport.current?.querySelector<HTMLElement>(`[data-gallery-id="${Number(id)}"]`);
-      card?.focus({ preventScroll: true });
-      card?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+      const slot = galleryViewport.current?.querySelector<HTMLElement>(`[data-progressive-gallery-id="${Number(id)}"]`);
+      const card = slot?.querySelector<HTMLElement>(".gallery-card") ?? galleryViewport.current?.querySelector<HTMLElement>(`.gallery-card[data-gallery-id="${Number(id)}"]`);
+      const focusTarget = card ?? slot;
+      focusTarget?.focus({ preventScroll: true });
+      focusTarget?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
+  }, []);
+  const changeAutoFindPage = useCallback((page: number) => {
+    setAutoFindPage(page);
+    setKeyboardFocusId(null);
+    if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
   }, []);
   const refreshCurrentView = useCallback(() => {
     if (ui.view === "explore") {
@@ -2395,7 +2721,7 @@ export default function App() {
       if (primaryModifier && event.key.toLocaleLowerCase() === "a" && !event.altKey && !event.repeat) {
         event.preventDefault();
         if (event.shiftKey) dispatch({ type: "selection.clear" });
-        else dispatch({ type: "selection.all", ids: actionableVisibleIds });
+        else dispatch({ type: "selection.all", ids: renderedActionableIds });
         return;
       }
 
@@ -2442,7 +2768,7 @@ export default function App() {
     };
     window.addEventListener("keydown", keyDown);
     return () => window.removeEventListener("keydown", keyDown);
-  }, [actionableVisibleIds, closeActivity, effectiveKeyboardFocusId, excludeAutoFindCandidates, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, selectedIds, showToast, ui.detail.activeId, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction]);
+  }, [closeActivity, effectiveKeyboardFocusId, excludeAutoFindCandidates, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, renderedActionableIds, selectedIds, showToast, ui.detail.activeId, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction]);
 
   const config = viewConfig[ui.view];
   const resultSourceLabel = backend.runtime === "tauri" ? "Hitomi 실데이터" : "브라우저 fixture";
@@ -2475,13 +2801,15 @@ export default function App() {
       previewWidth={previewWidth}
       selectionContext={multiSelectionMode}
       ariaLabel={ariaLabel}
+      displayMode={currentGalleryDisplayMode}
     >
-      {items.map((gallery, index) => (
-        <GalleryCard
+      {items.map((gallery, index) => {
+        const card = <GalleryCard
           key={gallery.id}
           gallery={gallery}
           thumbnailPriority={index < galleryColumns ? "visible" : "prefetch"}
           view={ui.view}
+          displayMode={currentGalleryDisplayMode}
           explorationExcluded={duplicateHiddenGalleryIds.has(gallery.id)}
           selected={ui.selection.ids.has(gallery.id)}
           selectionContext={multiSelectionMode}
@@ -2509,8 +2837,18 @@ export default function App() {
           onStatusDetail={openStatusDetail}
           onMetadataSearch={searchMetadata}
           onMetadataFavorite={toggleMetadataFavorite}
-        />
-      ))}
+        />;
+        return ui.view === "downloads" ? (
+          <ProgressiveGallerySlot
+            key={gallery.id}
+            gallery={gallery}
+            displayMode={currentGalleryDisplayMode}
+            active={nearbyDownloadIds.has(gallery.id) || gallery.id === effectiveKeyboardFocusId}
+          >
+            {card}
+          </ProgressiveGallerySlot>
+        ) : card;
+      })}
     </GalleryGrid>
   );
 
@@ -2530,6 +2868,7 @@ export default function App() {
           <ViewHeader
             view={ui.view}
             search={ui.search[ui.view]}
+            searchPending={settingsLoading}
             suggestions={ui.view === "explore" ? searchSuggestions : []}
             activityCount={activeDownloadCount}
             activityOpen={ui.overlays.activityOpen}
@@ -2544,7 +2883,7 @@ export default function App() {
                   excludeTags: [],
                   languages: [...ui.search.explore.languages],
                   sort: ui.exploreSort,
-                  pageSize: 50,
+                  pageSize: settings.explorePageSize,
                 }, { displayValue, label: displayValue || "새 탐색" });
               }
               dispatch({ type: "search.commit", view: ui.view, value });
@@ -2554,7 +2893,10 @@ export default function App() {
               if (ui.view === "explore" && suggestion.request) {
                 dispatch({ type: "search.languages", view: "explore", languages: suggestion.request.languages });
                 dispatch({ type: "sort.set", sort: suggestion.request.sort });
-                startExploreSearch(suggestion.request, { displayValue: value, label: value || "새 탐색" });
+                startExploreSearch({
+                  ...suggestion.request,
+                  pageSize: settings.explorePageSize,
+                }, { displayValue: value, label: value || "새 탐색" });
               } else if (ui.view === "explore") {
                 startExploreSearch({
                   text: value.trim(),
@@ -2562,7 +2904,7 @@ export default function App() {
                   excludeTags: [],
                   languages: [...ui.search.explore.languages],
                   sort: ui.exploreSort,
-                  pageSize: 50,
+                  pageSize: settings.explorePageSize,
                 }, { displayValue: value, label: value || "새 탐색" });
               }
               dispatch({ type: "search.commit", view: ui.view, value });
@@ -2575,10 +2917,10 @@ export default function App() {
               dispatch({ type: "search.languages", view: ui.view, languages });
             }}
             onTagSuggestionQuery={requestTagSuggestions}
-            onTagCatalogRefresh={() => void refreshTagCatalog()}
-            tagCatalogStatus={tagCatalogStatus}
-            tagCatalogRefreshing={tagCatalogRefreshing}
             tagCatalogRevision={tagCatalogStatus?.revision}
+            onRandomOpen={() => void openRandomGallery()}
+            randomOpenPending={randomOpenPending}
+            randomOpenAvailable={randomOpenAvailable}
             privacyMode={settings.privacyMode}
             privacyModePending={privacyModePending || settingsLoading}
             onPrivacyModeToggle={() => void togglePrivacyMode()}
@@ -2628,6 +2970,10 @@ export default function App() {
           ) : null}
           <section className="context-row">
             <div className="context-left">
+              <GalleryDisplayModeControl
+                value={currentGalleryDisplayMode}
+                onChange={(mode) => persistGalleryDisplayMode(ui.view, mode)}
+              />
               {(ui.view === "auto-find" || ui.view === "downloads") ? (
                 <div className="gallery-grouping-toolbar" role="group" aria-label="목록 표시 도구">
                   <GroupingControl
@@ -2721,7 +3067,7 @@ export default function App() {
             count={ui.selection.ids.size}
             downloadsView={ui.view === "downloads"}
             restoreMode={selectedIds.length > 0 && selectedIds.every((id) => displayGalleries.get(id)?.download?.state === "quarantined")}
-            onAll={() => dispatch({ type: "selection.all", ids: actionableVisibleIds })}
+            onAll={() => dispatch({ type: "selection.all", ids: renderedActionableIds })}
             onClear={() => dispatch({ type: "selection.clear" })}
             onPrimary={() => void queueGalleries(selectedIds)}
             onDelete={() => ui.view === "downloads"
@@ -2736,7 +3082,7 @@ export default function App() {
             ) : ((ui.view === "explore" && query.phase === "submitting" && !visible.length)
               || (ui.view === "downloads" && downloadsLoading && !visible.length)
               || (ui.view === "auto-find" && autoFindLoading && !visible.length)) ? (
-              <GalleryGridSkeleton columns={galleryColumns} previewWidth={previewWidth} />
+              <GalleryGridSkeleton columns={galleryColumns} previewWidth={previewWidth} displayMode={currentGalleryDisplayMode} />
             ) : ui.view === "explore" && query.phase === "idle" ? (
               <div className="empty-state"><FluentIcon glyph="\uE721" /><h2>검색을 시작해 주세요</h2><p>검색어와 언어·정렬 필터를 정한 뒤 검색 버튼을 눌러 주세요.</p></div>
             ) : ui.view === "explore" && query.error && !query.page ? (
@@ -2745,14 +3091,14 @@ export default function App() {
                 const context = activeId ? exploreContexts.current.get(activeId) : undefined;
                 if (context?.request) startExploreSearch(context.request, { displayValue: context.displayValue, label: context.label });
               }}>다시 시도</button></div>
-            ) : ui.view === "downloads" && downloadsError ? (
+            ) : ui.view === "downloads" && downloadsError && !visible.length ? (
               <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>다운로드 목록을 불러오지 못했습니다</h2><p>{downloadsError}</p><button type="button" className="text-button" onClick={() => setDownloadsRefresh((value) => value + 1)}>다시 시도</button></div>
             ) : ui.view === "auto-find" && autoFindError && !autoFindSnapshot.candidates.length ? (
               <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>자동 탐색 결과를 불러오지 못했습니다</h2><p>{autoFindError}</p><button type="button" className="text-button" onClick={() => void hydrateAutoFind(true)}>다시 시도</button></div>
             ) : visible.length ? (
               (ui.view === "auto-find" || ui.view === "downloads") ? (
                 ui.grouping[ui.view] === "all"
-                  ? renderGalleryGrid(visible, `${config.title} 전체 목록`)
+                  ? renderGalleryGrid(renderedVisible, `${config.title} 전체 목록`)
                   : <GalleryAccordionGroups
                       groups={groupedVisible}
                       view={ui.view}
@@ -2761,12 +3107,29 @@ export default function App() {
                       onToggle={toggleGroupCollapsed}
                       renderGrid={renderGalleryGrid}
                     />
-              ) : renderGalleryGrid(visible, config.title)
+              ) : renderGalleryGrid(renderedVisible, config.title)
             ) : (
               <div className="empty-state"><FluentIcon glyph="\uE11A" /><h2>표시할 갤러리가 없습니다</h2><p>{ui.view === "auto-find" ? "즐겨찾기 작가를 추가한 뒤 명시적으로 갱신하거나 현재 검색·언어 필터를 바꿔 보세요." : "검색어나 언어·상태 필터를 바꿔 보세요."}</p></div>
             )}
             {ui.view === "explore" && query.page ? <div className="pager"><button type="button" className="text-button" disabled={query.phase === "loading-page" || query.page.page <= 1} onClick={() => void loadExplorePage(query.page!.page - 1)}>이전</button><span>{query.page.page} / {Math.max(1, query.page.totalPages)}{query.phase === "loading-page" ? " · 불러오는 중" : ""}</span><button type="button" className="text-button" disabled={query.phase === "loading-page" || query.page.page >= query.page.totalPages} onClick={() => void loadExplorePage(query.page!.page + 1)}>다음</button></div> : null}
+            {ui.view === "auto-find" ? (
+              <AutoFindPager
+                page={autoFindPagination.page}
+                totalPages={autoFindPagination.totalPages}
+                totalItems={autoFindPagination.totalItems}
+                onPageChange={changeAutoFindPage}
+              />
+            ) : null}
           </section>
+          {ui.view === "auto-find" || ui.view === "downloads" ? (
+            <GalleryScrollPositionHint
+              rootRef={galleryViewport}
+              view={ui.view}
+              grouping={ui.grouping[ui.view]}
+              items={renderedVisible}
+              groups={groupedVisible}
+            />
+          ) : null}
         </main>
         <ActivityDrawer
           open={ui.overlays.activityOpen}
@@ -2808,10 +3171,14 @@ export default function App() {
         error={settingsError}
         onClose={() => dispatch({ type: "overlay.settings", open: false })}
         onSave={saveSettingsPatch}
+        onLoadStorageUsage={loadStorageUsage}
         onPreviewLayout={setSettingsPreview}
         onPreviewFolderName={previewFolderNameTemplate}
         onMaintenance={runMaintenance}
         onCheckForUpdates={() => appUpdater.checkForUpdates("manual")}
+        onTagCatalogRefresh={refreshTagCatalog}
+        tagCatalogStatus={tagCatalogStatus}
+        tagCatalogRefreshing={tagCatalogRefreshing}
         onLoadExplorationExclusions={loadExplorationExclusionsAndSync}
         onRestoreExplorationExclusions={restoreExplorationExclusionsAndSync}
       />
@@ -2851,6 +3218,7 @@ export default function App() {
         error={downloadOverlapError}
         decisionPending={downloadOverlapDecisionPending}
         browserFixture={backend.runtime === "browser-mock"}
+        autoMode={settings.downloadOverlapAutoMode}
         previewWidth={previewWidth}
         thumbnailClient={thumbnailClient}
         onClose={closeDownloadOverlapReview}

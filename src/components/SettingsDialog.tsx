@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import packageMetadata from "../../package.json";
 import type {
   ApiError,
@@ -9,6 +9,8 @@ import type {
   MaintenanceResult,
   SettingsPatch,
   SettingsSnapshot,
+  StorageUsageSnapshot,
+  TagCatalogStatus,
 } from "../api/contracts";
 import type { GalleryId } from "../core/types";
 import {
@@ -26,10 +28,14 @@ type SettingsDialogProps = {
   error: ApiError | null;
   onClose: () => void;
   onSave: (patch: SettingsPatch) => Promise<boolean>;
+  onLoadStorageUsage: () => Promise<ApiResult<StorageUsageSnapshot>>;
   onPreviewLayout: (layout: { maxColumns: number; previewWidth: number } | null) => void;
   onPreviewFolderName: (template: string) => Promise<ApiResult<string>>;
   onMaintenance: (action: MaintenanceAction) => Promise<ApiResult<MaintenanceResult>>;
   onCheckForUpdates: () => Promise<AppUpdateCheckResult>;
+  onTagCatalogRefresh: () => Promise<void>;
+  tagCatalogStatus?: TagCatalogStatus;
+  tagCatalogRefreshing: boolean;
   onLoadExplorationExclusions: () => Promise<ApiResult<ExplorationExclusion[]>>;
   onRestoreExplorationExclusions: (galleryIds: GalleryId[]) => Promise<ApiResult<ExplorationExclusionRestoreResult>>;
 };
@@ -43,6 +49,20 @@ const exclusionReasonLabel = (kind: ExplorationExclusion["reasons"][number]["kin
   duplicate_resolved: "중복 판정",
   duplicate_pair: "중복 아님 쌍",
 })[kind];
+
+const formatBytes = (bytes: number): string => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  const unit = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / (1024 ** unit);
+  return `${value.toLocaleString("ko-KR", {
+    maximumFractionDigits: value >= 100 || unit === 0 ? 0 : value >= 10 ? 1 : 2,
+  })} ${units[unit]}`;
+};
+
+const storagePercent = (part: number, total: number): number => (
+  total > 0 ? Math.min(100, Math.max(0, (part / total) * 100)) : 0
+);
 
 const copyText = async (value: string) => {
   if (navigator.clipboard?.writeText) {
@@ -68,10 +88,14 @@ export function SettingsDialog({
   error,
   onClose,
   onSave,
+  onLoadStorageUsage,
   onPreviewLayout,
   onPreviewFolderName,
   onMaintenance,
   onCheckForUpdates,
+  onTagCatalogRefresh,
+  tagCatalogStatus,
+  tagCatalogRefreshing,
   onLoadExplorationExclusions,
   onRestoreExplorationExclusions,
 }: SettingsDialogProps) {
@@ -99,6 +123,13 @@ export function SettingsDialog({
   const [restoringExclusions, setRestoringExclusions] = useState(false);
   const [includeTagInput, setIncludeTagInput] = useState(settings.searchIncludeTags.join("\n"));
   const [excludeTagInput, setExcludeTagInput] = useState(settings.searchExcludeTags.join("\n"));
+  const [storageUsage, setStorageUsage] = useState<StorageUsageSnapshot | null>(null);
+  const [storageUsageLoading, setStorageUsageLoading] = useState(false);
+  const [storageUsageError, setStorageUsageError] = useState("");
+  const storageUsageRequest = useRef(0);
+  const storageUsageLoadingRef = useRef(false);
+  const storageUsagePath = useRef<string | null>(null);
+  const storageUsageLoadedAt = useRef(0);
 
   useEffect(() => {
     if (open && !wasOpen.current) {
@@ -129,6 +160,41 @@ export function SettingsDialog({
     }
     wasOpen.current = open;
   }, [open, onPreviewLayout, settings]);
+
+  const loadStorageUsage = useCallback((force = false) => {
+    if (storageUsageLoadingRef.current) return;
+    const requestedPath = settings.downloadRoot.trim();
+    const fresh = storageUsagePath.current === requestedPath
+      && Date.now() - storageUsageLoadedAt.current < 30_000;
+    if (!force && fresh) return;
+    const request = ++storageUsageRequest.current;
+    storageUsageLoadingRef.current = true;
+    setStorageUsageLoading(true);
+    setStorageUsageError("");
+    if (storageUsagePath.current !== requestedPath) setStorageUsage(null);
+    void onLoadStorageUsage().then((result) => {
+      if (storageUsageRequest.current !== request) return;
+      if (result.ok) {
+        setStorageUsage(result.data);
+        storageUsagePath.current = requestedPath;
+        storageUsageLoadedAt.current = Date.now();
+      } else {
+        setStorageUsageError(result.error.message);
+      }
+      storageUsageLoadingRef.current = false;
+      setStorageUsageLoading(false);
+    }).catch(() => {
+      if (storageUsageRequest.current !== request) return;
+      setStorageUsageError("저장공간 사용량을 불러오지 못했습니다.");
+      storageUsageLoadingRef.current = false;
+      setStorageUsageLoading(false);
+    });
+  }, [onLoadStorageUsage, settings.downloadRoot]);
+
+  useEffect(() => {
+    if (!open) return;
+    loadStorageUsage();
+  }, [loadStorageUsage, open]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -191,6 +257,8 @@ export function SettingsDialog({
     setDraft((current) => ({
       ...current,
       autoFindHistoryMode: "include_all_history",
+      downloadOverlapAutoMode: "off",
+      explorePageSize: 50,
       maxColumns,
       previewWidth,
       relatedPreviewWidth: 240,
@@ -272,6 +340,9 @@ export function SettingsDialog({
 
   const overlappingSearchTags = draft.searchIncludeTags.filter((tag) =>
     draft.searchExcludeTags.includes(tag));
+  const tagCatalogIncomplete = !tagCatalogStatus?.entryCount
+    || tagCatalogStatus.artistCount === 0
+    || tagCatalogStatus.groupCount === 0;
 
   const save = async () => {
     setSaving(true);
@@ -279,6 +350,8 @@ export function SettingsDialog({
       downloadRoot: draft.downloadRoot,
       folderNameTemplate: draft.folderNameTemplate,
       autoFindHistoryMode: draft.autoFindHistoryMode,
+      downloadOverlapAutoMode: draft.downloadOverlapAutoMode,
+      explorePageSize: draft.explorePageSize,
       maxColumns: draft.maxColumns,
       previewWidth: draft.previewWidth,
       relatedPreviewWidth: draft.relatedPreviewWidth,
@@ -349,6 +422,85 @@ export function SettingsDialog({
                   <div><strong>다운로드 폴더</strong><span>완료된 갤러리를 저장할 위치</span></div>
                   <input value={draft.downloadRoot} placeholder="폴더를 선택하세요" aria-label="다운로드 폴더" onChange={(event) => patch("downloadRoot", event.target.value)} />
                 </div>
+                <section className="storage-usage-panel" aria-labelledby="storage-usage-title">
+                  <header className="storage-usage-header">
+                    <div>
+                      <span className="eyebrow">STORAGE</span>
+                      <strong id="storage-usage-title">저장공간 사용량</strong>
+                      <p>현재 저장된 다운로드 경로를 기준으로 계산합니다. 큰 폴더는 확인에 시간이 걸릴 수 있습니다.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-button"
+                      disabled={storageUsageLoading}
+                      onClick={() => loadStorageUsage(true)}
+                    >{storageUsageLoading ? "계산 중" : "새로고침"}</button>
+                  </header>
+                  {storageUsageError ? <p className="storage-usage-error" role="alert">{storageUsageError}</p> : null}
+                  {!storageUsage && storageUsageLoading ? <p className="storage-usage-loading" role="status">파일과 디스크 용량을 계산하고 있습니다.</p> : null}
+                  {storageUsage ? <>
+                    <div className="storage-summary-grid">
+                      <article>
+                        <span>메모리 미리보기 캐시</span>
+                        <data value={storageUsage.memoryCacheBytes}>{formatBytes(storageUsage.memoryCacheBytes)}</data>
+                        <small>현재 실행 중인 RAM 사용량</small>
+                      </article>
+                      <article>
+                        <span>디스크 임시 캐시</span>
+                        <data value={storageUsage.diskCache.bytes}>{formatBytes(storageUsage.diskCache.bytes)}</data>
+                        <small>열려 있는 원본 페이지 미리보기</small>
+                      </article>
+                      <article>
+                        <span>앱 데이터</span>
+                        <data value={storageUsage.appData.bytes}>{formatBytes(storageUsage.appData.bytes)}</data>
+                        <small>DB·분석 정보·마이그레이션 백업</small>
+                      </article>
+                      <article>
+                        <span>다운로드 폴더</span>
+                        <data value={storageUsage.downloads.bytes}>
+                          {!settings.downloadRoot.trim() ? "폴더 미설정" : formatBytes(storageUsage.downloads.bytes)}
+                        </data>
+                        <small>{settings.downloadRoot.trim() && !storageUsage.downloads.exists ? "설정된 폴더가 존재하지 않음" : "다운로드 루트 아래의 실제 파일"}</small>
+                      </article>
+                    </div>
+                    <div className="storage-volume-list">
+                      {storageUsage.volumes.map((volume) => {
+                        const total = volume.totalBytes;
+                        const available = volume.availableBytes;
+                        if (total === undefined || available === undefined || total <= 0) {
+                          return <article className="storage-volume" key={volume.root}>
+                            <div><strong>{volume.root}</strong><span>디스크 전체·남은 용량을 읽지 못했습니다.</span></div>
+                            <small>Atsumi 관리 경로 {formatBytes(volume.atsumiBytes)}</small>
+                          </article>;
+                        }
+                        const occupied = Math.min(total, Math.max(0, total - available));
+                        const atsumiOnDisk = Math.min(occupied, volume.atsumiBytes);
+                        const otherOccupied = Math.max(0, occupied - atsumiOnDisk);
+                        return <article className="storage-volume" key={volume.root}>
+                          <div className="storage-volume-heading">
+                            <strong>{volume.root} 디스크</strong>
+                            <span>{formatBytes(available)} 남음 / {formatBytes(total)}</span>
+                          </div>
+                          <div
+                            className="storage-volume-meter"
+                            role="img"
+                            aria-label={`${volume.root} 전체 ${formatBytes(total)} 중 ${formatBytes(occupied)} 사용, Atsumi 관리 경로 ${formatBytes(volume.atsumiBytes)}`}
+                          >
+                            <span className="is-other" style={{ width: `${storagePercent(otherOccupied, total)}%` }} />
+                            <span className="is-atsumi" style={{ width: `${storagePercent(atsumiOnDisk, total)}%` }} />
+                          </div>
+                          <div className="storage-volume-legend">
+                            <span><i className="is-atsumi" />Atsumi 관리 경로 {formatBytes(volume.atsumiBytes)} ({storagePercent(volume.atsumiBytes, total).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%)</span>
+                            <span><i className="is-other" />기타 사용 {formatBytes(otherOccupied)}</span>
+                          </div>
+                        </article>;
+                      })}
+                    </div>
+                    {storageUsage.warnings.length ? <ul className="storage-usage-warnings">
+                      {storageUsage.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                    </ul> : null}
+                  </> : null}
+                </section>
                 <div className="setting-row">
                   <div>
                     <strong>갤러리 폴더 이름</strong>
@@ -378,14 +530,55 @@ export function SettingsDialog({
                     <span>변경한 기준은 다음 Auto Find 실행부터 적용됩니다.</span>
                     <span>최신 기준은 검증 완료·격리된 소유 작품의 gallery ID 이후만 후보로 봅니다.</span>
                   </div>
-                  <select
-                    aria-label="Auto Find 기록 기준"
-                    value={draft.autoFindHistoryMode}
-                    onChange={(event) => patch("autoFindHistoryMode", event.target.value as SettingsSnapshot["autoFindHistoryMode"])}
-                  >
-                    <option value="include_all_history">전체 기록 포함</option>
-                    <option value="newer_than_oldest_downloaded">가장 오래된 소유 작품 이후</option>
-                  </select>
+                  <div className="settings-select-control">
+                    <select
+                      aria-label="Auto Find 기록 기준"
+                      value={draft.autoFindHistoryMode}
+                      onChange={(event) => patch("autoFindHistoryMode", event.target.value as SettingsSnapshot["autoFindHistoryMode"])}
+                    >
+                      <option value="include_all_history">전체 기록 포함</option>
+                      <option value="newer_than_oldest_downloaded">가장 오래된 소유 작품 이후</option>
+                    </select>
+                    <FluentIcon glyph="\uE70D" />
+                  </div>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <strong>다운로드 판본 자동 판정</strong>
+                    <span>포함률 99.5% 이상·고유 페이지 0장·정확 일치 90% 이상 등 엄격한 추가 페이지 규칙만 사용합니다.</span>
+                    <span>번역판·검열 차이·거의 동일·부분 겹침은 항상 직접 검토하며, 자동 제거도 영구 삭제가 아닌 복구 가능한 격리입니다.</span>
+                  </div>
+                  <div className="settings-select-control">
+                    <select
+                      aria-label="다운로드 판본 자동 판정"
+                      value={draft.downloadOverlapAutoMode}
+                      onChange={(event) => patch("downloadOverlapAutoMode", event.target.value as SettingsSnapshot["downloadOverlapAutoMode"])}
+                    >
+                      <option value="off">사용 안 함</option>
+                      <option value="recommend">추천만 표시</option>
+                      <option value="strict_quarantine">엄격 기준 자동 격리</option>
+                    </select>
+                    <FluentIcon glyph="\uE70D" />
+                  </div>
+                </div>
+                <div className="setting-row">
+                  <div>
+                    <strong>Explore 페이지당 앨범 수</strong>
+                    <span>다음 새 탐색부터 한 페이지에 불러올 앨범 수</span>
+                  </div>
+                  <div className="range-wrap">
+                    <input
+                      id="settings-explore-page-size"
+                      aria-label="Explore 페이지당 앨범 수"
+                      type="range"
+                      min="10"
+                      max="200"
+                      step="10"
+                      value={draft.explorePageSize}
+                      onChange={(event) => patch("explorePageSize", Number(event.target.value))}
+                    />
+                    <output htmlFor="settings-explore-page-size">{draft.explorePageSize}개</output>
+                  </div>
                 </div>
                 <div className="setting-row">
                   <div><strong>앨범 카드 최대 열 수</strong><span>창이 넓어도 설정한 열 수를 넘지 않습니다</span></div>
@@ -489,6 +682,36 @@ export function SettingsDialog({
                   <p className="settings-about-message" role="status" aria-live="polite">{updateMessage || informationMessage}</p>
                 </section>
               </> : <>
+                <section className="search-catalog-panel" aria-labelledby="search-catalog-title">
+                  <header>
+                    <div>
+                      <span className="eyebrow">SEARCH AUTOCOMPLETE</span>
+                      <h3 id="search-catalog-title">검색어 자동완성 데이터</h3>
+                      <p>Hitomi의 태그·작가·그룹 목록을 내려받아 Explore 검색 제안을 최신 상태로 유지합니다.</p>
+                    </div>
+                    <button
+                      type="button"
+                      className="text-button primary"
+                      aria-busy={tagCatalogRefreshing || undefined}
+                      disabled={tagCatalogRefreshing}
+                      onClick={() => void onTagCatalogRefresh()}
+                    >
+                      {tagCatalogRefreshing ? <span className="spinner catalog-refresh-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE72C" />}
+                      {tagCatalogRefreshing ? "최신화 중" : "지금 최신화"}
+                    </button>
+                  </header>
+                  <div className={`search-catalog-status${tagCatalogIncomplete ? " is-incomplete" : ""}`} role="status" aria-live="polite">
+                    <strong>{tagCatalogStatus?.entryCount
+                      ? `${tagCatalogStatus.entryCount.toLocaleString()}개 항목 저장됨`
+                      : "저장된 자동완성 데이터 없음"}</strong>
+                    {tagCatalogStatus?.entryCount ? (
+                      <span>
+                        작가 {tagCatalogStatus.artistCount.toLocaleString()} · 그룹 {tagCatalogStatus.groupCount.toLocaleString()} · 일반 태그 {tagCatalogStatus.neutralCount.toLocaleString()} · F {tagCatalogStatus.femaleCount.toLocaleString()} · M {tagCatalogStatus.maleCount.toLocaleString()}
+                      </span>
+                    ) : <span>처음 최신화하기 전에도 검색 자체는 사용할 수 있습니다.</span>}
+                    {tagCatalogStatus?.lastErrorMessage ? <small>최근 실패: {tagCatalogStatus.lastErrorMessage}</small> : null}
+                  </div>
+                </section>
                 <section className="search-rules-panel" aria-labelledby="search-rules-title">
                   <header>
                     <span className="eyebrow">GLOBAL SEARCH RULES</span>

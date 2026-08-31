@@ -76,6 +76,15 @@ describe("DetailWorkspace page previews", () => {
         download: { ...started.download!, state: "quarantined" },
       }));
       expect(container.querySelector('[aria-label="저장 폴더 열기"]')).toBeNull();
+
+      await act(async () => render({
+        ...started,
+        download: { ...started.download!, state: "completed", progress: 100 },
+      }));
+      expect(container.querySelector('[aria-label="다운로드"]')).toBeNull();
+      expect(container.querySelector('[aria-label="다운로드 완료"]')).toHaveClass("detail-download-complete");
+      expect(container.querySelector('[aria-label="저장 폴더 열기"]')).not.toBeNull();
+      expect(container.querySelector(".page-preview-dialog")).toHaveClass("is-resizable");
     } finally {
       await act(async () => root.unmount());
       client.dispose();
@@ -221,7 +230,7 @@ describe("DetailWorkspace page previews", () => {
     }
   });
 
-  it("moves only the bounded page window with previous and next controls", async () => {
+  it("moves only the bounded page window with side arrows, A/D, and direct page input", async () => {
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
     const resizeCallbacks: Array<() => void> = [];
     class TestResizeObserver {
@@ -233,7 +242,10 @@ describe("DetailWorkspace page previews", () => {
     const gallery: Gallery = { ...mockGalleries[0]!, pages: 5000, pageDimensions: Array.from({ length: 8 }, (_, index) => ({ sourcePage: index + 1, width: 720, height: 1080 })) };
     const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
     const container = document.createElement("div");
+    const backgroundControl = document.createElement("button");
+    backgroundControl.textContent = "background card";
     document.body.append(container);
+    document.body.append(backgroundControl);
     const root = createRoot(container);
     try {
       await act(async () => root.render(
@@ -241,31 +253,61 @@ describe("DetailWorkspace page previews", () => {
       ));
       expect(container.querySelectorAll(".preview-thumb").length).toBeLessThan(20);
       const nav = container.querySelector(".preview-window-nav");
-      expect(nav).not.toHaveTextContent("처음");
-      expect(nav).not.toHaveTextContent("마지막");
-      expect(container.querySelector('input[aria-label="페이지 번호로 이동"]')).toBeNull();
-      const next = [...container.querySelectorAll<HTMLButtonElement>(".preview-window-nav button")]
-        .find((button) => button.textContent === "다음 묶음");
-      const previous = [...container.querySelectorAll<HTMLButtonElement>(".preview-window-nav button")]
-        .find((button) => button.textContent === "이전 묶음");
+      expect(nav?.querySelector("button")).toBeNull();
+      const input = container.querySelector<HTMLInputElement>('input[aria-label="페이지 번호로 이동"]')!;
+      const next = container.querySelector<HTMLButtonElement>('[aria-label="다음 미리보기 묶음"]');
+      const previous = container.querySelector<HTMLButtonElement>('[aria-label="이전 미리보기 묶음"]');
+      expect(next).toHaveClass("is-next");
+      expect(previous).toHaveClass("is-previous");
+      expect(previous).toBeDisabled();
       const initialStart = container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent;
       await act(async () => {
         next?.click();
       });
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).not.toBe(initialStart);
-      const movedStart = container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent;
-      await act(async () => {
-        resizeCallbacks.forEach((callback) => callback());
-      });
-      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).toBe(movedStart);
       await act(async () => {
         previous?.click();
       });
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).toBe(initialStart);
+
+      const workspace = container.querySelector<HTMLElement>(".detail-workspace")!;
+      await act(async () => {
+        workspace.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
+      });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "10페이지 확대");
+
+      backgroundControl.focus();
+      await act(async () => {
+        backgroundControl.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
+      });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "19페이지 확대");
+
+      input.focus();
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true }));
+      });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "19페이지 확대");
+
+      const valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      await act(async () => {
+        valueSetter?.call(input, "4999");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "4996페이지 확대");
+      expect(input.value).toBe("4996");
+
+      await act(async () => {
+        resizeCallbacks.forEach((callback) => callback());
+      });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "4996페이지 확대");
       expect(container.querySelectorAll(".preview-thumb").length).toBeLessThan(20);
     } finally {
       await act(async () => root.unmount());
       client.dispose();
+      backgroundControl.remove();
       container.remove();
     }
   });
@@ -309,7 +351,7 @@ describe("DetailWorkspace page previews", () => {
     }
   });
 
-  it("changes only the dialog page and its source-page thumbnail key", async () => {
+  it("changes only the dialog page with A/D and leaves the background bundle in place", async () => {
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
     const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
     Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -330,12 +372,17 @@ describe("DetailWorkspace page previews", () => {
       await act(async () => container.querySelector<HTMLButtonElement>(".preview-thumb")?.click());
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
       expect(container.querySelector<HTMLImageElement>(".page-preview-media img")?.alt).toContain("1페이지");
+      const backgroundStart = container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent;
       await act(async () => {
-        [...container.querySelectorAll<HTMLButtonElement>(".page-preview-controls button")]
-          .find((button) => button.textContent === "다음")?.click();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
       });
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("2페이지");
       expect(container.querySelector<HTMLImageElement>(".page-preview-media img")?.alt).toContain("2페이지");
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).toBe(backgroundStart);
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true }));
+      });
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
     } finally {
       await act(async () => root.unmount());
       client.dispose();
@@ -345,10 +392,133 @@ describe("DetailWorkspace page previews", () => {
     }
   });
 
+  it("cycles Floating Detail tabs with Q/E without hijacking text input", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    const galleries = mockGalleries.slice(0, 3).map((gallery) => ({ ...gallery, pageDimensions: [] }));
+    const tabs = galleries.map((gallery) => gallery.id);
+    const onActivate = vi.fn();
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <DetailWorkspace tabs={tabs} activeId={tabs[0]!} minimized={false} galleries={new Map(galleries.map((gallery) => [gallery.id, gallery]))} favoriteMetadata={new Set()} thumbnailClient={client} onActivate={onActivate} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />,
+      ));
+      const activeTab = container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!;
+      await act(async () => {
+        activeTab.dispatchEvent(new KeyboardEvent("keydown", { key: "e", code: "KeyE", bubbles: true }));
+        activeTab.dispatchEvent(new KeyboardEvent("keydown", { key: "q", code: "KeyQ", bubbles: true }));
+      });
+      expect(onActivate).toHaveBeenNthCalledWith(1, tabs[1]);
+      expect(onActivate).toHaveBeenNthCalledWith(2, tabs[2]);
+
+      const input = container.querySelector<HTMLInputElement>('[aria-label="페이지 번호로 이동"]')!;
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "e", code: "KeyE", bubbles: true }));
+      });
+      expect(onActivate).toHaveBeenCalledTimes(2);
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+    }
+  });
+
+  it("ignores global A/D while editing, composing, modified, modal, minimized, or closed", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    const gallery: Gallery = {
+      ...mockGalleries[0]!,
+      pages: 30,
+      pageDimensions: Array.from({ length: 8 }, (_, index) => ({
+        sourcePage: index + 1,
+        width: 720,
+        height: 1080,
+      })),
+    };
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
+    const container = document.createElement("div");
+    const backgroundControl = document.createElement("button");
+    const input = document.createElement("input");
+    const textarea = document.createElement("textarea");
+    const select = document.createElement("select");
+    const editable = document.createElement("div");
+    editable.setAttribute("contenteditable", "true");
+    document.body.append(container, backgroundControl, input, textarea, select, editable);
+    const root = createRoot(container);
+    const render = (minimized: boolean, tabs = [gallery.id]) => root.render(
+      <DetailWorkspace tabs={tabs} activeId={tabs[0] ?? null} minimized={minimized} galleries={new Map([[gallery.id, gallery]])} favoriteMetadata={new Set()} thumbnailClient={client} onActivate={vi.fn()} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />,
+    );
+    const press = async (target: HTMLElement, init: KeyboardEventInit) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "a",
+        code: "KeyA",
+        bubbles: true,
+        cancelable: true,
+        ...init,
+      });
+      await act(async () => {
+        target.focus();
+        target.dispatchEvent(event);
+      });
+      return event;
+    };
+
+    try {
+      await act(async () => render(false));
+      await press(backgroundControl, { key: "d", code: "KeyD" });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "10페이지 확대");
+
+      for (const modifiers of [
+        { ctrlKey: true },
+        { metaKey: true },
+        { altKey: true },
+        { shiftKey: true },
+        { isComposing: true },
+      ]) {
+        await press(backgroundControl, modifiers);
+      }
+      for (const editor of [input, textarea, select, editable]) await press(editor, {});
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "10페이지 확대");
+
+      const modal = document.createElement("dialog");
+      modal.setAttribute("open", "");
+      document.body.append(modal);
+      await press(backgroundControl, {});
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "10페이지 확대");
+      modal.remove();
+
+      await act(async () => render(true));
+      const minimizedEvent = await press(backgroundControl, {});
+      expect(minimizedEvent.defaultPrevented).toBe(false);
+      await act(async () => render(false));
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "10페이지 확대");
+
+      await act(async () => render(false, []));
+      const closedEvent = await press(backgroundControl, {});
+      expect(closedEvent.defaultPrevented).toBe(false);
+      await act(async () => render(false));
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "1페이지 확대");
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+      backgroundControl.remove();
+      input.remove();
+      textarea.remove();
+      select.remove();
+      editable.remove();
+      document.querySelector("dialog[open]")?.remove();
+    }
+  });
+
   it("uses the card tag order in detail and keeps series and characters out of related galleries", async () => {
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
     const parent: Gallery = { ...mockGalleries[0]!, relatedIds: [mockGalleries[6]!.id] };
-    const related = mockGalleries[6]!;
+    const related: Gallery = {
+      ...mockGalleries[6]!,
+      download: { entryId: "related-complete", state: "completed", progress: 100 },
+    };
     const onMetadataSearch = vi.fn();
     const onMetadataFavorite = vi.fn();
     const onOpenRelated = vi.fn();
@@ -394,6 +564,8 @@ describe("DetailWorkspace page previews", () => {
       expect(container.querySelector(".related-card .meta-bottom")).toHaveTextContent(`${related.pages}p`);
       expect(container.querySelector(".related-card .meta-bottom")).toHaveTextContent(`#${related.id}`);
       expect(container.querySelector(".related-card")).toHaveAttribute("tabindex", "0");
+      expect(container.querySelector('.related-card [aria-label="다운로드 완료"]')).toHaveClass("download-check");
+      expect(container.querySelector('.related-card [data-status-icon="complete"]')).not.toBeNull();
 
       await act(async () => {
         mainSeries?.click();
@@ -406,10 +578,19 @@ describe("DetailWorkspace page previews", () => {
       expect(onOpenRelated).not.toHaveBeenCalled();
       const relatedCard = container.querySelector<HTMLElement>(".related-card");
       await act(async () => {
+        relatedCard?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0 }));
+        relatedCard?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: true }));
+        relatedCard?.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, metaKey: true }));
+      });
+      expect(onOpenRelated).toHaveBeenNthCalledWith(1, related.id, parent.id, { activate: false });
+      expect(onOpenRelated).toHaveBeenNthCalledWith(2, related.id, parent.id, { activate: false });
+      await act(async () => {
         relatedCard?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
         relatedCard?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
       });
-      expect(onOpenRelated).toHaveBeenCalledTimes(2);
+      expect(onOpenRelated).toHaveBeenNthCalledWith(3, related.id, parent.id);
+      expect(onOpenRelated).toHaveBeenNthCalledWith(4, related.id, parent.id);
+      expect(onOpenRelated).toHaveBeenCalledTimes(4);
     } finally {
       await act(async () => root.unmount());
       client.dispose();

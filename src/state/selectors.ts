@@ -76,7 +76,9 @@ const matchesDownloadFilter = (gallery: Gallery, state: UiState): boolean => {
 export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>): Gallery[] {
   const search = state.search[state.view];
   const directExploreId = state.view === "explore" && /^\d{7}$/.test(search.committed.trim());
-  let items = [...galleries].filter((gallery) => directExploreId || search.languages.includes(gallery.language));
+  let items = [...galleries].filter((gallery) => directExploreId
+    || search.languages.includes(gallery.language)
+    || (state.view === "downloads" && gallery.languageKnown === false));
 
   if (state.view === "auto-find") {
     items = items.filter((gallery) => gallery.favorite && gallery.download?.state !== "quarantined");

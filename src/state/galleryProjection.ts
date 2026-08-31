@@ -1,4 +1,11 @@
-import type { DownloadEntry, GalleryDetail, GalleryPage, GalleryPageDimension, GallerySummary } from "../api/contracts";
+import type {
+  DownloadEntry,
+  DownloadLibraryPage,
+  GalleryDetail,
+  GalleryPage,
+  GalleryPageDimension,
+  GallerySummary,
+} from "../api/contracts";
 import type { Gallery, GalleryId, Language } from "../core/types";
 
 type RuntimeGallerySummary = Partial<Record<keyof GallerySummary, unknown>>;
@@ -129,6 +136,7 @@ const placeholderGallery = (id: GalleryId): Gallery => ({
   publishedAt: "0000-00-00",
   coverIndex: Math.abs(Number(id)) % 6,
   language: "korean",
+  languageKnown: false,
   tags: [],
   series: [],
   characters: [],
@@ -165,4 +173,50 @@ export function mergeDownloadEntries(
     });
   }
   return next;
+}
+
+export function mergeDownloadLibraryPage(
+  galleries: ReadonlyMap<GalleryId, Gallery>,
+  page: DownloadLibraryPage,
+): { galleries: ReadonlyMap<GalleryId, Gallery>; ids: GalleryId[] } {
+  const next = new Map(galleries);
+  for (const item of page.items) {
+    const current = next.get(item.gallery.id);
+    const summary = {
+      id: item.gallery.id,
+      title: item.gallery.title ?? current?.title ?? `Gallery #${item.gallery.id}`,
+      artist: item.gallery.artist ?? current?.artist ?? "정보 불러오는 중",
+      ...(item.gallery.group ?? current?.group ? { group: item.gallery.group ?? current?.group } : {}),
+      pages: item.gallery.pages ?? current?.pages ?? 0,
+      language: item.gallery.language ?? current?.language ?? "korean",
+      tags: current ? [...current.tags] : [],
+      series: current ? [...current.series] : [],
+      characters: current ? [...current.characters] : [],
+      ...(item.gallery.publishedRank !== undefined ? { publishedRank: item.gallery.publishedRank } : {}),
+      ...(current?.score !== undefined ? { popularity: current.score } : {}),
+      ...(current?.thumbnailKey ? { thumbnailKey: current.thumbnailKey } : {}),
+      ...(current?.thumbnailWidth !== undefined ? { thumbnailWidth: current.thumbnailWidth } : {}),
+      ...(current?.thumbnailHeight !== undefined ? { thumbnailHeight: current.thumbnailHeight } : {}),
+    } as GallerySummary;
+    const projected = projectGallerySummary(summary, current);
+    next.set(item.gallery.id, {
+      ...projected,
+      languageKnown: item.gallery.language !== undefined
+        || (current !== undefined && current.languageKnown !== false),
+      download: {
+        entryId: item.download.entryId,
+        revision: item.download.revision,
+        state: item.download.state,
+        ...(item.download.progress !== undefined ? { progress: item.download.progress } : {}),
+        ...(item.download.attempt !== undefined ? { attempt: item.download.attempt } : {}),
+        ...(item.download.errorCode !== undefined ? { errorCode: item.download.errorCode } : {}),
+        ...(item.download.errorMessage !== undefined ? { errorMessage: item.download.errorMessage } : {}),
+        ...(item.download.reviewKind !== undefined ? { reviewKind: item.download.reviewKind } : {}),
+        ...(item.download.reviewId !== undefined ? { reviewId: item.download.reviewId } : {}),
+        ...(item.download.createdAt !== undefined ? { createdAt: item.download.createdAt } : current?.download?.createdAt !== undefined ? { createdAt: current.download.createdAt } : {}),
+        ...(item.download.updatedAt !== undefined ? { updatedAt: item.download.updatedAt } : current?.download?.updatedAt !== undefined ? { updatedAt: current.download.updatedAt } : {}),
+      },
+    });
+  }
+  return { galleries: next, ids: page.items.map((item) => item.gallery.id) };
 }

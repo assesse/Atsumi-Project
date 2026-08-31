@@ -20,8 +20,9 @@ use std::{
 use application::{
     ApplicationService, ArtifactRepository, ArtifactStore, AutoFindSource, AutoFindSupervisor,
     AutomationRepository, DetailOriginalSupervisor, DisabledDuplicateRelationProvider,
-    DownloadOverlapRepository, DownloadSourcePort, DownloadSupervisor, DuplicateRepository,
-    DuplicateSupervisor, InternalDuplicateRepository, InternalDuplicateSupervisor, StateRepository,
+    DownloadOverlapRepository, DownloadPipelineRepository, DownloadSourcePort, DownloadSupervisor,
+    DuplicateRepository, DuplicateSupervisor, InternalDuplicateRepository,
+    InternalDuplicateSupervisor, StateRepository,
 };
 use domain::{
     AutoFindRun, DownloadJobProjection, DuplicateScanRun, InternalArtifactScanProgress,
@@ -512,7 +513,13 @@ pub fn run() -> tauri::Result<()> {
                         }
                     }
                 })?;
-            let detail_originals = DetailOriginalSupervisor::new(live_source.clone(), &data_dir)?;
+            let detail_original_repository: Arc<dyn DownloadPipelineRepository> = repository.clone();
+            let detail_originals = DetailOriginalSupervisor::new_with_artifacts(
+                live_source.clone(),
+                detail_original_repository,
+                Arc::clone(&artifact_store),
+                &data_dir,
+            )?;
             let duplicate_repository: Arc<dyn DuplicateRepository> = repository.clone();
             let duplicate_settings: Arc<dyn StateRepository> = repository.clone();
             let (duplicate_event_tx, duplicate_event_rx) = mpsc::channel::<DuplicateScanRun>();
@@ -697,6 +704,7 @@ pub fn run() -> tauri::Result<()> {
         .invoke_handler(tauri::generate_handler![
             interface::commands::settings_get,
             interface::commands::settings_update,
+            interface::commands::storage_usage_get,
             interface::commands::folder_name_template_preview,
             interface::commands::window_placement_get,
             interface::commands::window_placement_update,
@@ -736,6 +744,7 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::internal_removal_undo,
             interface::commands::download_queue_add,
             interface::commands::download_entries_list,
+            interface::commands::download_library_page_list,
             interface::commands::download_retry,
             interface::commands::download_cancel,
             interface::commands::download_quarantine,

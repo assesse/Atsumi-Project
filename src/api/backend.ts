@@ -19,6 +19,8 @@ import type {
   DetailOriginalPrepareRequest,
   DetailOriginalPrepared,
   DownloadEntry,
+  DownloadLibraryGallery,
+  DownloadLibraryPage,
   DownloadOverlapDecisionRequest,
   DownloadOverlapDecisionResult,
   DownloadOverlapReview,
@@ -60,6 +62,7 @@ import type {
   SearchSubmission,
   SettingsPatch,
   SettingsSnapshot,
+  StorageUsageSnapshot,
   ThumbnailCompletionEvent,
   ThumbnailCacheClearResult,
   ThumbnailInvalidation,
@@ -103,6 +106,7 @@ export interface BackendClient {
   readonly runtime: "tauri" | "browser-mock";
   settingsGet(): Promise<ApiResult<SettingsSnapshot>>;
   settingsUpdate(patch: SettingsPatch, expectedRevision: number): Promise<ApiResult<SettingsSnapshot>>;
+  storageUsageGet(): Promise<ApiResult<StorageUsageSnapshot>>;
   tagCatalogStatus(): Promise<ApiResult<import("./contracts").TagCatalogStatus>>;
   tagCatalogRefresh(): Promise<ApiResult<import("./contracts").TagCatalogStatus>>;
   tagSuggestionsSearch(request: import("./contracts").TagSuggestionRequest): Promise<ApiResult<import("./contracts").TagSuggestion[]>>;
@@ -142,6 +146,7 @@ export interface BackendClient {
   internalRemovalUndo(request: InternalRemovalUndoRequest): Promise<ApiResult<InternalRemovalResult>>;
   downloadQueueAdd(galleries: GalleryId[], requestId: string): Promise<ApiResult<DownloadEntry[]>>;
   downloadEntriesList(request: DownloadListRequest): Promise<ApiResult<DownloadPage>>;
+  downloadLibraryPageList(request: DownloadListRequest): Promise<ApiResult<DownloadLibraryPage>>;
   downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>>;
   downloadCancel(entryIds: string[]): Promise<ApiResult<DownloadEntry[]>>;
   downloadQuarantine(entryIds: string[], reason: string): Promise<ApiResult<DownloadEntry[]>>;
@@ -171,6 +176,8 @@ const defaultSettings: SettingsSnapshot = {
   downloadRoot: "",
   folderNameTemplate: "[{artist}] {title} [{group}] {id}",
   autoFindHistoryMode: "include_all_history",
+  downloadOverlapAutoMode: "off",
+  explorePageSize: 50,
   maxColumns: 3,
   previewWidth: 220,
   relatedPreviewWidth: 240,
@@ -180,6 +187,9 @@ const defaultSettings: SettingsSnapshot = {
   requestStartIntervalMs: 25,
   autoFindGrouping: "all",
   downloadsGrouping: "all",
+  exploreDisplayMode: "detail",
+  autoFindDisplayMode: "detail",
+  downloadsDisplayMode: "detail",
   collapsedGroupKeys: [],
   searchIncludeTags: [],
   searchExcludeTags: [],
@@ -199,6 +209,9 @@ const normalizeGlobalSearchTags = (value: unknown): string[] | null => {
 
 const isGalleryGrouping = (value: unknown): value is SettingsSnapshot["autoFindGrouping"] =>
   value === "all" || value === "day" || value === "artist";
+
+const isGalleryDisplayMode = (value: unknown): value is SettingsSnapshot["exploreDisplayMode"] =>
+  value === "detail" || value === "compact";
 
 const windowsPathForDisplay = (value: string): string => {
   const uncPrefix = "\\\\?\\UNC\\";
@@ -234,9 +247,17 @@ const readPersistedBrowserSettings = (): SettingsSnapshot => {
       relatedPreviewWidth: [180, 200, 220, 240, 260, 280, 300, 320].includes(parsed.relatedPreviewWidth ?? defaultSettings.relatedPreviewWidth)
         ? parsed.relatedPreviewWidth ?? defaultSettings.relatedPreviewWidth
         : defaultSettings.relatedPreviewWidth,
+      explorePageSize: Number.isInteger(parsed.explorePageSize)
+        && (parsed.explorePageSize ?? 0) >= 10
+        && (parsed.explorePageSize ?? 0) <= 200
+        ? parsed.explorePageSize ?? defaultSettings.explorePageSize
+        : defaultSettings.explorePageSize,
       privacyMode: parsed.privacyMode === true,
       autoFindGrouping: isGalleryGrouping(parsed.autoFindGrouping) ? parsed.autoFindGrouping : "all",
       downloadsGrouping: isGalleryGrouping(parsed.downloadsGrouping) ? parsed.downloadsGrouping : "all",
+      exploreDisplayMode: isGalleryDisplayMode(parsed.exploreDisplayMode) ? parsed.exploreDisplayMode : "detail",
+      autoFindDisplayMode: isGalleryDisplayMode(parsed.autoFindDisplayMode) ? parsed.autoFindDisplayMode : "detail",
+      downloadsDisplayMode: isGalleryDisplayMode(parsed.downloadsDisplayMode) ? parsed.downloadsDisplayMode : "detail",
       collapsedGroupKeys: Array.isArray(parsed.collapsedGroupKeys)
         ? [...new Set(parsed.collapsedGroupKeys.filter((key): key is string => typeof key === "string" && key.trim().length > 0))].sort((left, right) => left.localeCompare(right))
         : [],
@@ -245,6 +266,10 @@ const readPersistedBrowserSettings = (): SettingsSnapshot => {
       autoFindHistoryMode: parsed.autoFindHistoryMode === "newer_than_oldest_downloaded"
         ? "newer_than_oldest_downloaded"
         : "include_all_history",
+      downloadOverlapAutoMode: parsed.downloadOverlapAutoMode === "recommend"
+        || parsed.downloadOverlapAutoMode === "strict_quarantine"
+        ? parsed.downloadOverlapAutoMode
+        : "off",
     };
   } catch {
     return { ...defaultSettings };
@@ -379,6 +404,16 @@ const cancellableDownloadStates: ReadonlySet<DownloadEntry["state"]> = new Set([
 ]);
 
 const cloneDownloadEntry = (entry: DownloadEntry): DownloadEntry => ({ ...entry });
+
+const compareDownloadLibraryRecency = (left: DownloadEntry, right: DownloadEntry): number => (
+  (left.createdAt ?? "").localeCompare(right.createdAt ?? "")
+  || (left.updatedAt ?? "").localeCompare(right.updatedAt ?? "")
+  || (left.revision ?? 0) - (right.revision ?? 0)
+  || left.entryId.localeCompare(right.entryId)
+);
+
+const downloadLibraryDisplayTime = (entry: DownloadEntry): string =>
+  entry.createdAt ?? entry.updatedAt ?? "";
 
 const normalizedGallerySet = (galleries: GalleryId[]): GalleryId[] =>
   [...new Set(galleries)].sort((left, right) => left - right);
@@ -735,6 +770,10 @@ class BrowserMockBackend implements BackendClient {
       (next.autoFindHistoryMode !== "include_all_history" && next.autoFindHistoryMode !== "newer_than_oldest_downloaded"
         ? validationError("autoFindHistoryMode", "must be a supported history mode")
         : null) ??
+      (!["off", "recommend", "strict_quarantine"].includes(next.downloadOverlapAutoMode)
+        ? validationError("downloadOverlapAutoMode", "must be off, recommend or strict_quarantine")
+        : null) ??
+      validateIntegerRange(next.explorePageSize, "explorePageSize", 10, 200) ??
       validateIntegerRange(next.maxColumns, "maxColumns", 1, 4) ??
       (!GALLERY_PREVIEW_PRESETS.some((preset) => preset.width === next.previewWidth)
         ? validationError("previewWidth", "must be one of the supported preview presets")
@@ -750,6 +789,15 @@ class BrowserMockBackend implements BackendClient {
         : null) ??
       (!isGalleryGrouping(next.downloadsGrouping)
         ? validationError("downloadsGrouping", "must be all, day or artist")
+        : null) ??
+      (!isGalleryDisplayMode(next.exploreDisplayMode)
+        ? validationError("exploreDisplayMode", "must be detail or compact")
+        : null) ??
+      (!isGalleryDisplayMode(next.autoFindDisplayMode)
+        ? validationError("autoFindDisplayMode", "must be detail or compact")
+        : null) ??
+      (!isGalleryDisplayMode(next.downloadsDisplayMode)
+        ? validationError("downloadsDisplayMode", "must be detail or compact")
         : null) ??
       (!Array.isArray(next.collapsedGroupKeys)
         || next.collapsedGroupKeys.length > 2_048
@@ -780,6 +828,51 @@ class BrowserMockBackend implements BackendClient {
     persistBrowserSettings(this.settings);
     this.emit("settings:changed", { ...this.settings });
     return ok({ ...this.settings });
+  }
+
+  async storageUsageGet(): Promise<ApiResult<StorageUsageSnapshot>> {
+    const downloadRoot = this.settings.downloadRoot.trim();
+    const downloadBytes = downloadRoot ? 37 * 1024 * 1024 * 1024 : 0;
+    const downloadVolumeRoot = /^([a-z]):[\\/]/i.exec(downloadRoot)?.[1]?.toUpperCase();
+    const onDataVolume = downloadVolumeRoot === "C";
+    const appDataDiskBytes = 170 * 1024 * 1024;
+    const volumes: StorageUsageSnapshot["volumes"] = [{
+      root: "C:\\",
+      totalBytes: 512 * 1024 * 1024 * 1024,
+      availableBytes: 211 * 1024 * 1024 * 1024,
+      atsumiBytes: appDataDiskBytes + (onDataVolume ? downloadBytes : 0),
+    }];
+    if (downloadRoot && !onDataVolume) {
+      volumes.push({
+        root: downloadVolumeRoot ? `${downloadVolumeRoot}:\\` : "다운로드 볼륨",
+        totalBytes: 2 * 1024 * 1024 * 1024 * 1024,
+        availableBytes: 1_163 * 1024 * 1024 * 1024,
+        atsumiBytes: downloadBytes,
+      });
+    }
+    return ok({
+      memoryCacheBytes: 18 * 1024 * 1024,
+      diskCache: {
+        bytes: 6 * 1024 * 1024,
+        exists: true,
+        scanComplete: true,
+        volumeRoot: "C:\\",
+      },
+      appData: {
+        bytes: 164 * 1024 * 1024,
+        exists: true,
+        scanComplete: true,
+        volumeRoot: "C:\\",
+      },
+      downloads: {
+        bytes: downloadBytes,
+        exists: Boolean(downloadRoot),
+        scanComplete: true,
+        ...(downloadRoot ? { volumeRoot: downloadVolumeRoot ? `${downloadVolumeRoot}:\\` : "다운로드 볼륨" } : {}),
+      },
+      volumes,
+      warnings: [],
+    });
   }
 
   async tagCatalogStatus(): Promise<ApiResult<TagCatalogStatus>> { return ok({ ...this.tagCatalogStatusValue }); }
@@ -1360,6 +1453,23 @@ class BrowserMockBackend implements BackendClient {
   async downloadOverlapDecisionApply(
     request: DownloadOverlapDecisionRequest,
   ): Promise<ApiResult<DownloadOverlapDecisionResult>> {
+    if (request.actor === "automation") {
+      if (!request.candidateId
+        || (request.action !== "remove_existing_continue" && request.action !== "remove_incoming")
+        || request.reasonCode !== "strict_extra_pages_v1"
+        || request.ruleVersion !== 1
+        || !request.featureSnapshotJson) {
+        return validationError("request", "자동 중복 판정 감사 정보가 올바르지 않습니다");
+      }
+      try {
+        const snapshot = JSON.parse(request.featureSnapshotJson) as unknown;
+        if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) {
+          return validationError("request.featureSnapshotJson", "JSON 객체여야 합니다");
+        }
+      } catch {
+        return validationError("request.featureSnapshotJson", "올바른 JSON이어야 합니다");
+      }
+    }
     const review = this.downloadOverlapReviews.get(request.reviewId);
     if (!review) {
       return notFoundError(
@@ -1826,6 +1936,78 @@ class BrowserMockBackend implements BackendClient {
     });
   }
 
+  async downloadLibraryPageList(request: DownloadListRequest): Promise<ApiResult<DownloadLibraryPage>> {
+    if (!Number.isInteger(request.page) || request.page < 1) {
+      return validationError("page", "must be one-based");
+    }
+    if (!Number.isInteger(request.pageSize) || request.pageSize < 1 || request.pageSize > 200) {
+      return validationError("pageSize", "must be between 1 and 200");
+    }
+    const query = request.query?.trim().toLowerCase() ?? "";
+    if (new TextEncoder().encode(query).length > 500) {
+      return validationError("query", "must be at most 500 bytes");
+    }
+    const visibleEntries = [...this.downloadEntries.values()]
+      .filter((entry) => entry.state !== "cancelled"
+        || ![...this.downloadOverlapReviews.values()].some((review) => (
+          (review.entryId === entry.entryId && review.state === "cancelled")
+          || review.candidates.some((candidate) => (
+            candidate.existing.entryId === entry.entryId && candidate.decision === "existing_removed"
+          ))
+        )))
+      .filter((entry) => !this.duplicateHiddenGalleryIds.has(entry.galleryId)
+        || this.explorationRestoredGalleryIds.has(entry.galleryId));
+    const canonicalByGallery = new Map<GalleryId, DownloadEntry>();
+    for (const entry of visibleEntries) {
+      const current = canonicalByGallery.get(entry.galleryId);
+      if (!current || compareDownloadLibraryRecency(entry, current) > 0) {
+        canonicalByGallery.set(entry.galleryId, entry);
+      }
+    }
+    const items = [...canonicalByGallery.values()]
+      .filter((entry) => request.state === undefined || entry.state === request.state)
+      .map((download) => ({ gallery: this.localDownloadGallery(download.galleryId), download }))
+      .filter(({ gallery, download }) => {
+        if (!query) return true;
+        return [
+          download.entryId,
+          String(download.galleryId),
+          gallery.title ?? "",
+          gallery.artist ?? "",
+          gallery.group ?? "",
+        ].join(" ").toLowerCase().includes(query);
+      })
+      .sort((left, right) => downloadLibraryDisplayTime(right.download)
+        .localeCompare(downloadLibraryDisplayTime(left.download))
+        || right.gallery.id - left.gallery.id
+        || right.download.entryId.localeCompare(left.download.entryId));
+    const offset = (request.page - 1) * request.pageSize;
+    return ok({
+      page: request.page,
+      totalItems: items.length,
+      items: items.slice(offset, offset + request.pageSize).map(({ gallery, download }) => ({
+        gallery: { ...gallery },
+        download: cloneDownloadEntry(download),
+      })),
+    });
+  }
+
+  private localDownloadGallery(id: GalleryId): DownloadLibraryGallery {
+    const summary = galleryDetailFixture(id)
+      ?? this.autoFind.candidates.find((candidate) => candidate.id === id)
+      ?? [...this.searchQueries.values()].flatMap((result) => result.items).find((item) => item.id === id);
+    if (!summary) return { id };
+    return {
+      id,
+      title: summary.title,
+      artist: summary.artist,
+      ...(summary.group ? { group: summary.group } : {}),
+      pages: summary.pages,
+      language: summary.language,
+      publishedRank: summary.publishedRank,
+    };
+  }
+
   async downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>> {
     const normalized = [...new Set(entryIds.map((entryId) => entryId.trim()))];
     if (!normalized.length || normalized.some((entryId) => !entryId)) {
@@ -2062,13 +2244,32 @@ class BrowserMockBackend implements BackendClient {
 
   async detailOriginalPrepare(request: DetailOriginalPrepareRequest): Promise<ApiResult<DetailOriginalPrepared>> {
     const canonicalUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-    if (!canonicalUuid.test(request.requestId) || !Number.isInteger(request.galleryId) || request.galleryId <= 0 || request.sourcePage !== 1) {
-      return validationError("detailOriginal", "requestId must be a UUID, galleryId must be positive, and sourcePage must be 1");
+    const localEntryId = request.entryId?.trim();
+    if (
+      !canonicalUuid.test(request.requestId)
+      || !Number.isInteger(request.galleryId)
+      || request.galleryId <= 0
+      || !Number.isInteger(request.sourcePage)
+      || request.sourcePage < 1
+      || (request.entryId !== undefined && !localEntryId)
+      || (request.entryId === undefined && request.sourcePage !== 1)
+    ) {
+      return validationError("detailOriginal", "requestId, galleryId, sourcePage, or entryId is invalid");
+    }
+    if (localEntryId) {
+      const entry = this.downloadEntries.get(localEntryId);
+      if (!entry || entry.galleryId !== request.galleryId || entry.state !== "completed") {
+        return notFoundError(
+          "DETAIL_ORIGINAL_UNAVAILABLE",
+          "The verified local artifact page is unavailable",
+          { galleryId: request.galleryId, sourcePage: request.sourcePage, entryId: localEntryId },
+        );
+      }
     }
     return ok({
       requestId: request.requestId,
       galleryId: request.galleryId,
-      sourcePage: 1,
+      sourcePage: request.sourcePage,
       mediaUrl: "/mock-gallery-sheet.png",
       contentType: "image/png" as const,
       width: 512,
@@ -2453,6 +2654,10 @@ class TauriBackend implements BackendClient {
     return invoke("settings_update", { patch, expectedRevision });
   }
 
+  storageUsageGet(): Promise<ApiResult<StorageUsageSnapshot>> {
+    return invoke("storage_usage_get");
+  }
+
   tagCatalogStatus(): Promise<ApiResult<TagCatalogStatus>> { return invoke("tag_catalog_status"); }
   tagCatalogRefresh(): Promise<ApiResult<TagCatalogStatus>> { return invoke("tag_catalog_refresh"); }
   tagSuggestionsSearch(request: TagSuggestionRequest): Promise<ApiResult<TagSuggestion[]>> { return invoke("tag_suggestions_search", { request }); }
@@ -2598,6 +2803,10 @@ class TauriBackend implements BackendClient {
 
   downloadEntriesList(request: DownloadListRequest): Promise<ApiResult<DownloadPage>> {
     return invoke("download_entries_list", { request });
+  }
+
+  downloadLibraryPageList(request: DownloadListRequest): Promise<ApiResult<DownloadLibraryPage>> {
+    return invoke("download_library_page_list", { request });
   }
 
   downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>> {
