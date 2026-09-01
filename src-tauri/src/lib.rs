@@ -851,6 +851,7 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::settings_get,
             interface::danbooru::danbooru_search,
             interface::danbooru::danbooru_random,
+            interface::danbooru::danbooru_related,
             interface::danbooru::danbooru_autocomplete,
             interface::danbooru::danbooru_download,
             interface::danbooru::danbooru_downloads_list,

@@ -200,7 +200,7 @@ describe("ViewHeader language filter", () => {
           onSettings={vi.fn()}
         />,
       ));
-      const toggle = container.querySelector<HTMLButtonElement>('[aria-label="개인정보 보호 모드"]');
+      const toggle = container.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]');
       expect(toggle).toHaveAttribute("aria-pressed", "true");
       expect(toggle).toHaveClass("is-active");
       await act(async () => toggle?.click());
@@ -231,7 +231,7 @@ describe("ViewHeader language filter", () => {
           onSettings={vi.fn()}
         />,
       ));
-      const pendingToggle = container.querySelector<HTMLButtonElement>('[aria-label="개인정보 보호 모드"]');
+      const pendingToggle = container.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]');
       expect(pendingToggle).toBeDisabled();
       expect(pendingToggle).toHaveAttribute("aria-busy", "true");
     } finally {

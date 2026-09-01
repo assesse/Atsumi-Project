@@ -181,7 +181,7 @@ describe("App Phase 3A backend flow", () => {
       await settle();
     });
     expect(document.documentElement.dataset.privacyMode).toBe("off");
-    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="개인정보 보호 모드"]');
+    const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="프라이버시 모드"]');
     if (!toggle) throw new Error("Privacy mode toggle was not rendered");
 
     await act(async () => {
@@ -2360,12 +2360,12 @@ describe("App Phase 3A backend flow", () => {
     await act(async () => {
       container.querySelector<HTMLButtonElement>('.review-dialog button[aria-label="닫기"]')?.click();
       await settle();
-      container.querySelector<HTMLButtonElement>('button[aria-label="활동 알림"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')?.click();
       await settle();
     });
     const processedActivity = [...container.querySelectorAll<HTMLElement>("#activity-panel .activity-item")]
       .find((item) => item.textContent?.includes("The Last Tram"));
-    expect(processedActivity).toHaveTextContent("중복 검토 완료");
+    expect(processedActivity).toHaveTextContent("중복 처리 완료 · 목록에서 제외");
     expect(processedActivity).toHaveTextContent("처리 완료");
     expect(processedActivity).not.toHaveTextContent("재시도");
 

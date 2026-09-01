@@ -7,6 +7,7 @@ type ActivityDrawerProps = {
   galleries: Gallery[];
   sessionDownloads: SessionDownloadActivity[];
   automaticOverlapActivities?: AutomaticOverlapActivity[];
+  danbooruActivities?: DanbooruSessionActivity[];
   duplicateExcludedGalleryIds?: ReadonlySet<GalleryId>;
   onClose: () => void;
   onReview: (id: GalleryId) => void;
@@ -32,6 +33,15 @@ export type AutomaticOverlapActivity = {
   state: "completed" | "failed";
 };
 
+export type DanbooruSessionActivity = {
+  id: string;
+  postId: number;
+  title: string;
+  detail: string;
+  occurredAt: number;
+  state: "completed" | "failed";
+};
+
 const runningDownloadStates = new Set([
   "queued",
   "resolving_metadata",
@@ -41,21 +51,21 @@ const runningDownloadStates = new Set([
   "retry_wait",
 ]);
 
-const duplicateProcessedDetail = "중복 검토 완료 · 탐색 및 다운로드 목록에서 제외됨";
+const duplicateProcessedDetail = "중복 처리 완료 · 목록에서 제외";
 
 const stateDetail: Partial<Record<NonNullable<Gallery["download"]>["state"], string>> = {
-  queued: "다운로드 대기",
-  resolving_metadata: "원본 정보를 확인하는 중",
-  downloading: "이미지를 받는 중",
-  hashing: "다운로드 파일의 해시를 만드는 중",
-  verifying: "파일 수와 무결성을 확인하는 중",
-  retry_wait: "서버 cooldown 후 다시 시도",
-  review_required: "유사 작품 검토 필요",
-  interrupted: "이전 실행에서 작업이 중단됨",
-  failed: "원본 사이트 응답 시간이 초과됨",
-  completed: "다운로드와 파일 검증 완료",
-  quarantined: "복구 가능한 격리 상태",
-  cancelled: "사용자가 다운로드를 취소함",
+  queued: "대기 중",
+  resolving_metadata: "정보 확인 중",
+  downloading: "다운로드 중",
+  hashing: "해시 확인 중",
+  verifying: "검증 중",
+  retry_wait: "재시도 대기",
+  review_required: "검토 필요",
+  interrupted: "중단됨",
+  failed: "실패",
+  completed: "완료",
+  quarantined: "격리됨",
+  cancelled: "취소됨",
 };
 
 const downloadDetail = (download: NonNullable<Gallery["download"]>): string => {
@@ -75,6 +85,7 @@ export function ActivityDrawer({
   galleries,
   sessionDownloads,
   automaticOverlapActivities = [],
+  danbooruActivities = [],
   duplicateExcludedGalleryIds = new Set(),
   onClose,
   onReview,
@@ -102,6 +113,11 @@ export function ActivityDrawer({
       activity,
       occurredAt: activity.occurredAt,
     })),
+    ...danbooruActivities.map((activity) => ({
+      kind: "danbooru" as const,
+      activity,
+      occurredAt: activity.occurredAt,
+    })),
   ]
     .sort((left, right) => right.occurredAt - left.occurredAt);
 
@@ -109,7 +125,7 @@ export function ActivityDrawer({
     <aside
       id="activity-panel"
       className="activity-panel"
-      aria-label="이번 실행 활동"
+      aria-label="활동 기록"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -122,6 +138,7 @@ export function ActivityDrawer({
           if (item.kind === "automatic-overlap") {
             return `${item.activity.title}: ${item.activity.detail}`;
           }
+          if (item.kind === "danbooru") return `${item.activity.title}: ${item.activity.detail}`;
           const gallery = item.gallery;
           const processed = duplicateExcludedGalleryIds.has(gallery.id)
             && !runningDownloadStates.has(gallery.download!.state);
@@ -131,14 +148,27 @@ export function ActivityDrawer({
       <header>
         <div>
           <span className="eyebrow">ACTIVITY</span>
-          <h2>이번 실행 활동</h2>
+          <h2>활동 기록</h2>
         </div>
-        <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="활동 알림 닫기" onClick={onClose}>
+        <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="활동 기록 닫기" onClick={onClose}>
           <FluentIcon glyph="\uE711" />
         </button>
       </header>
       <div className="activity-list">
         {feed.map((item) => {
+          if (item.kind === "danbooru") {
+            const { activity } = item;
+            return (
+              <article key={activity.id} className={`activity-item${activity.state === "completed" ? " complete" : " warning"}`}>
+                <span className="activity-icon"><FluentIcon glyph={activity.state === "completed" ? "\uE73E" : "\uE7BA"} /></span>
+                <div>
+                  <strong>{activity.title}</strong>
+                  <span>{activity.detail}</span>
+                  <small>Danbooru #{activity.postId}</small>
+                </div>
+              </article>
+            );
+          }
           if (item.kind === "automatic-overlap") {
             const { activity } = item;
             return (
@@ -222,8 +252,8 @@ export function ActivityDrawer({
         {feed.length === 0 ? (
           <div className="activity-empty">
             <FluentIcon glyph="\uE823" />
-            <strong>이번 실행의 활동이 없습니다.</strong>
-            <span>새 다운로드와 자동 판본 분류가 여기에 쌓입니다.</span>
+            <strong>기록이 없습니다.</strong>
+            <span>다운로드와 자동 처리가 여기에 표시됩니다.</span>
           </div>
         ) : null}
       </div>

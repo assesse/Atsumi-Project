@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { BackendClient } from "../api/backend";
 import type {
   DanbooruAutocompleteItem,
   DanbooruDownloadRecord,
   DanbooruDownloadsPage,
   DanbooruPost,
+  DanbooruRelatedPosts,
   DanbooruSearchPage,
 } from "../api/contracts";
 import type { ContentSource, ViewId } from "../core/types";
+import { alignPageSizeToColumns } from "../layout/pageSizeAlignment";
 import {
   activeDanbooruFilterCount,
   buildDanbooruSearchQuery,
@@ -25,6 +27,8 @@ import {
   type DanbooruSort,
 } from "../danbooru/searchPreferences";
 import { FluentIcon } from "./FluentIcon";
+import type { DanbooruSessionActivity } from "./ActivityDrawer";
+import { DropdownSelect } from "./DropdownSelect";
 import { SideRail } from "./SideRail";
 
 type DanbooruView = "explore" | "downloads";
@@ -34,8 +38,17 @@ type DanbooruWorkspaceProps = {
   railCollapsed: boolean;
   pageSize: number;
   previewWidth: number;
+  favoriteMetadata?: ReadonlySet<string>;
+  activityCount?: number;
+  activityOpen?: boolean;
+  privacyMode?: boolean;
+  privacyModePending?: boolean;
   onToggleRail: () => void;
   onSourceChange: (source: ContentSource) => void;
+  onActivity?: () => void;
+  onPrivacyModeToggle?: () => void;
+  onActivityRecord?: (activity: DanbooruSessionActivity) => void;
+  onMetadataFavorite?: (token: string) => void;
   onOpenSettings: () => void;
 };
 
@@ -51,6 +64,7 @@ type PersistedDanbooruState = {
 };
 
 const stateKey = "atsumi.danbooru-state.v1";
+const emptyFavoriteMetadata: ReadonlySet<string> = new Set();
 const defaultState: PersistedDanbooruState = {
   view: "explore",
   exploreDraft: "",
@@ -117,6 +131,13 @@ const formatBytes = (bytes: number): string => {
 // the browser while still being far too short after cropping, so cards always use
 // the large/sample projection and keep only the preview as an availability fallback.
 const cardMediaUrl = (post: DanbooruPost): string | undefined => post.largeUrl ?? post.previewUrl;
+const isPlayableVideo = (post: DanbooruPost): boolean => post.fileExt === "mp4" || post.fileExt === "webm";
+type DanbooruFavoriteKind = "artist" | "series" | "character" | "tag";
+
+const danbooruFavoriteToken = (kind: DanbooruFavoriteKind, tag: string): string => {
+  const value = tag.trim().toLocaleLowerCase();
+  return kind === "tag" ? value : `${kind}:${value}`;
+};
 
 const postTitle = (post: DanbooruPost): string => {
   const artist = post.artists.at(0);
@@ -144,8 +165,17 @@ export function DanbooruWorkspace({
   railCollapsed,
   pageSize,
   previewWidth,
+  favoriteMetadata = emptyFavoriteMetadata,
+  activityCount = 0,
+  activityOpen = false,
+  privacyMode = false,
+  privacyModePending = false,
   onToggleRail,
   onSourceChange,
+  onActivity = () => undefined,
+  onPrivacyModeToggle = () => undefined,
+  onActivityRecord = () => undefined,
+  onMetadataFavorite = () => undefined,
   onOpenSettings,
 }: DanbooruWorkspaceProps) {
   const persisted = useRef(loadState()).current;
@@ -169,13 +199,19 @@ export function DanbooruWorkspace({
   const [notice, setNotice] = useState<string | null>(null);
   const requestSequence = useRef(0);
   const suggestionSequence = useRef(0);
+  const content = useRef<HTMLElement>(null);
+  const gridWidth = Math.max(160, Math.min(360, previewWidth));
+  const [gridColumns, setGridColumns] = useState(1);
+  const [gridMeasured, setGridMeasured] = useState(false);
+  const restoredPageLoaded = useRef(false);
 
   const normalizedPageSize = Math.max(10, Math.min(100, pageSize));
+  const alignedPageSize = alignPageSizeToColumns(normalizedPageSize, gridColumns, 100);
   const loadExplore = useCallback(async (tags: string, page: number) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
-    const result = await backend.danbooruSearch({ tags, page, pageSize: normalizedPageSize }).catch(() => null);
+    const result = await backend.danbooruSearch({ tags, page, pageSize: alignedPageSize }).catch(() => null);
     if (sequence !== requestSequence.current) return;
     setLoading(false);
     if (!result) {
@@ -188,13 +224,13 @@ export function DanbooruWorkspace({
     }
     setSearchPage(result.data);
     setExplorePage(result.data.page);
-  }, [backend, normalizedPageSize]);
+  }, [alignedPageSize, backend]);
 
   const loadDownloads = useCallback(async (page: number, query: string) => {
     const sequence = ++requestSequence.current;
     setLoading(true);
     setError(null);
-    const result = await backend.danbooruDownloadsList({ page, pageSize: normalizedPageSize, query }).catch(() => null);
+    const result = await backend.danbooruDownloadsList({ page, pageSize: alignedPageSize, query }).catch(() => null);
     if (sequence !== requestSequence.current) return;
     setLoading(false);
     if (!result) {
@@ -208,7 +244,23 @@ export function DanbooruWorkspace({
     setDownloadsPage(result.data);
     setDownloadsPageNumber(result.data.page);
     setDownloadedIds((current) => new Set([...current, ...result.data.items.map((item) => item.post.id)]));
-  }, [backend, normalizedPageSize]);
+  }, [alignedPageSize, backend]);
+
+  useLayoutEffect(() => {
+    const host = content.current;
+    if (!host) return;
+    const update = () => {
+      const available = Math.max(0, host.clientWidth - 8);
+      const columns = Math.max(1, Math.floor((available + 14) / (gridWidth + 14)));
+      setGridColumns((current) => current === columns ? current : columns);
+      setGridMeasured(true);
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(update);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, [gridWidth]);
 
   useEffect(() => {
     saveState({
@@ -232,11 +284,11 @@ export function DanbooruWorkspace({
   }, []);
 
   useEffect(() => {
+    if (!gridMeasured || restoredPageLoaded.current) return;
+    restoredPageLoaded.current = true;
     if (view === "explore") void loadExplore(exploreCommitted, explorePage);
     else void loadDownloads(downloadsPageNumber, downloadsCommitted);
-    // Restore the persisted source context once; explicit navigation owns subsequent requests.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [downloadsCommitted, downloadsPageNumber, exploreCommitted, explorePage, gridMeasured, loadDownloads, loadExplore, view]);
 
   useEffect(() => {
     if (view !== "explore") {
@@ -314,13 +366,16 @@ export function DanbooruWorkspace({
     });
     if (!result) {
       setNotice("Danbooru 원본 저장 요청을 전달하지 못했습니다.");
+      onActivityRecord({ id: `${post.id}:${Date.now()}`, postId: post.id, title: postTitle(post), detail: "원본 저장 실패", occurredAt: Date.now(), state: "failed" });
       return;
     }
     if (!result.ok) {
       setNotice(result.error.message);
+      onActivityRecord({ id: `${post.id}:${Date.now()}`, postId: post.id, title: postTitle(post), detail: "원본 저장 실패", occurredAt: Date.now(), state: "failed" });
       return;
     }
     setDownloadedIds((current) => new Set(current).add(post.id));
+    onActivityRecord({ id: `${post.id}:${Date.now()}`, postId: post.id, title: postTitle(post), detail: "원본 저장 완료", occurredAt: Date.now(), state: "completed" });
     setNotice(`${result.data.fileName} 원본을 저장했습니다.`);
     if (view === "downloads") void loadDownloads(downloadsPageNumber, downloadsCommitted);
   };
@@ -334,7 +389,6 @@ export function DanbooruWorkspace({
   const detailIndex = detail ? posts.findIndex((post) => post.id === detail.id) : -1;
   const previousDetail = detailIndex > 0 ? posts[detailIndex - 1] : undefined;
   const nextDetail = detailIndex >= 0 && detailIndex < posts.length - 1 ? posts[detailIndex + 1] : undefined;
-  const gridWidth = Math.max(170, Math.min(320, previewWidth));
   const activeFilterCount = activeDanbooruFilterCount(filters);
   const limitedTermCount = danbooruLimitedTermCount(buildDanbooruSearchQuery(exploreDraft, filters));
 
@@ -387,6 +441,11 @@ export function DanbooruWorkspace({
             {view === "explore" ? (
               <button type="button" className="icon-button" title="랜덤 post 열기" aria-label="랜덤 post 열기" disabled={loading} onClick={() => void openRandom()}><FluentIcon glyph="\uE8B1" /></button>
             ) : null}
+            <button type="button" className="icon-button activity-button" title="활동 기록" aria-label="활동 기록" aria-controls="activity-panel" aria-expanded={activityOpen} onClick={onActivity}>
+              <FluentIcon glyph="\uE9D9" />
+              {activityCount > 0 ? <span className="activity-count">{activityCount}</span> : null}
+            </button>
+            <button type="button" className={`icon-button${privacyMode ? " is-active" : ""}`} title={privacyMode ? "미리보기 표시" : "미리보기 가리기"} aria-label="프라이버시 모드" aria-pressed={privacyMode} aria-busy={privacyModePending || undefined} disabled={privacyModePending} onClick={onPrivacyModeToggle}><FluentIcon glyph="\uE890" /></button>
             <button type="button" className="icon-button" title="설정" aria-label="설정" onClick={onOpenSettings}><FluentIcon glyph="\uE713" /></button>
           </div>
         </header>
@@ -403,21 +462,19 @@ export function DanbooruWorkspace({
                 <FluentIcon glyph="\uE71C" /> 상세 조건
                 {activeFilterCount ? <span>{activeFilterCount}</span> : null}
               </button>
-              <label className="danbooru-sort-control">
-                <span>정렬</span>
-                <select
-                  aria-label="Danbooru 정렬 기준"
-                  value={filters.sort}
-                  onChange={(event) => {
-                    const next = { ...filters, sort: event.target.value as DanbooruSort };
+              <DropdownSelect
+                ariaLabel="Danbooru 정렬 기준"
+                className="danbooru-sort-dropdown"
+                variant="toolbar"
+                prefix="정렬"
+                value={filters.sort}
+                options={DANBOORU_SORTS}
+                onChange={(sort) => {
+                    const next = { ...filters, sort: sort as DanbooruSort };
                     setFilters(next);
                     submit(exploreDraft, next);
-                  }}
-                >
-                  {DANBOORU_SORTS.map((sort) => <option key={sort.value} value={sort.value}>{sort.label}</option>)}
-                </select>
-                <FluentIcon glyph="\uE70D" />
-              </label>
+                }}
+              />
               <span className={`danbooru-tag-budget${limitedTermCount > 2 ? " is-over" : ""}`}>
                 제한 대상 {limitedTermCount}/2 · rating/date/score 등은 제외 · 정렬은 1개 사용
               </span>
@@ -445,7 +502,7 @@ export function DanbooruWorkspace({
           </section>
         </div>
 
-        <section className="danbooru-content" aria-busy={loading}>
+        <section ref={content} className="danbooru-content" aria-busy={loading}>
           {error ? (
             <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>Danbooru 결과를 불러오지 못했습니다</h2><p>{error}</p><button type="button" className="text-button" onClick={() => view === "explore" ? void loadExplore(exploreCommitted, explorePage) : void loadDownloads(downloadsPageNumber, downloadsCommitted)}>다시 시도</button></div>
           ) : loading && !posts.length ? (
@@ -483,6 +540,7 @@ export function DanbooruWorkspace({
 
       {detail ? (
         <DanbooruDetail
+          backend={backend}
           post={detail}
           downloaded={downloadedIds.has(detail.id)}
           pending={pendingDownloads.has(detail.id)}
@@ -490,6 +548,9 @@ export function DanbooruWorkspace({
           onPrevious={previousDetail ? () => setDetail(previousDetail) : undefined}
           onNext={nextDetail ? () => setDetail(nextDetail) : undefined}
           onDownload={() => void download(detail)}
+          onOpenRelated={setDetail}
+          favoriteMetadata={favoriteMetadata}
+          onMetadataFavorite={onMetadataFavorite}
           onSearch={(tag) => {
             setDetail(null);
             setView("explore");
@@ -580,16 +641,19 @@ function DanbooruSearchFilterPanel({
         </fieldset>
         <fieldset>
           <legend>게시물 관계</legend>
-          <label className="danbooru-filter-select">
-            <select aria-label="Danbooru 게시물 관계" value={filters.relationship} onChange={(event) => onChange({ ...filters, relationship: event.target.value as DanbooruSearchFilters["relationship"] })}>
-              <option value="any">관계 제한 없음</option>
-              <option value="has_parent">부모가 있는 변형판</option>
-              <option value="no_parent">부모가 없는 게시물</option>
-              <option value="has_children">자식 변형판이 있는 게시물</option>
-              <option value="no_children">자식 변형판이 없는 게시물</option>
-            </select>
-            <FluentIcon glyph="\uE70D" />
-          </label>
+          <DropdownSelect
+            ariaLabel="Danbooru 게시물 관계"
+            className="danbooru-filter-dropdown"
+            value={filters.relationship}
+            options={[
+              { value: "any", label: "관계 제한 없음" },
+              { value: "has_parent", label: "부모가 있는 변형판" },
+              { value: "no_parent", label: "부모가 없는 게시물" },
+              { value: "has_children", label: "자식 변형판이 있는 게시물" },
+              { value: "no_children", label: "자식 변형판이 없는 게시물" },
+            ]}
+            onChange={(relationship) => onChange({ ...filters, relationship })}
+          />
         </fieldset>
       </div>
       <footer>
@@ -637,6 +701,7 @@ function DanbooruCard({
 }
 
 function DanbooruDetail({
+  backend,
   post,
   downloaded,
   pending,
@@ -644,8 +709,12 @@ function DanbooruDetail({
   onPrevious,
   onNext,
   onDownload,
+  onOpenRelated,
+  favoriteMetadata,
+  onMetadataFavorite,
   onSearch,
 }: {
+  backend: BackendClient;
   post: DanbooruPost;
   downloaded: boolean;
   pending: boolean;
@@ -653,10 +722,18 @@ function DanbooruDetail({
   onPrevious?: () => void;
   onNext?: () => void;
   onDownload: () => void;
+  onOpenRelated: (post: DanbooruPost) => void;
+  favoriteMetadata: ReadonlySet<string>;
+  onMetadataFavorite: (token: string) => void;
   onSearch: (tag: string) => void;
 }) {
   const mediaUrl = post.largeUrl ?? post.previewUrl;
+  const playableVideo = isPlayableVideo(post) && Boolean(post.fileUrl);
   const dialog = useRef<HTMLElement>(null);
+  const [related, setRelated] = useState<DanbooruRelatedPosts | null>(null);
+  const [relatedLoading, setRelatedLoading] = useState(true);
+  const [relatedError, setRelatedError] = useState<string | null>(null);
+  const [relatedRevision, setRelatedRevision] = useState(0);
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const frame = window.requestAnimationFrame(() => dialog.current?.focus({ preventScroll: true }));
@@ -695,6 +772,26 @@ function DanbooruDetail({
     window.addEventListener("keydown", keyDown, true);
     return () => window.removeEventListener("keydown", keyDown, true);
   }, [onClose, onNext, onPrevious]);
+  useEffect(() => {
+    let cancelled = false;
+    setRelated(null);
+    setRelatedError(null);
+    setRelatedLoading(true);
+    void backend.danbooruRelated({
+      postId: post.id,
+      ...(post.parentId ? { parentId: post.parentId } : {}),
+      hasChildren: post.hasChildren,
+    }).then((result) => {
+      if (cancelled) return;
+      if (result.ok) setRelated(result.data);
+      else setRelatedError(result.error.message);
+    }).catch(() => {
+      if (!cancelled) setRelatedError("연결된 post 정보를 불러오지 못했습니다.");
+    }).finally(() => {
+      if (!cancelled) setRelatedLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [backend, post.hasChildren, post.id, post.parentId, relatedRevision]);
   return (
     <div className="modal-backdrop danbooru-detail-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <section ref={dialog} className="danbooru-detail" role="dialog" aria-modal="true" aria-labelledby="danbooru-detail-title" aria-describedby="danbooru-detail-shortcuts" tabIndex={-1}>
@@ -705,7 +802,9 @@ function DanbooruDetail({
         </header>
         <div className="danbooru-detail-body">
           <div key={`media-${post.id}`} className="danbooru-detail-media">
-            {mediaUrl ? <img src={mediaUrl} alt="" width={post.imageWidth} height={post.imageHeight} referrerPolicy="no-referrer" /> : <span className="danbooru-media-missing"><FluentIcon glyph="\uEB9F" /> 표시할 미디어가 없습니다.</span>}
+            {playableVideo ? (
+              <video src={post.fileUrl} poster={mediaUrl} controls autoPlay muted preload="auto" playsInline aria-label={`Danbooru post #${post.id} 영상 · 자동재생 · 음소거`} />
+            ) : mediaUrl ? <img src={mediaUrl} alt="" width={post.imageWidth} height={post.imageHeight} referrerPolicy="no-referrer" /> : <span className="danbooru-media-missing"><FluentIcon glyph="\uEB9F" /> 표시할 미디어가 없습니다.</span>}
           </div>
           <aside key={`metadata-${post.id}`}>
             <div className="danbooru-detail-facts">
@@ -713,12 +812,19 @@ function DanbooruDetail({
               <b>{post.imageWidth}×{post.imageHeight}</b><b>{formatBytes(post.fileSize)}</b><b>{post.fileExt.toUpperCase()}</b>
               <span>점수 {post.score}</span><span>즐겨찾기 {post.favoriteCount}</span>
             </div>
-            <TagSection title="작가" tags={post.artists} onSearch={onSearch} />
-            <TagSection title="작품" tags={post.copyrights} onSearch={onSearch} />
-            <TagSection title="캐릭터" tags={post.characters} onSearch={onSearch} />
-            <TagSection title="태그" tags={post.tags.slice(0, 36)} onSearch={onSearch} />
-            {post.parentId ? <p className="danbooru-relation">부모 post #{post.parentId}</p> : null}
-            {post.hasChildren ? <p className="danbooru-relation">연결된 자식 post가 있습니다.</p> : null}
+            <TagSection title="작가" kind="artist" tags={post.artists} favoriteMetadata={favoriteMetadata} onSearch={onSearch} onFavorite={onMetadataFavorite} />
+            <TagSection title="작품" kind="series" tags={post.copyrights} favoriteMetadata={favoriteMetadata} onSearch={onSearch} onFavorite={onMetadataFavorite} />
+            <TagSection title="캐릭터" kind="character" tags={post.characters} favoriteMetadata={favoriteMetadata} onSearch={onSearch} onFavorite={onMetadataFavorite} />
+            <TagSection title="태그" kind="tag" tags={post.tags.slice(0, 36)} favoriteMetadata={favoriteMetadata} onSearch={onSearch} onFavorite={onMetadataFavorite} />
+            <DanbooruRelationsPanel
+              currentPostId={post.id}
+              related={related}
+              loading={relatedLoading}
+              error={relatedError}
+              onOpen={onOpenRelated}
+              onPoolSearch={(poolId) => onSearch(`pool:${poolId}`)}
+              onRetry={() => setRelatedRevision((revision) => revision + 1)}
+            />
           </aside>
         </div>
         <footer>
@@ -730,12 +836,139 @@ function DanbooruDetail({
   );
 }
 
-function TagSection({ title, tags, onSearch }: { title: string; tags: string[]; onSearch: (tag: string) => void }) {
+function DanbooruRelationsPanel({
+  currentPostId,
+  related,
+  loading,
+  error,
+  onOpen,
+  onPoolSearch,
+  onRetry,
+}: {
+  currentPostId: number;
+  related: DanbooruRelatedPosts | null;
+  loading: boolean;
+  error: string | null;
+  onOpen: (post: DanbooruPost) => void;
+  onPoolSearch: (poolId: number) => void;
+  onRetry: () => void;
+}) {
+  if (loading) return <div className="danbooru-relations-status" role="status"><span /> 관계를 확인하는 중…</div>;
+  if (error) {
+    return (
+      <div className="danbooru-relations-status is-error">
+        <span>{error}</span>
+        <button type="button" onClick={onRetry}>다시 시도</button>
+      </div>
+    );
+  }
+  if (!related) return null;
+  const groups = [
+    ...(related.parent ? [{ key: "parent", title: "부모", items: [related.parent] }] : []),
+    ...(related.siblings.length ? [{ key: "siblings", title: "같은 부모", items: related.siblings }] : []),
+    ...(related.children.length ? [{ key: "children", title: "자식", items: related.children }] : []),
+  ];
+  if (!related.pools.length && !groups.length) return null;
+  return (
+    <section className="danbooru-relations" aria-label="연결된 Danbooru post">
+      <div className="danbooru-relations-heading">
+        <h3>연결된 항목</h3>
+        <small>선택하면 이 창에서 이어서 봅니다</small>
+      </div>
+      {related.pools.map((pool) => (
+        <section key={`pool-${pool.id}`} className="danbooru-relation-group is-pool">
+          <header>
+            <button type="button" onClick={() => onPoolSearch(pool.id)} title={`${formatTag(pool.name)} Pool 전체 검색`}>
+              <span>POOL · {pool.category === "series" ? "시리즈" : "컬렉션"}</span>
+              <b>{formatTag(pool.name)}</b>
+            </button>
+            <small>{pool.currentIndex + 1} / {pool.postCount.toLocaleString()}</small>
+          </header>
+          <RelatedPostStrip items={pool.items} currentPostId={currentPostId} onOpen={onOpen} />
+        </section>
+      ))}
+      {groups.map((group) => (
+        <section key={group.key} className="danbooru-relation-group">
+          <header><h4>{group.title}</h4><small>{group.items.length}</small></header>
+          <RelatedPostStrip items={group.items} currentPostId={currentPostId} onOpen={onOpen} />
+        </section>
+      ))}
+    </section>
+  );
+}
+
+function RelatedPostStrip({ items, currentPostId, onOpen }: {
+  items: DanbooruPost[];
+  currentPostId: number;
+  onOpen: (post: DanbooruPost) => void;
+}) {
+  return (
+    <div className="danbooru-related-strip">
+      {items.map((item) => {
+        const mediaUrl = cardMediaUrl(item);
+        const current = item.id === currentPostId;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            className={`danbooru-related-card${current ? " is-current" : ""}`}
+            aria-current={current ? "true" : undefined}
+            aria-label={`post #${item.id}${current ? " 현재 항목" : " 열기"}`}
+            onClick={() => onOpen(item)}
+          >
+            {mediaUrl ? <img src={mediaUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : <FluentIcon glyph="\uEB9F" />}
+            <span>#{item.id}</span>
+            {current ? <b>현재</b> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function TagSection({
+  title,
+  kind,
+  tags,
+  favoriteMetadata,
+  onSearch,
+  onFavorite,
+}: {
+  title: string;
+  kind: DanbooruFavoriteKind;
+  tags: string[];
+  favoriteMetadata: ReadonlySet<string>;
+  onSearch: (tag: string) => void;
+  onFavorite: (token: string) => void;
+}) {
   if (!tags.length) return null;
   return (
     <section className="danbooru-tag-section">
       <h3>{title}</h3>
-      <div>{tags.map((tag) => <button key={tag} type="button" onClick={() => onSearch(tag)}>{formatTag(tag)}</button>)}</div>
+      <div>{tags.map((tag) => {
+        const favoriteToken = danbooruFavoriteToken(kind, tag);
+        const favorite = favoriteMetadata.has(favoriteToken);
+        const label = formatTag(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            className={favorite ? "is-favorite" : undefined}
+            data-favorite-token={favoriteToken}
+            aria-label={`${label}${favorite ? ", 즐겨찾기" : ""} · 좌클릭 검색 · 우클릭 즐겨찾기 변경`}
+            title={`${label} · 좌클릭 검색 / 우클릭 즐겨찾기`}
+            onClick={() => onSearch(tag)}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onFavorite(favoriteToken);
+            }}
+          >
+            <span>{label}</span>
+            {favorite ? <span className="danbooru-tag-favorite" aria-hidden="true">★</span> : null}
+          </button>
+        );
+      })}</div>
     </section>
   );
 }

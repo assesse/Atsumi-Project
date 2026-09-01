@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -23,6 +24,9 @@ const MAX_CONCURRENT_MEDIA_REQUESTS: usize = 6;
 const INDEX_FILE: &str = ".atsumi-danbooru-index.json";
 const MEDIA_PROXY_HTTP_ROOT: &str = "http://danbooru-media.localhost/";
 const MEDIA_PROXY_SCHEME_ROOT: &str = "danbooru-media://localhost/";
+const RELATION_POST_LIMIT: u32 = 50;
+const RELATED_POOL_LIMIT: usize = 8;
+const RELATED_POOL_WINDOW: usize = 9;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -38,6 +42,35 @@ pub struct DanbooruSearchPage {
     pub items: Vec<DanbooruPost>,
     pub page: u32,
     pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DanbooruRelatedRequest {
+    pub post_id: u64,
+    pub parent_id: Option<u64>,
+    pub has_children: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DanbooruPoolRelation {
+    pub id: u64,
+    pub name: String,
+    pub category: String,
+    pub post_count: u64,
+    pub current_index: usize,
+    pub items: Vec<DanbooruPost>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DanbooruRelatedPosts {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent: Option<DanbooruPost>,
+    pub siblings: Vec<DanbooruPost>,
+    pub children: Vec<DanbooruPost>,
+    pub pools: Vec<DanbooruPoolRelation>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,6 +165,7 @@ struct RemotePost {
     preview_file_url: Option<String>,
     large_file_url: Option<String>,
     file_url: Option<String>,
+    media_asset: Option<RemoteMediaAsset>,
     #[serde(default)]
     tag_string_general: String,
     #[serde(default)]
@@ -143,6 +177,36 @@ struct RemotePost {
     parent_id: Option<u64>,
     #[serde(default)]
     has_children: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemotePool {
+    id: u64,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    category: String,
+    #[serde(default)]
+    post_count: u64,
+    #[serde(default)]
+    post_ids: Vec<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteMediaAsset {
+    #[serde(default)]
+    variants: Vec<RemoteMediaVariant>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RemoteMediaVariant {
+    url: Option<String>,
+    #[serde(default)]
+    width: u32,
+    #[serde(default)]
+    height: u32,
+    #[serde(default)]
+    file_ext: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -290,6 +354,113 @@ impl DanbooruClient {
         let url = Url::parse(&format!("{API_ROOT}/posts/{post_id}.json"))
             .map_err(|_| DanbooruError::Protocol)?;
         self.get_json::<RemotePost>(url).map(DanbooruPost::from)
+    }
+
+    pub fn related(
+        &self,
+        request: DanbooruRelatedRequest,
+    ) -> Result<DanbooruRelatedPosts, DanbooruError> {
+        if request.post_id == 0
+            || request.parent_id == Some(0)
+            || request.parent_id == Some(request.post_id)
+        {
+            return Err(DanbooruError::InvalidRequest("postId"));
+        }
+
+        let (parent, siblings) = if let Some(parent_id) = request.parent_id {
+            let parent = self.post(parent_id)?;
+            let siblings = self
+                .relation_group(parent_id)?
+                .into_iter()
+                .filter(|post| post.parent_id == Some(parent_id) && post.id != request.post_id)
+                .collect();
+            (Some(parent), siblings)
+        } else {
+            (None, Vec::new())
+        };
+        let children = if request.has_children {
+            self.relation_group(request.post_id)?
+                .into_iter()
+                .filter(|post| post.parent_id == Some(request.post_id))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        let mut pools_url =
+            Url::parse(&format!("{API_ROOT}/pools.json")).map_err(|_| DanbooruError::Protocol)?;
+        pools_url
+            .query_pairs_mut()
+            .append_pair("search[post_ids_include_any]", &request.post_id.to_string())
+            .append_pair("limit", &RELATED_POOL_LIMIT.to_string());
+        let remote_pools: Vec<RemotePool> = self.get_json(pools_url)?;
+        let pool_windows: Vec<(RemotePool, usize, Vec<u64>)> = remote_pools
+            .into_iter()
+            .filter_map(|pool| {
+                let current_index = pool.post_ids.iter().position(|id| *id == request.post_id)?;
+                let ids = centered_window(&pool.post_ids, current_index, RELATED_POOL_WINDOW);
+                Some((pool, current_index, ids))
+            })
+            .collect();
+
+        let selected_ids: Vec<u64> = pool_windows
+            .iter()
+            .flat_map(|(_, _, ids)| ids.iter().copied())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect();
+        let pool_posts = self.posts_by_id(&selected_ids)?;
+        let pools = pool_windows
+            .into_iter()
+            .map(|(pool, current_index, ids)| DanbooruPoolRelation {
+                id: pool.id,
+                name: pool.name,
+                category: pool.category,
+                post_count: pool.post_count.max(pool.post_ids.len() as u64),
+                current_index,
+                items: ids
+                    .iter()
+                    .filter_map(|id| pool_posts.get(id).cloned())
+                    .collect(),
+            })
+            .collect();
+
+        Ok(DanbooruRelatedPosts {
+            parent,
+            siblings,
+            children,
+            pools,
+        })
+    }
+
+    fn relation_group(&self, parent_id: u64) -> Result<Vec<DanbooruPost>, DanbooruError> {
+        self.search(DanbooruSearchRequest {
+            tags: format!("parent:{parent_id}"),
+            page: 1,
+            page_size: RELATION_POST_LIMIT,
+        })
+        .map(|page| page.items)
+    }
+
+    fn posts_by_id(&self, ids: &[u64]) -> Result<HashMap<u64, DanbooruPost>, DanbooruError> {
+        if ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut url =
+            Url::parse(&format!("{API_ROOT}/posts.json")).map_err(|_| DanbooruError::Protocol)?;
+        let tags = format!(
+            "id:{}",
+            ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",")
+        );
+        url.query_pairs_mut()
+            .append_pair("tags", &tags)
+            .append_pair("limit", &ids.len().to_string());
+        let posts: Vec<RemotePost> = self.get_json(url)?;
+        Ok(posts
+            .into_iter()
+            .map(DanbooruPost::from)
+            .map(|post| (post.id, post))
+            .collect())
     }
 
     pub fn autocomplete(
@@ -543,6 +714,15 @@ pub async fn danbooru_random(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn danbooru_related(
+    state: State<'_, AppState>,
+    request: DanbooruRelatedRequest,
+) -> Result<ApiResult<DanbooruRelatedPosts>, ApiError> {
+    let client = state.danbooru.clone();
+    Ok(run_blocking("danbooru_related", move || client.related(request)).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn danbooru_autocomplete(
     state: State<'_, AppState>,
     query: String,
@@ -705,7 +885,7 @@ impl From<RemotePost> for DanbooruPost {
         let large_url = if is_display_image_extension(&file_ext) {
             clean_optional(value.large_file_url).or_else(|| preview_url.clone())
         } else {
-            preview_url.clone()
+            best_static_media_variant(value.media_asset.as_ref()).or_else(|| preview_url.clone())
         };
         let mut post = Self {
             id: value.id,
@@ -732,6 +912,21 @@ impl From<RemotePost> for DanbooruPost {
         post.proxy_display_media();
         post
     }
+}
+
+fn best_static_media_variant(media_asset: Option<&RemoteMediaAsset>) -> Option<String> {
+    media_asset?
+        .variants
+        .iter()
+        .filter(|variant| is_display_image_extension(&variant.file_ext.to_lowercase()))
+        .filter_map(|variant| {
+            let url = clean_optional(variant.url.clone())?;
+            validate_media_url(&url).ok()?;
+            let area = u64::from(variant.width).saturating_mul(u64::from(variant.height));
+            Some((area, url))
+        })
+        .max_by_key(|(area, _)| *area)
+        .map(|(_, url)| url)
 }
 
 impl DanbooruPost {
@@ -962,6 +1157,17 @@ fn clean_optional(value: Option<String>) -> Option<String> {
     value.filter(|item| !item.trim().is_empty())
 }
 
+fn centered_window(values: &[u64], current_index: usize, limit: usize) -> Vec<u64> {
+    if values.is_empty() || limit == 0 || current_index >= values.len() {
+        return Vec::new();
+    }
+    let count = limit.min(values.len());
+    let start = current_index
+        .saturating_sub(count / 2)
+        .min(values.len().saturating_sub(count));
+    values[start..start + count].to_vec()
+}
+
 fn now_unix_ms() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1018,7 +1224,16 @@ mod tests {
     }
 
     #[test]
-    fn video_posts_use_the_static_preview_for_display() {
+    fn pool_preview_window_stays_centered_and_preserves_pool_order() {
+        let ids: Vec<u64> = (1..=20).collect();
+        assert_eq!(centered_window(&ids, 0, 9), (1..=9).collect::<Vec<_>>());
+        assert_eq!(centered_window(&ids, 10, 9), (7..=15).collect::<Vec<_>>());
+        assert_eq!(centered_window(&ids, 19, 9), (12..=20).collect::<Vec<_>>());
+        assert!(centered_window(&ids, 20, 9).is_empty());
+    }
+
+    #[test]
+    fn video_posts_use_the_largest_static_media_variant_for_display() {
         let converted = DanbooruPost::from(RemotePost {
             id: 9,
             created_at: String::new(),
@@ -1034,6 +1249,70 @@ mod tests {
             preview_file_url: Some("https://cdn.donmai.us/180x180/aa/bb/preview.jpg".into()),
             large_file_url: Some("https://cdn.donmai.us/original/aa/bb/video.webm".into()),
             file_url: Some("https://cdn.donmai.us/original/aa/bb/video.webm".into()),
+            media_asset: Some(RemoteMediaAsset {
+                variants: vec![
+                    RemoteMediaVariant {
+                        url: Some("https://cdn.donmai.us/180x180/aa/bb/preview.jpg".into()),
+                        width: 123,
+                        height: 180,
+                        file_ext: "jpg".into(),
+                    },
+                    RemoteMediaVariant {
+                        url: Some("https://cdn.donmai.us/720x720/aa/bb/poster.webp".into()),
+                        width: 491,
+                        height: 720,
+                        file_ext: "webp".into(),
+                    },
+                    RemoteMediaVariant {
+                        url: Some("https://cdn.donmai.us/original/aa/bb/video.webm".into()),
+                        width: 720,
+                        height: 1_056,
+                        file_ext: "webm".into(),
+                    },
+                    RemoteMediaVariant {
+                        url: Some(
+                            "https://cdn.donmai.us.evil.example/1440x1440/poster.webp".into(),
+                        ),
+                        width: 982,
+                        height: 1_440,
+                        file_ext: "webp".into(),
+                    },
+                ],
+            }),
+            tag_string_general: String::new(),
+            tag_string_artist: String::new(),
+            tag_string_character: String::new(),
+            tag_string_copyright: String::new(),
+            parent_id: None,
+            has_children: false,
+        });
+        let large_url = converted.large_url.as_deref().unwrap();
+        assert_ne!(converted.large_url, converted.preview_url);
+        let token = large_url.rsplit('/').next().unwrap();
+        assert_eq!(
+            decode_media_proxy_token(token).unwrap().as_str(),
+            "https://cdn.donmai.us/720x720/aa/bb/poster.webp"
+        );
+    }
+
+    #[test]
+    fn video_posts_fall_back_to_the_small_preview_without_static_variants() {
+        let converted = DanbooruPost::from(RemotePost {
+            id: 10,
+            created_at: String::new(),
+            rating: "g".into(),
+            score: 0,
+            fav_count: 0,
+            image_width: 1,
+            image_height: 1,
+            file_ext: "mp4".into(),
+            file_size: 1,
+            md5: None,
+            source: None,
+            preview_file_url: Some("https://cdn.donmai.us/180x180/aa/bb/preview.jpg".into()),
+            large_file_url: Some("https://cdn.donmai.us/original/aa/bb/video.mp4".into()),
+            file_url: Some("https://cdn.donmai.us/original/aa/bb/video.mp4".into()),
+            media_asset: None,
             tag_string_general: String::new(),
             tag_string_artist: String::new(),
             tag_string_character: String::new(),
@@ -1042,11 +1321,6 @@ mod tests {
             has_children: false,
         });
         assert_eq!(converted.large_url, converted.preview_url);
-        assert!(converted
-            .large_url
-            .as_deref()
-            .is_some_and(|url| url.starts_with(MEDIA_PROXY_HTTP_ROOT)
-                || url.starts_with(MEDIA_PROXY_SCHEME_ROOT)));
     }
 
     #[test]

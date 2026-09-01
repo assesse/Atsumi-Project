@@ -906,6 +906,18 @@ dialog::backdrop {
   border-color: color-mix(in srgb, var(--source-teal) 48%, var(--line));
 }
 
+.danbooru-tag-section button.is-favorite {
+  color: var(--favorite);
+  background: color-mix(in srgb, var(--favorite) 10%, var(--chip-bg));
+  border-color: color-mix(in srgb, var(--favorite) 58%, var(--chip-border));
+}
+
+.danbooru-tag-section button.is-favorite:hover {
+  color: color-mix(in srgb, var(--favorite) 78%, white);
+  background: color-mix(in srgb, var(--favorite) 14%, var(--surface-hover));
+  border-color: var(--favorite);
+}
+
 @media (max-width: 1020px) {
   .brand {
     height: 62px;

@@ -68,11 +68,56 @@ describe("ProgressivePagePreview", () => {
     const root = createRoot(container);
     try {
       await act(async () => root.render(
-        <ProgressivePagePreview gallery={gallery} page={3} client={client} backend={backend} />,
+        <ProgressivePagePreview
+          gallery={gallery}
+          page={3}
+          expectedDimension={{ width: 1600, height: 900 }}
+          client={client}
+          backend={backend}
+        />,
       ));
       expect(prepare).not.toHaveBeenCalled();
-      expect(container.querySelector(".page-preview-media")).toHaveAttribute("data-original-source", "thumbnail");
+      const media = container.querySelector<HTMLElement>(".page-preview-media")!;
+      expect(media).toHaveAttribute("data-original-source", "thumbnail");
+      expect(media).toHaveAttribute("data-page-orientation", "landscape");
+      expect(media).toHaveStyle({ aspectRatio: "1600 / 900" });
       expect(container.querySelector(".page-preview-original")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+    }
+  });
+
+  it("reports the resolved source dimensions so the dialog can replace its metadata fallback", async () => {
+    const gallery: Gallery = { ...mockGalleries[0]!, download: undefined };
+    const backend = { detailOriginalPrepare: vi.fn(), detailOriginalDispose: vi.fn() } as unknown as BackendClient;
+    const client = new ThumbnailClient({
+      resolve: () => ({ kind: "image" as const, url: "https://images.example.test/resolved.webp", width: 720, height: 1080 }),
+    });
+    const onDimensionResolved = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <ProgressivePagePreview
+          gallery={gallery}
+          page={4}
+          client={client}
+          backend={backend}
+          onDimensionResolved={onDimensionResolved}
+        />,
+      ));
+      await act(async () => Promise.resolve());
+      expect(onDimensionResolved).toHaveBeenCalledWith({
+        galleryId: gallery.id,
+        page: 4,
+        width: 720,
+        height: 1080,
+      });
+      expect(container.querySelector(".page-preview-media")).toHaveAttribute("data-page-orientation", "portrait");
+      expect(container.querySelector<HTMLElement>(".page-preview-media")).toHaveStyle({ aspectRatio: "2 / 3" });
     } finally {
       await act(async () => root.unmount());
       client.dispose();

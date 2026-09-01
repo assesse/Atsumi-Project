@@ -13,6 +13,8 @@ pub const DEFAULT_PREVIEW_WIDTH: u32 = 220;
 /// its own size preference instead of inheriting the dense Explore card size.
 pub const DEFAULT_RELATED_PREVIEW_WIDTH: u32 = 240;
 pub const DEFAULT_EXPLORE_PAGE_SIZE: u32 = 50;
+pub const DEFAULT_DANBOORU_PAGE_SIZE: u32 = 60;
+pub const DEFAULT_DANBOORU_PREVIEW_WIDTH: u32 = 190;
 pub const DEFAULT_CACHE_LIMIT_GB: u32 = 10;
 pub const DEFAULT_CONCURRENT_IMAGE_REQUESTS: u32 = 5;
 pub const DEFAULT_REQUEST_START_INTERVAL_MS: u64 = 25;
@@ -229,8 +231,10 @@ pub struct SettingsSnapshot {
     pub download_root: String,
     pub folder_name_template: String,
     pub explore_page_size: u32,
+    pub danbooru_page_size: u32,
     pub max_columns: u32,
     pub preview_width: u32,
+    pub danbooru_preview_width: u32,
     pub related_preview_width: u32,
     pub privacy_mode: bool,
     pub cache_limit_gb: u32,
@@ -255,8 +259,10 @@ impl Default for SettingsSnapshot {
             download_root: String::new(),
             folder_name_template: DEFAULT_FOLDER_NAME_TEMPLATE.to_owned(),
             explore_page_size: DEFAULT_EXPLORE_PAGE_SIZE,
+            danbooru_page_size: DEFAULT_DANBOORU_PAGE_SIZE,
             max_columns: DEFAULT_MAX_COLUMNS,
             preview_width: DEFAULT_PREVIEW_WIDTH,
+            danbooru_preview_width: DEFAULT_DANBOORU_PREVIEW_WIDTH,
             related_preview_width: DEFAULT_RELATED_PREVIEW_WIDTH,
             privacy_mode: false,
             cache_limit_gb: DEFAULT_CACHE_LIMIT_GB,
@@ -282,8 +288,10 @@ pub struct SettingsPatch {
     pub download_root: Option<String>,
     pub folder_name_template: Option<String>,
     pub explore_page_size: Option<u32>,
+    pub danbooru_page_size: Option<u32>,
     pub max_columns: Option<u32>,
     pub preview_width: Option<u32>,
+    pub danbooru_preview_width: Option<u32>,
     pub related_preview_width: Option<u32>,
     pub privacy_mode: Option<bool>,
     pub cache_limit_gb: Option<u32>,
@@ -335,11 +343,17 @@ impl SettingsSnapshot {
         if let Some(value) = patch.explore_page_size {
             next.explore_page_size = value;
         }
+        if let Some(value) = patch.danbooru_page_size {
+            next.danbooru_page_size = value;
+        }
         if let Some(value) = patch.max_columns {
             next.max_columns = value;
         }
         if let Some(value) = patch.preview_width {
             next.preview_width = value;
+        }
+        if let Some(value) = patch.danbooru_preview_width {
+            next.danbooru_preview_width = value;
         }
         if let Some(value) = patch.related_preview_width {
             next.related_preview_width = value;
@@ -407,6 +421,12 @@ impl SettingsSnapshot {
                 "must be between 10 and 200",
             ));
         }
+        if !(10..=100).contains(&self.danbooru_page_size) {
+            return Err(ValidationError::new(
+                "danbooruPageSize",
+                "must be between 10 and 100",
+            ));
+        }
         if !(1..=4).contains(&self.max_columns) {
             return Err(ValidationError::new(
                 "maxColumns",
@@ -416,6 +436,12 @@ impl SettingsSnapshot {
         if !is_gallery_preview_width(self.preview_width) {
             return Err(ValidationError::new(
                 "previewWidth",
+                "must be one of 160, 190, 220, 250, 280, 320 or 360",
+            ));
+        }
+        if !is_gallery_preview_width(self.danbooru_preview_width) {
+            return Err(ValidationError::new(
+                "danbooruPreviewWidth",
                 "must be one of 160, 190, 220, 250, 280, 320 or 360",
             ));
         }

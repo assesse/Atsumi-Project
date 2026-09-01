@@ -21,6 +21,8 @@ import type {
   DanbooruDownloadsPage,
   DanbooruDownloadsRequest,
   DanbooruPost,
+  DanbooruRelatedPosts,
+  DanbooruRelatedRequest,
   DanbooruSearchPage,
   DanbooruSearchRequest,
   DetailOriginalPrepareRequest,
@@ -116,6 +118,7 @@ export interface BackendClient {
   storageUsageGet(): Promise<ApiResult<StorageUsageSnapshot>>;
   danbooruSearch(request: DanbooruSearchRequest): Promise<ApiResult<DanbooruSearchPage>>;
   danbooruRandom(): Promise<ApiResult<DanbooruPost>>;
+  danbooruRelated(request: DanbooruRelatedRequest): Promise<ApiResult<DanbooruRelatedPosts>>;
   danbooruAutocomplete(query: string, limit: number): Promise<ApiResult<DanbooruAutocompleteItem[]>>;
   danbooruDownload(postId: number): Promise<ApiResult<DanbooruDownloadRecord>>;
   danbooruDownloadsList(request: DanbooruDownloadsRequest): Promise<ApiResult<DanbooruDownloadsPage>>;
@@ -190,8 +193,10 @@ const defaultSettings: SettingsSnapshot = {
   autoFindHistoryMode: "include_all_history",
   downloadOverlapAutoMode: "off",
   explorePageSize: 50,
+  danbooruPageSize: 60,
   maxColumns: 3,
   previewWidth: 220,
+  danbooruPreviewWidth: 190,
   relatedPreviewWidth: 240,
   privacyMode: false,
   cacheLimitGb: 10,
@@ -264,6 +269,14 @@ const readPersistedBrowserSettings = (): SettingsSnapshot => {
         && (parsed.explorePageSize ?? 0) <= 200
         ? parsed.explorePageSize ?? defaultSettings.explorePageSize
         : defaultSettings.explorePageSize,
+      danbooruPageSize: Number.isInteger(parsed.danbooruPageSize)
+        && (parsed.danbooruPageSize ?? 0) >= 10
+        && (parsed.danbooruPageSize ?? 0) <= 100
+        ? parsed.danbooruPageSize ?? defaultSettings.danbooruPageSize
+        : defaultSettings.danbooruPageSize,
+      danbooruPreviewWidth: GALLERY_PREVIEW_PRESETS.some((preset) => preset.width === parsed.danbooruPreviewWidth)
+        ? parsed.danbooruPreviewWidth ?? defaultSettings.danbooruPreviewWidth
+        : defaultSettings.danbooruPreviewWidth,
       privacyMode: parsed.privacyMode === true,
       autoFindGrouping: isGalleryGrouping(parsed.autoFindGrouping) ? parsed.autoFindGrouping : "all",
       downloadsGrouping: isGalleryGrouping(parsed.downloadsGrouping) ? parsed.downloadsGrouping : "all",
@@ -730,9 +743,16 @@ const browserDanbooruPosts: DanbooruPost[] = Array.from({ length: 18 }, (_, inde
     copyrights: [index % 2 ? "original" : "atsumi_fixture"],
     characters: index % 2 ? [`sample_character_${index % 4 + 1}`] : [],
     tags: ["blue_sky", index % 2 ? "landscape" : "portrait"],
-    hasChildren: index % 5 === 0,
+    ...(index === 1 || index === 2 ? { parentId: 12_000_000 } : {}),
+    ...(index === 6 || index === 7 ? { parentId: 12_000_005 } : {}),
+    hasChildren: index === 0 || index === 5,
   };
 });
+
+const browserDanbooruPools = [
+  { id: 91, name: "atsumi_fixture_sequence", category: "series", postIds: browserDanbooruPosts.slice(0, 7).map(({ id }) => id) },
+  { id: 92, name: "fixture_variations", category: "collection", postIds: browserDanbooruPosts.slice(4, 12).map(({ id }) => id) },
+];
 
 const danbooruUnlimitedMetatags = new Set([
   "status", "rating", "limit", "is", "id", "date", "age", "filesize", "filetype",
@@ -902,9 +922,13 @@ class BrowserMockBackend implements BackendClient {
         ? validationError("downloadOverlapAutoMode", "must be off, recommend or strict_quarantine")
         : null) ??
       validateIntegerRange(next.explorePageSize, "explorePageSize", 10, 200) ??
+      validateIntegerRange(next.danbooruPageSize, "danbooruPageSize", 10, 100) ??
       validateIntegerRange(next.maxColumns, "maxColumns", 1, 4) ??
       (!GALLERY_PREVIEW_PRESETS.some((preset) => preset.width === next.previewWidth)
         ? validationError("previewWidth", "must be one of the supported preview presets")
+        : null) ??
+      (!GALLERY_PREVIEW_PRESETS.some((preset) => preset.width === next.danbooruPreviewWidth)
+        ? validationError("danbooruPreviewWidth", "must be one of the supported preview presets")
         : null) ??
       (![180, 200, 220, 240, 260, 280, 300, 320].includes(next.relatedPreviewWidth)
         ? validationError("relatedPreviewWidth", "must be one of the supported related preview presets")
@@ -1037,6 +1061,46 @@ class BrowserMockBackend implements BackendClient {
   async danbooruRandom(): Promise<ApiResult<DanbooruPost>> {
     const index = Math.floor(Math.random() * browserDanbooruPosts.length);
     return ok({ ...browserDanbooruPosts[index]! });
+  }
+
+  async danbooruRelated(request: DanbooruRelatedRequest): Promise<ApiResult<DanbooruRelatedPosts>> {
+    const current = browserDanbooruPosts.find((post) => post.id === request.postId);
+    if (!current) return notFoundError("DANBOORU_POST_NOT_FOUND", "해당 Danbooru post를 찾을 수 없습니다.");
+    const parentId = request.parentId ?? current.parentId;
+    const parent = parentId === undefined
+      ? undefined
+      : browserDanbooruPosts.find((post) => post.id === parentId);
+    const clone = (post: DanbooruPost) => ({ ...post });
+    const siblings = parentId === undefined
+      ? []
+      : browserDanbooruPosts.filter((post) => post.parentId === parentId && post.id !== request.postId).map(clone);
+    const children = (request.hasChildren || current.hasChildren)
+      ? browserDanbooruPosts.filter((post) => post.parentId === request.postId).map(clone)
+      : [];
+    const pools = browserDanbooruPools.flatMap((pool) => {
+      const currentIndex = pool.postIds.indexOf(request.postId);
+      if (currentIndex < 0) return [];
+      const start = Math.min(Math.max(0, currentIndex - 4), Math.max(0, pool.postIds.length - 9));
+      const selectedIds = new Set(pool.postIds.slice(start, start + 9));
+      return [{
+        id: pool.id,
+        name: pool.name,
+        category: pool.category,
+        postCount: pool.postIds.length,
+        currentIndex,
+        items: pool.postIds
+          .filter((id) => selectedIds.has(id))
+          .map((id) => browserDanbooruPosts.find((post) => post.id === id))
+          .filter((post): post is DanbooruPost => Boolean(post))
+          .map(clone),
+      }];
+    });
+    return ok({
+      ...(parent ? { parent: clone(parent) } : {}),
+      siblings,
+      children,
+      pools,
+    });
   }
 
   async danbooruAutocomplete(query: string, limit: number): Promise<ApiResult<DanbooruAutocompleteItem[]>> {
@@ -2875,6 +2939,10 @@ class TauriBackend implements BackendClient {
 
   danbooruRandom(): Promise<ApiResult<DanbooruPost>> {
     return invoke("danbooru_random");
+  }
+
+  danbooruRelated(request: DanbooruRelatedRequest): Promise<ApiResult<DanbooruRelatedPosts>> {
+    return invoke("danbooru_related", { request });
   }
 
   danbooruAutocomplete(query: string, limit: number): Promise<ApiResult<DanbooruAutocompleteItem[]>> {

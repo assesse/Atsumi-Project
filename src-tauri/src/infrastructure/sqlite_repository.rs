@@ -286,8 +286,10 @@ impl StateRepository for SqliteRepository {
                         download_overlap_auto_mode = ?18,
                         explore_display_mode = ?19,
                         auto_find_display_mode = ?20,
-                        downloads_display_mode = ?21
-                    WHERE singleton = 1 AND revision = ?22
+                        downloads_display_mode = ?21,
+                        danbooru_page_size = ?22,
+                        danbooru_preview_width = ?23
+                    WHERE singleton = 1 AND revision = ?24
                 "#,
                 params![
                     to_sql_integer(next.revision, "settings revision")?,
@@ -311,6 +313,8 @@ impl StateRepository for SqliteRepository {
                     next.explore_display_mode.as_str(),
                     next.auto_find_display_mode.as_str(),
                     next.downloads_display_mode.as_str(),
+                    i64::from(next.danbooru_page_size),
+                    i64::from(next.danbooru_preview_width),
                     to_sql_integer(expected_revision, "expected settings revision")?,
                 ],
             )
@@ -8063,7 +8067,8 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                        collapsed_group_keys_json, search_include_tags_json,
                        search_exclude_tags_json, explore_page_size,
                        download_overlap_auto_mode, explore_display_mode,
-                       auto_find_display_mode, downloads_display_mode
+                       auto_find_display_mode, downloads_display_mode,
+                       danbooru_page_size, danbooru_preview_width
                 FROM settings
                 WHERE singleton = 1
             "#,
@@ -8091,6 +8096,8 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                     row.get::<_, String>(18)?,
                     row.get::<_, String>(19)?,
                     row.get::<_, String>(20)?,
+                    row.get::<_, i64>(21)?,
+                    row.get::<_, i64>(22)?,
                 ))
             },
         )
@@ -8101,10 +8108,15 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
         download_root: values.1,
         folder_name_template: values.2,
         explore_page_size: stored_u32(values.16, "Explore page size")?,
+        danbooru_page_size: stored_u32(values.21, "Danbooru page size")?,
         max_columns: stored_u32(values.3, "max columns")?,
         preview_width: crate::domain::normalize_gallery_preview_width(stored_u32(
             values.4,
             "preview width",
+        )?),
+        danbooru_preview_width: crate::domain::normalize_gallery_preview_width(stored_u32(
+            values.22,
+            "Danbooru preview width",
         )?),
         related_preview_width: stored_u32(values.5, "related preview width")?,
         cache_limit_gb: stored_u32(values.6, "cache limit")?,

@@ -181,6 +181,7 @@ fn blocking_candidate_from_record(
     } else {
         DownloadOverlapRelation::PartialOverlap
     };
+    let aligned_run = longest_aligned_run(&page_pairs);
 
     let blocks = match relation {
         DownloadOverlapRelation::NearEquivalent => {
@@ -201,9 +202,13 @@ fn blocking_candidate_from_record(
         }
         DownloadOverlapRelation::TranslationEdition => {
             smaller_pages > 3
-                && matched_pages >= 6
-                && incoming_coverage.max(existing_coverage) >= 0.90
                 && non_low_information * 2 > page_pairs.len()
+                && ((matched_pages >= 6 && incoming_coverage.max(existing_coverage) >= 0.90)
+                    || (smaller_pages >= 8
+                        && matched_pages >= 8
+                        && incoming_coverage >= 0.75
+                        && existing_coverage >= 0.75
+                        && aligned_run >= 8))
         }
         DownloadOverlapRelation::PartialOverlap => {
             smaller_pages > 3
@@ -237,7 +242,7 @@ fn blocking_candidate_from_record(
         incoming_coverage,
         existing_unique_pages: existing_pages.saturating_sub(matched_pages),
         incoming_unique_pages: incoming_pages.saturating_sub(matched_pages),
-        longest_aligned_run: longest_aligned_run(&page_pairs),
+        longest_aligned_run: aligned_run,
         rank: 0,
         decision: None,
         page_pairs,
@@ -395,6 +400,43 @@ mod tests {
         assert_eq!(candidate.relation, DownloadOverlapRelation::NearEquivalent);
         assert_eq!(candidate.exact_pages, 0);
         assert_eq!(candidate.visual_pages, 8);
+    }
+
+    #[test]
+    fn guarded_typesetting_sequence_reaches_download_overlap_review() {
+        let profile = HashProfile::current();
+        let existing = artifact(10, 25, 0);
+        let mut incoming = artifact(20, 25, 10_000);
+        for page in incoming.pages.iter_mut().take(22).skip(11) {
+            page.edge_density = 0.29;
+            page.width = 120;
+            page.height = 168;
+        }
+        for page in incoming.pages.iter_mut().skip(22) {
+            page.low_information = true;
+            page.std_dev = 0.0;
+            page.non_uniform_ratio = 0.0;
+            page.edge_density = 0.0;
+        }
+
+        let candidate = analyze_download_overlap_pair(
+            "typesetting-review",
+            &incoming,
+            &existing,
+            "7".repeat(64),
+            &profile,
+        )
+        .expect("a long guarded typesetting sequence should pause for review");
+        assert_eq!(
+            candidate.relation,
+            DownloadOverlapRelation::TranslationEdition
+        );
+        assert_eq!(candidate.matched_pages, 22);
+        assert_eq!(candidate.exact_pages, 0);
+        assert_eq!(candidate.visual_pages, 22);
+        assert_eq!(candidate.incoming_coverage, 0.88);
+        assert_eq!(candidate.existing_coverage, 0.88);
+        assert_eq!(candidate.longest_aligned_run, 22);
     }
 
     #[test]

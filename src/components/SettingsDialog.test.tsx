@@ -19,9 +19,11 @@ const settings: SettingsSnapshot = {
   folderNameTemplate: "[{artist}] {title} [{group}] {id}",
   autoFindHistoryMode: "include_all_history",
   explorePageSize: 50,
+  danbooruPageSize: 60,
   downloadOverlapAutoMode: "off",
   maxColumns: 3,
   previewWidth: 220,
+  danbooruPreviewWidth: 190,
   relatedPreviewWidth: 240,
   privacyMode: false,
   cacheLimitGb: 5,
@@ -202,7 +204,7 @@ describe("SettingsDialog operational boundaries", () => {
       const historyMode = container.querySelector<HTMLSelectElement>('[aria-label="Auto Find 기록 기준"]');
       expect(historyMode?.value).toBe("include_all_history");
       expect(historyMode?.closest(".settings-select-control")?.querySelector(".fluent")).not.toBeNull();
-      const explorePageSize = container.querySelector<HTMLInputElement>('[aria-label="Explore 페이지당 항목 수"]');
+      const explorePageSize = container.querySelector<HTMLInputElement>('[aria-label="Hitomi 페이지당 앨범 수"]');
       expect(explorePageSize?.min).toBe("10");
       expect(explorePageSize?.max).toBe("200");
       expect(explorePageSize?.step).toBe("10");
@@ -214,7 +216,7 @@ describe("SettingsDialog operational boundaries", () => {
         explorePageSize.dispatchEvent(new Event("input", { bubbles: true }));
         explorePageSize.dispatchEvent(new Event("change", { bubbles: true }));
       });
-      const previewRange = container.querySelector<HTMLInputElement>('[aria-label="카드 미리보기 크기"]');
+      const previewRange = container.querySelector<HTMLInputElement>('[aria-label="Hitomi 카드 미리보기 크기"]');
       expect(previewRange?.min).toBe("0");
       expect(previewRange?.max).toBe("6");
       expect(previewRange?.value).toBe("2");
@@ -222,7 +224,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(relatedPreviewRange?.min).toBe("180");
       expect(relatedPreviewRange?.max).toBe("320");
       expect(relatedPreviewRange?.value).toBe("240");
-      const privacyMode = container.querySelector<HTMLInputElement>('[aria-label="개인정보 보호 모드"]');
+      const privacyMode = container.querySelector<HTMLInputElement>('[aria-label="프라이버시 모드"]');
       expect(privacyMode).not.toBeChecked();
       await act(async () => privacyMode?.click());
       expect(privacyMode).toBeChecked();
@@ -303,7 +305,13 @@ describe("SettingsDialog operational boundaries", () => {
       expect(danbooruSettings).toHaveTextContent("4종: General(g), Sensitive(s), Questionable(q), Explicit(e)");
       expect(danbooruSettings).toHaveTextContent("status rating limit is id date age filesize filetype");
       expect(danbooruSettings?.querySelectorAll('.danbooru-settings-checks:not(.is-files) input[type="checkbox"]')).toHaveLength(4);
-      expect(danbooruSettings?.querySelector('[aria-label="Danbooru 기본 정렬"]')).toHaveValue("newest");
+      const danbooruSort = danbooruSettings?.querySelector<HTMLButtonElement>('[aria-label="Danbooru 기본 정렬"]');
+      expect(danbooruSort).toHaveTextContent("최신 등록순");
+      expect(danbooruSort).toHaveAttribute("aria-expanded", "false");
+      const danbooruPageSize = danbooruSettings?.querySelector<HTMLInputElement>('[aria-label="Danbooru 페이지당 post 수"]');
+      const danbooruPreviewWidth = danbooruSettings?.querySelector<HTMLInputElement>('[aria-label="Danbooru 카드 미리보기 크기"]');
+      expect(danbooruPageSize).toHaveValue("60");
+      expect(danbooruPreviewWidth).toHaveValue("1");
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>("button")]
           .find((button) => button.textContent === "저장")
@@ -313,6 +321,8 @@ describe("SettingsDialog operational boundaries", () => {
         folderNameTemplate: "[{artist}] {title} [{group}] {id}",
         autoFindHistoryMode: "include_all_history",
         explorePageSize: 50,
+        danbooruPageSize: 60,
+        danbooruPreviewWidth: 190,
         relatedPreviewWidth: 240,
         privacyMode: true,
         searchIncludeTags: ["female:glasses", "webtoon"],

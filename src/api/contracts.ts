@@ -47,6 +47,28 @@ export type DanbooruSearchPage = {
   hasMore: boolean;
 };
 
+export type DanbooruRelatedRequest = {
+  postId: number;
+  parentId?: number;
+  hasChildren: boolean;
+};
+
+export type DanbooruPoolRelation = {
+  id: number;
+  name: string;
+  category: string;
+  postCount: number;
+  currentIndex: number;
+  items: DanbooruPost[];
+};
+
+export type DanbooruRelatedPosts = {
+  parent?: DanbooruPost;
+  siblings: DanbooruPost[];
+  children: DanbooruPost[];
+  pools: DanbooruPoolRelation[];
+};
+
 export type DanbooruAutocompleteItem = {
   label: string;
   value: string;
@@ -134,8 +156,11 @@ export type SettingsSnapshot = {
   downloadOverlapAutoMode: "off" | "recommend" | "strict_quarantine";
   /** Number of albums requested for each Explore result page. */
   explorePageSize: number;
+  /** Danbooru posts requested per page before row-alignment adjustment. */
+  danbooruPageSize: number;
   maxColumns: number;
   previewWidth: number;
+  danbooruPreviewWidth: number;
   relatedPreviewWidth: number;
   privacyMode: boolean;
   cacheLimitGb: number;

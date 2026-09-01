@@ -97,7 +97,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -182,7 +182,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31, 32, 33, 34, 35
+            29, 30, 31, 32, 33, 34, 35, 36
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -293,7 +293,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35
+            33, 34, 35, 36
         ]
     );
     let metadata: (String, String) = connection
@@ -357,7 +357,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -400,8 +400,10 @@ fn default_settings_match_the_approved_foundation_values() {
             "downloadRoot": "",
             "folderNameTemplate": "[{artist}] {title} [{group}] {id}",
             "explorePageSize": 50,
+            "danbooruPageSize": 60,
             "maxColumns": 3,
             "previewWidth": 220,
+            "danbooruPreviewWidth": 190,
             "relatedPreviewWidth": 240,
             "privacyMode": false,
             "cacheLimitGb": 10,
@@ -554,8 +556,10 @@ fn settings_validation_matches_the_approved_ui_ranges() {
         download_root: String::new(),
         folder_name_template: "[{artist}] {title} [{group}] {id}".into(),
         explore_page_size: 200,
+        danbooru_page_size: 100,
         max_columns: 4,
         preview_width: 360,
+        danbooru_preview_width: 360,
         related_preview_width: 320,
         privacy_mode: false,
         cache_limit_gb: 30,
@@ -583,6 +587,9 @@ fn settings_validation_matches_the_approved_ui_ranges() {
     invalid.explore_page_size = 9;
     assert!(invalid.validate().is_err());
     invalid = limits.clone();
+    invalid.danbooru_page_size = 101;
+    assert!(invalid.validate().is_err());
+    invalid = limits.clone();
     invalid.max_columns = 5;
     assert!(invalid.validate().is_err());
     invalid = limits.clone();
@@ -593,6 +600,9 @@ fn settings_validation_matches_the_approved_ui_ranges() {
     assert!(invalid.validate().is_err());
     invalid = limits.clone();
     invalid.preview_width = 305;
+    assert!(invalid.validate().is_err());
+    invalid = limits.clone();
+    invalid.danbooru_preview_width = 205;
     assert!(invalid.validate().is_err());
     invalid = limits.clone();
     invalid.related_preview_width = 170;
@@ -638,7 +648,9 @@ fn settings_update_rejects_a_stale_revision() {
         .settings_update(
             SettingsPatch {
                 explore_page_size: Some(80),
+                danbooru_page_size: Some(60),
                 max_columns: Some(4),
+                danbooru_preview_width: Some(190),
                 privacy_mode: Some(true),
                 explore_display_mode: Some(GalleryDisplayMode::Compact),
                 auto_find_display_mode: Some(GalleryDisplayMode::Detail),
@@ -650,6 +662,8 @@ fn settings_update_rejects_a_stale_revision() {
         .expect("update current settings");
     assert_eq!(updated.revision, 1);
     assert_eq!(updated.explore_page_size, 80);
+    assert_eq!(updated.danbooru_page_size, 60);
+    assert_eq!(updated.danbooru_preview_width, 190);
     assert_eq!(updated.max_columns, 4);
     assert!(updated.privacy_mode);
     assert_eq!(updated.explore_display_mode, GalleryDisplayMode::Compact);
@@ -676,6 +690,8 @@ fn settings_update_rejects_a_stale_revision() {
     ));
     let persisted = service.settings_get().expect("reload settings");
     assert_eq!(persisted.explore_page_size, 80);
+    assert_eq!(persisted.danbooru_page_size, 60);
+    assert_eq!(persisted.danbooru_preview_width, 190);
     assert_eq!(persisted.preview_width, 220);
     assert!(persisted.privacy_mode);
     assert_eq!(persisted.explore_display_mode, GalleryDisplayMode::Compact);

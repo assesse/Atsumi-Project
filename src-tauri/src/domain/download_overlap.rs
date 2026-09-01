@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{DownloadEntryId, DownloadJobDescriptor, DownloadJobProjection, GalleryId};
 
-pub const DOWNLOAD_OVERLAP_POLICY_VERSION: u32 = 1;
+pub const DOWNLOAD_OVERLAP_POLICY_VERSION: u32 = 2;
 pub const DOWNLOAD_OVERLAP_MAX_STORED_PAGE_PAIRS: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

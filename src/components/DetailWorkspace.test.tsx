@@ -261,14 +261,24 @@ describe("DetailWorkspace page previews", () => {
       expect(next).toHaveClass("is-next");
       expect(previous).toHaveClass("is-previous");
       expect(previous).toBeDisabled();
+      expect(container.querySelector(".preview-window-viewport")).not.toBeNull();
+      const initialGrid = container.querySelector<HTMLElement>(".preview-grid")!;
+      expect(initialGrid).toHaveAttribute("data-preview-direction", "none");
       const initialStart = container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent;
       await act(async () => {
         next?.click();
       });
+      const nextGrid = container.querySelector<HTMLElement>(".preview-grid")!;
+      expect(nextGrid).not.toBe(initialGrid);
+      expect(nextGrid).toHaveAttribute("data-preview-direction", "next");
+      expect(container.querySelectorAll(".preview-thumb")).toHaveLength(9);
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).not.toBe(initialStart);
       await act(async () => {
         previous?.click();
       });
+      const previousGrid = container.querySelector<HTMLElement>(".preview-grid")!;
+      expect(previousGrid).not.toBe(nextGrid);
+      expect(previousGrid).toHaveAttribute("data-preview-direction", "previous");
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).toBe(initialStart);
 
       const workspace = container.querySelector<HTMLElement>(".detail-workspace")!;
@@ -371,9 +381,17 @@ describe("DetailWorkspace page previews", () => {
       configurable: true,
       value: vi.fn(function (this: HTMLDialogElement) { this.setAttribute("open", ""); }),
     });
-    const gallery: Gallery = { ...mockGalleries[0]!, pages: 25, pageDimensions: Array.from({ length: 8 }, (_, index) => ({ sourcePage: index + 1, width: 800, height: 1000 })) };
+    const gallery: Gallery = {
+      ...mockGalleries[0]!,
+      pages: 25,
+      pageDimensions: Array.from({ length: 8 }, (_, index) => index === 1
+        ? { sourcePage: 2, width: 1600, height: 900 }
+        : { sourcePage: index + 1, width: 800, height: 1200 }),
+    };
     const client = new ThumbnailClient({
-      resolve: () => ({ kind: "image" as const, url: "https://images.example.test/page.jpg", width: 800, height: 1000 }),
+      resolve: (request) => request.key.kind === "source-page" && request.key.page === 2
+        ? { kind: "image" as const, url: "https://images.example.test/page-2.jpg", width: 1600, height: 900 }
+        : { kind: "image" as const, url: "https://images.example.test/page.jpg", width: 800, height: 1200 },
     });
     const container = document.createElement("div");
     document.body.append(container);
@@ -385,16 +403,194 @@ describe("DetailWorkspace page previews", () => {
       await act(async () => container.querySelector<HTMLButtonElement>(".preview-thumb")?.click());
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
       expect(container.querySelector<HTMLImageElement>(".page-preview-media img")?.alt).toContain("1페이지");
+      const dialog = container.querySelector<HTMLDialogElement>(".page-preview-dialog")!;
+      expect(dialog).toHaveAttribute("data-page-preview-orientation", "portrait");
+      expect(dialog.style.getPropertyValue("--page-preview-aspect-ratio")).toBe("800 / 1200");
+      expect(container.querySelector(".page-preview-media")).toHaveAttribute("data-page-orientation", "portrait");
+      expect(container.querySelector('[aria-label="두쪽 보기"]')).toBeNull();
       const backgroundStart = container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent;
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
       });
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("2페이지");
       expect(container.querySelector<HTMLImageElement>(".page-preview-media img")?.alt).toContain("2페이지");
+      expect(dialog).toHaveAttribute("data-page-preview-orientation", "landscape");
+      expect(dialog.style.getPropertyValue("--page-preview-aspect-ratio")).toBe("1600 / 900");
+      expect(container.querySelector(".page-preview-media")).toHaveAttribute("data-page-orientation", "landscape");
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).toBe(backgroundStart);
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true }));
       });
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
+      expect(dialog).toHaveAttribute("data-page-preview-orientation", "portrait");
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+      if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
+    }
+  });
+
+  it("offers two-page view only for adjacent portrait pages and advances by spreads", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: vi.fn(function (this: HTMLDialogElement) { this.setAttribute("open", ""); }),
+    });
+    const gallery: Gallery = {
+      ...mockGalleries[3]!,
+      pages: 6,
+      pageDimensions: Array.from({ length: 6 }, (_, index) => ({
+        sourcePage: index + 1,
+        width: 800,
+        height: 1200,
+      })),
+    };
+    const client = new ThumbnailClient({
+      resolve: () => ({ kind: "image" as const, url: "https://images.example.test/portrait.jpg", width: 800, height: 1200 }),
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <DetailWorkspace tabs={[gallery.id]} activeId={gallery.id} minimized={false} galleries={new Map([[gallery.id, gallery]])} favoriteMetadata={new Set()} thumbnailClient={client} onActivate={vi.fn()} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />,
+      ));
+      await act(async () => container.querySelector<HTMLButtonElement>('.preview-thumb[title="1페이지 확대"]')?.click());
+      const toggle = container.querySelector<HTMLButtonElement>('[aria-label="두쪽 보기"]')!;
+      expect(toggle).toBeInTheDocument();
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+      expect(toggle.closest(".page-preview-controls")).not.toBeNull();
+      expect(container.querySelectorAll(".page-preview-media")).toHaveLength(1);
+
+      await act(async () => toggle.click());
+      expect(toggle).toHaveAttribute("aria-pressed", "true");
+      expect(container.querySelector(".page-preview-dialog")).toHaveAttribute("data-page-preview-view", "spread");
+      expect(container.querySelector(".page-preview-media-stage")).toHaveAttribute("data-page-preview-count", "2");
+      expect(container.querySelectorAll(".page-preview-media")).toHaveLength(2);
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("1–2페이지");
+      expect(container.querySelector(".page-preview-navigation")).toHaveTextContent("1–2 / 6");
+      expect(Array.from(container.querySelectorAll<HTMLImageElement>(".page-preview-media img")).map((image) => image.alt)).toEqual([
+        expect.stringContaining("1페이지"),
+        expect.stringContaining("2페이지"),
+      ]);
+
+      const backgroundStart = container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent;
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
+      });
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("3–4페이지");
+      expect(container.querySelector(".page-preview-navigation")).toHaveTextContent("3–4 / 6");
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).toBe(backgroundStart);
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
+      });
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("5–6페이지");
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
+      });
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("5–6페이지");
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true }));
+      });
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("3–4페이지");
+
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true }));
+      });
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("1–2페이지");
+
+      await act(async () => toggle.click());
+      expect(container.querySelector(".page-preview-dialog")).toHaveAttribute("data-page-preview-view", "single");
+      expect(container.querySelectorAll(".page-preview-media")).toHaveLength(1);
+      expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+      if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
+    }
+  });
+
+  it("keeps completed PAGE PREVIEW centered while resizing symmetrically", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    vi.stubGlobal("innerWidth", 1200);
+    vi.stubGlobal("innerHeight", 900);
+    const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: vi.fn(function (this: HTMLDialogElement) { this.setAttribute("open", ""); }),
+    });
+    const gallery: Gallery = {
+      ...mockGalleries[2]!,
+      pages: 4,
+      pageDimensions: Array.from({ length: 4 }, (_, index) => ({ sourcePage: index + 1, width: 800, height: 1200 })),
+    };
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <DetailWorkspace tabs={[gallery.id]} activeId={gallery.id} minimized={false} galleries={new Map([[gallery.id, gallery]])} favoriteMetadata={new Set()} thumbnailClient={client} onActivate={vi.fn()} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />,
+      ));
+      expect(container.querySelectorAll("[data-resize-edge]")).toHaveLength(0);
+      await act(async () => container.querySelector<HTMLButtonElement>('.preview-thumb[title="1페이지 확대"]')?.click());
+      const dialog = container.querySelector<HTMLDialogElement>(".page-preview-dialog")!;
+      vi.spyOn(dialog, "getBoundingClientRect").mockImplementation(() => {
+        const width = Number.parseFloat(dialog.style.width) || 600;
+        const height = Number.parseFloat(dialog.style.height) || 500;
+        const left = (window.innerWidth - width) / 2;
+        const top = (window.innerHeight - height) / 2;
+        return {
+          left,
+          top,
+          right: left + width,
+          bottom: top + height,
+          width,
+          height,
+          x: left,
+          y: top,
+          toJSON: () => ({}),
+        };
+      });
+      const right = container.querySelector<HTMLElement>('[data-resize-edge="right"]')!;
+      const bottom = container.querySelector<HTMLElement>('[data-resize-edge="bottom"]')!;
+      expect(container.querySelectorAll("[data-resize-edge]")).toHaveLength(3);
+      expect(right).toHaveAttribute("role", "separator");
+      expect(bottom).toHaveAttribute("role", "separator");
+
+      await act(async () => {
+        right.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 900, clientY: 450 }));
+        window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 980, clientY: 510 }));
+        window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 980, clientY: 510 }));
+      });
+      expect(dialog.style.width).toBe("760px");
+      expect(dialog.style.height).toBe("500px");
+      expect(dialog.style.left).toBe("220px");
+      expect(dialog.style.top).toBe("200px");
+
+      await act(async () => {
+        bottom.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 600, clientY: 700 }));
+        window.dispatchEvent(new MouseEvent("pointermove", { bubbles: true, clientX: 680, clientY: 760 }));
+        window.dispatchEvent(new MouseEvent("pointerup", { bubbles: true, clientX: 680, clientY: 760 }));
+      });
+      expect(dialog.style.width).toBe("760px");
+      expect(dialog.style.height).toBe("620px");
+      expect(dialog.style.left).toBe("220px");
+      expect(dialog.style.top).toBe("140px");
+
+      await act(async () => {
+        right.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }));
+      });
+      expect(dialog.style.width).toBe("784px");
+      expect(dialog.style.left).toBe("208px");
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
     } finally {
       await act(async () => root.unmount());

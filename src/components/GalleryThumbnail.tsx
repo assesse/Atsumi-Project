@@ -37,6 +37,7 @@ type GalleryThumbnailProps = Omit<HTMLAttributes<HTMLElement>, "children"> & {
     status: "resolved" | "error";
     width?: number;
     height?: number;
+    kind?: ThumbnailAsset["kind"];
   }) => void;
   rootRef?: Ref<HTMLElement>;
   client?: ThumbnailClient;
@@ -316,7 +317,12 @@ export function GalleryThumbnail({
     }
     if (snapshot.status === "resolved") {
       const resolved = intrinsicDimensions(snapshot.asset, undefined);
-      onTerminalSnapshot({ status: "resolved", width: resolved.width, height: resolved.height });
+      onTerminalSnapshot({
+        status: "resolved",
+        width: resolved.width,
+        height: resolved.height,
+        kind: snapshot.asset.kind,
+      });
     }
   }, [onTerminalSnapshot, shouldSubscribe, snapshot]);
 

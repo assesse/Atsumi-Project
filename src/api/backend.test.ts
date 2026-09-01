@@ -44,6 +44,25 @@ describe("browser Danbooru search contract", () => {
       error: { code: "DANBOORU_TAG_LIMIT" },
     });
   });
+
+  it("returns ordered pool context plus parent, sibling, and child relations", async () => {
+    const child = await backend.danbooruRelated({ postId: 12_000_001, parentId: 12_000_000, hasChildren: false });
+    expect(child).toMatchObject({
+      ok: true,
+      data: {
+        parent: { id: 12_000_000 },
+        siblings: [{ id: 12_000_002 }],
+        children: [],
+        pools: [{ id: 91, currentIndex: 1, postCount: 7 }],
+      },
+    });
+
+    const parent = await backend.danbooruRelated({ postId: 12_000_000, hasChildren: true });
+    expect(parent).toMatchObject({
+      ok: true,
+      data: { children: [{ id: 12_000_001 }, { id: 12_000_002 }] },
+    });
+  });
 });
 
 describe("browser backend settings contract", () => {
@@ -100,6 +119,22 @@ describe("browser backend settings contract", () => {
       ok: false,
       error: { code: "VALIDATION_ERROR", details: { field: "explorePageSize" } },
     });
+
+    await expect(backend.settingsUpdate(
+      { danbooruPageSize: 101 },
+      current.data.revision,
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", details: { field: "danbooruPageSize" } },
+    });
+
+    await expect(backend.settingsUpdate(
+      { danbooruPreviewWidth: 205 },
+      current.data.revision,
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: "VALIDATION_ERROR", details: { field: "danbooruPreviewWidth" } },
+    });
   });
 
   it("persists the Explore page size used by new searches", async () => {
@@ -120,6 +155,31 @@ describe("browser backend settings contract", () => {
       updated.data.revision,
     );
     expect(restored).toMatchObject({ ok: true, data: { explorePageSize: current.data.explorePageSize } });
+  });
+
+  it("persists Danbooru layout values independently from Hitomi", async () => {
+    const current = await backend.settingsGet();
+    if (!current.ok) throw new Error(current.error.message);
+    const nextPageSize = current.data.danbooruPageSize === 70 ? 60 : 70;
+    const nextPreviewWidth = current.data.danbooruPreviewWidth === 250 ? 190 : 250;
+    const updated = await backend.settingsUpdate({
+      danbooruPageSize: nextPageSize,
+      danbooruPreviewWidth: nextPreviewWidth,
+    }, current.data.revision);
+    expect(updated).toMatchObject({
+      ok: true,
+      data: {
+        danbooruPageSize: nextPageSize,
+        danbooruPreviewWidth: nextPreviewWidth,
+        explorePageSize: current.data.explorePageSize,
+        previewWidth: current.data.previewWidth,
+      },
+    });
+    if (!updated.ok) return;
+    await expect(backend.settingsUpdate({
+      danbooruPageSize: current.data.danbooruPageSize,
+      danbooruPreviewWidth: current.data.danbooruPreviewWidth,
+    }, updated.data.revision)).resolves.toMatchObject({ ok: true });
   });
 
   it("persists only supported overlap automation modes", async () => {

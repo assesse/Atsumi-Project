@@ -145,7 +145,7 @@ describe("ActivityDrawer download controls", () => {
       />,
     ));
 
-    expect(container).toHaveTextContent("중복 검토 완료 · 탐색 및 다운로드 목록에서 제외됨");
+    expect(container).toHaveTextContent("중복 처리 완료 · 목록에서 제외");
     expect(container).toHaveTextContent("처리 완료");
     expect(container).not.toHaveTextContent("SOURCE_TIMEOUT");
     expect(container).not.toHaveTextContent("재시도");
@@ -194,6 +194,40 @@ describe("ActivityDrawer download controls", () => {
         .find((button) => button.textContent === "근거 보기")?.click();
     });
     expect(onReviewOverlap).toHaveBeenCalledWith("review-1", failedGallery.id);
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("includes concise Danbooru activity in the shared feed", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => root.render(
+      <ActivityDrawer
+        open
+        galleries={[]}
+        sessionDownloads={[]}
+        danbooruActivities={[{
+          id: "danbooru-6907632",
+          postId: 6_907_632,
+          title: "sample_artist · #6907632",
+          detail: "원본 저장 완료",
+          occurredAt: 3,
+          state: "completed",
+        }]}
+        onClose={vi.fn()}
+        onReview={vi.fn()}
+        onRetry={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    ));
+
+    expect(container.querySelector("#activity-panel")).toHaveAccessibleName("활동 기록");
+    expect(container).toHaveTextContent("sample_artist · #6907632");
+    expect(container).toHaveTextContent("원본 저장 완료");
+    expect(container).toHaveTextContent("Danbooru #6907632");
 
     await act(async () => root.unmount());
     container.remove();

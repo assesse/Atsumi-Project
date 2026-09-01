@@ -294,8 +294,8 @@ export function ViewHeader({
       <button
         type="button"
         className="icon-button activity-button"
-        title="이번 실행 활동"
-        aria-label="활동 알림"
+        title="활동 기록"
+        aria-label="활동 기록"
         aria-controls="activity-panel"
         aria-expanded={activityOpen}
         onClick={onActivity}
@@ -306,8 +306,8 @@ export function ViewHeader({
       <button
         type="button"
         className={`icon-button${privacyMode ? " is-active" : ""}`}
-        title={privacyMode ? "개인정보 보호 모드 끄기" : "개인정보 보호 모드 켜기"}
-        aria-label="개인정보 보호 모드"
+        title={privacyMode ? "미리보기 표시" : "미리보기 가리기"}
+        aria-label="프라이버시 모드"
         aria-pressed={privacyMode}
         aria-busy={privacyModePending || undefined}
         disabled={privacyModePending}

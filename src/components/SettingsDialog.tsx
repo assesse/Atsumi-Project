@@ -31,6 +31,7 @@ import {
 import { parseGlobalSearchTagInput } from "../search/globalSearchRules";
 import type { AppUpdateCheckResult } from "../update/useAppUpdater";
 import { FluentIcon } from "./FluentIcon";
+import { DropdownSelect } from "./DropdownSelect";
 
 type SettingsDialogProps = {
   open: boolean;
@@ -272,8 +273,10 @@ export function SettingsDialog({
       autoFindHistoryMode: "include_all_history",
       downloadOverlapAutoMode: "off",
       explorePageSize: 50,
+      danbooruPageSize: 60,
       maxColumns,
       previewWidth,
+      danbooruPreviewWidth: 190,
       relatedPreviewWidth: 240,
       privacyMode: false,
       concurrentImageRequests: 5,
@@ -365,8 +368,10 @@ export function SettingsDialog({
       autoFindHistoryMode: draft.autoFindHistoryMode,
       downloadOverlapAutoMode: draft.downloadOverlapAutoMode,
       explorePageSize: draft.explorePageSize,
+      danbooruPageSize: draft.danbooruPageSize,
       maxColumns: draft.maxColumns,
       previewWidth: draft.previewWidth,
+      danbooruPreviewWidth: draft.danbooruPreviewWidth,
       relatedPreviewWidth: draft.relatedPreviewWidth,
       privacyMode: draft.privacyMode,
       cacheLimitGb: draft.cacheLimitGb,
@@ -586,15 +591,15 @@ export function SettingsDialog({
                     <FluentIcon glyph="\uE70D" />
                   </div>
                 </div>
-                <div className="setting-row" hidden={activeTab !== "general"}>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div>
-                    <strong>Explore 페이지당 항목 수</strong>
-                    <span>다음 새 탐색부터 불러올 Hitomi 앨범 또는 Danbooru post 수 · Danbooru는 API 안전 상한 100개까지</span>
+                    <strong>Hitomi 페이지당 앨범 수</strong>
+                    <span>현재 열 수에 맞춰 마지막 행이 차도록 요청량을 가까운 열 배수로 자동 조정합니다.</span>
                   </div>
                   <div className="range-wrap">
                     <input
                       id="settings-explore-page-size"
-                      aria-label="Explore 페이지당 항목 수"
+                      aria-label="Hitomi 페이지당 앨범 수"
                       type="range"
                       min="10"
                       max="200"
@@ -609,9 +614,9 @@ export function SettingsDialog({
                   <div><strong>앨범 카드 최대 열 수</strong><span>창이 넓어도 설정한 열 수를 넘지 않습니다</span></div>
                   <div className="range-wrap"><input id="settings-max-columns" aria-label="앨범 카드 최대 열 수" type="range" min="1" max="4" step="1" value={draft.maxColumns} onChange={(event) => { const value = Number(event.target.value); patch("maxColumns", value); previewLayout(value, draft.previewWidth); }} /><output htmlFor="settings-max-columns">{draft.maxColumns}열</output></div>
                 </div>
-                <div className="setting-row" hidden={activeTab !== "general"}>
-                  <div><strong>카드 미리보기 크기</strong><span>Hitomi 앨범과 Danbooru post의 Explore·Downloads에 함께 적용</span></div>
-                  <div className="range-wrap"><input id="settings-preview-width" aria-label="카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(draft.previewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[2]!; patch("previewWidth", preset.width); previewLayout(draft.maxColumns, preset.width); }} /><output htmlFor="settings-preview-width">{draft.previewWidth}px</output></div>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <div><strong>Hitomi 카드 미리보기 크기</strong><span>Hitomi Explore·Auto Find·Downloads 카드에 적용</span></div>
+                  <div className="range-wrap"><input id="settings-preview-width" aria-label="Hitomi 카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(draft.previewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[2]!; patch("previewWidth", preset.width); previewLayout(draft.maxColumns, preset.width); }} /><output htmlFor="settings-preview-width">{draft.previewWidth}px</output></div>
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>Related galleries 미리보기 크기</strong><span>Floating Detail 안의 Related galleries에만 적용</span></div>
@@ -619,14 +624,14 @@ export function SettingsDialog({
                 </div>
                 <div className="setting-row" hidden={activeTab !== "general"}>
                   <div>
-                    <strong>개인정보 보호 모드</strong>
-                    <span>Hitomi 앨범·페이지와 Danbooru 카드·상세 이미지를 화면에서 가립니다. 이미지 요청과 캐시는 계속 사용됩니다.</span>
+                    <strong>프라이버시 모드</strong>
+                    <span>Hitomi와 Danbooru의 미리보기·상세 이미지를 가립니다.</span>
                   </div>
                   <label className="setting-checkbox">
                     <input
                       type="checkbox"
                       role="switch"
-                      aria-label="개인정보 보호 모드"
+                      aria-label="프라이버시 모드"
                       checked={draft.privacyMode}
                       onChange={(event) => patch("privacyMode", event.target.checked)}
                     />
@@ -845,8 +850,14 @@ export function SettingsDialog({
               {activeTab === "danbooru" ? (
                 <DanbooruSettingsPanel
                   filters={danbooruDraft}
+                  settings={draft}
                   onChange={setDanbooruDraft}
-                  onReset={() => setDanbooruDraft(defaultDanbooruSearchFilters())}
+                  onSettingsChange={patch}
+                  onReset={() => {
+                    setDanbooruDraft(defaultDanbooruSearchFilters());
+                    patch("danbooruPageSize", 60);
+                    patch("danbooruPreviewWidth", 190);
+                  }}
                 />
               ) : null}
           </section>
@@ -858,11 +869,15 @@ export function SettingsDialog({
 
 function DanbooruSettingsPanel({
   filters,
+  settings,
   onChange,
+  onSettingsChange,
   onReset,
 }: {
   filters: DanbooruSearchFilters;
+  settings: SettingsSnapshot;
   onChange: (filters: DanbooruSearchFilters) => void;
+  onSettingsChange: <K extends keyof SettingsSnapshot>(key: K, value: SettingsSnapshot[K]) => void;
   onReset: () => void;
 }) {
   const toggleRating = (rating: DanbooruRating, checked: boolean) => onChange({
@@ -884,6 +899,23 @@ function DanbooruSettingsPanel({
         <h3>Danbooru 설정</h3>
         <p>개별 post 검색의 기본 메타 조건입니다. Hitomi 앨범 검색·Auto Find·중복 판정에는 영향을 주지 않습니다.</p>
       </div>
+      <section className="danbooru-settings-section" aria-labelledby="danbooru-layout-title">
+        <header><h3 id="danbooru-layout-title">카드와 페이지</h3><p>Danbooru에만 적용되며 Hitomi 카드 설정과 독립적으로 저장됩니다.</p></header>
+        <div className="setting-row">
+          <div><strong>페이지당 post 수</strong><span>현재 열 수에 맞춰 마지막 행이 차도록 100개 이내의 가까운 열 배수로 조정합니다.</span></div>
+          <div className="range-wrap">
+            <input id="settings-danbooru-page-size" aria-label="Danbooru 페이지당 post 수" type="range" min="10" max="100" step="10" value={settings.danbooruPageSize} onChange={(event) => onSettingsChange("danbooruPageSize", Number(event.target.value))} />
+            <output htmlFor="settings-danbooru-page-size">{settings.danbooruPageSize}개</output>
+          </div>
+        </div>
+        <div className="setting-row">
+          <div><strong>카드 미리보기 크기</strong><span>Danbooru Explore·Downloads 카드에만 적용합니다.</span></div>
+          <div className="range-wrap">
+            <input id="settings-danbooru-preview-width" aria-label="Danbooru 카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(settings.danbooruPreviewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[1]!; onSettingsChange("danbooruPreviewWidth", preset.width); }} />
+            <output htmlFor="settings-danbooru-preview-width">{settings.danbooruPreviewWidth}px</output>
+          </div>
+        </div>
+      </section>
       <section className="danbooru-settings-section" aria-labelledby="danbooru-default-search-title">
         <header><h3 id="danbooru-default-search-title">새 검색 기본값</h3><p>단부루 모드를 새로 열거나 기본 조건을 불러올 때 사용합니다.</p></header>
         <div className="setting-row">
@@ -900,19 +932,20 @@ function DanbooruSettingsPanel({
         </div>
         <div className="setting-row">
           <div><strong>기본 정렬</strong><span>최신순 외 정렬은 무료 검색의 일반 조건 1개를 사용합니다.</span></div>
-          <div className="settings-select-control">
-            <select aria-label="Danbooru 기본 정렬" value={filters.sort} onChange={(event) => onChange({ ...filters, sort: event.target.value as DanbooruSearchFilters["sort"] })}>
-              {DANBOORU_SORTS.map((sort) => <option key={sort.value} value={sort.value}>{sort.label}</option>)}
-            </select>
-            <FluentIcon glyph="\uE70D" />
-          </div>
+          <DropdownSelect
+            ariaLabel="Danbooru 기본 정렬"
+            className="settings-dropdown"
+            value={filters.sort}
+            options={DANBOORU_SORTS}
+            onChange={(sort) => onChange({ ...filters, sort })}
+          />
         </div>
         <div className="setting-row">
-          <div><strong>카드 이미지 품질</strong><span>180px 썸네일 대신 최대 850px large/sample을 지연 로드합니다.</span></div>
+          <div><strong>카드 이미지 품질</strong><span>카드는 최대 850px large/sample poster를 쓰고, MP4·WebM은 상세 화면에서 바로 재생합니다.</span></div>
           <span className="settings-fixed-value">고화질 고정</span>
         </div>
         <div className="setting-row settings-reset-row">
-          <div><strong>Danbooru 기본값 초기화</strong><span>등급·형식·정렬 기본값만 되돌립니다.</span></div>
+          <div><strong>Danbooru 기본값 초기화</strong><span>카드·페이지·검색 기본값을 되돌립니다.</span></div>
           <button type="button" className="text-button" onClick={onReset}>Danbooru 기본값</button>
         </div>
       </section>

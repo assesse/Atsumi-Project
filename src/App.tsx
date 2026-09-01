@@ -38,6 +38,7 @@ import type {
 import {
   ActivityDrawer,
   type AutomaticOverlapActivity,
+  type DanbooruSessionActivity,
   type SessionDownloadActivity,
 } from "./components/ActivityDrawer";
 import { AutoFindPager } from "./components/AutoFindPager";
@@ -67,6 +68,7 @@ import { useSettings } from "./hooks/useSettings";
 import { useProgressiveGalleryWindow } from "./hooks/useProgressiveGalleryWindow";
 import { useWindowPlacement } from "./hooks/useWindowPlacement";
 import { resolveCompactGalleryColumns, resolveGalleryColumns } from "./layout/galleryColumns";
+import { alignPageSizeToColumns } from "./layout/pageSizeAlignment";
 import { buildSearchSuggestionCatalog, catalogSuggestion } from "./search/searchSuggestions";
 import { activeSearchToken, metadataSearchToken, searchTokenKind } from "./search/searchTokens";
 import { applyDownloadChanged } from "./state/downloadProjection";
@@ -293,6 +295,7 @@ export default function App() {
   const [pendingDownloadEntries, setPendingDownloadEntries] = useState<ReadonlySet<string>>(() => new Set());
   const [sessionDownloadActivities, setSessionDownloadActivities] = useState<SessionDownloadActivity[]>([]);
   const [automaticOverlapActivities, setAutomaticOverlapActivities] = useState<AutomaticOverlapActivity[]>([]);
+  const [danbooruSessionActivities, setDanbooruSessionActivities] = useState<DanbooruSessionActivity[]>([]);
   const [unreadActivityCount, setUnreadActivityCount] = useState(0);
   const exitConfirmOpenRef = useRef(false);
   const exitActionPendingRef = useRef(false);
@@ -426,6 +429,7 @@ export default function App() {
   const maximumColumns = settingsPreview?.maxColumns ?? settings.maxColumns;
   const previewWidth = settingsPreview?.previewWidth ?? settings.previewWidth;
   const [galleryColumns, setGalleryColumns] = useState(1);
+  const hitomiPageSize = alignPageSizeToColumns(settings.explorePageSize, galleryColumns, 200);
 
   useWindowPlacement();
 
@@ -467,6 +471,11 @@ export default function App() {
     if (!uiRef.current.overlays.activityOpen) {
       setUnreadActivityCount((current) => current + 1);
     }
+  }, []);
+
+  const recordDanbooruActivity = useCallback((activity: DanbooruSessionActivity) => {
+    setDanbooruSessionActivities((current) => [activity, ...current].slice(0, 200));
+    if (!uiRef.current.overlays.activityOpen) setUnreadActivityCount((current) => current + 1);
   }, []);
 
   const replaceExploreContextIds = useCallback((ids: string[]) => {
@@ -2055,7 +2064,7 @@ export default function App() {
         excludeTags: [],
         languages: ui.search.explore.languages,
         sort: ui.exploreSort,
-        pageSize: settings.explorePageSize,
+        pageSize: hitomiPageSize,
       }
       : {
         text: target.displayToken,
@@ -2063,7 +2072,7 @@ export default function App() {
         excludeTags: [],
         languages: ui.search.explore.languages,
         sort: ui.exploreSort,
-        pageSize: settings.explorePageSize,
+        pageSize: hitomiPageSize,
       };
     if (!kind && !target.displayToken) return;
 
@@ -2136,7 +2145,7 @@ export default function App() {
     replaceExploreContextIds,
     snapshotActiveExploreContext,
     startExploreSearch,
-    settings.explorePageSize,
+    hitomiPageSize,
     ui.exploreSort,
     ui.search.explore.languages,
   ]);
@@ -2587,7 +2596,7 @@ export default function App() {
     const result = await saveSettings({ privacyMode: !settings.privacyMode });
     setPrivacyModePending(false);
     if (result.ok) {
-      showToast(result.data.privacyMode ? "프라이버시 모드를 켰습니다." : "프라이버시 모드를 껐습니다.");
+      showToast(result.data.privacyMode ? "프라이버시 모드 켬" : "프라이버시 모드 끔");
     } else {
       showToast(result.error.message);
     }
@@ -2622,10 +2631,10 @@ export default function App() {
     ui.search["auto-find"].committed.trim(),
     [...ui.search["auto-find"].languages].sort().join(","),
     ui.grouping["auto-find"],
-    settings.explorePageSize,
+    hitomiPageSize,
   ].join("\u001f"), [
     autoFindSnapshot.run?.runId,
-    settings.explorePageSize,
+    hitomiPageSize,
     ui.grouping,
     ui.search,
   ]);
@@ -2644,8 +2653,8 @@ export default function App() {
       : autoFindFullGroups.flatMap((group) => group.items);
   }, [autoFindFullGroups, ui.grouping, ui.view, visible]);
   const autoFindPagination = useMemo(
-    () => paginateAutoFindItems(autoFindPaginationSource, autoFindPage, settings.explorePageSize),
-    [autoFindPage, autoFindPaginationSource, settings.explorePageSize],
+    () => paginateAutoFindItems(autoFindPaginationSource, autoFindPage, hitomiPageSize),
+    [autoFindPage, autoFindPaginationSource, hitomiPageSize],
   );
   const renderedVisible = ui.view === "auto-find" ? autoFindPagination.items : visible;
   const renderedActionableIds = useMemo(() => {
@@ -2975,10 +2984,19 @@ export default function App() {
         <DanbooruWorkspace
           backend={backend}
           railCollapsed={ui.railCollapsed}
-          pageSize={settings.explorePageSize}
-          previewWidth={settings.previewWidth}
+          pageSize={settings.danbooruPageSize}
+          previewWidth={settings.danbooruPreviewWidth}
+          favoriteMetadata={favoriteMetadataForDisplay}
+          activityCount={unreadActivityCount}
+          activityOpen={ui.overlays.activityOpen}
+          privacyMode={settings.privacyMode}
+          privacyModePending={privacyModePending || settingsLoading}
           onToggleRail={() => dispatch({ type: "rail.toggle" })}
           onSourceChange={switchContentSource}
+          onActivity={() => ui.overlays.activityOpen ? closeActivity() : openActivity()}
+          onPrivacyModeToggle={() => void togglePrivacyMode()}
+          onActivityRecord={recordDanbooruActivity}
+          onMetadataFavorite={toggleMetadataFavorite}
           onOpenSettings={() => dispatch({ type: "overlay.settings", open: true })}
         />
       ) : (
@@ -3014,7 +3032,7 @@ export default function App() {
                   excludeTags: [],
                   languages: [...ui.search.explore.languages],
                   sort: ui.exploreSort,
-                  pageSize: settings.explorePageSize,
+                  pageSize: hitomiPageSize,
                 }, { displayValue, label: displayValue || "새 탐색" });
               }
               dispatch({ type: "search.commit", view: ui.view, value });
@@ -3026,7 +3044,7 @@ export default function App() {
                 dispatch({ type: "sort.set", sort: suggestion.request.sort });
                 startExploreSearch({
                   ...suggestion.request,
-                  pageSize: settings.explorePageSize,
+                  pageSize: hitomiPageSize,
                 }, { displayValue: value, label: value || "새 탐색" });
               } else if (ui.view === "explore") {
                 startExploreSearch({
@@ -3035,7 +3053,7 @@ export default function App() {
                   excludeTags: [],
                   languages: [...ui.search.explore.languages],
                   sort: ui.exploreSort,
-                  pageSize: settings.explorePageSize,
+                  pageSize: hitomiPageSize,
                 }, { displayValue: value, label: value || "새 탐색" });
               }
               dispatch({ type: "search.commit", view: ui.view, value });
@@ -3262,19 +3280,6 @@ export default function App() {
             />
           ) : null}
         </main>
-        <ActivityDrawer
-          open={ui.overlays.activityOpen}
-          galleries={allGalleries}
-          sessionDownloads={sessionDownloadActivities}
-          automaticOverlapActivities={automaticOverlapActivities}
-          duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
-          onClose={closeActivity}
-          onReview={openReview}
-          onReviewOverlap={openAutomaticOverlapReview}
-          onRetry={(id) => void retryGallery(id)}
-          onCancel={(id) => void cancelGallery(id)}
-          pendingEntryIds={pendingDownloadEntries}
-        />
       </div>
 
       <DetailWorkspace
@@ -3299,6 +3304,21 @@ export default function App() {
       />
         </>
       )}
+
+      <ActivityDrawer
+        open={ui.overlays.activityOpen}
+        galleries={allGalleries}
+        sessionDownloads={sessionDownloadActivities}
+        automaticOverlapActivities={automaticOverlapActivities}
+        danbooruActivities={danbooruSessionActivities}
+        duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
+        onClose={closeActivity}
+        onReview={openReview}
+        onReviewOverlap={openAutomaticOverlapReview}
+        onRetry={(id) => void retryGallery(id)}
+        onCancel={(id) => void cancelGallery(id)}
+        pendingEntryIds={pendingDownloadEntries}
+      />
 
       <SettingsDialog
         open={ui.overlays.settingsOpen}

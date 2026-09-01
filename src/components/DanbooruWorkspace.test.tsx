@@ -38,10 +38,23 @@ const nextPost: DanbooruPost = {
   artists: ["next_artist"],
 };
 
+const videoPost: DanbooruPost = {
+  ...post,
+  id: 12_345_680,
+  fileExt: "mp4",
+  fileUrl: "https://cdn.donmai.us/original/fixture-video.mp4",
+  previewUrl: "data:image/svg+xml,%3Csvg data-size='video-preview'/%3E",
+  largeUrl: "data:image/svg+xml,%3Csvg data-size='video-poster'/%3E",
+};
+
 const backend = {
   runtime: "browser-mock",
   danbooruSearch: vi.fn(async () => ({ ok: true as const, data: { items: [post], page: 1, hasMore: false } })),
   danbooruRandom: vi.fn(async () => ({ ok: true as const, data: post })),
+  danbooruRelated: vi.fn(async () => ({
+    ok: true as const,
+    data: { parent: nextPost, siblings: [], children: [], pools: [] },
+  })),
   danbooruAutocomplete: vi.fn(async () => ({ ok: true as const, data: [] })),
   danbooruDownload: vi.fn(async () => ({
     ok: true as const,
@@ -98,6 +111,41 @@ describe("DanbooruWorkspace", () => {
     }
   });
 
+  it("measures the post grid before requesting a complete final row", async () => {
+    const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this instanceof HTMLElement && this.classList.contains("danbooru-content") ? 620 : 0;
+      },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(
+          <DanbooruWorkspace
+            backend={backend}
+            railCollapsed={false}
+            pageSize={50}
+            previewWidth={190}
+            onToggleRail={vi.fn()}
+            onSourceChange={vi.fn()}
+            onOpenSettings={vi.fn()}
+          />,
+        );
+        await settle();
+      });
+      expect(backend.danbooruSearch).toHaveBeenCalledWith({ tags: "", page: 1, pageSize: 51 });
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      else delete (HTMLElement.prototype as unknown as { clientWidth?: number }).clientWidth;
+    }
+  });
+
   it("composes metadata filters and sorting separately from regular tags", async () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -139,10 +187,13 @@ describe("DanbooruWorkspace", () => {
       expect(backend.danbooruSearch).toHaveBeenLastCalledWith(expect.objectContaining({
         tags: expect.stringContaining("sample_artist rating:s,q,e"),
       }));
-      const sort = container.querySelector<HTMLSelectElement>('[aria-label="Danbooru 정렬 기준"]')!;
+      const sort = container.querySelector<HTMLButtonElement>('[aria-label="Danbooru 정렬 기준"]')!;
       await act(async () => {
-        sort.value = "score";
-        sort.dispatchEvent(new Event("change", { bubbles: true }));
+        sort.click();
+        await Promise.resolve();
+        [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+          .find((option) => option.textContent?.includes("점수 높은순"))
+          ?.click();
         await settle();
       });
       expect(backend.danbooruSearch).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -242,6 +293,139 @@ describe("DanbooruWorkspace", () => {
       const detailDialog = container.querySelector('[role="dialog"]');
       expect(detailDialog).toHaveTextContent("FLOATING DETAIL");
       expect(detailDialog).toHaveTextContent("DANBOORU POST #12345678");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("plays MP4 posts only in Floating Detail and exposes global header controls", async () => {
+    vi.mocked(backend.danbooruSearch).mockResolvedValueOnce({
+      ok: true,
+      data: { items: [videoPost], page: 1, hasMore: false },
+    });
+    const onActivity = vi.fn();
+    const onPrivacyModeToggle = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(
+          <DanbooruWorkspace
+            backend={backend}
+            railCollapsed={false}
+            pageSize={60}
+            previewWidth={190}
+            activityCount={2}
+            activityOpen={false}
+            privacyMode
+            privacyModePending={false}
+            onActivity={onActivity}
+            onPrivacyModeToggle={onPrivacyModeToggle}
+            onToggleRail={vi.fn()}
+            onSourceChange={vi.fn()}
+            onOpenSettings={vi.fn()}
+          />,
+        );
+        await settle();
+      });
+      expect(container.querySelector(".danbooru-card video")).toBeNull();
+      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toHaveTextContent("2");
+      expect(container.querySelector('[aria-label="프라이버시 모드"]')).toHaveAttribute("aria-pressed", "true");
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="활동 기록"]')?.click();
+        container.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]')?.click();
+        container.querySelector<HTMLButtonElement>('[data-post-id="12345680"] .danbooru-card-preview')?.click();
+        await settle();
+      });
+      expect(onActivity).toHaveBeenCalledOnce();
+      expect(onPrivacyModeToggle).toHaveBeenCalledOnce();
+      expect(container.querySelector<HTMLVideoElement>(".danbooru-detail-media video")).toHaveAttribute("src", videoPost.fileUrl);
+      expect(container.querySelector<HTMLVideoElement>(".danbooru-detail-media video")).toHaveAttribute("poster", videoPost.largeUrl);
+      expect(container.querySelector<HTMLVideoElement>(".danbooru-detail-media video")).toHaveAttribute("controls");
+      expect(container.querySelector<HTMLVideoElement>(".danbooru-detail-media video")).toHaveAttribute("autoplay");
+      expect(container.querySelector<HTMLVideoElement>(".danbooru-detail-media video")).toHaveProperty("muted", true);
+      expect(container.querySelector<HTMLVideoElement>(".danbooru-detail-media video")).toHaveAttribute("preload", "auto");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("toggles shared favorites from detail tags with the context menu", async () => {
+    const onMetadataFavorite = vi.fn();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(
+          <DanbooruWorkspace
+            backend={backend}
+            railCollapsed={false}
+            pageSize={50}
+            previewWidth={220}
+            favoriteMetadata={new Set(["artist:sample_artist"])}
+            onMetadataFavorite={onMetadataFavorite}
+            onToggleRail={vi.fn()}
+            onSourceChange={vi.fn()}
+            onOpenSettings={vi.fn()}
+          />,
+        );
+        await settle();
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-post-id="12345678"] .danbooru-card-preview')?.click();
+        await settle();
+      });
+      const artist = container.querySelector<HTMLButtonElement>('[data-favorite-token="artist:sample_artist"]');
+      const tag = container.querySelector<HTMLButtonElement>('[data-favorite-token="blue_sky"]');
+      expect(artist).toHaveClass("is-favorite");
+      expect(artist).toHaveTextContent("★");
+      const contextMenu = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+      await act(async () => tag?.dispatchEvent(contextMenu));
+      expect(contextMenu.defaultPrevented).toBe(true);
+      expect(onMetadataFavorite).toHaveBeenCalledWith("blue_sky");
+
+      await act(async () => artist?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+      expect(onMetadataFavorite).toHaveBeenCalledWith("artist:sample_artist");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("shows related posts below tags and keeps navigation inside Floating Detail", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(
+          <DanbooruWorkspace
+            backend={backend}
+            railCollapsed={false}
+            pageSize={50}
+            previewWidth={220}
+            onToggleRail={vi.fn()}
+            onSourceChange={vi.fn()}
+            onOpenSettings={vi.fn()}
+          />,
+        );
+        await settle();
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-post-id="12345678"] .danbooru-card-preview')?.click();
+        await settle();
+      });
+      expect(backend.danbooruRelated).toHaveBeenCalledWith({ postId: post.id, hasChildren: false });
+      expect(container.querySelector(".danbooru-relations")).toHaveTextContent("부모");
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('.danbooru-related-card[aria-label*="12345679"]')?.click();
+        await settle();
+      });
+      expect(container.querySelector('[role="dialog"]')).toHaveTextContent("DANBOORU POST #12345679");
     } finally {
       await act(async () => root.unmount());
       container.remove();
