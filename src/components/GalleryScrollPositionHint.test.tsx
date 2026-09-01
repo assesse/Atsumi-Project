@@ -106,10 +106,9 @@ describe("GalleryScrollPositionHint", () => {
     expect(hint).toHaveAttribute("role", "status");
     expect(hint).toHaveAttribute("aria-live", "polite");
     expect(hint).toHaveAttribute("data-view", "downloads");
-    expect(hint).toHaveTextContent("전체 · 나미");
-    expect(hint).toHaveTextContent("가운데 앨범");
-    expect(hint).toHaveTextContent("2 / 3");
-    expect(hint).toHaveTextContent("50%");
+    expect(hint).toHaveTextContent("전체 2/3");
+    expect(hint).not.toHaveTextContent("가운데 앨범");
+    expect(hint).not.toHaveTextContent("50%");
     expect(Number.parseFloat(hint?.style.top ?? "0")).toBeGreaterThanOrEqual(42);
     expect(Number.parseFloat(hint?.style.right ?? "0")).toBeGreaterThanOrEqual(8);
   });
@@ -139,22 +138,20 @@ describe("GalleryScrollPositionHint", () => {
     expect(document.querySelector(".gallery-scroll-position-hint")).toBeNull();
   });
 
-  it("describes the active artist or period group as well as the overall position", () => {
+  it("reduces artist and date groups to the key value and local position", () => {
     const artistGroups: GalleryGroup[] = [
       { key: "artist\u001f하루", label: "하루", items: [first] },
       { key: "artist\u001f나미", label: "나미", items: [second, third] },
     ];
     expect(galleryScrollHintCopy("auto-find", "artist", [first, second, third], artistGroups, 2)).toEqual({
-      label: "즐겨찾기 작가 · 나미",
-      title: "마지막 앨범",
-      position: "2 / 2 · 전체 3 / 3",
+      label: "나미",
+      position: "2/2",
     });
     expect(galleryScrollHintCopy("downloads", "day", [first, second], [
       { key: "day\u001f2026-08-31", label: "2026년 8월 31일", items: [first, second] },
     ], 0)).toEqual({
-      label: "기간 · 2026년 8월 31일",
-      title: "첫 앨범",
-      position: "1 / 2 · 전체 1 / 2",
+      label: "26.08.31",
+      position: "1/2",
     });
   });
 });

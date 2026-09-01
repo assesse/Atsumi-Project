@@ -1,16 +1,35 @@
 import { useEffect, useRef } from "react";
-import type { Gallery, GalleryId } from "../core/types";
+import type { DownloadState, Gallery, GalleryId } from "../core/types";
 import { FluentIcon } from "./FluentIcon";
 
 type ActivityDrawerProps = {
   open: boolean;
   galleries: Gallery[];
+  sessionDownloads: SessionDownloadActivity[];
+  automaticOverlapActivities?: AutomaticOverlapActivity[];
   duplicateExcludedGalleryIds?: ReadonlySet<GalleryId>;
   onClose: () => void;
   onReview: (id: GalleryId) => void;
+  onReviewOverlap?: (reviewId: string, galleryId: GalleryId) => void;
   onRetry: (id: GalleryId) => void;
   onCancel: (id: GalleryId) => void;
   pendingEntryIds?: ReadonlySet<string>;
+};
+
+export type SessionDownloadActivity = {
+  galleryId: GalleryId;
+  occurredAt: number;
+  state?: DownloadState;
+};
+
+export type AutomaticOverlapActivity = {
+  id: string;
+  reviewId: string;
+  galleryId: GalleryId;
+  title: string;
+  detail: string;
+  occurredAt: number;
+  state: "completed" | "failed";
 };
 
 const runningDownloadStates = new Set([
@@ -54,9 +73,12 @@ const displayedProgress = (download: NonNullable<Gallery["download"]>): number =
 export function ActivityDrawer({
   open,
   galleries,
+  sessionDownloads,
+  automaticOverlapActivities = [],
   duplicateExcludedGalleryIds = new Set(),
   onClose,
   onReview,
+  onReviewOverlap,
   onRetry,
   onCancel,
   pendingEntryIds = new Set(),
@@ -68,23 +90,26 @@ export function ActivityDrawer({
   }, [open]);
 
   if (!open) return null;
-  const activities = galleries
-    .filter((gallery) => gallery.download)
-    .sort((left, right) => {
-      const order = { failed: 0, review_required: 1, downloading: 2, queued: 3, completed: 4 } as const;
-      const leftProcessed = duplicateExcludedGalleryIds.has(left.id)
-        && !runningDownloadStates.has(left.download!.state);
-      const rightProcessed = duplicateExcludedGalleryIds.has(right.id)
-        && !runningDownloadStates.has(right.download!.state);
-      return (leftProcessed ? 5 : order[left.download?.state as keyof typeof order] ?? 3)
-        - (rightProcessed ? 5 : order[right.download?.state as keyof typeof order] ?? 3);
-    });
+  const galleryById = new Map(galleries.map((gallery) => [gallery.id, gallery]));
+  const downloadActivities = sessionDownloads.flatMap(({ galleryId, occurredAt }) => {
+    const gallery = galleryById.get(galleryId);
+    return gallery?.download ? [{ kind: "download" as const, gallery, occurredAt }] : [];
+  });
+  const feed = [
+    ...downloadActivities,
+    ...automaticOverlapActivities.map((activity) => ({
+      kind: "automatic-overlap" as const,
+      activity,
+      occurredAt: activity.occurredAt,
+    })),
+  ]
+    .sort((left, right) => right.occurredAt - left.occurredAt);
 
   return (
     <aside
       id="activity-panel"
       className="activity-panel"
-      aria-label="작업 상태"
+      aria-label="이번 실행 활동"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -93,7 +118,11 @@ export function ActivityDrawer({
       }}
     >
       <div className="sr-only" role="status" aria-live="polite">
-        {activities.map((gallery) => {
+        {feed.map((item) => {
+          if (item.kind === "automatic-overlap") {
+            return `${item.activity.title}: ${item.activity.detail}`;
+          }
+          const gallery = item.gallery;
           const processed = duplicateExcludedGalleryIds.has(gallery.id)
             && !runningDownloadStates.has(gallery.download!.state);
           return `${gallery.title}: ${processed ? duplicateProcessedDetail : downloadDetail(gallery.download!)}`;
@@ -102,14 +131,40 @@ export function ActivityDrawer({
       <header>
         <div>
           <span className="eyebrow">ACTIVITY</span>
-          <h2>작업 상태</h2>
+          <h2>이번 실행 활동</h2>
         </div>
-        <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="작업 상태 닫기" onClick={onClose}>
+        <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="활동 알림 닫기" onClick={onClose}>
           <FluentIcon glyph="\uE711" />
         </button>
       </header>
       <div className="activity-list">
-        {activities.map((gallery) => {
+        {feed.map((item) => {
+          if (item.kind === "automatic-overlap") {
+            const { activity } = item;
+            return (
+              <article
+                key={activity.id}
+                className={`activity-item automatic-overlap${activity.state === "completed" ? " complete" : " warning"}`}
+              >
+                <span className="activity-icon">
+                  <FluentIcon glyph={activity.state === "completed" ? "\uE73E" : "\uE7BA"} />
+                </span>
+                <div>
+                  <strong>{activity.title}</strong>
+                  <span>{activity.detail}</span>
+                  <small>자동 판본 분류 · 이번 실행</small>
+                </div>
+                <div className="activity-actions">
+                  <button
+                    type="button"
+                    className="mini-command"
+                    onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}
+                  >근거 보기</button>
+                </div>
+              </article>
+            );
+          }
+          const gallery = item.gallery;
           const download = gallery.download!;
           const running = runningDownloadStates.has(download.state);
           const duplicateProcessed = duplicateExcludedGalleryIds.has(gallery.id) && !running;
@@ -164,6 +219,13 @@ export function ActivityDrawer({
             </article>
           );
         })}
+        {feed.length === 0 ? (
+          <div className="activity-empty">
+            <FluentIcon glyph="\uE823" />
+            <strong>이번 실행의 활동이 없습니다.</strong>
+            <span>새 다운로드와 자동 판본 분류가 여기에 쌓입니다.</span>
+          </div>
+        ) : null}
       </div>
     </aside>
   );

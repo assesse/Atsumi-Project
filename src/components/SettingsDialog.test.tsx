@@ -131,7 +131,7 @@ describe("SettingsDialog operational boundaries", () => {
       });
 
       expect(container.querySelector(".settings-nav")).not.toBeNull();
-      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "검색 관리"]);
+      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru"]);
       expect(container.textContent).not.toContain("다음 단계");
       expect(container.querySelectorAll('[data-settings-scroll-root="true"]')).toHaveLength(1);
       expect(container.querySelector(".settings-dialog > .settings-form")).not.toBeNull();
@@ -202,7 +202,7 @@ describe("SettingsDialog operational boundaries", () => {
       const historyMode = container.querySelector<HTMLSelectElement>('[aria-label="Auto Find 기록 기준"]');
       expect(historyMode?.value).toBe("include_all_history");
       expect(historyMode?.closest(".settings-select-control")?.querySelector(".fluent")).not.toBeNull();
-      const explorePageSize = container.querySelector<HTMLInputElement>('[aria-label="Explore 페이지당 앨범 수"]');
+      const explorePageSize = container.querySelector<HTMLInputElement>('[aria-label="Explore 페이지당 항목 수"]');
       expect(explorePageSize?.min).toBe("10");
       expect(explorePageSize?.max).toBe("200");
       expect(explorePageSize?.step).toBe("10");
@@ -214,7 +214,7 @@ describe("SettingsDialog operational boundaries", () => {
         explorePageSize.dispatchEvent(new Event("input", { bubbles: true }));
         explorePageSize.dispatchEvent(new Event("change", { bubbles: true }));
       });
-      const previewRange = container.querySelector<HTMLInputElement>('[aria-label="앨범 미리보기 크기"]');
+      const previewRange = container.querySelector<HTMLInputElement>('[aria-label="카드 미리보기 크기"]');
       expect(previewRange?.min).toBe("0");
       expect(previewRange?.max).toBe("6");
       expect(previewRange?.value).toBe("2");
@@ -252,13 +252,16 @@ describe("SettingsDialog operational boundaries", () => {
       });
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-          .find((button) => button.textContent === "검색 관리")
+          .find((button) => button.textContent === "Hitomi")
           ?.click();
       });
       await act(async () => {
         await Promise.resolve();
       });
       expect(onLoadExplorationExclusions).toHaveBeenCalledTimes(1);
+      expect(container.textContent).toContain("무검열 표식이 확인되면 그 판본을 우선");
+      expect(container.textContent).toContain("더 큰 판본이 검열판이고 작은 판본이 무검열판인 충돌");
+      expect(container.textContent).not.toContain("무검열 표식을 우선하며, 표식이 충돌");
       const searchCatalog = container.querySelector<HTMLElement>(".search-catalog-panel");
       expect(searchCatalog).toHaveTextContent("검색어 자동완성 데이터");
       expect(searchCatalog).toHaveTextContent("10,000개 항목 저장됨");
@@ -290,6 +293,17 @@ describe("SettingsDialog operational boundaries", () => {
       });
       expect(onRestoreExplorationExclusions).toHaveBeenCalledWith([excludedGalleryId]);
       expect(container.textContent).not.toContain("제외된 작품");
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+          .find((button) => button.textContent === "Danbooru")
+          ?.click();
+      });
+      const danbooruSettings = container.querySelector<HTMLElement>(".danbooru-settings-panel");
+      expect(danbooruSettings).toBeVisible();
+      expect(danbooruSettings).toHaveTextContent("4종: General(g), Sensitive(s), Questionable(q), Explicit(e)");
+      expect(danbooruSettings).toHaveTextContent("status rating limit is id date age filesize filetype");
+      expect(danbooruSettings?.querySelectorAll('.danbooru-settings-checks:not(.is-files) input[type="checkbox"]')).toHaveLength(4);
+      expect(danbooruSettings?.querySelector('[aria-label="Danbooru 기본 정렬"]')).toHaveValue("newest");
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>("button")]
           .find((button) => button.textContent === "저장")
@@ -363,7 +377,7 @@ describe("SettingsDialog operational boundaries", () => {
       ));
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-          .find((button) => button.textContent === "검색 관리")
+          .find((button) => button.textContent === "Hitomi")
           ?.click();
         await Promise.resolve();
       });

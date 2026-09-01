@@ -13,12 +13,10 @@ type GalleryScrollPositionHintProps = {
 
 type HintCopy = {
   label: string;
-  title: string;
   position: string;
 };
 
 type HintSnapshot = HintCopy & {
-  percent: number;
   right: number;
   top: number;
 };
@@ -33,9 +31,17 @@ const HIDE_AFTER_SCROLL_MS = 1_200;
 const HIDE_AFTER_GUTTER_LEAVE_MS = 240;
 
 const normalizedArtist = (gallery: Gallery): string => gallery.artist.trim() || "작가 정보 없음";
+const compactPosition = (index: number, length: number): string =>
+  `${numberFormatter.format(index + 1)}/${numberFormatter.format(length)}`;
+const compactDayLabel = (group: GalleryGroup): string => {
+  const identity = group.key.split("\u001f")[1] ?? "";
+  const match = identity.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return identity === "unknown" ? "날짜 없음" : group.label;
+  return `${match[1]!.slice(-2)}.${match[2]!}.${match[3]!}`;
+};
 
 export function galleryScrollHintCopy(
-  view: "auto-find" | "downloads",
+  _view: "auto-find" | "downloads",
   grouping: GalleryGrouping,
   orderedItems: readonly Gallery[],
   groups: readonly GalleryGroup[],
@@ -44,12 +50,11 @@ export function galleryScrollHintCopy(
 ): HintCopy | null {
   const gallery = orderedItems[index];
   if (!gallery) return null;
-  const overall = `${numberFormatter.format(index + 1)} / ${numberFormatter.format(orderedItems.length)}`;
+  const overall = compactPosition(index, orderedItems.length);
 
   if (grouping === "all") {
     return {
-      label: `전체 · ${normalizedArtist(gallery)}`,
-      title: gallery.title,
+      label: "전체",
       position: overall,
     };
   }
@@ -59,20 +64,16 @@ export function galleryScrollHintCopy(
     ?? groups.find((candidate) => candidate.items.some((item) => item.id === gallery.id));
   if (!group) {
     return {
-      label: grouping === "artist" ? normalizedArtist(gallery) : "기간 정보 없음",
-      title: gallery.title,
+      label: grouping === "artist" ? normalizedArtist(gallery) : "날짜 없음",
       position: overall,
     };
   }
   const groupIndex = knownLocation?.index ?? group.items.findIndex((item) => item.id === gallery.id);
-  const groupPosition = `${numberFormatter.format(groupIndex + 1)} / ${numberFormatter.format(group.items.length)}`;
-  const label = grouping === "artist"
-    ? view === "auto-find" ? `즐겨찾기 작가 · ${group.label}` : `작가 · ${group.label}`
-    : `기간 · ${group.label}`;
+  const groupPosition = compactPosition(groupIndex, group.items.length);
+  const label = grouping === "artist" ? group.label : compactDayLabel(group);
   return {
     label,
-    title: gallery.title,
-    position: `${groupPosition} · 전체 ${overall}`,
+    position: groupPosition,
   };
 }
 
@@ -233,7 +234,7 @@ export function GalleryScrollPositionHint({
         8,
         Math.max(8, window.innerWidth - 24),
       );
-      setSnapshot({ ...copy, percent: Math.round(ratio * 100), right, top });
+      setSnapshot({ ...copy, right, top });
     };
     const requestUpdate = () => {
       if (updateFrame.current === null) updateFrame.current = window.requestAnimationFrame(update);
@@ -310,11 +311,8 @@ export function GalleryScrollPositionHint({
       data-view={view}
     >
       <strong>{snapshot.label}</strong>
-      <span className="gallery-scroll-position-title">{snapshot.title}</span>
-      <span className="gallery-scroll-position-meta">
-        <span>{snapshot.position}</span>
-        <b>{snapshot.percent}%</b>
-      </span>
+      {" "}
+      <span className="gallery-scroll-position-value">{snapshot.position}</span>
     </aside>,
     document.body,
   );

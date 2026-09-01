@@ -734,6 +734,88 @@ const browserDanbooruPosts: DanbooruPost[] = Array.from({ length: 18 }, (_, inde
   };
 });
 
+const danbooruUnlimitedMetatags = new Set([
+  "status", "rating", "limit", "is", "id", "date", "age", "filesize", "filetype",
+  "parent", "child", "md5", "width", "height", "duration", "mpixels", "ratio", "score",
+  "upvote", "downvotes", "favcount", "embedded", "tagcount", "pixiv_id", "pixiv",
+]);
+
+const danbooruMetatagName = (term: string): string | null => {
+  const normalized = term.replace(/^-/, "");
+  const separator = normalized.indexOf(":");
+  return separator > 0 ? normalized.slice(0, separator) : null;
+};
+
+const browserDanbooruLimitedTermCount = (terms: string[]): number => terms.filter((term) => {
+  const name = danbooruMetatagName(term);
+  return !name || !danbooruUnlimitedMetatags.has(name);
+}).length;
+
+const browserDanbooruMatchesNumeric = (actual: number, expression: string): boolean => {
+  const match = /^(>=|<=|>|<)?(-?\d+(?:\.\d+)?)$/.exec(expression);
+  if (!match) return true;
+  const expected = Number(match[2]);
+  if (match[1] === ">=") return actual >= expected;
+  if (match[1] === "<=") return actual <= expected;
+  if (match[1] === ">") return actual > expected;
+  if (match[1] === "<") return actual < expected;
+  return actual === expected;
+};
+
+const browserDanbooruMatchesDate = (createdAt: string, expression: string): boolean => {
+  const date = createdAt.slice(0, 10);
+  const range = /^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/.exec(expression);
+  if (range) return date >= range[1]! && date <= range[2]!;
+  if (expression.startsWith(">=")) return date >= expression.slice(2);
+  if (expression.startsWith("<=")) return date <= expression.slice(2);
+  return date === expression;
+};
+
+const filterAndSortBrowserDanbooruPosts = (terms: string[]): DanbooruPost[] => {
+  const order = terms.find((term) => term.startsWith("order:"))?.slice(6) ?? "id";
+  const filtered = browserDanbooruPosts.filter((post) => terms.every((term) => {
+    const negative = term.startsWith("-");
+    const normalized = term.replace(/^-/, "");
+    const separator = normalized.indexOf(":");
+    const name = separator > 0 ? normalized.slice(0, separator) : null;
+    const value = separator > 0 ? normalized.slice(separator + 1) : normalized;
+    let matches: boolean;
+    if (name === "rating") matches = value.split(",").includes(post.rating);
+    else if (name === "filetype") matches = value.split(",").includes(post.fileExt.toLowerCase());
+    else if (name === "date") matches = browserDanbooruMatchesDate(post.createdAt, value);
+    else if (name === "score") matches = browserDanbooruMatchesNumeric(post.score, value);
+    else if (name === "favcount") matches = browserDanbooruMatchesNumeric(post.favoriteCount, value);
+    else if (name === "width") matches = browserDanbooruMatchesNumeric(post.imageWidth, value);
+    else if (name === "height") matches = browserDanbooruMatchesNumeric(post.imageHeight, value);
+    else if (name === "mpixels") matches = browserDanbooruMatchesNumeric((post.imageWidth * post.imageHeight) / 1_000_000, value);
+    else if (name === "parent") matches = value === "any" ? Boolean(post.parentId) : value === "none" ? !post.parentId : String(post.parentId) === value;
+    else if (name === "child") matches = value === "any" ? post.hasChildren : value === "none" ? !post.hasChildren : true;
+    else if (name && danbooruUnlimitedMetatags.has(name)) matches = true;
+    else if (name === "order") matches = true;
+    else {
+      const tagValue = value.toLowerCase();
+      matches = [
+        ...post.artists,
+        ...post.copyrights,
+        ...post.characters,
+        ...post.tags,
+      ].some((candidate) => candidate.toLowerCase().includes(tagValue));
+    }
+    return negative ? !matches : matches;
+  }));
+  return [...filtered].sort((left, right) => {
+    if (order === "id_asc") return left.id - right.id;
+    if (order === "score") return right.score - left.score || right.id - left.id;
+    if (order === "favcount") return right.favoriteCount - left.favoriteCount || right.id - left.id;
+    if (order === "mpixels") return (right.imageWidth * right.imageHeight) - (left.imageWidth * left.imageHeight) || right.id - left.id;
+    if (order === "filesize") return right.fileSize - left.fileSize || right.id - left.id;
+    if (order === "tagcount") return right.tags.length - left.tags.length || right.id - left.id;
+    if (order === "portrait") return (right.imageHeight / right.imageWidth) - (left.imageHeight / left.imageWidth) || right.id - left.id;
+    if (order === "landscape") return (right.imageWidth / right.imageHeight) - (left.imageWidth / left.imageHeight) || right.id - left.id;
+    return right.id - left.id;
+  });
+};
+
 class BrowserMockBackend implements BackendClient {
   readonly runtime = "browser-mock" as const;
   private settings = readPersistedBrowserSettings();
@@ -929,12 +1011,12 @@ class BrowserMockBackend implements BackendClient {
       return validationError("pageSize", "must be between 1 and 100");
     }
     const tags = request.tags.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    if (tags.length > 2) {
+    if (browserDanbooruLimitedTermCount(tags) > 2) {
       return {
         ok: false,
         error: {
           code: "DANBOORU_TAG_LIMIT",
-          message: "Danbooru 비로그인 검색은 태그를 최대 2개까지 사용할 수 있습니다.",
+          message: "Danbooru 비로그인 검색은 제한 대상 조건을 최대 2개까지 사용할 수 있습니다.",
           retryable: false,
           action: "none",
         },
@@ -942,12 +1024,7 @@ class BrowserMockBackend implements BackendClient {
     }
     const numeric = /^\d+$/.test(request.tags.trim()) ? Number(request.tags.trim()) : null;
     const filtered = numeric === null
-      ? browserDanbooruPosts.filter((post) => tags.every((tag) => [
-          ...post.artists,
-          ...post.copyrights,
-          ...post.characters,
-          ...post.tags,
-        ].some((value) => value.includes(tag.replace(/^-/, "")))))
+      ? filterAndSortBrowserDanbooruPosts(tags)
       : browserDanbooruPosts.filter((post) => post.id === numeric);
     const offset = (request.page - 1) * request.pageSize;
     return ok({
@@ -1590,8 +1667,8 @@ class BrowserMockBackend implements BackendClient {
     if (request.actor === "automation") {
       if (!request.candidateId
         || (request.action !== "remove_existing_continue" && request.action !== "remove_incoming")
-        || request.reasonCode !== "strict_extra_pages_v1"
-        || request.ruleVersion !== 1
+        || request.reasonCode !== "balanced_overlap_v2"
+        || request.ruleVersion !== 2
         || !request.featureSnapshotJson) {
         return validationError("request", "자동 중복 판정 감사 정보가 올바르지 않습니다");
       }

@@ -45,6 +45,7 @@ describe("ActivityDrawer download controls", () => {
       <ActivityDrawer
         open
         galleries={[gallery]}
+        sessionDownloads={[{ galleryId: gallery.id, occurredAt: 1 }]}
         onClose={vi.fn()}
         onReview={vi.fn()}
         onRetry={vi.fn()}
@@ -72,6 +73,7 @@ describe("ActivityDrawer download controls", () => {
       <ActivityDrawer
         open
         galleries={[failedGallery]}
+        sessionDownloads={[{ galleryId: failedGallery.id, occurredAt: 1 }]}
         onClose={vi.fn()}
         onReview={vi.fn()}
         onRetry={onRetry}
@@ -106,6 +108,7 @@ describe("ActivityDrawer download controls", () => {
       <ActivityDrawer
         open
         galleries={[failedGallery]}
+        sessionDownloads={[{ galleryId: failedGallery.id, occurredAt: 1 }]}
         pendingEntryIds={new Set(["entry-42"])}
         onClose={vi.fn()}
         onReview={vi.fn()}
@@ -133,6 +136,7 @@ describe("ActivityDrawer download controls", () => {
       <ActivityDrawer
         open
         galleries={[failedGallery]}
+        sessionDownloads={[{ galleryId: failedGallery.id, occurredAt: 1 }]}
         duplicateExcludedGalleryIds={new Set([failedGallery.id])}
         onClose={vi.fn()}
         onReview={vi.fn()}
@@ -149,6 +153,47 @@ describe("ActivityDrawer download controls", () => {
     expect(container.querySelector('[role="progressbar"]')).toBeNull();
     expect(onRetry).not.toHaveBeenCalled();
     expect(onCancel).not.toHaveBeenCalled();
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("shows only this-run downloads and opens an automatic decision by its persisted review id", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onReviewOverlap = vi.fn();
+    const unrelated = { ...failedGallery, id: galleryId(77), title: "Old database job" };
+
+    await act(async () => root.render(
+      <ActivityDrawer
+        open
+        galleries={[failedGallery, unrelated]}
+        sessionDownloads={[{ galleryId: failedGallery.id, occurredAt: 1 }]}
+        automaticOverlapActivities={[{
+          id: "automatic-review-1",
+          reviewId: "review-1",
+          galleryId: failedGallery.id,
+          title: "Failure evidence",
+          detail: "자동 분류 완료 · 신규 앨범 B 보존",
+          occurredAt: 2,
+          state: "completed",
+        }]}
+        onClose={vi.fn()}
+        onReview={vi.fn()}
+        onReviewOverlap={onReviewOverlap}
+        onRetry={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    ));
+
+    expect(container).not.toHaveTextContent("Old database job");
+    expect(container).toHaveTextContent("자동 분류 완료 · 신규 앨범 B 보존");
+    await act(async () => {
+      [...container.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent === "근거 보기")?.click();
+    });
+    expect(onReviewOverlap).toHaveBeenCalledWith("review-1", failedGallery.id);
 
     await act(async () => root.unmount());
     container.remove();

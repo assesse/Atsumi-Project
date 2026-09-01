@@ -241,6 +241,7 @@ describe("DetailWorkspace page previews", () => {
     vi.stubGlobal("ResizeObserver", TestResizeObserver);
     const gallery: Gallery = { ...mockGalleries[0]!, pages: 5000, pageDimensions: Array.from({ length: 8 }, (_, index) => ({ sourcePage: index + 1, width: 720, height: 1080 })) };
     const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
+    const onActivate = vi.fn();
     const container = document.createElement("div");
     const backgroundControl = document.createElement("button");
     backgroundControl.textContent = "background card";
@@ -249,7 +250,7 @@ describe("DetailWorkspace page previews", () => {
     const root = createRoot(container);
     try {
       await act(async () => root.render(
-        <DetailWorkspace tabs={[gallery.id]} activeId={gallery.id} minimized={false} galleries={new Map([[gallery.id, gallery]])} favoriteMetadata={new Set()} thumbnailClient={client} onActivate={vi.fn()} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />,
+        <DetailWorkspace tabs={[gallery.id]} activeId={gallery.id} minimized={false} galleries={new Map([[gallery.id, gallery]])} favoriteMetadata={new Set()} thumbnailClient={client} onActivate={onActivate} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />,
       ));
       expect(container.querySelectorAll(".preview-thumb").length).toBeLessThan(20);
       const nav = container.querySelector(".preview-window-nav");
@@ -282,9 +283,21 @@ describe("DetailWorkspace page previews", () => {
       });
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "19페이지 확대");
 
+      await act(async () => {
+        backgroundControl.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", code: "ArrowLeft", bubbles: true }));
+      });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "10페이지 확대");
+
+      const activeTab = container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')!;
+      await act(async () => {
+        activeTab.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", code: "ArrowRight", bubbles: true }));
+      });
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "19페이지 확대");
+      expect(onActivate).not.toHaveBeenCalled();
+
       input.focus();
       await act(async () => {
-        input.dispatchEvent(new KeyboardEvent("keydown", { key: "a", code: "KeyA", bubbles: true }));
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", code: "ArrowLeft", bubbles: true }));
       });
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "19페이지 확대");
 

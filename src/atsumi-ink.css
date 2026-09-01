@@ -1,0 +1,956 @@
+/*
+ * Atsumi Ink
+ *
+ * This file intentionally loads after styles.css. It keeps the existing
+ * component geometry and interaction contracts while giving every source the
+ * same dark, logo-derived surface system. Rose is reserved for selection and
+ * focus; teal identifies sources and information; status colors keep their
+ * own meaning.
+ */
+
+:root {
+  color-scheme: dark;
+  --ink-canvas: #100f13;
+  --ink-rail: #151319;
+  --ink-workspace: #17151b;
+  --ink-surface: #211e26;
+  --ink-surface-soft: #26232b;
+  --ink-raised: #2b2831;
+  --ink-hover: #34313d;
+  --ink-line: #45404c;
+  --ink-line-strong: #5a5361;
+  --ink-text: #f2eff3;
+  --ink-text-soft: #d5d0d7;
+  --ink-muted: #aaa4ae;
+  --brand-ink: #34313d;
+  --brand-ink-hover: #423e49;
+  --brand-on-ink: #ffffff;
+  --accent-rose: #d97a8d;
+  --accent-rose-strong: #e8a0ae;
+  --accent-rose-soft: #3b252e;
+  --source-teal: #63b7b4;
+  --source-teal-soft: rgba(99, 183, 180, 0.14);
+
+  --rail: var(--ink-rail);
+  --rail-active: var(--brand-ink);
+  --canvas: var(--ink-canvas);
+  --workspace: var(--ink-workspace);
+  --surface: var(--ink-surface);
+  --surface-soft: var(--ink-surface-soft);
+  --surface-raised: var(--ink-raised);
+  --surface-hover: var(--ink-hover);
+  --surface-selected: var(--accent-rose-soft);
+  --line: var(--ink-line);
+  --line-strong: var(--ink-line-strong);
+  --text: var(--ink-text);
+  --text-soft: var(--ink-text-soft);
+  --muted: var(--ink-muted);
+  --thumbnail-frame: #0c0b0e;
+  --primary: var(--accent-rose);
+  --primary-strong: var(--accent-rose-strong);
+  --primary-soft: rgba(217, 122, 141, 0.15);
+  --favorite: #e6aa58;
+  --female: #e58ca3;
+  --male: #80a9d6;
+  --danger: #f08386;
+  --danger-bg: rgba(240, 131, 134, 0.13);
+  --warning: #e6aa58;
+  --warning-bg: rgba(230, 170, 88, 0.13);
+  --success: #67c59b;
+  --chip-bg: #2a2730;
+  --chip-bg-hover: var(--ink-hover);
+  --chip-border: #4b4552;
+  --chip-border-hover: #655d6b;
+  --skeleton-base: #242129;
+  --skeleton-highlight: #39343f;
+  --shadow: 0 20px 54px rgba(0, 0, 0, 0.5);
+}
+
+html,
+body,
+#root {
+  color: var(--text);
+  background: var(--canvas);
+}
+
+button,
+input,
+select,
+textarea {
+  accent-color: var(--accent-rose);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-color: var(--accent-rose-strong);
+}
+
+.app-shell {
+  background: var(--canvas);
+}
+
+.workspace,
+.gallery-viewport {
+  background:
+    radial-gradient(circle at 76% -18%, rgba(217, 122, 141, 0.055), transparent 34%),
+    var(--workspace);
+}
+
+/* Side rail and source switcher */
+
+.sidebar {
+  color: var(--text-soft);
+  background: var(--rail);
+  border-color: var(--line);
+}
+
+.brand {
+  height: 76px;
+  gap: 11px;
+  padding: 10px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--line);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.2);
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.brand img {
+  width: 44px;
+  height: 44px;
+}
+
+.brand-copy span,
+.brand-chevron {
+  color: var(--muted);
+}
+
+.brand:hover,
+.brand.is-open {
+  background: color-mix(in srgb, var(--surface-raised) 78%, var(--brand-ink));
+  border-color: var(--line-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.brand:focus-visible {
+  outline: 2px solid var(--accent-rose-strong);
+  outline-offset: 2px;
+}
+
+.main-nav {
+  gap: 6px;
+  margin-top: 20px;
+}
+
+.nav-item {
+  min-height: 46px;
+  color: var(--text-soft);
+  border-radius: 8px;
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+
+.nav-item:hover {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: transparent;
+}
+
+.nav-item.is-active,
+.nav-item.is-active:hover {
+  color: var(--brand-on-ink);
+  background: var(--brand-ink);
+  border-color: var(--line-strong);
+}
+
+.nav-item.is-active::before {
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  background: var(--accent-rose);
+  border-radius: 0 3px 3px 0;
+}
+
+.nav-count {
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--accent-rose) 38%, transparent);
+}
+
+.nav-count.warning {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-color: color-mix(in srgb, var(--warning) 38%, transparent);
+}
+
+.live-indicator {
+  color: var(--muted);
+}
+
+.live-indicator i {
+  background: var(--source-teal);
+  box-shadow: 0 0 0 3px var(--source-teal-soft);
+}
+
+.source-switcher {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+
+.source-switcher button {
+  color: var(--text-soft);
+  border-radius: 7px;
+}
+
+.source-switcher button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+}
+
+.source-switcher button.is-active {
+  color: var(--text);
+  background: var(--source-teal-soft);
+  border-color: color-mix(in srgb, var(--source-teal) 55%, var(--line));
+}
+
+.source-switcher button.is-active::after {
+  color: var(--source-teal);
+}
+
+.source-switcher span {
+  color: var(--muted);
+}
+
+/* Main search and action hierarchy */
+
+.view-header {
+  grid-template-columns: minmax(220px, 1fr) 48px 48px minmax(108px, auto) repeat(3, 48px);
+}
+
+.search-box,
+.suggestions,
+.popover,
+.select-control,
+.segmented {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.search-box {
+  border-radius: 9px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16);
+}
+
+.search-box:focus-within {
+  border-color: var(--accent-rose);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.search-symbol,
+.search-box > .fluent:first-child,
+.suggestion small {
+  color: var(--muted);
+}
+
+.suggestions,
+.popover {
+  background: var(--surface-raised);
+  border-color: var(--line-strong);
+  border-radius: 9px;
+  box-shadow: var(--shadow);
+}
+
+.suggestion:hover,
+.suggestion.is-active {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.suggestion-type {
+  color: var(--source-teal);
+}
+
+.icon-button,
+.text-button {
+  color: var(--text-soft);
+  background: var(--surface);
+  border-color: var(--line);
+  border-radius: 8px;
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.icon-button:hover:not(:disabled),
+.text-button:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+}
+
+.icon-button.is-active,
+.icon-button.primary-soft {
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--accent-rose) 52%, var(--line));
+}
+
+.text-button.primary,
+.text-button.dark,
+.random-open-button,
+.random-open-button.is-pending {
+  color: var(--brand-on-ink);
+  background: var(--brand-ink);
+  border-color: var(--line-strong);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 5px 14px rgba(0, 0, 0, 0.22);
+}
+
+.text-button.primary:hover:not(:disabled),
+.text-button.dark:hover:not(:disabled),
+.random-open-button:hover:not(:disabled) {
+  color: var(--brand-on-ink);
+  background: var(--brand-ink-hover);
+  border-color: color-mix(in srgb, var(--accent-rose) 32%, var(--line-strong));
+}
+
+.random-open-button {
+  display: inline-flex;
+  width: auto;
+  min-width: 108px;
+  gap: 7px;
+  padding: 0 13px;
+  white-space: nowrap;
+}
+
+.random-open-label {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.random-open-spinner {
+  flex: 0 0 auto;
+}
+
+.icon-dot {
+  background: var(--source-teal);
+  border-color: var(--surface);
+}
+
+.activity-count {
+  color: var(--ink-canvas);
+  background: var(--warning);
+  border-color: var(--surface);
+}
+
+.segmented button.is-active,
+.gallery-display-mode-control button[aria-pressed="true"] {
+  color: var(--brand-on-ink);
+  background: var(--brand-ink);
+  box-shadow: inset 0 -2px 0 var(--accent-rose);
+}
+
+.context-row {
+  border-color: var(--line);
+}
+
+.gallery-group-count,
+.auto-find-status.is-running {
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-color: color-mix(in srgb, var(--accent-rose) 34%, var(--line));
+}
+
+.select-control select,
+.settings-select-control select,
+.setting-row input:not([type="range"]),
+.search-rule-fields textarea {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line-strong);
+}
+
+/* Gallery cards */
+
+.gallery-card,
+.related-card {
+  --card-surface: var(--surface);
+  --card-border: var(--line);
+  --card-border-hover: var(--line-strong);
+  --card-copy-muted: var(--muted);
+  --card-copy-faint: color-mix(in srgb, var(--muted) 72%, var(--surface));
+  color: var(--text);
+  background: var(--card-surface);
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  box-shadow: 0 5px 14px rgba(0, 0, 0, 0.24);
+  transition: transform 160ms ease-out, background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
+}
+
+.gallery-card:hover,
+.related-card:hover {
+  z-index: 2;
+  background: color-mix(in srgb, var(--surface) 78%, var(--surface-hover));
+  border-color: var(--card-border-hover);
+  box-shadow: 0 11px 26px rgba(0, 0, 0, 0.36);
+  transform: translateY(-2px);
+}
+
+.gallery-card:focus-visible,
+.related-card:focus-visible,
+.related-card:focus-within {
+  border-color: var(--accent-rose);
+  outline: 2px solid var(--accent-rose-strong);
+  outline-offset: 2px;
+}
+
+.gallery-card.is-selected,
+.gallery-card.is-selected:hover {
+  background: color-mix(in srgb, var(--surface) 76%, var(--accent-rose-soft));
+  border-color: color-mix(in srgb, var(--accent-rose) 78%, var(--line));
+  box-shadow: inset 0 2px 0 var(--accent-rose), 0 9px 24px rgba(0, 0, 0, 0.34);
+}
+
+.cover,
+.related-cover {
+  background: var(--thumbnail-frame);
+  border-color: var(--line);
+}
+
+.selection-indicator,
+.status-pill.icon-only,
+.language-flag {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  border-color: var(--line-strong);
+  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.38);
+}
+
+.gallery-grid.is-selection-context .gallery-card.is-selected .selection-indicator {
+  color: var(--brand-on-ink);
+  background: var(--accent-rose);
+  border-color: var(--accent-rose-strong);
+}
+
+.gallery-card.is-favorite .artist,
+.byline.favorite,
+.tag-favorite {
+  color: var(--favorite);
+}
+
+.tag,
+.tag.female,
+.tag.male,
+.tag-overflow,
+.meta-chip {
+  color: var(--text-soft);
+  background: var(--chip-bg);
+  border-color: var(--chip-border);
+}
+
+.tag:hover,
+.meta-chip:hover {
+  color: var(--text);
+  background: var(--chip-bg-hover);
+  border-color: var(--chip-border-hover);
+}
+
+.tag.favorite,
+.tag.female.favorite,
+.meta-chip.favorite {
+  color: var(--favorite);
+  background: color-mix(in srgb, var(--favorite) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--favorite) 58%, var(--line));
+}
+
+.byline:hover,
+.byline:focus-visible,
+.internal-result-badge:hover,
+.internal-result-badge:focus-visible {
+  color: var(--primary-strong);
+}
+
+.download-check,
+.icon-button.detail-download-complete,
+.icon-button.detail-download-complete:hover {
+  color: var(--brand-on-ink);
+  background: var(--success);
+  border-color: color-mix(in srgb, var(--success) 70%, var(--line));
+}
+
+.status-pill {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 13%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--warning) 58%, var(--line));
+}
+
+.status-pill.failed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 13%, var(--surface-raised));
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--line));
+}
+
+.status-pill.is-downloading,
+.internal-result-badge {
+  color: var(--source-teal);
+}
+
+.progress-track {
+  background: color-mix(in srgb, var(--line-strong) 72%, transparent);
+}
+
+.progress-track span {
+  background: color-mix(in srgb, var(--source-teal) 84%, transparent);
+}
+
+.gallery-card.is-complete .progress-track span {
+  background: color-mix(in srgb, var(--success) 84%, transparent);
+}
+
+.gallery-card.has-problem .progress-track span {
+  background: color-mix(in srgb, var(--warning) 84%, transparent);
+}
+
+.gallery-card-skeleton,
+.thumbnail-loading,
+.thumbnail-deferred {
+  background-color: var(--surface);
+}
+
+/* Floating surfaces, detail, settings, and review */
+
+.activity-panel,
+.detail-workspace,
+dialog,
+.auto-find-evidence-popover {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow);
+}
+
+.detail-workspace,
+dialog {
+  border-radius: 12px;
+}
+
+dialog::backdrop {
+  background: rgba(8, 7, 10, 0.68);
+  backdrop-filter: blur(4px);
+}
+
+.activity-panel header,
+.dialog-header,
+.detail-tabbar,
+.danbooru-detail > header,
+.danbooru-detail > footer {
+  border-color: var(--line);
+}
+
+.activity-item,
+.detail-body,
+.page-preview-dialog-body {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.activity-item:hover {
+  background: var(--surface-hover);
+}
+
+.activity-item.complete .activity-icon {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 13%, var(--surface-soft));
+}
+
+.detail-tabbar {
+  background: var(--surface-soft);
+}
+
+.detail-tab {
+  color: var(--muted);
+  border-color: transparent;
+}
+
+.detail-tab:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.detail-tab.is-active {
+  color: var(--brand-on-ink);
+  background: var(--brand-ink);
+  border-color: var(--line-strong);
+  box-shadow: inset 0 -2px 0 var(--accent-rose);
+}
+
+.detail-cover,
+.page-preview-media {
+  background: var(--thumbnail-frame);
+  border-color: var(--line);
+}
+
+.metadata-box,
+.review-evidence,
+.series-decision,
+.decision-history,
+.internal-scene-block,
+.internal-plan-summary,
+.internal-quarantine-history,
+.review-card,
+.tutorial-steps section,
+.keyboard-shortcuts-groups section,
+.update-version-row,
+.update-release-notes {
+  background: var(--surface-soft);
+  border-color: var(--line);
+}
+
+.settings-nav {
+  background: color-mix(in srgb, var(--surface-raised) 84%, transparent);
+  border-color: var(--line);
+}
+
+.settings-nav button {
+  color: var(--muted);
+}
+
+.settings-nav button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.settings-nav button.is-active {
+  color: var(--primary-strong);
+}
+
+.settings-nav button.is-active::after {
+  height: 3px;
+  background: var(--accent-rose);
+}
+
+.settings-content {
+  background: var(--surface);
+}
+
+.settings-scope-intro {
+  background: color-mix(in srgb, var(--accent-rose-soft) 64%, var(--surface));
+  border-color: color-mix(in srgb, var(--accent-rose) 32%, var(--line));
+}
+
+.search-catalog-panel,
+.search-rules-panel,
+.exclusion-manager,
+.danbooru-settings-section,
+.danbooru-metatag-guide,
+.storage-usage-panel,
+.maintenance-panel,
+.settings-about-panel {
+  background: color-mix(in srgb, var(--surface-soft) 72%, var(--surface));
+  border-color: var(--line);
+  border-radius: 8px;
+}
+
+.setting-row {
+  border-color: var(--line);
+}
+
+.setting-row:hover {
+  background: color-mix(in srgb, var(--surface-hover) 28%, transparent);
+}
+
+.settings-select-control:hover select {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+}
+
+.settings-select-control:focus-within select,
+.setting-row input:focus-visible,
+.search-rule-fields textarea:focus-visible {
+  border-color: var(--accent-rose);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.settings-select-control:focus-within > .fluent,
+.settings-select-control:hover > .fluent,
+.range-wrap output {
+  color: var(--primary-strong);
+}
+
+.storage-volume-meter .is-atsumi,
+.storage-volume-legend i.is-atsumi {
+  background: var(--accent-rose);
+}
+
+.review-summary,
+.internal-plan-summary {
+  color: var(--warning);
+  background: var(--warning-bg);
+  border-color: color-mix(in srgb, var(--warning) 58%, var(--line));
+}
+
+.inline-error,
+.review-inline-error,
+.update-error {
+  color: var(--danger);
+  background: var(--danger-bg);
+  border-color: color-mix(in srgb, var(--danger) 58%, var(--line));
+}
+
+.empty-state {
+  color: var(--muted);
+  background: var(--surface-soft);
+  border-color: var(--line-strong);
+}
+
+/* Danbooru keeps teal as source identity without replacing Atsumi Ink. */
+
+.danbooru-workspace {
+  color: var(--text);
+  background:
+    radial-gradient(circle at 78% -10%, rgba(99, 183, 180, 0.075), transparent 34%),
+    var(--workspace);
+}
+
+.danbooru-header {
+  border-color: var(--line);
+}
+
+.danbooru-header form,
+.danbooru-suggestions,
+.danbooru-filter-button,
+.danbooru-sort-control,
+.danbooru-filter-panel,
+.danbooru-range-fields input,
+.danbooru-filter-select,
+.danbooru-card,
+.danbooru-pager {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--line);
+}
+
+.danbooru-header form:focus-within {
+  border-color: var(--accent-rose);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.danbooru-header input,
+.danbooru-sort-control select,
+.danbooru-filter-select select {
+  color: var(--text);
+}
+
+.danbooru-header form > .fluent,
+.danbooru-sort-control,
+.danbooru-tag-budget,
+.danbooru-filter-grid small,
+.danbooru-range-fields label,
+.danbooru-card-copy > span,
+.danbooru-card-copy small,
+.danbooru-heading p,
+.danbooru-detail > footer > span,
+.danbooru-tag-section h3,
+.danbooru-relation {
+  color: var(--muted);
+}
+
+.danbooru-suggestions {
+  background: var(--surface-raised);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow);
+}
+
+.danbooru-suggestions button {
+  color: var(--text-soft);
+}
+
+.danbooru-suggestions button:hover {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.danbooru-filter-button:hover,
+.danbooru-filter-button.is-active {
+  color: var(--text);
+  background: var(--source-teal-soft);
+  border-color: color-mix(in srgb, var(--source-teal) 56%, var(--line));
+}
+
+.danbooru-filter-button > span {
+  color: var(--ink-canvas);
+  background: var(--source-teal);
+}
+
+.danbooru-filter-panel {
+  background: var(--surface-raised);
+  border-color: var(--line-strong);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.32);
+}
+
+.danbooru-filter-grid fieldset,
+.danbooru-detail-body > aside,
+.danbooru-detail-facts {
+  border-color: var(--line);
+}
+
+.danbooru-filter-grid legend,
+.danbooru-check-grid label,
+.danbooru-heading h1,
+.danbooru-card-title,
+.danbooru-detail > header h2,
+.danbooru-detail-facts b {
+  color: var(--text);
+}
+
+.danbooru-result-count {
+  color: var(--source-teal);
+  background: var(--source-teal-soft);
+  border-color: color-mix(in srgb, var(--source-teal) 42%, var(--line));
+}
+
+.danbooru-card {
+  border-radius: 10px;
+  box-shadow: 0 7px 20px rgba(0, 0, 0, 0.24);
+  transition: transform 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
+}
+
+.danbooru-card:hover {
+  border-color: color-mix(in srgb, var(--source-teal) 46%, var(--line-strong));
+  box-shadow: 0 11px 26px rgba(0, 0, 0, 0.36);
+  transform: translateY(-2px);
+}
+
+.danbooru-card-preview {
+  color: var(--muted);
+  background: var(--thumbnail-frame);
+}
+
+.danbooru-card-preview img {
+  transition-duration: 180ms;
+}
+
+.danbooru-card-title:hover {
+  color: var(--source-teal);
+}
+
+.danbooru-card-metrics,
+.danbooru-detail-facts {
+  color: var(--text-soft);
+}
+
+.danbooru-save-button {
+  color: var(--brand-on-ink);
+  background: var(--brand-ink);
+  border-color: var(--line-strong);
+}
+
+.danbooru-save-button:hover:not(:disabled) {
+  color: var(--brand-on-ink);
+  background: var(--brand-ink-hover);
+  border-color: color-mix(in srgb, var(--accent-rose) 34%, var(--line-strong));
+}
+
+.danbooru-save-button.is-complete,
+.danbooru-downloaded {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 54%, var(--line));
+}
+
+.danbooru-pager {
+  background: color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  border-color: var(--line-strong);
+}
+
+.danbooru-detail-backdrop {
+  background: rgba(8, 7, 10, 0.68);
+}
+
+.danbooru-detail {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--line-strong);
+  border-radius: 12px;
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.62);
+}
+
+.danbooru-detail > header,
+.danbooru-detail > footer,
+.danbooru-detail-body > aside,
+.danbooru-detail-facts {
+  border-color: var(--line);
+}
+
+.danbooru-detail-media {
+  background:
+    linear-gradient(45deg, var(--canvas) 25%, transparent 25%, transparent 75%, var(--canvas) 75%),
+    linear-gradient(45deg, var(--canvas) 25%, var(--surface) 25%, var(--surface) 75%, var(--canvas) 75%);
+  background-position: 0 0, 10px 10px;
+  background-size: 20px 20px;
+}
+
+.danbooru-tag-section button {
+  color: var(--text-soft);
+  background: var(--chip-bg);
+  border-color: var(--chip-border);
+}
+
+.danbooru-tag-section button:hover {
+  color: var(--source-teal);
+  background: var(--surface-hover);
+  border-color: color-mix(in srgb, var(--source-teal) 48%, var(--line));
+}
+
+@media (max-width: 1020px) {
+  .brand {
+    height: 62px;
+    padding: 7px;
+  }
+
+  .view-header {
+    grid-template-columns: minmax(220px, 1fr) 48px 48px minmax(108px, auto) repeat(3, 48px);
+  }
+}
+
+@media (max-width: 940px) {
+  .view-header {
+    grid-template-columns: minmax(220px, 1fr) repeat(6, 48px);
+  }
+
+  .random-open-button {
+    width: 48px;
+    min-width: 48px;
+    padding: 0;
+  }
+
+  .random-open-label {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .brand,
+  .nav-item,
+  .icon-button,
+  .text-button,
+  .gallery-card,
+  .related-card,
+  .danbooru-card,
+  .danbooru-card-preview img,
+  .danbooru-detail {
+    transition: none;
+    animation: none;
+  }
+
+  .gallery-card:hover,
+  .related-card:hover,
+  .danbooru-card:hover,
+  .danbooru-card:hover .danbooru-card-preview img {
+    transform: none;
+  }
+}

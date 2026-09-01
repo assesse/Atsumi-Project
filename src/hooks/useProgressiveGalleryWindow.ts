@@ -8,6 +8,8 @@ type ProgressiveGalleryWindowOptions = {
   onEnter?: (ids: readonly GalleryId[]) => void;
   onLeave?: (ids: readonly GalleryId[]) => void;
   overscanPixels?: number;
+  /** Keep every slot that has entered the window mounted until this hook unmounts. */
+  retainEntered?: boolean;
 };
 
 const EMPTY_IDS: ReadonlySet<GalleryId> = new Set<GalleryId>();
@@ -19,6 +21,7 @@ export function useProgressiveGalleryWindow({
   onEnter,
   onLeave,
   overscanPixels = 1200,
+  retainEntered = false,
 }: ProgressiveGalleryWindowOptions): ReadonlySet<GalleryId> {
   const [activeIds, setActiveIds] = useState<ReadonlySet<GalleryId>>(EMPTY_IDS);
   const activeIdsRef = useRef<ReadonlySet<GalleryId>>(EMPTY_IDS);
@@ -32,6 +35,7 @@ export function useProgressiveGalleryWindow({
 
   useLayoutEffect(() => {
     if (!enabled) {
+      if (retainEntered) return undefined;
       activeIdsRef.current = EMPTY_IDS;
       setActiveIds((current) => current.size ? EMPTY_IDS : current);
       return undefined;
@@ -41,6 +45,7 @@ export function useProgressiveGalleryWindow({
     if (!root) return undefined;
     const elements = [...root.querySelectorAll<HTMLElement>("[data-progressive-gallery-id]")];
     if (!elements.length) {
+      if (retainEntered) return undefined;
       activeIdsRef.current = EMPTY_IDS;
       setActiveIds((current) => current.size ? EMPTY_IDS : current);
       return undefined;
@@ -72,11 +77,14 @@ export function useProgressiveGalleryWindow({
         const id = idFor(entry.target);
         if (id === null) continue;
         if (entry.isIntersecting) {
-          if (!next.has(id)) {
+          const wasAdded = !next.has(id);
+          if (wasAdded) {
             next.add(id);
-            entered.push(id);
             changed = true;
           }
+          if (retainEntered || wasAdded) entered.push(id);
+        } else if (retainEntered) {
+          if (next.has(id)) left.push(id);
         } else if (next.delete(id)) {
           left.push(id);
           changed = true;
@@ -96,7 +104,7 @@ export function useProgressiveGalleryWindow({
 
     elements.forEach((element) => observer.observe(element));
     return () => observer.disconnect();
-  }, [enabled, observeKey, overscanPixels, rootRef]);
+  }, [enabled, observeKey, overscanPixels, retainEntered, rootRef]);
 
   return activeIds;
 }

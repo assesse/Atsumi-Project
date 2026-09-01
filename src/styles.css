@@ -980,11 +980,12 @@ h2 {
 .gallery-scroll-position-hint {
   position: fixed;
   z-index: 80;
-  display: grid;
-  width: min(244px, calc(100vw - 24px));
+  display: flex;
+  width: max-content;
   max-width: calc(100vw - 24px);
-  gap: 3px;
-  padding: 10px 11px;
+  align-items: baseline;
+  gap: 6px;
+  padding: 7px 9px;
   overflow: visible;
   color: var(--text);
   pointer-events: none;
@@ -1010,8 +1011,7 @@ h2 {
 }
 
 .gallery-scroll-position-hint > strong,
-.gallery-scroll-position-title,
-.gallery-scroll-position-meta > span {
+.gallery-scroll-position-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1024,35 +1024,12 @@ h2 {
   font-weight: 750;
 }
 
-.gallery-scroll-position-title {
-  color: var(--text-soft);
-  font-size: 11px;
-}
-
-.gallery-scroll-position-meta {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: 9px;
-  color: var(--muted);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.gallery-scroll-position-meta > span {
-  min-width: 0;
-}
-
-.gallery-scroll-position-meta > b {
+.gallery-scroll-position-value {
   flex: 0 0 auto;
-  min-width: 36px;
-  padding: 1px 5px;
-  color: var(--text);
-  text-align: center;
-  background: color-mix(in srgb, var(--primary) 15%, var(--surface));
-  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
-  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes gallery-scroll-position-hint-in {
@@ -2078,6 +2055,30 @@ h2 {
 .activity-list {
   display: grid;
   padding: 8px;
+}
+
+.activity-empty {
+  display: grid;
+  min-height: 150px;
+  padding: 24px;
+  place-items: center;
+  align-content: center;
+  gap: 7px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.activity-empty .fluent {
+  color: var(--primary);
+  font-size: 28px;
+}
+
+.activity-empty strong {
+  color: var(--text);
+}
+
+.activity-empty span {
+  font-size: 12px;
 }
 
 .activity-item {
@@ -3317,6 +3318,127 @@ dialog::backdrop {
   padding: 8px 24px 24px;
   overflow-x: hidden;
   overflow-y: auto;
+}
+
+.settings-content [hidden] {
+  display: none !important;
+}
+
+.settings-scope-intro {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
+  padding: 16px 17px;
+  background: color-mix(in srgb, var(--primary-soft) 42%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--primary) 34%, var(--line));
+  border-radius: 7px;
+}
+
+.settings-scope-intro h3,
+.settings-scope-intro p {
+  margin: 0;
+}
+
+.settings-scope-intro h3 {
+  font-size: 18px;
+}
+
+.settings-scope-intro p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.danbooru-settings-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.danbooru-settings-section,
+.danbooru-metatag-guide {
+  padding: 17px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+}
+
+.danbooru-settings-section > header,
+.danbooru-metatag-guide > header {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 5px;
+}
+
+.danbooru-settings-section h3,
+.danbooru-settings-section p,
+.danbooru-metatag-guide h3,
+.danbooru-metatag-guide p {
+  margin: 0;
+}
+
+.danbooru-settings-section > header p,
+.danbooru-metatag-guide > header p {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.danbooru-settings-checks {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px 12px;
+  max-width: 390px;
+}
+
+.danbooru-settings-checks label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.settings-fixed-value {
+  justify-self: end;
+  padding: 6px 10px;
+  color: var(--primary-strong);
+  font-size: 12px;
+  font-weight: 800;
+  background: var(--primary-soft);
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--line));
+  border-radius: 999px;
+}
+
+.danbooru-metatag-groups {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.danbooru-metatag-groups article {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.danbooru-metatag-groups article > p {
+  min-height: 35px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.danbooru-metatag-groups code {
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+  font-size: 10px;
+  line-height: 1.55;
 }
 
 .search-catalog-panel,
@@ -5727,7 +5849,9 @@ dialog::backdrop {
  */
 [data-privacy-mode="on"] .gallery-thumbnail,
 [data-privacy-mode="on"] .detail-hero,
-[data-privacy-mode="on"] .page-preview-media {
+[data-privacy-mode="on"] .page-preview-media,
+[data-privacy-mode="on"] .danbooru-card-preview,
+[data-privacy-mode="on"] .danbooru-detail-media {
   isolation: isolate;
 }
 
@@ -5826,13 +5950,24 @@ dialog::backdrop {
 
 .danbooru-workspace {
   display: grid;
-  grid-template-rows: 72px 104px minmax(0, 1fr);
+  grid-template-rows: 72px auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   padding: 0 22px 18px;
   background:
     radial-gradient(circle at 78% -10%, rgba(59, 176, 184, 0.12), transparent 34%),
     var(--canvas);
+}
+
+.danbooru-overview {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  align-content: start;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .danbooru-header {
@@ -5924,6 +6059,188 @@ dialog::backdrop {
 .danbooru-suggestions small {
   color: #8fa8af;
   white-space: nowrap;
+}
+
+.danbooru-search-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 2px 0;
+}
+
+.danbooru-filter-button,
+.danbooru-sort-control {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  color: #c9dfe2;
+  background: #17282f;
+  border: 1px solid #36505a;
+  border-radius: 7px;
+}
+
+.danbooru-filter-button {
+  gap: 7px;
+  padding: 0 11px;
+}
+
+.danbooru-filter-button:hover,
+.danbooru-filter-button.is-active {
+  color: #effcfd;
+  border-color: #55aeb7;
+  background: #1d333a;
+}
+
+.danbooru-filter-button > span {
+  min-width: 19px;
+  padding: 1px 5px;
+  color: #0c262b;
+  font-size: 11px;
+  font-weight: 800;
+  background: #65d0d6;
+  border-radius: 999px;
+}
+
+.danbooru-sort-control {
+  position: relative;
+  gap: 4px;
+  padding-left: 10px;
+  color: #8fa8af;
+  font-size: 12px;
+}
+
+.danbooru-sort-control select,
+.danbooru-filter-select select {
+  min-height: 34px;
+  padding: 0 30px 0 8px;
+  color: #e4f1f3;
+  font: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  appearance: none;
+}
+
+.danbooru-sort-control > .fluent,
+.danbooru-filter-select > .fluent {
+  position: absolute;
+  right: 9px;
+  pointer-events: none;
+}
+
+.danbooru-tag-budget {
+  color: #819aa1;
+  font-size: 11px;
+}
+
+.danbooru-tag-budget.is-over {
+  color: #ffb0a7;
+  font-weight: 700;
+}
+
+.danbooru-filter-panel {
+  margin: 10px 2px 0;
+  padding: 14px;
+  background: #14242b;
+  border: 1px solid #35515b;
+  border-radius: 9px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.22);
+}
+
+.danbooru-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.danbooru-filter-grid fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 11px;
+  border: 1px solid #2d4650;
+  border-radius: 7px;
+}
+
+.danbooru-filter-grid legend {
+  padding: 0 5px;
+  color: #dcebed;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.danbooru-filter-grid small {
+  display: block;
+  margin-top: 8px;
+  color: #829ba2;
+  font-size: 10px;
+}
+
+.danbooru-check-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.danbooru-check-grid label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: #c3d7da;
+  font-size: 11px;
+}
+
+.danbooru-check-grid .danbooru-rating {
+  position: static;
+  min-width: 0;
+  padding: 3px 7px;
+}
+
+.danbooru-range-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.danbooru-range-fields label {
+  display: grid;
+  gap: 5px;
+  color: #91a9af;
+  font-size: 10px;
+}
+
+.danbooru-range-fields input,
+.danbooru-filter-select {
+  min-width: 0;
+  min-height: 34px;
+  color: #e5f1f3;
+  color-scheme: dark;
+  background: #102027;
+  border: 1px solid #36515b;
+  border-radius: 6px;
+}
+
+.danbooru-range-fields input {
+  width: 100%;
+  padding: 0 9px;
+  font: inherit;
+}
+
+.danbooru-filter-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.danbooru-filter-select select {
+  width: 100%;
+}
+
+.danbooru-filter-panel > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .danbooru-heading {
@@ -6025,6 +6342,7 @@ dialog::backdrop {
 
 .danbooru-card-preview > .danbooru-rating {
   position: absolute;
+  z-index: 4;
   top: 8px;
   left: 8px;
 }
@@ -6035,6 +6353,7 @@ dialog::backdrop {
 
 .danbooru-downloaded {
   position: absolute;
+  z-index: 4;
   right: 8px;
   bottom: 8px;
   color: #aaf1cf;
@@ -6127,21 +6446,44 @@ dialog::backdrop {
 }
 
 .danbooru-detail-backdrop {
+  position: fixed;
+  inset: 0;
   z-index: 110;
+  display: grid;
+  place-items: center;
   padding: 28px;
+  background: rgba(4, 10, 13, 0.62);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
 }
 
 .danbooru-detail {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(1180px, 96vw);
-  height: min(840px, 92vh);
+  grid-template-rows: 72px minmax(0, 1fr) 64px;
+  width: clamp(920px, calc(100vw - 96px), 1480px);
+  height: min(900px, calc(100vh - 90px));
   overflow: hidden;
   color: #dcebed;
   background: #14242b;
   border: 1px solid #3a5964;
-  border-radius: 12px;
+  border-radius: 8px;
   box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58);
+  animation: danbooru-floating-detail-in 150ms cubic-bezier(0.2, 0.78, 0.24, 1);
+}
+
+.danbooru-detail:focus {
+  outline: 0;
+}
+
+@keyframes danbooru-floating-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .danbooru-detail > header,
@@ -6154,10 +6496,18 @@ dialog::backdrop {
   border-bottom: 1px solid #2e4650;
 }
 
+.danbooru-detail > header > div {
+  min-width: 0;
+  overflow: hidden;
+}
+
 .danbooru-detail > header h2 {
   margin: 2px 0 0;
+  overflow: hidden;
   color: #f0f8f9;
   font-size: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .danbooru-detail > footer {
@@ -6166,22 +6516,27 @@ dialog::backdrop {
 }
 
 .danbooru-detail > footer > span {
+  min-width: 0;
+  overflow: hidden;
   color: #91a8ae;
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .danbooru-detail-body {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.55fr);
+  grid-template-columns: minmax(0, 1fr) clamp(300px, 28vw, 390px);
   min-height: 0;
 }
 
 .danbooru-detail-media {
+  position: relative;
   display: grid;
   place-items: center;
   min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: hidden;
   padding: 16px;
   background:
     linear-gradient(45deg, #101c21 25%, transparent 25%, transparent 75%, #101c21 75%),
@@ -6192,8 +6547,10 @@ dialog::backdrop {
 
 .danbooru-detail-media img {
   display: block;
-  max-width: 100%;
-  max-height: 100%;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
   object-fit: contain;
 }
 
@@ -6269,18 +6626,51 @@ dialog::backdrop {
     left: 12px;
   }
 
+  .danbooru-detail-backdrop {
+    padding: 20px;
+  }
+
+  .danbooru-detail {
+    width: calc(100vw - 40px);
+    height: calc(100vh - 48px);
+  }
+
   .danbooru-detail-body {
-    grid-template-columns: minmax(0, 1fr) minmax(240px, 0.56fr);
+    grid-template-columns: minmax(0, 1fr) 300px;
   }
 }
 
 @media (max-width: 760px) {
+  .danbooru-metatag-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .danbooru-settings-checks {
+    justify-content: flex-start;
+  }
+
   .danbooru-workspace {
     padding-inline: 12px;
   }
 
   .danbooru-heading {
     align-items: flex-start;
+  }
+
+  .danbooru-search-tools {
+    flex-wrap: wrap;
+  }
+
+  .danbooru-tag-budget {
+    flex-basis: 100%;
+  }
+
+  .danbooru-filter-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .danbooru-check-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .danbooru-result-count {
@@ -6292,6 +6682,7 @@ dialog::backdrop {
   }
 
   .danbooru-detail {
+    grid-template-rows: 66px minmax(0, 1fr) 60px;
     width: 98vw;
     height: 96vh;
   }
@@ -6313,7 +6704,9 @@ dialog::backdrop {
 
 [data-privacy-mode="on"] .gallery-thumbnail::after,
 [data-privacy-mode="on"] .detail-hero::after,
-[data-privacy-mode="on"] .page-preview-media::after {
+[data-privacy-mode="on"] .page-preview-media::after,
+[data-privacy-mode="on"] .danbooru-card-preview::after,
+[data-privacy-mode="on"] .danbooru-detail-media::after {
   position: absolute;
   inset: 0;
   z-index: 3;

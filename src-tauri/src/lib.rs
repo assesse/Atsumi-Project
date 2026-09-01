@@ -143,6 +143,47 @@ fn detail_original_protocol_response(
         .unwrap_or_else(|_| Response::new(Vec::new()))
 }
 
+fn danbooru_media_protocol_token(request: &Request<Vec<u8>>) -> Result<String, StatusCode> {
+    if request.method() != Method::GET {
+        return Err(StatusCode::METHOD_NOT_ALLOWED);
+    }
+    if request.uri().query().is_some() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    request
+        .uri()
+        .path()
+        .strip_prefix('/')
+        .filter(|token| !token.is_empty() && !token.contains('/'))
+        .map(str::to_owned)
+        .ok_or(StatusCode::NOT_FOUND)
+}
+
+fn danbooru_media_protocol_response(
+    status: StatusCode,
+    bytes: Vec<u8>,
+    content_type: Option<&str>,
+) -> Response<Vec<u8>> {
+    let cache_control = if status.is_success() {
+        "private, max-age=86400"
+    } else {
+        "no-store"
+    };
+    let mut response = Response::builder()
+        .status(status)
+        .header("cache-control", cache_control)
+        .header("cross-origin-resource-policy", "cross-origin")
+        .header("x-content-type-options", "nosniff");
+    if let Some(content_type) = content_type {
+        response = response
+            .header("content-type", content_type)
+            .header("content-length", bytes.len());
+    }
+    response
+        .body(bytes)
+        .unwrap_or_else(|_| Response::new(Vec::new()))
+}
+
 #[cfg(test)]
 mod detail_original_protocol_tests {
     use super::*;
@@ -203,6 +244,58 @@ mod detail_original_protocol_tests {
         assert_eq!(response.headers()["content-length"], "3");
         assert_eq!(response.headers()["cache-control"], "no-store");
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+    }
+
+    #[test]
+    fn danbooru_media_protocol_accepts_only_one_get_token() {
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("http://danbooru-media.localhost/aGVsbG8")
+            .body(Vec::new())
+            .unwrap();
+        assert_eq!(
+            danbooru_media_protocol_token(&request),
+            Ok("aGVsbG8".into())
+        );
+        let nested = Request::builder()
+            .method(Method::GET)
+            .uri("http://danbooru-media.localhost/a/b")
+            .body(Vec::new())
+            .unwrap();
+        assert_eq!(
+            danbooru_media_protocol_token(&nested),
+            Err(StatusCode::NOT_FOUND)
+        );
+    }
+
+    #[test]
+    fn danbooru_media_response_is_cacheable_and_cross_origin_safe() {
+        let response =
+            danbooru_media_protocol_response(StatusCode::OK, vec![1, 2], Some("image/jpeg"));
+        assert_eq!(response.headers()["content-type"], "image/jpeg");
+        assert_eq!(response.headers()["content-length"], "2");
+        assert_eq!(
+            response.headers()["cache-control"],
+            "private, max-age=86400"
+        );
+        assert_eq!(
+            response.headers()["cross-origin-resource-policy"],
+            "cross-origin"
+        );
+    }
+
+    #[test]
+    fn danbooru_media_error_responses_are_not_cached() {
+        for status in [
+            StatusCode::NOT_FOUND,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            StatusCode::BAD_GATEWAY,
+        ] {
+            let response = danbooru_media_protocol_response(status, Vec::new(), None);
+            assert_eq!(response.status(), status);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+        }
     }
 }
 
@@ -383,6 +476,55 @@ pub fn run() -> tauri::Result<()> {
                 let response = match std::fs::read(path) {
                     Ok(bytes) => detail_original_protocol_response(StatusCode::OK, bytes, Some(&content_type)),
                     Err(_) => detail_original_protocol_response(StatusCode::NOT_FOUND, Vec::new(), None),
+                };
+                responder.respond(response);
+            });
+        })
+        .register_asynchronous_uri_scheme_protocol("danbooru-media", |context, request, responder| {
+            let token = match danbooru_media_protocol_token(&request) {
+                Ok(token) => token,
+                Err(status) => {
+                    responder.respond(danbooru_media_protocol_response(status, Vec::new(), None));
+                    return;
+                }
+            };
+            let client = Arc::clone(&context.app_handle().state::<AppState>().danbooru);
+            thread::spawn(move || {
+                let response = match client.media(&token) {
+                    Ok(media) => danbooru_media_protocol_response(
+                        StatusCode::OK,
+                        media.bytes,
+                        Some(&media.content_type),
+                    ),
+                    Err(interface::danbooru::DanbooruError::UnsafeMediaUrl) => {
+                        danbooru_media_protocol_response(StatusCode::NOT_FOUND, Vec::new(), None)
+                    }
+                    Err(interface::danbooru::DanbooruError::NotFound)
+                    | Err(interface::danbooru::DanbooruError::MediaUnavailable) => {
+                        danbooru_media_protocol_response(StatusCode::NOT_FOUND, Vec::new(), None)
+                    }
+                    Err(interface::danbooru::DanbooruError::UnsupportedMedia) => {
+                        danbooru_media_protocol_response(
+                            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                            Vec::new(),
+                            None,
+                        )
+                    }
+                    Err(interface::danbooru::DanbooruError::DownloadTooLarge) => {
+                        danbooru_media_protocol_response(
+                            StatusCode::PAYLOAD_TOO_LARGE,
+                            Vec::new(),
+                            None,
+                        )
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = ?error, "Danbooru display media could not be loaded");
+                        danbooru_media_protocol_response(
+                            StatusCode::BAD_GATEWAY,
+                            Vec::new(),
+                            None,
+                        )
+                    }
                 };
                 responder.respond(response);
             });

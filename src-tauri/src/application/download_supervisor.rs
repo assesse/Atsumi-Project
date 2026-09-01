@@ -9,6 +9,7 @@ use std::{
     thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
 };
+use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
 use crate::{
@@ -1590,7 +1591,7 @@ fn normalize_overlap_decision_audit(
             | DownloadOverlapDecisionAction::RemoveIncoming
     ) {
         return Err(ApplicationError::DownloadOverlapDecisionInvalid(
-            "Automatic overlap decisions may only quarantine one side of a strict containment match"
+            "Automatic overlap decisions may only quarantine one side of a verified overlap match"
                 .into(),
         ));
     }
@@ -1610,13 +1611,13 @@ fn normalize_overlap_decision_audit(
                 "Automatic overlap decisions require a reason code".into(),
             )
         })?;
-    if reason != "strict_extra_pages_v1" {
+    if reason != "balanced_overlap_v2" {
         return Err(ApplicationError::DownloadOverlapDecisionInvalid(
             "The requested automatic overlap rule is not supported by this build".into(),
         ));
     }
     request.reason_code = Some(reason.to_owned());
-    if request.rule_version != Some(1) {
+    if request.rule_version != Some(2) {
         return Err(ApplicationError::DownloadOverlapDecisionInvalid(
             "The requested automatic overlap rule version is not supported by this build".into(),
         ));
@@ -1648,11 +1649,11 @@ fn normalize_overlap_decision_audit(
         ));
     }
     let expected_candidate = request.candidate_id.as_deref().unwrap_or_default();
-    if parsed.get("rule").and_then(serde_json::Value::as_str) != Some("strict_extra_pages_v1")
+    if parsed.get("rule").and_then(serde_json::Value::as_str) != Some("balanced_overlap_v2")
         || parsed
             .get("ruleVersion")
             .and_then(serde_json::Value::as_u64)
-            != Some(1)
+            != Some(2)
         || parsed.get("reviewId").and_then(serde_json::Value::as_str)
             != Some(request.review_id.as_str())
         || parsed
@@ -1683,34 +1684,76 @@ enum StrictOverlapWinner {
     Existing,
 }
 
+fn overlap_edition_preference(title: &str) -> i8 {
+    let normalized = title
+        .nfkc()
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    if [
+        "uncensored",
+        "decensored",
+        "uncen",
+        "無修正",
+        "无修正",
+        "無碼",
+        "无码",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
+    {
+        1
+    } else if ["censored", "mosaic", "モザイク", "修正版"]
+        .iter()
+        .any(|marker| normalized.contains(marker))
+    {
+        -1
+    } else {
+        0
+    }
+}
+
 fn strict_overlap_winner(
-    incoming_page_count: u32,
+    incoming: &crate::domain::DownloadOverlapGalleryRef,
     candidate: &crate::domain::DownloadOverlapCandidate,
 ) -> Option<StrictOverlapWinner> {
-    let (
-        winner,
-        loser_coverage,
-        loser_unique_pages,
-        winner_unique_pages,
-        loser_page_count,
-        winner_page_count,
-    ) = match candidate.relation {
-        crate::domain::DownloadOverlapRelation::IncomingContainsExisting => (
-            StrictOverlapWinner::Incoming,
-            candidate.existing_coverage,
-            candidate.existing_unique_pages,
-            candidate.incoming_unique_pages,
-            candidate.existing.page_count,
-            incoming_page_count,
-        ),
-        crate::domain::DownloadOverlapRelation::ExistingContainsIncoming => (
-            StrictOverlapWinner::Existing,
-            candidate.incoming_coverage,
-            candidate.incoming_unique_pages,
-            candidate.existing_unique_pages,
-            incoming_page_count,
-            candidate.existing.page_count,
-        ),
+    let incoming_page_count = incoming.page_count;
+    let existing_page_count = candidate.existing.page_count;
+    let incoming_preference = overlap_edition_preference(&incoming.title);
+    let existing_preference = overlap_edition_preference(&candidate.existing.title);
+    let (winner, loser_coverage) = match candidate.relation {
+        crate::domain::DownloadOverlapRelation::IncomingContainsExisting => {
+            if incoming_preference < existing_preference {
+                return None;
+            }
+            (StrictOverlapWinner::Incoming, candidate.existing_coverage)
+        }
+        crate::domain::DownloadOverlapRelation::ExistingContainsIncoming => {
+            if existing_preference < incoming_preference {
+                return None;
+            }
+            (StrictOverlapWinner::Existing, candidate.incoming_coverage)
+        }
+        crate::domain::DownloadOverlapRelation::NearEquivalent => {
+            let winner = if incoming_preference != existing_preference {
+                if incoming_preference > existing_preference {
+                    StrictOverlapWinner::Incoming
+                } else {
+                    StrictOverlapWinner::Existing
+                }
+            } else if incoming_page_count != existing_page_count {
+                if incoming_page_count > existing_page_count {
+                    StrictOverlapWinner::Incoming
+                } else {
+                    StrictOverlapWinner::Existing
+                }
+            } else {
+                StrictOverlapWinner::Existing
+            };
+            (
+                winner,
+                candidate.existing_coverage.min(candidate.incoming_coverage),
+            )
+        }
         _ => return None,
     };
     if candidate.matched_pages == 0 {
@@ -1724,20 +1767,15 @@ fn strict_overlap_winner(
         .filter(|pair| !pair.low_information)
         .count();
     let informative_match_ratio = informative_matches as f64 / matched;
-    let exact_match_ratio = f64::from(candidate.exact_pages) / matched;
-    let required_winner_unique_pages = 10_u32.max(
-        (f64::from(loser_page_count) * 0.1)
-            .ceil()
-            .min(f64::from(u32::MAX)) as u32,
-    );
-    (loser_coverage >= 0.995
-        && loser_unique_pages == 0
-        && candidate.matched_pages >= 10
-        && winner_unique_pages >= required_winner_unique_pages
-        && winner_page_count > loser_page_count
-        && aligned_run_ratio >= 0.8
-        && informative_match_ratio >= 0.9
-        && exact_match_ratio >= 0.9)
+    let smaller_page_count = incoming_page_count.min(existing_page_count);
+    let required_matched_pages = 4_u32.min(smaller_page_count);
+    (loser_coverage >= 0.95
+        && incoming_page_count.abs_diff(existing_page_count) <= 5
+        && candidate.matched_pages >= required_matched_pages
+        && candidate.confidence >= 0.9
+        && aligned_run_ratio >= 0.75
+        && informative_match_ratio >= 0.75
+        && (smaller_page_count > 3 || candidate.exact_pages == candidate.matched_pages))
         .then_some(winner)
 }
 
@@ -1760,12 +1798,12 @@ fn validate_strict_overlap_automatic_decision(
                 "The automatic overlap candidate is no longer pending".into(),
             )
         })?;
-    let selected_winner = strict_overlap_winner(review.incoming.page_count, selected);
+    let selected_winner = strict_overlap_winner(&review.incoming, selected);
     let safe = match request.action {
         DownloadOverlapDecisionAction::RemoveExistingContinue => {
             selected_winner == Some(StrictOverlapWinner::Incoming)
                 && pending.iter().all(|candidate| {
-                    strict_overlap_winner(review.incoming.page_count, candidate)
+                    strict_overlap_winner(&review.incoming, candidate)
                         == Some(StrictOverlapWinner::Incoming)
                 })
         }
@@ -1778,7 +1816,7 @@ fn validate_strict_overlap_automatic_decision(
         Ok(())
     } else {
         Err(ApplicationError::DownloadOverlapDecisionInvalid(
-            "This review does not satisfy the strict extra-page containment rule; manual review is required"
+            "This review does not satisfy the 95 percent overlap and five-page safety rule; manual review is required"
                 .into(),
         ))
     }
@@ -2134,7 +2172,7 @@ mod tests {
                 gallery_id: GalleryId::new(200).unwrap(),
                 title: "Incoming B".to_owned(),
                 artists: vec!["artist".to_owned()],
-                page_count: 30,
+                page_count: 25,
             },
             revision: 4,
             state: DownloadOverlapReviewState::Pending,
@@ -2157,9 +2195,9 @@ mod tests {
                 exact_pages: 20,
                 visual_pages: 0,
                 existing_coverage: 1.0,
-                incoming_coverage: 2.0 / 3.0,
+                incoming_coverage: 0.8,
                 existing_unique_pages: 0,
-                incoming_unique_pages: 10,
+                incoming_unique_pages: 5,
                 longest_aligned_run: 20,
                 rank: 1,
                 decision: None,
@@ -2178,12 +2216,12 @@ mod tests {
             action: DownloadOverlapDecisionAction::RemoveExistingContinue,
             candidate_id: Some("strict-candidate".to_owned()),
             actor: DownloadOverlapDecisionActor::Automation,
-            reason_code: Some("strict_extra_pages_v1".to_owned()),
-            rule_version: Some(1),
+            reason_code: Some("balanced_overlap_v2".to_owned()),
+            rule_version: Some(2),
             feature_snapshot_json: Some(
                 serde_json::json!({
-                    "rule": "strict_extra_pages_v1",
-                    "ruleVersion": 1,
+                    "rule": "balanced_overlap_v2",
+                    "ruleVersion": 2,
                     "reviewId": "strict-review",
                     "reviewRevision": 4,
                     "candidateId": "strict-candidate"
@@ -2203,19 +2241,39 @@ mod tests {
 
         let mut near_equivalent = review.clone();
         near_equivalent.candidates[0].relation = DownloadOverlapRelation::NearEquivalent;
-        assert!(validate_strict_overlap_automatic_decision(&near_equivalent, &request).is_err());
+        near_equivalent.candidates[0].incoming_coverage = 0.95;
+        near_equivalent.candidates[0].existing_coverage = 1.0;
+        validate_strict_overlap_automatic_decision(&near_equivalent, &request)
+            .expect("near-equivalent larger incoming should be eligible");
 
-        let mut weak_exact_evidence = review.clone();
-        weak_exact_evidence.candidates[0].exact_pages = 17;
-        assert!(
-            validate_strict_overlap_automatic_decision(&weak_exact_evidence, &request).is_err()
-        );
+        let mut equal_unknown = near_equivalent.clone();
+        equal_unknown.incoming.page_count = 20;
+        equal_unknown.candidates[0].incoming_coverage = 1.0;
+        assert!(validate_strict_overlap_automatic_decision(&equal_unknown, &request).is_err());
+        let mut keep_existing = request.clone();
+        keep_existing.action = DownloadOverlapDecisionAction::RemoveIncoming;
+        validate_strict_overlap_automatic_decision(&equal_unknown, &keep_existing)
+            .expect("equal unknown editions should keep the stable existing artifact");
+
+        let mut uncensored_incoming = equal_unknown.clone();
+        uncensored_incoming.incoming.title = "Edition [ＵＮＣＥＮＳＯＲＥＤ]".to_owned();
+        uncensored_incoming.candidates[0].existing.title = "Edition [Censored]".to_owned();
+        validate_strict_overlap_automatic_decision(&uncensored_incoming, &request)
+            .expect("the NFKC-normalized uncensored marker should take priority");
+
+        let mut weak_evidence = review.clone();
+        weak_evidence.candidates[0].confidence = 0.89;
+        assert!(validate_strict_overlap_automatic_decision(&weak_evidence, &request).is_err());
+
+        let mut excessive_page_gap = review.clone();
+        excessive_page_gap.incoming.page_count = 26;
+        assert!(validate_strict_overlap_automatic_decision(&excessive_page_gap, &request).is_err());
 
         let mut mismatched_snapshot = strict_automatic_request();
         mismatched_snapshot.feature_snapshot_json = Some(
             serde_json::json!({
-                "rule": "strict_extra_pages_v1",
-                "ruleVersion": 1,
+                "rule": "balanced_overlap_v2",
+                "ruleVersion": 2,
                 "reviewId": "strict-review",
                 "reviewRevision": 3,
                 "candidateId": "strict-candidate"

@@ -175,7 +175,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   }, [activeId, minimized]);
 
   const navigateTabs = (event: KeyboardEvent<HTMLElement>, index: number) => {
-    if (!tabs.length) return;
+    if (!tabs.length || event.defaultPrevented) return;
     let nextIndex: number | null = null;
     if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
     else if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
@@ -282,13 +282,16 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
           : null;
       if (target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
       const key = event.key.toLocaleLowerCase();
-      const windowOffset = event.code === "KeyA" || key === "a"
+      const previousWindow = event.key === "ArrowLeft" || event.code === "KeyA" || key === "a";
+      const nextWindow = event.key === "ArrowRight" || event.code === "KeyD" || key === "d";
+      const windowOffset = previousWindow
         ? -previewPageCount
-        : event.code === "KeyD" || key === "d"
+        : nextWindow
           ? previewPageCount
           : 0;
       if (!windowOffset) return;
       event.preventDefault();
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") event.stopPropagation();
       setPreviewWindowStart(previewWindowStart + windowOffset);
     };
     window.addEventListener("keydown", onKeyDown, true);

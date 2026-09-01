@@ -7,6 +7,7 @@ import type {
   AppActiveWorkSnapshot,
   DownloadEntry,
   DownloadLibraryPage,
+  DownloadOverlapReview,
   DownloadPage,
   GalleryPage,
   InternalArtifactScanProgress,
@@ -1891,6 +1892,180 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it("keeps an earlier automatic overlap exclusion visible when a later candidate decision fails", async () => {
+    const originalSettings = await backend.settingsGet();
+    if (!originalSettings.ok) throw new Error(originalSettings.error.message);
+    const settingsGet = vi.spyOn(backend, "settingsGet").mockResolvedValue({
+      ok: true,
+      data: { ...originalSettings.data, downloadOverlapAutoMode: "strict_quarantine" },
+    });
+
+    const incoming = mockGalleries[3]!;
+    const excludedExisting = mockGalleries[6]!;
+    const pendingExisting = mockGalleries[5]!;
+    const pagePairs = Array.from({ length: 20 }, (_, index) => ({
+      incomingSourcePage: index + 1,
+      existingSourcePage: index + 1,
+      exactSha256: true,
+      dHashDistance: 0,
+      pHashDistance: 0,
+      detailHashDistance: 0,
+      edgeSimilarity: 1,
+      visualSimilarity: 1,
+      lowInformation: false,
+    }));
+    const initialReview: DownloadOverlapReview = {
+      reviewId: "partial-auto-overlap-review",
+      entryId: "partial-auto-incoming",
+      incoming: {
+        entryId: "partial-auto-incoming",
+        galleryId: incoming.id,
+        title: incoming.title,
+        artists: [incoming.artist],
+        pageCount: 25,
+      },
+      revision: 1,
+      state: "pending",
+      profileVersion: 1,
+      policyVersion: 1,
+      incomingFingerprint: "b".repeat(64),
+      candidates: [excludedExisting, pendingExisting].map((gallery, index) => ({
+        candidateId: `partial-auto-candidate-${index + 1}`,
+        existing: {
+          entryId: `partial-auto-existing-${index + 1}`,
+          galleryId: gallery.id,
+          title: gallery.title,
+          artists: [gallery.artist],
+          pageCount: 20,
+        },
+        existingFingerprint: String(index + 1).repeat(64),
+        relation: "incoming_contains_existing" as const,
+        confidence: 0.99,
+        matchedPages: 20,
+        exactPages: 20,
+        visualPages: 0,
+        existingCoverage: 1,
+        incomingCoverage: 0.8,
+        existingUniquePages: 0,
+        incomingUniquePages: 5,
+        longestAlignedRun: 20,
+        rank: index + 1,
+        pagePairs,
+      })),
+      createdAt: "2026-09-02T00:00:00Z",
+      updatedAt: "2026-09-02T00:00:00Z",
+    };
+    const reviewAfterFirstDecision: DownloadOverlapReview = {
+      ...initialReview,
+      revision: 2,
+      candidates: initialReview.candidates.map((candidate, index) => index === 0
+        ? { ...candidate, decision: "existing_removed" }
+        : candidate),
+      updatedAt: "2026-09-02T00:00:01Z",
+    };
+    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({ ok: true, data: [] });
+    const downloadPage: DownloadPage = {
+      page: 1,
+      totalItems: 3,
+      entries: [
+        {
+          entryId: initialReview.entryId,
+          galleryId: incoming.id,
+          revision: 1,
+          state: "review_required",
+          progress: 100,
+          reviewKind: "gallery_duplicate",
+          reviewId: initialReview.reviewId,
+        },
+        {
+          entryId: initialReview.candidates[0]!.existing.entryId,
+          galleryId: excludedExisting.id,
+          revision: 1,
+          state: "failed",
+          progress: 100,
+        },
+        {
+          entryId: initialReview.candidates[1]!.existing.entryId,
+          galleryId: pendingExisting.id,
+          revision: 1,
+          state: "completed",
+          progress: 100,
+        },
+      ],
+    };
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({ ok: true, data: downloadPage });
+    const downloadLibrary = vi.spyOn(backend, "downloadLibraryPageList").mockResolvedValue({
+      ok: true,
+      data: libraryPageFromEntries(downloadPage),
+    });
+    const overlapGet = vi.spyOn(backend, "downloadOverlapReviewGet").mockResolvedValue({ ok: true, data: initialReview });
+    const decision = vi.spyOn(backend, "downloadOverlapDecisionApply")
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { review: reviewAfterFirstDecision, resumed: false, cancelled: false },
+      })
+      .mockResolvedValueOnce({
+        ok: false,
+        error: {
+          code: "PARTIAL_AUTOMATION_FIXTURE",
+          message: "second candidate failed",
+          retryable: true,
+          action: "review",
+        },
+      });
+    const { download: _download, ...excludedSummary } = excludedExisting;
+    vi.spyOn(backend, "searchSubmit").mockResolvedValue({
+      ok: true,
+      data: {
+        queryId: "partial-auto-exclusion-search",
+        firstPage: {
+          page: 1,
+          totalPages: 1,
+          items: [{
+            ...excludedSummary,
+            publishedRank: Number(excludedExisting.publishedAt.replaceAll("-", "")),
+            popularity: excludedExisting.score,
+            thumbnailWidth: excludedExisting.thumbnailWidth ?? 512,
+            thumbnailHeight: excludedExisting.thumbnailHeight ?? 768,
+          }],
+        },
+      },
+    });
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await vi.waitFor(() => expect(settingsGet).toHaveBeenCalled());
+      await vi.waitFor(() => expect(downloadLibrary).toHaveBeenCalled());
+      await vi.waitFor(() => expect(overlapGet).toHaveBeenCalled());
+      await vi.waitFor(() => expect(decision).toHaveBeenCalledTimes(2));
+      expect(decision).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        action: "remove_existing_continue",
+        candidateId: initialReview.candidates[0]!.candidateId,
+        actor: "automation",
+      }));
+      expect(decision).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        action: "remove_existing_continue",
+        candidateId: initialReview.candidates[1]!.candidateId,
+        actor: "automation",
+      }));
+
+      await submitExploreSearch(container);
+      const excludedCard = container.querySelector<HTMLElement>(`[data-gallery-id="${excludedExisting.id}"]`);
+      expect(excludedCard).toHaveClass("is-exploration-blind");
+      expect(excludedCard).toHaveAccessibleName(expect.stringContaining("중복 판정으로 제외"));
+      expect(container).toHaveTextContent("자동 분류 중단 · 직접 검토 필요 · second candidate failed");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("hydrates, routes, and clears per-artifact internal scan progress on exact Downloads cards", async () => {
     const downloads: DownloadPage = {
       page: 1,
@@ -2185,7 +2360,7 @@ describe("App Phase 3A backend flow", () => {
     await act(async () => {
       container.querySelector<HTMLButtonElement>('.review-dialog button[aria-label="닫기"]')?.click();
       await settle();
-      container.querySelector<HTMLButtonElement>('button[aria-label="작업 상태"]')?.click();
+      container.querySelector<HTMLButtonElement>('button[aria-label="활동 알림"]')?.click();
       await settle();
     });
     const processedActivity = [...container.querySelectorAll<HTMLElement>("#activity-panel .activity-item")]
@@ -2507,6 +2682,61 @@ describe("App Phase 3A backend flow", () => {
     } finally {
       await act(async () => root.unmount());
       container.remove();
+    }
+  });
+
+  it("measures detailed Hitomi columns when its workspace first mounts after a source switch", async () => {
+    const originalContentSource = window.localStorage.getItem("atsumi.content-source.v1");
+    window.localStorage.setItem("atsumi.content-source.v1", "danbooru");
+    const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", {
+      configurable: true,
+      get() {
+        return this instanceof HTMLElement && this.classList.contains("gallery-viewport") ? 1_700 : 0;
+      },
+    });
+    const currentSettings = await backend.settingsGet();
+    if (!currentSettings.ok) throw new Error(currentSettings.error.message);
+    const configuredSettings = await backend.settingsUpdate({ maxColumns: 3, previewWidth: 220 }, currentSettings.data.revision);
+    if (!configuredSettings.ok) throw new Error(configuredSettings.error.message);
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle(50);
+      });
+      expect(container).toHaveTextContent("Danbooru post 탐색");
+
+      const banner = container.querySelector<HTMLButtonElement>('.brand[aria-haspopup="menu"]');
+      if (!banner) throw new Error("source banner missing");
+      await act(async () => banner.click());
+      const hitomi = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+        .find((button) => button.textContent?.includes("Hitomi"));
+      await act(async () => {
+        hitomi?.click();
+        await settle(20);
+      });
+      await submitExploreSearch(container);
+
+      const grid = container.querySelector<HTMLElement>('.gallery-grid[data-display-mode="detail"]');
+      expect(grid?.style.gridTemplateColumns).toBe("repeat(3, minmax(0, 1fr))");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
+      else delete (HTMLElement.prototype as unknown as { clientWidth?: number }).clientWidth;
+      if (originalContentSource === null) window.localStorage.removeItem("atsumi.content-source.v1");
+      else window.localStorage.setItem("atsumi.content-source.v1", originalContentSource);
+      const latestSettings = await backend.settingsGet();
+      if (latestSettings.ok) {
+        await backend.settingsUpdate({
+          maxColumns: currentSettings.data.maxColumns,
+          previewWidth: currentSettings.data.previewWidth,
+        }, latestSettings.data.revision);
+      }
     }
   });
 });

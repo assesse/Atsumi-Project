@@ -29,8 +29,8 @@ const shortcutGroups = [
     title: "Floating Detail",
     shortcuts: [
       ["Q · E", "이전·다음 상세 탭"],
-      ["A · D", "추가 미리보기 이전·다음 묶음"],
-      ["A · D", "PAGE PREVIEW 이전·다음 페이지"],
+      ["A · D · ← · →", "추가 미리보기 이전·다음 묶음"],
+      ["A · D · ← · →", "PAGE PREVIEW 이전·다음 페이지"],
     ],
   },
   {

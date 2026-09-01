@@ -43,6 +43,12 @@ export function ExploreContextBar({
       <div className="explore-context-tabs" role="tablist" aria-label="탐색 세션">
         {tabs.map((tab) => {
           const active = tab.id === activeId;
+          const pageDescription = tab.page === undefined
+            ? null
+            : `${tab.page} / ${Math.max(1, tab.totalPages ?? 1)} 페이지`;
+          const accessibleStatus = [tab.busy ? "불러오는 중" : null, pageDescription]
+            .filter(Boolean)
+            .join(", ");
           return (
             <div className={`explore-context-tab-shell${active ? " is-active" : ""}`} key={tab.id}>
               <button
@@ -51,15 +57,13 @@ export function ExploreContextBar({
                 role="tab"
                 aria-selected={active}
                 aria-controls="gallery-viewport"
+                aria-busy={tab.busy || undefined}
+                aria-label={accessibleStatus ? `${tab.label}, ${accessibleStatus}` : tab.label}
                 data-explore-context-id={tab.id}
                 onClick={() => onActivate(tab.id)}
               >
                 <span>{tab.label}</span>
-                {tab.busy ? (
-                  <small>불러오는 중</small>
-                ) : tab.page !== undefined ? (
-                  <small>{tab.page} / {Math.max(1, tab.totalPages ?? 1)}</small>
-                ) : null}
+                {tab.busy ? <small>불러오는 중</small> : null}
               </button>
               {!tab.root ? (
                 <button

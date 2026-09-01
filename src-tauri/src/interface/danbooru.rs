@@ -2,13 +2,14 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use md5::{Digest, Md5};
-use reqwest::{blocking::Client, StatusCode, Url};
+use reqwest::{blocking::Client, header::CONTENT_TYPE, StatusCode, Url};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use tauri::State;
 
@@ -17,7 +18,11 @@ use super::{commands::AppState, ApiAction, ApiError, ApiResult};
 const API_ROOT: &str = "https://danbooru.donmai.us";
 const API_START_INTERVAL: Duration = Duration::from_millis(250);
 const MAX_DOWNLOAD_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_DISPLAY_MEDIA_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_CONCURRENT_MEDIA_REQUESTS: usize = 6;
 const INDEX_FILE: &str = ".atsumi-danbooru-index.json";
+const MEDIA_PROXY_HTTP_ROOT: &str = "http://danbooru-media.localhost/";
+const MEDIA_PROXY_SCHEME_ROOT: &str = "danbooru-media://localhost/";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -174,6 +179,44 @@ pub struct DanbooruClient {
     http: Client,
     next_start: Arc<Mutex<Instant>>,
     download_index: Arc<Mutex<()>>,
+    media_gate: Arc<MediaGate>,
+}
+
+struct MediaGate {
+    active: Mutex<usize>,
+    available: Condvar,
+}
+
+struct MediaPermit<'a> {
+    gate: &'a MediaGate,
+}
+
+pub(crate) struct DanbooruMedia {
+    pub bytes: Vec<u8>,
+    pub content_type: String,
+}
+
+impl MediaGate {
+    fn acquire(&self) -> Result<MediaPermit<'_>, DanbooruError> {
+        let mut active = self.active.lock().map_err(|_| DanbooruError::Unavailable)?;
+        while *active >= MAX_CONCURRENT_MEDIA_REQUESTS {
+            active = self
+                .available
+                .wait(active)
+                .map_err(|_| DanbooruError::Unavailable)?;
+        }
+        *active += 1;
+        Ok(MediaPermit { gate: self })
+    }
+}
+
+impl Drop for MediaPermit<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.gate.active.lock() {
+            *active = active.saturating_sub(1);
+            self.gate.available.notify_one();
+        }
+    }
 }
 
 impl DanbooruClient {
@@ -191,6 +234,10 @@ impl DanbooruClient {
             http,
             next_start: Arc::new(Mutex::new(Instant::now())),
             download_index: Arc::new(Mutex::new(())),
+            media_gate: Arc::new(MediaGate {
+                active: Mutex::new(0),
+                available: Condvar::new(),
+            }),
         })
     }
 
@@ -210,7 +257,6 @@ impl DanbooruClient {
                 has_more: false,
             });
         }
-        validate_anonymous_tag_count(&tags)?;
         let mut url =
             Url::parse(&format!("{API_ROOT}/posts.json")).map_err(|_| DanbooruError::Protocol)?;
         url.query_pairs_mut()
@@ -384,16 +430,71 @@ impl DanbooruClient {
             .min(u64::from(u32::MAX)) as u32;
         let page = request.page.min(total_pages);
         let offset = usize::try_from((page - 1) * request.page_size).unwrap_or(usize::MAX);
-        let items = records
+        let mut items: Vec<DanbooruDownloadRecord> = records
             .into_iter()
             .skip(offset)
             .take(request.page_size as usize)
             .collect();
+        for record in &mut items {
+            record.post.proxy_display_media();
+        }
         Ok(DanbooruDownloadsPage {
             items,
             page,
             total,
             total_pages,
+        })
+    }
+
+    pub(crate) fn media(&self, token: &str) -> Result<DanbooruMedia, DanbooruError> {
+        let remote_url = decode_media_proxy_token(token)?;
+        let _permit = self.media_gate.acquire()?;
+        let mut response = self
+            .http
+            .get(remote_url)
+            .send()
+            .map_err(|_| DanbooruError::Unavailable)?;
+        map_http_status(response.status(), None)?;
+        if response
+            .content_length()
+            .is_some_and(|length| length > MAX_DISPLAY_MEDIA_BYTES)
+        {
+            return Err(DanbooruError::DownloadTooLarge);
+        }
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .map(str::trim)
+            .filter(|value| is_display_image_content_type(value))
+            .ok_or(DanbooruError::UnsupportedMedia)?
+            .to_owned();
+        let mut bytes = Vec::with_capacity(
+            response
+                .content_length()
+                .unwrap_or_default()
+                .min(MAX_DISPLAY_MEDIA_BYTES) as usize,
+        );
+        let mut chunk = [0_u8; 64 * 1024];
+        loop {
+            let count = response
+                .read(&mut chunk)
+                .map_err(|_| DanbooruError::Unavailable)?;
+            if count == 0 {
+                break;
+            }
+            if bytes.len().saturating_add(count) > MAX_DISPLAY_MEDIA_BYTES as usize {
+                return Err(DanbooruError::DownloadTooLarge);
+            }
+            bytes.extend_from_slice(&chunk[..count]);
+        }
+        if bytes.is_empty() {
+            return Err(DanbooruError::Protocol);
+        }
+        Ok(DanbooruMedia {
+            bytes,
+            content_type,
         })
     }
 
@@ -517,7 +618,7 @@ fn api_error(error: DanbooruError) -> ApiError {
         ),
         DanbooruError::TagLimit => (
             "DANBOORU_TAG_LIMIT",
-            "Danbooru 비로그인 검색은 태그를 최대 2개까지 사용할 수 있습니다.",
+            "Danbooru 비로그인 검색은 제한 대상 조건을 최대 2개까지 사용할 수 있습니다.",
             false,
             ApiAction::None,
         ),
@@ -599,7 +700,14 @@ fn api_error(error: DanbooruError) -> ApiError {
 
 impl From<RemotePost> for DanbooruPost {
     fn from(value: RemotePost) -> Self {
-        Self {
+        let file_ext = value.file_ext.to_lowercase();
+        let preview_url = clean_optional(value.preview_file_url);
+        let large_url = if is_display_image_extension(&file_ext) {
+            clean_optional(value.large_file_url).or_else(|| preview_url.clone())
+        } else {
+            preview_url.clone()
+        };
+        let mut post = Self {
             id: value.id,
             created_at: value.created_at,
             rating: value.rating,
@@ -607,12 +715,12 @@ impl From<RemotePost> for DanbooruPost {
             favorite_count: value.fav_count,
             image_width: value.image_width,
             image_height: value.image_height,
-            file_ext: value.file_ext.to_lowercase(),
+            file_ext,
             file_size: value.file_size,
             md5: clean_optional(value.md5),
             source: clean_optional(value.source),
-            preview_url: clean_optional(value.preview_file_url),
-            large_url: clean_optional(value.large_file_url),
+            preview_url,
+            large_url,
             file_url: clean_optional(value.file_url),
             artists: split_tags(&value.tag_string_artist),
             copyrights: split_tags(&value.tag_string_copyright),
@@ -620,7 +728,16 @@ impl From<RemotePost> for DanbooruPost {
             tags: split_tags(&value.tag_string_general),
             parent_id: value.parent_id,
             has_children: value.has_children,
-        }
+        };
+        post.proxy_display_media();
+        post
+    }
+}
+
+impl DanbooruPost {
+    fn proxy_display_media(&mut self) {
+        self.preview_url = self.preview_url.take().and_then(proxy_media_url);
+        self.large_url = self.large_url.take().and_then(proxy_media_url);
     }
 }
 
@@ -686,13 +803,6 @@ fn normalize_query(value: &str) -> Result<String, DanbooruError> {
     Ok(normalized)
 }
 
-fn validate_anonymous_tag_count(tags: &str) -> Result<(), DanbooruError> {
-    if tags.split_whitespace().count() > 2 {
-        return Err(DanbooruError::TagLimit);
-    }
-    Ok(())
-}
-
 fn map_http_status(status: StatusCode, body: Option<&str>) -> Result<(), DanbooruError> {
     if status.is_success() {
         return Ok(());
@@ -722,10 +832,45 @@ fn validate_media_url(value: &str) -> Result<Url, DanbooruError> {
     Ok(url)
 }
 
+fn proxy_media_url(value: String) -> Option<String> {
+    if value.starts_with(MEDIA_PROXY_HTTP_ROOT) || value.starts_with(MEDIA_PROXY_SCHEME_ROOT) {
+        return Some(value);
+    }
+    validate_media_url(&value).ok()?;
+    let token = URL_SAFE_NO_PAD.encode(value.as_bytes());
+    #[cfg(target_os = "windows")]
+    let root = MEDIA_PROXY_HTTP_ROOT;
+    #[cfg(not(target_os = "windows"))]
+    let root = MEDIA_PROXY_SCHEME_ROOT;
+    Some(format!("{root}{token}"))
+}
+
+fn decode_media_proxy_token(token: &str) -> Result<Url, DanbooruError> {
+    if token.is_empty() || token.len() > 4_096 || token.contains('/') {
+        return Err(DanbooruError::UnsafeMediaUrl);
+    }
+    let bytes = URL_SAFE_NO_PAD
+        .decode(token)
+        .map_err(|_| DanbooruError::UnsafeMediaUrl)?;
+    let value = String::from_utf8(bytes).map_err(|_| DanbooruError::UnsafeMediaUrl)?;
+    validate_media_url(&value)
+}
+
+fn is_display_image_extension(extension: &str) -> bool {
+    matches!(extension, "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif")
+}
+
+fn is_display_image_content_type(content_type: &str) -> bool {
+    matches!(
+        content_type.to_ascii_lowercase().as_str(),
+        "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/avif"
+    )
+}
+
 fn validate_extension(value: &str) -> Result<String, DanbooruError> {
     let extension = value.trim().to_lowercase();
     match extension.as_str() {
-        "jpg" | "jpeg" | "png" | "gif" | "webp" | "webm" | "mp4" | "zip" => {
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "avif" | "webm" | "mp4" | "zip" => {
             Ok(if extension == "jpeg" {
                 "jpg".into()
             } else {
@@ -863,10 +1008,72 @@ mod tests {
     }
 
     #[test]
-    fn anonymous_search_limit_is_explicit() {
-        assert!(validate_anonymous_tag_count("one two").is_ok());
+    fn media_proxy_round_trip_preserves_only_allowlisted_urls() {
+        let remote = "https://cdn.donmai.us/180x180/aa/bb/example.jpg";
+        let proxied = proxy_media_url(remote.into()).unwrap();
+        let token = proxied.rsplit('/').next().unwrap();
+        assert_eq!(decode_media_proxy_token(token).unwrap().as_str(), remote);
+        assert_eq!(proxy_media_url(proxied.clone()), Some(proxied));
+        assert!(proxy_media_url("https://cdn.donmai.us.evil.example/a.jpg".into()).is_none());
+    }
+
+    #[test]
+    fn video_posts_use_the_static_preview_for_display() {
+        let converted = DanbooruPost::from(RemotePost {
+            id: 9,
+            created_at: String::new(),
+            rating: "g".into(),
+            score: 0,
+            fav_count: 0,
+            image_width: 1,
+            image_height: 1,
+            file_ext: "webm".into(),
+            file_size: 1,
+            md5: None,
+            source: None,
+            preview_file_url: Some("https://cdn.donmai.us/180x180/aa/bb/preview.jpg".into()),
+            large_file_url: Some("https://cdn.donmai.us/original/aa/bb/video.webm".into()),
+            file_url: Some("https://cdn.donmai.us/original/aa/bb/video.webm".into()),
+            tag_string_general: String::new(),
+            tag_string_artist: String::new(),
+            tag_string_character: String::new(),
+            tag_string_copyright: String::new(),
+            parent_id: None,
+            has_children: false,
+        });
+        assert_eq!(converted.large_url, converted.preview_url);
+        assert!(converted
+            .large_url
+            .as_deref()
+            .is_some_and(|url| url.starts_with(MEDIA_PROXY_HTTP_ROOT)
+                || url.starts_with(MEDIA_PROXY_SCHEME_ROOT)));
+    }
+
+    #[test]
+    #[ignore = "opt-in live Danbooru general-rated thumbnail transport smoke"]
+    fn live_general_thumbnail_round_trips_through_the_app_proxy() {
+        let client = DanbooruClient::new().unwrap();
+        let page = client
+            .search(DanbooruSearchRequest {
+                tags: "rating:g".into(),
+                page: 1,
+                page_size: 1,
+            })
+            .unwrap();
+        let proxy_url = page.items[0].preview_url.as_deref().unwrap();
+        let token = proxy_url.rsplit('/').next().unwrap();
+        let media = client.media(token).unwrap();
+        assert!(!media.bytes.is_empty());
+        assert!(is_display_image_content_type(&media.content_type));
+    }
+
+    #[test]
+    fn server_tag_limit_error_is_preserved() {
         assert_eq!(
-            validate_anonymous_tag_count("one two three"),
+            map_http_status(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Some("PostQuery::TagLimitError"),
+            ),
             Err(DanbooruError::TagLimit)
         );
     }

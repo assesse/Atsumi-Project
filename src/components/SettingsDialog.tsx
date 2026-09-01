@@ -14,6 +14,17 @@ import type {
 } from "../api/contracts";
 import type { GalleryId } from "../core/types";
 import {
+  DANBOORU_FILE_TYPES,
+  DANBOORU_RATINGS,
+  DANBOORU_SORTS,
+  defaultDanbooruSearchFilters,
+  loadDanbooruSearchPreferences,
+  saveDanbooruSearchPreferences,
+  type DanbooruFileType,
+  type DanbooruRating,
+  type DanbooruSearchFilters,
+} from "../danbooru/searchPreferences";
+import {
   GALLERY_PREVIEW_PRESETS,
   galleryPreviewPresetIndex,
 } from "../layout/galleryPreviewPresets";
@@ -115,7 +126,8 @@ export function SettingsDialog({
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateMessage, setUpdateMessage] = useState("");
   const [rebuildOptions, setRebuildOptions] = useState({ thumbnail: true, duplicate: false, internal: false, autoFind: false });
-  const [activeTab, setActiveTab] = useState<"general" | "search">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "hitomi" | "danbooru">("general");
+  const [danbooruDraft, setDanbooruDraft] = useState<DanbooruSearchFilters>(defaultDanbooruSearchFilters);
   const [exclusions, setExclusions] = useState<ExplorationExclusion[]>([]);
   const [exclusionsLoading, setExclusionsLoading] = useState(false);
   const [exclusionsError, setExclusionsError] = useState("");
@@ -139,6 +151,7 @@ export function SettingsDialog({
       setInformationMessage("");
       setUpdateMessage("");
       setActiveTab("general");
+      setDanbooruDraft(loadDanbooruSearchPreferences());
       setExclusions([]);
       setExclusionsError("");
       setSelectedExclusionIds(new Set());
@@ -219,7 +232,7 @@ export function SettingsDialog({
   }, [draft.folderNameTemplate, onPreviewFolderName, open]);
 
   useEffect(() => {
-    if (!open || activeTab !== "search") return undefined;
+    if (!open || activeTab !== "hitomi") return undefined;
     let cancelled = false;
     setExclusionsLoading(true);
     setExclusionsError("");
@@ -363,7 +376,10 @@ export function SettingsDialog({
       searchExcludeTags: draft.searchExcludeTags,
     });
     setSaving(false);
-    if (success) close();
+    if (success) {
+      saveDanbooruSearchPreferences(danbooruDraft);
+      close();
+    }
   };
 
   return (
@@ -409,20 +425,29 @@ export function SettingsDialog({
           <button
             type="button"
             role="tab"
-            aria-selected={activeTab === "search"}
-            className={activeTab === "search" ? "is-active" : ""}
-            onClick={() => setActiveTab("search")}
-          >검색 관리</button>
+            aria-selected={activeTab === "hitomi"}
+            className={activeTab === "hitomi" ? "is-active" : ""}
+            onClick={() => setActiveTab("hitomi")}
+          >Hitomi</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "danbooru"}
+            className={activeTab === "danbooru" ? "is-active" : ""}
+            onClick={() => setActiveTab("danbooru")}
+          >Danbooru</button>
         </nav>
         <div className="settings-layout settings-layout-single">
           <section className="settings-content" data-settings-scroll-root="true">
               {error ? <div className="inline-error" role="alert">{error.message}</div> : null}
-              {activeTab === "general" ? <>
-                <div className="setting-row">
-                  <div><strong>다운로드 폴더</strong><span>완료된 갤러리를 저장할 위치</span></div>
+              {activeTab === "general" ? <div className="settings-scope-intro"><span className="eyebrow">ATSUMI COMMON</span><h3>일반 설정</h3><p>두 소스가 함께 사용하는 저장 위치·화면 크기·개인정보 보호·프로그램 관리 설정입니다.</p></div> : null}
+              {activeTab === "hitomi" ? <div className="settings-scope-intro"><span className="eyebrow">HITOMI LIBRARY</span><h3>Hitomi 설정</h3><p>앨범·Auto Find·판본 중복·Related galleries·Hitomi 태그 검색에만 적용됩니다.</p></div> : null}
+              {activeTab !== "danbooru" ? <>
+                <div className="setting-row" hidden={activeTab !== "general"}>
+                  <div><strong>다운로드 폴더</strong><span>Hitomi 앨범과 Danbooru 원본을 저장할 공통 루트</span></div>
                   <input value={draft.downloadRoot} placeholder="폴더를 선택하세요" aria-label="다운로드 폴더" onChange={(event) => patch("downloadRoot", event.target.value)} />
                 </div>
-                <section className="storage-usage-panel" aria-labelledby="storage-usage-title">
+                <section className="storage-usage-panel" aria-labelledby="storage-usage-title" hidden={activeTab !== "general"}>
                   <header className="storage-usage-header">
                     <div>
                       <span className="eyebrow">STORAGE</span>
@@ -501,7 +526,7 @@ export function SettingsDialog({
                     </ul> : null}
                   </> : null}
                 </section>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div>
                     <strong>갤러리 폴더 이름</strong>
                     <span>{"사용가능 인자 : {artist}, {title}, {group}, {id}"}</span>
@@ -524,7 +549,7 @@ export function SettingsDialog({
                     </button>
                   </div>
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div>
                     <strong>Auto Find 기록 기준</strong>
                     <span>변경한 기준은 다음 Auto Find 실행부터 적용됩니다.</span>
@@ -542,11 +567,11 @@ export function SettingsDialog({
                     <FluentIcon glyph="\uE70D" />
                   </div>
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div>
                     <strong>다운로드 판본 자동 판정</strong>
-                    <span>포함률 99.5% 이상·고유 페이지 0장·정확 일치 90% 이상 등 엄격한 추가 페이지 규칙만 사용합니다.</span>
-                    <span>번역판·검열 차이·거의 동일·부분 겹침은 항상 직접 검토하며, 자동 제거도 영구 삭제가 아닌 복구 가능한 격리입니다.</span>
+                    <span>포함률 95% 이상이면서 판본 간 페이지 차이가 5장 이하인 포함·거의 동일 판본만 판단합니다.</span>
+                    <span>제목에서 무검열 표식이 확인되면 그 판본을 우선합니다. 다만 포함 관계에서 더 큰 판본이 검열판이고 작은 판본이 무검열판인 충돌, 또는 근거가 부족한 경우에는 직접 검토합니다. 자동 제거도 영구 삭제가 아닌 복구 가능한 격리입니다.</span>
                   </div>
                   <div className="settings-select-control">
                     <select
@@ -556,20 +581,20 @@ export function SettingsDialog({
                     >
                       <option value="off">사용 안 함</option>
                       <option value="recommend">추천만 표시</option>
-                      <option value="strict_quarantine">엄격 기준 자동 격리</option>
+                      <option value="strict_quarantine">95% 기준 자동 정리</option>
                     </select>
                     <FluentIcon glyph="\uE70D" />
                   </div>
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "general"}>
                   <div>
-                    <strong>Explore 페이지당 앨범 수</strong>
-                    <span>다음 새 탐색부터 한 페이지에 불러올 앨범 수</span>
+                    <strong>Explore 페이지당 항목 수</strong>
+                    <span>다음 새 탐색부터 불러올 Hitomi 앨범 또는 Danbooru post 수 · Danbooru는 API 안전 상한 100개까지</span>
                   </div>
                   <div className="range-wrap">
                     <input
                       id="settings-explore-page-size"
-                      aria-label="Explore 페이지당 앨범 수"
+                      aria-label="Explore 페이지당 항목 수"
                       type="range"
                       min="10"
                       max="200"
@@ -580,22 +605,22 @@ export function SettingsDialog({
                     <output htmlFor="settings-explore-page-size">{draft.explorePageSize}개</output>
                   </div>
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>앨범 카드 최대 열 수</strong><span>창이 넓어도 설정한 열 수를 넘지 않습니다</span></div>
                   <div className="range-wrap"><input id="settings-max-columns" aria-label="앨범 카드 최대 열 수" type="range" min="1" max="4" step="1" value={draft.maxColumns} onChange={(event) => { const value = Number(event.target.value); patch("maxColumns", value); previewLayout(value, draft.previewWidth); }} /><output htmlFor="settings-max-columns">{draft.maxColumns}열</output></div>
                 </div>
-                <div className="setting-row">
-                  <div><strong>앨범 미리보기 크기</strong><span>Explore와 Downloads에 함께 적용</span></div>
-                  <div className="range-wrap"><input id="settings-preview-width" aria-label="앨범 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(draft.previewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[2]!; patch("previewWidth", preset.width); previewLayout(draft.maxColumns, preset.width); }} /><output htmlFor="settings-preview-width">{draft.previewWidth}px</output></div>
+                <div className="setting-row" hidden={activeTab !== "general"}>
+                  <div><strong>카드 미리보기 크기</strong><span>Hitomi 앨범과 Danbooru post의 Explore·Downloads에 함께 적용</span></div>
+                  <div className="range-wrap"><input id="settings-preview-width" aria-label="카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(draft.previewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[2]!; patch("previewWidth", preset.width); previewLayout(draft.maxColumns, preset.width); }} /><output htmlFor="settings-preview-width">{draft.previewWidth}px</output></div>
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>Related galleries 미리보기 크기</strong><span>Floating Detail 안의 Related galleries에만 적용</span></div>
                   <div className="range-wrap"><input id="settings-related-preview-width" aria-label="Related galleries 미리보기 크기" type="range" min="180" max="320" step="20" value={draft.relatedPreviewWidth} onChange={(event) => patch("relatedPreviewWidth", Number(event.target.value))} /><output htmlFor="settings-related-preview-width">{draft.relatedPreviewWidth}px</output></div>
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "general"}>
                   <div>
                     <strong>개인정보 보호 모드</strong>
-                    <span>앨범·페이지 미리보기만 화면에서 가립니다. 이미지 요청과 캐시는 계속 사용됩니다.</span>
+                    <span>Hitomi 앨범·페이지와 Danbooru 카드·상세 이미지를 화면에서 가립니다. 이미지 요청과 캐시는 계속 사용됩니다.</span>
                   </div>
                   <label className="setting-checkbox">
                     <input
@@ -608,22 +633,22 @@ export function SettingsDialog({
                     <span>{draft.privacyMode ? "사용 중" : "사용 안 함"}</span>
                   </label>
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>동시 이미지 요청</strong><span>안정 기본값 5</span></div>
                   <input type="number" min="1" max="30" value={draft.concurrentImageRequests} aria-label="동시 이미지 요청" onChange={(event) => patch("concurrentImageRequests", Number(event.target.value))} />
                 </div>
-                <div className="setting-row">
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>요청 시작 간격</strong><span>안정 기본값 25ms</span></div>
                   <input type="number" min="0" max="5000" value={draft.requestStartIntervalMs} aria-label="요청 시작 간격" onChange={(event) => patch("requestStartIntervalMs", Number(event.target.value))} />
                 </div>
-                <div className="setting-row settings-reset-row">
+                <div className="setting-row settings-reset-row" hidden={activeTab !== "general"}>
                   <div>
                     <strong>설정 초기화</strong>
                     <span>화면·미리보기·네트워크 설정을 기본값으로 되돌립니다. 저장을 눌러야 적용됩니다.</span>
                   </div>
                   <button type="button" className="text-button" disabled={maintenanceBusy !== null} onClick={restorePreferenceDefaults}>설정 기본값</button>
                 </div>
-                <section className="maintenance-panel" aria-labelledby="maintenance-panel-title">
+                <section className="maintenance-panel" aria-labelledby="maintenance-panel-title" hidden={activeTab !== "hitomi"}>
                   <header className="maintenance-panel-header">
                     <strong id="maintenance-panel-title">저장 데이터 관리</strong>
                     <p>원본 파일과 사용자 판정을 보존하는 복구·검사 작업과, 외부 원본을 보존하는 앱 데이터 초기화를 제공합니다.</p>
@@ -660,7 +685,7 @@ export function SettingsDialog({
                     </article>
                   </div>
                 </section>
-                <section className="settings-about-panel" aria-labelledby="settings-about-title">
+                <section className="settings-about-panel" aria-labelledby="settings-about-title" hidden={activeTab !== "general"}>
                   <header>
                     <div>
                       <span className="eyebrow">ABOUT &amp; FEEDBACK</span>
@@ -681,7 +706,8 @@ export function SettingsDialog({
                   </div>
                   <p className="settings-about-message" role="status" aria-live="polite">{updateMessage || informationMessage}</p>
                 </section>
-              </> : <>
+              </> : null}
+              {activeTab === "hitomi" ? <>
                 <section className="search-catalog-panel" aria-labelledby="search-catalog-title">
                   <header>
                     <div>
@@ -815,10 +841,91 @@ export function SettingsDialog({
                     </div>
                   ) : null}
                 </section>
-              </>}
+              </> : null}
+              {activeTab === "danbooru" ? (
+                <DanbooruSettingsPanel
+                  filters={danbooruDraft}
+                  onChange={setDanbooruDraft}
+                  onReset={() => setDanbooruDraft(defaultDanbooruSearchFilters())}
+                />
+              ) : null}
           </section>
         </div>
       </div>
     </dialog>
+  );
+}
+
+function DanbooruSettingsPanel({
+  filters,
+  onChange,
+  onReset,
+}: {
+  filters: DanbooruSearchFilters;
+  onChange: (filters: DanbooruSearchFilters) => void;
+  onReset: () => void;
+}) {
+  const toggleRating = (rating: DanbooruRating, checked: boolean) => onChange({
+    ...filters,
+    ratings: checked
+      ? DANBOORU_RATINGS.map(({ value }) => value).filter((value) => filters.ratings.includes(value) || value === rating)
+      : filters.ratings.filter((value) => value !== rating),
+  });
+  const toggleFileType = (fileType: DanbooruFileType, checked: boolean) => onChange({
+    ...filters,
+    fileTypes: checked
+      ? DANBOORU_FILE_TYPES.map(({ value }) => value).filter((value) => filters.fileTypes.includes(value) || value === fileType)
+      : filters.fileTypes.filter((value) => value !== fileType),
+  });
+  return (
+    <div className="danbooru-settings-panel">
+      <div className="settings-scope-intro">
+        <span className="eyebrow">DANBOORU POSTS</span>
+        <h3>Danbooru 설정</h3>
+        <p>개별 post 검색의 기본 메타 조건입니다. Hitomi 앨범 검색·Auto Find·중복 판정에는 영향을 주지 않습니다.</p>
+      </div>
+      <section className="danbooru-settings-section" aria-labelledby="danbooru-default-search-title">
+        <header><h3 id="danbooru-default-search-title">새 검색 기본값</h3><p>단부루 모드를 새로 열거나 기본 조건을 불러올 때 사용합니다.</p></header>
+        <div className="setting-row">
+          <div><strong>기본 등급</strong><span>4종: General(g), Sensitive(s), Questionable(q), Explicit(e)</span></div>
+          <div className="danbooru-settings-checks">
+            {DANBOORU_RATINGS.map((rating) => <label key={rating.value} title={rating.description}><input type="checkbox" checked={filters.ratings.includes(rating.value)} onChange={(event) => toggleRating(rating.value, event.target.checked)} /> {rating.label}</label>)}
+          </div>
+        </div>
+        <div className="setting-row">
+          <div><strong>기본 파일 형식</strong><span>미선택 또는 전체 선택은 형식을 제한하지 않습니다.</span></div>
+          <div className="danbooru-settings-checks is-files">
+            {DANBOORU_FILE_TYPES.map((fileType) => <label key={fileType.value}><input type="checkbox" checked={filters.fileTypes.includes(fileType.value)} onChange={(event) => toggleFileType(fileType.value, event.target.checked)} /> {fileType.label}</label>)}
+          </div>
+        </div>
+        <div className="setting-row">
+          <div><strong>기본 정렬</strong><span>최신순 외 정렬은 무료 검색의 일반 조건 1개를 사용합니다.</span></div>
+          <div className="settings-select-control">
+            <select aria-label="Danbooru 기본 정렬" value={filters.sort} onChange={(event) => onChange({ ...filters, sort: event.target.value as DanbooruSearchFilters["sort"] })}>
+              {DANBOORU_SORTS.map((sort) => <option key={sort.value} value={sort.value}>{sort.label}</option>)}
+            </select>
+            <FluentIcon glyph="\uE70D" />
+          </div>
+        </div>
+        <div className="setting-row">
+          <div><strong>카드 이미지 품질</strong><span>180px 썸네일 대신 최대 850px large/sample을 지연 로드합니다.</span></div>
+          <span className="settings-fixed-value">고화질 고정</span>
+        </div>
+        <div className="setting-row settings-reset-row">
+          <div><strong>Danbooru 기본값 초기화</strong><span>등급·형식·정렬 기본값만 되돌립니다.</span></div>
+          <button type="button" className="text-button" onClick={onReset}>Danbooru 기본값</button>
+        </div>
+      </section>
+      <section className="danbooru-metatag-guide" aria-labelledby="danbooru-metatag-guide-title">
+        <header><span className="eyebrow">SEARCH METADATA</span><h3 id="danbooru-metatag-guide-title">검색 제한과 메타데이터</h3><p>익명·무료 Member는 제한 대상 조건을 최대 2개 사용할 수 있습니다.</p></header>
+        <div className="danbooru-metatag-groups">
+          <article><strong>고정 선택 값</strong><p>등급은 정확히 4종이며 관계는 존재 여부나 post ID를 받습니다.</p><code>rating:g|s|q|e · parent:any|none|ID · child:any|none|ID · filetype:jpg|png|gif|webp|avif|webm|mp4|zip</code></article>
+          <article><strong>범위·비교 입력</strong><p>날짜 범위와 수치 비교를 같은 문법으로 조합할 수 있습니다.</p><code>date:2026-08-01..2026-08-31 · score:&gt;=20 · favcount:&gt;=5 · width:&gt;=1600 · ratio:&gt;1</code></article>
+          <article><strong>제한에서 제외</strong><p>일반 태그 2개와 함께 추가해도 슬롯을 쓰지 않습니다.</p><code>status rating limit is id date age filesize filetype parent child md5 width height duration mpixels ratio score upvote downvotes favcount embedded tagcount pixiv_id pixiv</code></article>
+          <article><strong>제한에 포함</strong><p>각 종류가 일반 태그와 같은 슬롯을 사용합니다.</p><code>order source pool user fav favgroup has ai note comment commentary search wildcards</code></article>
+          <article><strong>정렬 값</strong><p>Atsumi가 제공하는 주요 정렬이며 한 번에 하나만 사용할 수 있습니다.</p><code>id_asc score favcount mpixels filesize tagcount portrait landscape</code></article>
+        </div>
+      </section>
+    </div>
   );
 }

@@ -35,7 +35,11 @@ import type {
   TagNamespace,
   TagSuggestion,
 } from "./api/contracts";
-import { ActivityDrawer } from "./components/ActivityDrawer";
+import {
+  ActivityDrawer,
+  type AutomaticOverlapActivity,
+  type SessionDownloadActivity,
+} from "./components/ActivityDrawer";
 import { AutoFindPager } from "./components/AutoFindPager";
 import { DetailWorkspace } from "./components/DetailWorkspace";
 import { DanbooruWorkspace } from "./components/DanbooruWorkspace";
@@ -112,13 +116,13 @@ const loadExplorationExclusions = () => backend.explorationExclusionsList();
 const restoreExplorationExclusions = (galleryIds: GalleryId[]) =>
   backend.explorationExclusionsRestore(galleryIds);
 
-const activeDownloadStates: ReadonlySet<DownloadState> = new Set([
-  "queued",
-  "resolving_metadata",
-  "downloading",
-  "hashing",
-  "verifying",
-  "retry_wait",
+const activityNotificationStates: ReadonlySet<DownloadState> = new Set([
+  "completed",
+  "failed",
+  "interrupted",
+  "review_required",
+  "cancelled",
+  "quarantined",
 ]);
 
 type Toast = { id: number; message: string } | null;
@@ -287,6 +291,9 @@ export default function App() {
   const [forceQuitArmed, setForceQuitArmed] = useState(false);
   const [exitActionPending, setExitActionPending] = useState(false);
   const [pendingDownloadEntries, setPendingDownloadEntries] = useState<ReadonlySet<string>>(() => new Set());
+  const [sessionDownloadActivities, setSessionDownloadActivities] = useState<SessionDownloadActivity[]>([]);
+  const [automaticOverlapActivities, setAutomaticOverlapActivities] = useState<AutomaticOverlapActivity[]>([]);
+  const [unreadActivityCount, setUnreadActivityCount] = useState(0);
   const exitConfirmOpenRef = useRef(false);
   const exitActionPendingRef = useRef(false);
   const exitSnapshotSequence = useRef(0);
@@ -311,6 +318,8 @@ export default function App() {
   const downloadHydrationToken = useRef(0);
   const queueRequestSequence = useRef(0);
   const pendingDownloadEntriesRef = useRef(new Set<string>());
+  const sessionDownloadStatesRef = useRef(new Map<GalleryId, DownloadState | undefined>());
+  const automaticOverlapActivityIdsRef = useRef(new Set<string>());
   const undoPendingRef = useRef(false);
   const pendingFavoriteTokens = useRef(new Set<string>());
   const openingDownloadFolders = useRef(new Set<string>());
@@ -430,6 +439,34 @@ export default function App() {
     window.clearTimeout(toastTimer.current);
     setToast({ id: Date.now(), message });
     toastTimer.current = window.setTimeout(() => setToast(null), 2400);
+  }, []);
+
+  const recordSessionDownloadActivity = useCallback((id: GalleryId, state?: DownloadState) => {
+    const known = sessionDownloadStatesRef.current.has(id);
+    const previousState = sessionDownloadStatesRef.current.get(id);
+    sessionDownloadStatesRef.current.set(id, state);
+    const attentionTransition = known
+      && state !== undefined
+      && state !== previousState
+      && activityNotificationStates.has(state);
+    if (known && !attentionTransition) return;
+
+    const occurredAt = Date.now();
+    setSessionDownloadActivities((current) => known
+      ? current.map((activity) => activity.galleryId === id
+        ? { galleryId: id, occurredAt, state }
+        : activity)
+      : [{ galleryId: id, occurredAt, state }, ...current]);
+    if (!uiRef.current.overlays.activityOpen) setUnreadActivityCount((current) => current + 1);
+  }, []);
+
+  const recordAutomaticOverlapActivity = useCallback((activity: AutomaticOverlapActivity) => {
+    if (automaticOverlapActivityIdsRef.current.has(activity.id)) return;
+    automaticOverlapActivityIdsRef.current.add(activity.id);
+    setAutomaticOverlapActivities((current) => [activity, ...current]);
+    if (!uiRef.current.overlays.activityOpen) {
+      setUnreadActivityCount((current) => current + 1);
+    }
   }, []);
 
   const replaceExploreContextIds = useCallback((ids: string[]) => {
@@ -907,12 +944,13 @@ export default function App() {
     const observer = new ResizeObserver(update);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [currentGalleryDisplayMode, maximumColumns, previewWidth, settingsLoading]);
+  }, [contentSource, currentGalleryDisplayMode, maximumColumns, previewWidth, settingsLoading]);
 
   useEffect(() => {
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
     void backend.on("download:changed", (event: DownloadChangedEvent) => {
+      recordSessionDownloadActivity(galleryId(event.galleryId), event.state);
       setGalleries((current) => {
         const projection = applyDownloadChanged(current, event);
         return projection.galleries;
@@ -927,7 +965,7 @@ export default function App() {
       disposed = true;
       unsubscribe?.();
     };
-  }, [showToast]);
+  }, [recordSessionDownloadActivity, showToast]);
 
   useEffect(() => {
     let disposed = false;
@@ -1270,10 +1308,6 @@ export default function App() {
       && ["failed", "interrupted", "review_required"].includes(gallery.download?.state ?? "")).length,
     [allGalleries, duplicateHiddenGalleryIds],
   );
-  const activeDownloadCount = useMemo(
-    () => allGalleries.filter((gallery) => gallery.download && activeDownloadStates.has(gallery.download.state)).length,
-    [allGalleries],
-  );
   const refreshExitWorkSnapshot = useCallback(async (armForceOnFailure = false): Promise<AppActiveWorkSnapshot | null> => {
     const sequence = ++exitSnapshotSequence.current;
     try {
@@ -1600,6 +1634,17 @@ export default function App() {
         return;
       }
       setDuplicateReview(result.data);
+      const hiddenGalleryId = request.action === "hide_parent"
+        ? result.data.candidate.parent.galleryId
+        : request.action === "hide_candidate"
+          ? result.data.candidate.candidate.galleryId
+          : undefined;
+      if (hiddenGalleryId !== undefined) {
+        recordSessionDownloadActivity(
+          hiddenGalleryId,
+          galleriesRef.current.get(hiddenGalleryId)?.download?.state,
+        );
+      }
       await hydrateDuplicateSnapshot();
       setDownloadsRefresh((value) => value + 1);
       showToast("중복 판정을 저장했습니다. 파일은 자동으로 영구 삭제되지 않습니다.");
@@ -1609,7 +1654,7 @@ export default function App() {
       duplicateDecisionPendingRef.current = false;
       setDuplicateDecisionPending(false);
     }
-  }, [hydrateDuplicateReview, hydrateDuplicateSnapshot, showToast]);
+  }, [hydrateDuplicateReview, hydrateDuplicateSnapshot, recordSessionDownloadActivity, showToast]);
   const applyDownloadOverlapDecision = useCallback(async (request: DownloadOverlapDecisionRequest) => {
     if (downloadOverlapDecisionPendingRef.current) return;
     downloadOverlapDecisionPendingRef.current = true;
@@ -1634,6 +1679,10 @@ export default function App() {
           : undefined;
       if (excludedGalleryId !== undefined) {
         setDuplicateHiddenGalleryIds((current) => new Set([...current, excludedGalleryId]));
+        recordSessionDownloadActivity(
+          excludedGalleryId,
+          galleriesRef.current.get(excludedGalleryId)?.download?.state,
+        );
       }
       setDownloadsRefresh((value) => value + 1);
       if (result.data.resumed || result.data.cancelled) {
@@ -1654,7 +1703,7 @@ export default function App() {
       downloadOverlapDecisionPendingRef.current = false;
       setDownloadOverlapDecisionPending(false);
     }
-  }, [closeDownloadOverlapReview, hydrateDownloadOverlapReview, showToast]);
+  }, [closeDownloadOverlapReview, hydrateDownloadOverlapReview, recordSessionDownloadActivity, showToast]);
 
   useEffect(() => {
     if (settingsLoading
@@ -1670,10 +1719,12 @@ export default function App() {
 
     automaticOverlapInFlightRef.current = true;
     void (async () => {
+      let activityReview: DownloadOverlapReview | null = null;
       try {
         const loaded = await backend.downloadOverlapReviewGet(reviewId);
         if (!loaded.ok) return;
         let current = loaded.data;
+        activityReview = current;
         const attemptKey = `${current.reviewId}:${current.revision}`;
         if (automaticOverlapAttemptedRef.current.has(attemptKey)) return;
         automaticOverlapAttemptedRef.current.add(attemptKey);
@@ -1697,29 +1748,69 @@ export default function App() {
             featureSnapshotJson,
           });
           if (!result.ok) {
-            showToast(`자동 판본 판정을 중단했습니다. 직접 검토해 주세요. · ${result.error.message}`);
+            const detail = `자동 분류 중단 · 직접 검토 필요 · ${result.error.message}`;
+            recordAutomaticOverlapActivity({
+              id: `${current.reviewId}:failed:${current.revision}`,
+              reviewId: current.reviewId,
+              galleryId: current.incoming.galleryId,
+              title: current.incoming.title,
+              detail,
+              occurredAt: Date.now(),
+              state: "failed",
+            });
+            showToast(detail);
             return;
           }
           const decidedCandidate = current.candidates.find((candidate) => candidate.candidateId === step.candidateId);
-          if (step.action === "remove_incoming") excludedGalleryIds.push(current.incoming.galleryId);
-          else if (decidedCandidate) excludedGalleryIds.push(decidedCandidate.existing.galleryId);
+          const excludedGalleryId = step.action === "remove_incoming"
+            ? current.incoming.galleryId
+            : decidedCandidate?.existing.galleryId;
+          if (excludedGalleryId !== undefined) {
+            excludedGalleryIds.push(excludedGalleryId);
+            // Each backend decision is durable on its own. Reflect it immediately
+            // so a later candidate failure cannot leave this session's UI stale.
+            setDuplicateHiddenGalleryIds((known) => new Set([...known, excludedGalleryId]));
+          }
           current = result.data.review;
+          activityReview = current;
         }
 
         if (excludedGalleryIds.length) {
           setDuplicateHiddenGalleryIds((known) => new Set([...known, ...excludedGalleryIds]));
         }
         setDownloadsRefresh((value) => value + 1);
-        showToast(plan.winner === "incoming"
-          ? `엄격한 포함 규칙으로 기존 판본 ${plan.steps.length}개를 복구 가능한 격리로 이동했습니다.`
-          : "엄격한 포함 규칙으로 신규 판본을 취소 상태로 보존했습니다.");
+        const detail = plan.winner === "incoming"
+          ? `자동 분류 완료 · 신규 앨범 B 보존 · 기존 판본 ${plan.steps.length}개 제외 처리`
+          : "자동 분류 완료 · 기존 앨범 A 보존 · 신규 앨범 B 취소";
+        recordAutomaticOverlapActivity({
+          id: `${current.reviewId}:completed`,
+          reviewId: current.reviewId,
+          galleryId: current.incoming.galleryId,
+          title: current.incoming.title,
+          detail,
+          occurredAt: Date.now(),
+          state: "completed",
+        });
+        showToast(detail);
       } catch {
-        showToast("자동 판본 판정을 완료하지 못했습니다. 직접 검토해 주세요.");
+        const detail = "자동 분류를 완료하지 못했습니다. 직접 검토해 주세요.";
+        if (activityReview) {
+          recordAutomaticOverlapActivity({
+            id: `${activityReview.reviewId}:failed:exception`,
+            reviewId: activityReview.reviewId,
+            galleryId: activityReview.incoming.galleryId,
+            title: activityReview.incoming.title,
+            detail,
+            occurredAt: Date.now(),
+            state: "failed",
+          });
+        }
+        showToast(detail);
       } finally {
         automaticOverlapInFlightRef.current = false;
       }
     })();
-  }, [allGalleries, downloadOverlapReviewId, settings.downloadOverlapAutoMode, settingsLoading, showToast]);
+  }, [allGalleries, downloadOverlapReviewId, recordAutomaticOverlapActivity, settings.downloadOverlapAutoMode, settingsLoading, showToast]);
 
   const hydrateInternalReview = useCallback(async (entryId: string) => {
     const token = ++internalReviewToken.current;
@@ -1892,6 +1983,7 @@ export default function App() {
   }, [hydrateInternalSnapshot, showToast]);
   const openActivity = useCallback(() => {
     activityOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setUnreadActivityCount(0);
     dispatch({ type: "overlay.activity", open: true });
   }, []);
   const closeActivity = useCallback(() => {
@@ -1903,6 +1995,16 @@ export default function App() {
       else document.querySelector<HTMLElement>("[aria-controls='activity-panel']")?.focus();
     });
   }, []);
+  const openAutomaticOverlapReview = useCallback((reviewId: string, id: GalleryId) => {
+    closeActivity();
+    setDuplicateReviewCandidateId(null);
+    setDuplicateReview(null);
+    setDownloadOverlapReviewId(reviewId);
+    setDownloadOverlapReview(null);
+    setDownloadOverlapError(null);
+    dispatch({ type: "overlay.review", galleryId: id });
+    void hydrateDownloadOverlapReview(reviewId);
+  }, [closeActivity, hydrateDownloadOverlapReview]);
   const openStatusDetail = useCallback((_: GalleryId) => openActivity(), [openActivity]);
 
   const openArtifact = useCallback(
@@ -2076,10 +2178,11 @@ export default function App() {
     async (ids: GalleryId[]) => {
       const uniqueIds = [...new Set(ids)].filter((id) => !duplicateHiddenGalleryIds.has(id));
       const newGalleryIds = uniqueIds.filter((id) => !galleries.get(id)?.download);
-      const retryEntryIds = uniqueIds.flatMap((id) => {
+      const retryGalleryIds = uniqueIds.filter((id) => {
         const download = galleries.get(id)?.download;
-        return download && retryableDownloadStates.has(download.state) ? [download.entryId] : [];
+        return download !== undefined && retryableDownloadStates.has(download.state);
       });
+      const retryEntryIds = retryGalleryIds.map((id) => galleries.get(id)!.download!.entryId);
       if (!newGalleryIds.length && !retryEntryIds.length) {
         showToast("현재 상태에서 시작할 수 있는 항목이 없습니다.");
         dispatch({ type: "selection.clear" });
@@ -2093,6 +2196,7 @@ export default function App() {
             showToast(retryResult.error.message);
             return;
           }
+          retryGalleryIds.forEach((id) => recordSessionDownloadActivity(id, "queued"));
           started += retryResult.data.length;
           setDownloadsRefresh((value) => value + 1);
         }
@@ -2104,6 +2208,7 @@ export default function App() {
             return;
           }
           setGalleries((current) => mergeDownloadEntries(current, queueResult.data));
+          queueResult.data.forEach((entry) => recordSessionDownloadActivity(entry.galleryId, entry.state));
           setDownloadIds((current) => [...new Set([...current, ...queueResult.data.map((entry) => entry.galleryId)])]);
           started += queueResult.data.length;
         }
@@ -2113,7 +2218,7 @@ export default function App() {
       }
       dispatch({ type: "selection.clear" });
     },
-    [duplicateHiddenGalleryIds, galleries, showToast],
+    [duplicateHiddenGalleryIds, galleries, recordSessionDownloadActivity, showToast],
   );
 
   const retryGallery = useCallback(
@@ -2134,6 +2239,7 @@ export default function App() {
           showToast(result.error.message);
           return;
         }
+        recordSessionDownloadActivity(id, "queued");
         setDownloadsRefresh((value) => value + 1);
         showToast("다운로드를 다시 시작했습니다.");
       } catch {
@@ -2142,7 +2248,7 @@ export default function App() {
         finishDownloadMutation(download.entryId);
       }
     },
-    [beginDownloadMutation, duplicateHiddenGalleryIds, finishDownloadMutation, showToast],
+    [beginDownloadMutation, duplicateHiddenGalleryIds, finishDownloadMutation, recordSessionDownloadActivity, showToast],
   );
 
   const cancelGallery = useCallback(async (id: GalleryId) => {
@@ -2155,6 +2261,7 @@ export default function App() {
         showToast(result.error.message);
         return;
       }
+      result.data.forEach((entry) => recordSessionDownloadActivity(entry.galleryId, entry.state));
       setGalleries((current) => mergeDownloadEntries(current, result.data));
       showToast("다운로드를 취소했습니다.");
     } catch {
@@ -2162,7 +2269,7 @@ export default function App() {
     } finally {
       finishDownloadMutation(download.entryId);
     }
-  }, [beginDownloadMutation, finishDownloadMutation, showToast]);
+  }, [beginDownloadMutation, finishDownloadMutation, recordSessionDownloadActivity, showToast]);
 
   const quarantineGalleries = useCallback(async (ids: GalleryId[]) => {
     const downloads = ids
@@ -2581,6 +2688,7 @@ export default function App() {
     onEnter: hydrateNearbyDownloadDetails,
     onLeave: discardNearbyDownloadDetails,
     overscanPixels: currentGalleryDisplayMode === "compact" ? 900 : 1200,
+    retainEntered: true,
   });
   const keyboardNavigableIds = useMemo(() => {
     if (ui.view === "explore" || ui.grouping[ui.view] === "all") return renderedActionableIds;
@@ -2893,7 +3001,7 @@ export default function App() {
             search={ui.search[ui.view]}
             searchPending={settingsLoading}
             suggestions={ui.view === "explore" ? searchSuggestions : []}
-            activityCount={activeDownloadCount}
+            activityCount={unreadActivityCount}
             activityOpen={ui.overlays.activityOpen}
             onDraft={(value) => dispatch({ type: "search.draft", view: ui.view, value })}
             onSuggestions={(open, active) => dispatch({ type: "search.suggestions", view: ui.view, open, active })}
@@ -3157,9 +3265,12 @@ export default function App() {
         <ActivityDrawer
           open={ui.overlays.activityOpen}
           galleries={allGalleries}
+          sessionDownloads={sessionDownloadActivities}
+          automaticOverlapActivities={automaticOverlapActivities}
           duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
           onClose={closeActivity}
           onReview={openReview}
+          onReviewOverlap={openAutomaticOverlapReview}
           onRetry={(id) => void retryGallery(id)}
           onCancel={(id) => void cancelGallery(id)}
           pendingEntryIds={pendingDownloadEntries}

@@ -21,6 +21,31 @@ const searchRequest = (patch: Partial<SearchRequest> = {}): SearchRequest => ({
   ...patch,
 });
 
+describe("browser Danbooru search contract", () => {
+  it("does not charge unlimited metadata against the anonymous two-term limit", async () => {
+    await expect(backend.danbooruSearch({
+      tags: "fixture_artist_1 blue_sky rating:g filetype:jpg date:2026-08-31 score:>=0",
+      page: 1,
+      pageSize: 50,
+    })).resolves.toMatchObject({ ok: true });
+
+    await expect(backend.danbooruSearch({
+      tags: "fixture_artist_1 order:score",
+      page: 1,
+      pageSize: 50,
+    })).resolves.toMatchObject({ ok: true });
+
+    await expect(backend.danbooruSearch({
+      tags: "fixture_artist_1 blue_sky order:score",
+      page: 1,
+      pageSize: 50,
+    })).resolves.toMatchObject({
+      ok: false,
+      error: { code: "DANBOORU_TAG_LIMIT" },
+    });
+  });
+});
+
 describe("browser backend settings contract", () => {
   it("reports memory, disk, download, and volume usage separately", async () => {
     const original = await backend.settingsGet();
@@ -1572,8 +1597,8 @@ describe("browser backend active-work exit contract", () => {
       action: "remove_existing_continue",
       candidateId: firstCandidate.candidateId,
       actor: "automation",
-      reasonCode: "strict_extra_pages_v1",
-      ruleVersion: 1,
+      reasonCode: "balanced_overlap_v2",
+      ruleVersion: 2,
       featureSnapshotJson: "[]",
     })).resolves.toMatchObject({
       ok: false,

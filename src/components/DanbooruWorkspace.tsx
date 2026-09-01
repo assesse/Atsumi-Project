@@ -8,6 +8,22 @@ import type {
   DanbooruSearchPage,
 } from "../api/contracts";
 import type { ContentSource, ViewId } from "../core/types";
+import {
+  activeDanbooruFilterCount,
+  buildDanbooruSearchQuery,
+  danbooruLimitedTermCount,
+  DANBOORU_FILE_TYPES,
+  DANBOORU_RATINGS,
+  DANBOORU_SEARCH_PREFERENCES_CHANGED,
+  DANBOORU_SORTS,
+  defaultDanbooruSearchFilters,
+  loadDanbooruSearchPreferences,
+  sanitizeDanbooruSearchFilters,
+  type DanbooruFileType,
+  type DanbooruRating,
+  type DanbooruSearchFilters,
+  type DanbooruSort,
+} from "../danbooru/searchPreferences";
 import { FluentIcon } from "./FluentIcon";
 import { SideRail } from "./SideRail";
 
@@ -31,6 +47,7 @@ type PersistedDanbooruState = {
   downloadsCommitted: string;
   explorePage: number;
   downloadsPage: number;
+  filters: DanbooruSearchFilters;
 };
 
 const stateKey = "atsumi.danbooru-state.v1";
@@ -42,12 +59,14 @@ const defaultState: PersistedDanbooruState = {
   downloadsCommitted: "",
   explorePage: 1,
   downloadsPage: 1,
+  filters: defaultDanbooruSearchFilters(),
 };
 
 const loadState = (): PersistedDanbooruState => {
+  const searchPreferences = loadDanbooruSearchPreferences();
   try {
     const parsed = JSON.parse(window.localStorage.getItem(stateKey) ?? "null") as Partial<PersistedDanbooruState> | null;
-    if (!parsed) return defaultState;
+    if (!parsed) return { ...defaultState, filters: searchPreferences };
     return {
       view: parsed.view === "downloads" ? "downloads" : "explore",
       exploreDraft: typeof parsed.exploreDraft === "string" ? parsed.exploreDraft : "",
@@ -56,9 +75,12 @@ const loadState = (): PersistedDanbooruState => {
       downloadsCommitted: typeof parsed.downloadsCommitted === "string" ? parsed.downloadsCommitted : "",
       explorePage: Number.isInteger(parsed.explorePage) && Number(parsed.explorePage) > 0 ? Number(parsed.explorePage) : 1,
       downloadsPage: Number.isInteger(parsed.downloadsPage) && Number(parsed.downloadsPage) > 0 ? Number(parsed.downloadsPage) : 1,
+      // The committed query above owns the restored result set. Filters are the
+      // draft for the next search, so Settings must remain their source of truth.
+      filters: searchPreferences,
     };
   } catch {
-    return defaultState;
+    return { ...defaultState, filters: searchPreferences };
   }
 };
 
@@ -90,6 +112,11 @@ const formatBytes = (bytes: number): string => {
   }
   return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
 };
+
+// The card is a 4:5 cover crop. A 180px `srcset` candidate can look wide enough to
+// the browser while still being far too short after cropping, so cards always use
+// the large/sample projection and keep only the preview as an availability fallback.
+const cardMediaUrl = (post: DanbooruPost): string | undefined => post.largeUrl ?? post.previewUrl;
 
 const postTitle = (post: DanbooruPost): string => {
   const artist = post.artists.at(0);
@@ -129,6 +156,8 @@ export function DanbooruWorkspace({
   const [downloadsCommitted, setDownloadsCommitted] = useState(persisted.downloadsCommitted);
   const [explorePage, setExplorePage] = useState(persisted.explorePage);
   const [downloadsPageNumber, setDownloadsPageNumber] = useState(persisted.downloadsPage);
+  const [filters, setFilters] = useState<DanbooruSearchFilters>(persisted.filters);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [searchPage, setSearchPage] = useState<DanbooruSearchPage | null>(null);
   const [downloadsPage, setDownloadsPage] = useState<DanbooruDownloadsPage | null>(null);
   const [loading, setLoading] = useState(false);
@@ -190,8 +219,17 @@ export function DanbooruWorkspace({
       downloadsCommitted,
       explorePage,
       downloadsPage: downloadsPageNumber,
+      filters,
     });
-  }, [downloadsCommitted, downloadsDraft, downloadsPageNumber, exploreCommitted, exploreDraft, explorePage, view]);
+  }, [downloadsCommitted, downloadsDraft, downloadsPageNumber, exploreCommitted, exploreDraft, explorePage, filters, view]);
+
+  useEffect(() => {
+    const preferencesChanged = (event: Event) => {
+      setFilters(sanitizeDanbooruSearchFilters((event as CustomEvent<DanbooruSearchFilters>).detail));
+    };
+    window.addEventListener(DANBOORU_SEARCH_PREFERENCES_CHANGED, preferencesChanged);
+    return () => window.removeEventListener(DANBOORU_SEARCH_PREFERENCES_CHANGED, preferencesChanged);
+  }, []);
 
   useEffect(() => {
     if (view === "explore") void loadExplore(exploreCommitted, explorePage);
@@ -230,14 +268,22 @@ export function DanbooruWorkspace({
     else void loadDownloads(downloadsPageNumber, downloadsCommitted);
   };
 
-  const submit = (value = view === "explore" ? exploreDraft : downloadsDraft) => {
+  const submit = (
+    value = view === "explore" ? exploreDraft : downloadsDraft,
+    nextFilters = filters,
+  ) => {
     const query = value.trim();
     setSuggestions([]);
     if (view === "explore") {
       setExploreDraft(query);
-      setExploreCommitted(query);
+      const composed = buildDanbooruSearchQuery(query, nextFilters);
+      if (danbooruLimitedTermCount(composed) > 2) {
+        setError("현재 비로그인 검색은 제한 대상 조건을 2개까지 사용할 수 있습니다. 정렬을 사용하면 일반 태그는 1개까지 입력할 수 있습니다.");
+        return;
+      }
+      setExploreCommitted(composed);
       setExplorePage(1);
-      void loadExplore(query, 1);
+      void loadExplore(composed, 1);
     } else {
       setDownloadsDraft(query);
       setDownloadsCommitted(query);
@@ -285,7 +331,12 @@ export function DanbooruWorkspace({
   const posts = view === "explore"
     ? searchPage?.items ?? []
     : downloadsPage?.items.map((record) => record.post) ?? [];
+  const detailIndex = detail ? posts.findIndex((post) => post.id === detail.id) : -1;
+  const previousDetail = detailIndex > 0 ? posts[detailIndex - 1] : undefined;
+  const nextDetail = detailIndex >= 0 && detailIndex < posts.length - 1 ? posts[detailIndex + 1] : undefined;
   const gridWidth = Math.max(170, Math.min(320, previewWidth));
+  const activeFilterCount = activeDanbooruFilterCount(filters);
+  const limitedTermCount = danbooruLimitedTermCount(buildDanbooruSearchQuery(exploreDraft, filters));
 
   return (
     <div className={`app-shell danbooru-shell${railCollapsed ? " sidebar-collapsed" : ""}`}>
@@ -340,14 +391,59 @@ export function DanbooruWorkspace({
           </div>
         </header>
 
-        <section className="danbooru-heading">
-          <div>
-            <span className="eyebrow">{view === "explore" ? "DANBOORU EXPLORE" : "DANBOORU DOWNLOADS"}</span>
-            <h1>{view === "explore" ? "Danbooru post 탐색" : "저장한 Danbooru 원본"}</h1>
-            <p>{view === "explore" ? "공개 API · 계정 없이 태그 2개까지 검색" : "다운로드 루트의 Danbooru 인덱스"}</p>
-          </div>
-          <span className="danbooru-result-count">{view === "downloads" ? `${downloadsPage?.total ?? 0}개 저장` : `${posts.length}개 표시`}</span>
-        </section>
+        <div className="danbooru-overview">
+          {view === "explore" ? <>
+            <section className="danbooru-search-tools" aria-label="Danbooru 검색 조건과 정렬">
+              <button
+                type="button"
+                className={`danbooru-filter-button${filtersOpen ? " is-active" : ""}`}
+                aria-expanded={filtersOpen}
+                onClick={() => setFiltersOpen((current) => !current)}
+              >
+                <FluentIcon glyph="\uE71C" /> 상세 조건
+                {activeFilterCount ? <span>{activeFilterCount}</span> : null}
+              </button>
+              <label className="danbooru-sort-control">
+                <span>정렬</span>
+                <select
+                  aria-label="Danbooru 정렬 기준"
+                  value={filters.sort}
+                  onChange={(event) => {
+                    const next = { ...filters, sort: event.target.value as DanbooruSort };
+                    setFilters(next);
+                    submit(exploreDraft, next);
+                  }}
+                >
+                  {DANBOORU_SORTS.map((sort) => <option key={sort.value} value={sort.value}>{sort.label}</option>)}
+                </select>
+                <FluentIcon glyph="\uE70D" />
+              </label>
+              <span className={`danbooru-tag-budget${limitedTermCount > 2 ? " is-over" : ""}`}>
+                제한 대상 {limitedTermCount}/2 · rating/date/score 등은 제외 · 정렬은 1개 사용
+              </span>
+            </section>
+            {filtersOpen ? (
+              <DanbooruSearchFilterPanel
+                filters={filters}
+                onChange={setFilters}
+                onApply={() => {
+                  setFiltersOpen(false);
+                  submit(exploreDraft, filters);
+                }}
+                onReset={() => setFilters(defaultDanbooruSearchFilters())}
+              />
+            ) : null}
+          </> : null}
+
+          <section className="danbooru-heading">
+            <div>
+              <span className="eyebrow">{view === "explore" ? "DANBOORU EXPLORE" : "DANBOORU DOWNLOADS"}</span>
+              <h1>{view === "explore" ? "Danbooru post 탐색" : "저장한 Danbooru 원본"}</h1>
+              <p>{view === "explore" ? "공개 API · 계정 없이 일반 태그 2개까지 검색" : "다운로드 루트의 Danbooru 인덱스"}</p>
+            </div>
+            <span className="danbooru-result-count">{view === "downloads" ? `${downloadsPage?.total ?? 0}개 저장` : `${posts.length}개 표시`}</span>
+          </section>
+        </div>
 
         <section className="danbooru-content" aria-busy={loading}>
           {error ? (
@@ -391,19 +487,116 @@ export function DanbooruWorkspace({
           downloaded={downloadedIds.has(detail.id)}
           pending={pendingDownloads.has(detail.id)}
           onClose={() => setDetail(null)}
+          onPrevious={previousDetail ? () => setDetail(previousDetail) : undefined}
+          onNext={nextDetail ? () => setDetail(nextDetail) : undefined}
           onDownload={() => void download(detail)}
           onSearch={(tag) => {
             setDetail(null);
             setView("explore");
             setExploreDraft(tag);
-            setExploreCommitted(tag);
+            const query = buildDanbooruSearchQuery(tag, filters);
+            setExploreCommitted(query);
             setExplorePage(1);
-            void loadExplore(tag, 1);
+            void loadExplore(query, 1);
           }}
         />
       ) : null}
       {notice ? <div className="toast" role="status" onAnimationEnd={() => setNotice(null)}>{notice}</div> : null}
     </div>
+  );
+}
+
+function DanbooruSearchFilterPanel({
+  filters,
+  onChange,
+  onApply,
+  onReset,
+}: {
+  filters: DanbooruSearchFilters;
+  onChange: (filters: DanbooruSearchFilters) => void;
+  onApply: () => void;
+  onReset: () => void;
+}) {
+  const toggleRating = (rating: DanbooruRating, checked: boolean) => onChange({
+    ...filters,
+    ratings: checked
+      ? DANBOORU_RATINGS.map(({ value }) => value).filter((value) => filters.ratings.includes(value) || value === rating)
+      : filters.ratings.filter((value) => value !== rating),
+  });
+  const toggleFileType = (fileType: DanbooruFileType, checked: boolean) => onChange({
+    ...filters,
+    fileTypes: checked
+      ? DANBOORU_FILE_TYPES.map(({ value }) => value).filter((value) => filters.fileTypes.includes(value) || value === fileType)
+      : filters.fileTypes.filter((value) => value !== fileType),
+  });
+  return (
+    <section className="danbooru-filter-panel" aria-label="Danbooru 상세 검색 조건">
+      <div className="danbooru-filter-grid">
+        <fieldset>
+          <legend>등급</legend>
+          <div className="danbooru-check-grid is-ratings">
+            {DANBOORU_RATINGS.map((rating) => (
+              <label key={rating.value} title={rating.description}>
+                <input
+                  type="checkbox"
+                  checked={filters.ratings.includes(rating.value)}
+                  onChange={(event) => toggleRating(rating.value, event.target.checked)}
+                />
+                <span className={`danbooru-rating is-${rating.value}`}>{rating.label}</span>
+              </label>
+            ))}
+          </div>
+          <small>미선택 또는 전체 선택은 등급을 제한하지 않습니다.</small>
+        </fieldset>
+        <fieldset>
+          <legend>파일 형식</legend>
+          <div className="danbooru-check-grid">
+            {DANBOORU_FILE_TYPES.map((fileType) => (
+              <label key={fileType.value}>
+                <input
+                  type="checkbox"
+                  checked={filters.fileTypes.includes(fileType.value)}
+                  onChange={(event) => toggleFileType(fileType.value, event.target.checked)}
+                />
+                {fileType.label}
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>등록 기간</legend>
+          <div className="danbooru-range-fields">
+            <label><span>시작</span><input type="date" aria-label="Danbooru 등록 시작일" value={filters.dateFrom} max={filters.dateTo || undefined} onChange={(event) => onChange({ ...filters, dateFrom: event.target.value })} /></label>
+            <label><span>종료</span><input type="date" aria-label="Danbooru 등록 종료일" value={filters.dateTo} min={filters.dateFrom || undefined} onChange={(event) => onChange({ ...filters, dateTo: event.target.value })} /></label>
+          </div>
+          <small>기간과 점수순을 함께 쓰면 해당 기간의 인기 게시물을 볼 수 있습니다.</small>
+        </fieldset>
+        <fieldset>
+          <legend>최소 기준</legend>
+          <div className="danbooru-range-fields">
+            <label><span>점수</span><input type="number" aria-label="Danbooru 최소 점수" step="1" value={filters.minimumScore} onChange={(event) => onChange({ ...filters, minimumScore: event.target.value })} /></label>
+            <label><span>즐겨찾기</span><input type="number" aria-label="Danbooru 최소 즐겨찾기" min="0" step="1" value={filters.minimumFavorites} onChange={(event) => onChange({ ...filters, minimumFavorites: event.target.value })} /></label>
+          </div>
+        </fieldset>
+        <fieldset>
+          <legend>게시물 관계</legend>
+          <label className="danbooru-filter-select">
+            <select aria-label="Danbooru 게시물 관계" value={filters.relationship} onChange={(event) => onChange({ ...filters, relationship: event.target.value as DanbooruSearchFilters["relationship"] })}>
+              <option value="any">관계 제한 없음</option>
+              <option value="has_parent">부모가 있는 변형판</option>
+              <option value="no_parent">부모가 없는 게시물</option>
+              <option value="has_children">자식 변형판이 있는 게시물</option>
+              <option value="no_children">자식 변형판이 없는 게시물</option>
+            </select>
+            <FluentIcon glyph="\uE70D" />
+          </label>
+        </fieldset>
+      </div>
+      <footer>
+        <button type="button" className="text-button" onClick={onReset}>조건 초기화</button>
+        <button type="button" className="text-button primary" onClick={onApply}>조건 적용</button>
+      </footer>
+    </section>
   );
 }
 
@@ -422,10 +615,11 @@ function DanbooruCard({
   onOpen: () => void;
   onDownload: () => void;
 }) {
+  const mediaUrl = cardMediaUrl(post);
   return (
     <article className="danbooru-card" data-post-id={post.id}>
       <button type="button" className="danbooru-card-preview" onClick={onOpen} aria-label={`${postTitle(post)} 상세 열기`}>
-        {post.previewUrl ? <img src={post.previewUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : <span className="danbooru-media-missing"><FluentIcon glyph="\uEB9F" /> 미리보기 없음</span>}
+        {mediaUrl ? <img src={mediaUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : <span className="danbooru-media-missing"><FluentIcon glyph="\uEB9F" /> 미리보기 없음</span>}
         <span className={`danbooru-rating is-${post.rating}`}>{ratingLabel[post.rating] ?? post.rating.toUpperCase()}</span>
         {downloaded ? <span className="danbooru-downloaded"><FluentIcon glyph="\uE73E" /> 저장됨</span> : null}
       </button>
@@ -447,6 +641,8 @@ function DanbooruDetail({
   downloaded,
   pending,
   onClose,
+  onPrevious,
+  onNext,
   onDownload,
   onSearch,
 }: {
@@ -454,29 +650,64 @@ function DanbooruDetail({
   downloaded: boolean;
   pending: boolean;
   onClose: () => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
   onDownload: () => void;
   onSearch: (tag: string) => void;
 }) {
   const mediaUrl = post.largeUrl ?? post.previewUrl;
+  const dialog = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = window.requestAnimationFrame(() => dialog.current?.focus({ preventScroll: true }));
+    return () => {
+      window.cancelAnimationFrame(frame);
+      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+    };
+  }, []);
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.defaultPrevented || event.isComposing || document.querySelector("dialog[open]")) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      const target = event.target instanceof Element
+        ? event.target
+        : document.activeElement instanceof Element
+          ? document.activeElement
+          : null;
+      if (target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      const key = event.key.toLocaleLowerCase();
+      const navigate = event.key === "ArrowLeft" || event.code === "KeyA" || key === "a"
+        ? onPrevious
+        : event.key === "ArrowRight" || event.code === "KeyD" || key === "d"
+          ? onNext
+          : undefined;
+      if (!navigate) return;
+      event.preventDefault();
+      event.stopPropagation();
+      navigate();
     };
-    window.addEventListener("keydown", keyDown);
-    return () => window.removeEventListener("keydown", keyDown);
-  }, [onClose]);
+    window.addEventListener("keydown", keyDown, true);
+    return () => window.removeEventListener("keydown", keyDown, true);
+  }, [onClose, onNext, onPrevious]);
   return (
     <div className="modal-backdrop danbooru-detail-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section className="danbooru-detail" role="dialog" aria-modal="true" aria-labelledby="danbooru-detail-title">
+      <section ref={dialog} className="danbooru-detail" role="dialog" aria-modal="true" aria-labelledby="danbooru-detail-title" aria-describedby="danbooru-detail-shortcuts" tabIndex={-1}>
         <header>
-          <div><span className="eyebrow">DANBOORU POST #{post.id}</span><h2 id="danbooru-detail-title">{postTitle(post)}</h2></div>
+          <div><span className="eyebrow">FLOATING DETAIL · DANBOORU POST #{post.id}</span><h2 id="danbooru-detail-title">{postTitle(post)}</h2></div>
+          <span id="danbooru-detail-shortcuts" className="sr-only">A, D 또는 왼쪽, 오른쪽 방향키로 현재 결과의 이전과 다음 post로 이동</span>
           <button type="button" className="icon-button" aria-label="닫기" title="닫기" onClick={onClose}><FluentIcon glyph="\uE711" /></button>
         </header>
         <div className="danbooru-detail-body">
-          <div className="danbooru-detail-media">
-            {mediaUrl ? <img src={mediaUrl} alt="" referrerPolicy="no-referrer" /> : <span className="danbooru-media-missing"><FluentIcon glyph="\uEB9F" /> 표시할 미디어가 없습니다.</span>}
+          <div key={`media-${post.id}`} className="danbooru-detail-media">
+            {mediaUrl ? <img src={mediaUrl} alt="" width={post.imageWidth} height={post.imageHeight} referrerPolicy="no-referrer" /> : <span className="danbooru-media-missing"><FluentIcon glyph="\uEB9F" /> 표시할 미디어가 없습니다.</span>}
           </div>
-          <aside>
+          <aside key={`metadata-${post.id}`}>
             <div className="danbooru-detail-facts">
               <span className={`danbooru-rating is-${post.rating}`}>{ratingLabel[post.rating] ?? post.rating}</span>
               <b>{post.imageWidth}×{post.imageHeight}</b><b>{formatBytes(post.fileSize)}</b><b>{post.fileExt.toUpperCase()}</b>

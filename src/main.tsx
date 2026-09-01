@@ -9,6 +9,7 @@ import {
   ThumbnailProvider,
 } from "./thumbnail";
 import "./styles.css";
+import "./atsumi-ink.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Atsumi root element is missing");

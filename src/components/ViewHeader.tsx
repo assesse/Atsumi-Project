@@ -289,13 +289,13 @@ export function ViewHeader({
         onClick={onRandomOpen}
       >
         {randomOpenPending ? <span className="spinner random-open-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE8B1" />}
-        {randomOpenPending ? <span className="sr-only">랜덤 갤러리를 찾는 중</span> : null}
+        <span className="random-open-label">{randomOpenPending ? "찾는 중" : "랜덤 열기"}</span>
       </button>
       <button
         type="button"
         className="icon-button activity-button"
-        title="작업 상태"
-        aria-label="작업 상태"
+        title="이번 실행 활동"
+        aria-label="활동 알림"
         aria-controls="activity-panel"
         aria-expanded={activityOpen}
         onClick={onActivity}

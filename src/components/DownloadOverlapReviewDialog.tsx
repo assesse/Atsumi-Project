@@ -343,6 +343,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
     ?? pendingCandidates[0]
     ?? review?.candidates[0];
   const autoPlan = useMemo(() => review ? buildStrictOverlapPlan(review) : null, [review]);
+  const reviewPending = review?.state === "pending";
 
   useEffect(() => {
     setCandidateId(review?.candidates.find((item) => item.decision === undefined)?.candidateId ?? review?.candidates[0]?.candidateId ?? null);
@@ -367,7 +368,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
   }, [open]);
 
   const decide = (action: DownloadOverlapDecisionRequest["action"], currentCandidateId?: string) => {
-    if (!review || decisionPending) return;
+    if (!review || !reviewPending || decisionPending) return;
     if (action === "remove_existing_continue" && !window.confirm(`기존 앨범 A를 제거 처리할까요? 완료 앨범은 복구 가능한 격리로 이동하고, 다른 중복 검토에 멈춘 staging이면 그 다운로드만 취소합니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""} 신규 앨범 B는 남은 후보 검토 후 완료됩니다.`)) return;
     if (action === "remove_incoming" && !window.confirm(`신규 앨범 B 다운로드를 취소할까요?${candidate?.incomingUniquePages ? ` B에만 있는 ${candidate.incomingUniquePages}장도 완료되지 않습니다.` : ""} 기존 앨범 A와 다른 보유 파일은 변경하지 않습니다.`)) return;
     onDecision({
@@ -404,10 +405,12 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
           <div className="review-scroll">
             {error ? <div className="inline-error review-inline-error" role="alert">{error}</div> : null}
             <div className="review-summary">
-              <span className="review-signal">완료 전 일시 정지</span>
+              <span className="review-signal">{reviewPending ? "완료 전 일시 정지" : "처리된 판본 검토"}</span>
               <strong>{relationLabel[candidate.relation]} · 신뢰도 {percent(candidate.confidence)}</strong>
               <span id="download-overlap-safety">
-                신규 B 파일은 검증됐지만 아직 완료 manifest를 만들지 않았습니다. 제거는 영구 삭제가 아니며, 완료된 기존 A는 복구 가능한 격리로 이동하고 검토 중 staging A와 신규 B는 취소 상태로 보존합니다.
+                {reviewPending
+                  ? "신규 B 파일은 검증됐지만 아직 완료 manifest를 만들지 않았습니다. 제거는 영구 삭제가 아니며, 완료된 기존 A는 복구 가능한 격리로 이동하고 검토 중 staging A와 신규 B는 취소 상태로 보존합니다."
+                  : "이 화면은 판정 당시의 A/B 비교 근거와 선택을 읽기 전용으로 보여줍니다. 제외된 완료본은 설정에서 복원할 수 있으며 파일을 영구 삭제하지 않습니다."}
                 {browserFixture ? " · 브라우저 검토 fixture" : ""}
               </span>
             </div>
@@ -416,10 +419,10 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
               <div className={`download-overlap-auto-recommendation${autoMode === "strict_quarantine" ? " is-automatic" : ""}`} role="status">
                 <FluentIcon glyph={autoPlan.winner === "incoming" ? "\uE73A" : "\uE74D"} />
                 <div>
-                  <strong>{autoMode === "strict_quarantine" ? "엄격 기준 자동 격리 대상" : "엄격 기준 추천"}</strong>
+                  <strong>{autoMode === "strict_quarantine" ? "95% 기준 자동 정리 대상" : "95% 기준 추천"}</strong>
                   <span>{autoPlan.summary}</span>
                   <small>
-                    포함률 99.5% 이상 · 작은 판본 고유 페이지 0장 · 정확 일치 90% 이상 · 충분한 추가 페이지를 모두 확인했습니다.
+                    포함률 95% 이상 · 판본 간 페이지 차이 5장 이하 · 정렬된 유효 페이지를 확인했습니다. 무검열 표식이 확인되면 그 판본을 우선하며, 포함 관계에서 더 큰 판본이 검열판이고 작은 판본이 무검열판인 충돌이나 근거 부족은 직접 검토합니다.
                     {autoMode === "strict_quarantine" ? " 이 창을 닫으면 기존 재검증 후 복구 가능한 격리로 처리합니다." : " 최종 선택은 직접 적용해 주세요."}
                   </small>
                 </div>
@@ -457,10 +460,10 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
 
         <div className="review-actions download-overlap-actions">
           <ReviewAction help="아무 판정도 저장하지 않고 검토 창만 닫습니다. 다음에 같은 검토를 다시 열 수 있습니다."><button type="button" className="text-button" onClick={onClose}>검토 미루기</button></ReviewAction>
-          <ReviewAction help={`현재 후보의 기존 앨범 A를 제거 처리합니다. 완료본은 복구 가능한 격리로 이동하고, 다른 중복 검토에 멈춘 staging이면 그 staging 다운로드와 자체 검토만 취소합니다. 남은 후보 검토 또는 신규 B 완료 절차는 계속됩니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!review || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("remove_existing_continue", candidate.candidateId)}>기존 A 제거</button></ReviewAction>
-          <ReviewAction help={`신규 앨범 B 다운로드 전체를 취소합니다. 기존 A와 다른 보유 앨범은 변경하지 않습니다.${candidate?.incomingUniquePages ? ` B에만 있는 ${candidate.incomingUniquePages}장도 완료되지 않습니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!review || decisionPending} onClick={() => decide("remove_incoming")}>신규 B 제거</button></ReviewAction>
-          <ReviewAction help="현재 A/B 후보가 중복이 아니라고 기록합니다. 같은 판본 지문 쌍은 다음 탐지에서 제외됩니다."><button type="button" className="text-button" disabled={!review || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("false_positive_continue", candidate.candidateId)}>오탐 판정</button></ReviewAction>
-          <ReviewAction help="현재 A/B 후보를 둘 다 보관해도 문제없다고 기록하고, 남은 후보 검토 또는 신규 B 완료 절차를 계속합니다."><button type="button" className="primary-button" disabled={!review || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("keep_both_continue", candidate.candidateId)}>문제 없음</button></ReviewAction>
+          <ReviewAction help={`현재 후보의 기존 앨범 A를 제거 처리합니다. 완료본은 복구 가능한 격리로 이동하고, 다른 중복 검토에 멈춘 staging이면 그 staging 다운로드와 자체 검토만 취소합니다. 남은 후보 검토 또는 신규 B 완료 절차는 계속됩니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!reviewPending || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("remove_existing_continue", candidate.candidateId)}>기존 A 제거</button></ReviewAction>
+          <ReviewAction help={`신규 앨범 B 다운로드 전체를 취소합니다. 기존 A와 다른 보유 앨범은 변경하지 않습니다.${candidate?.incomingUniquePages ? ` B에만 있는 ${candidate.incomingUniquePages}장도 완료되지 않습니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!reviewPending || decisionPending} onClick={() => decide("remove_incoming")}>신규 B 제거</button></ReviewAction>
+          <ReviewAction help="현재 A/B 후보가 중복이 아니라고 기록합니다. 같은 판본 지문 쌍은 다음 탐지에서 제외됩니다."><button type="button" className="text-button" disabled={!reviewPending || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("false_positive_continue", candidate.candidateId)}>오탐 판정</button></ReviewAction>
+          <ReviewAction help="현재 A/B 후보를 둘 다 보관해도 문제없다고 기록하고, 남은 후보 검토 또는 신규 B 완료 절차를 계속합니다."><button type="button" className="primary-button" disabled={!reviewPending || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("keep_both_continue", candidate.candidateId)}>문제 없음</button></ReviewAction>
         </div>
       </div>
     </dialog>

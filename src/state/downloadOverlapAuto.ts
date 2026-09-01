@@ -1,23 +1,24 @@
 import type {
   DownloadOverlapCandidate,
   DownloadOverlapDecisionRequest,
+  DownloadOverlapGalleryRef,
   DownloadOverlapReview,
 } from "../api/contracts";
 
-export const DOWNLOAD_OVERLAP_AUTO_RULE_VERSION = 1;
-export const DOWNLOAD_OVERLAP_AUTO_REASON_CODE = "strict_extra_pages_v1";
+export const DOWNLOAD_OVERLAP_AUTO_RULE_VERSION = 2;
+export const DOWNLOAD_OVERLAP_AUTO_REASON_CODE = "balanced_overlap_v2";
 
 export const strictOverlapThresholds = Object.freeze({
-  loserCoverage: 0.995,
-  matchedPages: 10,
-  winnerUniquePages: 10,
-  winnerUniqueRatio: 0.1,
-  alignedRunRatio: 0.8,
-  informativeMatchRatio: 0.9,
-  exactMatchRatio: 0.9,
+  loserCoverage: 0.95,
+  maximumPageDifference: 5,
+  matchedPages: 4,
+  confidence: 0.9,
+  alignedRunRatio: 0.75,
+  informativeMatchRatio: 0.75,
 });
 
 type StrictWinner = "incoming" | "existing";
+type EditionPreference = "uncensored" | "censored" | "unknown";
 
 export type StrictOverlapDecisionStep = {
   action: Extract<
@@ -42,56 +43,85 @@ type CandidateEvaluation = {
 const safeRatio = (numerator: number, denominator: number): number =>
   denominator > 0 ? numerator / denominator : 0;
 
+const editionPreference = (gallery: DownloadOverlapGalleryRef): EditionPreference => {
+  const title = gallery.title.normalize("NFKC").toLowerCase();
+  if ([
+    "uncensored",
+    "decensored",
+    "uncen",
+    "無修正",
+    "无修正",
+    "無碼",
+    "无码",
+  ].some((marker) => title.includes(marker))) return "uncensored";
+  if (["censored", "mosaic", "モザイク", "修正版"].some((marker) => title.includes(marker))) {
+    return "censored";
+  }
+  return "unknown";
+};
+
+const preferenceRank = (preference: EditionPreference): number =>
+  preference === "uncensored" ? 1 : preference === "censored" ? -1 : 0;
+
 const strictCandidateEvaluation = (
   review: DownloadOverlapReview,
   candidate: DownloadOverlapCandidate,
 ): CandidateEvaluation | null => {
+  const incomingPageCount = review.incoming.pageCount;
+  const existingPageCount = candidate.existing.pageCount;
+  const pageDifference = Math.abs(incomingPageCount - existingPageCount);
+  const smallerPageCount = Math.min(incomingPageCount, existingPageCount);
+  const requiredMatchedPages = Math.min(strictOverlapThresholds.matchedPages, smallerPageCount);
+  const alignedRunRatio = safeRatio(candidate.longestAlignedRun, candidate.matchedPages);
+  const informativeMatches = candidate.pagePairs.filter((pair) => !pair.lowInformation).length;
+  const informativeMatchRatio = safeRatio(informativeMatches, candidate.matchedPages);
+  const incomingPreference = editionPreference(review.incoming);
+  const existingPreference = editionPreference(candidate.existing);
+  const incomingPreferenceRank = preferenceRank(incomingPreference);
+  const existingPreferenceRank = preferenceRank(existingPreference);
+
+  if (
+    pageDifference > strictOverlapThresholds.maximumPageDifference
+    || candidate.matchedPages < requiredMatchedPages
+    || candidate.confidence < strictOverlapThresholds.confidence
+    || alignedRunRatio < strictOverlapThresholds.alignedRunRatio
+    || informativeMatchRatio < strictOverlapThresholds.informativeMatchRatio
+    || (smallerPageCount <= 3 && candidate.exactPages !== candidate.matchedPages)
+  ) return null;
+
   let winner: StrictWinner;
   let loserCoverage: number;
-  let loserUniquePages: number;
-  let winnerUniquePages: number;
-  let loserPageCount: number;
-  let winnerPageCount: number;
+  let preferenceReason: "containment" | "uncensored" | "page_count" | "stable_existing";
 
   if (candidate.relation === "incoming_contains_existing") {
     winner = "incoming";
     loserCoverage = candidate.existingCoverage;
-    loserUniquePages = candidate.existingUniquePages;
-    winnerUniquePages = candidate.incomingUniquePages;
-    loserPageCount = candidate.existing.pageCount;
-    winnerPageCount = review.incoming.pageCount;
+    preferenceReason = "containment";
+    // Do not automatically discard a known uncensored edition in favour of a
+    // known censored one. The evidence stays pending for human review.
+    if (incomingPreferenceRank < existingPreferenceRank) return null;
   } else if (candidate.relation === "existing_contains_incoming") {
     winner = "existing";
     loserCoverage = candidate.incomingCoverage;
-    loserUniquePages = candidate.incomingUniquePages;
-    winnerUniquePages = candidate.existingUniquePages;
-    loserPageCount = review.incoming.pageCount;
-    winnerPageCount = candidate.existing.pageCount;
+    preferenceReason = "containment";
+    if (existingPreferenceRank < incomingPreferenceRank) return null;
+  } else if (candidate.relation === "near_equivalent") {
+    loserCoverage = Math.min(candidate.existingCoverage, candidate.incomingCoverage);
+    if (incomingPreferenceRank !== existingPreferenceRank) {
+      winner = incomingPreferenceRank > existingPreferenceRank ? "incoming" : "existing";
+      preferenceReason = "uncensored";
+    } else if (incomingPageCount !== existingPageCount) {
+      winner = incomingPageCount > existingPageCount ? "incoming" : "existing";
+      preferenceReason = "page_count";
+    } else {
+      winner = "existing";
+      preferenceReason = "stable_existing";
+    }
   } else {
     return null;
   }
 
-  const alignedRunRatio = safeRatio(candidate.longestAlignedRun, candidate.matchedPages);
-  const informativeMatches = candidate.pagePairs.filter((pair) => !pair.lowInformation).length;
-  const informativeMatchRatio = safeRatio(informativeMatches, candidate.matchedPages);
-  const exactMatchRatio = safeRatio(candidate.exactPages, candidate.matchedPages);
-  const requiredWinnerUniquePages = Math.max(
-    strictOverlapThresholds.winnerUniquePages,
-    Math.ceil(loserPageCount * strictOverlapThresholds.winnerUniqueRatio),
-  );
-
-  if (
-    loserCoverage < strictOverlapThresholds.loserCoverage
-    || loserUniquePages !== 0
-    || candidate.matchedPages < strictOverlapThresholds.matchedPages
-    || winnerUniquePages < requiredWinnerUniquePages
-    || winnerPageCount <= loserPageCount
-    || alignedRunRatio < strictOverlapThresholds.alignedRunRatio
-    || informativeMatchRatio < strictOverlapThresholds.informativeMatchRatio
-    || exactMatchRatio < strictOverlapThresholds.exactMatchRatio
-  ) {
-    return null;
-  }
+  if (loserCoverage < strictOverlapThresholds.loserCoverage) return null;
 
   return {
     winner,
@@ -107,31 +137,34 @@ const strictCandidateEvaluation = (
       existingFingerprint: candidate.existingFingerprint,
       relation: candidate.relation,
       winner,
+      preferenceReason,
+      editionPreference: {
+        incoming: incomingPreference,
+        existing: existingPreference,
+      },
       metrics: {
         confidence: candidate.confidence,
         matchedPages: candidate.matchedPages,
         exactPages: candidate.exactPages,
         loserCoverage,
-        loserUniquePages,
-        winnerUniquePages,
-        loserPageCount,
-        winnerPageCount,
+        pageDifference,
+        incomingPageCount,
+        existingPageCount,
         alignedRunRatio,
         informativeMatchRatio,
-        exactMatchRatio,
       },
       thresholds: {
         ...strictOverlapThresholds,
-        requiredWinnerUniquePages,
+        requiredMatchedPages,
       },
     }),
   };
 };
 
 /**
- * Produces an all-or-nothing plan. A multi-candidate review is automatic only
- * when the incoming edition strictly dominates every unresolved existing
- * candidate. Existing-vs-existing comparisons are not inferred transitively.
+ * Produces an all-or-nothing plan. Multi-candidate cleanup is automatic only
+ * when the incoming edition wins every direct comparison. Mixed candidate
+ * graphs remain pending because existing-vs-existing edges are not inferred.
  */
 export const buildStrictOverlapPlan = (
   review: DownloadOverlapReview,
@@ -158,8 +191,8 @@ export const buildStrictOverlapPlan = (
         featureSnapshotJson: result!.featureSnapshotJson,
       })),
       summary: pending.length === 1
-        ? "신규 앨범 B가 기존 앨범 A의 실질 페이지를 모두 포함하고 추가 페이지가 충분합니다."
-        : `신규 앨범 B가 미처리 후보 ${pending.length}개를 각각 엄격한 기준으로 포함합니다.`,
+        ? "신규 앨범 B가 기존 앨범 A와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다."
+        : `신규 앨범 B가 미처리 후보 ${pending.length}개와 각각 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다.`,
     };
   }
 
@@ -172,7 +205,7 @@ export const buildStrictOverlapPlan = (
         candidateId: only.candidate.candidateId,
         featureSnapshotJson: only.result.featureSnapshotJson,
       }],
-      summary: "기존 앨범 A가 신규 앨범 B의 실질 페이지를 모두 포함하고 추가 페이지가 충분합니다.",
+      summary: "기존 앨범 A가 신규 앨범 B와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다.",
     };
   }
 
