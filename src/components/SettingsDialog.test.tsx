@@ -260,9 +260,9 @@ describe("SettingsDialog operational boundaries", () => {
       await act(async () => {
         await Promise.resolve();
       });
-      expect(onLoadExplorationExclusions).toHaveBeenCalledTimes(1);
+      expect(onLoadExplorationExclusions).not.toHaveBeenCalled();
       expect(container.textContent).toContain("무검열 표식이 확인되면 그 판본을 우선");
-      expect(container.textContent).toContain("더 큰 판본이 검열판이고 작은 판본이 무검열판인 충돌");
+      expect(container.textContent).toContain("1.5배·8장 이상 큰 합본이면 무검열 표식보다 합본 보존을 우선");
       expect(container.textContent).not.toContain("무검열 표식을 우선하며, 표식이 충돌");
       const searchCatalog = container.querySelector<HTMLElement>(".search-catalog-panel");
       expect(searchCatalog).toHaveTextContent("검색어 자동완성 데이터");
@@ -285,6 +285,16 @@ describe("SettingsDialog operational boundaries", () => {
         setTextareaValue?.call(excludeTags, "male:glasses");
         excludeTags.dispatchEvent(new Event("input", { bubbles: true }));
       });
+      const exclusionManagerButton = [...container.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent === "제외 앨범 관리");
+      expect(exclusionManagerButton).toHaveAttribute("aria-expanded", "false");
+      expect(container.textContent).not.toContain("제외된 작품");
+      await act(async () => {
+        exclusionManagerButton?.click();
+        await Promise.resolve();
+      });
+      expect(onLoadExplorationExclusions).toHaveBeenCalledTimes(1);
+      expect(exclusionManagerButton).toHaveAttribute("aria-expanded", "true");
       expect(container.textContent).toContain("제외된 작품");
       expect(container.textContent).toContain("중복 판정");
       await act(async () => {
@@ -342,6 +352,100 @@ describe("SettingsDialog operational boundaries", () => {
         Reflect.deleteProperty(navigator, "clipboard");
       }
       confirm.mockRestore();
+    }
+  });
+
+  it("loads excluded albums only on demand and reveals large lists in batches", async () => {
+    const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value() { this.setAttribute("open", ""); },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const exclusions = Array.from({ length: 55 }, (_, index): ExplorationExclusion => ({
+      galleryId: galleryId(1_000_000 + index),
+      title: `제외 앨범 ${index + 1}`,
+      artist: "작가",
+      reasons: [{
+        kind: "manual",
+        detail: "직접 제외",
+        excludedAt: "2026-09-04T00:00:00Z",
+      }],
+    }));
+    const onLoadExplorationExclusions = vi.fn(async (): Promise<ApiResult<ExplorationExclusion[]>> => ({
+      ok: true,
+      data: exclusions,
+    }));
+    try {
+      await act(async () => root.render(
+        <SettingsDialog
+          open
+          settings={settings}
+          loading={false}
+          error={null}
+          onClose={vi.fn()}
+          onSave={vi.fn(async () => false)}
+          onLoadStorageUsage={vi.fn(async () => ({
+            ok: true as const,
+            data: {
+              memoryCacheBytes: 0,
+              diskCache: { bytes: 0, exists: false, scanComplete: true },
+              appData: { bytes: 0, exists: false, scanComplete: true },
+              downloads: { bytes: 0, exists: false, scanComplete: true },
+              volumes: [],
+              warnings: [],
+            },
+          }))}
+          onPreviewLayout={vi.fn()}
+          onPreviewFolderName={vi.fn(async () => ({ ok: true as const, data: "preview" }))}
+          onMaintenance={vi.fn()}
+          onCheckForUpdates={vi.fn()}
+          onTagCatalogRefresh={vi.fn()}
+          tagCatalogRefreshing={false}
+          onLoadExplorationExclusions={onLoadExplorationExclusions}
+          onRestoreExplorationExclusions={vi.fn()}
+        />,
+      ));
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+          .find((button) => button.textContent === "Hitomi")
+          ?.click();
+        await Promise.resolve();
+      });
+
+      expect(onLoadExplorationExclusions).not.toHaveBeenCalled();
+      expect(container.querySelectorAll(".exclusion-item")).toHaveLength(0);
+      const manage = [...container.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent === "제외 앨범 관리");
+      await act(async () => {
+        manage?.click();
+        await Promise.resolve();
+      });
+
+      expect(onLoadExplorationExclusions).toHaveBeenCalledTimes(1);
+      expect(container.querySelectorAll(".exclusion-item")).toHaveLength(50);
+      expect(container.textContent).toContain("더 보기 (5개 남음)");
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>("button")]
+          .find((button) => button.textContent === "더 보기 (5개 남음)")
+          ?.click();
+      });
+      expect(container.querySelectorAll(".exclusion-item")).toHaveLength(55);
+
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>("button")]
+          .find((button) => button.textContent === "목록 닫기")
+          ?.click();
+      });
+      expect(container.querySelectorAll(".exclusion-item")).toHaveLength(0);
+      expect(container.querySelector("#exclusion-manager-body")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
     }
   });
 

@@ -30,6 +30,9 @@ import type {
   DownloadEntry,
   DownloadLibraryGallery,
   DownloadLibraryPage,
+  DownloadOverlapAutomationHistoryItem,
+  DownloadOverlapAutomationHistoryPage,
+  DownloadOverlapAutomationHistoryRequest,
   DownloadOverlapDecisionRequest,
   DownloadOverlapDecisionResult,
   DownloadOverlapReview,
@@ -150,6 +153,12 @@ export interface BackendClient {
   duplicateReviewGet(candidateId: string): Promise<ApiResult<DuplicateReview>>;
   duplicateDecisionApply(request: DuplicateDecisionRequest): Promise<ApiResult<DuplicateReview>>;
   downloadOverlapReviewGet(reviewId: string): Promise<ApiResult<DownloadOverlapReview>>;
+  downloadOverlapAutomationHistoryList(
+    request: DownloadOverlapAutomationHistoryRequest,
+  ): Promise<ApiResult<DownloadOverlapAutomationHistoryPage>>;
+  downloadOverlapAutomationHistoryAcknowledge(
+    reviewId: string,
+  ): Promise<ApiResult<DownloadOverlapAutomationHistoryItem>>;
   downloadOverlapDecisionApply(request: DownloadOverlapDecisionRequest): Promise<ApiResult<DownloadOverlapDecisionResult>>;
   internalDuplicateSnapshot(): Promise<ApiResult<InternalDuplicateSnapshot>>;
   internalDuplicateActiveArtifact(): Promise<ApiResult<InternalArtifactScanProgress | null>>;
@@ -707,6 +716,7 @@ const browserOverlapReview = (reviewId: string): DownloadOverlapReview => {
 const cloneDownloadOverlapReview = (review: DownloadOverlapReview): DownloadOverlapReview => ({
   ...review,
   incoming: { ...review.incoming, artists: [...review.incoming.artists] },
+  ...(review.decisions ? { decisions: review.decisions.map((decision) => ({ ...decision })) } : {}),
   candidates: review.candidates.map((candidate) => ({
     ...candidate,
     existing: { ...candidate.existing, artists: [...candidate.existing.artists] },
@@ -875,6 +885,7 @@ class BrowserMockBackend implements BackendClient {
   };
   private duplicateReviews = new Map<string, DuplicateReview>();
   private downloadOverlapReviews = new Map<string, DownloadOverlapReview>();
+  private downloadOverlapAutomationHistory = new Map<string, DownloadOverlapAutomationHistoryItem>();
   private duplicateResolvedCandidates = new Set<string>();
   private duplicateHiddenGalleryIds = new Set<GalleryId>();
   private duplicateGeneration = 0;
@@ -1725,14 +1736,58 @@ class BrowserMockBackend implements BackendClient {
     return ok(cloneDownloadOverlapReview(review));
   }
 
+  async downloadOverlapAutomationHistoryList(
+    request: DownloadOverlapAutomationHistoryRequest,
+  ): Promise<ApiResult<DownloadOverlapAutomationHistoryPage>> {
+    if (!Number.isInteger(request.page) || request.page < 1) {
+      return validationError("request.page", "1 이상의 정수여야 합니다");
+    }
+    if (!Number.isInteger(request.pageSize) || request.pageSize < 1 || request.pageSize > 200) {
+      return validationError("request.pageSize", "1 이상 200 이하의 정수여야 합니다");
+    }
+    const allItems = [...this.downloadOverlapAutomationHistory.values()]
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    const start = (request.page - 1) * request.pageSize;
+    return ok({
+      page: request.page,
+      pageSize: request.pageSize,
+      totalItems: allItems.length,
+      unacknowledgedItems: allItems.filter((item) => !item.acknowledgedAt).length,
+      items: allItems.slice(start, start + request.pageSize).map((item) => ({
+        ...item,
+        removedGalleryIds: [...item.removedGalleryIds],
+      })),
+    });
+  }
+
+  async downloadOverlapAutomationHistoryAcknowledge(
+    reviewId: string,
+  ): Promise<ApiResult<DownloadOverlapAutomationHistoryItem>> {
+    const normalizedId = reviewId.trim();
+    if (!normalizedId) return validationError("reviewId", "비어 있을 수 없습니다");
+    const item = this.downloadOverlapAutomationHistory.get(normalizedId);
+    if (!item) {
+      return notFoundError(
+        "DOWNLOAD_OVERLAP_AUTOMATION_HISTORY_NOT_FOUND",
+        "자동 판본 분류 기록을 찾을 수 없습니다.",
+        { reviewId: normalizedId },
+      );
+    }
+    const acknowledged = item.acknowledgedAt
+      ? item
+      : { ...item, acknowledgedAt: new Date().toISOString() };
+    this.downloadOverlapAutomationHistory.set(normalizedId, acknowledged);
+    return ok({ ...acknowledged, removedGalleryIds: [...acknowledged.removedGalleryIds] });
+  }
+
   async downloadOverlapDecisionApply(
     request: DownloadOverlapDecisionRequest,
   ): Promise<ApiResult<DownloadOverlapDecisionResult>> {
     if (request.actor === "automation") {
       if (!request.candidateId
         || (request.action !== "remove_existing_continue" && request.action !== "remove_incoming")
-        || request.reasonCode !== "balanced_overlap_v2"
-        || request.ruleVersion !== 2
+        || request.reasonCode !== "balanced_overlap_v3"
+        || request.ruleVersion !== 3
         || !request.featureSnapshotJson) {
         return validationError("request", "자동 중복 판정 감사 정보가 올바르지 않습니다");
       }
@@ -1790,15 +1845,49 @@ class BrowserMockBackend implements BackendClient {
     });
     const pending = remaining.some((candidate) => candidate.decision === undefined);
     const cancelled = request.action === "remove_incoming";
+    const decidedAt = new Date().toISOString();
     const next: DownloadOverlapReview = {
       ...review,
       revision: review.revision + 1,
       state: cancelled ? "cancelled" : pending ? "pending" : "resolved",
       candidates: remaining,
-      updatedAt: new Date().toISOString(),
-      ...(!pending ? { resolvedAt: new Date().toISOString() } : {}),
+      decisions: [
+        ...(review.decisions ?? []),
+        {
+          ...(request.candidateId ? { candidateId: request.candidateId } : {}),
+          action: request.action,
+          actor: request.actor ?? "human",
+          ...(request.reasonCode ? { reasonCode: request.reasonCode } : {}),
+          ...(request.ruleVersion !== undefined ? { ruleVersion: request.ruleVersion } : {}),
+          ...(request.featureSnapshotJson ? { featureSnapshotJson: request.featureSnapshotJson } : {}),
+          createdAt: decidedAt,
+        },
+      ],
+      updatedAt: decidedAt,
+      ...(!pending ? { resolvedAt: decidedAt } : {}),
     };
     this.downloadOverlapReviews.set(request.reviewId, next);
+    if (request.actor === "automation") {
+      const currentHistory = this.downloadOverlapAutomationHistory.get(request.reviewId);
+      const removedGalleryId = request.action === "remove_incoming"
+        ? review.incoming.galleryId
+        : selectedCandidate?.existing.galleryId;
+      const removedGalleryIds = removedGalleryId === undefined
+        ? currentHistory?.removedGalleryIds ?? []
+        : [...new Set([...(currentHistory?.removedGalleryIds ?? []), removedGalleryId])];
+      this.downloadOverlapAutomationHistory.set(request.reviewId, {
+        reviewId: request.reviewId,
+        incomingGalleryId: review.incoming.galleryId,
+        title: review.incoming.title,
+        occurredAt: next.updatedAt,
+        reviewState: next.state,
+        removeIncomingCount: (currentHistory?.removeIncomingCount ?? 0)
+          + (request.action === "remove_incoming" ? 1 : 0),
+        removeExistingCount: (currentHistory?.removeExistingCount ?? 0)
+          + (request.action === "remove_existing_continue" ? 1 : 0),
+        removedGalleryIds,
+      });
+    }
     if (cancelled) {
       this.explorationRestoredGalleryIds.delete(review.incoming.galleryId);
       this.duplicateHiddenGalleryIds.add(review.incoming.galleryId);
@@ -3055,6 +3144,18 @@ class TauriBackend implements BackendClient {
 
   downloadOverlapReviewGet(reviewId: string): Promise<ApiResult<DownloadOverlapReview>> {
     return invoke("download_overlap_review_get", { reviewId });
+  }
+
+  downloadOverlapAutomationHistoryList(
+    request: DownloadOverlapAutomationHistoryRequest,
+  ): Promise<ApiResult<DownloadOverlapAutomationHistoryPage>> {
+    return invoke("download_overlap_automation_history_list", { request });
+  }
+
+  downloadOverlapAutomationHistoryAcknowledge(
+    reviewId: string,
+  ): Promise<ApiResult<DownloadOverlapAutomationHistoryItem>> {
+    return invoke("download_overlap_automation_history_acknowledge", { reviewId });
   }
 
   downloadOverlapDecisionApply(request: DownloadOverlapDecisionRequest): Promise<ApiResult<DownloadOverlapDecisionResult>> {

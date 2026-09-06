@@ -34,12 +34,14 @@ pub use download::{
     DownloadListRequest, DownloadPage, DownloadReviewKind,
 };
 pub use download_overlap::{
-    DownloadOverlapCandidate, DownloadOverlapCandidateIdentity, DownloadOverlapDecisionAction,
-    DownloadOverlapDecisionActor, DownloadOverlapDecisionApplied,
-    DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionRequest,
-    DownloadOverlapDecisionResult, DownloadOverlapGalleryRef, DownloadOverlapPagePair,
-    DownloadOverlapPairDecision, DownloadOverlapRelation, DownloadOverlapReview,
-    DownloadOverlapReviewDraft, DownloadOverlapReviewState, DOWNLOAD_OVERLAP_MAX_STORED_PAGE_PAIRS,
+    DownloadOverlapAutomationHistoryItem, DownloadOverlapAutomationHistoryListRequest,
+    DownloadOverlapAutomationHistoryPage, DownloadOverlapCandidate,
+    DownloadOverlapCandidateIdentity, DownloadOverlapDecisionAction, DownloadOverlapDecisionActor,
+    DownloadOverlapDecisionApplied, DownloadOverlapDecisionApplyOutcome,
+    DownloadOverlapDecisionAudit, DownloadOverlapDecisionRequest, DownloadOverlapDecisionResult,
+    DownloadOverlapGalleryRef, DownloadOverlapPagePair, DownloadOverlapPairDecision,
+    DownloadOverlapRelation, DownloadOverlapReview, DownloadOverlapReviewDraft,
+    DownloadOverlapReviewState, DOWNLOAD_OVERLAP_MAX_STORED_PAGE_PAIRS,
     DOWNLOAD_OVERLAP_POLICY_VERSION,
 };
 pub use duplicate::{

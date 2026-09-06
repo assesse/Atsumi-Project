@@ -53,6 +53,7 @@ type SettingsDialogProps = {
 };
 
 const DEFAULT_FOLDER_NAME_TEMPLATE = "[{artist}] {title} [{group}] {id}";
+const EXCLUSION_RENDER_BATCH = 50;
 const PROJECT_URL = "https://github.com/assesse/Atsumi-Project";
 const FEEDBACK_URL = `${PROJECT_URL}/issues/new/choose`;
 const exclusionReasonLabel = (kind: ExplorationExclusion["reasons"][number]["kind"]): string => ({
@@ -134,6 +135,9 @@ export function SettingsDialog({
   const [exclusionsError, setExclusionsError] = useState("");
   const [selectedExclusionIds, setSelectedExclusionIds] = useState<Set<GalleryId>>(new Set());
   const [restoringExclusions, setRestoringExclusions] = useState(false);
+  const [exclusionManagerOpen, setExclusionManagerOpen] = useState(false);
+  const [visibleExclusionCount, setVisibleExclusionCount] = useState(EXCLUSION_RENDER_BATCH);
+  const exclusionRequest = useRef(0);
   const [includeTagInput, setIncludeTagInput] = useState(settings.searchIncludeTags.join("\n"));
   const [excludeTagInput, setExcludeTagInput] = useState(settings.searchExcludeTags.join("\n"));
   const [storageUsage, setStorageUsage] = useState<StorageUsageSnapshot | null>(null);
@@ -153,9 +157,14 @@ export function SettingsDialog({
       setUpdateMessage("");
       setActiveTab("general");
       setDanbooruDraft(loadDanbooruSearchPreferences());
+      exclusionRequest.current += 1;
+      setExclusionManagerOpen(false);
       setExclusions([]);
+      setExclusionsLoading(false);
       setExclusionsError("");
       setSelectedExclusionIds(new Set());
+      setRestoringExclusions(false);
+      setVisibleExclusionCount(EXCLUSION_RENDER_BATCH);
       setIncludeTagInput(settings.searchIncludeTags.join("\n"));
       setExcludeTagInput(settings.searchExcludeTags.join("\n"));
       onPreviewLayout({ maxColumns: settings.maxColumns, previewWidth: settings.previewWidth });
@@ -233,24 +242,45 @@ export function SettingsDialog({
   }, [draft.folderNameTemplate, onPreviewFolderName, open]);
 
   useEffect(() => {
-    if (!open || activeTab !== "hitomi") return undefined;
-    let cancelled = false;
+    if (open && activeTab === "hitomi") return;
+    exclusionRequest.current += 1;
+    setExclusionManagerOpen(false);
+    setExclusions([]);
+    setExclusionsLoading(false);
+    setExclusionsError("");
+    setSelectedExclusionIds(new Set());
+    setVisibleExclusionCount(EXCLUSION_RENDER_BATCH);
+  }, [activeTab, open]);
+
+  const loadExclusionManager = () => {
+    const request = ++exclusionRequest.current;
+    setExclusionManagerOpen(true);
     setExclusionsLoading(true);
     setExclusionsError("");
+    setExclusions([]);
+    setSelectedExclusionIds(new Set());
+    setVisibleExclusionCount(EXCLUSION_RENDER_BATCH);
     void onLoadExplorationExclusions().then((result) => {
-      if (cancelled) return;
+      if (exclusionRequest.current !== request) return;
       if (result.ok) setExclusions(result.data);
       else setExclusionsError(result.error.message);
       setExclusionsLoading(false);
     }).catch(() => {
-      if (cancelled) return;
+      if (exclusionRequest.current !== request) return;
       setExclusionsError("탐색 제외 앨범을 불러오지 못했습니다.");
       setExclusionsLoading(false);
     });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, onLoadExplorationExclusions, open]);
+  };
+
+  const closeExclusionManager = () => {
+    exclusionRequest.current += 1;
+    setExclusionManagerOpen(false);
+    setExclusions([]);
+    setExclusionsLoading(false);
+    setExclusionsError("");
+    setSelectedExclusionIds(new Set());
+    setVisibleExclusionCount(EXCLUSION_RENDER_BATCH);
+  };
 
   const patch = <K extends keyof SettingsSnapshot>(key: K, value: SettingsSnapshot[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -338,24 +368,30 @@ export function SettingsDialog({
     if (!galleryIds.length) return;
     setRestoringExclusions(true);
     setExclusionsError("");
+    const restored = new Set<GalleryId>();
     try {
-      const result = await onRestoreExplorationExclusions(galleryIds);
-      if (result.ok) {
-        const restored = new Set(result.data.restoredGalleryIds);
-        setExclusions((current) => current.filter((item) => !restored.has(item.galleryId)));
-        setSelectedExclusionIds((current) => new Set([...current].filter((id) => !restored.has(id))));
-      } else {
-        setExclusionsError(result.error.message);
+      for (let offset = 0; offset < galleryIds.length; offset += 200) {
+        const result = await onRestoreExplorationExclusions(galleryIds.slice(offset, offset + 200));
+        if (!result.ok) {
+          setExclusionsError(result.error.message);
+          break;
+        }
+        result.data.restoredGalleryIds.forEach((id) => restored.add(id));
       }
     } catch {
       setExclusionsError("선택한 앨범의 제외 또는 숨김을 해제하지 못했습니다.");
     } finally {
+      if (restored.size) {
+        setExclusions((current) => current.filter((item) => !restored.has(item.galleryId)));
+        setSelectedExclusionIds((current) => new Set([...current].filter((id) => !restored.has(id))));
+      }
       setRestoringExclusions(false);
     }
   };
 
   const overlappingSearchTags = draft.searchIncludeTags.filter((tag) =>
     draft.searchExcludeTags.includes(tag));
+  const visibleExclusions = exclusions.slice(0, visibleExclusionCount);
   const tagCatalogIncomplete = !tagCatalogStatus?.entryCount
     || tagCatalogStatus.artistCount === 0
     || tagCatalogStatus.groupCount === 0;
@@ -575,8 +611,8 @@ export function SettingsDialog({
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div>
                     <strong>다운로드 판본 자동 판정</strong>
-                    <span>포함률 95% 이상이면서 판본 간 페이지 차이가 5장 이하인 포함·거의 동일 판본만 판단합니다.</span>
-                    <span>제목에서 무검열 표식이 확인되면 그 판본을 우선합니다. 다만 포함 관계에서 더 큰 판본이 검열판이고 작은 판본이 무검열판인 충돌, 또는 근거가 부족한 경우에는 직접 검토합니다. 자동 제거도 영구 삭제가 아닌 복구 가능한 격리입니다.</span>
+                    <span>일반 판본은 포함률 95% 이상이면서 판본 간 페이지 차이가 5장 이하인 포함·거의 동일 판본만 판단합니다.</span>
+                    <span>제목에서 무검열 표식이 확인되면 그 판본을 우선합니다. 단, 작은 판본에 고유 페이지가 없고 98% 이상 포함되며 큰 판본이 1.5배·8장 이상 큰 합본이면 무검열 표식보다 합본 보존을 우선합니다. 근거가 부족한 경우에는 직접 검토하며, 자동 제거도 영구 삭제가 아닌 복구 가능한 격리입니다.</span>
                   </div>
                   <div className="settings-select-control">
                     <select
@@ -586,7 +622,7 @@ export function SettingsDialog({
                     >
                       <option value="off">사용 안 함</option>
                       <option value="recommend">추천만 표시</option>
-                      <option value="strict_quarantine">95% 기준 자동 정리</option>
+                      <option value="strict_quarantine">안전 기준 자동 정리</option>
                     </select>
                     <FluentIcon glyph="\uE70D" />
                   </div>
@@ -787,62 +823,90 @@ export function SettingsDialog({
                     <div>
                       <span className="eyebrow">EXCLUDED ALBUMS</span>
                       <h3 id="exclusion-manager-title">탐색 제외·중복 숨김 앨범</h3>
-                      <p>직접 제외했거나 중복 판정 때문에 Auto Find 또는 Downloads에서 숨겨진 앨범입니다. 해제해도 중복 판정 기록은 삭제되지 않습니다.</p>
+                      <p>목록은 설정을 열 때 자동으로 불러오지 않습니다. 관리가 필요할 때만 열고, 화면에는 50개씩 나누어 표시합니다.</p>
                     </div>
-                    <button
-                      type="button"
-                      className="text-button primary"
-                      disabled={!selectedExclusionIds.size || restoringExclusions}
-                      onClick={() => void restoreExclusions([...selectedExclusionIds])}
-                    >{restoringExclusions ? "복원 중" : `선택 복원 (${selectedExclusionIds.size})`}</button>
+                    <div className="exclusion-manager-actions">
+                      {exclusionManagerOpen ? (
+                        <button
+                          type="button"
+                          className="text-button primary"
+                          disabled={!selectedExclusionIds.size || restoringExclusions}
+                          onClick={() => void restoreExclusions([...selectedExclusionIds])}
+                        >{restoringExclusions ? "복원 중" : `선택 복원 (${selectedExclusionIds.size})`}</button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="text-button"
+                        aria-expanded={exclusionManagerOpen}
+                        aria-controls="exclusion-manager-body"
+                        onClick={exclusionManagerOpen ? closeExclusionManager : loadExclusionManager}
+                      >{exclusionManagerOpen ? "목록 닫기" : "제외 앨범 관리"}</button>
+                    </div>
                   </header>
-                  {exclusionsError ? <div className="inline-error" role="alert">{exclusionsError}</div> : null}
-                  {exclusionsLoading ? <p className="exclusion-empty" role="status">제외 앨범을 불러오는 중입니다.</p> : null}
-                  {!exclusionsLoading && !exclusions.length ? <p className="exclusion-empty">현재 관리할 제외·숨김 앨범이 없습니다.</p> : null}
-                  {exclusions.length ? (
-                    <div className="exclusion-list">
-                      <label className="exclusion-select-all">
-                        <input
-                          type="checkbox"
-                          checked={selectedExclusionIds.size === exclusions.length}
-                          onChange={(event) => setSelectedExclusionIds(event.target.checked
-                            ? new Set(exclusions.map((item) => item.galleryId))
-                            : new Set())}
-                        />
-                        전체 선택
-                      </label>
-                      {exclusions.map((item) => (
-                        <article className="exclusion-item" key={item.galleryId}>
-                          <input
-                            type="checkbox"
-                            aria-label={`${item.title} 선택`}
-                            checked={selectedExclusionIds.has(item.galleryId)}
-                            onChange={(event) => setSelectedExclusionIds((current) => {
-                              const next = new Set(current);
-                              if (event.target.checked) next.add(item.galleryId);
-                              else next.delete(item.galleryId);
-                              return next;
-                            })}
-                          />
-                          <div className="exclusion-copy">
-                            <strong>{item.title}</strong>
-                            <span>{item.artist} · Gallery #{item.galleryId}</span>
-                            <div className="exclusion-reasons">
-                              {item.reasons.map((reason, index) => (
-                                <span key={`${reason.kind}-${reason.excludedAt}-${index}`} title={`${reason.detail} · ${reason.excludedAt}`}>
-                                  {exclusionReasonLabel(reason.kind)}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                          <button
-                            type="button"
-                            className="text-button"
-                            disabled={restoringExclusions}
-                            onClick={() => void restoreExclusions([item.galleryId])}
-                          >제외/숨김 해제</button>
-                        </article>
-                      ))}
+                  {exclusionManagerOpen ? (
+                    <div id="exclusion-manager-body" className="exclusion-manager-body">
+                      <p className="exclusion-manager-note">직접 제외했거나 중복 판정 때문에 Auto Find 또는 Downloads에서 숨겨진 앨범입니다. 해제해도 중복 판정 기록은 삭제되지 않습니다.</p>
+                      {exclusionsError ? (
+                        <div className="exclusion-load-error" role="alert">
+                          <span>{exclusionsError}</span>
+                          <button type="button" className="text-button" onClick={loadExclusionManager}>다시 불러오기</button>
+                        </div>
+                      ) : null}
+                      {exclusionsLoading ? <p className="exclusion-empty" role="status">제외 앨범을 불러오는 중입니다.</p> : null}
+                      {!exclusionsLoading && !exclusionsError && !exclusions.length ? <p className="exclusion-empty">현재 관리할 제외·숨김 앨범이 없습니다.</p> : null}
+                      {exclusions.length ? (
+                        <div className="exclusion-list">
+                          <label className="exclusion-select-all">
+                            <input
+                              type="checkbox"
+                              checked={exclusions.length > 0 && selectedExclusionIds.size === exclusions.length}
+                              onChange={(event) => setSelectedExclusionIds(event.target.checked
+                                ? new Set(exclusions.map((item) => item.galleryId))
+                                : new Set())}
+                            />
+                            불러온 {exclusions.length.toLocaleString("ko-KR")}개 전체 선택
+                          </label>
+                          {visibleExclusions.map((item) => (
+                            <article className="exclusion-item" key={item.galleryId}>
+                              <input
+                                type="checkbox"
+                                aria-label={`${item.title} 선택`}
+                                checked={selectedExclusionIds.has(item.galleryId)}
+                                onChange={(event) => setSelectedExclusionIds((current) => {
+                                  const next = new Set(current);
+                                  if (event.target.checked) next.add(item.galleryId);
+                                  else next.delete(item.galleryId);
+                                  return next;
+                                })}
+                              />
+                              <div className="exclusion-copy">
+                                <strong>{item.title}</strong>
+                                <span>{item.artist} · Gallery #{item.galleryId}</span>
+                                <div className="exclusion-reasons">
+                                  {item.reasons.map((reason, index) => (
+                                    <span key={`${reason.kind}-${reason.excludedAt}-${index}`} title={`${reason.detail} · ${reason.excludedAt}`}>
+                                      {exclusionReasonLabel(reason.kind)}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                className="text-button"
+                                disabled={restoringExclusions}
+                                onClick={() => void restoreExclusions([item.galleryId])}
+                              >제외/숨김 해제</button>
+                            </article>
+                          ))}
+                          {visibleExclusions.length < exclusions.length ? (
+                            <button
+                              type="button"
+                              className="text-button exclusion-load-more"
+                              onClick={() => setVisibleExclusionCount((current) => current + EXCLUSION_RENDER_BATCH)}
+                            >더 보기 ({(exclusions.length - visibleExclusions.length).toLocaleString("ko-KR")}개 남음)</button>
+                          ) : null}
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </section>

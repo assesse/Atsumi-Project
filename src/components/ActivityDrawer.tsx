@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
 import type { DownloadState, Gallery, GalleryId } from "../core/types";
 import { FluentIcon } from "./FluentIcon";
 
@@ -7,11 +8,21 @@ type ActivityDrawerProps = {
   galleries: Gallery[];
   sessionDownloads: SessionDownloadActivity[];
   automaticOverlapActivities?: AutomaticOverlapActivity[];
+  automationHistory?: DownloadOverlapAutomationHistoryItem[];
+  automationHistoryLoading?: boolean;
+  automationHistoryError?: string | null;
+  automationHistoryTotalItems?: number;
+  automationHistoryUnacknowledgedItems?: number;
+  automationHistoryPendingReviewIds?: ReadonlySet<string>;
   danbooruActivities?: DanbooruSessionActivity[];
   duplicateExcludedGalleryIds?: ReadonlySet<GalleryId>;
   onClose: () => void;
   onReview: (id: GalleryId) => void;
   onReviewOverlap?: (reviewId: string, galleryId: GalleryId) => void;
+  onAcknowledgeAutomationHistory?: (reviewId: string) => void;
+  onRestoreAutomationExclusions?: (reviewId: string, galleryIds: GalleryId[]) => void;
+  onRetryAutomationHistory?: () => void;
+  onLoadMoreAutomationHistory?: () => void;
   onRetry: (id: GalleryId) => void;
   onCancel: (id: GalleryId) => void;
   pendingEntryIds?: ReadonlySet<string>;
@@ -80,21 +91,56 @@ const displayedProgress = (download: NonNullable<Gallery["download"]>): number =
   return Math.floor(Math.min(100, Math.max(0, Number.isFinite(rawProgress) ? rawProgress : 0)));
 };
 
+const automationReviewStateLabel: Record<DownloadOverlapAutomationHistoryItem["reviewState"], string> = {
+  pending: "직접 검토 필요",
+  resolved: "분류 완료",
+  cancelled: "신규 판본 취소",
+  stale: "상태 변경됨",
+};
+
+const automaticHistoryDetail = (item: DownloadOverlapAutomationHistoryItem): string => {
+  const decisions = [
+    item.removeExistingCount > 0 ? `기존 판본 ${item.removeExistingCount}개 제외` : "",
+    item.removeIncomingCount > 0 ? `신규 판본 ${item.removeIncomingCount}개 제외` : "",
+  ].filter(Boolean);
+  return decisions.length > 0 ? `자동 분류 · ${decisions.join(" · ")}` : "자동 판본 분류 기록";
+};
+
+const formatOccurredAt = (occurredAt: string): string => {
+  const timestamp = Date.parse(occurredAt);
+  if (!Number.isFinite(timestamp)) return occurredAt;
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(timestamp);
+};
+
 export function ActivityDrawer({
   open,
   galleries,
   sessionDownloads,
   automaticOverlapActivities = [],
+  automationHistory = [],
+  automationHistoryLoading = false,
+  automationHistoryError = null,
+  automationHistoryTotalItems = 0,
+  automationHistoryUnacknowledgedItems = 0,
+  automationHistoryPendingReviewIds = new Set(),
   danbooruActivities = [],
   duplicateExcludedGalleryIds = new Set(),
   onClose,
   onReview,
   onReviewOverlap,
+  onAcknowledgeAutomationHistory,
+  onRestoreAutomationExclusions,
+  onRetryAutomationHistory,
+  onLoadMoreAutomationHistory,
   onRetry,
   onCancel,
   pendingEntryIds = new Set(),
 }: ActivityDrawerProps) {
   const closeButton = useRef<HTMLButtonElement>(null);
+  const [activeSection, setActiveSection] = useState<"session" | "automation">("session");
 
   useEffect(() => {
     if (open) window.requestAnimationFrame(() => closeButton.current?.focus());
@@ -106,9 +152,13 @@ export function ActivityDrawer({
     const gallery = galleryById.get(galleryId);
     return gallery?.download ? [{ kind: "download" as const, gallery, occurredAt }] : [];
   });
+  const latestAutomaticActivities = [...automaticOverlapActivities]
+    .sort((left, right) => right.occurredAt - left.occurredAt)
+    .filter((activity, index, activities) =>
+      activities.findIndex((candidate) => candidate.reviewId === activity.reviewId) === index);
   const feed = [
     ...downloadActivities,
-    ...automaticOverlapActivities.map((activity) => ({
+    ...latestAutomaticActivities.map((activity) => ({
       kind: "automatic-overlap" as const,
       activity,
       occurredAt: activity.occurredAt,
@@ -120,6 +170,19 @@ export function ActivityDrawer({
     })),
   ]
     .sort((left, right) => right.occurredAt - left.occurredAt);
+  const liveAutomaticByReviewId = new Map(latestAutomaticActivities.map((activity) => [activity.reviewId, activity]));
+  const persistedReviewIds = new Set(automationHistory.map((item) => item.reviewId));
+  const automationReviewRows = [
+    ...automationHistory.map((item) => ({
+      kind: "persisted" as const,
+      item,
+      live: liveAutomaticByReviewId.get(item.reviewId),
+      occurredAt: Date.parse(item.occurredAt) || 0,
+    })),
+    ...latestAutomaticActivities
+      .filter((activity) => !persistedReviewIds.has(activity.reviewId))
+      .map((activity) => ({ kind: "live" as const, activity, occurredAt: activity.occurredAt })),
+  ].sort((left, right) => right.occurredAt - left.occurredAt);
 
   return (
     <aside
@@ -154,7 +217,27 @@ export function ActivityDrawer({
           <FluentIcon glyph="\uE711" />
         </button>
       </header>
-      <div className="activity-list">
+      <nav className="activity-section-tabs" role="tablist" aria-label="활동 기록 분류">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSection === "session"}
+          aria-controls="activity-session-panel"
+          className={`mini-command${activeSection === "session" ? " is-active" : ""}`}
+          onClick={() => setActiveSection("session")}
+        >이번 실행</button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSection === "automation"}
+          aria-controls="activity-automation-panel"
+          className={`mini-command${activeSection === "automation" ? " is-active" : ""}`}
+          onClick={() => setActiveSection("automation")}
+        >
+          자동분류 검토{automationHistoryUnacknowledgedItems > 0 ? ` ${automationHistoryUnacknowledgedItems}` : ""}
+        </button>
+      </nav>
+      {activeSection === "session" ? <div id="activity-session-panel" role="tabpanel" className="activity-list">
         {feed.map((item) => {
           if (item.kind === "danbooru") {
             const { activity } = item;
@@ -256,7 +339,83 @@ export function ActivityDrawer({
             <span>다운로드와 자동 처리가 여기에 표시됩니다.</span>
           </div>
         ) : null}
-      </div>
+      </div> : (
+        <div id="activity-automation-panel" role="tabpanel" className="activity-list">
+          <p className="activity-history-note" title="탐색·목록 제외만 해제하며 격리된 실제 파일은 복원하지 않습니다.">
+            목록 복원은 탐색·목록 제외만 해제합니다. 격리된 실제 파일은 복원하지 않습니다.
+          </p>
+          {automationReviewRows.map((row) => {
+            if (row.kind === "live") {
+              const { activity } = row;
+              return (
+                <article key={`live:${activity.reviewId}`} className={`activity-item automatic-overlap${activity.state === "completed" ? " complete" : " warning"}`}>
+                  <span className="activity-icon"><FluentIcon glyph={activity.state === "completed" ? "\uE73E" : "\uE7BA"} /></span>
+                  <div>
+                    <strong>{activity.title}</strong>
+                    <span>{activity.detail}</span>
+                    <small>이번 실행 · 영구 기록 반영 대기</small>
+                  </div>
+                  <div className="activity-actions">
+                    <button type="button" className="mini-command" onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}>근거 보기</button>
+                  </div>
+                </article>
+              );
+            }
+            const { item, live } = row;
+            const pending = automationHistoryPendingReviewIds.has(item.reviewId);
+            const acknowledged = Boolean(item.acknowledgedAt);
+            return (
+              <article key={item.reviewId} className={`activity-item automatic-overlap activity-history-item${item.reviewState === "pending" || item.reviewState === "stale" ? " warning" : " complete"}`}>
+                <span className="activity-icon"><FluentIcon glyph={item.reviewState === "pending" || item.reviewState === "stale" ? "\uE7BA" : "\uE73E"} /></span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <span>{live?.detail ?? automaticHistoryDetail(item)}</span>
+                  <small>{automationReviewStateLabel[item.reviewState]} · {formatOccurredAt(item.occurredAt)}</small>
+                </div>
+                <div className="activity-actions automation-history-actions">
+                  {acknowledged ? <b className="activity-resolution">확인 완료</b> : null}
+                  <button type="button" className="mini-command" disabled={pending} onClick={() => onReviewOverlap?.(item.reviewId, item.incomingGalleryId)}>근거 보기</button>
+                  {!acknowledged && item.removedGalleryIds.length > 0 ? (
+                    <button
+                      type="button"
+                      className="mini-command"
+                      title="탐색·목록 제외만 해제합니다. 격리된 실제 파일은 복원하지 않습니다."
+                      disabled={pending}
+                      onClick={() => onRestoreAutomationExclusions?.(item.reviewId, item.removedGalleryIds)}
+                    >목록에 복원</button>
+                  ) : null}
+                  {!acknowledged ? (
+                    <button type="button" className="mini-command" disabled={pending} onClick={() => onAcknowledgeAutomationHistory?.(item.reviewId)}>확인 완료</button>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+          {automationHistoryLoading && automationReviewRows.length === 0 ? (
+            <div className="activity-empty" role="status"><span className="spinner" /><strong>자동분류 기록을 불러오는 중입니다.</strong></div>
+          ) : null}
+          {automationHistoryError ? (
+            <div className="activity-empty" role="alert">
+              <FluentIcon glyph="\uE7BA" />
+              <strong>자동분류 기록을 불러오지 못했습니다.</strong>
+              <span>{automationHistoryError}</span>
+              <button type="button" className="mini-command" onClick={onRetryAutomationHistory}>다시 시도</button>
+            </div>
+          ) : null}
+          {!automationHistoryLoading && !automationHistoryError && automationReviewRows.length === 0 ? (
+            <div className="activity-empty">
+              <FluentIcon glyph="\uE823" />
+              <strong>검토할 자동분류 기록이 없습니다.</strong>
+              <span>자동 판본 분류 결과가 생기면 여기에 영구 보관됩니다.</span>
+            </div>
+          ) : null}
+          {automationHistory.length < automationHistoryTotalItems ? (
+            <button type="button" className="mini-command activity-history-more" disabled={automationHistoryLoading} onClick={onLoadMoreAutomationHistory}>
+              {automationHistoryLoading ? "불러오는 중" : "더 보기"}
+            </button>
+          ) : null}
+        </div>
+      )}
     </aside>
   );
 }

@@ -7,9 +7,11 @@ use crate::{
     domain::{
         ArtifactBundle, ArtifactManifest, ArtifactRelativePath, ArtifactSha256,
         ArtifactStorageFormat, DownloadEntryId, DownloadJobDescriptor, DownloadJobProjection,
-        DownloadOverlapCandidateIdentity, DownloadOverlapDecisionApplyOutcome,
-        DownloadOverlapDecisionRequest, DownloadOverlapReview, DownloadOverlapReviewDraft,
-        DuplicatePageHash, Gallery, GalleryId, JobRef, JobState, PageArtifact, SourcePageNumber,
+        DownloadOverlapAutomationHistoryItem, DownloadOverlapAutomationHistoryListRequest,
+        DownloadOverlapAutomationHistoryPage, DownloadOverlapCandidateIdentity,
+        DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionRequest, DownloadOverlapReview,
+        DownloadOverlapReviewDraft, DuplicatePageHash, Gallery, GalleryId, JobRef, JobState,
+        PageArtifact, SourcePageNumber,
     },
     source::{SourceCandidateDiagnostic, SourceContractError},
     thumbnail::CancellationToken,
@@ -112,6 +114,14 @@ pub trait ArtifactStore: Send + Sync {
         root: &Path,
         relative_directory: &ArtifactRelativePath,
         allow_existing: bool,
+    ) -> Result<ArtifactLayout, DownloadPipelineError>;
+
+    /// Resolves an artifact directory that must already exist without probing
+    /// or otherwise mutating the download root.
+    fn prepare_existing_layout(
+        &self,
+        root: &Path,
+        relative_directory: &ArtifactRelativePath,
     ) -> Result<ArtifactLayout, DownloadPipelineError>;
 
     fn verify_existing_page(
@@ -379,6 +389,12 @@ pub trait DownloadOverlapRepository: DownloadPipelineRepository {
         incoming_entry_id: &DownloadEntryId,
     ) -> Result<Vec<DownloadOverlapCandidateIdentity>, RepositoryError>;
 
+    fn overlap_candidate_is_eligible(
+        &self,
+        incoming_entry_id: &DownloadEntryId,
+        candidate_entry_id: &DownloadEntryId,
+    ) -> Result<bool, RepositoryError>;
+
     fn overlap_page_hash_get(
         &self,
         entry_id: &str,
@@ -407,6 +423,16 @@ pub trait DownloadOverlapRepository: DownloadPipelineRepository {
         &self,
         review_id: &str,
     ) -> Result<Option<DownloadOverlapReview>, RepositoryError>;
+
+    fn overlap_automation_history_list(
+        &self,
+        request: &DownloadOverlapAutomationHistoryListRequest,
+    ) -> Result<DownloadOverlapAutomationHistoryPage, RepositoryError>;
+
+    fn overlap_automation_history_acknowledge(
+        &self,
+        review_id: &str,
+    ) -> Result<Option<DownloadOverlapAutomationHistoryItem>, RepositoryError>;
 
     fn overlap_decision_apply(
         &self,

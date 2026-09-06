@@ -131,6 +131,48 @@ impl ArtifactStore for FilesystemArtifactStore {
         })
     }
 
+    fn prepare_existing_layout(
+        &self,
+        root: &Path,
+        relative_directory: &ArtifactRelativePath,
+    ) -> Result<ArtifactLayout, DownloadPipelineError> {
+        let root = resolve_existing_download_root(root)?;
+        let directory = root.join(relative_directory.as_str());
+        if directory.as_os_str().encode_wide_units() > MAX_MANAGED_ABSOLUTE_PATH_UTF16 {
+            return Err(DownloadPipelineError::new(
+                DownloadPipelineErrorCode::PathOutsideRoot,
+                "The planned artifact path is too long for the Windows safety budget",
+                false,
+            ));
+        }
+        let canonical_directory = directory.canonicalize().map_err(|_| {
+            DownloadPipelineError::new(
+                DownloadPipelineErrorCode::ArtifactMissing,
+                "The existing gallery folder could not be resolved",
+                false,
+            )
+        })?;
+        if !canonical_directory.is_dir() {
+            return Err(DownloadPipelineError::new(
+                DownloadPipelineErrorCode::ArtifactMissing,
+                "The existing gallery folder is not available",
+                false,
+            ));
+        }
+        ensure_descendant(&root, &canonical_directory)?;
+        let manifest_relative_path = ArtifactRelativePath::new(format!(
+            "{}/{}",
+            relative_directory.as_str(),
+            MANIFEST_FILE_NAME
+        ))
+        .map_err(|error| invalid_path(error.to_string()))?;
+        Ok(ArtifactLayout {
+            root,
+            relative_directory: relative_directory.clone(),
+            manifest_relative_path,
+        })
+    }
+
     fn verify_existing_page(
         &self,
         layout: &ArtifactLayout,
@@ -1092,6 +1134,50 @@ mod tests {
             fs::read(occupied.join("owned-by-user.txt")).unwrap(),
             b"keep"
         );
+    }
+
+    #[test]
+    fn prepare_existing_layout_never_creates_a_root_probe_or_missing_directory() {
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path().join("downloads");
+        fs::create_dir(&root).unwrap();
+        let relative = ArtifactRelativePath::new("existing-42").unwrap();
+        let directory = root.join(relative.as_str());
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("owned-by-user.txt"), b"keep").unwrap();
+        let store = FilesystemArtifactStore::new();
+
+        let layout = store.prepare_existing_layout(&root, &relative).unwrap();
+
+        assert_eq!(layout.root, root.canonicalize().unwrap());
+        assert_eq!(layout.relative_directory, relative);
+        assert_eq!(
+            layout.manifest_relative_path.as_str(),
+            "existing-42/manifest.json"
+        );
+        assert_eq!(
+            fs::read(directory.join("owned-by-user.txt")).unwrap(),
+            b"keep"
+        );
+        assert!(fs::read_dir(&root).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".atsumi-write-probe-")
+        }));
+
+        let missing = ArtifactRelativePath::new("missing-43").unwrap();
+        let error = store.prepare_existing_layout(&root, &missing).unwrap_err();
+        assert_eq!(error.code, DownloadPipelineErrorCode::ArtifactMissing);
+        assert!(!root.join(missing.as_str()).exists());
+
+        let missing_root = temporary.path().join("missing-download-root");
+        let error = store
+            .prepare_existing_layout(&missing_root, &relative)
+            .unwrap_err();
+        assert_eq!(error.code, DownloadPipelineErrorCode::Filesystem);
+        assert!(!missing_root.exists());
     }
 
     #[test]

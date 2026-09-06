@@ -14,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import type {
   DownloadOverlapCandidate,
+  DownloadOverlapDecisionAudit,
   DownloadOverlapDecisionRequest,
   DownloadOverlapGalleryRef,
   DownloadOverlapPagePair,
@@ -55,6 +56,278 @@ const relationLabel: Record<DownloadOverlapCandidate["relation"], string> = {
 };
 
 const percent = (value: number) => `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`;
+
+type ArtifactOutcome = "kept" | "excluded" | "pending" | "uncertain";
+
+type ArtifactPresentation = {
+  outcome: ArtifactOutcome;
+  reason: string;
+};
+
+type ComparisonOutcome = {
+  existing?: ArtifactPresentation;
+  incoming?: ArtifactPresentation;
+};
+
+type AutomaticDecisionSnapshot = {
+  candidateId?: string;
+  incomingGalleryId?: number;
+  existingGalleryId?: number;
+  winner: "incoming" | "existing";
+  preferenceReason:
+    | "containment"
+    | "omnibus_containment"
+    | "uncensored"
+    | "page_count"
+    | "stable_existing";
+  metrics?: {
+    loserCoverage?: number;
+    pageDifference?: number;
+  };
+};
+
+const latestDecision = (
+  review: DownloadOverlapReview,
+  predicate: (decision: DownloadOverlapDecisionAudit) => boolean,
+): DownloadOverlapDecisionAudit | undefined => {
+  const decisions = review.decisions ?? [];
+  for (let index = decisions.length - 1; index >= 0; index -= 1) {
+    if (predicate(decisions[index]!)) return decisions[index];
+  }
+  return undefined;
+};
+
+const candidateDecisionAudit = (
+  review: DownloadOverlapReview,
+  candidate: DownloadOverlapCandidate,
+): DownloadOverlapDecisionAudit | undefined => {
+  const expectedAction = candidate.decision === "existing_removed"
+    ? "remove_existing_continue"
+    : candidate.decision === "keep_both"
+      ? "keep_both_continue"
+      : candidate.decision === "false_positive"
+        ? "false_positive_continue"
+        : null;
+  if (!expectedAction) return undefined;
+  return latestDecision(review, (decision) =>
+    decision.candidateId === candidate.candidateId && decision.action === expectedAction);
+};
+
+const terminalIncomingAudit = (
+  review: DownloadOverlapReview,
+): DownloadOverlapDecisionAudit | undefined => latestDecision(review, (decision) =>
+  decision.action === "remove_incoming");
+
+const automaticDecisionSnapshot = (
+  audit: DownloadOverlapDecisionAudit,
+  review: DownloadOverlapReview,
+  candidate: DownloadOverlapCandidate,
+): AutomaticDecisionSnapshot | null => {
+  if (audit.actor !== "automation" || !audit.featureSnapshotJson) return null;
+  try {
+    const parsed = JSON.parse(audit.featureSnapshotJson) as Record<string, unknown>;
+    const winner = parsed.winner;
+    const preferenceReason = parsed.preferenceReason;
+    const expectedWinner = audit.action === "remove_existing_continue"
+      ? "incoming"
+      : audit.action === "remove_incoming"
+        ? "existing"
+        : null;
+    if ((winner !== "incoming" && winner !== "existing")
+      || winner !== expectedWinner
+      || ![
+        "containment",
+        "omnibus_containment",
+        "uncensored",
+        "page_count",
+        "stable_existing",
+      ].includes(String(preferenceReason))) return null;
+    if (typeof parsed.candidateId === "string" && parsed.candidateId !== candidate.candidateId) return null;
+    if (typeof parsed.incomingGalleryId === "number"
+      && parsed.incomingGalleryId !== Number(review.incoming.galleryId)) return null;
+    if (typeof parsed.existingGalleryId === "number"
+      && parsed.existingGalleryId !== Number(candidate.existing.galleryId)) return null;
+    const rawMetrics = parsed.metrics;
+    const metrics = typeof rawMetrics === "object" && rawMetrics !== null && !Array.isArray(rawMetrics)
+      ? rawMetrics as Record<string, unknown>
+      : undefined;
+    return {
+      ...(typeof parsed.candidateId === "string" ? { candidateId: parsed.candidateId } : {}),
+      ...(typeof parsed.incomingGalleryId === "number" ? { incomingGalleryId: parsed.incomingGalleryId } : {}),
+      ...(typeof parsed.existingGalleryId === "number" ? { existingGalleryId: parsed.existingGalleryId } : {}),
+      winner,
+      preferenceReason: preferenceReason as AutomaticDecisionSnapshot["preferenceReason"],
+      ...(metrics ? {
+        metrics: {
+          ...(typeof metrics.loserCoverage === "number" ? { loserCoverage: metrics.loserCoverage } : {}),
+          ...(typeof metrics.pageDifference === "number" ? { pageDifference: metrics.pageDifference } : {}),
+        },
+      } : {}),
+    };
+  } catch {
+    return null;
+  }
+};
+
+const automaticArtifactReason = (
+  snapshot: AutomaticDecisionSnapshot,
+  review: DownloadOverlapReview,
+  candidate: DownloadOverlapCandidate,
+  side: "existing" | "incoming",
+): string => {
+  const isWinner = snapshot.winner === side;
+  const pageDifference = Math.max(
+    0,
+    Math.round(snapshot.metrics?.pageDifference
+      ?? Math.abs(candidate.existing.pageCount - review.incoming.pageCount)),
+  );
+  const loserCoverage = snapshot.metrics?.loserCoverage
+    ?? (snapshot.winner === "incoming" ? candidate.existingCoverage : candidate.incomingCoverage);
+  switch (snapshot.preferenceReason) {
+    case "uncensored":
+      return isWinner
+        ? `무검열 표식 우선 · 신뢰도 ${percent(candidate.confidence)}`
+        : "상대 판본의 무검열 표식 우선";
+    case "page_count":
+      return isWinner
+        ? `추가 ${pageDifference}장 · 신뢰도 ${percent(candidate.confidence)}`
+        : `상대 판본이 ${pageDifference}장 더 많음`;
+    case "stable_existing":
+      return isWinner ? "동일 조건 · 기존 보유본 우선" : "동일 조건 · 기존 보유본 우선";
+    case "containment":
+      return isWinner
+        ? `상대 판본 ${percent(loserCoverage)} 포함`
+        : `보존판에 ${percent(loserCoverage)} 포함`;
+    case "omnibus_containment":
+      return isWinner
+        ? `큰 합본 · 상대 판본 ${percent(loserCoverage)} 포함`
+        : `큰 합본에 ${percent(loserCoverage)} 포함`;
+  }
+};
+
+const artifactReason = (
+  review: DownloadOverlapReview,
+  candidate: DownloadOverlapCandidate,
+  side: "existing" | "incoming",
+  outcome: ArtifactOutcome,
+): string => {
+  if (outcome === "pending") return "남은 후보 검토 중";
+  if (outcome === "uncertain") return "현재 상태 재확인 필요";
+
+  const candidateAudit = candidateDecisionAudit(review, candidate);
+  const incomingAudit = review.state === "cancelled"
+    ? terminalIncomingAudit(review)
+    : undefined;
+  const terminalIncomingDecisionApplies = Boolean(incomingAudit)
+    && review.state === "cancelled"
+    && !(side === "existing" && outcome === "excluded");
+  if (terminalIncomingDecisionApplies
+    && incomingAudit?.candidateId
+    && incomingAudit.candidateId !== candidate.candidateId) {
+    return side === "incoming"
+      ? "다른 후보 판정으로 신규 B 최종 제외"
+      : "신규 B 최종 제외로 유지";
+  }
+  const audit = terminalIncomingDecisionApplies ? incomingAudit : candidateAudit;
+  if (audit?.actor === "automation") {
+    const snapshot = automaticDecisionSnapshot(audit, review, candidate);
+    return snapshot
+      ? automaticArtifactReason(snapshot, review, candidate, side)
+      : `자동 판정 · 신뢰도 ${percent(candidate.confidence)}`;
+  }
+  if (audit?.action === "remove_existing_continue") {
+    return side === "existing" ? "수동 제거 선택" : "기존 A 제거 후 계속";
+  }
+  if (audit?.action === "remove_incoming") {
+    return side === "incoming" ? "수동 제거 선택" : "신규 B 제거 선택";
+  }
+
+  if (review.state !== "cancelled"
+    && candidate.decision === "false_positive"
+    && outcome === "kept") return "오탐 판정 · 둘 다 보존";
+  if (review.state !== "cancelled"
+    && candidate.decision === "keep_both"
+    && outcome === "kept") return "둘 다 보존 선택";
+
+  if (side === "existing" && candidate.decision === "existing_removed") {
+    return "기존 제외 상태 반영";
+  }
+  if (side === "incoming" && review.state === "cancelled") return "신규 제거 판정";
+  if (side === "existing" && review.state === "cancelled") return "신규 B 제거 후 유지";
+  return outcome === "kept" ? "검토 완료" : "제외 판정";
+};
+
+const comparisonOutcome = (
+  review: DownloadOverlapReview,
+  candidate: DownloadOverlapCandidate,
+): ComparisonOutcome | null => {
+  const incomingOutcome: ArtifactOutcome | undefined = review.state === "resolved"
+    ? "kept"
+    : review.state === "cancelled"
+      ? "excluded"
+      : candidate.decision
+        ? review.state === "pending" ? "pending" : "uncertain"
+        : undefined;
+  const existingOutcome: ArtifactOutcome | undefined = candidate.decision === "existing_removed"
+    ? "excluded"
+    : candidate.decision === "keep_both" || candidate.decision === "false_positive"
+      ? "kept"
+      : review.state === "cancelled"
+        ? "kept"
+        : undefined;
+
+  if (!existingOutcome && !incomingOutcome) return null;
+  return {
+    ...(existingOutcome ? {
+      existing: {
+        outcome: existingOutcome,
+        reason: artifactReason(review, candidate, "existing", existingOutcome),
+      },
+    } : {}),
+    ...(incomingOutcome ? {
+      incoming: {
+        outcome: incomingOutcome,
+        reason: artifactReason(review, candidate, "incoming", incomingOutcome),
+      },
+    } : {}),
+  };
+};
+
+const candidateOutcomeLabel = (
+  review: DownloadOverlapReview,
+  candidate: DownloadOverlapCandidate,
+): { label: string; tone: "kept" | "excluded" | "pending" } | null => {
+  const outcome = comparisonOutcome(review, candidate);
+  if (!outcome) return null;
+  if (outcome.existing?.outcome === "excluded" && outcome.incoming?.outcome === "kept") {
+    return { label: "A 제외", tone: "excluded" };
+  }
+  if (outcome.existing?.outcome === "kept" && outcome.incoming?.outcome === "excluded") {
+    return { label: "B 제외", tone: "excluded" };
+  }
+  if (outcome.existing?.outcome === "kept" && outcome.incoming?.outcome === "kept") {
+    return {
+      label: candidate.decision === "false_positive" ? "오탐 · 둘 다 유지" : "둘 다 유지",
+      tone: "kept",
+    };
+  }
+  if (outcome.existing?.outcome === "excluded" && outcome.incoming?.outcome === "excluded") {
+    return { label: "둘 다 제외", tone: "excluded" };
+  }
+  if (outcome.incoming?.outcome === "pending") {
+    return {
+      label: outcome.existing?.outcome === "excluded" ? "A 제외 · 계속 검토" : "A 유지 · 계속 검토",
+      tone: "pending",
+    };
+  }
+  if (outcome.incoming?.outcome === "uncertain") {
+    return {
+      label: outcome.existing?.outcome === "excluded" ? "A 제외 · 상태 확인" : "A 유지 · 상태 확인",
+      tone: "pending",
+    };
+  }
+  return outcome.incoming?.outcome === "kept" ? { label: "B 유지", tone: "kept" } : null;
+};
 
 type PageHoverPreview = {
   anchor: HTMLElement;
@@ -181,14 +454,28 @@ function PageHoverPreviewLayer({ preview, previewWidth, thumbnailClient }: {
   );
 }
 
-function ArtifactSummary({ gallery, label, page, thumbnailClient }: {
+function ArtifactSummary({ gallery, label, page, presentation, thumbnailClient }: {
   gallery: DownloadOverlapGalleryRef;
   label: string;
   page: number;
+  presentation?: ArtifactPresentation;
   thumbnailClient?: ThumbnailClient;
 }) {
+  const outcome = presentation?.outcome;
+  const outcomeLabel = outcome === "kept"
+    ? "이 검토에서 보존"
+    : outcome === "excluded"
+      ? "이 검토에서 제외"
+      : outcome === "pending"
+        ? "검토 계속 중"
+        : outcome === "uncertain"
+          ? "상태 확인 필요"
+          : null;
   return (
-    <article className="download-overlap-artifact">
+    <article
+      className={`download-overlap-artifact${outcome ? ` is-${outcome}` : ""}`}
+      aria-label={`${label}${outcomeLabel ? ` · ${outcomeLabel}` : ""}${presentation?.reason ? ` · 근거 ${presentation.reason}` : ""}`}
+    >
       <GalleryThumbnail
         className="download-overlap-cover"
         thumbnailKey={artifactPageThumbnailKey(gallery.entryId, page, Number(gallery.galleryId) % 6)}
@@ -198,7 +485,21 @@ function ArtifactSummary({ gallery, label, page, thumbnailClient }: {
         alt={`${gallery.title} ${page}페이지`}
       />
       <div>
-        <strong className="download-overlap-edition-label">{label}</strong>
+        <div className="download-overlap-artifact-label-row">
+          <strong className="download-overlap-edition-label">{label}</strong>
+          {outcomeLabel ? (
+            <span className={`download-overlap-artifact-outcome is-${outcome}`}>
+              <FluentIcon glyph={outcome === "kept" ? "\uE73E" : outcome === "excluded" ? "\uE711" : "\uE7BA"} />
+              {outcomeLabel}
+            </span>
+          ) : null}
+        </div>
+        {presentation?.reason ? (
+          <p className="download-overlap-artifact-reason">
+            <span>근거</span>
+            {presentation.reason}
+          </p>
+        ) : null}
         <strong className="download-overlap-artifact-title">{gallery.title}</strong>
         <span>{gallery.artists.join(", ") || "작가 정보 없음"}</span>
         <span>#{gallery.galleryId} · {gallery.pageCount}p</span>
@@ -343,7 +644,13 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
     ?? pendingCandidates[0]
     ?? review?.candidates[0];
   const autoPlan = useMemo(() => review ? buildStrictOverlapPlan(review) : null, [review]);
+  const outcome = useMemo(
+    () => review && candidate ? comparisonOutcome(review, candidate) : null,
+    [candidate, review],
+  );
   const reviewPending = review?.state === "pending";
+  const remainingAfterCandidate = pendingCandidates.filter((item) =>
+    item.candidateId !== candidate?.candidateId).length;
 
   useEffect(() => {
     setCandidateId(review?.candidates.find((item) => item.decision === undefined)?.candidateId ?? review?.candidates[0]?.candidateId ?? null);
@@ -369,7 +676,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
 
   const decide = (action: DownloadOverlapDecisionRequest["action"], currentCandidateId?: string) => {
     if (!review || !reviewPending || decisionPending) return;
-    if (action === "remove_existing_continue" && !window.confirm(`기존 앨범 A를 제거 처리할까요? 완료 앨범은 복구 가능한 격리로 이동하고, 다른 중복 검토에 멈춘 staging이면 그 다운로드만 취소합니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""} 신규 앨범 B는 남은 후보 검토 후 완료됩니다.`)) return;
+    if (action === "remove_existing_continue" && !window.confirm(`기존 앨범 A를 제거 처리할까요? 완료 앨범은 영구 삭제하지 않고 격리 영역으로 이동하며, 다른 중복 검토에 멈춘 staging이면 그 다운로드만 취소합니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""} 신규 앨범 B는 남은 후보 검토 후 완료됩니다.`)) return;
     if (action === "remove_incoming" && !window.confirm(`신규 앨범 B 다운로드를 취소할까요?${candidate?.incomingUniquePages ? ` B에만 있는 ${candidate.incomingUniquePages}장도 완료되지 않습니다.` : ""} 기존 앨범 A와 다른 보유 파일은 변경하지 않습니다.`)) return;
     onDecision({
       reviewId: review.reviewId,
@@ -409,8 +716,8 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
               <strong>{relationLabel[candidate.relation]} · 신뢰도 {percent(candidate.confidence)}</strong>
               <span id="download-overlap-safety">
                 {reviewPending
-                  ? "신규 B 파일은 검증됐지만 아직 완료 manifest를 만들지 않았습니다. 제거는 영구 삭제가 아니며, 완료된 기존 A는 복구 가능한 격리로 이동하고 검토 중 staging A와 신규 B는 취소 상태로 보존합니다."
-                  : "이 화면은 판정 당시의 A/B 비교 근거와 선택을 읽기 전용으로 보여줍니다. 제외된 완료본은 설정에서 복원할 수 있으며 파일을 영구 삭제하지 않습니다."}
+                  ? "신규 B 파일은 검증됐지만 아직 완료 manifest를 만들지 않았습니다. 제거는 영구 삭제가 아니며, 완료된 기존 A는 격리 영역으로 이동하고 검토 중 staging A와 신규 B는 취소 상태로 보존합니다."
+                  : "이 화면은 판정 당시의 A/B 비교 근거와 선택을 읽기 전용으로 보여줍니다. 탐색·목록 제외는 활동 기록이나 설정에서 해제할 수 있지만, 격리된 실제 파일은 이 판정 기록에서 복원되지 않습니다."}
                 {browserFixture ? " · 브라우저 검토 fixture" : ""}
               </span>
             </div>
@@ -419,11 +726,11 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
               <div className={`download-overlap-auto-recommendation${autoMode === "strict_quarantine" ? " is-automatic" : ""}`} role="status">
                 <FluentIcon glyph={autoPlan.winner === "incoming" ? "\uE73A" : "\uE74D"} />
                 <div>
-                  <strong>{autoMode === "strict_quarantine" ? "95% 기준 자동 정리 대상" : "95% 기준 추천"}</strong>
+                  <strong>{autoMode === "strict_quarantine" ? "안전 기준 자동 정리 대상" : "안전 기준 추천"}</strong>
                   <span>{autoPlan.summary}</span>
                   <small>
-                    포함률 95% 이상 · 판본 간 페이지 차이 5장 이하 · 정렬된 유효 페이지를 확인했습니다. 무검열 표식이 확인되면 그 판본을 우선하며, 포함 관계에서 더 큰 판본이 검열판이고 작은 판본이 무검열판인 충돌이나 근거 부족은 직접 검토합니다.
-                    {autoMode === "strict_quarantine" ? " 이 창을 닫으면 기존 재검증 후 복구 가능한 격리로 처리합니다." : " 최종 선택은 직접 적용해 주세요."}
+                    일반 판본은 포함률 95% 이상·페이지 차이 5장 이하에서 판단하며, 무검열 표식이 확인되면 그 판본을 우선합니다. 작은 판본에 고유 페이지가 없고 98% 이상 포함되며 큰 판본이 1.5배·8장 이상 큰 명확한 합본이면 작은 판본의 무검열 표식보다 합본을 우선합니다. 그 밖의 근거 부족은 직접 검토합니다.
+                    {autoMode === "strict_quarantine" ? " 이 창을 닫으면 기존 재검증 후 영구 삭제 대신 격리 영역으로 이동합니다." : " 최종 선택은 직접 적용해 주세요."}
                   </small>
                 </div>
               </div>
@@ -431,18 +738,21 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
 
             {review.candidates.length > 1 ? (
               <div className="download-overlap-candidate-tabs" role="tablist" aria-label="겹침 후보">
-                {review.candidates.map((item) => (
-                  <button type="button" role="tab" aria-selected={item.candidateId === candidate.candidateId} className={item.candidateId === candidate.candidateId ? "is-active" : ""} key={item.candidateId} onClick={() => setCandidateId(item.candidateId)}>
-                    후보 {item.rank} · #{item.existing.galleryId}
-                    {item.decision ? <small>처리됨</small> : null}
-                  </button>
-                ))}
+                {review.candidates.map((item) => {
+                  const tabOutcome = candidateOutcomeLabel(review, item);
+                  return (
+                    <button type="button" role="tab" aria-selected={item.candidateId === candidate.candidateId} className={item.candidateId === candidate.candidateId ? "is-active" : ""} key={item.candidateId} onClick={() => setCandidateId(item.candidateId)}>
+                      후보 {item.rank} · #{item.existing.galleryId}
+                      {tabOutcome ? <small className={`is-${tabOutcome.tone}`}>{tabOutcome.label}</small> : null}
+                    </button>
+                  );
+                })}
               </div>
             ) : null}
 
             <div className="download-overlap-artifacts">
-              <ArtifactSummary gallery={candidate.existing} label="기존 앨범 A" page={candidate.pagePairs[0]?.existingSourcePage ?? 1} thumbnailClient={thumbnailClient} />
-              <ArtifactSummary gallery={review.incoming} label="신규 앨범 B" page={candidate.pagePairs[0]?.incomingSourcePage ?? 1} thumbnailClient={thumbnailClient} />
+              <ArtifactSummary gallery={candidate.existing} label="기존 앨범 A" page={candidate.pagePairs[0]?.existingSourcePage ?? 1} presentation={outcome?.existing} thumbnailClient={thumbnailClient} />
+              <ArtifactSummary gallery={review.incoming} label="신규 앨범 B" page={candidate.pagePairs[0]?.incomingSourcePage ?? 1} presentation={outcome?.incoming} thumbnailClient={thumbnailClient} />
             </div>
 
             <dl className="download-overlap-metrics">
@@ -458,13 +768,38 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
           </div>
         ) : null}
 
-        <div className="review-actions download-overlap-actions">
-          <ReviewAction help="아무 판정도 저장하지 않고 검토 창만 닫습니다. 다음에 같은 검토를 다시 열 수 있습니다."><button type="button" className="text-button" onClick={onClose}>검토 미루기</button></ReviewAction>
-          <ReviewAction help={`현재 후보의 기존 앨범 A를 제거 처리합니다. 완료본은 복구 가능한 격리로 이동하고, 다른 중복 검토에 멈춘 staging이면 그 staging 다운로드와 자체 검토만 취소합니다. 남은 후보 검토 또는 신규 B 완료 절차는 계속됩니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!reviewPending || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("remove_existing_continue", candidate.candidateId)}>기존 A 제거</button></ReviewAction>
-          <ReviewAction help={`신규 앨범 B 다운로드 전체를 취소합니다. 기존 A와 다른 보유 앨범은 변경하지 않습니다.${candidate?.incomingUniquePages ? ` B에만 있는 ${candidate.incomingUniquePages}장도 완료되지 않습니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!reviewPending || decisionPending} onClick={() => decide("remove_incoming")}>신규 B 제거</button></ReviewAction>
-          <ReviewAction help="현재 A/B 후보가 중복이 아니라고 기록합니다. 같은 판본 지문 쌍은 다음 탐지에서 제외됩니다."><button type="button" className="text-button" disabled={!reviewPending || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("false_positive_continue", candidate.candidateId)}>오탐 판정</button></ReviewAction>
-          <ReviewAction help="현재 A/B 후보를 둘 다 보관해도 문제없다고 기록하고, 남은 후보 검토 또는 신규 B 완료 절차를 계속합니다."><button type="button" className="primary-button" disabled={!reviewPending || !candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("keep_both_continue", candidate.candidateId)}>문제 없음</button></ReviewAction>
-        </div>
+        {reviewPending ? (
+          <div className="review-actions download-overlap-actions">
+            <div className="download-overlap-action-note" role="note">
+              <FluentIcon glyph="\uE946" />
+              <span>
+                <strong>현재 후보에만 적용됩니다.</strong>
+                {' '}`둘 다 보존`은 기존 제외를 복구하지 않고 이 A/B를 유지로 확정합니다.
+                {!candidate?.decision
+                  ? remainingAfterCandidate > 0
+                    ? ` 선택 후 남은 후보 ${remainingAfterCandidate}개를 계속 검토합니다.`
+                    : " 마지막 후보이면 검토를 완료하고 신규 B 다운로드를 재개합니다."
+                  : " 이 후보는 이미 처리됐으므로 미처리 후보 탭을 선택해 주세요."}
+              </span>
+            </div>
+            <ReviewAction help="아무 판정도 저장하지 않고 검토 창만 닫습니다. 다음에 같은 검토를 다시 열 수 있습니다."><button type="button" className="text-button" onClick={onClose}>검토 미루기</button></ReviewAction>
+            <ReviewAction help={`현재 후보의 기존 앨범 A를 제거 처리합니다. 완료본은 영구 삭제하지 않고 격리 영역으로 이동하며, 다른 중복 검토에 멈춘 staging이면 그 staging 다운로드와 자체 검토만 취소합니다. 남은 후보 검토 또는 신규 B 완료 절차는 계속됩니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("remove_existing_continue", candidate.candidateId)}>기존 A 제거</button></ReviewAction>
+            <ReviewAction help={`신규 앨범 B 다운로드 전체를 취소합니다. 기존 A와 다른 보유 앨범은 변경하지 않습니다.${candidate?.incomingUniquePages ? ` B에만 있는 ${candidate.incomingUniquePages}장도 완료되지 않습니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={decisionPending} onClick={() => decide("remove_incoming")}>신규 B 제거</button></ReviewAction>
+            <ReviewAction help="현재 A/B 후보가 중복이 아니라고 기록하고 둘 다 보존합니다. 같은 판본 지문 쌍은 다음 탐지에서 제외되며, 기존 제외나 격리를 복구하지 않습니다."><button type="button" className="text-button" disabled={!candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("false_positive_continue", candidate.candidateId)}>오탐 판정</button></ReviewAction>
+            <ReviewAction help="현재 A/B 후보를 둘 다 보존으로 확정합니다. 기존에 제외·격리된 앨범을 복구하는 기능은 아닙니다. 남은 후보가 있으면 계속 검토하고, 마지막 후보이면 신규 B 완료 절차를 재개합니다."><button type="button" className="primary-button" disabled={!candidate || decisionPending || Boolean(candidate.decision)} onClick={() => candidate && decide("keep_both_continue", candidate.candidateId)}>둘 다 보존</button></ReviewAction>
+          </div>
+        ) : (
+          <div className="review-actions download-overlap-readonly-actions">
+            <div role="note">
+              <FluentIcon glyph="\uE8A5" />
+              <span>
+                <strong>읽기 전용 판정 기록</strong>
+                이 창에서는 판정을 바꾸거나 제외를 복구하지 않습니다. 탐색·목록 제외는 활동 기록이나 설정에서 해제할 수 있지만, 격리된 실제 파일은 이 판정 기록에서 복원되지 않습니다.
+              </span>
+            </div>
+            <button type="button" className="primary-button" onClick={onClose}>닫기</button>
+          </div>
+        )}
       </div>
     </dialog>
   );

@@ -727,6 +727,22 @@ export type DownloadOverlapCandidate = {
   pagePairs: DownloadOverlapPagePair[];
 };
 
+export type DownloadOverlapDecisionAction =
+  | "keep_both_continue"
+  | "false_positive_continue"
+  | "remove_existing_continue"
+  | "remove_incoming";
+
+export type DownloadOverlapDecisionAudit = {
+  candidateId?: string;
+  action: DownloadOverlapDecisionAction;
+  actor: "human" | "automation";
+  reasonCode?: string;
+  ruleVersion?: number;
+  featureSnapshotJson?: string;
+  createdAt: string;
+};
+
 export type DownloadOverlapReview = {
   reviewId: string;
   entryId: string;
@@ -737,19 +753,41 @@ export type DownloadOverlapReview = {
   policyVersion: number;
   incomingFingerprint: string;
   candidates: DownloadOverlapCandidate[];
+  decisions?: DownloadOverlapDecisionAudit[];
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
 };
 
+export type DownloadOverlapAutomationHistoryRequest = {
+  page: number;
+  pageSize: number;
+};
+
+export type DownloadOverlapAutomationHistoryItem = {
+  reviewId: string;
+  incomingGalleryId: GalleryId;
+  title: string;
+  occurredAt: string;
+  reviewState: DownloadOverlapReview["state"];
+  removeIncomingCount: number;
+  removeExistingCount: number;
+  removedGalleryIds: GalleryId[];
+  acknowledgedAt?: string;
+};
+
+export type DownloadOverlapAutomationHistoryPage = {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  unacknowledgedItems: number;
+  items: DownloadOverlapAutomationHistoryItem[];
+};
+
 export type DownloadOverlapDecisionRequest = {
   reviewId: string;
   expectedRevision: number;
-  action:
-    | "keep_both_continue"
-    | "false_positive_continue"
-    | "remove_existing_continue"
-    | "remove_incoming";
+  action: DownloadOverlapDecisionAction;
   candidateId?: string;
   actor?: "human" | "automation";
   reasonCode?: string;

@@ -32,6 +32,8 @@ type GalleryThumbnailProps = Omit<HTMLAttributes<HTMLElement>, "children"> & {
   sizing?: "container" | "intrinsic";
   /** Reserve this ratio before the coordinator returns intrinsic image dimensions. */
   expectedAspectRatio?: { readonly width: number; readonly height: number };
+  /** Optionally crop unusually tall intrinsic media from the bottom. */
+  maxHeightToWidthRatio?: number;
   /** Receives terminal thumbnail states without creating a second subscription. */
   onTerminalSnapshot?: (snapshot: {
     status: "resolved" | "error";
@@ -185,11 +187,12 @@ function SpriteImage({ asset, alt, loading, onError }: {
   );
 }
 
-function ThumbnailVisual({ asset, alt, loading, onError }: {
+function ThumbnailVisual({ asset, alt, loading, onError, cropTallBottom }: {
   asset: ThumbnailAsset;
   alt: string;
   loading: "eager" | "lazy";
   onError: () => void;
+  cropTallBottom: boolean;
 }) {
   if (asset.kind === "image") {
     return (
@@ -202,7 +205,11 @@ function ThumbnailVisual({ asset, alt, loading, onError }: {
         decoding="async"
         alt={alt}
         onError={onError}
-        style={{ ...fullBleedStyle, objectFit: "contain", objectPosition: "center" }}
+        style={{
+          ...fullBleedStyle,
+          objectFit: cropTallBottom ? "cover" : "contain",
+          objectPosition: cropTallBottom ? "center top" : "center",
+        }}
       />
     );
   }
@@ -229,6 +236,7 @@ export function GalleryThumbnail({
   as = "div",
   sizing = "container",
   expectedAspectRatio,
+  maxHeightToWidthRatio,
   onTerminalSnapshot,
   rootRef,
   client: clientOverride,
@@ -303,10 +311,24 @@ export function GalleryThumbnail({
     () => client.reportDisplayFailure(request, "Resolved thumbnail could not be decoded"),
     [client, request],
   );
-  const intrinsicStyle = sizing === "intrinsic"
-    ? { aspectRatio: intrinsicAspectRatio(asset, expectedAspectRatio) }
+  const sourceDimensions = intrinsicDimensions(asset, expectedAspectRatio);
+  const validMaximumHeightRatio = Number.isFinite(maxHeightToWidthRatio)
+    && (maxHeightToWidthRatio ?? 0) > 0
+    ? maxHeightToWidthRatio
     : undefined;
-  const dimensions = intrinsicDimensions(asset, expectedAspectRatio);
+  const cropTallBottom = sizing === "intrinsic"
+    && validMaximumHeightRatio !== undefined
+    && sourceDimensions.height / sourceDimensions.width > validMaximumHeightRatio;
+  const dimensions = cropTallBottom
+    ? { width: sourceDimensions.width, height: sourceDimensions.width * validMaximumHeightRatio }
+    : sourceDimensions;
+  const intrinsicStyle = sizing === "intrinsic"
+    ? {
+        aspectRatio: cropTallBottom
+          ? `${dimensions.width} / ${dimensions.height}`
+          : intrinsicAspectRatio(asset, expectedAspectRatio),
+      }
+    : undefined;
   const Element = as;
 
   useEffect(() => {
@@ -342,6 +364,7 @@ export function GalleryThumbnail({
       data-thumbnail-state={state}
       data-thumbnail-intrinsic-width={dimensions.width}
       data-thumbnail-intrinsic-height={dimensions.height}
+      data-thumbnail-crop={cropTallBottom ? "bottom" : undefined}
       aria-busy={shouldSubscribe && (snapshot.status === "idle" || snapshot.status === "loading") || undefined}
       style={{
         position: "relative",
@@ -355,7 +378,13 @@ export function GalleryThumbnail({
       {!shouldSubscribe ? (
         <i className="thumbnail-deferred" aria-hidden="true" />
       ) : asset ? (
-        <ThumbnailVisual asset={asset} alt={alt} loading={loading} onError={reportDisplayFailure} />
+        <ThumbnailVisual
+          asset={asset}
+          alt={alt}
+          loading={loading}
+          onError={reportDisplayFailure}
+          cropTallBottom={cropTallBottom}
+        />
       ) : snapshot.status === "error" ? (
         <i
           className="thumbnail-fallback thumbnail-fallback--error"

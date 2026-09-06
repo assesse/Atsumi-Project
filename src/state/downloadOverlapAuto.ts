@@ -5,8 +5,8 @@ import type {
   DownloadOverlapReview,
 } from "../api/contracts";
 
-export const DOWNLOAD_OVERLAP_AUTO_RULE_VERSION = 2;
-export const DOWNLOAD_OVERLAP_AUTO_REASON_CODE = "balanced_overlap_v2";
+export const DOWNLOAD_OVERLAP_AUTO_RULE_VERSION = 3;
+export const DOWNLOAD_OVERLAP_AUTO_REASON_CODE = "balanced_overlap_v3";
 
 export const strictOverlapThresholds = Object.freeze({
   loserCoverage: 0.95,
@@ -15,6 +15,26 @@ export const strictOverlapThresholds = Object.freeze({
   confidence: 0.9,
   alignedRunRatio: 0.75,
   informativeMatchRatio: 0.75,
+});
+
+/**
+ * A separate path calibrated from accepted manual containment decisions for a
+ * large omnibus. It is the only automatic rule allowed to override an
+ * uncensored marker on the smaller edition. Zero unique pages on the contained
+ * side and the explicit containment relation are the main safety gates; the
+ * lower confidence/run thresholds account for the score penalty created by a
+ * large page-count asymmetry.
+ */
+export const omnibusContainmentThresholds = Object.freeze({
+  loserCoverage: 0.98,
+  maximumContainedUniquePages: 0,
+  minimumExtraPages: 8,
+  minimumPageRatio: 1.5,
+  matchedPages: 8,
+  confidence: 0.86,
+  minimumAlignedRun: 4,
+  alignedRunRatio: 0.3,
+  informativeMatchRatio: 0.95,
 });
 
 type StrictWinner = "incoming" | "existing";
@@ -37,6 +57,7 @@ export type StrictOverlapPlan = {
 
 type CandidateEvaluation = {
   winner: StrictWinner;
+  decisionPath: "balanced" | "omnibus_containment";
   featureSnapshotJson: string;
 };
 
@@ -75,25 +96,68 @@ const strictCandidateEvaluation = (
   const alignedRunRatio = safeRatio(candidate.longestAlignedRun, candidate.matchedPages);
   const informativeMatches = candidate.pagePairs.filter((pair) => !pair.lowInformation).length;
   const informativeMatchRatio = safeRatio(informativeMatches, candidate.matchedPages);
+  const monotonicPageOrder = candidate.pagePairs.every((pair, index, pairs) => {
+    const previous = pairs[index - 1];
+    return !previous
+      || (pair.incomingSourcePage > previous.incomingSourcePage
+        && pair.existingSourcePage > previous.existingSourcePage);
+  });
   const incomingPreference = editionPreference(review.incoming);
   const existingPreference = editionPreference(candidate.existing);
   const incomingPreferenceRank = preferenceRank(incomingPreference);
   const existingPreferenceRank = preferenceRank(existingPreference);
 
-  if (
+  const containmentWinner: StrictWinner | null =
+    candidate.relation === "incoming_contains_existing" && incomingPageCount > existingPageCount
+      ? "incoming"
+      : candidate.relation === "existing_contains_incoming" && existingPageCount > incomingPageCount
+        ? "existing"
+        : null;
+  const containmentLoserCoverage = containmentWinner === "incoming"
+    ? candidate.existingCoverage
+    : containmentWinner === "existing"
+      ? candidate.incomingCoverage
+      : 0;
+  const containedUniquePages = containmentWinner === "incoming"
+    ? candidate.existingUniquePages
+    : containmentWinner === "existing"
+      ? candidate.incomingUniquePages
+      : Math.max(candidate.existingUniquePages, candidate.incomingUniquePages);
+  const containingPageCount = Math.max(incomingPageCount, existingPageCount);
+  const containedPageCount = Math.min(incomingPageCount, existingPageCount);
+  const containingPageRatio = safeRatio(containingPageCount, containedPageCount);
+  const omnibusContainment = containmentWinner !== null
+    && containmentLoserCoverage >= omnibusContainmentThresholds.loserCoverage
+    && containedUniquePages <= omnibusContainmentThresholds.maximumContainedUniquePages
+    && pageDifference >= omnibusContainmentThresholds.minimumExtraPages
+    && containingPageRatio >= omnibusContainmentThresholds.minimumPageRatio
+    && candidate.matchedPages >= omnibusContainmentThresholds.matchedPages
+    && candidate.confidence >= omnibusContainmentThresholds.confidence
+    && candidate.longestAlignedRun >= omnibusContainmentThresholds.minimumAlignedRun
+    && alignedRunRatio >= omnibusContainmentThresholds.alignedRunRatio
+    && informativeMatchRatio >= omnibusContainmentThresholds.informativeMatchRatio
+    && monotonicPageOrder;
+
+  if (!omnibusContainment && (
     pageDifference > strictOverlapThresholds.maximumPageDifference
     || candidate.matchedPages < requiredMatchedPages
     || candidate.confidence < strictOverlapThresholds.confidence
     || alignedRunRatio < strictOverlapThresholds.alignedRunRatio
     || informativeMatchRatio < strictOverlapThresholds.informativeMatchRatio
     || (smallerPageCount <= 3 && candidate.exactPages !== candidate.matchedPages)
-  ) return null;
+  )) return null;
 
   let winner: StrictWinner;
   let loserCoverage: number;
-  let preferenceReason: "containment" | "uncensored" | "page_count" | "stable_existing";
+  let preferenceReason: "containment" | "omnibus_containment" | "uncensored" | "page_count" | "stable_existing";
+  let decisionPath: CandidateEvaluation["decisionPath"] = "balanced";
 
-  if (candidate.relation === "incoming_contains_existing") {
+  if (omnibusContainment) {
+    winner = containmentWinner;
+    loserCoverage = containmentLoserCoverage;
+    preferenceReason = "omnibus_containment";
+    decisionPath = "omnibus_containment";
+  } else if (candidate.relation === "incoming_contains_existing") {
     winner = "incoming";
     loserCoverage = candidate.existingCoverage;
     preferenceReason = "containment";
@@ -137,6 +201,7 @@ const strictCandidateEvaluation = (
       existingFingerprint: candidate.existingFingerprint,
       relation: candidate.relation,
       winner,
+      decisionPath,
       preferenceReason,
       editionPreference: {
         incoming: incomingPreference,
@@ -150,14 +215,21 @@ const strictCandidateEvaluation = (
         pageDifference,
         incomingPageCount,
         existingPageCount,
+        containingPageCount,
+        containedPageCount,
+        containedUniquePages,
+        containingPageRatio,
         alignedRunRatio,
         informativeMatchRatio,
+        monotonicPageOrder,
       },
       thresholds: {
         ...strictOverlapThresholds,
         requiredMatchedPages,
+        omnibusContainment: omnibusContainmentThresholds,
       },
     }),
+    decisionPath,
   };
 };
 
@@ -183,6 +255,7 @@ export const buildStrictOverlapPlan = (
 
   const incomingWinsAll = evaluated.every(({ result }) => result?.winner === "incoming");
   if (incomingWinsAll) {
+    const omnibusCount = evaluated.filter(({ result }) => result?.decisionPath === "omnibus_containment").length;
     return {
       winner: "incoming",
       steps: evaluated.map(({ candidate, result }) => ({
@@ -190,9 +263,13 @@ export const buildStrictOverlapPlan = (
         candidateId: candidate.candidateId,
         featureSnapshotJson: result!.featureSnapshotJson,
       })),
-      summary: pending.length === 1
-        ? "신규 앨범 B가 기존 앨범 A와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다."
-        : `신규 앨범 B가 미처리 후보 ${pending.length}개와 각각 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다.`,
+      summary: omnibusCount === pending.length
+        ? pending.length === 1
+          ? "신규 앨범 B가 기존 앨범 A를 명확히 포함하는 큰 합본으로 판정됐습니다. 작은 판본의 무검열 표식보다 합본 구성을 우선합니다."
+          : `신규 앨범 B가 작은 기존 판본 ${pending.length}개를 명확히 포함하는 큰 합본으로 판정됐습니다. 작은 판본의 무검열 표식보다 합본 구성을 우선합니다.`
+        : pending.length === 1
+          ? "신규 앨범 B가 기존 앨범 A와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다."
+          : `신규 앨범 B가 미처리 후보 ${pending.length}개와 각각 안전하게 일치하며 더 보존할 판본으로 판정됐습니다.`,
     };
   }
 
@@ -205,7 +282,9 @@ export const buildStrictOverlapPlan = (
         candidateId: only.candidate.candidateId,
         featureSnapshotJson: only.result.featureSnapshotJson,
       }],
-      summary: "기존 앨범 A가 신규 앨범 B와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다.",
+      summary: only.result.decisionPath === "omnibus_containment"
+        ? "기존 앨범 A가 신규 앨범 B를 명확히 포함하는 큰 합본으로 판정됐습니다. 작은 판본의 무검열 표식보다 합본 구성을 우선합니다."
+        : "기존 앨범 A가 신규 앨범 B와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다.",
     };
   }
 

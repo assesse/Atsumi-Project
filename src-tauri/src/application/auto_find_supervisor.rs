@@ -13,11 +13,15 @@ use crate::{
 };
 
 use super::{
-    ApplicationError, AutoFindSource, AutoFindSourceRequest, AutomationRepository, RepositoryError,
-    StateRepository,
+    ApplicationError, AutoFindCheckpointStage, AutoFindIncrementalCheckpoint, AutoFindSource,
+    AutoFindSourceRequest, AutomationRepository, RepositoryError, StateRepository,
 };
 
 const AUTO_FIND_CANDIDATE_LIMIT: u32 = 50_000;
+const AUTO_FIND_INCREMENTAL_POLICY_VERSION: u32 = 1;
+const AUTO_FIND_INCREMENTAL_LOOKBACK_IDS: i64 = 10_000;
+const AUTO_FIND_FULL_RESCAN_AFTER_INCREMENTAL_RUNS: u32 = 10;
+const AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS: u32 = 30;
 
 #[derive(Clone)]
 pub struct AutoFindSupervisor {
@@ -44,6 +48,7 @@ pub(crate) struct PreparedAutoFindRefresh {
     total_favorites: u32,
     history_mode: AutoFindHistoryMode,
     cutoff_evidence: Vec<AutoFindCutoffEvidence>,
+    incremental_checkpoints: Vec<AutoFindIncrementalCheckpoint>,
 }
 
 impl AutoFindSupervisor {
@@ -95,11 +100,18 @@ impl AutoFindSupervisor {
             .map(|favorite| favorite.value.clone())
             .collect::<Vec<_>>();
         let cutoff_evidence = self.inner.repository.auto_find_owned_cutoffs(&artists)?;
+        let incremental_checkpoints = self.inner.repository.auto_find_incremental_checkpoints(
+            &artists,
+            history_mode,
+            AUTO_FIND_INCREMENTAL_POLICY_VERSION,
+            AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS,
+        )?;
         Ok(PreparedAutoFindRefresh {
             favorites,
             total_favorites,
             history_mode,
             cutoff_evidence,
+            incremental_checkpoints,
         })
     }
 
@@ -117,6 +129,7 @@ impl AutoFindSupervisor {
             total_favorites,
             history_mode,
             cutoff_evidence,
+            incremental_checkpoints,
         } = prepared;
         let run = self.inner.repository.auto_find_start(
             total_favorites,
@@ -154,6 +167,7 @@ impl AutoFindSupervisor {
                     favorites,
                     history_mode,
                     cutoff_evidence,
+                    incremental_checkpoints,
                     worker_cancellation,
                 );
             })
@@ -274,6 +288,7 @@ fn run_refresh(
     favorites: Vec<crate::domain::FavoriteRecord>,
     history_mode: AutoFindHistoryMode,
     cutoff_evidence: Vec<AutoFindCutoffEvidence>,
+    incremental_checkpoints: Vec<AutoFindIncrementalCheckpoint>,
     cancellation: CancellationToken,
 ) {
     let result = (|| -> Result<(), RepositoryError> {
@@ -281,11 +296,35 @@ fn run_refresh(
             .into_iter()
             .map(|evidence| (evidence.artist.clone(), evidence))
             .collect::<BTreeMap<_, _>>();
+        let checkpoints = incremental_checkpoints
+            .into_iter()
+            .map(|checkpoint| (checkpoint.artist.clone(), checkpoint))
+            .collect::<BTreeMap<_, _>>();
         for (favorite_index, favorite) in favorites.iter().enumerate() {
             if cancelled(&inner, &run_id, &cancellation)? {
                 return Ok(());
             }
             let cutoff = cutoffs.get(&favorite.value);
+            let history_floor = (history_mode == AutoFindHistoryMode::NewerThanOldestDownloaded)
+                .then(|| cutoff.and_then(|evidence| evidence.oldest_owned_gallery_id))
+                .flatten();
+            let checkpoint = checkpoints.get(&favorite.value);
+            let incremental = checkpoint.is_some_and(|checkpoint| {
+                checkpoint.history_mode == history_mode
+                    && checkpoint.policy_version == AUTO_FIND_INCREMENTAL_POLICY_VERSION
+                    && checkpoint.history_floor_gallery_id == history_floor
+                    && checkpoint.high_water_gallery_id.is_some()
+                    && checkpoint.incremental_runs_since_full
+                        < AUTO_FIND_FULL_RESCAN_AFTER_INCREMENTAL_RUNS
+            });
+            let incremental_floor = incremental
+                .then(|| checkpoint.and_then(|checkpoint| checkpoint.high_water_gallery_id))
+                .flatten()
+                .and_then(incremental_lookback_floor);
+            let request_floor = [history_floor, incremental_floor]
+                .into_iter()
+                .flatten()
+                .max();
             let request = AutoFindSourceRequest {
                 artist: favorite.value.clone(),
                 languages: vec![
@@ -294,29 +333,58 @@ fn run_refresh(
                     Language::Chinese,
                     Language::English,
                 ],
-                newer_than_gallery_id: (history_mode
-                    == AutoFindHistoryMode::NewerThanOldestDownloaded)
-                    .then(|| cutoff.and_then(|evidence| evidence.oldest_owned_gallery_id))
-                    .flatten(),
+                retain_after_gallery_id: history_floor,
+                newer_than_gallery_id: request_floor,
                 candidate_limit: AUTO_FIND_CANDIDATE_LIMIT,
             };
             let source = inner
                 .source
                 .auto_find_artist_plan(&request, &cancellation)?;
-            if let Some(reason) = source.truncated_reason {
+            let cached_candidates = if incremental {
+                inner
+                    .repository
+                    .auto_find_cached_candidates(&source.matching_ids)?
+                    .into_iter()
+                    .map(|gallery| (gallery.id, gallery))
+                    .collect::<BTreeMap<_, _>>()
+            } else {
+                BTreeMap::new()
+            };
+            if let Some(reason) = source.truncated_reason.as_ref() {
                 inner.repository.auto_find_truncation_add(
                     &run_id,
                     &crate::domain::AutoFindTruncation {
                         artist: favorite.value.clone(),
-                        reason,
+                        reason: reason.clone(),
                         eligible_count: source.eligible_count,
                         limit: source.limit,
                     },
                 )?;
             }
-            for gallery_id in source.candidate_ids {
+            if incremental {
+                // The newest run is the visible Auto Find projection. Carry
+                // forward only cached IDs which the current source still
+                // associates with this favorite. This both preserves the
+                // pending queue and reconciles removed/changed artist tags.
+                for gallery_id in &source.matching_ids {
+                    let Some(gallery) = cached_candidates.get(gallery_id) else {
+                        continue;
+                    };
+                    if cancelled(&inner, &run_id, &cancellation)? {
+                        return Ok(());
+                    }
+                    record_candidate(&inner, &run_id, favorite, gallery.clone())?;
+                }
+            }
+            for gallery_id in source.candidate_ids.iter().copied() {
                 if cancelled(&inner, &run_id, &cancellation)? {
                     return Ok(());
+                }
+                // Cached matches were already carried once above. The lookback
+                // window deliberately overlaps them, so writing them here again
+                // would repeat serialization, exclusion queries and a transaction.
+                if incremental && cached_candidates.contains_key(&gallery_id) {
+                    continue;
                 }
                 let Some(gallery) = inner
                     .source
@@ -328,6 +396,30 @@ fn run_refresh(
                     return Ok(());
                 }
                 record_candidate(&inner, &run_id, favorite, gallery)?;
+            }
+            if source.truncated_reason.is_none() {
+                let high_water_gallery_id = if incremental {
+                    [
+                        checkpoint.and_then(|checkpoint| checkpoint.high_water_gallery_id),
+                        source.latest_available_gallery_id,
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .max()
+                } else {
+                    source.latest_available_gallery_id
+                };
+                inner.repository.auto_find_checkpoint_stage(
+                    &run_id,
+                    &AutoFindCheckpointStage {
+                        artist: favorite.value.clone(),
+                        history_mode,
+                        policy_version: AUTO_FIND_INCREMENTAL_POLICY_VERSION,
+                        high_water_gallery_id,
+                        history_floor_gallery_id: history_floor,
+                        performed_full_scan: !incremental,
+                    },
+                )?;
             }
             if let Some(run) = inner.repository.auto_find_progress(
                 &run_id,
@@ -369,6 +461,15 @@ fn run_refresh(
     }
 }
 
+fn incremental_lookback_floor(
+    high_water: crate::domain::GalleryId,
+) -> Option<crate::domain::GalleryId> {
+    let floor = high_water
+        .get()
+        .checked_sub(AUTO_FIND_INCREMENTAL_LOOKBACK_IDS)?;
+    crate::domain::GalleryId::new(floor).ok()
+}
+
 fn record_candidate(
     inner: &AutoFindSupervisorInner,
     run_id: &str,
@@ -400,7 +501,7 @@ fn short_id(value: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use std::{
-        collections::BTreeSet,
+        collections::{BTreeMap, BTreeSet},
         sync::{
             atomic::{AtomicUsize, Ordering},
             mpsc, Arc, Barrier, Condvar, Mutex,
@@ -422,7 +523,10 @@ mod tests {
         infrastructure::{FixtureSearchRepository, SqliteRepository},
     };
 
-    use super::AutoFindSupervisor;
+    use super::{
+        AutoFindSupervisor, AUTO_FIND_FULL_RESCAN_AFTER_INCREMENTAL_RUNS,
+        AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS, AUTO_FIND_INCREMENTAL_POLICY_VERSION,
+    };
 
     struct DeterministicSearchRepository {
         items: Vec<GallerySummary>,
@@ -529,9 +633,31 @@ mod tests {
             if let Some(gate) = &self.gate {
                 gate.block();
             }
+            let latest_available_gallery_id = self.items.iter().map(|item| item.id).max();
+            let matching_ids = self
+                .items
+                .iter()
+                .map(|item| item.id)
+                .filter(|id| {
+                    request
+                        .retain_after_gallery_id
+                        .is_none_or(|floor| *id > floor)
+                })
+                .collect::<Vec<_>>();
+            let candidate_ids = matching_ids
+                .iter()
+                .copied()
+                .filter(|id| {
+                    request
+                        .newer_than_gallery_id
+                        .is_none_or(|floor| *id > floor)
+                })
+                .collect::<Vec<_>>();
             Ok(AutoFindSourceResult {
-                candidate_ids: self.items.iter().map(|item| item.id).collect(),
-                eligible_count: u32::try_from(self.items.len()).unwrap_or(u32::MAX),
+                eligible_count: u32::try_from(candidate_ids.len()).unwrap_or(u32::MAX),
+                candidate_ids,
+                matching_ids,
+                latest_available_gallery_id,
                 limit: 50_000,
                 truncated_reason: None,
             })
@@ -552,6 +678,81 @@ mod tests {
                 cancellation.cancel();
             }
             Ok(result)
+        }
+    }
+
+    struct MultiArtistSource {
+        items: BTreeMap<String, Vec<GallerySummary>>,
+        requests: Mutex<Vec<AutoFindSourceRequest>>,
+        summary_calls: AtomicUsize,
+    }
+
+    impl MultiArtistSource {
+        fn new(items: impl IntoIterator<Item = (String, Vec<GallerySummary>)>) -> Self {
+            Self {
+                items: items.into_iter().collect(),
+                requests: Mutex::new(Vec::new()),
+                summary_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl AutoFindSource for MultiArtistSource {
+        fn auto_find_artist_plan(
+            &self,
+            request: &AutoFindSourceRequest,
+            _cancellation: &crate::thumbnail::CancellationToken,
+        ) -> Result<AutoFindSourceResult, super::RepositoryError> {
+            self.requests
+                .lock()
+                .expect("test multi-artist request mutex")
+                .push(request.clone());
+            let items = self
+                .items
+                .get(&request.artist)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let latest_available_gallery_id = items.iter().map(|item| item.id).max();
+            let matching_ids = items
+                .iter()
+                .map(|item| item.id)
+                .filter(|id| {
+                    request
+                        .retain_after_gallery_id
+                        .is_none_or(|floor| *id > floor)
+                })
+                .collect::<Vec<_>>();
+            let candidate_ids = matching_ids
+                .iter()
+                .copied()
+                .filter(|id| {
+                    request
+                        .newer_than_gallery_id
+                        .is_none_or(|floor| *id > floor)
+                })
+                .collect::<Vec<_>>();
+            Ok(AutoFindSourceResult {
+                eligible_count: u32::try_from(candidate_ids.len()).unwrap_or(u32::MAX),
+                candidate_ids,
+                matching_ids,
+                latest_available_gallery_id,
+                limit: 50_000,
+                truncated_reason: None,
+            })
+        }
+
+        fn auto_find_gallery_summary(
+            &self,
+            gallery_id: GalleryId,
+            _cancellation: &crate::thumbnail::CancellationToken,
+        ) -> Result<Option<GallerySummary>, super::RepositoryError> {
+            self.summary_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self
+                .items
+                .values()
+                .flat_map(|items| items.iter())
+                .find(|item| item.id == gallery_id)
+                .cloned())
         }
     }
 
@@ -849,6 +1050,312 @@ mod tests {
         assert_eq!(
             restored.candidates[0].gallery.characters,
             vec!["test character"]
+        );
+    }
+
+    #[test]
+    fn completed_refresh_advances_an_incremental_checkpoint_and_carries_pending_candidates() {
+        let repository =
+            Arc::new(SqliteRepository::open_in_memory().expect("open Auto Find repository"));
+        enable_artist(&repository, "serein");
+
+        let first_source = Arc::new(DeterministicSearchRepository::immediate(vec![
+            gallery(25_000, "serein"),
+            gallery(15_000, "serein"),
+        ]));
+        let (events, _) = mpsc::channel();
+        let first = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            first_source.clone(),
+            events,
+        );
+        first.refresh().expect("start full bootstrap refresh");
+        let first_snapshot = wait_for_terminal(&repository);
+        first.shutdown_and_wait();
+        assert_eq!(first_source.summary_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(first_snapshot.candidates.len(), 2);
+
+        let checkpoint = repository
+            .auto_find_incremental_checkpoints(
+                &["serein".into()],
+                AutoFindHistoryMode::IncludeAllHistory,
+                AUTO_FIND_INCREMENTAL_POLICY_VERSION,
+                AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS,
+            )
+            .expect("read full-scan checkpoint")
+            .pop()
+            .expect("bootstrap checkpoint exists");
+        assert_eq!(
+            checkpoint.high_water_gallery_id,
+            GalleryId::new(25_000).ok()
+        );
+        assert_eq!(checkpoint.incremental_runs_since_full, 0);
+
+        let second_source = Arc::new(DeterministicSearchRepository::immediate(vec![
+            gallery(35_000, "serein"),
+            gallery(25_000, "serein"),
+            gallery(15_000, "serein"),
+        ]));
+        let (events, _) = mpsc::channel();
+        let second = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            second_source.clone(),
+            events,
+        );
+        second.refresh().expect("start incremental refresh");
+        let second_snapshot = wait_for_terminal(&repository);
+        second.shutdown_and_wait();
+
+        let request = second_source
+            .auto_find_requests
+            .lock()
+            .expect("read incremental request")[0]
+            .clone();
+        assert_eq!(request.retain_after_gallery_id, None);
+        assert_eq!(request.newer_than_gallery_id, GalleryId::new(15_000).ok());
+        assert_eq!(
+            second_source.summary_calls.load(Ordering::SeqCst),
+            1,
+            "only the gallery absent from the durable summary cache is fetched"
+        );
+        assert_eq!(
+            second_snapshot
+                .candidates
+                .iter()
+                .map(|candidate| candidate.gallery.id.get())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([15_000, 25_000, 35_000])
+        );
+        let checkpoint = repository
+            .auto_find_incremental_checkpoints(
+                &["serein".into()],
+                AutoFindHistoryMode::IncludeAllHistory,
+                AUTO_FIND_INCREMENTAL_POLICY_VERSION,
+                AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS,
+            )
+            .expect("read advanced checkpoint")
+            .pop()
+            .expect("advanced checkpoint exists");
+        assert_eq!(
+            checkpoint.high_water_gallery_id,
+            GalleryId::new(35_000).ok()
+        );
+        assert_eq!(checkpoint.incremental_runs_since_full, 1);
+    }
+
+    #[test]
+    fn cancelled_incremental_refresh_does_not_advance_its_checkpoint() {
+        let repository =
+            Arc::new(SqliteRepository::open_in_memory().expect("open Auto Find repository"));
+        enable_artist(&repository, "serein");
+        let (events, _) = mpsc::channel();
+        let bootstrap_source = Arc::new(DeterministicSearchRepository::immediate(vec![gallery(
+            25_000, "serein",
+        )]));
+        let bootstrap = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            bootstrap_source,
+            events,
+        );
+        bootstrap.refresh().expect("start bootstrap refresh");
+        wait_for_terminal(&repository);
+        bootstrap.shutdown_and_wait();
+
+        let cancelling_source = Arc::new(DeterministicSearchRepository::cancels_after_summaries(
+            vec![gallery(40_000, "serein"), gallery(25_000, "serein")],
+            1,
+        ));
+        let (events, _) = mpsc::channel();
+        let cancelling = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            cancelling_source,
+            events,
+        );
+        cancelling
+            .refresh()
+            .expect("start cancellable incremental refresh");
+        let cancelled = wait_for_terminal(&repository);
+        cancelling.shutdown_and_wait();
+        assert_eq!(
+            cancelled.run.expect("cancelled run").state,
+            AutoFindRunState::Cancelled
+        );
+
+        let checkpoint = repository
+            .auto_find_incremental_checkpoints(
+                &["serein".into()],
+                AutoFindHistoryMode::IncludeAllHistory,
+                AUTO_FIND_INCREMENTAL_POLICY_VERSION,
+                AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS,
+            )
+            .expect("read checkpoint after cancellation")
+            .pop()
+            .expect("bootstrap checkpoint remains");
+        assert_eq!(
+            checkpoint.high_water_gallery_id,
+            GalleryId::new(25_000).ok()
+        );
+        assert_eq!(checkpoint.incremental_runs_since_full, 0);
+    }
+
+    #[test]
+    fn candidate_shared_by_two_favorites_survives_when_its_first_owner_is_removed() {
+        let repository =
+            Arc::new(SqliteRepository::open_in_memory().expect("open Auto Find repository"));
+        enable_artist(&repository, "alpha");
+        enable_artist(&repository, "beta");
+        let shared = gallery(30_000, "alpha");
+        let first_source = Arc::new(MultiArtistSource::new([
+            (
+                "alpha".into(),
+                vec![gallery(50_000, "alpha"), shared.clone()],
+            ),
+            ("beta".into(), vec![gallery(60_000, "beta"), shared.clone()]),
+        ]));
+        let (events, _) = mpsc::channel();
+        let first =
+            AutoFindSupervisor::new(repository.clone(), repository.clone(), first_source, events);
+        first.refresh().expect("start two-favorite bootstrap");
+        wait_for_terminal(&repository);
+        first.shutdown_and_wait();
+
+        let service = ApplicationService::new(repository.clone())
+            .with_automation_repository(repository.clone());
+        service
+            .favorite_set(
+                FavoriteKey {
+                    namespace: FavoriteNamespace::Artist,
+                    value: "alpha".into(),
+                },
+                false,
+            )
+            .expect("remove first matching favorite");
+
+        let second_source = Arc::new(MultiArtistSource::new([(
+            "beta".into(),
+            vec![gallery(60_000, "beta"), shared],
+        )]));
+        let (events, _) = mpsc::channel();
+        let second = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            second_source.clone(),
+            events,
+        );
+        second
+            .refresh()
+            .expect("start beta-only incremental refresh");
+        let snapshot = wait_for_terminal(&repository);
+        second.shutdown_and_wait();
+
+        assert_eq!(
+            second_source.summary_calls.load(Ordering::SeqCst),
+            0,
+            "current membership can reassign a globally cached summary without refetching it"
+        );
+        assert_eq!(
+            snapshot
+                .candidates
+                .iter()
+                .map(|candidate| candidate.gallery.id.get())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([30_000, 60_000])
+        );
+        assert!(snapshot
+            .candidates
+            .iter()
+            .all(|candidate| { candidate.matched_favorite.value == "beta" }));
+    }
+
+    #[test]
+    fn newly_added_favorite_bootstraps_without_an_incremental_cutoff() {
+        let repository =
+            Arc::new(SqliteRepository::open_in_memory().expect("open Auto Find repository"));
+        enable_artist(&repository, "alpha");
+        let (events, _) = mpsc::channel();
+        let bootstrap_source = Arc::new(MultiArtistSource::new([(
+            "alpha".into(),
+            vec![gallery(50_000, "alpha")],
+        )]));
+        let bootstrap = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            bootstrap_source,
+            events,
+        );
+        bootstrap.refresh().expect("bootstrap alpha");
+        wait_for_terminal(&repository);
+        bootstrap.shutdown_and_wait();
+
+        enable_artist(&repository, "beta");
+        let next_source = Arc::new(MultiArtistSource::new([
+            ("alpha".into(), vec![gallery(50_000, "alpha")]),
+            ("beta".into(), vec![gallery(5_000, "beta")]),
+        ]));
+        let (events, _) = mpsc::channel();
+        let next = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            next_source.clone(),
+            events,
+        );
+        next.refresh().expect("refresh with newly added beta");
+        let snapshot = wait_for_terminal(&repository);
+        next.shutdown_and_wait();
+
+        let requests = next_source.requests.lock().expect("read favorite requests");
+        let beta = requests
+            .iter()
+            .find(|request| request.artist == "beta")
+            .expect("beta request exists");
+        assert_eq!(beta.newer_than_gallery_id, None);
+        assert_eq!(
+            snapshot
+                .candidates
+                .iter()
+                .map(|candidate| candidate.gallery.id.get())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([5_000, 50_000])
+        );
+    }
+
+    #[test]
+    fn incremental_checkpoint_forces_a_periodic_full_metadata_reconciliation() {
+        let repository =
+            Arc::new(SqliteRepository::open_in_memory().expect("open Auto Find repository"));
+        enable_artist(&repository, "serein");
+        let source = Arc::new(DeterministicSearchRepository::immediate(vec![gallery(
+            20_000, "serein",
+        )]));
+        let (events, _) = mpsc::channel();
+        let supervisor = AutoFindSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            source.clone(),
+            events,
+        );
+
+        for _ in 0..=(AUTO_FIND_FULL_RESCAN_AFTER_INCREMENTAL_RUNS + 1) {
+            supervisor.refresh().expect("start scheduled refresh");
+            wait_for_terminal(&repository);
+        }
+        supervisor.shutdown_and_wait();
+
+        let requests = source
+            .auto_find_requests
+            .lock()
+            .expect("read scheduled refresh requests");
+        assert_eq!(requests.len(), 12);
+        assert_eq!(requests.first().unwrap().newer_than_gallery_id, None);
+        assert_eq!(requests.last().unwrap().newer_than_gallery_id, None);
+        assert_eq!(
+            source.summary_calls.load(Ordering::SeqCst),
+            2,
+            "bootstrap and scheduled reconciliation refresh metadata; incremental runs reuse it"
         );
     }
 

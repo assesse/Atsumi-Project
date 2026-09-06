@@ -22,7 +22,9 @@ use crate::{
     },
     domain::{
         AutoFindExclusionResult, AutoFindRun, AutoFindSnapshot, DownloadChangedEvent,
-        DownloadEntry, DownloadLibraryPage, DownloadListRequest, DownloadOverlapDecisionRequest,
+        DownloadEntry, DownloadLibraryPage, DownloadListRequest,
+        DownloadOverlapAutomationHistoryItem, DownloadOverlapAutomationHistoryListRequest,
+        DownloadOverlapAutomationHistoryPage, DownloadOverlapDecisionRequest,
         DownloadOverlapDecisionResult, DownloadOverlapReview, DownloadPage,
         DuplicateDecisionRequest, DuplicateReview, DuplicateScanRun, DuplicateSnapshot,
         ExplorationDataResetRequest, ExplorationDataResetResult, FavoriteKey,
@@ -806,6 +808,33 @@ pub async fn download_overlap_review_get(
         })
         .await,
     )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn download_overlap_automation_history_list(
+    state: State<'_, AppState>,
+    request: DownloadOverlapAutomationHistoryListRequest,
+) -> Result<ApiResult<DownloadOverlapAutomationHistoryPage>, ApiError> {
+    let downloads = state.downloads.clone();
+    Ok(
+        run_application_blocking("download_overlap_automation_history_list", move || {
+            downloads.overlap_automation_history_list(request)
+        })
+        .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn download_overlap_automation_history_acknowledge(
+    state: State<'_, AppState>,
+    review_id: String,
+) -> Result<ApiResult<DownloadOverlapAutomationHistoryItem>, ApiError> {
+    let downloads = state.downloads.clone();
+    Ok(run_application_blocking(
+        "download_overlap_automation_history_acknowledge",
+        move || downloads.overlap_automation_history_acknowledge(review_id),
+    )
+    .await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

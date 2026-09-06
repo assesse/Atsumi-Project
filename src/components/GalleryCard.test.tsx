@@ -904,6 +904,49 @@ describe("GalleryCard event projection", () => {
     container.remove();
   });
 
+  it("keeps an unusually tall cover from stretching its gallery row", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const gallery: Gallery = {
+      ...mockGalleries[0]!,
+      thumbnailWidth: 400,
+      thumbnailHeight: 1600,
+    };
+    const thumbnailClient = new ThumbnailClient({
+      resolve: () => ({
+        kind: "image",
+        url: "https://images.example.test/very-tall-gallery.jpg",
+        width: 400,
+        height: 1600,
+      }),
+    });
+
+    await act(async () => root.render(
+      <GalleryCard
+        gallery={gallery}
+        thumbnailPriority="visible"
+        view="explore"
+        selected={false}
+        selectionContext={false}
+        favoriteMetadata={new Set()}
+        {...callbacks}
+        thumbnailClient={thumbnailClient}
+      />,
+    ));
+
+    const cover = container.querySelector<HTMLElement>(".cover");
+    const image = cover?.querySelector<HTMLImageElement>(".cover-image");
+    expect(cover).toHaveStyle({ aspectRatio: "400 / 600" });
+    expect(cover).toHaveAttribute("data-thumbnail-intrinsic-height", "600");
+    expect(cover).toHaveAttribute("data-thumbnail-crop", "bottom");
+    expect(image).toHaveStyle({ objectFit: "cover", objectPosition: "center top" });
+
+    await act(async () => root.unmount());
+    thumbnailClient.dispose();
+    container.remove();
+  });
+
   it("keeps the sprite fallback square without treating an opaque thumbnail key as a URL", async () => {
     const container = document.createElement("div");
     document.body.append(container);

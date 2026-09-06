@@ -73,6 +73,9 @@ const matchesDownloadFilter = (gallery: Gallery, state: UiState): boolean => {
   }
 };
 
+/** Auto Find is an inbox for discoveries that have not entered the download library yet. */
+export const isPendingAutoFindCandidate = (gallery: Gallery): boolean => gallery.download === undefined;
+
 export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>): Gallery[] {
   const search = state.search[state.view];
   const directExploreId = state.view === "explore" && /^\d{7}$/.test(search.committed.trim());
@@ -81,7 +84,7 @@ export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>): 
     || (state.view === "downloads" && gallery.languageKnown === false));
 
   if (state.view === "auto-find") {
-    items = items.filter((gallery) => gallery.favorite && gallery.download?.state !== "quarantined");
+    items = items.filter((gallery) => gallery.favorite && isPendingAutoFindCandidate(gallery));
   }
   if (state.view === "downloads") {
     items = items.filter((gallery) => gallery.download?.state !== "quarantined" && matchesDownloadFilter(gallery, state));

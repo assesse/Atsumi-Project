@@ -1657,8 +1657,8 @@ describe("browser backend active-work exit contract", () => {
       action: "remove_existing_continue",
       candidateId: firstCandidate.candidateId,
       actor: "automation",
-      reasonCode: "balanced_overlap_v2",
-      ruleVersion: 2,
+      reasonCode: "balanced_overlap_v3",
+      ruleVersion: 3,
       featureSnapshotJson: "[]",
     })).resolves.toMatchObject({
       ok: false,
@@ -1704,6 +1704,14 @@ describe("browser backend active-work exit contract", () => {
         },
       });
     }
+    const recorded = await backend.downloadOverlapReviewGet(review.data.reviewId);
+    if (!recorded.ok) throw new Error(recorded.error.message);
+    expect(recorded.data.decisions).toMatchObject([
+      { candidateId: firstCandidate.candidateId, action: "false_positive_continue", actor: "human" },
+      { candidateId: secondCandidate.candidateId, action: "remove_existing_continue", actor: "human" },
+      { action: "keep_both_continue", actor: "human" },
+      { action: "keep_both_continue", actor: "human" },
+    ]);
 
     const removable = await backend.downloadOverlapReviewGet("browser-overlap-remove-incoming");
     if (!removable.ok) throw new Error("browser overlap fixture missing");
@@ -1748,6 +1756,70 @@ describe("browser backend active-work exit contract", () => {
       ok: true,
       data: [{ reused: false }],
     });
+  });
+
+  it("pages and acknowledges durable automatic overlap history, then reopens it on a later decision", async () => {
+    const reviewResult = await backend.downloadOverlapReviewGet("browser-overlap-history-contract");
+    if (!reviewResult.ok) throw new Error("browser overlap history fixture missing");
+    const review = reviewResult.data;
+    const applyAutomaticDecision = (expectedRevision: number, candidateId: string) =>
+      backend.downloadOverlapDecisionApply({
+        reviewId: review.reviewId,
+        expectedRevision,
+        action: "remove_existing_continue",
+        candidateId,
+        actor: "automation",
+        reasonCode: "balanced_overlap_v3",
+        ruleVersion: 3,
+        featureSnapshotJson: "{}",
+      });
+
+    await expect(applyAutomaticDecision(0, review.candidates[0]!.candidateId)).resolves.toMatchObject({
+      ok: true,
+      data: { review: { revision: 1 } },
+    });
+    const evidence = await backend.downloadOverlapReviewGet(review.reviewId);
+    if (!evidence.ok) throw new Error(evidence.error.message);
+    expect(evidence.data.decisions?.at(-1)).toMatchObject({
+      candidateId: review.candidates[0]!.candidateId,
+      action: "remove_existing_continue",
+      actor: "automation",
+      reasonCode: "balanced_overlap_v3",
+      ruleVersion: 3,
+      featureSnapshotJson: "{}",
+      createdAt: expect.any(String),
+    });
+    const firstPage = await backend.downloadOverlapAutomationHistoryList({ page: 1, pageSize: 50 });
+    if (!firstPage.ok) throw new Error(firstPage.error.message);
+    const firstItem = firstPage.data.items.find((item) => item.reviewId === review.reviewId);
+    expect(firstPage.data.unacknowledgedItems).toBeGreaterThanOrEqual(1);
+    expect(firstItem).toMatchObject({
+      incomingGalleryId: review.incoming.galleryId,
+      reviewState: "pending",
+      removeIncomingCount: 0,
+      removeExistingCount: 1,
+      removedGalleryIds: [review.candidates[0]!.existing.galleryId],
+    });
+
+    await expect(backend.downloadOverlapAutomationHistoryAcknowledge(review.reviewId)).resolves.toMatchObject({
+      ok: true,
+      data: { reviewId: review.reviewId, acknowledgedAt: expect.any(String) },
+    });
+    const acknowledgedPage = await backend.downloadOverlapAutomationHistoryList({ page: 1, pageSize: 50 });
+    if (!acknowledgedPage.ok) throw new Error(acknowledgedPage.error.message);
+    expect(acknowledgedPage.data.items.find((item) => item.reviewId === review.reviewId)?.acknowledgedAt).toEqual(expect.any(String));
+
+    await expect(applyAutomaticDecision(1, review.candidates[1]!.candidateId)).resolves.toMatchObject({ ok: true });
+    const reopenedPage = await backend.downloadOverlapAutomationHistoryList({ page: 1, pageSize: 50 });
+    if (!reopenedPage.ok) throw new Error(reopenedPage.error.message);
+    expect(reopenedPage.data.items.find((item) => item.reviewId === review.reviewId)).toMatchObject({
+      removeExistingCount: 2,
+      removedGalleryIds: [
+        review.candidates[0]!.existing.galleryId,
+        review.candidates[1]!.existing.galleryId,
+      ],
+    });
+    expect(reopenedPage.data.items.find((item) => item.reviewId === review.reviewId)?.acknowledgedAt).toBeUndefined();
   });
 
   it("cancels only a chained staging review when it is removed from a newer overlap review", async () => {

@@ -9,6 +9,7 @@ import type {
   DownloadEntry,
   DownloadLibraryPage,
   DownloadPage,
+  DownloadOverlapAutomationHistoryItem,
   DownloadOverlapDecisionRequest,
   DownloadOverlapReview,
   DuplicateDecisionRequest,
@@ -82,7 +83,7 @@ import {
 import { mergeDownloadEntries, mergeDownloadLibraryPage, mergeGalleryDetail, mergeGalleryPage } from "./state/galleryProjection";
 import { galleryQueryReducer, initialGalleryQueryState, type GalleryQueryState } from "./state/galleryQuery";
 import { ExplorePageSession } from "./state/explorePageSession";
-import { visibleGalleries } from "./state/selectors";
+import { isPendingAutoFindCandidate, visibleGalleries } from "./state/selectors";
 import { galleryGroupStorageKey, groupGalleries, type GalleryGroup, type GalleryGrouping } from "./state/galleryGrouping";
 import {
   buildStrictOverlapPlan,
@@ -126,6 +127,7 @@ const activityNotificationStates: ReadonlySet<DownloadState> = new Set([
   "cancelled",
   "quarantined",
 ]);
+const DOWNLOAD_OVERLAP_AUTOMATION_HISTORY_PAGE_SIZE = 50;
 
 type Toast = { id: number; message: string } | null;
 
@@ -190,16 +192,21 @@ const favoriteKeyFromToken = (token: string): FavoriteKey => {
   return { namespace: "tag", value: normalized };
 };
 
-const autoFindStatusLabel = (loading: boolean, error: string | null, run?: AutoFindRun): string => {
+const autoFindStatusLabel = (
+  loading: boolean,
+  error: string | null,
+  pendingCandidateCount: number,
+  run?: AutoFindRun,
+): string => {
   if (loading) return "저장된 자동 탐색 결과를 불러오는 중";
   if (error) return `자동 탐색 오류 · ${error}`;
   if (!run) return "아직 실행한 자동 탐색이 없습니다.";
   if (run.state === "running") {
-    return `탐색 중 · 작가 ${run.completedFavorites}/${run.totalFavorites} · 후보 ${run.candidatesFound}개`;
+    return `탐색 중 · 작가 ${run.completedFavorites}/${run.totalFavorites} · 확인된 항목 ${run.candidatesFound}개 · 다운로드 전 ${pendingCandidateCount}개`;
   }
   if (run.state === "failed") return `탐색 실패 · ${run.errorMessage ?? run.errorCode ?? "원인을 확인해 주세요."}`;
-  if (run.state === "cancelled") return `탐색 취소됨 · 후보 ${run.candidatesFound}개 보존`;
-  return `탐색 완료 · 작가 ${run.completedFavorites}/${run.totalFavorites} · 후보 ${run.candidatesFound}개`;
+  if (run.state === "cancelled") return `탐색 취소됨 · 확인된 항목 ${run.candidatesFound}개 · 다운로드 전 ${pendingCandidateCount}개 보존`;
+  return `탐색 완료 · 작가 ${run.completedFavorites}/${run.totalFavorites} · 확인된 항목 ${run.candidatesFound}개 · 다운로드 전 ${pendingCandidateCount}개`;
 };
 
 const duplicateStatusLabel = (loading: boolean, error: string | null, run?: DuplicateScanRun): string => {
@@ -295,6 +302,15 @@ export default function App() {
   const [pendingDownloadEntries, setPendingDownloadEntries] = useState<ReadonlySet<string>>(() => new Set());
   const [sessionDownloadActivities, setSessionDownloadActivities] = useState<SessionDownloadActivity[]>([]);
   const [automaticOverlapActivities, setAutomaticOverlapActivities] = useState<AutomaticOverlapActivity[]>([]);
+  const [downloadOverlapAutomationHistory, setDownloadOverlapAutomationHistory] = useState<DownloadOverlapAutomationHistoryItem[]>([]);
+  const [downloadOverlapAutomationHistoryPage, setDownloadOverlapAutomationHistoryPage] = useState(0);
+  const [downloadOverlapAutomationHistoryTotalItems, setDownloadOverlapAutomationHistoryTotalItems] = useState(0);
+  const [downloadOverlapAutomationHistoryUnacknowledgedItems, setDownloadOverlapAutomationHistoryUnacknowledgedItems] = useState(0);
+  const [downloadOverlapAutomationHistoryLoading, setDownloadOverlapAutomationHistoryLoading] = useState(false);
+  const [downloadOverlapAutomationHistoryError, setDownloadOverlapAutomationHistoryError] = useState<string | null>(null);
+  const [downloadOverlapAutomationHistoryPendingReviewIds, setDownloadOverlapAutomationHistoryPendingReviewIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [unreadAutomaticOverlapReviewIds, setUnreadAutomaticOverlapReviewIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [automaticOverlapSweepRevision, setAutomaticOverlapSweepRevision] = useState(0);
   const [danbooruSessionActivities, setDanbooruSessionActivities] = useState<DanbooruSessionActivity[]>([]);
   const [unreadActivityCount, setUnreadActivityCount] = useState(0);
   const exitConfirmOpenRef = useRef(false);
@@ -310,8 +326,12 @@ export default function App() {
   const duplicatePendingRef = useRef(false);
   const duplicateDecisionPendingRef = useRef(false);
   const downloadOverlapReviewToken = useRef(0);
+  const downloadOverlapAutomationHistoryBodyToken = useRef(0);
+  const downloadOverlapAutomationHistoryCountToken = useRef(0);
+  const downloadOverlapAutomationHistoryPendingRef = useRef(new Set<string>());
   const downloadOverlapDecisionPendingRef = useRef(false);
   const automaticOverlapInFlightRef = useRef(false);
+  const automaticOverlapRescanRequestedRef = useRef(false);
   const automaticOverlapAttemptedRef = useRef(new Set<string>());
   const internalHydrationToken = useRef(0);
   const internalReviewToken = useRef(0);
@@ -445,6 +465,81 @@ export default function App() {
     toastTimer.current = window.setTimeout(() => setToast(null), 2400);
   }, []);
 
+  const applyDownloadOverlapAutomationHistoryCount = useCallback((
+    totalItems: number,
+    unacknowledgedItems: number,
+  ) => {
+    setDownloadOverlapAutomationHistoryTotalItems(totalItems);
+    setDownloadOverlapAutomationHistoryUnacknowledgedItems(unacknowledgedItems);
+  }, []);
+
+  const hydrateDownloadOverlapAutomationHistoryMeta = useCallback(async () => {
+    const token = ++downloadOverlapAutomationHistoryCountToken.current;
+    try {
+      const result = await backend.downloadOverlapAutomationHistoryList({ page: 1, pageSize: 1 });
+      if (token !== downloadOverlapAutomationHistoryCountToken.current || !result.ok) return;
+      applyDownloadOverlapAutomationHistoryCount(result.data.totalItems, result.data.unacknowledgedItems);
+      const persistedReviewIds = new Set(result.data.items.map((item) => item.reviewId));
+      setUnreadAutomaticOverlapReviewIds((current) =>
+        new Set([...current].filter((reviewId) => !persistedReviewIds.has(reviewId))));
+    } catch {
+      // The lightweight count is best-effort. Opening Activity performs a visible retry.
+    }
+  }, [applyDownloadOverlapAutomationHistoryCount]);
+
+  const hydrateDownloadOverlapAutomationHistoryPage = useCallback(async (
+    page: number,
+    replace: boolean,
+  ) => {
+    const bodyToken = ++downloadOverlapAutomationHistoryBodyToken.current;
+    const countToken = ++downloadOverlapAutomationHistoryCountToken.current;
+    setDownloadOverlapAutomationHistoryLoading(true);
+    setDownloadOverlapAutomationHistoryError(null);
+    try {
+      const result = await backend.downloadOverlapAutomationHistoryList({
+        page,
+        pageSize: DOWNLOAD_OVERLAP_AUTOMATION_HISTORY_PAGE_SIZE,
+      });
+      if (bodyToken !== downloadOverlapAutomationHistoryBodyToken.current) return;
+      if (!result.ok) {
+        setDownloadOverlapAutomationHistoryError(result.error.message);
+        return;
+      }
+      setDownloadOverlapAutomationHistory((current) => {
+        const merged = new Map((replace ? [] : current).map((item) => [item.reviewId, item]));
+        result.data.items.forEach((item) => merged.set(item.reviewId, item));
+        return [...merged.values()].sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+      });
+      setDownloadOverlapAutomationHistoryPage(result.data.page);
+      if (countToken === downloadOverlapAutomationHistoryCountToken.current) {
+        applyDownloadOverlapAutomationHistoryCount(result.data.totalItems, result.data.unacknowledgedItems);
+      }
+      const persistedReviewIds = new Set(result.data.items.map((item) => item.reviewId));
+      setUnreadAutomaticOverlapReviewIds((current) =>
+        new Set([...current].filter((reviewId) => !persistedReviewIds.has(reviewId))));
+    } catch {
+      if (bodyToken === downloadOverlapAutomationHistoryBodyToken.current) {
+        setDownloadOverlapAutomationHistoryError("자동 판본 분류 기록 backend에 연결하지 못했습니다.");
+      }
+    } finally {
+      if (bodyToken === downloadOverlapAutomationHistoryBodyToken.current) {
+        setDownloadOverlapAutomationHistoryLoading(false);
+      }
+    }
+  }, [applyDownloadOverlapAutomationHistoryCount]);
+
+  useEffect(() => {
+    void hydrateDownloadOverlapAutomationHistoryMeta();
+  }, [hydrateDownloadOverlapAutomationHistoryMeta]);
+
+  const refreshDownloadOverlapAutomationHistory = useCallback(() => {
+    if (uiRef.current.overlays.activityOpen) {
+      void hydrateDownloadOverlapAutomationHistoryPage(1, true);
+    } else {
+      void hydrateDownloadOverlapAutomationHistoryMeta();
+    }
+  }, [hydrateDownloadOverlapAutomationHistoryMeta, hydrateDownloadOverlapAutomationHistoryPage]);
+
   const recordSessionDownloadActivity = useCallback((id: GalleryId, state?: DownloadState) => {
     const known = sessionDownloadStatesRef.current.has(id);
     const previousState = sessionDownloadStatesRef.current.get(id);
@@ -469,7 +564,7 @@ export default function App() {
     automaticOverlapActivityIdsRef.current.add(activity.id);
     setAutomaticOverlapActivities((current) => [activity, ...current]);
     if (!uiRef.current.overlays.activityOpen) {
-      setUnreadActivityCount((current) => current + 1);
+      setUnreadAutomaticOverlapReviewIds((current) => new Set([...current, activity.reviewId]));
     }
   }, []);
 
@@ -657,6 +752,81 @@ export default function App() {
     }
     return result;
   }, []);
+
+  const beginDownloadOverlapAutomationHistoryMutation = useCallback((reviewId: string): boolean => {
+    if (downloadOverlapAutomationHistoryPendingRef.current.has(reviewId)) return false;
+    downloadOverlapAutomationHistoryPendingRef.current.add(reviewId);
+    setDownloadOverlapAutomationHistoryPendingReviewIds(
+      new Set(downloadOverlapAutomationHistoryPendingRef.current),
+    );
+    return true;
+  }, []);
+
+  const finishDownloadOverlapAutomationHistoryMutation = useCallback((reviewId: string) => {
+    downloadOverlapAutomationHistoryPendingRef.current.delete(reviewId);
+    setDownloadOverlapAutomationHistoryPendingReviewIds(
+      new Set(downloadOverlapAutomationHistoryPendingRef.current),
+    );
+  }, []);
+
+  const applyAcknowledgedDownloadOverlapAutomationHistory = useCallback((
+    item: DownloadOverlapAutomationHistoryItem,
+  ) => {
+    setDownloadOverlapAutomationHistory((current) => current.map((known) =>
+      known.reviewId === item.reviewId ? item : known));
+    setUnreadAutomaticOverlapReviewIds((current) => {
+      const next = new Set(current);
+      next.delete(item.reviewId);
+      return next;
+    });
+  }, []);
+
+  const acknowledgeDownloadOverlapAutomationHistory = useCallback(async (reviewId: string) => {
+    if (!beginDownloadOverlapAutomationHistoryMutation(reviewId)) return;
+    try {
+      const result = await backend.downloadOverlapAutomationHistoryAcknowledge(reviewId);
+      if (!result.ok) {
+        showToast(result.error.message);
+        return;
+      }
+      applyAcknowledgedDownloadOverlapAutomationHistory(result.data);
+      setDownloadOverlapAutomationHistoryUnacknowledgedItems((current) => Math.max(0, current - 1));
+      void hydrateDownloadOverlapAutomationHistoryMeta();
+    } catch {
+      showToast("자동 판본 분류 기록을 확인 처리하지 못했습니다.");
+    } finally {
+      finishDownloadOverlapAutomationHistoryMutation(reviewId);
+    }
+  }, [applyAcknowledgedDownloadOverlapAutomationHistory, beginDownloadOverlapAutomationHistoryMutation, finishDownloadOverlapAutomationHistoryMutation, hydrateDownloadOverlapAutomationHistoryMeta, showToast]);
+
+  const restoreDownloadOverlapAutomationExclusions = useCallback(async (
+    reviewId: string,
+    galleryIds: GalleryId[],
+  ) => {
+    if (!galleryIds.length || !beginDownloadOverlapAutomationHistoryMutation(reviewId)) return;
+    try {
+      const restored = await restoreExplorationExclusionsAndSync(galleryIds);
+      if (!restored.ok) {
+        showToast(restored.error.message);
+        return;
+      }
+      setDownloadsRefresh((current) => current + 1);
+      const acknowledged = await backend.downloadOverlapAutomationHistoryAcknowledge(reviewId);
+      if (!acknowledged.ok) {
+        showToast(`목록 제외 ${restored.data.restoredGalleryIds.length}개는 해제했지만 기록 확인 처리는 실패했습니다. ${acknowledged.error.message}`);
+        void hydrateDownloadOverlapAutomationHistoryMeta();
+        return;
+      }
+      applyAcknowledgedDownloadOverlapAutomationHistory(acknowledged.data);
+      setDownloadOverlapAutomationHistoryUnacknowledgedItems((current) => Math.max(0, current - 1));
+      void hydrateDownloadOverlapAutomationHistoryMeta();
+      showToast(`${restored.data.restoredGalleryIds.length}개 앨범의 탐색·목록 제외를 해제했습니다. 격리된 실제 파일은 복원하지 않았습니다.`);
+    } catch {
+      showToast("자동 분류 제외 앨범을 목록에 복원하지 못했습니다.");
+    } finally {
+      finishDownloadOverlapAutomationHistoryMutation(reviewId);
+    }
+  }, [applyAcknowledgedDownloadOverlapAutomationHistory, beginDownloadOverlapAutomationHistoryMutation, finishDownloadOverlapAutomationHistoryMutation, hydrateDownloadOverlapAutomationHistoryMeta, restoreExplorationExclusionsAndSync, showToast]);
 
   useEffect(() => {
     void loadExplorationExclusionsAndSync().catch(() => undefined);
@@ -1245,14 +1415,19 @@ export default function App() {
     };
   }, [downloadsRefresh]);
 
+  const autoFindMatchedFavoriteTokens = useMemo(() => new Map(
+    autoFindSnapshot.candidates.map((candidate) => [candidate.id, favoriteToken(candidate.matchedFavorite)]),
+  ), [autoFindSnapshot.candidates]);
   const displayGalleries = useMemo<ReadonlyMap<GalleryId, Gallery>>(() => {
     const next = new Map<GalleryId, Gallery>();
     galleries.forEach((gallery, id) => {
-      const favorite = favoriteMetadata.has(`artist:${normalizeMetadataToken(gallery.artist)}`);
+      const matchedFavoriteToken = autoFindMatchedFavoriteTokens.get(id);
+      const favorite = favoriteMetadata.has(`artist:${normalizeMetadataToken(gallery.artist)}`)
+        || (matchedFavoriteToken !== undefined && favoriteMetadata.has(matchedFavoriteToken));
       next.set(id, gallery.favorite === favorite ? gallery : { ...gallery, favorite });
     });
     return next;
-  }, [favoriteMetadata, galleries]);
+  }, [autoFindMatchedFavoriteTokens, favoriteMetadata, galleries]);
   const favoriteMetadataForDisplay = useMemo<ReadonlySet<string>>(() => {
     const next = new Set(favoriteMetadata);
     galleries.forEach((gallery) => {
@@ -1275,13 +1450,33 @@ export default function App() {
     return next;
   }, [favoriteMetadata, galleries]);
 
+  const pendingAutoFindIds = useMemo(
+    () => autoFindIds.filter((id) => {
+      const gallery = displayGalleries.get(id);
+      return gallery !== undefined && isPendingAutoFindCandidate(gallery);
+    }),
+    [autoFindIds, displayGalleries],
+  );
+  const autoFindSearchState = ui.search["auto-find"];
+  const filteredPendingAutoFindGalleries = useMemo(() => visibleGalleries(
+    {
+      ...initialUiState,
+      view: "auto-find",
+      search: { ...initialUiState.search, "auto-find": autoFindSearchState },
+    },
+    pendingAutoFindIds.flatMap((id) => {
+      const gallery = displayGalleries.get(id);
+      return gallery ? [gallery] : [];
+    }),
+  ), [autoFindSearchState, displayGalleries, pendingAutoFindIds]);
+
   const scopedGalleries = useMemo(() => {
-    const ids = ui.view === "explore" ? exploreIds : ui.view === "downloads" ? downloadIds : autoFindIds;
+    const ids = ui.view === "explore" ? exploreIds : ui.view === "downloads" ? downloadIds : pendingAutoFindIds;
     return ids.flatMap((id) => {
       const gallery = displayGalleries.get(id);
       return gallery ? [gallery] : [];
     });
-  }, [autoFindIds, displayGalleries, downloadIds, exploreIds, ui.view]);
+  }, [displayGalleries, downloadIds, exploreIds, pendingAutoFindIds, ui.view]);
   const visible = useMemo(() => visibleGalleries(ui, scopedGalleries), [ui, scopedGalleries]);
   const actionableVisibleIds = useMemo(
     () => visible
@@ -1308,10 +1503,7 @@ export default function App() {
     }
     return counts;
   }, [internalSnapshot.groups]);
-  const autoFindCount = useMemo(
-    () => autoFindIds.filter((id) => displayGalleries.get(id)?.download?.state !== "quarantined").length,
-    [autoFindIds, displayGalleries],
-  );
+  const autoFindCount = filteredPendingAutoFindGalleries.length;
   const attentionCount = useMemo(
     () => allGalleries.filter((gallery) => !duplicateHiddenGalleryIds.has(gallery.id)
       && ["failed", "interrupted", "review_required"].includes(gallery.download?.state ?? "")).length,
@@ -1466,24 +1658,19 @@ export default function App() {
   const randomOpenAvailable = useMemo(() => {
     if (ui.view === "explore") return true;
     if (ui.view === "auto-find") {
-      return autoFindIds.some((id) => displayGalleries.get(id)?.download?.state !== "quarantined"
-        && displayGalleries.has(id)
-        && !duplicateHiddenGalleryIds.has(id));
+      return filteredPendingAutoFindGalleries.some((gallery) => !duplicateHiddenGalleryIds.has(gallery.id));
     }
     return downloadIds.some((id) => displayGalleries.get(id)?.download?.state === "completed"
       && !duplicateHiddenGalleryIds.has(id));
-  }, [autoFindIds, displayGalleries, downloadIds, duplicateHiddenGalleryIds, ui.view]);
+  }, [displayGalleries, downloadIds, duplicateHiddenGalleryIds, filteredPendingAutoFindGalleries, ui.view]);
   const openRandomGallery = useCallback(async () => {
     if (randomOpenPending) return;
 
     let candidates: Gallery[] = [];
     if (ui.view === "auto-find") {
-      candidates = autoFindIds.flatMap((id) => {
-        const gallery = displayGalleries.get(id);
-        return gallery && gallery.download?.state !== "quarantined" && !duplicateHiddenGalleryIds.has(id)
-          ? [gallery]
-          : [];
-      });
+      candidates = filteredPendingAutoFindGalleries.filter(
+        (gallery) => !duplicateHiddenGalleryIds.has(gallery.id),
+      );
     } else if (ui.view === "downloads") {
       candidates = downloadIds.flatMap((id) => {
         const gallery = displayGalleries.get(id);
@@ -1531,7 +1718,7 @@ export default function App() {
     } finally {
       setRandomOpenPending(false);
     }
-  }, [autoFindIds, displayGalleries, downloadIds, duplicateHiddenGalleryIds, openDetail, randomOpenPending, showToast, ui.view]);
+  }, [displayGalleries, downloadIds, duplicateHiddenGalleryIds, filteredPendingAutoFindGalleries, openDetail, randomOpenPending, showToast, ui.view]);
   const openRelatedDetail = useCallback((id: GalleryId, parentId: GalleryId, options?: { activate?: boolean }) => {
     dispatch({ type: "detail.open", id, parentId, activate: options?.activate });
     void hydrateDetail(id);
@@ -1717,90 +1904,124 @@ export default function App() {
   useEffect(() => {
     if (settingsLoading
       || settings.downloadOverlapAutoMode !== "strict_quarantine"
-      || automaticOverlapInFlightRef.current
+      || downloadOverlapDecisionPending
       || downloadOverlapDecisionPendingRef.current) return;
+    if (automaticOverlapInFlightRef.current) {
+      // Download pages and worker events can add another review while a sweep is
+      // already running. Remember that change so it is not lost when the
+      // current snapshot finishes.
+      automaticOverlapRescanRequestedRef.current = true;
+      return;
+    }
 
-    const reviewId = allGalleries.find((gallery) => gallery.download?.state === "review_required"
-      && gallery.download.reviewKind === "gallery_duplicate"
-      && gallery.download.reviewId
-      && gallery.download.reviewId !== downloadOverlapReviewId)?.download?.reviewId;
-    if (!reviewId) return;
+    const reviewIds = [...new Set(allGalleries.flatMap((gallery) => {
+      const download = gallery.download;
+      return download?.state === "review_required"
+        && download.reviewKind === "gallery_duplicate"
+        && download.reviewId
+        && download.reviewId !== downloadOverlapReviewId
+        ? [download.reviewId]
+        : [];
+    }))];
+    if (!reviewIds.length) return;
 
     automaticOverlapInFlightRef.current = true;
     void (async () => {
       let activityReview: DownloadOverlapReview | null = null;
+      let systemicFailure = false;
       try {
-        const loaded = await backend.downloadOverlapReviewGet(reviewId);
-        if (!loaded.ok) return;
-        let current = loaded.data;
-        activityReview = current;
-        const attemptKey = `${current.reviewId}:${current.revision}`;
-        if (automaticOverlapAttemptedRef.current.has(attemptKey)) return;
-        automaticOverlapAttemptedRef.current.add(attemptKey);
-        const plan = buildStrictOverlapPlan(current);
-        if (!plan) return;
-
-        const excludedGalleryIds: GalleryId[] = [];
-        for (const step of plan.steps) {
-          const featureSnapshotJson = JSON.stringify({
-            ...(JSON.parse(step.featureSnapshotJson) as Record<string, unknown>),
-            reviewRevision: current.revision,
-          });
-          const result = await backend.downloadOverlapDecisionApply({
-            reviewId: current.reviewId,
-            expectedRevision: current.revision,
-            action: step.action,
-            candidateId: step.candidateId,
-            actor: "automation",
-            reasonCode: DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
-            ruleVersion: DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
-            featureSnapshotJson,
-          });
-          if (!result.ok) {
-            const detail = `자동 분류 중단 · 직접 검토 필요 · ${result.error.message}`;
-            recordAutomaticOverlapActivity({
-              id: `${current.reviewId}:failed:${current.revision}`,
-              reviewId: current.reviewId,
-              galleryId: current.incoming.galleryId,
-              title: current.incoming.title,
-              detail,
-              occurredAt: Date.now(),
-              state: "failed",
-            });
-            showToast(detail);
+        for (const reviewId of reviewIds) {
+          const loaded = await backend.downloadOverlapReviewGet(reviewId);
+          if (!loaded.ok) {
+            if (loaded.error.code === "DOWNLOAD_OVERLAP_REVIEW_NOT_FOUND") continue;
+            systemicFailure = true;
+            showToast(`자동 분류 중단 · 직접 검토 필요 · ${loaded.error.message}`);
             return;
           }
-          const decidedCandidate = current.candidates.find((candidate) => candidate.candidateId === step.candidateId);
-          const excludedGalleryId = step.action === "remove_incoming"
-            ? current.incoming.galleryId
-            : decidedCandidate?.existing.galleryId;
-          if (excludedGalleryId !== undefined) {
-            excludedGalleryIds.push(excludedGalleryId);
-            // Each backend decision is durable on its own. Reflect it immediately
-            // so a later candidate failure cannot leave this session's UI stale.
-            setDuplicateHiddenGalleryIds((known) => new Set([...known, excludedGalleryId]));
-          }
-          current = result.data.review;
+          let current = loaded.data;
           activityReview = current;
-        }
+          const attemptKey = `${current.reviewId}:${current.revision}`;
+          if (automaticOverlapAttemptedRef.current.has(attemptKey)) continue;
+          automaticOverlapAttemptedRef.current.add(attemptKey);
+          const plan = buildStrictOverlapPlan(current);
+          if (!plan) continue;
 
-        if (excludedGalleryIds.length) {
-          setDuplicateHiddenGalleryIds((known) => new Set([...known, ...excludedGalleryIds]));
+          const excludedGalleryIds: GalleryId[] = [];
+          let reviewBecameStale = false;
+          for (const step of plan.steps) {
+            const featureSnapshotJson = JSON.stringify({
+              ...(JSON.parse(step.featureSnapshotJson) as Record<string, unknown>),
+              reviewRevision: current.revision,
+            });
+            const result = await backend.downloadOverlapDecisionApply({
+              reviewId: current.reviewId,
+              expectedRevision: current.revision,
+              action: step.action,
+              candidateId: step.candidateId,
+              actor: "automation",
+              reasonCode: DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
+              ruleVersion: DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
+              featureSnapshotJson,
+            });
+            if (!result.ok) {
+              if (["REVISION_CONFLICT", "DOWNLOAD_OVERLAP_REVIEW_NOT_FOUND"].includes(result.error.code)) {
+                reviewBecameStale = true;
+                automaticOverlapRescanRequestedRef.current = true;
+                break;
+              }
+              const detail = `자동 분류 중단 · 직접 검토 필요 · ${result.error.message}`;
+              recordAutomaticOverlapActivity({
+                id: `${current.reviewId}:failed:${current.revision}`,
+                reviewId: current.reviewId,
+                galleryId: current.incoming.galleryId,
+                title: current.incoming.title,
+                detail,
+                occurredAt: Date.now(),
+                state: "failed",
+              });
+              refreshDownloadOverlapAutomationHistory();
+              systemicFailure = true;
+              showToast(detail);
+              return;
+            }
+            const decidedCandidate = current.candidates.find((candidate) => candidate.candidateId === step.candidateId);
+            const excludedGalleryId = step.action === "remove_incoming"
+              ? current.incoming.galleryId
+              : decidedCandidate?.existing.galleryId;
+            if (excludedGalleryId !== undefined) {
+              excludedGalleryIds.push(excludedGalleryId);
+              // Each backend decision is durable on its own. Reflect it immediately
+              // so a later candidate failure cannot leave this session's UI stale.
+              setDuplicateHiddenGalleryIds((known) => new Set([...known, excludedGalleryId]));
+            }
+            current = result.data.review;
+            activityReview = current;
+          }
+
+          if (excludedGalleryIds.length) {
+            setDuplicateHiddenGalleryIds((known) => new Set([...known, ...excludedGalleryIds]));
+          }
+          if (reviewBecameStale) {
+            if (excludedGalleryIds.length) refreshDownloadOverlapAutomationHistory();
+            continue;
+          }
+
+          setDownloadsRefresh((value) => value + 1);
+          const detail = plan.winner === "incoming"
+            ? `자동 분류 완료 · 신규 앨범 B 보존 · 기존 판본 ${plan.steps.length}개 제외 처리`
+            : "자동 분류 완료 · 기존 앨범 A 보존 · 신규 앨범 B 취소";
+          recordAutomaticOverlapActivity({
+            id: `${current.reviewId}:completed`,
+            reviewId: current.reviewId,
+            galleryId: current.incoming.galleryId,
+            title: current.incoming.title,
+            detail,
+            occurredAt: Date.now(),
+            state: "completed",
+          });
+          refreshDownloadOverlapAutomationHistory();
+          showToast(detail);
         }
-        setDownloadsRefresh((value) => value + 1);
-        const detail = plan.winner === "incoming"
-          ? `자동 분류 완료 · 신규 앨범 B 보존 · 기존 판본 ${plan.steps.length}개 제외 처리`
-          : "자동 분류 완료 · 기존 앨범 A 보존 · 신규 앨범 B 취소";
-        recordAutomaticOverlapActivity({
-          id: `${current.reviewId}:completed`,
-          reviewId: current.reviewId,
-          galleryId: current.incoming.galleryId,
-          title: current.incoming.title,
-          detail,
-          occurredAt: Date.now(),
-          state: "completed",
-        });
-        showToast(detail);
       } catch {
         const detail = "자동 분류를 완료하지 못했습니다. 직접 검토해 주세요.";
         if (activityReview) {
@@ -1813,13 +2034,19 @@ export default function App() {
             occurredAt: Date.now(),
             state: "failed",
           });
+          refreshDownloadOverlapAutomationHistory();
         }
+        systemicFailure = true;
         showToast(detail);
       } finally {
         automaticOverlapInFlightRef.current = false;
+        if (!systemicFailure && automaticOverlapRescanRequestedRef.current) {
+          automaticOverlapRescanRequestedRef.current = false;
+          setAutomaticOverlapSweepRevision((value) => value + 1);
+        }
       }
     })();
-  }, [allGalleries, downloadOverlapReviewId, recordAutomaticOverlapActivity, settings.downloadOverlapAutoMode, settingsLoading, showToast]);
+  }, [allGalleries, automaticOverlapSweepRevision, downloadOverlapDecisionPending, downloadOverlapReviewId, recordAutomaticOverlapActivity, refreshDownloadOverlapAutomationHistory, settings.downloadOverlapAutoMode, settingsLoading, showToast]);
 
   const hydrateInternalReview = useCallback(async (entryId: string) => {
     const token = ++internalReviewToken.current;
@@ -1990,11 +2217,18 @@ export default function App() {
       setInternalPending(false);
     }
   }, [hydrateInternalSnapshot, showToast]);
+  const loadMoreDownloadOverlapAutomationHistory = useCallback(() => {
+    if (downloadOverlapAutomationHistoryLoading
+      || downloadOverlapAutomationHistory.length >= downloadOverlapAutomationHistoryTotalItems) return;
+    void hydrateDownloadOverlapAutomationHistoryPage(downloadOverlapAutomationHistoryPage + 1, false);
+  }, [downloadOverlapAutomationHistory.length, downloadOverlapAutomationHistoryLoading, downloadOverlapAutomationHistoryPage, downloadOverlapAutomationHistoryTotalItems, hydrateDownloadOverlapAutomationHistoryPage]);
   const openActivity = useCallback(() => {
     activityOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setUnreadActivityCount(0);
+    setUnreadAutomaticOverlapReviewIds(new Set());
     dispatch({ type: "overlay.activity", open: true });
-  }, []);
+    void hydrateDownloadOverlapAutomationHistoryPage(1, true);
+  }, [hydrateDownloadOverlapAutomationHistoryPage]);
   const closeActivity = useCallback(() => {
     dispatch({ type: "overlay.activity", open: false });
     const target = activityOpener.current;
@@ -2893,7 +3127,12 @@ export default function App() {
 
   const config = viewConfig[ui.view];
   const resultSourceLabel = backend.runtime === "tauri" ? "Hitomi 실데이터" : "브라우저 fixture";
-  const currentAutoFindStatus = autoFindStatusLabel(autoFindLoading, autoFindError, autoFindSnapshot.run);
+  const currentAutoFindStatus = autoFindStatusLabel(
+    autoFindLoading,
+    autoFindError,
+    autoFindCount,
+    autoFindSnapshot.run,
+  );
   const currentDuplicateStatus = duplicateStatusLabel(duplicateLoading, duplicateError, duplicateRun);
   const currentInternalStatus = internalStatusLabel(internalLoading, internalError, internalRun);
   const exploreContextTabs = useMemo<ExploreContextTab[]>(() => exploreContextIds.flatMap((id) => {
@@ -2977,6 +3216,14 @@ export default function App() {
       })}
     </GalleryGrid>
   );
+  const persistedAutomaticReviewIds = new Set(
+    downloadOverlapAutomationHistory.map((item) => item.reviewId),
+  );
+  const unreadAutomaticOverlapSessionCount = [...unreadAutomaticOverlapReviewIds]
+    .filter((reviewId) => !persistedAutomaticReviewIds.has(reviewId)).length;
+  const activityBadgeCount = unreadActivityCount
+    + downloadOverlapAutomationHistoryUnacknowledgedItems
+    + unreadAutomaticOverlapSessionCount;
 
   return (
     <>
@@ -2987,7 +3234,7 @@ export default function App() {
           pageSize={settings.danbooruPageSize}
           previewWidth={settings.danbooruPreviewWidth}
           favoriteMetadata={favoriteMetadataForDisplay}
-          activityCount={unreadActivityCount}
+          activityCount={activityBadgeCount}
           activityOpen={ui.overlays.activityOpen}
           privacyMode={settings.privacyMode}
           privacyModePending={privacyModePending || settingsLoading}
@@ -3019,7 +3266,7 @@ export default function App() {
             search={ui.search[ui.view]}
             searchPending={settingsLoading}
             suggestions={ui.view === "explore" ? searchSuggestions : []}
-            activityCount={unreadActivityCount}
+            activityCount={activityBadgeCount}
             activityOpen={ui.overlays.activityOpen}
             onDraft={(value) => dispatch({ type: "search.draft", view: ui.view, value })}
             onSuggestions={(open, active) => dispatch({ type: "search.suggestions", view: ui.view, open, active })}
@@ -3149,15 +3396,15 @@ export default function App() {
                   {((autoFindSnapshot.run?.historyMode === "newer_than_oldest_downloaded" && autoFindSnapshot.cutoffEvidence.length)
                     || autoFindSnapshot.truncations.length) ? (
                     <details className="auto-find-evidence-details">
-                      <summary>검증 근거 {autoFindSnapshot.cutoffEvidence.length + autoFindSnapshot.truncations.length}개</summary>
+                      <summary>검색 범위·제한 {autoFindSnapshot.cutoffEvidence.length + autoFindSnapshot.truncations.length}개</summary>
                       <div className="auto-find-evidence-popover">
                         {autoFindSnapshot.run?.historyMode === "newer_than_oldest_downloaded" && autoFindSnapshot.cutoffEvidence.length ? (
-                          <ul aria-label="Auto Find 기록 cutoff 근거">
+                          <ul aria-label="Auto Find 작가별 검색 시작점">
                             {autoFindSnapshot.cutoffEvidence.map((evidence) => (
                               <li key={evidence.artist}>
                                 {evidence.artist}: {evidence.oldestOwnedGalleryId === undefined
                                   ? "검증 완료·격리 소유 작품 없음"
-                                  : `가장 오래된 소유 gallery ID #${evidence.oldestOwnedGalleryId} 이후, ${evidence.qualifiedOwnedCount}개 확인`}
+                                  : `검증된 소유본 ${evidence.qualifiedOwnedCount}개 중 가장 오래된 #${evidence.oldestOwnedGalleryId} 이후를 검색`}
                               </li>
                             ))}
                           </ul>
@@ -3310,11 +3557,21 @@ export default function App() {
         galleries={allGalleries}
         sessionDownloads={sessionDownloadActivities}
         automaticOverlapActivities={automaticOverlapActivities}
+        automationHistory={downloadOverlapAutomationHistory}
+        automationHistoryLoading={downloadOverlapAutomationHistoryLoading}
+        automationHistoryError={downloadOverlapAutomationHistoryError}
+        automationHistoryTotalItems={downloadOverlapAutomationHistoryTotalItems}
+        automationHistoryUnacknowledgedItems={downloadOverlapAutomationHistoryUnacknowledgedItems}
+        automationHistoryPendingReviewIds={downloadOverlapAutomationHistoryPendingReviewIds}
         danbooruActivities={danbooruSessionActivities}
         duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
         onClose={closeActivity}
         onReview={openReview}
         onReviewOverlap={openAutomaticOverlapReview}
+        onAcknowledgeAutomationHistory={(reviewId) => void acknowledgeDownloadOverlapAutomationHistory(reviewId)}
+        onRestoreAutomationExclusions={(reviewId, galleryIds) => void restoreDownloadOverlapAutomationExclusions(reviewId, galleryIds)}
+        onRetryAutomationHistory={() => void hydrateDownloadOverlapAutomationHistoryPage(1, true)}
+        onLoadMoreAutomationHistory={loadMoreDownloadOverlapAutomationHistory}
         onRetry={(id) => void retryGallery(id)}
         onCancel={(id) => void cancelGallery(id)}
         pendingEntryIds={pendingDownloadEntries}

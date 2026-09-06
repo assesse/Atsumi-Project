@@ -283,6 +283,13 @@ impl From<ApplicationError> for ApiError {
                 action: Some(ApiAction::Review),
                 details: Some(BTreeMap::from([("reviewId".into(), json!(review_id))])),
             },
+            ApplicationError::DownloadOverlapAutomationHistoryNotFound(review_id) => Self {
+                code: "DOWNLOAD_OVERLAP_AUTOMATION_HISTORY_NOT_FOUND".into(),
+                message: "The download overlap automation history item no longer exists".into(),
+                retryable: false,
+                action: Some(ApiAction::Review),
+                details: Some(BTreeMap::from([("reviewId".into(), json!(review_id))])),
+            },
             ApplicationError::DownloadOverlapDecisionInvalid(reason) => Self {
                 code: "DOWNLOAD_OVERLAP_DECISION_INVALID".into(),
                 message: "The download overlap decision is no longer safe to apply".into(),
@@ -584,6 +591,21 @@ mod tests {
             assert!(!api.message.contains("C:\\Users"));
             assert!(api.details.is_none());
         }
+    }
+
+    #[test]
+    fn automation_history_not_found_uses_the_frontend_error_contract() {
+        let api = ApiError::from(ApplicationError::DownloadOverlapAutomationHistoryNotFound(
+            "review-404".into(),
+        ));
+
+        assert_eq!(api.code, "DOWNLOAD_OVERLAP_AUTOMATION_HISTORY_NOT_FOUND");
+        assert!(!api.retryable);
+        assert_eq!(api.action, Some(ApiAction::Review));
+        assert_eq!(
+            api.details,
+            Some(BTreeMap::from([("reviewId".into(), json!("review-404"))]))
+        );
     }
 
     #[test]

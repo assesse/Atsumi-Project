@@ -92,6 +92,44 @@ describe("GalleryThumbnail", () => {
     container.remove();
   });
 
+  it("caps an unusually tall intrinsic frame and crops only its bottom", async () => {
+    const client = new ThumbnailClient({
+      resolve: () => ({
+        kind: "image",
+        url: "https://images.example.test/tall-cover.jpg",
+        width: 400,
+        height: 1600,
+      }),
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    await act(async () => root.render(
+      <GalleryThumbnail
+        thumbnailKey={coverKey}
+        consumer="explore"
+        priority="visible"
+        client={client}
+        sizing="intrinsic"
+        maxHeightToWidthRatio={1.5}
+        alt="세로로 긴 표지"
+      />,
+    ));
+
+    const media = container.querySelector<HTMLElement>(".gallery-thumbnail");
+    const image = media?.querySelector<HTMLImageElement>("img");
+    expect(media).toHaveStyle({ aspectRatio: "400 / 600" });
+    expect(media).toHaveAttribute("data-thumbnail-intrinsic-width", "400");
+    expect(media).toHaveAttribute("data-thumbnail-intrinsic-height", "600");
+    expect(media).toHaveAttribute("data-thumbnail-crop", "bottom");
+    expect(image).toHaveStyle({ objectFit: "cover", objectPosition: "center top" });
+
+    await act(async () => root.unmount());
+    client.dispose();
+    container.remove();
+  });
+
   it("clips a 3x2 fixture sheet to a square cell without stretching the cell", async () => {
     const gallery = { ...mockGalleries[0]!, coverIndex: 1 };
     const pageKey = sourcePageThumbnailKey(gallery, 5);

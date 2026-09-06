@@ -38,10 +38,10 @@ pub use duplicate_supervisor::{DisabledDuplicateRelationProvider, DuplicateSuper
 pub use error::{ApplicationError, RepositoryError};
 pub use internal_duplicate_supervisor::InternalDuplicateSupervisor;
 pub use ports::{
-    ArtifactRepository, AutoFindSource, AutoFindSourceRequest, AutoFindSourceResult,
-    AutomationRepository, DownloadMutationOutcome, DownloadQueueAddOutcome, DownloadQueueRecord,
-    DownloadRepository, DuplicateRelationProvider, DuplicateRepository,
-    InternalDuplicateRepository, InternalPlanPrepareOutcome, SearchRepository, StateRepository,
-    TagCatalogRepository, TagCatalogSource,
+    ArtifactRepository, AutoFindCheckpointStage, AutoFindIncrementalCheckpoint, AutoFindSource,
+    AutoFindSourceRequest, AutoFindSourceResult, AutomationRepository, DownloadMutationOutcome,
+    DownloadQueueAddOutcome, DownloadQueueRecord, DownloadRepository, DuplicateRelationProvider,
+    DuplicateRepository, InternalDuplicateRepository, InternalPlanPrepareOutcome, SearchRepository,
+    StateRepository, TagCatalogRepository, TagCatalogSource,
 };
 pub use service::{ApplicationService, DownloadQueueLaunch};

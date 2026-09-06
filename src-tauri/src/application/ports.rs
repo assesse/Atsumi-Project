@@ -123,6 +123,11 @@ pub trait TagCatalogRepository: Send + Sync {
 pub struct AutoFindSourceRequest {
     pub artist: String,
     pub languages: Vec<crate::domain::Language>,
+    /// Stable history-policy floor. IDs at or below it are not part of the
+    /// current candidate set and therefore must not be carried forward.
+    pub retain_after_gallery_id: Option<crate::domain::GalleryId>,
+    /// Incremental metadata-fetch floor. The source still returns current
+    /// membership separately so cached pending candidates can be reconciled.
     pub newer_than_gallery_id: Option<crate::domain::GalleryId>,
     pub candidate_limit: u32,
 }
@@ -130,9 +135,36 @@ pub struct AutoFindSourceRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoFindSourceResult {
     pub candidate_ids: Vec<crate::domain::GalleryId>,
+    /// Complete current artist/language membership after the stable history
+    /// floor, before the incremental metadata-fetch floor.
+    pub matching_ids: Vec<crate::domain::GalleryId>,
+    /// Highest gallery ID currently present in the artist/language
+    /// intersection before the incremental cutoff is applied. A completed
+    /// refresh may promote this value to its durable per-artist checkpoint.
+    pub latest_available_gallery_id: Option<crate::domain::GalleryId>,
     pub eligible_count: u32,
     pub limit: u32,
     pub truncated_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoFindIncrementalCheckpoint {
+    pub artist: String,
+    pub history_mode: AutoFindHistoryMode,
+    pub policy_version: u32,
+    pub high_water_gallery_id: Option<GalleryId>,
+    pub history_floor_gallery_id: Option<GalleryId>,
+    pub incremental_runs_since_full: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AutoFindCheckpointStage {
+    pub artist: String,
+    pub history_mode: AutoFindHistoryMode,
+    pub policy_version: u32,
+    pub high_water_gallery_id: Option<GalleryId>,
+    pub history_floor_gallery_id: Option<GalleryId>,
+    pub performed_full_scan: bool,
 }
 
 /// Source-specific artist discovery. This intentionally bypasses the user
@@ -175,6 +207,19 @@ pub trait AutomationRepository: Send + Sync {
         artists: &[String],
     ) -> Result<Vec<AutoFindCutoffEvidence>, RepositoryError>;
 
+    fn auto_find_incremental_checkpoints(
+        &self,
+        artists: &[String],
+        history_mode: AutoFindHistoryMode,
+        policy_version: u32,
+        full_rescan_max_age_days: u32,
+    ) -> Result<Vec<AutoFindIncrementalCheckpoint>, RepositoryError>;
+
+    fn auto_find_cached_candidates(
+        &self,
+        gallery_ids: &[GalleryId],
+    ) -> Result<Vec<crate::domain::GallerySummary>, RepositoryError>;
+
     fn auto_find_start(
         &self,
         total_favorites: u32,
@@ -198,6 +243,12 @@ pub trait AutomationRepository: Send + Sync {
         run_id: &str,
         completed_favorites: u32,
     ) -> Result<Option<AutoFindRun>, RepositoryError>;
+
+    fn auto_find_checkpoint_stage(
+        &self,
+        run_id: &str,
+        checkpoint: &AutoFindCheckpointStage,
+    ) -> Result<(), RepositoryError>;
 
     fn auto_find_finish(
         &self,

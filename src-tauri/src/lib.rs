@@ -885,6 +885,8 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::duplicate_review_get,
             interface::commands::duplicate_decision_apply,
             interface::commands::download_overlap_review_get,
+            interface::commands::download_overlap_automation_history_list,
+            interface::commands::download_overlap_automation_history_acknowledge,
             interface::commands::download_overlap_decision_apply,
             interface::commands::internal_duplicate_snapshot,
             interface::commands::internal_duplicate_active_artifact,

@@ -14,12 +14,12 @@ use uuid::Uuid;
 
 use crate::{
     application::{
-        ArtifactRepository, AutomationRepository, DownloadArtifactPlan, DownloadCheckpoint,
-        DownloadMutationOutcome, DownloadOverlapRepository, DownloadPageAttempt,
-        DownloadPageAttemptResult, DownloadPipelineRepository, DownloadPrepared,
-        DownloadQueueAddOutcome, DownloadQueueRecord, DownloadRepository, DuplicateRepository,
-        QuarantineSaga, QuarantineSagaState, RepositoryError, StateRepository, StoredPage,
-        TagCatalogRepository,
+        ArtifactRepository, AutoFindCheckpointStage, AutoFindIncrementalCheckpoint,
+        AutomationRepository, DownloadArtifactPlan, DownloadCheckpoint, DownloadMutationOutcome,
+        DownloadOverlapRepository, DownloadPageAttempt, DownloadPageAttemptResult,
+        DownloadPipelineRepository, DownloadPrepared, DownloadQueueAddOutcome, DownloadQueueRecord,
+        DownloadRepository, DuplicateRepository, QuarantineSaga, QuarantineSagaState,
+        RepositoryError, StateRepository, StoredPage, TagCatalogRepository,
     },
     domain::{
         ArtifactBundle, ArtifactManifest, ArtifactRelativePath, ArtifactSha256,
@@ -28,17 +28,18 @@ use crate::{
         AutoFindSnapshot, AutoFindTruncation, DownloadArtifact, DownloadArtifactState,
         DownloadChangedEvent, DownloadEntry, DownloadEntryId, DownloadJobDescriptor,
         DownloadJobProjection, DownloadLibraryGallery, DownloadLibraryItem, DownloadLibraryPage,
-        DownloadListRequest, DownloadOverlapAutoMode, DownloadOverlapCandidate,
-        DownloadOverlapCandidateIdentity, DownloadOverlapDecisionAction,
+        DownloadListRequest, DownloadOverlapAutoMode, DownloadOverlapAutomationHistoryItem,
+        DownloadOverlapAutomationHistoryListRequest, DownloadOverlapAutomationHistoryPage,
+        DownloadOverlapCandidate, DownloadOverlapCandidateIdentity, DownloadOverlapDecisionAction,
         DownloadOverlapDecisionActor, DownloadOverlapDecisionApplied,
-        DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionRequest,
-        DownloadOverlapDecisionResult, DownloadOverlapGalleryRef, DownloadOverlapPagePair,
-        DownloadOverlapPairDecision, DownloadOverlapRelation, DownloadOverlapReview,
-        DownloadOverlapReviewDraft, DownloadOverlapReviewState, DownloadPage, DownloadReviewKind,
-        DuplicateCandidate, DuplicateCandidateRecord, DuplicateDecisionAction,
-        DuplicateDecisionApplyOutcome, DuplicateDecisionHistory, DuplicateDecisionRequest,
-        DuplicateEvidence, DuplicateEvidenceKind, DuplicateGalleryRef, DuplicatePageHash,
-        DuplicatePagePair, DuplicateRelation, DuplicateReview, DuplicateScanRun,
+        DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionAudit,
+        DownloadOverlapDecisionRequest, DownloadOverlapDecisionResult, DownloadOverlapGalleryRef,
+        DownloadOverlapPagePair, DownloadOverlapPairDecision, DownloadOverlapRelation,
+        DownloadOverlapReview, DownloadOverlapReviewDraft, DownloadOverlapReviewState,
+        DownloadPage, DownloadReviewKind, DuplicateCandidate, DuplicateCandidateRecord,
+        DuplicateDecisionAction, DuplicateDecisionApplyOutcome, DuplicateDecisionHistory,
+        DuplicateDecisionRequest, DuplicateEvidence, DuplicateEvidenceKind, DuplicateGalleryRef,
+        DuplicatePageHash, DuplicatePagePair, DuplicateRelation, DuplicateReview, DuplicateScanRun,
         DuplicateScanState, DuplicateSnapshot, ExplorationDataResetResult, ExplorationExclusion,
         ExplorationExclusionKind, ExplorationExclusionReason, ExplorationExclusionRestoreResult,
         FavoriteKey, FavoriteMutationResult, FavoriteNamespace, FavoriteRecord,
@@ -650,6 +651,144 @@ impl AutomationRepository for SqliteRepository {
             .collect()
     }
 
+    fn auto_find_incremental_checkpoints(
+        &self,
+        artists: &[String],
+        history_mode: AutoFindHistoryMode,
+        policy_version: u32,
+        full_rescan_max_age_days: u32,
+    ) -> Result<Vec<AutoFindIncrementalCheckpoint>, RepositoryError> {
+        let connection = self.connection()?;
+        let mut checkpoints = Vec::new();
+        let full_rescan_modifier = format!("-{full_rescan_max_age_days} days");
+        for artist in artists {
+            let stored = connection
+                .query_row(
+                    r#"
+                        SELECT high_water_gallery_id, history_floor_gallery_id,
+                               incremental_runs_since_full
+                        FROM auto_find_artist_checkpoints
+                        WHERE favorite_namespace = 'artist'
+                          AND artist = ?1
+                          AND history_mode = ?2
+                          AND policy_version = ?3
+                          AND last_full_scan_at >= strftime(
+                              '%Y-%m-%dT%H:%M:%fZ', 'now', ?4
+                          )
+                    "#,
+                    params![
+                        artist,
+                        history_mode.as_str(),
+                        i64::from(policy_version),
+                        full_rescan_modifier,
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, Option<i64>>(0)?,
+                            row.get::<_, Option<i64>>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )
+                .optional()
+                .map_err(map_sqlite_error)?;
+            let Some((high_water, history_floor, incremental_runs_since_full)) = stored else {
+                continue;
+            };
+            checkpoints.push(AutoFindIncrementalCheckpoint {
+                artist: artist.clone(),
+                history_mode,
+                policy_version,
+                high_water_gallery_id: high_water
+                    .map(GalleryId::new)
+                    .transpose()
+                    .map_err(domain_corruption)?,
+                history_floor_gallery_id: history_floor
+                    .map(GalleryId::new)
+                    .transpose()
+                    .map_err(domain_corruption)?,
+                incremental_runs_since_full: stored_u32(
+                    incremental_runs_since_full,
+                    "Auto Find incremental run count",
+                )?,
+            });
+        }
+        Ok(checkpoints)
+    }
+
+    fn auto_find_cached_candidates(
+        &self,
+        gallery_ids: &[GalleryId],
+    ) -> Result<Vec<GallerySummary>, RepositoryError> {
+        if gallery_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let requested_ids =
+            serde_json::to_string(&gallery_ids.iter().map(|id| id.get()).collect::<Vec<_>>())
+                .map_err(|error| RepositoryError::Other(error.to_string()))?;
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                    WITH requested(gallery_id) AS (
+                        SELECT DISTINCT CAST(value AS INTEGER)
+                        FROM json_each(?1)
+                        WHERE type = 'integer' AND CAST(value AS INTEGER) > 0
+                    ), ranked AS (
+                        SELECT candidate.run_id, candidate.gallery_id,
+                               candidate.title, candidate.artist,
+                               candidate.group_name, candidate.pages,
+                               language, tags_json, series_json, characters_json,
+                               published_rank, popularity,
+                               thumbnail_key, thumbnail_width, thumbnail_height,
+                               favorite_namespace, favorite_value, discovered_at,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY candidate.gallery_id
+                                   ORDER BY candidate.discovered_at DESC,
+                                            candidate.run_id DESC
+                               ) AS candidate_rank
+                        FROM requested
+                        JOIN auto_find_candidates candidate
+                          ON candidate.gallery_id = requested.gallery_id
+                        WHERE NOT EXISTS (
+                            SELECT 1 FROM auto_find_exclusions exclusion
+                            WHERE exclusion.gallery_id = candidate.gallery_id
+                        )
+                          AND NOT EXISTS (
+                            SELECT 1 FROM download_entries download
+                            WHERE download.gallery_id = candidate.gallery_id
+                        )
+                          AND NOT EXISTS (
+                            SELECT 1 FROM duplicate_hidden_galleries hidden
+                            WHERE hidden.gallery_id = candidate.gallery_id
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM exploration_restored_galleries restored
+                                  WHERE restored.gallery_id = candidate.gallery_id
+                              )
+                        )
+                    )
+                    SELECT run_id, gallery_id, title, artist, group_name, pages,
+                           language, tags_json, series_json, characters_json,
+                           published_rank, popularity,
+                           thumbnail_key, thumbnail_width, thumbnail_height,
+                           favorite_namespace, favorite_value, discovered_at
+                    FROM ranked
+                    WHERE candidate_rank = 1
+                    ORDER BY gallery_id DESC
+                "#,
+            )
+            .map_err(map_sqlite_error)?;
+        let rows = statement
+            .query_map([requested_ids], stored_auto_find_candidate)
+            .map_err(map_sqlite_error)?;
+        rows.map(|row| {
+            row.map_err(map_sqlite_error)?
+                .try_into_domain()
+                .map(|candidate| candidate.gallery)
+        })
+        .collect()
+    }
+
     fn auto_find_start(
         &self,
         total_favorites: u32,
@@ -824,6 +963,46 @@ impl AutomationRepository for SqliteRepository {
         read_auto_find_run(&connection, run_id)
     }
 
+    fn auto_find_checkpoint_stage(
+        &self,
+        run_id: &str,
+        checkpoint: &AutoFindCheckpointStage,
+    ) -> Result<(), RepositoryError> {
+        let connection = self.connection()?;
+        connection
+            .execute(
+                r#"
+                    INSERT INTO auto_find_run_artist_checkpoints (
+                        run_id, artist, history_mode, policy_version,
+                        high_water_gallery_id, history_floor_gallery_id,
+                        performed_full_scan
+                    )
+                    SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7
+                    WHERE EXISTS (
+                        SELECT 1 FROM auto_find_runs
+                        WHERE run_id = ?1 AND state = 'running'
+                    )
+                    ON CONFLICT(run_id, artist) DO UPDATE SET
+                        history_mode = excluded.history_mode,
+                        policy_version = excluded.policy_version,
+                        high_water_gallery_id = excluded.high_water_gallery_id,
+                        history_floor_gallery_id = excluded.history_floor_gallery_id,
+                        performed_full_scan = excluded.performed_full_scan
+                "#,
+                params![
+                    run_id,
+                    checkpoint.artist,
+                    checkpoint.history_mode.as_str(),
+                    i64::from(checkpoint.policy_version),
+                    checkpoint.high_water_gallery_id.map(GalleryId::get),
+                    checkpoint.history_floor_gallery_id.map(GalleryId::get),
+                    checkpoint.performed_full_scan,
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+        Ok(())
+    }
+
     fn auto_find_finish(
         &self,
         run_id: &str,
@@ -836,8 +1015,11 @@ impl AutomationRepository for SqliteRepository {
                 "Auto Find finish cannot keep a run in running state".into(),
             ));
         }
-        let connection = self.connection()?;
-        connection
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        let transitioned = transaction
             .execute(
                 r#"
                     UPDATE auto_find_runs
@@ -856,7 +1038,58 @@ impl AutomationRepository for SqliteRepository {
                 params![run_id, state.as_str(), error_code, error_message],
             )
             .map_err(map_sqlite_error)?;
-        read_auto_find_run(&connection, run_id)
+        if transitioned == 1 && state == AutoFindRunState::Completed {
+            transaction
+                .execute(
+                    r#"
+                        INSERT INTO auto_find_artist_checkpoints (
+                            favorite_namespace, artist, history_mode, policy_version,
+                            high_water_gallery_id, history_floor_gallery_id,
+                            incremental_runs_since_full, last_full_scan_at, updated_at
+                        )
+                        SELECT 'artist', staged.artist, staged.history_mode,
+                               staged.policy_version, staged.high_water_gallery_id,
+                               staged.history_floor_gallery_id,
+                               CASE
+                                   WHEN staged.performed_full_scan = 1 THEN 0
+                                   ELSE COALESCE(existing.incremental_runs_since_full, 0) + 1
+                               END,
+                               CASE
+                                   WHEN staged.performed_full_scan = 1
+                                       THEN strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                                   ELSE existing.last_full_scan_at
+                               END,
+                               strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                        FROM auto_find_run_artist_checkpoints staged
+                        LEFT JOIN auto_find_artist_checkpoints existing
+                          ON existing.favorite_namespace = 'artist'
+                         AND existing.artist = staged.artist
+                         AND existing.history_mode = staged.history_mode
+                        WHERE staged.run_id = ?1
+                          AND EXISTS (
+                              SELECT 1 FROM favorites favorite
+                              WHERE favorite.namespace = 'artist'
+                                AND favorite.value = staged.artist
+                          )
+                          AND (
+                              staged.performed_full_scan = 1
+                              OR existing.artist IS NOT NULL
+                          )
+                        ON CONFLICT(favorite_namespace, artist, history_mode) DO UPDATE SET
+                            policy_version = excluded.policy_version,
+                            high_water_gallery_id = excluded.high_water_gallery_id,
+                            history_floor_gallery_id = excluded.history_floor_gallery_id,
+                            incremental_runs_since_full = excluded.incremental_runs_since_full,
+                            last_full_scan_at = excluded.last_full_scan_at,
+                            updated_at = excluded.updated_at
+                    "#,
+                    [run_id],
+                )
+                .map_err(map_sqlite_error)?;
+        }
+        let run = read_auto_find_run(&transaction, run_id)?;
+        transaction.commit().map_err(map_sqlite_error)?;
+        Ok(run)
     }
 
     fn auto_find_is_running(&self, run_id: &str) -> Result<bool, RepositoryError> {
@@ -3614,21 +3847,21 @@ impl DownloadPipelineRepository for SqliteRepository {
     }
 }
 
-impl DownloadOverlapRepository for SqliteRepository {
-    fn overlap_candidate_identities(
-        &self,
-        incoming_entry_id: &DownloadEntryId,
-    ) -> Result<Vec<DownloadOverlapCandidateIdentity>, RepositoryError> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                r#"
+fn read_overlap_candidate_identities(
+    connection: &Connection,
+    incoming_entry_id: &DownloadEntryId,
+    candidate_entry_id: Option<&DownloadEntryId>,
+) -> Result<Vec<DownloadOverlapCandidateIdentity>, RepositoryError> {
+    let mut statement = connection
+        .prepare(
+            r#"
                     SELECT entry.entry_id, entry.gallery_id
                     FROM download_entries entry
                     JOIN download_artifacts artifact
                       ON artifact.entry_id = entry.entry_id
                      AND artifact.gallery_id = entry.gallery_id
                     WHERE entry.entry_id != ?1
+                      AND (?2 IS NULL OR entry.entry_id = ?2)
                       AND (
                         (
                           entry.state = 'completed'
@@ -3642,7 +3875,24 @@ impl DownloadOverlapRepository for SqliteRepository {
                           entry.state = 'review_required'
                           AND entry.review_kind = 'gallery_duplicate'
                           AND artifact.state = 'incomplete'
+                          AND EXISTS (
+                            SELECT 1
+                            FROM download_overlap_reviews review
+                            WHERE review.entry_id = entry.entry_id
+                              AND review.review_id = entry.review_id
+                              AND review.state = 'pending'
+                          )
                         )
+                      )
+                      AND NOT EXISTS (
+                        SELECT 1
+                        FROM duplicate_hidden_galleries hidden
+                        WHERE hidden.gallery_id = entry.gallery_id
+                          AND NOT EXISTS (
+                            SELECT 1
+                            FROM exploration_restored_galleries restored
+                            WHERE restored.gallery_id = hidden.gallery_id
+                          )
                       )
                       AND (
                         SELECT COUNT(*) FROM download_pages page
@@ -3663,27 +3913,55 @@ impl DownloadOverlapRepository for SqliteRepository {
                       )
                     ORDER BY entry.entry_id ASC
                 "#,
-            )
-            .map_err(map_sqlite_error)?;
-        let rows = statement
-            .query_map([incoming_entry_id.as_str()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })
-            .map_err(map_sqlite_error)?;
-        let mut stored = Vec::new();
-        for row in rows {
-            stored.push(row.map_err(map_sqlite_error)?);
-        }
-        drop(statement);
-        let mut result = Vec::with_capacity(stored.len());
-        for (entry_id, gallery_id) in stored {
-            let gallery_id = GalleryId::new(gallery_id).map_err(domain_corruption)?;
-            result.push(DownloadOverlapCandidateIdentity {
-                entry_id: DownloadEntryId::new(entry_id).map_err(domain_corruption)?,
-                artists: read_owned_gallery_artists(&connection, gallery_id)?,
-            });
-        }
-        Ok(result)
+        )
+        .map_err(map_sqlite_error)?;
+    let rows = statement
+        .query_map(
+            params![
+                incoming_entry_id.as_str(),
+                candidate_entry_id.map(DownloadEntryId::as_str),
+            ],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
+        )
+        .map_err(map_sqlite_error)?;
+    let mut stored = Vec::new();
+    for row in rows {
+        stored.push(row.map_err(map_sqlite_error)?);
+    }
+    drop(statement);
+    let mut result = Vec::with_capacity(stored.len());
+    for (entry_id, gallery_id) in stored {
+        let gallery_id = GalleryId::new(gallery_id).map_err(domain_corruption)?;
+        result.push(DownloadOverlapCandidateIdentity {
+            entry_id: DownloadEntryId::new(entry_id).map_err(domain_corruption)?,
+            gallery_id,
+            artists: read_owned_gallery_artists(connection, gallery_id)?,
+        });
+    }
+    Ok(result)
+}
+
+impl DownloadOverlapRepository for SqliteRepository {
+    fn overlap_candidate_identities(
+        &self,
+        incoming_entry_id: &DownloadEntryId,
+    ) -> Result<Vec<DownloadOverlapCandidateIdentity>, RepositoryError> {
+        let connection = self.connection()?;
+        read_overlap_candidate_identities(&connection, incoming_entry_id, None)
+    }
+
+    fn overlap_candidate_is_eligible(
+        &self,
+        incoming_entry_id: &DownloadEntryId,
+        candidate_entry_id: &DownloadEntryId,
+    ) -> Result<bool, RepositoryError> {
+        let connection = self.connection()?;
+        Ok(!read_overlap_candidate_identities(
+            &connection,
+            incoming_entry_id,
+            Some(candidate_entry_id),
+        )?
+        .is_empty())
     }
 
     fn overlap_page_hash_get(
@@ -3913,6 +4191,157 @@ impl DownloadOverlapRepository for SqliteRepository {
     ) -> Result<Option<DownloadOverlapReview>, RepositoryError> {
         let connection = self.connection()?;
         read_download_overlap_review(&connection, review_id)
+    }
+
+    fn overlap_automation_history_list(
+        &self,
+        request: &DownloadOverlapAutomationHistoryListRequest,
+    ) -> Result<DownloadOverlapAutomationHistoryPage, RepositoryError> {
+        let connection = self.connection()?;
+        let (total_items, unacknowledged_items) = connection
+            .query_row(
+                r#"
+                    WITH automation_history AS (
+                        SELECT decision.review_id
+                        FROM download_overlap_decisions decision
+                        WHERE decision.actor = 'automation'
+                        GROUP BY decision.review_id
+                    )
+                    SELECT COUNT(*), COALESCE(SUM(
+                        CASE WHEN acknowledgement.review_id IS NULL THEN 1 ELSE 0 END
+                    ), 0)
+                    FROM automation_history history
+                    JOIN download_overlap_reviews review
+                      ON review.review_id = history.review_id
+                    JOIN galleries gallery
+                      ON gallery.gallery_id = review.incoming_gallery_id
+                    LEFT JOIN download_overlap_automation_acknowledgements acknowledgement
+                      ON acknowledgement.review_id = history.review_id
+                "#,
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .map_err(map_sqlite_error)?;
+        let offset = u64::from(request.page - 1)
+            .checked_mul(u64::from(request.page_size))
+            .ok_or_else(|| RepositoryError::Other("history page offset overflowed".into()))?;
+        let mut statement = connection
+            .prepare(
+                r#"
+                    WITH automation_history AS (
+                        SELECT
+                            decision.review_id,
+                            MAX(decision.created_at) AS occurred_at,
+                            SUM(CASE WHEN decision.action IN (
+                                'remove_incoming', 'cancel_incoming'
+                            ) THEN 1 ELSE 0 END) AS remove_incoming_count,
+                            SUM(CASE WHEN decision.action = 'remove_existing_continue'
+                                THEN 1 ELSE 0 END) AS remove_existing_count
+                        FROM download_overlap_decisions decision
+                        WHERE decision.actor = 'automation'
+                        GROUP BY decision.review_id
+                    )
+                    SELECT
+                        review.review_id,
+                        review.incoming_gallery_id,
+                        gallery.title,
+                        history.occurred_at,
+                        review.state,
+                        history.remove_incoming_count,
+                        history.remove_existing_count,
+                        acknowledgement.acknowledged_at
+                    FROM automation_history history
+                    JOIN download_overlap_reviews review
+                      ON review.review_id = history.review_id
+                    JOIN galleries gallery
+                      ON gallery.gallery_id = review.incoming_gallery_id
+                    LEFT JOIN download_overlap_automation_acknowledgements acknowledgement
+                      ON acknowledgement.review_id = history.review_id
+                    ORDER BY history.occurred_at DESC, review.review_id DESC
+                    LIMIT ?1 OFFSET ?2
+                "#,
+            )
+            .map_err(map_sqlite_error)?;
+        let rows = statement
+            .query_map(
+                params![
+                    i64::from(request.page_size),
+                    to_sql_integer(offset, "automation history page offset")?,
+                ],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                    ))
+                },
+            )
+            .map_err(map_sqlite_error)?;
+        let mut stored_items = Vec::new();
+        for row in rows {
+            stored_items.push(row.map_err(map_sqlite_error)?);
+        }
+        drop(statement);
+        let mut items = Vec::with_capacity(stored_items.len());
+        for stored in stored_items {
+            items.push(download_overlap_automation_history_item_from_stored(
+                &connection,
+                stored,
+            )?);
+        }
+        Ok(DownloadOverlapAutomationHistoryPage {
+            total_items: stored_u64(total_items, "automation history total")?,
+            unacknowledged_items: stored_u64(
+                unacknowledged_items,
+                "automation history unacknowledged total",
+            )?,
+            page: request.page,
+            page_size: request.page_size,
+            items,
+        })
+    }
+
+    fn overlap_automation_history_acknowledge(
+        &self,
+        review_id: &str,
+    ) -> Result<Option<DownloadOverlapAutomationHistoryItem>, RepositoryError> {
+        let mut connection = self.connection()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(map_sqlite_error)?;
+        transaction
+            .execute(
+                r#"
+                    INSERT OR IGNORE INTO download_overlap_automation_acknowledgements (
+                        review_id, acknowledged_at
+                    )
+                    SELECT review.review_id,
+                           strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    FROM download_overlap_reviews review
+                    WHERE review.review_id = ?1
+                      AND EXISTS (
+                          SELECT 1
+                          FROM galleries gallery
+                          WHERE gallery.gallery_id = review.incoming_gallery_id
+                      )
+                      AND EXISTS (
+                          SELECT 1
+                          FROM download_overlap_decisions decision
+                          WHERE decision.review_id = review.review_id
+                            AND decision.actor = 'automation'
+                      )
+                "#,
+                [review_id],
+            )
+            .map_err(map_sqlite_error)?;
+        let item = read_download_overlap_automation_history_item(&transaction, review_id)?;
+        transaction.commit().map_err(map_sqlite_error)?;
+        Ok(item)
     }
 
     fn overlap_decision_apply(
@@ -4272,6 +4701,17 @@ impl DownloadOverlapRepository for SqliteRepository {
                     ],
                 )
                 .map_err(map_sqlite_error)?;
+            if request.actor == DownloadOverlapDecisionActor::Automation {
+                transaction
+                    .execute(
+                        r#"
+                            DELETE FROM download_overlap_automation_acknowledgements
+                            WHERE review_id = ?1
+                        "#,
+                        [request.review_id.as_str()],
+                    )
+                    .map_err(map_sqlite_error)?;
+            }
             transaction.commit().map_err(map_sqlite_error)?;
             (
                 projection,
@@ -7046,6 +7486,142 @@ fn requeue_overlap_target(
     Ok((projection, descriptor))
 }
 
+type StoredDownloadOverlapAutomationHistoryItem = (
+    String,
+    i64,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    Option<String>,
+);
+
+fn download_overlap_automation_history_item_from_stored(
+    connection: &Connection,
+    stored: StoredDownloadOverlapAutomationHistoryItem,
+) -> Result<DownloadOverlapAutomationHistoryItem, RepositoryError> {
+    let review_state = DownloadOverlapReviewState::from_database(&stored.4).ok_or_else(|| {
+        RepositoryError::Corrupt(format!(
+            "automation history review state {:?} is unsupported",
+            stored.4
+        ))
+    })?;
+    let removed_gallery_ids =
+        read_download_overlap_automation_removed_gallery_ids(connection, stored.0.as_str())?;
+    Ok(DownloadOverlapAutomationHistoryItem {
+        review_id: stored.0,
+        incoming_gallery_id: GalleryId::new(stored.1).map_err(domain_corruption)?,
+        title: stored.2,
+        occurred_at: stored.3,
+        review_state,
+        remove_incoming_count: stored_u64(stored.5, "automation history incoming removal count")?,
+        remove_existing_count: stored_u64(stored.6, "automation history existing removal count")?,
+        removed_gallery_ids,
+        acknowledged_at: stored.7,
+    })
+}
+
+fn read_download_overlap_automation_removed_gallery_ids(
+    connection: &Connection,
+    review_id: &str,
+) -> Result<Vec<GalleryId>, RepositoryError> {
+    let mut statement = connection
+        .prepare(
+            r#"
+                SELECT gallery_id
+                FROM (
+                    SELECT review.incoming_gallery_id AS gallery_id
+                    FROM download_overlap_decisions decision
+                    JOIN download_overlap_reviews review
+                      ON review.review_id = decision.review_id
+                    WHERE decision.review_id = ?1
+                      AND decision.actor = 'automation'
+                      AND decision.action IN ('remove_incoming', 'cancel_incoming')
+                    UNION
+                    SELECT candidate.existing_gallery_id AS gallery_id
+                    FROM download_overlap_decisions decision
+                    JOIN download_overlap_candidates candidate
+                      ON candidate.candidate_id = decision.candidate_id
+                     AND candidate.review_id = decision.review_id
+                    WHERE decision.review_id = ?1
+                      AND decision.actor = 'automation'
+                      AND decision.action = 'remove_existing_continue'
+                ) removed
+                ORDER BY gallery_id ASC
+            "#,
+        )
+        .map_err(map_sqlite_error)?;
+    let rows = statement
+        .query_map([review_id], |row| row.get::<_, i64>(0))
+        .map_err(map_sqlite_error)?;
+    let mut gallery_ids = Vec::new();
+    for row in rows {
+        gallery_ids
+            .push(GalleryId::new(row.map_err(map_sqlite_error)?).map_err(domain_corruption)?);
+    }
+    Ok(gallery_ids)
+}
+
+fn read_download_overlap_automation_history_item(
+    connection: &Connection,
+    review_id: &str,
+) -> Result<Option<DownloadOverlapAutomationHistoryItem>, RepositoryError> {
+    let stored = connection
+        .query_row(
+            r#"
+                WITH automation_history AS (
+                    SELECT
+                        decision.review_id,
+                        MAX(decision.created_at) AS occurred_at,
+                        SUM(CASE WHEN decision.action IN (
+                            'remove_incoming', 'cancel_incoming'
+                        ) THEN 1 ELSE 0 END) AS remove_incoming_count,
+                        SUM(CASE WHEN decision.action = 'remove_existing_continue'
+                            THEN 1 ELSE 0 END) AS remove_existing_count
+                    FROM download_overlap_decisions decision
+                    WHERE decision.actor = 'automation'
+                      AND decision.review_id = ?1
+                    GROUP BY decision.review_id
+                )
+                SELECT
+                    review.review_id,
+                    review.incoming_gallery_id,
+                    gallery.title,
+                    history.occurred_at,
+                    review.state,
+                    history.remove_incoming_count,
+                    history.remove_existing_count,
+                    acknowledgement.acknowledged_at
+                FROM automation_history history
+                JOIN download_overlap_reviews review
+                  ON review.review_id = history.review_id
+                JOIN galleries gallery
+                  ON gallery.gallery_id = review.incoming_gallery_id
+                LEFT JOIN download_overlap_automation_acknowledgements acknowledgement
+                  ON acknowledgement.review_id = history.review_id
+            "#,
+            [review_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, i64>(5)?,
+                    row.get::<_, i64>(6)?,
+                    row.get::<_, Option<String>>(7)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(map_sqlite_error)?;
+    stored
+        .map(|stored| download_overlap_automation_history_item_from_stored(connection, stored))
+        .transpose()
+}
+
 fn read_download_overlap_review(
     connection: &Connection,
     review_id: &str,
@@ -7241,6 +7817,7 @@ fn read_download_overlap_review(
             page_pairs,
         });
     }
+    let decisions = read_download_overlap_decision_audits(connection, &review_id)?;
     Ok(Some(DownloadOverlapReview {
         review_id,
         entry_id,
@@ -7255,10 +7832,73 @@ fn read_download_overlap_review(
         policy_version: stored_u32(policy_version, "download overlap policy version")?,
         incoming_fingerprint,
         candidates,
+        decisions,
         created_at,
         updated_at,
         resolved_at,
     }))
+}
+
+fn read_download_overlap_decision_audits(
+    connection: &Connection,
+    review_id: &str,
+) -> Result<Vec<DownloadOverlapDecisionAudit>, RepositoryError> {
+    let mut statement = connection
+        .prepare(
+            r#"
+                SELECT candidate_id, action, actor, reason_code,
+                       rule_version, feature_snapshot_json, created_at
+                FROM download_overlap_decisions
+                WHERE review_id = ?1
+                ORDER BY created_at ASC, decision_id ASC
+            "#,
+        )
+        .map_err(map_sqlite_error)?;
+    let rows = statement
+        .query_map([review_id], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, String>(6)?,
+            ))
+        })
+        .map_err(map_sqlite_error)?;
+    let mut decisions = Vec::new();
+    for row in rows {
+        let (
+            candidate_id,
+            action,
+            actor,
+            reason_code,
+            rule_version,
+            feature_snapshot_json,
+            created_at,
+        ) = row.map_err(map_sqlite_error)?;
+        decisions.push(DownloadOverlapDecisionAudit {
+            candidate_id,
+            action: DownloadOverlapDecisionAction::from_database(&action).ok_or_else(|| {
+                RepositoryError::Corrupt(format!(
+                    "download overlap decision action {action:?} is unsupported"
+                ))
+            })?,
+            actor: DownloadOverlapDecisionActor::from_database(&actor).ok_or_else(|| {
+                RepositoryError::Corrupt(format!(
+                    "download overlap decision actor {actor:?} is unsupported"
+                ))
+            })?,
+            reason_code,
+            rule_version: rule_version
+                .map(|value| stored_u32(value, "download overlap decision rule version"))
+                .transpose()?,
+            feature_snapshot_json,
+            created_at,
+        });
+    }
+    Ok(decisions)
 }
 
 struct StoredArtifactBundle {
@@ -8284,6 +8924,261 @@ fn map_migration_error(error: MigrationError) -> RepositoryError {
 }
 
 #[cfg(test)]
+mod auto_find_repository_tests {
+    use super::*;
+
+    const ARTIST: &str = "checkpoint race artist";
+    const HISTORY_MODE: AutoFindHistoryMode = AutoFindHistoryMode::IncludeAllHistory;
+    const POLICY_VERSION: u32 = 1;
+
+    fn favorite_artist(repository: &SqliteRepository) {
+        repository
+            .favorite_set(
+                &FavoriteKey {
+                    namespace: FavoriteNamespace::Artist,
+                    value: ARTIST.into(),
+                },
+                true,
+            )
+            .expect("favorite checkpoint artist");
+    }
+
+    fn stage_checkpoint(
+        repository: &SqliteRepository,
+        run_id: &str,
+        high_water_gallery_id: i64,
+        performed_full_scan: bool,
+    ) {
+        repository
+            .auto_find_checkpoint_stage(
+                run_id,
+                &AutoFindCheckpointStage {
+                    artist: ARTIST.into(),
+                    history_mode: HISTORY_MODE,
+                    policy_version: POLICY_VERSION,
+                    high_water_gallery_id: Some(
+                        GalleryId::new(high_water_gallery_id).expect("valid gallery ID"),
+                    ),
+                    history_floor_gallery_id: None,
+                    performed_full_scan,
+                },
+            )
+            .expect("stage checkpoint");
+    }
+
+    fn checkpoints(repository: &SqliteRepository) -> Vec<AutoFindIncrementalCheckpoint> {
+        repository
+            .auto_find_incremental_checkpoints(&[ARTIST.into()], HISTORY_MODE, POLICY_VERSION, 30)
+            .expect("read checkpoint")
+    }
+
+    fn cached_candidate(run_id: &str, gallery_id: i64, title: &str) -> AutoFindCandidateRecord {
+        AutoFindCandidateRecord {
+            run_id: run_id.into(),
+            gallery: GallerySummary {
+                id: GalleryId::new(gallery_id).unwrap(),
+                title: title.into(),
+                artist: ARTIST.into(),
+                group: None,
+                pages: 10,
+                language: Language::English,
+                tags: vec!["tag".into()],
+                series: Vec::new(),
+                characters: Vec::new(),
+                published_rank: 1,
+                popularity: 1,
+                thumbnail_key: None,
+                thumbnail_width: 100,
+                thumbnail_height: 150,
+            },
+            matched_favorite: FavoriteKey {
+                namespace: FavoriteNamespace::Artist,
+                value: ARTIST.into(),
+            },
+        }
+    }
+
+    #[test]
+    fn cancelled_finish_blocks_late_completed_checkpoint_promotion() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        favorite_artist(&repository);
+        let run = repository
+            .auto_find_start(1, HISTORY_MODE, &[])
+            .expect("start Auto Find");
+        stage_checkpoint(&repository, &run.run_id, 100, true);
+
+        let cancelled = repository
+            .auto_find_finish(&run.run_id, AutoFindRunState::Cancelled, None, None)
+            .expect("cancel Auto Find")
+            .expect("run exists");
+        assert_eq!(cancelled.state, AutoFindRunState::Cancelled);
+
+        let late_completion = repository
+            .auto_find_finish(&run.run_id, AutoFindRunState::Completed, None, None)
+            .expect("late completion has a typed outcome")
+            .expect("run still exists");
+        assert_eq!(late_completion.state, AutoFindRunState::Cancelled);
+        assert!(checkpoints(&repository).is_empty());
+    }
+
+    #[test]
+    fn duplicate_completed_finish_does_not_increment_checkpoint_twice() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        favorite_artist(&repository);
+
+        let full_run = repository
+            .auto_find_start(1, HISTORY_MODE, &[])
+            .expect("start full Auto Find");
+        stage_checkpoint(&repository, &full_run.run_id, 100, true);
+        repository
+            .auto_find_finish(&full_run.run_id, AutoFindRunState::Completed, None, None)
+            .expect("finish full Auto Find");
+
+        let incremental_run = repository
+            .auto_find_start(1, HISTORY_MODE, &[])
+            .expect("start incremental Auto Find");
+        stage_checkpoint(&repository, &incremental_run.run_id, 200, false);
+        repository
+            .auto_find_finish(
+                &incremental_run.run_id,
+                AutoFindRunState::Completed,
+                None,
+                None,
+            )
+            .expect("finish incremental Auto Find");
+        let promoted = checkpoints(&repository);
+        assert_eq!(promoted.len(), 1);
+        assert_eq!(
+            promoted[0].high_water_gallery_id,
+            Some(GalleryId::new(200).unwrap())
+        );
+        assert_eq!(promoted[0].incremental_runs_since_full, 1);
+
+        repository
+            .auto_find_finish(
+                &incremental_run.run_id,
+                AutoFindRunState::Completed,
+                None,
+                None,
+            )
+            .expect("duplicate completion has a typed outcome");
+        let after_duplicate = checkpoints(&repository);
+        assert_eq!(after_duplicate.len(), 1);
+        assert_eq!(after_duplicate[0].incremental_runs_since_full, 1);
+    }
+
+    #[test]
+    fn stale_full_scan_checkpoint_is_not_reused_for_incremental_refresh() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        favorite_artist(&repository);
+        let run = repository
+            .auto_find_start(1, HISTORY_MODE, &[])
+            .expect("start Auto Find");
+        stage_checkpoint(&repository, &run.run_id, 100, true);
+        repository
+            .auto_find_finish(&run.run_id, AutoFindRunState::Completed, None, None)
+            .expect("finish Auto Find");
+        {
+            let connection = repository.connection().expect("lock repository");
+            connection
+                .execute(
+                    "UPDATE auto_find_artist_checkpoints SET last_full_scan_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-31 days') WHERE artist = ?1",
+                    [ARTIST],
+                )
+                .unwrap();
+        }
+
+        assert!(checkpoints(&repository).is_empty());
+    }
+
+    #[test]
+    fn candidate_cache_is_bounded_to_requested_pending_ids_and_uses_latest_summary() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        let first_run = repository
+            .auto_find_start(1, HISTORY_MODE, &[])
+            .expect("start first Auto Find");
+        for gallery_id in 10..=15 {
+            repository
+                .auto_find_candidate_add(&cached_candidate(
+                    &first_run.run_id,
+                    gallery_id,
+                    &format!("old {gallery_id}"),
+                ))
+                .expect("record first candidate");
+        }
+        repository
+            .auto_find_finish(&first_run.run_id, AutoFindRunState::Completed, None, None)
+            .expect("finish first Auto Find");
+
+        let second_run = repository
+            .auto_find_start(1, HISTORY_MODE, &[])
+            .expect("start second Auto Find");
+        repository
+            .auto_find_candidate_add(&cached_candidate(&second_run.run_id, 10, "newest 10"))
+            .expect("record refreshed candidate");
+        {
+            let connection = repository.connection().expect("lock repository");
+            connection
+                .execute(
+                    "UPDATE auto_find_candidates SET discovered_at = '2026-01-01T00:00:00.000Z' WHERE run_id = ?1",
+                    [first_run.run_id.as_str()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE auto_find_candidates SET discovered_at = '2026-02-01T00:00:00.000Z' WHERE run_id = ?1",
+                    [second_run.run_id.as_str()],
+                )
+                .unwrap();
+        }
+        repository
+            .auto_find_finish(&second_run.run_id, AutoFindRunState::Completed, None, None)
+            .expect("finish second Auto Find");
+
+        repository
+            .download_queue_add("cached-download", &[GalleryId::new(12).unwrap()])
+            .expect("queue downloaded candidate");
+        repository
+            .auto_find_exclude(&[GalleryId::new(13).unwrap()], "manual cache exclusion")
+            .expect("exclude cached candidate");
+        {
+            let connection = repository.connection().expect("lock repository");
+            connection
+                .execute(
+                    "INSERT INTO duplicate_hidden_galleries (gallery_id, decision_id, created_at) VALUES (14, 'cache-hidden-14', '2026-02-02T00:00:00.000Z')",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO duplicate_hidden_galleries (gallery_id, decision_id, created_at) VALUES (15, 'cache-hidden-15', '2026-02-02T00:00:00.000Z')",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO exploration_restored_galleries (gallery_id, restored_at) VALUES (15, '2026-02-03T00:00:00.000Z')",
+                    [],
+                )
+                .unwrap();
+        }
+
+        let requested = [10, 12, 13, 14, 15].map(|gallery_id| GalleryId::new(gallery_id).unwrap());
+        let cached = repository
+            .auto_find_cached_candidates(&requested)
+            .expect("read bounded candidate cache");
+        assert_eq!(
+            cached
+                .iter()
+                .map(|gallery| (gallery.id.get(), gallery.title.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(15, "old 15"), (10, "newest 10")]
+        );
+        assert!(cached.iter().all(|gallery| gallery.id.get() != 11));
+    }
+}
+
+#[cfg(test)]
 mod download_repository_tests {
     use super::*;
 
@@ -8589,7 +9484,35 @@ mod download_repository_tests {
                     )
                     .unwrap();
             }
+            connection
+                .execute(
+                    r#"
+                        INSERT INTO download_overlap_decisions (
+                            decision_id, review_id, review_revision, candidate_id,
+                            action, created_at, actor, reason_code,
+                            rule_version, feature_snapshot_json
+                        ) VALUES
+                        (
+                            'previous-human-decision', ?1, 0, NULL,
+                            'false_positive_continue', '2026-08-28T10:01:00Z',
+                            'human', NULL, NULL, NULL
+                        ),
+                        (
+                            'previous-automatic-decision', ?1, 0, NULL,
+                            'continue_keep_both', '2026-08-28T10:01:00Z',
+                            'automation', 'prior_fixture_v1', 1, '{"fixture":true}'
+                        )
+                    "#,
+                    [review_id],
+                )
+                .unwrap();
         }
+
+        let prior_acknowledgement = repository
+            .overlap_automation_history_acknowledge(review_id)
+            .expect("acknowledge the earlier automatic decision")
+            .expect("earlier automatic history exists");
+        assert!(prior_acknowledgement.acknowledged_at.is_some());
 
         let verified_existing = candidates
             .iter()
@@ -8618,6 +9541,59 @@ mod download_repository_tests {
         };
         assert!(!applied.result.resumed);
         assert!(!applied.result.cancelled);
+        assert_eq!(applied.result.review.decisions.len(), 3);
+        let prior_decision = &applied.result.review.decisions[0];
+        assert_eq!(prior_decision.candidate_id, None);
+        assert_eq!(
+            prior_decision.action,
+            DownloadOverlapDecisionAction::KeepBothContinue
+        );
+        assert_eq!(
+            prior_decision.actor,
+            DownloadOverlapDecisionActor::Automation
+        );
+        assert_eq!(
+            prior_decision.reason_code.as_deref(),
+            Some("prior_fixture_v1")
+        );
+        assert_eq!(prior_decision.rule_version, Some(1));
+        assert_eq!(
+            prior_decision.feature_snapshot_json.as_deref(),
+            Some("{\"fixture\":true}")
+        );
+        assert_eq!(prior_decision.created_at, "2026-08-28T10:01:00Z");
+        let human_decision = &applied.result.review.decisions[1];
+        assert_eq!(
+            human_decision.action,
+            DownloadOverlapDecisionAction::FalsePositiveContinue
+        );
+        assert_eq!(human_decision.actor, DownloadOverlapDecisionActor::Human);
+        assert_eq!(human_decision.reason_code, None);
+        assert_eq!(human_decision.rule_version, None);
+        assert_eq!(human_decision.feature_snapshot_json, None);
+        assert_eq!(human_decision.created_at, "2026-08-28T10:01:00Z");
+        let applied_decision = &applied.result.review.decisions[2];
+        assert_eq!(
+            applied_decision.candidate_id.as_deref(),
+            Some("selected-overlap-candidate")
+        );
+        assert_eq!(
+            applied_decision.action,
+            DownloadOverlapDecisionAction::RemoveExistingContinue
+        );
+        assert_eq!(
+            applied_decision.actor,
+            DownloadOverlapDecisionActor::Automation
+        );
+        assert_eq!(
+            applied_decision.reason_code.as_deref(),
+            Some("strict_extra_pages_v1")
+        );
+        assert_eq!(applied_decision.rule_version, Some(1));
+        assert_eq!(
+            applied_decision.feature_snapshot_json.as_deref(),
+            Some("{\"fixture\":true}")
+        );
 
         let connection = repository.connection().expect("inspect overlap decision");
         let hidden = connection
@@ -8649,7 +9625,7 @@ mod download_repository_tests {
                 r#"
                     SELECT actor, reason_code, rule_version, feature_snapshot_json
                     FROM download_overlap_decisions
-                    WHERE review_id = ?1
+                    WHERE review_id = ?1 AND action = 'remove_existing_continue'
                 "#,
                 [review_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
@@ -8664,7 +9640,29 @@ mod download_repository_tests {
                 "{\"fixture\":true}".to_owned(),
             )
         );
+        let acknowledgement_count: i64 = connection
+            .query_row(
+                r#"
+                    SELECT COUNT(*)
+                    FROM download_overlap_automation_acknowledgements
+                    WHERE review_id = ?1
+                "#,
+                [review_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(acknowledgement_count, 0);
         drop(connection);
+
+        let history = repository
+            .overlap_automation_history_list(&DownloadOverlapAutomationHistoryListRequest {
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list history after the new automatic decision");
+        assert_eq!(history.total_items, 1);
+        assert_eq!(history.unacknowledged_items, 1);
+        assert_eq!(history.items[0].acknowledged_at, None);
 
         let blocked = repository
             .download_retry(std::slice::from_ref(&selected_entry))
@@ -8685,6 +9683,289 @@ mod download_repository_tests {
                 .expect("retry restored selected gallery"),
             DownloadMutationOutcome::Applied(_)
         ));
+    }
+
+    #[test]
+    fn automation_history_groups_pages_and_persists_pending_review_acknowledgement() {
+        let temporary = tempfile::tempdir().expect("create history fixture directory");
+        let database_path = temporary.path().join("history.sqlite3");
+        let repository = SqliteRepository::open(&database_path).expect("open repository");
+        let pending_incoming = GalleryId::new(4_300_101).unwrap();
+        let first_existing = GalleryId::new(4_300_102).unwrap();
+        let second_existing = GalleryId::new(4_300_103).unwrap();
+        let cancelled_incoming = GalleryId::new(4_300_201).unwrap();
+        let human_incoming = GalleryId::new(4_300_301).unwrap();
+        let gallery_ids = [
+            pending_incoming,
+            first_existing,
+            second_existing,
+            cancelled_incoming,
+            human_incoming,
+        ];
+        let queued = repository
+            .download_queue_add("automation-history", &gallery_ids)
+            .expect("queue history fixtures");
+        let DownloadQueueAddOutcome::Added(queued) = queued else {
+            panic!("new history fixture should add downloads");
+        };
+        let entry_for = |gallery_id: GalleryId| {
+            queued
+                .entries
+                .iter()
+                .find(|entry| entry.gallery_id == gallery_id)
+                .expect("queued gallery has an entry")
+                .entry_id
+                .clone()
+        };
+        let pending_entry = entry_for(pending_incoming);
+        let first_existing_entry = entry_for(first_existing);
+        let second_existing_entry = entry_for(second_existing);
+        let cancelled_entry = entry_for(cancelled_incoming);
+        let human_entry = entry_for(human_incoming);
+
+        {
+            let connection = repository.connection().expect("lock repository");
+            for gallery_id in gallery_ids {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO galleries (
+                                gallery_id, revision, title, source_page_count
+                            ) VALUES (?1, 0, ?2, 1)
+                        "#,
+                        params![gallery_id.get(), format!("Gallery {}", gallery_id.get())],
+                    )
+                    .unwrap();
+            }
+            for (review_id, entry_id, incoming_gallery_id, state, created_at) in [
+                (
+                    "pending-automation-review",
+                    pending_entry.as_str(),
+                    pending_incoming,
+                    "pending",
+                    "2026-09-04T11:50:00.000Z",
+                ),
+                (
+                    "cancelled-automation-review",
+                    cancelled_entry.as_str(),
+                    cancelled_incoming,
+                    "cancelled",
+                    "2026-09-04T10:50:00.000Z",
+                ),
+                (
+                    "human-review",
+                    human_entry.as_str(),
+                    human_incoming,
+                    "cancelled",
+                    "2026-09-04T12:50:00.000Z",
+                ),
+            ] {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO download_overlap_reviews (
+                                review_id, entry_id, incoming_gallery_id, revision,
+                                state, profile_version, policy_version,
+                                incoming_fingerprint, created_at, updated_at, resolved_at
+                            ) VALUES (
+                                ?1, ?2, ?3, 2, ?4, 1, 1, ?5, ?6, ?6,
+                                CASE WHEN ?4 = 'pending' THEN NULL ELSE ?6 END
+                            )
+                        "#,
+                        params![
+                            review_id,
+                            entry_id,
+                            incoming_gallery_id.get(),
+                            state,
+                            "a".repeat(64),
+                            created_at,
+                        ],
+                    )
+                    .unwrap();
+            }
+            for (candidate_id, existing_entry_id, existing_gallery_id, rank) in [
+                (
+                    "pending-candidate-one",
+                    first_existing_entry.as_str(),
+                    first_existing,
+                    1_i64,
+                ),
+                (
+                    "pending-candidate-two",
+                    second_existing_entry.as_str(),
+                    second_existing,
+                    2_i64,
+                ),
+            ] {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO download_overlap_candidates (
+                                candidate_id, review_id, existing_entry_id,
+                                existing_gallery_id, existing_fingerprint, relation,
+                                confidence, matched_pages, exact_pages, visual_pages,
+                                existing_coverage, incoming_coverage,
+                                existing_unique_pages, incoming_unique_pages,
+                                longest_aligned_run, rank, decision
+                            ) VALUES (
+                                ?1, 'pending-automation-review', ?2, ?3, ?4,
+                                'near_equivalent', 1, 1, 1, 0, 1, 1, 0, 0,
+                                1, ?5, 'existing_removed'
+                            )
+                        "#,
+                        params![
+                            candidate_id,
+                            existing_entry_id,
+                            existing_gallery_id.get(),
+                            "b".repeat(64),
+                            rank,
+                        ],
+                    )
+                    .unwrap();
+            }
+            for (decision_id, candidate_id, revision, occurred_at) in [
+                (
+                    "pending-decision-one",
+                    "pending-candidate-one",
+                    0_i64,
+                    "2026-09-04T12:00:00.000Z",
+                ),
+                (
+                    "pending-decision-two",
+                    "pending-candidate-two",
+                    1_i64,
+                    "2026-09-04T12:05:00.000Z",
+                ),
+            ] {
+                connection
+                    .execute(
+                        r#"
+                            INSERT INTO download_overlap_decisions (
+                                decision_id, review_id, review_revision, candidate_id,
+                                action, created_at, actor, reason_code,
+                                rule_version, feature_snapshot_json
+                            ) VALUES (
+                                ?1, 'pending-automation-review', ?2, ?3,
+                                'remove_existing_continue', ?4, 'automation',
+                                'strict_extra_pages_v1', 1, '{"fixture":true}'
+                            )
+                        "#,
+                        params![decision_id, revision, candidate_id, occurred_at],
+                    )
+                    .unwrap();
+            }
+            connection
+                .execute(
+                    r#"
+                        INSERT INTO download_overlap_decisions (
+                            decision_id, review_id, review_revision, candidate_id,
+                            action, created_at, actor, reason_code,
+                            rule_version, feature_snapshot_json
+                        ) VALUES (
+                            'cancelled-automation-decision',
+                            'cancelled-automation-review', 0, NULL,
+                            'remove_incoming', '2026-09-04T11:00:00.000Z',
+                            'automation', 'strict_subset_v1', 1, '{"fixture":true}'
+                        )
+                    "#,
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    r#"
+                        INSERT INTO download_overlap_decisions (
+                            decision_id, review_id, review_revision, candidate_id,
+                            action, created_at, actor
+                        ) VALUES (
+                            'human-decision', 'human-review', 0, NULL,
+                            'remove_incoming', '2026-09-04T13:00:00.000Z', 'human'
+                        )
+                    "#,
+                    [],
+                )
+                .unwrap();
+        }
+
+        let first_page = repository
+            .overlap_automation_history_list(&DownloadOverlapAutomationHistoryListRequest {
+                page: 1,
+                page_size: 1,
+            })
+            .expect("list first history page");
+        assert_eq!(first_page.total_items, 2);
+        assert_eq!(first_page.unacknowledged_items, 2);
+        assert_eq!(first_page.page, 1);
+        assert_eq!(first_page.page_size, 1);
+        assert_eq!(first_page.items.len(), 1);
+        let pending = &first_page.items[0];
+        assert_eq!(pending.review_id, "pending-automation-review");
+        assert_eq!(pending.review_state, DownloadOverlapReviewState::Pending);
+        assert_eq!(pending.occurred_at, "2026-09-04T12:05:00.000Z");
+        assert_eq!(pending.remove_incoming_count, 0);
+        assert_eq!(pending.remove_existing_count, 2);
+        assert_eq!(
+            pending.removed_gallery_ids,
+            vec![first_existing, second_existing]
+        );
+        assert_eq!(pending.acknowledged_at, None);
+
+        let second_page = repository
+            .overlap_automation_history_list(&DownloadOverlapAutomationHistoryListRequest {
+                page: 2,
+                page_size: 1,
+            })
+            .expect("list second history page");
+        assert_eq!(second_page.total_items, 2);
+        assert_eq!(second_page.unacknowledged_items, 2);
+        assert_eq!(
+            second_page.items[0].review_id,
+            "cancelled-automation-review"
+        );
+        assert_eq!(second_page.items[0].remove_incoming_count, 1);
+        assert_eq!(
+            second_page.items[0].removed_gallery_ids,
+            vec![cancelled_incoming]
+        );
+
+        let acknowledged = repository
+            .overlap_automation_history_acknowledge("pending-automation-review")
+            .expect("acknowledge pending history")
+            .expect("pending automation history exists");
+        let acknowledged_at = acknowledged
+            .acknowledged_at
+            .clone()
+            .expect("acknowledgement timestamp is stored");
+        let acknowledged_again = repository
+            .overlap_automation_history_acknowledge("pending-automation-review")
+            .expect("repeat acknowledgement")
+            .expect("pending automation history still exists");
+        assert_eq!(
+            acknowledged_again.acknowledged_at,
+            Some(acknowledged_at.clone())
+        );
+        assert!(repository
+            .overlap_automation_history_acknowledge("human-review")
+            .expect("human-only review has a typed outcome")
+            .is_none());
+        let after_ack = repository
+            .overlap_automation_history_list(&DownloadOverlapAutomationHistoryListRequest {
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list acknowledged history");
+        assert_eq!(after_ack.unacknowledged_items, 1);
+
+        drop(repository);
+        let reopened = SqliteRepository::open(&database_path).expect("reopen repository");
+        let persisted = reopened
+            .overlap_automation_history_list(&DownloadOverlapAutomationHistoryListRequest {
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list history after restart");
+        assert_eq!(persisted.unacknowledged_items, 1);
+        assert_eq!(persisted.items[0].acknowledged_at, Some(acknowledged_at));
     }
 }
 
@@ -9083,6 +10364,165 @@ mod duplicate_repository_tests {
             .write_image(&rgba, 256, 256, ExtendedColorType::Rgba8)
             .unwrap();
         bytes
+    }
+
+    #[test]
+    fn overlap_candidates_exclude_hidden_galleries_until_they_are_restored() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        for (gallery_id, entry_id) in [
+            (10, "entry-10"),
+            (20, "entry-20"),
+            (30, "entry-30"),
+            (40, "entry-40"),
+        ] {
+            seed_verified_gallery(&repository, gallery_id, entry_id);
+        }
+        let connection = repository.connection().expect("lock repository");
+        connection
+            .execute_batch(
+                r#"
+                    INSERT INTO duplicate_hidden_galleries (
+                        gallery_id, decision_id, created_at
+                    ) VALUES (30, 'hide-30', '2026-09-04T00:00:00Z');
+                    INSERT INTO duplicate_hidden_galleries (
+                        gallery_id, decision_id, created_at
+                    ) VALUES (40, 'hide-40', '2026-09-04T00:00:00Z');
+                    INSERT INTO exploration_restored_galleries (
+                        gallery_id, restored_at
+                    ) VALUES (40, '2026-09-04T00:01:00Z');
+                "#,
+            )
+            .expect("seed hidden and restored galleries");
+        drop(connection);
+
+        let candidates = repository
+            .overlap_candidate_identities(&DownloadEntryId::new("entry-10").unwrap())
+            .expect("list overlap candidates");
+        let identities = candidates
+            .into_iter()
+            .map(|candidate| (candidate.entry_id.to_string(), candidate.gallery_id.get()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            identities,
+            vec![("entry-20".to_owned(), 20), ("entry-40".to_owned(), 40)]
+        );
+    }
+
+    #[test]
+    fn overlap_candidate_recheck_detects_removal_after_the_identity_snapshot() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        seed_verified_gallery(&repository, 10, "entry-10");
+        seed_verified_gallery(&repository, 20, "entry-20");
+        let incoming = DownloadEntryId::new("entry-10").unwrap();
+        let candidate = DownloadEntryId::new("entry-20").unwrap();
+
+        let snapshot = repository
+            .overlap_candidate_identities(&incoming)
+            .expect("take candidate identity snapshot");
+        assert_eq!(snapshot.len(), 1);
+        assert!(repository
+            .overlap_candidate_is_eligible(&incoming, &candidate)
+            .expect("candidate starts eligible"));
+
+        repository
+            .connection()
+            .expect("lock repository")
+            .execute(
+                r#"
+                    INSERT INTO duplicate_hidden_galleries (
+                        gallery_id, decision_id, created_at
+                    ) VALUES (20, 'concurrent-hide-20', '2026-09-04T00:00:00Z')
+                "#,
+                [],
+            )
+            .expect("simulate concurrent overlap removal");
+
+        assert!(!repository
+            .overlap_candidate_is_eligible(&incoming, &candidate)
+            .expect("recheck observes the candidate removal"));
+    }
+
+    #[test]
+    fn overlap_review_required_candidate_must_reference_its_pending_review() {
+        let repository = SqliteRepository::open_in_memory().expect("open repository");
+        for (gallery_id, entry_id) in [
+            (10, "entry-10"),
+            (20, "entry-20"),
+            (30, "entry-30"),
+            (40, "entry-40"),
+            (50, "entry-50"),
+        ] {
+            seed_verified_gallery(&repository, gallery_id, entry_id);
+        }
+        let connection = repository.connection().expect("lock repository");
+        for (entry_id, review_id) in [
+            ("entry-20", "pending-20"),
+            ("entry-30", "resolved-30"),
+            ("entry-40", "different-review-40"),
+            ("entry-50", "missing-review-50"),
+        ] {
+            connection
+                .execute(
+                    r#"
+                        UPDATE download_entries
+                        SET state='review_required', review_kind='gallery_duplicate', review_id=?1
+                        WHERE entry_id=?2
+                    "#,
+                    params![review_id, entry_id],
+                )
+                .expect("mark review-required entry");
+            connection
+                .execute(
+                    "UPDATE download_artifacts SET state='incomplete' WHERE entry_id=?1",
+                    [entry_id],
+                )
+                .expect("mark staged overlap artifact");
+        }
+        for (review_id, entry_id, gallery_id, state) in [
+            ("pending-20", "entry-20", 20, "pending"),
+            ("resolved-30", "entry-30", 30, "resolved"),
+            ("pending-40", "entry-40", 40, "pending"),
+        ] {
+            connection
+                .execute(
+                    r#"
+                        INSERT INTO download_overlap_reviews (
+                            review_id, entry_id, incoming_gallery_id, revision,
+                            state, profile_version, policy_version,
+                            incoming_fingerprint, created_at, updated_at
+                        ) VALUES (
+                            ?1, ?2, ?3, 0, ?4, 1, 1, ?5,
+                            '2026-09-04T00:00:00Z', '2026-09-04T00:00:00Z'
+                        )
+                    "#,
+                    params![review_id, entry_id, gallery_id, state, "a".repeat(64)],
+                )
+                .expect("seed overlap review");
+        }
+        drop(connection);
+
+        let candidates = repository
+            .overlap_candidate_identities(&DownloadEntryId::new("entry-10").unwrap())
+            .expect("list overlap candidates");
+        let identities = candidates
+            .into_iter()
+            .map(|candidate| (candidate.entry_id.to_string(), candidate.gallery_id.get()))
+            .collect::<Vec<_>>();
+
+        assert_eq!(identities, vec![("entry-20".to_owned(), 20)]);
+        assert!(repository
+            .overlap_candidate_is_eligible(
+                &DownloadEntryId::new("entry-10").unwrap(),
+                &DownloadEntryId::new("entry-20").unwrap(),
+            )
+            .expect("matching pending review remains eligible"));
+        assert!(!repository
+            .overlap_candidate_is_eligible(
+                &DownloadEntryId::new("entry-10").unwrap(),
+                &DownloadEntryId::new("entry-30").unwrap(),
+            )
+            .expect("resolved review is ineligible"));
     }
 
     #[test]
@@ -9838,7 +11278,7 @@ mod migration_backup_tests {
     use super::*;
     use crate::infrastructure::migrations::MIGRATIONS;
 
-    fn create_database_before_latest_migration(path: &Path) -> i64 {
+    fn create_database_through(path: &Path, latest_version: i64) -> i64 {
         let connection = Connection::open(path).expect("create pre-migration database");
         connection
             .execute_batch(
@@ -9854,8 +11294,11 @@ mod migration_backup_tests {
                 "#,
             )
             .expect("create migration history");
-        let migrations_before_latest = &MIGRATIONS[..MIGRATIONS.len() - 1];
-        for migration in migrations_before_latest {
+        let migrations = MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= latest_version)
+            .collect::<Vec<_>>();
+        for migration in &migrations {
             connection
                 .execute_batch(migration.sql)
                 .expect("apply pre-latest migration");
@@ -9866,10 +11309,17 @@ mod migration_backup_tests {
                 )
                 .expect("record pre-latest migration");
         }
-        migrations_before_latest
+        migrations
             .last()
-            .expect("at least one pre-latest migration")
+            .expect("at least one selected migration")
             .version
+    }
+
+    fn create_database_before_latest_migration(path: &Path) -> i64 {
+        create_database_through(
+            path,
+            MIGRATIONS.last().expect("latest migration").version - 1,
+        )
     }
 
     fn backup_files(directory: &Path) -> Vec<PathBuf> {
@@ -9884,6 +11334,70 @@ mod migration_backup_tests {
             .collect::<Vec<_>>();
         backups.sort();
         backups
+    }
+
+    #[test]
+    fn acknowledgement_migration_immediately_exposes_existing_automation_history() {
+        let temporary = tempfile::tempdir().expect("create temporary directory");
+        let database_path = temporary.path().join("legacy-history.sqlite3");
+        let previous_version = create_database_through(&database_path, 36);
+        assert_eq!(previous_version, 36);
+        let connection = Connection::open(&database_path).expect("open v36 database");
+        connection
+            .execute_batch(
+                r#"
+                    PRAGMA foreign_keys = ON;
+                    INSERT INTO galleries (
+                        gallery_id, revision, title, source_page_count
+                    ) VALUES (4300401, 0, 'Legacy automation history', 1);
+                    INSERT INTO download_entries (
+                        entry_id, gallery_id, revision, state, progress,
+                        created_at, updated_at
+                    ) VALUES (
+                        'legacy-history-entry', 4300401, 1, 'cancelled', 100,
+                        '2026-09-03T10:00:00.000Z', '2026-09-03T10:01:00.000Z'
+                    );
+                    INSERT INTO download_overlap_reviews (
+                        review_id, entry_id, incoming_gallery_id, revision,
+                        state, profile_version, policy_version,
+                        incoming_fingerprint, created_at, updated_at, resolved_at
+                    ) VALUES (
+                        'legacy-automation-review', 'legacy-history-entry', 4300401, 1,
+                        'cancelled', 1, 1,
+                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                        '2026-09-03T10:00:00.000Z', '2026-09-03T10:01:00.000Z',
+                        '2026-09-03T10:01:00.000Z'
+                    );
+                    INSERT INTO download_overlap_decisions (
+                        decision_id, review_id, review_revision, candidate_id,
+                        action, created_at, actor, reason_code,
+                        rule_version, feature_snapshot_json
+                    ) VALUES (
+                        'legacy-automation-decision', 'legacy-automation-review', 0, NULL,
+                        'remove_incoming', '2026-09-03T10:01:00.000Z', 'automation',
+                        'strict_subset_v1', 1, '{"fixture":true}'
+                    );
+                "#,
+            )
+            .expect("seed v36 automation decision");
+        drop(connection);
+
+        let repository = SqliteRepository::open(&database_path).expect("apply v37 migration");
+        let page = repository
+            .overlap_automation_history_list(&DownloadOverlapAutomationHistoryListRequest {
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list migrated automation history");
+        assert_eq!(page.total_items, 1);
+        assert_eq!(page.unacknowledged_items, 1);
+        assert_eq!(page.items[0].review_id, "legacy-automation-review");
+        assert_eq!(page.items[0].remove_incoming_count, 1);
+        assert_eq!(
+            page.items[0].removed_gallery_ids,
+            vec![GalleryId::new(4_300_401).unwrap()]
+        );
+        assert_eq!(page.items[0].acknowledged_at, None);
     }
 
     #[test]

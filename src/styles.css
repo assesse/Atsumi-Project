@@ -2057,6 +2057,35 @@ h2 {
   padding: 8px;
 }
 
+.activity-section-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.activity-section-tabs .mini-command {
+  color: var(--muted);
+  border-color: var(--line);
+}
+
+.activity-section-tabs .mini-command.is-active {
+  color: var(--primary-strong);
+  background: var(--primary-soft);
+  border-color: var(--primary);
+}
+
+.activity-history-note {
+  margin: 0 0 6px;
+  padding: 9px 10px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .activity-empty {
   display: grid;
   min-height: 150px;
@@ -2119,6 +2148,16 @@ h2 {
 .activity-actions > b {
   color: var(--primary-strong);
   font-size: 13px;
+}
+
+.automation-history-actions {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.activity-history-more {
+  justify-self: center;
+  margin: 10px 0 4px;
 }
 
 .activity-item.duplicate-resolved .activity-resolution {
@@ -3725,9 +3764,46 @@ dialog::backdrop {
   gap: 18px;
 }
 
-.exclusion-manager-header > button {
+.exclusion-manager-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.exclusion-manager-actions > button {
   flex: 0 0 auto;
   min-width: 142px;
+}
+
+.exclusion-manager-body {
+  margin-top: 15px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+}
+
+.exclusion-manager-note {
+  color: var(--text-soft) !important;
+}
+
+.exclusion-load-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  color: var(--danger);
+  background: var(--danger-bg);
+  border: 1px solid #edaaaa;
+  border-radius: 5px;
+}
+
+.exclusion-load-more {
+  justify-self: center;
+  min-width: 210px;
+  margin-top: 4px;
 }
 
 .exclusion-empty {
@@ -4920,7 +4996,19 @@ dialog::backdrop {
 }
 
 .download-overlap-candidate-tabs small {
+  color: var(--muted);
+}
+
+.download-overlap-candidate-tabs small.is-kept {
   color: var(--success);
+}
+
+.download-overlap-candidate-tabs small.is-excluded {
+  color: var(--danger);
+}
+
+.download-overlap-candidate-tabs small.is-pending {
+  color: var(--warning);
 }
 
 .download-overlap-artifacts {
@@ -4941,11 +5029,83 @@ dialog::backdrop {
   border-radius: 6px;
 }
 
+.download-overlap-artifact.is-kept {
+  border-color: color-mix(in srgb, var(--success) 68%, var(--line));
+  border-left-width: 4px;
+  background: color-mix(in srgb, var(--success) 8%, var(--surface-soft));
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--success) 9%, transparent),
+    0 0 16px color-mix(in srgb, var(--success) 9%, transparent);
+  animation: download-overlap-survivor-settle 220ms ease-out both;
+}
+
+.download-overlap-artifact.is-excluded {
+  border-color: color-mix(in srgb, var(--danger) 34%, var(--line));
+  background: color-mix(in srgb, var(--danger-bg) 38%, var(--surface-soft));
+}
+
+.download-overlap-artifact.is-excluded .download-overlap-cover {
+  filter: saturate(0.22) brightness(0.68);
+  opacity: 0.76;
+}
+
+.download-overlap-artifact.is-pending,
+.download-overlap-artifact.is-uncertain {
+  border-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+  background: color-mix(in srgb, var(--warning-bg) 32%, var(--surface-soft));
+}
+
+@keyframes download-overlap-survivor-settle {
+  from {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--success) 26%, transparent),
+      0 0 24px color-mix(in srgb, var(--success) 22%, transparent);
+  }
+}
+
 .download-overlap-artifact > div {
   display: grid;
   align-content: center;
   gap: 5px;
   min-width: 0;
+}
+
+.download-overlap-artifact-label-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.download-overlap-artifact .download-overlap-artifact-outcome {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.download-overlap-artifact .download-overlap-artifact-outcome.is-kept {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 12%, transparent);
+}
+
+.download-overlap-artifact .download-overlap-artifact-outcome.is-excluded {
+  color: color-mix(in srgb, var(--danger) 86%, var(--text));
+  background: color-mix(in srgb, var(--danger-bg) 78%, transparent);
+}
+
+.download-overlap-artifact .download-overlap-artifact-outcome.is-pending,
+.download-overlap-artifact .download-overlap-artifact-outcome.is-uncertain {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning-bg) 78%, transparent);
 }
 
 .download-overlap-artifact-title,
@@ -4966,9 +5126,37 @@ dialog::backdrop {
   font-size: 15px;
 }
 
-.download-overlap-artifact span:not(.eyebrow) {
+.download-overlap-artifact-reason {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 5px;
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.download-overlap-artifact-reason > span {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface-strong) 74%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.download-overlap-artifact > div > span:not(.eyebrow) {
   color: var(--muted);
   font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .download-overlap-artifact.is-kept {
+    animation: none;
+  }
 }
 
 .download-overlap-cover {
@@ -5206,6 +5394,62 @@ dialog::backdrop {
   overflow: visible;
 }
 
+.download-overlap-action-note {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px 10px;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--warning-bg) 38%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--line));
+  border-radius: 5px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.download-overlap-action-note > .fluent {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warning);
+}
+
+.download-overlap-action-note strong {
+  color: var(--text);
+}
+
+.download-overlap-readonly-actions {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.download-overlap-readonly-actions > div {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.download-overlap-readonly-actions > div > .fluent {
+  flex: 0 0 auto;
+  color: var(--primary-strong);
+  font-size: 18px;
+}
+
+.download-overlap-readonly-actions > div > span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.download-overlap-readonly-actions strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
 .download-overlap-action-with-help {
   position: relative;
   min-width: 0;
@@ -5270,6 +5514,14 @@ dialog::backdrop {
   }
 
   .download-overlap-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .download-overlap-action-note {
+    grid-column: 1;
+  }
+
+  .download-overlap-readonly-actions {
     grid-template-columns: 1fr;
   }
 
@@ -6094,6 +6346,13 @@ dialog::backdrop {
     align-items: stretch;
     flex-direction: column;
   }
+
+  .exclusion-manager-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .exclusion-manager-actions > button { width: 100%; }
 
   .exclusion-item {
     grid-template-columns: auto minmax(0, 1fr);

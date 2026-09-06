@@ -7,6 +7,7 @@ import type {
   AppActiveWorkSnapshot,
   DownloadEntry,
   DownloadLibraryPage,
+  DownloadOverlapAutomationHistoryItem,
   DownloadOverlapReview,
   DownloadPage,
   GalleryPage,
@@ -875,6 +876,12 @@ describe("App Phase 3A backend flow", () => {
     };
     const randomSummary = asSummary(3);
     const autoFindSummary = asSummary(4);
+    const filteredAutoFindSummary = {
+      ...autoFindSummary,
+      id: galleryId(5_300_001),
+      title: "Filtered Japanese Auto Find candidate",
+      language: "japanese" as const,
+    };
     const completedSummary = asSummary(2);
     const searchSubmit = vi.spyOn(backend, "searchSubmit").mockResolvedValue({
       ok: true,
@@ -888,12 +895,12 @@ describe("App Phase 3A backend flow", () => {
     vi.spyOn(backend, "autoFindSnapshot").mockResolvedValue({
       ok: true,
       data: {
-        candidates: [{
-          ...autoFindSummary,
+        candidates: [autoFindSummary, filteredAutoFindSummary].map((candidate) => ({
+          ...candidate,
           runId: "random-auto-find-run",
-          matchedFavorite: { namespace: "artist", value: autoFindSummary.artist },
+          matchedFavorite: { namespace: "artist" as const, value: autoFindSummary.artist },
           discoveredAt: "2026-08-30T00:00:00Z",
-        }],
+        })),
         cutoffEvidence: [],
         truncations: [],
       },
@@ -909,7 +916,7 @@ describe("App Phase 3A backend flow", () => {
         ],
       },
     });
-    vi.spyOn(Math, "random").mockReturnValue(0);
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -1535,6 +1542,118 @@ describe("App Phase 3A backend flow", () => {
     await backend.favoriteSet({ namespace: "artist", value: "mizuno" }, false);
   });
 
+  it("removes queued galleries from the Auto Find list and navigation count immediately", async () => {
+    const base = mockGalleries[4]!;
+    const candidateIds = [galleryId(5_200_001), galleryId(5_200_002), galleryId(5_200_003)];
+    const candidates = candidateIds.map((id, index) => ({
+      id,
+      title: index === 1 ? "Anthology matched through favorite artist" : `Queued Auto Find candidate ${index + 1}`,
+      artist: index === 1 ? "anthology editor" : base.artist,
+      ...(base.group ? { group: base.group } : {}),
+      pages: base.pages,
+      language: index === 2 ? "japanese" as const : base.language,
+      tags: [...base.tags],
+      series: [...base.series],
+      characters: [...base.characters],
+      publishedRank: 20260901 - index,
+      popularity: base.score,
+      thumbnailWidth: 512,
+      thumbnailHeight: 768,
+      runId: "auto-find-queue-filter-run",
+      matchedFavorite: { namespace: "artist" as const, value: base.artist },
+      discoveredAt: `2026-09-0${index + 1}T00:00:00Z`,
+    }));
+    vi.spyOn(backend, "favoritesList").mockResolvedValue({
+      ok: true,
+      data: [{
+        namespace: "artist",
+        value: base.artist,
+        revision: 1,
+        createdAt: "2026-09-01T00:00:00Z",
+        updatedAt: "2026-09-01T00:00:00Z",
+      }],
+    });
+    vi.spyOn(backend, "autoFindSnapshot").mockResolvedValue({
+      ok: true,
+      data: {
+        run: {
+          runId: "auto-find-queue-filter-run",
+          revision: 3,
+          state: "completed",
+          totalFavorites: 1,
+          completedFavorites: 1,
+          candidatesFound: 3,
+          startedAt: "2026-09-01T00:00:00Z",
+          updatedAt: "2026-09-01T00:01:00Z",
+          finishedAt: "2026-09-01T00:01:00Z",
+          historyMode: "include_all_history",
+        },
+        candidates,
+        cutoffEvidence: [],
+        truncations: [],
+      },
+    });
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({
+      ok: true,
+      data: { page: 1, totalItems: 0, entries: [] },
+    });
+    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({ ok: true, data: [] });
+    const queue = vi.spyOn(backend, "downloadQueueAdd").mockImplementation(async (ids) => ({
+      ok: true,
+      data: ids.map((id) => ({
+        entryId: `queued-auto-find-${id}`,
+        galleryId: id,
+        revision: 1,
+        state: "queued" as const,
+        progress: 0,
+      })),
+    }));
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle(60);
+      });
+      await act(async () => {
+        clickButtonContaining(container, "Auto Find");
+        await settle(30);
+      });
+
+      const autoFindNav = [...container.querySelectorAll<HTMLButtonElement>(".nav-item")]
+        .find((button) => button.textContent?.includes("Auto Find"));
+      expect(autoFindNav?.querySelector(".nav-count")).toHaveTextContent("2");
+      expect(container).toHaveTextContent("확인된 항목 3개 · 다운로드 전 2개");
+      const cards = [...container.querySelectorAll<HTMLElement>(".gallery-card")];
+      expect(cards).toHaveLength(2);
+      expect(container).toHaveTextContent("Anthology matched through favorite artist");
+      expect(container).not.toHaveTextContent("Queued Auto Find candidate 3");
+
+      await act(async () => {
+        cards[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
+        cards[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+        await settle();
+      });
+      const downloadSelected = container.querySelector<HTMLButtonElement>(".selection-toolbar .primary");
+      if (!downloadSelected) throw new Error("Auto Find multi-selection download button was not rendered");
+      await act(async () => {
+        downloadSelected.click();
+        await settle(30);
+      });
+
+      expect(queue).toHaveBeenCalledWith(candidateIds.slice(0, 2), expect.stringMatching(/^frontend-queue-/));
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(0);
+      expect(autoFindNav?.querySelector(".nav-count")).toBeNull();
+      expect(container).toHaveTextContent("확인된 항목 3개 · 다운로드 전 0개");
+      expect(container).toHaveTextContent("표시할 갤러리가 없습니다");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("uses compact evidence and persists Auto Find and Downloads accordion state", async () => {
     const originalSettings = await backend.settingsGet();
     if (!originalSettings.ok) throw new Error(originalSettings.error.message);
@@ -1892,6 +2011,182 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it("skips an ineligible overlap review and chains returned revisions for the next eligible review", async () => {
+    const originalSettings = await backend.settingsGet();
+    if (!originalSettings.ok) throw new Error(originalSettings.error.message);
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({
+      ok: true,
+      data: { ...originalSettings.data, downloadOverlapAutoMode: "strict_quarantine" },
+    });
+
+    const pagePairs = Array.from({ length: 20 }, (_, index) => ({
+      incomingSourcePage: index + 1,
+      existingSourcePage: index + 1,
+      exactSha256: true,
+      dHashDistance: 0,
+      pHashDistance: 0,
+      detailHashDistance: 0,
+      edgeSimilarity: 1,
+      visualSimilarity: 1,
+      lowInformation: false,
+    }));
+    const ineligibleIncoming = mockGalleries[3]!;
+    const eligibleIncoming = mockGalleries[0]!;
+    const eligibleExisting = [mockGalleries[6]!, mockGalleries[5]!];
+    const eligibleReview: DownloadOverlapReview = {
+      reviewId: "sweep-eligible-review",
+      entryId: "sweep-eligible-incoming",
+      incoming: {
+        entryId: "sweep-eligible-incoming",
+        galleryId: eligibleIncoming.id,
+        title: eligibleIncoming.title,
+        artists: [eligibleIncoming.artist],
+        pageCount: 25,
+      },
+      revision: 7,
+      state: "pending",
+      profileVersion: 1,
+      policyVersion: 1,
+      incomingFingerprint: "a".repeat(64),
+      candidates: eligibleExisting.map((gallery, index) => ({
+        candidateId: `sweep-eligible-candidate-${index + 1}`,
+        existing: {
+          entryId: `sweep-eligible-existing-${index + 1}`,
+          galleryId: gallery.id,
+          title: gallery.title,
+          artists: [gallery.artist],
+          pageCount: 20,
+        },
+        existingFingerprint: String(index + 1).repeat(64),
+        relation: "incoming_contains_existing" as const,
+        confidence: 0.99,
+        matchedPages: 20,
+        exactPages: 20,
+        visualPages: 0,
+        existingCoverage: 1,
+        incomingCoverage: 0.8,
+        existingUniquePages: 0,
+        incomingUniquePages: 5,
+        longestAlignedRun: 20,
+        rank: index + 1,
+        pagePairs,
+      })),
+      createdAt: "2026-09-04T00:00:00Z",
+      updatedAt: "2026-09-04T00:00:00Z",
+    };
+    const ineligibleReview: DownloadOverlapReview = {
+      ...eligibleReview,
+      reviewId: "sweep-ineligible-review",
+      entryId: "sweep-ineligible-incoming",
+      incoming: {
+        entryId: "sweep-ineligible-incoming",
+        galleryId: ineligibleIncoming.id,
+        title: ineligibleIncoming.title,
+        artists: [ineligibleIncoming.artist],
+        pageCount: 25,
+      },
+      revision: 3,
+      incomingFingerprint: "f".repeat(64),
+      candidates: [{
+        ...eligibleReview.candidates[0]!,
+        candidateId: "sweep-ineligible-candidate",
+        relation: "partial_overlap",
+      }],
+    };
+    const afterFirstDecision: DownloadOverlapReview = {
+      ...eligibleReview,
+      revision: 41,
+      candidates: eligibleReview.candidates.map((candidate, index) => index === 0
+        ? { ...candidate, decision: "existing_removed" }
+        : candidate),
+      updatedAt: "2026-09-04T00:00:01Z",
+    };
+    const afterSecondDecision: DownloadOverlapReview = {
+      ...afterFirstDecision,
+      revision: 42,
+      state: "resolved",
+      candidates: afterFirstDecision.candidates.map((candidate) => ({
+        ...candidate,
+        decision: "existing_removed",
+      })),
+      updatedAt: "2026-09-04T00:00:02Z",
+      resolvedAt: "2026-09-04T00:00:02Z",
+    };
+    const downloadPage: DownloadPage = {
+      page: 1,
+      totalItems: 2,
+      entries: [
+        {
+          entryId: ineligibleReview.entryId,
+          galleryId: ineligibleReview.incoming.galleryId,
+          revision: 1,
+          state: "review_required",
+          progress: 100,
+          reviewKind: "gallery_duplicate",
+          reviewId: ineligibleReview.reviewId,
+        },
+        {
+          entryId: eligibleReview.entryId,
+          galleryId: eligibleReview.incoming.galleryId,
+          revision: 1,
+          state: "review_required",
+          progress: 100,
+          reviewKind: "gallery_duplicate",
+          reviewId: eligibleReview.reviewId,
+        },
+      ],
+    };
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({ ok: true, data: downloadPage });
+    vi.spyOn(backend, "downloadLibraryPageList").mockResolvedValue({
+      ok: true,
+      data: libraryPageFromEntries(downloadPage),
+    });
+    let eligibleCurrent = eligibleReview;
+    const overlapGet = vi.spyOn(backend, "downloadOverlapReviewGet").mockImplementation(async (reviewId) => ({
+      ok: true,
+      data: reviewId === ineligibleReview.reviewId ? ineligibleReview : eligibleCurrent,
+    }));
+    const decision = vi.spyOn(backend, "downloadOverlapDecisionApply").mockImplementation(async () => {
+      eligibleCurrent = eligibleCurrent.revision === eligibleReview.revision
+        ? afterFirstDecision
+        : afterSecondDecision;
+      return { ok: true, data: { review: eligibleCurrent, resumed: eligibleCurrent.state === "resolved", cancelled: false } };
+    });
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await vi.waitFor(() => expect(decision).toHaveBeenCalledTimes(2));
+
+      expect(overlapGet).toHaveBeenNthCalledWith(1, ineligibleReview.reviewId);
+      expect(overlapGet).toHaveBeenNthCalledWith(2, eligibleReview.reviewId);
+      expect(decision.mock.calls.map(([request]) => request)).toMatchObject([
+        {
+          reviewId: eligibleReview.reviewId,
+          candidateId: eligibleReview.candidates[0]!.candidateId,
+          expectedRevision: 7,
+          actor: "automation",
+        },
+        {
+          reviewId: eligibleReview.reviewId,
+          candidateId: eligibleReview.candidates[1]!.candidateId,
+          expectedRevision: 41,
+          actor: "automation",
+        },
+      ]);
+      expect(JSON.parse(decision.mock.calls[1]![0].featureSnapshotJson ?? "{}"))
+        .toMatchObject({ reviewRevision: 41 });
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("keeps an earlier automatic overlap exclusion visible when a later candidate decision fails", async () => {
     const originalSettings = await backend.settingsGet();
     if (!originalSettings.ok) throw new Error(originalSettings.error.message);
@@ -2060,6 +2355,96 @@ describe("App Phase 3A backend flow", () => {
       expect(excludedCard).toHaveClass("is-exploration-blind");
       expect(excludedCard).toHaveAccessibleName(expect.stringContaining("중복 판정으로 제외"));
       expect(container).toHaveTextContent("자동 분류 중단 · 직접 검토 필요 · second candidate failed");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("restores the persistent automatic-review badge and lazily supports list-only restore", async () => {
+    const removedGalleryIds = [galleryId(4_051_038), galleryId(4_050_754)];
+    const historyItem: DownloadOverlapAutomationHistoryItem = {
+      reviewId: "persistent-auto-review",
+      incomingGalleryId: galleryId(4_053_291),
+      title: "새로고침 뒤 자동분류 기록",
+      occurredAt: "2026-09-04T01:30:00Z",
+      reviewState: "resolved",
+      removeIncomingCount: 0,
+      removeExistingCount: 2,
+      removedGalleryIds,
+    };
+    let acknowledged = false;
+    const historyList = vi.spyOn(backend, "downloadOverlapAutomationHistoryList").mockImplementation(async (request) => ({
+      ok: true,
+      data: {
+        page: request.page,
+        pageSize: request.pageSize,
+        totalItems: 1,
+        unacknowledgedItems: acknowledged ? 0 : 1,
+        items: request.page === 1 ? [{
+          ...historyItem,
+          ...(acknowledged ? { acknowledgedAt: "2026-09-04T01:31:00Z" } : {}),
+        }] : [],
+      },
+    }));
+    const historyAcknowledge = vi.spyOn(backend, "downloadOverlapAutomationHistoryAcknowledge")
+      .mockImplementation(async (reviewId) => {
+        acknowledged = true;
+        return {
+          ok: true,
+          data: { ...historyItem, reviewId, acknowledgedAt: "2026-09-04T01:31:00Z" },
+        };
+      });
+    const restoreExclusions = vi.spyOn(backend, "explorationExclusionsRestore").mockResolvedValue({
+      ok: true,
+      data: {
+        restoredGalleryIds: removedGalleryIds,
+        snapshot: { candidates: [], cutoffEvidence: [], truncations: [] },
+      },
+    });
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({
+      ok: true,
+      data: { page: 1, totalItems: 0, entries: [] },
+    });
+    vi.spyOn(backend, "downloadLibraryPageList").mockResolvedValue({
+      ok: true,
+      data: { page: 1, totalItems: 0, items: [] },
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await vi.waitFor(() => expect(historyList).toHaveBeenCalledWith({ page: 1, pageSize: 1 }));
+      expect(historyList).not.toHaveBeenCalledWith({ page: 1, pageSize: 50 });
+      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toHaveTextContent("1");
+
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')?.click();
+        await settle();
+      });
+      await vi.waitFor(() => expect(historyList).toHaveBeenCalledWith({ page: 1, pageSize: 50 }));
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+          .find((button) => button.textContent?.includes("자동분류 검토"))?.click();
+      });
+      expect(container.querySelector("#activity-automation-panel")).toHaveTextContent("새로고침 뒤 자동분류 기록");
+      expect(container.querySelector("#activity-automation-panel")).toHaveTextContent("격리된 실제 파일은 복원하지 않습니다");
+
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>("#activity-automation-panel button")]
+          .find((button) => button.textContent === "목록에 복원")?.click();
+        await settle();
+      });
+      expect(restoreExclusions).toHaveBeenCalledWith(removedGalleryIds);
+      expect(historyAcknowledge).toHaveBeenCalledWith(historyItem.reviewId);
+      expect(container.querySelector("#activity-automation-panel")).toHaveTextContent("확인 완료");
+      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toBeNull();
+      expect(container).toHaveTextContent("격리된 실제 파일은 복원하지 않았습니다");
     } finally {
       await act(async () => root.unmount());
       container.remove();

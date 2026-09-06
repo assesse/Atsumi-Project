@@ -1811,6 +1811,222 @@ pub const MIGRATIONS: &[Migration] = &[
                 CHECK (danbooru_preview_width IN (160, 190, 220, 250, 280, 320, 360));
         "#,
     },
+    Migration {
+        version: 37,
+        name: "download_overlap_automation_acknowledgements",
+        sql: r#"
+            CREATE TABLE download_overlap_automation_acknowledgements (
+                review_id TEXT PRIMARY KEY
+                    REFERENCES download_overlap_reviews(review_id) ON DELETE CASCADE,
+                acknowledged_at TEXT NOT NULL CHECK (length(acknowledged_at) > 0)
+            ) STRICT;
+
+            CREATE INDEX download_overlap_decisions_actor_review_time_idx
+                ON download_overlap_decisions(
+                    actor, review_id, created_at DESC, decision_id DESC
+                );
+        "#,
+    },
+    Migration {
+        version: 38,
+        name: "allow_historical_download_overlap_reviews",
+        sql: r#"
+            -- Some deployed databases were created with an unintended UNIQUE
+            -- constraint on download_overlap_reviews.entry_id. Rebuild the
+            -- complete review graph so removing that table constraint cannot
+            -- cascade-delete or orphan any related audit data.
+            CREATE TABLE download_overlap_reviews_v38 (
+                review_id TEXT PRIMARY KEY CHECK (length(trim(review_id)) > 0),
+                entry_id TEXT NOT NULL
+                    REFERENCES download_entries(entry_id) ON DELETE CASCADE,
+                incoming_gallery_id INTEGER NOT NULL CHECK (incoming_gallery_id > 0),
+                revision INTEGER NOT NULL CHECK (revision >= 0),
+                state TEXT NOT NULL CHECK (state IN (
+                    'pending', 'resolved', 'cancelled', 'stale'
+                )),
+                profile_version INTEGER NOT NULL
+                    REFERENCES duplicate_hash_profiles(profile_version),
+                policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                incoming_fingerprint TEXT NOT NULL CHECK (length(incoming_fingerprint) = 64),
+                created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+                updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+                resolved_at TEXT
+            ) STRICT;
+
+            CREATE TABLE download_overlap_candidates_v38 (
+                candidate_id TEXT PRIMARY KEY CHECK (length(trim(candidate_id)) > 0),
+                review_id TEXT NOT NULL
+                    REFERENCES download_overlap_reviews_v38(review_id) ON DELETE CASCADE,
+                existing_entry_id TEXT NOT NULL
+                    REFERENCES download_entries(entry_id) ON DELETE CASCADE,
+                existing_gallery_id INTEGER NOT NULL CHECK (existing_gallery_id > 0),
+                existing_fingerprint TEXT NOT NULL CHECK (length(existing_fingerprint) = 64),
+                relation TEXT NOT NULL CHECK (relation IN (
+                    'near_equivalent', 'incoming_contains_existing',
+                    'existing_contains_incoming', 'partial_overlap',
+                    'translation_edition'
+                )),
+                confidence REAL NOT NULL CHECK (confidence BETWEEN 0.0 AND 1.0),
+                matched_pages INTEGER NOT NULL CHECK (matched_pages > 0),
+                exact_pages INTEGER NOT NULL CHECK (exact_pages BETWEEN 0 AND matched_pages),
+                visual_pages INTEGER NOT NULL CHECK (visual_pages BETWEEN 0 AND matched_pages),
+                existing_coverage REAL NOT NULL CHECK (existing_coverage BETWEEN 0.0 AND 1.0),
+                incoming_coverage REAL NOT NULL CHECK (incoming_coverage BETWEEN 0.0 AND 1.0),
+                existing_unique_pages INTEGER NOT NULL CHECK (existing_unique_pages >= 0),
+                incoming_unique_pages INTEGER NOT NULL CHECK (incoming_unique_pages >= 0),
+                longest_aligned_run INTEGER NOT NULL CHECK (longest_aligned_run > 0),
+                rank INTEGER NOT NULL CHECK (rank > 0),
+                decision TEXT CHECK (decision IS NULL OR decision IN (
+                    'keep_both', 'false_positive', 'existing_removed'
+                )),
+                UNIQUE (review_id, existing_entry_id),
+                CHECK (exact_pages + visual_pages = matched_pages)
+            ) STRICT;
+
+            CREATE TABLE download_overlap_page_pairs_v38 (
+                candidate_id TEXT NOT NULL
+                    REFERENCES download_overlap_candidates_v38(candidate_id) ON DELETE CASCADE,
+                pair_index INTEGER NOT NULL CHECK (pair_index >= 0),
+                incoming_source_page INTEGER NOT NULL CHECK (incoming_source_page > 0),
+                existing_source_page INTEGER NOT NULL CHECK (existing_source_page > 0),
+                exact_sha256 INTEGER NOT NULL CHECK (exact_sha256 IN (0, 1)),
+                d_hash_distance INTEGER NOT NULL CHECK (d_hash_distance >= 0),
+                p_hash_distance INTEGER NOT NULL CHECK (p_hash_distance >= 0),
+                detail_hash_distance INTEGER NOT NULL CHECK (detail_hash_distance >= 0),
+                edge_similarity REAL NOT NULL CHECK (edge_similarity BETWEEN 0.0 AND 1.0),
+                visual_similarity REAL NOT NULL CHECK (visual_similarity BETWEEN 0.0 AND 1.0),
+                low_information INTEGER NOT NULL CHECK (low_information IN (0, 1)),
+                PRIMARY KEY (candidate_id, pair_index)
+            ) STRICT;
+
+            CREATE TABLE download_overlap_decisions_v38 (
+                decision_id TEXT PRIMARY KEY CHECK (length(trim(decision_id)) > 0),
+                review_id TEXT NOT NULL
+                    REFERENCES download_overlap_reviews_v38(review_id),
+                review_revision INTEGER NOT NULL CHECK (review_revision >= 0),
+                candidate_id TEXT
+                    REFERENCES download_overlap_candidates_v38(candidate_id),
+                action TEXT NOT NULL CHECK (action IN (
+                    'continue_keep_both', 'false_positive_continue', 'cancel_incoming',
+                    'keep_both_continue', 'remove_existing_continue', 'remove_incoming'
+                )),
+                created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+                actor TEXT NOT NULL DEFAULT 'human'
+                    CHECK (actor IN ('human', 'automation')),
+                reason_code TEXT
+                    CHECK (reason_code IS NULL OR length(reason_code) BETWEEN 1 AND 100),
+                rule_version INTEGER
+                    CHECK (rule_version IS NULL OR rule_version > 0),
+                feature_snapshot_json TEXT
+                    CHECK (
+                        feature_snapshot_json IS NULL
+                        OR length(feature_snapshot_json) BETWEEN 2 AND 65536
+                    )
+            ) STRICT;
+
+            CREATE TABLE download_overlap_automation_acknowledgements_v38 (
+                review_id TEXT PRIMARY KEY
+                    REFERENCES download_overlap_reviews_v38(review_id) ON DELETE CASCADE,
+                acknowledged_at TEXT NOT NULL CHECK (length(acknowledged_at) > 0)
+            ) STRICT;
+
+            INSERT INTO download_overlap_reviews_v38
+            SELECT * FROM download_overlap_reviews;
+            INSERT INTO download_overlap_candidates_v38
+            SELECT * FROM download_overlap_candidates;
+            INSERT INTO download_overlap_page_pairs_v38
+            SELECT * FROM download_overlap_page_pairs;
+            INSERT INTO download_overlap_decisions_v38
+            SELECT * FROM download_overlap_decisions;
+            INSERT INTO download_overlap_automation_acknowledgements_v38
+            SELECT * FROM download_overlap_automation_acknowledgements;
+
+            DROP TABLE download_overlap_automation_acknowledgements;
+            DROP TABLE download_overlap_page_pairs;
+            DROP TABLE download_overlap_decisions;
+            DROP TABLE download_overlap_candidates;
+            DROP TABLE download_overlap_reviews;
+
+            ALTER TABLE download_overlap_reviews_v38
+                RENAME TO download_overlap_reviews;
+            ALTER TABLE download_overlap_candidates_v38
+                RENAME TO download_overlap_candidates;
+            ALTER TABLE download_overlap_page_pairs_v38
+                RENAME TO download_overlap_page_pairs;
+            ALTER TABLE download_overlap_decisions_v38
+                RENAME TO download_overlap_decisions;
+            ALTER TABLE download_overlap_automation_acknowledgements_v38
+                RENAME TO download_overlap_automation_acknowledgements;
+
+            CREATE UNIQUE INDEX download_overlap_one_pending_per_entry
+                ON download_overlap_reviews(entry_id) WHERE state = 'pending';
+            CREATE INDEX download_overlap_reviews_entry_idx
+                ON download_overlap_reviews(entry_id, created_at DESC, review_id DESC);
+            CREATE INDEX download_overlap_reviews_recent_idx
+                ON download_overlap_reviews(updated_at DESC, review_id DESC);
+            CREATE INDEX download_overlap_candidates_review_idx
+                ON download_overlap_candidates(review_id, decision, rank, candidate_id);
+            CREATE INDEX download_overlap_decisions_review_idx
+                ON download_overlap_decisions(review_id, created_at, decision_id);
+            CREATE INDEX download_overlap_decisions_actor_time_idx
+                ON download_overlap_decisions(actor, created_at, decision_id);
+            CREATE INDEX download_overlap_decisions_actor_review_time_idx
+                ON download_overlap_decisions(
+                    actor, review_id, created_at DESC, decision_id DESC
+                );
+        "#,
+    },
+    Migration {
+        version: 39,
+        name: "auto_find_incremental_artist_checkpoints",
+        sql: r#"
+            CREATE TABLE auto_find_artist_checkpoints (
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist'
+                    CHECK (favorite_namespace = 'artist'),
+                artist TEXT NOT NULL COLLATE NOCASE
+                    CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                history_mode TEXT NOT NULL CHECK (history_mode IN (
+                    'include_all_history', 'newer_than_oldest_downloaded'
+                )),
+                policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                high_water_gallery_id INTEGER
+                    CHECK (high_water_gallery_id IS NULL OR high_water_gallery_id > 0),
+                history_floor_gallery_id INTEGER
+                    CHECK (history_floor_gallery_id IS NULL OR history_floor_gallery_id > 0),
+                incremental_runs_since_full INTEGER NOT NULL DEFAULT 0
+                    CHECK (incremental_runs_since_full >= 0),
+                last_full_scan_at TEXT NOT NULL CHECK (length(last_full_scan_at) > 0),
+                updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+                PRIMARY KEY (favorite_namespace, artist, history_mode),
+                FOREIGN KEY (favorite_namespace, artist)
+                    REFERENCES favorites(namespace, value) ON DELETE CASCADE
+            ) STRICT;
+
+            CREATE TABLE auto_find_run_artist_checkpoints (
+                run_id TEXT NOT NULL
+                    REFERENCES auto_find_runs(run_id) ON DELETE CASCADE,
+                artist TEXT NOT NULL COLLATE NOCASE
+                    CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                history_mode TEXT NOT NULL CHECK (history_mode IN (
+                    'include_all_history', 'newer_than_oldest_downloaded'
+                )),
+                policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                high_water_gallery_id INTEGER
+                    CHECK (high_water_gallery_id IS NULL OR high_water_gallery_id > 0),
+                history_floor_gallery_id INTEGER
+                    CHECK (history_floor_gallery_id IS NULL OR history_floor_gallery_id > 0),
+                performed_full_scan INTEGER NOT NULL
+                    CHECK (performed_full_scan IN (0, 1)),
+                PRIMARY KEY (run_id, artist)
+            ) STRICT;
+
+            DROP INDEX auto_find_candidates_gallery_idx;
+            CREATE INDEX auto_find_candidates_gallery_recent_idx
+                ON auto_find_candidates(
+                    gallery_id, discovered_at DESC, run_id DESC
+                );
+        "#,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2100,7 +2316,7 @@ mod tests {
             report.applied_versions,
             vec![
                 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-                36
+                36, 37, 38, 39
             ]
         );
         let historical_import_tables: i64 = connection
@@ -2200,10 +2416,10 @@ mod tests {
             report.applied_versions,
             vec![
                 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                33, 34, 35, 36,
+                33, 34, 35, 36, 37, 38, 39,
             ]
         );
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.current_version, 39);
         let favorite: String = connection
             .query_row(
                 "SELECT value FROM favorites WHERE namespace = 'artist'",
@@ -2258,7 +2474,7 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v21 to v22");
         assert_eq!(
             report.applied_versions,
-            vec![22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+            vec![22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
         );
         let columns = connection
             .prepare(
@@ -2312,9 +2528,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v22 to v23");
         assert_eq!(
             report.applied_versions,
-            vec![23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+            vec![23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
         );
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.current_version, 39);
         let settings: (i64, i64) = connection
             .query_row(
                 "SELECT max_columns, privacy_mode FROM settings WHERE singleton = 1",
@@ -2388,9 +2604,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v23 to v24");
         assert_eq!(
             report.applied_versions,
-            vec![24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+            vec![24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
         );
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.current_version, 39);
         let preserved: (String, i64, i64, i64) = connection
             .query_row(
                 r#"SELECT e.canonical_token, s.revision, s.artist_count, s.group_count
@@ -2473,9 +2689,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v25 to v26");
         assert_eq!(
             report.applied_versions,
-            vec![26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+            vec![26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
         );
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.current_version, 39);
         let preserved: String = connection
             .query_row(
                 "SELECT title FROM galleries WHERE gallery_id=42",
@@ -2541,9 +2757,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v26 to current");
         assert_eq!(
             report.applied_versions,
-            vec![27, 28, 29, 30, 31, 32, 33, 34, 35, 36]
+            vec![27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
         );
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.current_version, 39);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, search_include_tags_json, search_exclude_tags_json FROM settings WHERE singleton = 1",
@@ -2602,9 +2818,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v27 to v28");
         assert_eq!(
             report.applied_versions,
-            vec![28, 29, 30, 31, 32, 33, 34, 35, 36]
+            vec![28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
         );
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.current_version, 39);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, auto_find_grouping, downloads_grouping FROM settings WHERE singleton = 1",
@@ -2688,8 +2904,11 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v29 to current");
-        assert_eq!(report.applied_versions, vec![30, 31, 32, 33, 34, 35, 36]);
-        assert_eq!(report.current_version, 36);
+        assert_eq!(
+            report.applied_versions,
+            vec![30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+        );
+        assert_eq!(report.current_version, 39);
         let hidden: (i64, String) = connection
             .query_row(
                 "SELECT gallery_id, decision_id FROM duplicate_hidden_galleries WHERE gallery_id=3668987",
@@ -2804,8 +3023,11 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v30 to current");
-        assert_eq!(report.applied_versions, vec![31, 32, 33, 34, 35, 36]);
-        assert_eq!(report.current_version, 36);
+        assert_eq!(
+            report.applied_versions,
+            vec![31, 32, 33, 34, 35, 36, 37, 38, 39]
+        );
+        assert_eq!(report.current_version, 39);
 
         let hidden = connection
             .prepare(
@@ -2870,8 +3092,11 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v31 to current");
-        assert_eq!(report.applied_versions, vec![32, 33, 34, 35, 36]);
-        assert_eq!(report.current_version, 36);
+        assert_eq!(
+            report.applied_versions,
+            vec![32, 33, 34, 35, 36, 37, 38, 39]
+        );
+        assert_eq!(report.current_version, 39);
         let settings: (i64, i64, String) = connection
             .query_row(
                 "SELECT max_columns, explore_page_size, download_overlap_auto_mode FROM settings WHERE singleton = 1",
@@ -2932,8 +3157,8 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v33 to current");
-        assert_eq!(report.applied_versions, vec![34, 35, 36]);
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.applied_versions, vec![34, 35, 36, 37, 38, 39]);
+        assert_eq!(report.current_version, 39);
         let modes: (String, String, String, i64) = connection
             .query_row(
                 "SELECT explore_display_mode, auto_find_display_mode, downloads_display_mode, max_columns FROM settings WHERE singleton = 1",
@@ -3011,8 +3236,8 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v34 to current");
-        assert_eq!(report.applied_versions, vec![35, 36]);
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.applied_versions, vec![35, 36, 37, 38, 39]);
+        assert_eq!(report.current_version, 39);
         let known: (Option<String>, Option<i64>) = connection
             .query_row(
                 "SELECT language, published_rank FROM galleries WHERE gallery_id = 701",
@@ -3066,8 +3291,8 @@ mod tests {
             .unwrap();
 
         let report = MigrationRunner::run(&mut connection).expect("migrate v35 to current");
-        assert_eq!(report.applied_versions, vec![36]);
-        assert_eq!(report.current_version, 36);
+        assert_eq!(report.applied_versions, vec![36, 37, 38, 39]);
+        assert_eq!(report.current_version, 39);
         let preferences: (i64, i64, i64, i64) = connection
             .query_row(
                 "SELECT explore_page_size, preview_width, danbooru_page_size, danbooru_preview_width FROM settings WHERE singleton = 1",
@@ -3088,5 +3313,217 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn overlap_review_history_rebuild_removes_legacy_entry_uniqueness_without_data_loss() {
+        let mut connection = migration_history(&[]);
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 37)
+        {
+            if migration.version == 26 {
+                let legacy_sql = migration.sql.replacen(
+                    "entry_id TEXT NOT NULL\n                    REFERENCES download_entries",
+                    "entry_id TEXT NOT NULL UNIQUE\n                    REFERENCES download_entries",
+                    1,
+                );
+                assert_ne!(legacy_sql, migration.sql, "legacy constraint was injected");
+                connection.execute_batch(&legacy_sql).unwrap();
+            } else {
+                connection.execute_batch(migration.sql).unwrap();
+            }
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                    params![migration.version, migration.name],
+                )
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                r#"
+                    INSERT INTO download_entries (
+                        entry_id, gallery_id, revision, state, progress,
+                        review_kind, review_id, created_at, updated_at
+                    ) VALUES
+                        ('incoming-a', 380001, 1, 'completed', 100, NULL, NULL,
+                         '2026-09-01T00:00:00Z', '2026-09-01T00:01:00Z'),
+                        ('existing-a', 380002, 1, 'quarantined', 100, NULL, NULL,
+                         '2026-09-01T00:00:00Z', '2026-09-01T00:01:00Z'),
+                        ('incoming-b', 380003, 1, 'review_required', 100,
+                         'gallery_duplicate', 'review-b',
+                         '2026-09-02T00:00:00Z', '2026-09-02T00:01:00Z'),
+                        ('existing-b', 380004, 1, 'completed', 100, NULL, NULL,
+                         '2026-09-02T00:00:00Z', '2026-09-02T00:01:00Z');
+
+                    INSERT INTO download_overlap_reviews (
+                        review_id, entry_id, incoming_gallery_id, revision,
+                        state, profile_version, policy_version,
+                        incoming_fingerprint, created_at, updated_at, resolved_at
+                    ) VALUES
+                        ('review-a', 'incoming-a', 380001, 3, 'resolved', 1, 1,
+                         lower(hex(zeroblob(32))), '2026-09-01T00:00:10Z',
+                         '2026-09-01T00:00:20Z', '2026-09-01T00:00:20Z'),
+                        ('review-b', 'incoming-b', 380003, 0, 'pending', 1, 1,
+                         lower(hex(randomblob(32))), '2026-09-02T00:00:10Z',
+                         '2026-09-02T00:00:10Z', NULL);
+
+                    INSERT INTO download_overlap_candidates (
+                        candidate_id, review_id, existing_entry_id,
+                        existing_gallery_id, existing_fingerprint, relation,
+                        confidence, matched_pages, exact_pages, visual_pages,
+                        existing_coverage, incoming_coverage,
+                        existing_unique_pages, incoming_unique_pages,
+                        longest_aligned_run, rank, decision
+                    ) VALUES
+                        ('candidate-a', 'review-a', 'existing-a', 380002,
+                         lower(hex(randomblob(32))), 'incoming_contains_existing',
+                         0.98, 2, 1, 1, 1, 0.5, 0, 2, 2, 1,
+                         'existing_removed'),
+                        ('candidate-b', 'review-b', 'existing-b', 380004,
+                         lower(hex(randomblob(32))), 'near_equivalent',
+                         0.99, 1, 1, 0, 1, 1, 0, 0, 1, 1, NULL);
+
+                    INSERT INTO download_overlap_page_pairs (
+                        candidate_id, pair_index, incoming_source_page,
+                        existing_source_page, exact_sha256, d_hash_distance,
+                        p_hash_distance, detail_hash_distance, edge_similarity,
+                        visual_similarity, low_information
+                    ) VALUES
+                        ('candidate-a', 0, 1, 1, 1, 0, 0, 0, 1, 1, 0),
+                        ('candidate-a', 1, 2, 2, 0, 2, 3, 4, 0.9, 0.95, 0),
+                        ('candidate-b', 0, 1, 1, 1, 0, 0, 0, 1, 1, 0);
+
+                    INSERT INTO download_overlap_decisions (
+                        decision_id, review_id, review_revision, candidate_id,
+                        action, created_at, actor, reason_code, rule_version,
+                        feature_snapshot_json
+                    ) VALUES (
+                        'decision-a', 'review-a', 2, 'candidate-a',
+                        'remove_existing_continue', '2026-09-01T00:00:20Z',
+                        'automation', 'omnibus_containment', 3,
+                        '{"matchedPages":2}'
+                    );
+
+                    INSERT INTO download_overlap_automation_acknowledgements (
+                        review_id, acknowledged_at
+                    ) VALUES ('review-a', '2026-09-01T00:02:00Z');
+                "#,
+            )
+            .unwrap();
+
+        assert!(connection
+            .execute(
+                r#"INSERT INTO download_overlap_reviews (
+                       review_id, entry_id, incoming_gallery_id, revision,
+                       state, profile_version, policy_version,
+                       incoming_fingerprint, created_at, updated_at, resolved_at
+                   ) VALUES (
+                       'legacy-blocked', 'incoming-a', 380001, 0, 'stale', 1, 1,
+                       lower(hex(randomblob(32))), '2026-09-03T00:00:00Z',
+                       '2026-09-03T00:00:00Z', NULL
+                   )"#,
+                [],
+            )
+            .is_err());
+
+        let report = MigrationRunner::run(&mut connection).expect("migrate legacy v37 to v38");
+        assert_eq!(report.applied_versions, vec![38, 39]);
+        assert_eq!(report.current_version, 39);
+
+        let counts: (i64, i64, i64, i64, i64) = connection
+            .query_row(
+                r#"SELECT
+                       (SELECT COUNT(*) FROM download_overlap_reviews),
+                       (SELECT COUNT(*) FROM download_overlap_candidates),
+                       (SELECT COUNT(*) FROM download_overlap_page_pairs),
+                       (SELECT COUNT(*) FROM download_overlap_decisions),
+                       (SELECT COUNT(*) FROM download_overlap_automation_acknowledgements)"#,
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(counts, (2, 2, 3, 1, 1));
+        let audit: (String, String, i64, String) = connection
+            .query_row(
+                r#"SELECT d.actor, d.reason_code, d.rule_version,
+                          a.acknowledged_at
+                   FROM download_overlap_decisions d
+                   JOIN download_overlap_automation_acknowledgements a
+                     ON a.review_id = d.review_id
+                   WHERE d.decision_id = 'decision-a'"#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            audit,
+            (
+                "automation".to_owned(),
+                "omnibus_containment".to_owned(),
+                3,
+                "2026-09-01T00:02:00Z".to_owned(),
+            )
+        );
+
+        connection
+            .execute(
+                r#"INSERT INTO download_overlap_reviews (
+                       review_id, entry_id, incoming_gallery_id, revision,
+                       state, profile_version, policy_version,
+                       incoming_fingerprint, created_at, updated_at, resolved_at
+                   ) VALUES (
+                       'historical-a-2', 'incoming-a', 380001, 0, 'stale', 1, 1,
+                       lower(hex(randomblob(32))), '2026-09-03T00:00:00Z',
+                       '2026-09-03T00:00:00Z', NULL
+                   )"#,
+                [],
+            )
+            .expect("allow another historical review for the same entry");
+        connection
+            .execute(
+                r#"INSERT INTO download_overlap_reviews (
+                       review_id, entry_id, incoming_gallery_id, revision,
+                       state, profile_version, policy_version,
+                       incoming_fingerprint, created_at, updated_at, resolved_at
+                   ) VALUES (
+                       'pending-a', 'incoming-a', 380001, 0, 'pending', 1, 1,
+                       lower(hex(randomblob(32))), '2026-09-03T00:00:01Z',
+                       '2026-09-03T00:00:01Z', NULL
+                   )"#,
+                [],
+            )
+            .expect("allow one pending review for the entry");
+        assert!(connection
+            .execute(
+                r#"INSERT INTO download_overlap_reviews (
+                       review_id, entry_id, incoming_gallery_id, revision,
+                       state, profile_version, policy_version,
+                       incoming_fingerprint, created_at, updated_at, resolved_at
+                   ) VALUES (
+                       'pending-a-2', 'incoming-a', 380001, 0, 'pending', 1, 1,
+                       lower(hex(randomblob(32))), '2026-09-03T00:00:02Z',
+                       '2026-09-03T00:00:02Z', NULL
+                   )"#,
+                [],
+            )
+            .is_err());
+
+        let mut foreign_keys = connection.prepare("PRAGMA foreign_key_check").unwrap();
+        assert!(foreign_keys.query([]).unwrap().next().unwrap().is_none());
+        drop(foreign_keys);
+
+        let second = MigrationRunner::run(&mut connection).expect("migration remains idempotent");
+        assert!(second.applied_versions.is_empty());
+        assert_eq!(second.current_version, 39);
     }
 }

@@ -117,7 +117,7 @@ describe("ActivityDrawer download controls", () => {
       />,
     ));
 
-    const controls = [...container.querySelectorAll<HTMLButtonElement>(".mini-command")];
+    const controls = [...container.querySelectorAll<HTMLButtonElement>(".activity-item .mini-command")];
     expect(controls).toHaveLength(2);
     expect(controls.every((button) => button.disabled)).toBe(true);
 
@@ -194,6 +194,81 @@ describe("ActivityDrawer download controls", () => {
         .find((button) => button.textContent === "근거 보기")?.click();
     });
     expect(onReviewOverlap).toHaveBeenCalledWith("review-1", failedGallery.id);
+
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("merges live automatic activity into persistent review history and exposes acknowledgement and list-only restore", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onReviewOverlap = vi.fn();
+    const onAcknowledge = vi.fn();
+    const onRestore = vi.fn();
+    const onLoadMore = vi.fn();
+
+    await act(async () => root.render(
+      <ActivityDrawer
+        open
+        galleries={[]}
+        sessionDownloads={[]}
+        automaticOverlapActivities={[{
+          id: "review-persistent:completed",
+          reviewId: "review-persistent",
+          galleryId: galleryId(501),
+          title: "자동 분류 앨범",
+          detail: "자동 분류 완료 · 신규 앨범 B 보존",
+          occurredAt: Date.parse("2026-09-04T01:00:00Z"),
+          state: "completed",
+        }]}
+        automationHistory={[{
+          reviewId: "review-persistent",
+          incomingGalleryId: galleryId(501),
+          title: "자동 분류 앨범",
+          occurredAt: "2026-09-04T01:00:00Z",
+          reviewState: "resolved",
+          removeIncomingCount: 0,
+          removeExistingCount: 2,
+          removedGalleryIds: [galleryId(502), galleryId(503)],
+        }]}
+        automationHistoryTotalItems={2}
+        automationHistoryUnacknowledgedItems={1}
+        onClose={vi.fn()}
+        onReview={vi.fn()}
+        onReviewOverlap={onReviewOverlap}
+        onAcknowledgeAutomationHistory={onAcknowledge}
+        onRestoreAutomationExclusions={onRestore}
+        onLoadMoreAutomationHistory={onLoadMore}
+        onRetry={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    ));
+
+    const historyTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent?.includes("자동분류 검토"));
+    expect(historyTab).toHaveTextContent("1");
+    await act(async () => historyTab?.click());
+
+    const historyPanel = container.querySelector("#activity-automation-panel");
+    expect(historyPanel?.querySelectorAll("article")).toHaveLength(1);
+    expect(historyPanel).toHaveTextContent("자동 분류 완료 · 신규 앨범 B 보존");
+    expect(historyPanel).toHaveTextContent("격리된 실제 파일은 복원하지 않습니다");
+    const buttons = [...(historyPanel?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
+    await act(async () => {
+      buttons.find((button) => button.textContent === "근거 보기")?.click();
+      buttons.find((button) => button.textContent === "목록에 복원")?.click();
+      buttons.find((button) => button.textContent === "확인 완료")?.click();
+      buttons.find((button) => button.textContent === "더 보기")?.click();
+    });
+    expect(onReviewOverlap).toHaveBeenCalledWith("review-persistent", galleryId(501));
+    expect(onRestore).toHaveBeenCalledWith("review-persistent", [galleryId(502), galleryId(503)]);
+    expect(onAcknowledge).toHaveBeenCalledWith("review-persistent");
+    expect(onLoadMore).toHaveBeenCalledOnce();
+    expect(buttons.find((button) => button.textContent === "목록에 복원")).toHaveAttribute(
+      "title",
+      expect.stringContaining("격리된 실제 파일은 복원하지 않습니다"),
+    );
 
     await act(async () => root.unmount());
     container.remove();

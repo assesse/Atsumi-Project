@@ -16,12 +16,13 @@ use crate::{
     domain::{
         plan_artifact_relative_directory, ArtifactManifest, ArtifactRelativePath,
         ArtifactStorageFormat, DownloadArtifactState, DownloadEntry, DownloadEntryId,
-        DownloadJobDescriptor, DownloadJobProjection, DownloadOverlapDecisionAction,
-        DownloadOverlapDecisionActor, DownloadOverlapDecisionApplyOutcome,
-        DownloadOverlapDecisionRequest, DownloadOverlapDecisionResult, DownloadOverlapReview,
-        DownloadOverlapReviewDraft, DuplicateGalleryRef, HashProfile, JobRef, JobState,
-        PageArtifactState, ARTIFACT_MANIFEST_SCHEMA_VERSION, DOWNLOAD_OVERLAP_POLICY_VERSION,
-        HASH_PROFILE_VERSION,
+        DownloadJobDescriptor, DownloadJobProjection, DownloadOverlapAutomationHistoryItem,
+        DownloadOverlapAutomationHistoryListRequest, DownloadOverlapAutomationHistoryPage,
+        DownloadOverlapDecisionAction, DownloadOverlapDecisionActor,
+        DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionRequest,
+        DownloadOverlapDecisionResult, DownloadOverlapReview, DownloadOverlapReviewDraft,
+        DuplicateGalleryRef, HashProfile, JobRef, JobState, PageArtifactState,
+        ARTIFACT_MANIFEST_SCHEMA_VERSION, DOWNLOAD_OVERLAP_POLICY_VERSION, HASH_PROFILE_VERSION,
     },
     source::{SourceCandidateDiagnostic, SourceContractError, SourceErrorCode},
     thumbnail::CancellationToken,
@@ -602,6 +603,38 @@ impl DownloadSupervisor {
             .repository
             .overlap_review_get(review_id)
             .map_err(Into::into)
+    }
+
+    pub fn overlap_automation_history_list(
+        &self,
+        request: DownloadOverlapAutomationHistoryListRequest,
+    ) -> Result<DownloadOverlapAutomationHistoryPage, ApplicationError> {
+        let request = request.normalized()?;
+        self.inner
+            .repository
+            .overlap_automation_history_list(&request)
+            .map_err(Into::into)
+    }
+
+    pub fn overlap_automation_history_acknowledge(
+        &self,
+        review_id: String,
+    ) -> Result<DownloadOverlapAutomationHistoryItem, ApplicationError> {
+        let review_id = review_id.trim().to_owned();
+        if review_id.is_empty() || review_id.len() > 200 {
+            return Err(crate::domain::ValidationError::new(
+                "reviewId",
+                "must contain between 1 and 200 bytes",
+            )
+            .into());
+        }
+        let _decision_guard = unpoison(self.inner.overlap_decisions.lock());
+        self.inner
+            .repository
+            .overlap_automation_history_acknowledge(&review_id)?
+            .ok_or(ApplicationError::DownloadOverlapAutomationHistoryNotFound(
+                review_id,
+            ))
     }
 
     pub fn overlap_decision_apply(
@@ -1378,17 +1411,35 @@ fn run_overlap_review_gate(
         );
         return Ok(None);
     }
-    verify_bundle_files(inner, incoming_layout, incoming_bundle)
-        .map_err(|_| overlap_check_failed())?;
+    verify_bundle_files(inner, incoming_layout, incoming_bundle).map_err(|error| {
+        overlap_gate_failure(descriptor, "verify_incoming_files", None, None, error)
+    })?;
     let profile = HashProfile::current();
     let incoming_fingerprint =
-        overlap_artifact_fingerprint(incoming_bundle, profile.profile_version)
-            .ok_or_else(overlap_check_failed)?;
-    let incoming_hashed = prepare_overlap_hashes(inner, incoming_bundle, &profile, cancellation)?;
+        overlap_artifact_fingerprint(incoming_bundle, profile.profile_version).ok_or_else(
+            || {
+                overlap_gate_failure(
+                    descriptor,
+                    "fingerprint_incoming",
+                    None,
+                    None,
+                    DownloadPipelineError::new(
+                        DownloadPipelineErrorCode::ManifestInvalid,
+                        "the verified incoming artifact cannot produce a stable fingerprint",
+                        false,
+                    )
+                    .into(),
+                )
+            },
+        )?;
+    let incoming_hashed = prepare_overlap_hashes(inner, incoming_bundle, &profile, cancellation)
+        .map_err(|error| overlap_gate_failure(descriptor, "hash_incoming", None, None, error))?;
     let identities = inner
         .repository
         .overlap_candidate_identities(&incoming_bundle.artifact.entry_id)
-        .map_err(|_| overlap_check_failed())?;
+        .map_err(|error| {
+            overlap_gate_failure(descriptor, "list_candidates", None, None, error.into())
+        })?;
     let review_id = format!("download-overlap-{}", Uuid::new_v4());
     let mut candidates = Vec::new();
 
@@ -1397,20 +1448,95 @@ fn run_overlap_review_gate(
         if !overlap_artists_intersect(incoming_artists, &identity.artists) {
             continue;
         }
-        let existing_bundle = inner
+        let existing_bundle = match inner
             .repository
             .pipeline_artifact_bundle(&identity.entry_id)
-            .map_err(|_| overlap_check_failed())?
-            .ok_or_else(overlap_check_failed)?;
+        {
+            Ok(Some(bundle)) => bundle,
+            Ok(None) => {
+                handle_overlap_candidate_stage_failure(
+                    inner,
+                    descriptor,
+                    &incoming_bundle.artifact.entry_id,
+                    "load_candidate_bundle",
+                    &identity,
+                    RepositoryError::Corrupt(
+                        "an eligible overlap candidate no longer has an artifact bundle".into(),
+                    )
+                    .into(),
+                )?;
+                continue;
+            }
+            Err(error) => {
+                handle_overlap_candidate_stage_failure(
+                    inner,
+                    descriptor,
+                    &incoming_bundle.artifact.entry_id,
+                    "load_candidate_bundle",
+                    &identity,
+                    error.into(),
+                )?;
+                continue;
+            }
+        };
         if verified_overlap_pages(&existing_bundle).is_none() {
-            return Err(overlap_check_failed());
+            handle_overlap_candidate_stage_failure(
+                inner,
+                descriptor,
+                &incoming_bundle.artifact.entry_id,
+                "validate_candidate_pages",
+                &identity,
+                DownloadPipelineError::new(
+                    DownloadPipelineErrorCode::ManifestInvalid,
+                    "the candidate page checkpoints are not fully verified",
+                    false,
+                )
+                .into(),
+            )?;
+            continue;
         }
-        let existing_layout = overlap_layout(inner, &existing_bundle)?;
-        verify_bundle_files(inner, &existing_layout, &existing_bundle)
-            .map_err(|_| overlap_check_failed())?;
+        let existing_layout = match overlap_existing_layout_inner(inner, &existing_bundle) {
+            Ok(layout) => layout,
+            Err(error) => {
+                handle_overlap_candidate_stage_failure(
+                    inner,
+                    descriptor,
+                    &incoming_bundle.artifact.entry_id,
+                    "prepare_candidate_layout",
+                    &identity,
+                    error,
+                )?;
+                continue;
+            }
+        };
+        if let Err(error) = verify_bundle_files(inner, &existing_layout, &existing_bundle) {
+            handle_overlap_candidate_stage_failure(
+                inner,
+                descriptor,
+                &incoming_bundle.artifact.entry_id,
+                "verify_candidate_files",
+                &identity,
+                error,
+            )?;
+            continue;
+        }
         let existing_fingerprint =
-            overlap_artifact_fingerprint(&existing_bundle, profile.profile_version)
-                .ok_or_else(overlap_check_failed)?;
+            overlap_artifact_fingerprint(&existing_bundle, profile.profile_version).ok_or_else(
+                || {
+                    overlap_gate_failure(
+                        descriptor,
+                        "fingerprint_candidate",
+                        Some(identity.entry_id.as_str()),
+                        Some(identity.gallery_id),
+                        DownloadPipelineError::new(
+                            DownloadPipelineErrorCode::ManifestInvalid,
+                            "the candidate artifact cannot produce a stable fingerprint",
+                            false,
+                        )
+                        .into(),
+                    )
+                },
+            )?;
         if inner
             .repository
             .overlap_pair_policy_exists(
@@ -1419,12 +1545,33 @@ fn run_overlap_review_gate(
                 profile.profile_version,
                 DOWNLOAD_OVERLAP_POLICY_VERSION,
             )
-            .map_err(|_| overlap_check_failed())?
+            .map_err(|error| {
+                overlap_gate_failure(
+                    descriptor,
+                    "read_pair_policy",
+                    Some(identity.entry_id.as_str()),
+                    Some(identity.gallery_id),
+                    error.into(),
+                )
+            })?
         {
             continue;
         }
         let existing_hashed =
-            prepare_overlap_hashes(inner, &existing_bundle, &profile, cancellation)?;
+            match prepare_overlap_hashes(inner, &existing_bundle, &profile, cancellation) {
+                Ok(hashed) => hashed,
+                Err(error) => {
+                    handle_overlap_candidate_stage_failure(
+                        inner,
+                        descriptor,
+                        &incoming_bundle.artifact.entry_id,
+                        "hash_candidate",
+                        &identity,
+                        error,
+                    )?;
+                    continue;
+                }
+            };
         if let Some(mut candidate) = analyze_download_overlap_pair(
             &review_id,
             &incoming_hashed,
@@ -1432,6 +1579,32 @@ fn run_overlap_review_gate(
             existing_fingerprint,
             &profile,
         ) {
+            match inner.repository.overlap_candidate_is_eligible(
+                &incoming_bundle.artifact.entry_id,
+                &identity.entry_id,
+            ) {
+                Ok(true) => {}
+                Ok(false) => {
+                    tracing::info!(
+                        stage = "finalize_candidate",
+                        incoming_entry_id = descriptor.entry_id,
+                        incoming_gallery_id = descriptor.gallery_id.get(),
+                        candidate_entry_id = identity.entry_id.as_str(),
+                        candidate_gallery_id = identity.gallery_id.get(),
+                        "download overlap candidate became ineligible before review persistence"
+                    );
+                    continue;
+                }
+                Err(error) => {
+                    return Err(overlap_gate_failure(
+                        descriptor,
+                        "recheck_candidate_before_review",
+                        Some(identity.entry_id.as_str()),
+                        Some(identity.gallery_id),
+                        error.into(),
+                    ));
+                }
+            }
             candidate.existing = overlap_gallery_ref(&existing_bundle);
             candidates.push(candidate);
         }
@@ -1472,7 +1645,29 @@ fn run_overlap_review_gate(
     let projection = inner
         .repository
         .overlap_review_pause(descriptor, &draft)
-        .map_err(|_| overlap_check_failed())?;
+        .map_err(|error| {
+            let candidate_entry_ids = draft
+                .candidates
+                .iter()
+                .map(|candidate| candidate.existing.entry_id.as_str())
+                .collect::<Vec<_>>();
+            let candidate_gallery_ids = draft
+                .candidates
+                .iter()
+                .map(|candidate| candidate.existing.gallery_id.get())
+                .collect::<Vec<_>>();
+            tracing::error!(
+                stage = "persist_review",
+                incoming_entry_id = descriptor.entry_id,
+                incoming_gallery_id = descriptor.gallery_id.get(),
+                candidate_count = draft.candidates.len(),
+                candidate_entry_ids = ?candidate_entry_ids,
+                candidate_gallery_ids = ?candidate_gallery_ids,
+                underlying_error = %error,
+                "download overlap review gate failed"
+            );
+            overlap_check_failed()
+        })?;
     tracing::info!(
         entry_id = descriptor.entry_id,
         gallery_id = descriptor.gallery_id.get(),
@@ -1487,10 +1682,16 @@ fn overlap_layout(
     inner: &SupervisorInner,
     bundle: &crate::domain::ArtifactBundle,
 ) -> Result<ArtifactLayout, DownloadPipelineError> {
+    overlap_layout_inner(inner, bundle).map_err(|_| overlap_check_failed())
+}
+
+fn overlap_layout_inner(
+    inner: &SupervisorInner,
+    bundle: &crate::domain::ArtifactBundle,
+) -> Result<ArtifactLayout, RunError> {
     let root = inner
         .repository
-        .pipeline_artifact_root(&bundle.artifact.entry_id)
-        .map_err(|_| overlap_check_failed())?;
+        .pipeline_artifact_root(&bundle.artifact.entry_id)?;
     let layout = inner
         .store
         .prepare_layout(&root, &bundle.artifact.relative_directory, true)?;
@@ -1500,7 +1701,38 @@ fn overlap_layout(
         .as_ref()
         .is_some_and(|path| path != &layout.manifest_relative_path)
     {
-        return Err(overlap_check_failed());
+        return Err(DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ManifestInvalid,
+            "the stored manifest path does not match the prepared artifact layout",
+            false,
+        )
+        .into());
+    }
+    Ok(layout)
+}
+
+fn overlap_existing_layout_inner(
+    inner: &SupervisorInner,
+    bundle: &crate::domain::ArtifactBundle,
+) -> Result<ArtifactLayout, RunError> {
+    let root = inner
+        .repository
+        .pipeline_artifact_root(&bundle.artifact.entry_id)?;
+    let layout = inner
+        .store
+        .prepare_existing_layout(&root, &bundle.artifact.relative_directory)?;
+    if bundle
+        .artifact
+        .manifest_relative_path
+        .as_ref()
+        .is_some_and(|path| path != &layout.manifest_relative_path)
+    {
+        return Err(DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ManifestInvalid,
+            "the stored manifest path does not match the existing artifact layout",
+            false,
+        )
+        .into());
     }
     Ok(layout)
 }
@@ -1510,33 +1742,37 @@ fn prepare_overlap_hashes(
     bundle: &crate::domain::ArtifactBundle,
     profile: &HashProfile,
     cancellation: &CancellationToken,
-) -> Result<super::duplicate_analyzer::HashedArtifact, DownloadPipelineError> {
-    let pages = verified_overlap_pages(bundle).ok_or_else(overlap_check_failed)?;
+) -> Result<super::duplicate_analyzer::HashedArtifact, RunError> {
+    let pages = verified_overlap_pages(bundle).ok_or_else(|| {
+        DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ManifestInvalid,
+            "the artifact page checkpoints are not fully verified",
+            false,
+        )
+    })?;
     let root = inner
         .repository
-        .pipeline_artifact_root(&bundle.artifact.entry_id)
-        .map_err(|_| overlap_check_failed())?;
+        .pipeline_artifact_root(&bundle.artifact.entry_id)?;
     let mut hashes = Vec::with_capacity(pages.len());
     for page in pages {
-        check_cancelled(cancellation).map_err(|_| DownloadPipelineError::cancelled())?;
-        let sha = page.sha256.as_ref().ok_or_else(overlap_check_failed)?;
-        if let Some(cached) = inner
-            .repository
-            .overlap_page_hash_get(
-                bundle.artifact.entry_id.as_str(),
-                page.page_id.source_page_number,
-                profile.profile_version,
-                sha.as_str(),
+        check_cancelled(cancellation)?;
+        let sha = page.sha256.as_ref().ok_or_else(|| {
+            DownloadPipelineError::new(
+                DownloadPipelineErrorCode::ManifestInvalid,
+                "a verified page checkpoint is missing its SHA-256 digest",
+                false,
             )
-            .map_err(|_| overlap_check_failed())?
-        {
+        })?;
+        if let Some(cached) = inner.repository.overlap_page_hash_get(
+            bundle.artifact.entry_id.as_str(),
+            page.page_id.source_page_number,
+            profile.profile_version,
+            sha.as_str(),
+        )? {
             hashes.push(cached);
             continue;
         }
-        let bytes = inner
-            .store
-            .read_verified_page_bytes(&root, page)
-            .map_err(|_| overlap_check_failed())?;
+        let bytes = inner.store.read_verified_page_bytes(&root, page)?;
         let hash = compute_page_hash(
             bundle.artifact.entry_id.as_str(),
             bundle.gallery.id,
@@ -1544,12 +1780,8 @@ fn prepare_overlap_hashes(
             sha.clone(),
             &bytes,
             profile,
-        )
-        .map_err(|_| overlap_check_failed())?;
-        inner
-            .repository
-            .overlap_page_hash_upsert(&hash)
-            .map_err(|_| overlap_check_failed())?;
+        )?;
+        inner.repository.overlap_page_hash_upsert(&hash)?;
         hashes.push(hash);
     }
     Ok(hashed_artifact(
@@ -1611,13 +1843,13 @@ fn normalize_overlap_decision_audit(
                 "Automatic overlap decisions require a reason code".into(),
             )
         })?;
-    if reason != "balanced_overlap_v2" {
+    if reason != "balanced_overlap_v3" {
         return Err(ApplicationError::DownloadOverlapDecisionInvalid(
             "The requested automatic overlap rule is not supported by this build".into(),
         ));
     }
     request.reason_code = Some(reason.to_owned());
-    if request.rule_version != Some(2) {
+    if request.rule_version != Some(3) {
         return Err(ApplicationError::DownloadOverlapDecisionInvalid(
             "The requested automatic overlap rule version is not supported by this build".into(),
         ));
@@ -1649,11 +1881,11 @@ fn normalize_overlap_decision_audit(
         ));
     }
     let expected_candidate = request.candidate_id.as_deref().unwrap_or_default();
-    if parsed.get("rule").and_then(serde_json::Value::as_str) != Some("balanced_overlap_v2")
+    if parsed.get("rule").and_then(serde_json::Value::as_str) != Some("balanced_overlap_v3")
         || parsed
             .get("ruleVersion")
             .and_then(serde_json::Value::as_u64)
-            != Some(2)
+            != Some(3)
         || parsed.get("reviewId").and_then(serde_json::Value::as_str)
             != Some(request.review_id.as_str())
         || parsed
@@ -1718,6 +1950,73 @@ fn strict_overlap_winner(
 ) -> Option<StrictOverlapWinner> {
     let incoming_page_count = incoming.page_count;
     let existing_page_count = candidate.existing.page_count;
+    if candidate.matched_pages == 0 {
+        return None;
+    }
+    let matched = f64::from(candidate.matched_pages);
+    let aligned_run_ratio = f64::from(candidate.longest_aligned_run) / matched;
+    let informative_matches = candidate
+        .page_pairs
+        .iter()
+        .filter(|pair| !pair.low_information)
+        .count();
+    let informative_match_ratio = informative_matches as f64 / matched;
+
+    // Large compilation/omnibus decisions use a separate evidence path. This
+    // path deliberately ignores edition-title preference only when the
+    // directional containment and every contained page are unambiguous.
+    let omnibus_direction = match candidate.relation {
+        crate::domain::DownloadOverlapRelation::IncomingContainsExisting
+            if incoming_page_count > existing_page_count =>
+        {
+            Some((
+                StrictOverlapWinner::Incoming,
+                candidate.existing_coverage,
+                candidate.existing_unique_pages,
+                incoming_page_count,
+                existing_page_count,
+            ))
+        }
+        crate::domain::DownloadOverlapRelation::ExistingContainsIncoming
+            if existing_page_count > incoming_page_count =>
+        {
+            Some((
+                StrictOverlapWinner::Existing,
+                candidate.incoming_coverage,
+                candidate.incoming_unique_pages,
+                existing_page_count,
+                incoming_page_count,
+            ))
+        }
+        _ => None,
+    };
+    if let Some((winner, loser_coverage, contained_unique_pages, larger, smaller)) =
+        omnibus_direction
+    {
+        let page_pairs_are_strictly_increasing = candidate.page_pairs.windows(2).all(|pair| {
+            pair[0].incoming_source_page < pair[1].incoming_source_page
+                && pair[0].existing_source_page < pair[1].existing_source_page
+        });
+        let page_ratio = if smaller == 0 {
+            0.0
+        } else {
+            f64::from(larger) / f64::from(smaller)
+        };
+        if loser_coverage >= 0.98
+            && contained_unique_pages == 0
+            && larger.abs_diff(smaller) >= 8
+            && page_ratio >= 1.5
+            && candidate.matched_pages >= 8
+            && candidate.confidence >= 0.86
+            && candidate.longest_aligned_run >= 4
+            && aligned_run_ratio >= 0.30
+            && informative_match_ratio >= 0.95
+            && page_pairs_are_strictly_increasing
+        {
+            return Some(winner);
+        }
+    }
+
     let incoming_preference = overlap_edition_preference(&incoming.title);
     let existing_preference = overlap_edition_preference(&candidate.existing.title);
     let (winner, loser_coverage) = match candidate.relation {
@@ -1756,17 +2055,6 @@ fn strict_overlap_winner(
         }
         _ => return None,
     };
-    if candidate.matched_pages == 0 {
-        return None;
-    }
-    let matched = f64::from(candidate.matched_pages);
-    let aligned_run_ratio = f64::from(candidate.longest_aligned_run) / matched;
-    let informative_matches = candidate
-        .page_pairs
-        .iter()
-        .filter(|pair| !pair.low_information)
-        .count();
-    let informative_match_ratio = informative_matches as f64 / matched;
     let smaller_page_count = incoming_page_count.min(existing_page_count);
     let required_matched_pages = 4_u32.min(smaller_page_count);
     (loser_coverage >= 0.95
@@ -1816,7 +2104,7 @@ fn validate_strict_overlap_automatic_decision(
         Ok(())
     } else {
         Err(ApplicationError::DownloadOverlapDecisionInvalid(
-            "This review does not satisfy the 95 percent overlap and five-page safety rule; manual review is required"
+            "This review does not satisfy a supported automatic overlap safety rule; manual review is required"
                 .into(),
         ))
     }
@@ -1828,6 +2116,82 @@ fn overlap_check_failed() -> DownloadPipelineError {
         "The verified download could not be compared safely with owned editions",
         true,
     )
+}
+
+fn overlap_gate_failure(
+    descriptor: &DownloadJobDescriptor,
+    stage: &'static str,
+    candidate_entry_id: Option<&str>,
+    candidate_gallery_id: Option<crate::domain::GalleryId>,
+    error: RunError,
+) -> DownloadPipelineError {
+    match error {
+        RunError::Pipeline(error) if error.code == DownloadPipelineErrorCode::Cancelled => error,
+        error => {
+            tracing::error!(
+                stage,
+                incoming_entry_id = descriptor.entry_id,
+                incoming_gallery_id = descriptor.gallery_id.get(),
+                candidate_entry_id = candidate_entry_id.unwrap_or(""),
+                candidate_gallery_id = candidate_gallery_id.map(|id| id.get()).unwrap_or(0),
+                underlying_error = %error,
+                "download overlap review gate failed"
+            );
+            overlap_check_failed()
+        }
+    }
+}
+
+fn handle_overlap_candidate_stage_failure(
+    inner: &SupervisorInner,
+    descriptor: &DownloadJobDescriptor,
+    incoming_entry_id: &DownloadEntryId,
+    stage: &'static str,
+    candidate: &crate::domain::DownloadOverlapCandidateIdentity,
+    error: RunError,
+) -> Result<(), DownloadPipelineError> {
+    if let RunError::Pipeline(cancelled) = &error {
+        if cancelled.code == DownloadPipelineErrorCode::Cancelled {
+            return Err(DownloadPipelineError::cancelled());
+        }
+    }
+    match inner
+        .repository
+        .overlap_candidate_is_eligible(incoming_entry_id, &candidate.entry_id)
+    {
+        Ok(false) => {
+            tracing::info!(
+                stage,
+                incoming_entry_id = descriptor.entry_id,
+                incoming_gallery_id = descriptor.gallery_id.get(),
+                candidate_entry_id = candidate.entry_id.as_str(),
+                candidate_gallery_id = candidate.gallery_id.get(),
+                discarded_error = %error,
+                "download overlap candidate became ineligible during comparison"
+            );
+            Ok(())
+        }
+        Ok(true) => Err(overlap_gate_failure(
+            descriptor,
+            stage,
+            Some(candidate.entry_id.as_str()),
+            Some(candidate.gallery_id),
+            error,
+        )),
+        Err(recheck_error) => {
+            tracing::error!(
+                stage,
+                incoming_entry_id = descriptor.entry_id,
+                incoming_gallery_id = descriptor.gallery_id.get(),
+                candidate_entry_id = candidate.entry_id.as_str(),
+                candidate_gallery_id = candidate.gallery_id.get(),
+                underlying_error = %error,
+                eligibility_recheck_error = %recheck_error,
+                "download overlap candidate eligibility could not be rechecked"
+            );
+            Err(overlap_check_failed())
+        }
+    }
 }
 
 fn verify_bundle_files(
@@ -1978,6 +2342,16 @@ enum RunError {
     Repository(RepositoryError),
     Source(SourceContractError),
     Pipeline(DownloadPipelineError),
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Repository(error) => error.fmt(formatter),
+            Self::Source(error) => error.fmt(formatter),
+            Self::Pipeline(error) => error.fmt(formatter),
+        }
+    }
 }
 
 impl RunError {
@@ -2203,6 +2577,7 @@ mod tests {
                 decision: None,
                 page_pairs,
             }],
+            decisions: Vec::new(),
             created_at: "2026-08-31T00:00:00Z".to_owned(),
             updated_at: "2026-08-31T00:00:00Z".to_owned(),
             resolved_at: None,
@@ -2216,12 +2591,12 @@ mod tests {
             action: DownloadOverlapDecisionAction::RemoveExistingContinue,
             candidate_id: Some("strict-candidate".to_owned()),
             actor: DownloadOverlapDecisionActor::Automation,
-            reason_code: Some("balanced_overlap_v2".to_owned()),
-            rule_version: Some(2),
+            reason_code: Some("balanced_overlap_v3".to_owned()),
+            rule_version: Some(3),
             feature_snapshot_json: Some(
                 serde_json::json!({
-                    "rule": "balanced_overlap_v2",
-                    "ruleVersion": 2,
+                    "rule": "balanced_overlap_v3",
+                    "ruleVersion": 3,
                     "reviewId": "strict-review",
                     "reviewRevision": 4,
                     "candidateId": "strict-candidate"
@@ -2229,6 +2604,29 @@ mod tests {
                 .to_string(),
             ),
         }
+    }
+
+    fn strict_omnibus_review() -> DownloadOverlapReview {
+        let mut review = strict_automatic_review();
+        review.incoming.title = "Collected Edition [Censored]".to_owned();
+        review.incoming.page_count = 20;
+        let candidate = &mut review.candidates[0];
+        candidate.existing.title = "Chapter [Decensored]".to_owned();
+        candidate.existing.page_count = 12;
+        candidate.confidence = 0.8646;
+        candidate.matched_pages = 12;
+        candidate.exact_pages = 4;
+        candidate.visual_pages = 8;
+        candidate.existing_coverage = 1.0;
+        candidate.incoming_coverage = 0.6;
+        candidate.existing_unique_pages = 0;
+        candidate.incoming_unique_pages = 8;
+        candidate.longest_aligned_run = 4;
+        candidate.page_pairs.truncate(12);
+        for (index, pair) in candidate.page_pairs.iter_mut().enumerate() {
+            pair.exact_sha256 = index < 4;
+        }
+        review
     }
 
     #[test]
@@ -2272,8 +2670,8 @@ mod tests {
         let mut mismatched_snapshot = strict_automatic_request();
         mismatched_snapshot.feature_snapshot_json = Some(
             serde_json::json!({
-                "rule": "balanced_overlap_v2",
-                "ruleVersion": 2,
+                "rule": "balanced_overlap_v3",
+                "ruleVersion": 3,
                 "reviewId": "strict-review",
                 "reviewRevision": 3,
                 "candidateId": "strict-candidate"
@@ -2281,6 +2679,98 @@ mod tests {
             .to_string(),
         );
         assert!(normalize_overlap_decision_audit(&mut mismatched_snapshot).is_err());
+    }
+
+    #[test]
+    fn strict_overlap_automation_accepts_observed_omnibus_boundary() {
+        let review = strict_omnibus_review();
+        validate_strict_overlap_automatic_decision(&review, &strict_automatic_request())
+            .expect("the observed 20-to-12 clear-containment boundary should be eligible");
+    }
+
+    #[test]
+    fn strict_overlap_automation_removes_a_small_uncensored_incoming_from_an_existing_omnibus() {
+        let mut review = strict_omnibus_review();
+        review.incoming.title = "Chapter [Decensored]".to_owned();
+        review.incoming.page_count = 12;
+        let candidate = &mut review.candidates[0];
+        candidate.relation = DownloadOverlapRelation::ExistingContainsIncoming;
+        candidate.existing.title = "Collected Edition [Censored]".to_owned();
+        candidate.existing.page_count = 20;
+        candidate.existing_coverage = 0.6;
+        candidate.incoming_coverage = 1.0;
+        candidate.existing_unique_pages = 8;
+        candidate.incoming_unique_pages = 0;
+        let mut request = strict_automatic_request();
+        request.action = DownloadOverlapDecisionAction::RemoveIncoming;
+
+        validate_strict_overlap_automatic_decision(&review, &request)
+            .expect("a clearly contained small incoming remains removable despite its marker");
+    }
+
+    #[test]
+    fn strict_overlap_automation_rejects_omnibus_unique_pages_or_nonmonotonic_pairs() {
+        let mut unique_page = strict_omnibus_review();
+        unique_page.candidates[0].existing_unique_pages = 1;
+        assert!(validate_strict_overlap_automatic_decision(
+            &unique_page,
+            &strict_automatic_request()
+        )
+        .is_err());
+
+        let mut nonmonotonic = strict_omnibus_review();
+        let repeated_existing_page = nonmonotonic.candidates[0].page_pairs[3].existing_source_page;
+        nonmonotonic.candidates[0].page_pairs[4].existing_source_page = repeated_existing_page;
+        assert!(validate_strict_overlap_automatic_decision(
+            &nonmonotonic,
+            &strict_automatic_request()
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn strict_overlap_automation_requires_every_pending_candidate_to_keep_the_same_winner() {
+        let mut all_incoming = strict_omnibus_review();
+        let mut second = all_incoming.candidates[0].clone();
+        second.candidate_id = "strict-candidate-2".to_owned();
+        second.existing.entry_id = "existing-entry-2".to_owned();
+        second.existing.gallery_id = GalleryId::new(101).unwrap();
+        second.existing_fingerprint = "c".repeat(64);
+        second.rank = 2;
+        all_incoming.candidates.push(second);
+        validate_strict_overlap_automatic_decision(&all_incoming, &strict_automatic_request())
+            .expect("every pending candidate has the same safe incoming winner");
+
+        let mixed = &mut all_incoming.candidates[1];
+        mixed.relation = DownloadOverlapRelation::ExistingContainsIncoming;
+        mixed.existing.page_count = 40;
+        mixed.existing_coverage = 0.5;
+        mixed.incoming_coverage = 1.0;
+        mixed.existing_unique_pages = 20;
+        mixed.incoming_unique_pages = 0;
+        mixed.confidence = 0.99;
+        mixed.matched_pages = 20;
+        mixed.exact_pages = 20;
+        mixed.visual_pages = 0;
+        mixed.longest_aligned_run = 20;
+        mixed.page_pairs = (1..=20)
+            .map(|page| crate::domain::DownloadOverlapPagePair {
+                incoming_source_page: page,
+                existing_source_page: page,
+                exact_sha256: true,
+                d_hash_distance: 0,
+                p_hash_distance: 0,
+                detail_hash_distance: 0,
+                edge_similarity: 1.0,
+                visual_similarity: 1.0,
+                low_information: false,
+            })
+            .collect();
+        assert!(validate_strict_overlap_automatic_decision(
+            &all_incoming,
+            &strict_automatic_request()
+        )
+        .is_err());
     }
 
     struct FakeDownloadSource {
@@ -2466,6 +2956,36 @@ mod tests {
         assert_eq!(code, "IMAGE_RESPONSE_INVALID");
         assert!(!message.contains("private"));
         assert!(!message.contains("secret"));
+    }
+
+    #[test]
+    fn candidate_stage_failure_is_skipped_after_eligibility_recheck_rejects_snapshot() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        let (repository, service) = configured_repository(&root);
+        let queued = service
+            .download_queue_add(vec![41], "overlap-race-recheck".into())
+            .unwrap();
+        let descriptor = queued.jobs.into_iter().next().unwrap();
+        let incoming_entry_id = DownloadEntryId::new(descriptor.entry_id.clone()).unwrap();
+        let candidate = crate::domain::DownloadOverlapCandidateIdentity {
+            entry_id: DownloadEntryId::new("candidate-removed-after-snapshot").unwrap(),
+            gallery_id: GalleryId::new(42).unwrap(),
+            artists: vec!["fixture artist".into()],
+        };
+        let (supervisor, _events) = launch(&repository, Arc::new(FakeDownloadSource::new(1, None)));
+
+        handle_overlap_candidate_stage_failure(
+            &supervisor.inner,
+            &descriptor,
+            &incoming_entry_id,
+            "verify_candidate_files",
+            &candidate,
+            RepositoryError::Corrupt("candidate changed concurrently".into()).into(),
+        )
+        .expect("an ineligible stale candidate is skipped");
+
+        supervisor.shutdown_and_wait();
     }
 
     #[test]

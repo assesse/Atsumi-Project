@@ -71,6 +71,8 @@ pub enum ApplicationError {
     DuplicateCandidateNotFound(String),
     #[error("download overlap review {0:?} was not found")]
     DownloadOverlapReviewNotFound(String),
+    #[error("download overlap automation history {0:?} was not found")]
+    DownloadOverlapAutomationHistoryNotFound(String),
     #[error("download overlap decision is invalid: {0}")]
     DownloadOverlapDecisionInvalid(String),
     #[error("no internal duplicate scan is currently running")]

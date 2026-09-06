@@ -387,7 +387,8 @@ impl AutoFindSource for HitomiLiveAdapter {
         } else {
             request.languages.clone()
         };
-        let cutoff = request.newer_than_gallery_id.map(|id| id.get() as u64);
+        let retain_cutoff = request.retain_after_gallery_id.map(|id| id.get() as u64);
+        let incremental_cutoff = request.newer_than_gallery_id.map(|id| id.get() as u64);
         let mut ids = Vec::new();
         for language in languages {
             check_auto_find_cancelled(cancellation)?;
@@ -397,8 +398,40 @@ impl AutoFindSource for HitomiLiveAdapter {
         ids.sort_unstable_by(|left, right| right.cmp(left));
         let mut seen = HashSet::new();
         ids.retain(|id| seen.insert(*id));
-        ids.retain(|id| artist_ids.contains(id) && cutoff.is_none_or(|minimum| *id > minimum));
+        ids.retain(|id| artist_ids.contains(id));
         ids.dedup();
+        let latest_available_gallery_id = ids
+            .first()
+            .copied()
+            .map(|id| {
+                i64::try_from(id).map_err(|_| {
+                    SourceContractError::invalid_data(
+                        "gallery ID",
+                        "does not fit the application domain",
+                    )
+                })
+            })
+            .transpose()?
+            .map(GalleryId::new)
+            .transpose()
+            .map_err(|error| SourceContractError::invalid_data("gallery ID", error.to_string()))?;
+        ids.retain(|id| retain_cutoff.is_none_or(|minimum| *id > minimum));
+        let matching_ids = ids
+            .iter()
+            .copied()
+            .map(|id| {
+                let id = i64::try_from(id).map_err(|_| {
+                    SourceContractError::invalid_data(
+                        "gallery ID",
+                        "does not fit the application domain",
+                    )
+                })?;
+                GalleryId::new(id).map_err(|error| {
+                    SourceContractError::invalid_data("gallery ID", error.to_string())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        ids.retain(|id| incremental_cutoff.is_none_or(|minimum| *id > minimum));
         let eligible_count = u32::try_from(ids.len()).unwrap_or(u32::MAX);
         let bounded_limit = request.candidate_limit.min(AUTO_FIND_CANDIDATE_LIMIT);
         let limit = usize::try_from(bounded_limit).unwrap_or(usize::MAX);
@@ -421,6 +454,8 @@ impl AutoFindSource for HitomiLiveAdapter {
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?,
+            matching_ids,
+            latest_available_gallery_id,
             eligible_count,
             limit: bounded_limit,
             truncated_reason,

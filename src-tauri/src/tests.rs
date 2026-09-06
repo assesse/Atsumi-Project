@@ -14,7 +14,9 @@ use crate::{
     domain::{
         windows_path_for_display, ArtifactBundle, ArtifactRelativePath, AutoFindHistoryMode,
         AutoFindRunState, DownloadArtifact, DownloadArtifactState, DownloadEntry, DownloadEntryId,
-        DownloadListRequest, ExplorationDataResetRequest, FavoriteKey, FavoriteNamespace,
+        DownloadListRequest, DownloadOverlapAutomationHistoryItem,
+        DownloadOverlapAutomationHistoryListRequest, DownloadOverlapAutomationHistoryPage,
+        DownloadOverlapReviewState, ExplorationDataResetRequest, FavoriteKey, FavoriteNamespace,
         FixtureDownloadJobStep, Gallery, GalleryDisplayMode, GalleryGroupingMode, GalleryId,
         GalleryMetadata, JobRef, JobState, Language, PageArtifact, PageArtifactState,
         SearchRequest, SearchSort, SettingsPatch, SettingsSnapshot, SourcePageNumber,
@@ -97,7 +99,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -182,7 +184,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31, 32, 33, 34, 35, 36
+            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -293,7 +295,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36
+            33, 34, 35, 36, 37, 38, 39
         ]
     );
     let metadata: (String, String) = connection
@@ -357,7 +359,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -2029,6 +2031,11 @@ fn download_command_payloads_and_results_match_typescript_contracts() {
     struct MutationPayload {
         entry_ids: Vec<String>,
     }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase", deny_unknown_fields)]
+    struct AutomationHistoryPayload {
+        request: DownloadOverlapAutomationHistoryListRequest,
+    }
 
     let queue: QueuePayload = serde_json::from_value(json!({
         "galleries": [4051038, 4051027],
@@ -2055,6 +2062,52 @@ fn download_command_payloads_and_results_match_typescript_contracts() {
     }))
     .expect("deserialize retry/cancel payload");
     assert_eq!(mutation.entry_ids, vec!["entry-1", "entry-2"]);
+
+    let history: AutomationHistoryPayload = serde_json::from_value(json!({
+        "request": { "page": 3, "pageSize": 25 }
+    }))
+    .expect("deserialize download_overlap_automation_history_list payload");
+    assert_eq!(history.request.page, 3);
+    assert_eq!(history.request.page_size, 25);
+    assert_eq!(
+        serde_json::to_value(DownloadOverlapAutomationHistoryPage {
+            total_items: 4,
+            unacknowledged_items: 2,
+            page: 1,
+            page_size: 25,
+            items: vec![DownloadOverlapAutomationHistoryItem {
+                review_id: "review-contract".into(),
+                incoming_gallery_id: GalleryId::new(4_051_038).unwrap(),
+                title: "History contract".into(),
+                occurred_at: "2026-09-04T12:00:00.000Z".into(),
+                review_state: DownloadOverlapReviewState::Pending,
+                remove_incoming_count: 0,
+                remove_existing_count: 2,
+                removed_gallery_ids: vec![
+                    GalleryId::new(4_051_027).unwrap(),
+                    GalleryId::new(4_051_028).unwrap(),
+                ],
+                acknowledged_at: None,
+            }],
+        })
+        .expect("serialize automation history page"),
+        json!({
+            "totalItems": 4,
+            "unacknowledgedItems": 2,
+            "page": 1,
+            "pageSize": 25,
+            "items": [{
+                "reviewId": "review-contract",
+                "incomingGalleryId": 4051038,
+                "title": "History contract",
+                "occurredAt": "2026-09-04T12:00:00.000Z",
+                "reviewState": "pending",
+                "removeIncomingCount": 0,
+                "removeExistingCount": 2,
+                "removedGalleryIds": [4051027, 4051028]
+            }]
+        })
+    );
     assert_eq!(
         serde_json::to_value(ApiResult::success(vec![JobRef {
             job_id: "job-contract".into(),

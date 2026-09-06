@@ -380,6 +380,7 @@ fn auto_find_filters_nozomi_ids_before_metadata_and_reports_the_bounded_plan() {
             &AutoFindSourceRequest {
                 artist: "serein".into(),
                 languages: vec![Language::English],
+                retain_after_gallery_id: None,
                 newer_than_gallery_id: Some(GalleryId::new(100).unwrap()),
                 candidate_limit: 1,
             },
@@ -388,6 +389,18 @@ fn auto_find_filters_nozomi_ids_before_metadata_and_reports_the_bounded_plan() {
         .unwrap();
 
     assert_eq!(plan.candidate_ids, vec![GalleryId::new(300).unwrap()]);
+    assert_eq!(
+        plan.matching_ids,
+        vec![
+            GalleryId::new(300).unwrap(),
+            GalleryId::new(200).unwrap(),
+            GalleryId::new(90).unwrap()
+        ]
+    );
+    assert_eq!(
+        plan.latest_available_gallery_id,
+        Some(GalleryId::new(300).unwrap())
+    );
     assert_eq!(plan.eligible_count, 2);
     assert_eq!(
         plan.truncated_reason.as_deref(),

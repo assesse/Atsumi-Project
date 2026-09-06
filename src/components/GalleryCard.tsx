@@ -65,6 +65,8 @@ const workLabel: Partial<Record<NonNullable<Gallery["download"]>["state"], strin
   cancelled: "취소됨",
 };
 
+const galleryCardMaximumCoverHeightRatio = 3 / 2;
+
 export function compactFavoriteTagValues(
   tags: readonly string[],
   favoriteMetadata: ReadonlySet<string>,
@@ -353,6 +355,7 @@ function GalleryCardComponent({
         priority={thumbnailPriority}
         client={thumbnailClient}
         sizing="intrinsic"
+        maxHeightToWidthRatio={galleryCardMaximumCoverHeightRatio}
         expectedAspectRatio={gallery.thumbnailWidth !== undefined && gallery.thumbnailHeight !== undefined
           ? { width: gallery.thumbnailWidth, height: gallery.thumbnailHeight }
           : undefined}

@@ -172,6 +172,34 @@ describe("gallery selectors", () => {
     expect(visibleGalleries(downloads, [quarantined])).toEqual([]);
   });
 
+  it.each([
+    "queued",
+    "resolving_metadata",
+    "downloading",
+    "hashing",
+    "verifying",
+    "retry_wait",
+    "review_required",
+    "interrupted",
+    "failed",
+    "completed",
+    "quarantined",
+    "cancelled",
+  ] as const)("removes a %s download-library item from the Auto Find inbox", (downloadState) => {
+    const autoFind = uiReducer(initialUiState, { type: "navigate", view: "auto-find" });
+    const candidate = {
+      ...mockGalleries[4]!,
+      favorite: true,
+      download: {
+        entryId: `auto-find-${downloadState}`,
+        state: downloadState,
+      },
+    };
+
+    expect(visibleGalleries(autoFind, [candidate])).toEqual([]);
+    expect(visibleGalleries(autoFind, [{ ...candidate, download: undefined }])).toHaveLength(1);
+  });
+
   it("shows the most recently added download first only in the flat all view", () => {
     const older = {
       ...mockGalleries[0]!,
