@@ -44,6 +44,8 @@ pub struct DownloadSupervisor {
     inner: Arc<SupervisorInner>,
 }
 
+type DownloadCompletionHandler = Arc<dyn Fn(crate::domain::GalleryId) + Send + Sync>;
+
 struct SupervisorInner {
     queue: Mutex<QueueState>,
     wake: Condvar,
@@ -56,6 +58,8 @@ struct SupervisorInner {
     workers: Mutex<Vec<JoinHandle<()>>>,
     finalization_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     overlap_decisions: Mutex<()>,
+    completion_handler: Mutex<Option<DownloadCompletionHandler>>,
+    exclusion_handler: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     shutting_down: AtomicBool,
 }
 
@@ -104,6 +108,8 @@ impl DownloadSupervisor {
             workers: Mutex::new(Vec::new()),
             finalization_locks: Mutex::new(HashMap::new()),
             overlap_decisions: Mutex::new(()),
+            completion_handler: Mutex::new(None),
+            exclusion_handler: Mutex::new(None),
             shutting_down: AtomicBool::new(false),
         });
         let supervisor = Self {
@@ -126,6 +132,18 @@ impl DownloadSupervisor {
         }
         drop(workers);
         Ok(supervisor)
+    }
+
+    /// The handler must enqueue background work and return promptly.
+    pub fn set_completion_handler(
+        &self,
+        handler: Arc<dyn Fn(crate::domain::GalleryId) + Send + Sync>,
+    ) {
+        *unpoison(self.inner.completion_handler.lock()) = Some(handler);
+    }
+
+    pub fn set_exclusion_handler(&self, handler: Arc<dyn Fn() + Send + Sync>) {
+        *unpoison(self.inner.exclusion_handler.lock()) = Some(handler);
     }
 
     pub fn enqueue(
@@ -424,6 +442,7 @@ impl DownloadSupervisor {
                 });
                 if let Some(projection) = self.inner.repository.pipeline_mark_artifact_issue(
                     &bundle.artifact.entry_id,
+                    Some(&bundle.artifact),
                     &code,
                     &message,
                 )? {
@@ -788,6 +807,16 @@ impl DownloadSupervisor {
         }
         match outcome {
             DownloadOverlapDecisionApplyOutcome::Applied(applied) => {
+                if matches!(
+                    request.action,
+                    DownloadOverlapDecisionAction::RemoveIncoming
+                        | DownloadOverlapDecisionAction::RemoveExistingContinue
+                ) {
+                    let handler = unpoison(self.inner.exclusion_handler.lock()).clone();
+                    if let Some(handler) = handler {
+                        handler();
+                    }
+                }
                 if let Some(projection) = applied.removed_existing_projection {
                     emit(&self.inner, projection);
                 }
@@ -1221,6 +1250,7 @@ fn run_download(
                             false,
                         )
                     })?,
+                    None,
                     "RECOVERY_CONFLICT",
                     "Ambiguous page files were moved aside for review",
                 )? {
@@ -1392,6 +1422,10 @@ fn run_download(
             &layout.manifest_relative_path,
         )?,
     );
+    let handler = unpoison(inner.completion_handler.lock()).clone();
+    if let Some(handler) = handler {
+        handler(descriptor.gallery_id);
+    }
     Ok(())
 }
 
@@ -1843,13 +1877,13 @@ fn normalize_overlap_decision_audit(
                 "Automatic overlap decisions require a reason code".into(),
             )
         })?;
-    if reason != "balanced_overlap_v3" {
+    if reason != "balanced_overlap_v4" {
         return Err(ApplicationError::DownloadOverlapDecisionInvalid(
             "The requested automatic overlap rule is not supported by this build".into(),
         ));
     }
     request.reason_code = Some(reason.to_owned());
-    if request.rule_version != Some(3) {
+    if request.rule_version != Some(4) {
         return Err(ApplicationError::DownloadOverlapDecisionInvalid(
             "The requested automatic overlap rule version is not supported by this build".into(),
         ));
@@ -1881,11 +1915,11 @@ fn normalize_overlap_decision_audit(
         ));
     }
     let expected_candidate = request.candidate_id.as_deref().unwrap_or_default();
-    if parsed.get("rule").and_then(serde_json::Value::as_str) != Some("balanced_overlap_v3")
+    if parsed.get("rule").and_then(serde_json::Value::as_str) != Some("balanced_overlap_v4")
         || parsed
             .get("ruleVersion")
             .and_then(serde_json::Value::as_u64)
-            != Some(3)
+            != Some(4)
         || parsed.get("reviewId").and_then(serde_json::Value::as_str)
             != Some(request.review_id.as_str())
         || parsed
@@ -1962,10 +1996,10 @@ fn strict_overlap_winner(
         .count();
     let informative_match_ratio = informative_matches as f64 / matched;
 
-    // Large compilation/omnibus decisions use a separate evidence path. This
-    // path deliberately ignores edition-title preference only when the
-    // directional containment and every contained page are unambiguous.
-    let omnibus_direction = match candidate.relation {
+    // Complete directional containment is stronger evidence than an edition
+    // title marker. Every page on the contained side must be accounted for by
+    // a monotonic mapping, while match/run minima scale down for short works.
+    let complete_containment_direction = match candidate.relation {
         crate::domain::DownloadOverlapRelation::IncomingContainsExisting
             if incoming_page_count > existing_page_count =>
         {
@@ -1990,27 +2024,24 @@ fn strict_overlap_winner(
         }
         _ => None,
     };
-    if let Some((winner, loser_coverage, contained_unique_pages, larger, smaller)) =
-        omnibus_direction
+    if let Some((winner, loser_coverage, contained_unique_pages, _larger, smaller)) =
+        complete_containment_direction
     {
         let page_pairs_are_strictly_increasing = candidate.page_pairs.windows(2).all(|pair| {
             pair[0].incoming_source_page < pair[1].incoming_source_page
                 && pair[0].existing_source_page < pair[1].existing_source_page
         });
-        let page_ratio = if smaller == 0 {
-            0.0
-        } else {
-            f64::from(larger) / f64::from(smaller)
-        };
-        if loser_coverage >= 0.98
+        let required_matched_pages = 4_u32.min(smaller);
+        let required_aligned_run = 2_u32.min(candidate.matched_pages);
+        if loser_coverage >= 1.0
             && contained_unique_pages == 0
-            && larger.abs_diff(smaller) >= 8
-            && page_ratio >= 1.5
-            && candidate.matched_pages >= 8
-            && candidate.confidence >= 0.86
-            && candidate.longest_aligned_run >= 4
-            && aligned_run_ratio >= 0.30
-            && informative_match_ratio >= 0.95
+            && candidate.matched_pages == smaller
+            && candidate.page_pairs.len() == candidate.matched_pages as usize
+            && candidate.matched_pages >= required_matched_pages
+            && candidate.confidence >= 0.85
+            && candidate.longest_aligned_run >= required_aligned_run
+            && informative_match_ratio >= 0.75
+            && (smaller > 3 || candidate.exact_pages == candidate.matched_pages)
             && page_pairs_are_strictly_increasing
         {
             return Some(winner);
@@ -2021,15 +2052,9 @@ fn strict_overlap_winner(
     let existing_preference = overlap_edition_preference(&candidate.existing.title);
     let (winner, loser_coverage) = match candidate.relation {
         crate::domain::DownloadOverlapRelation::IncomingContainsExisting => {
-            if incoming_preference < existing_preference {
-                return None;
-            }
             (StrictOverlapWinner::Incoming, candidate.existing_coverage)
         }
         crate::domain::DownloadOverlapRelation::ExistingContainsIncoming => {
-            if existing_preference < incoming_preference {
-                return None;
-            }
             (StrictOverlapWinner::Existing, candidate.incoming_coverage)
         }
         crate::domain::DownloadOverlapRelation::NearEquivalent => {
@@ -2591,12 +2616,12 @@ mod tests {
             action: DownloadOverlapDecisionAction::RemoveExistingContinue,
             candidate_id: Some("strict-candidate".to_owned()),
             actor: DownloadOverlapDecisionActor::Automation,
-            reason_code: Some("balanced_overlap_v3".to_owned()),
-            rule_version: Some(3),
+            reason_code: Some("balanced_overlap_v4".to_owned()),
+            rule_version: Some(4),
             feature_snapshot_json: Some(
                 serde_json::json!({
-                    "rule": "balanced_overlap_v3",
-                    "ruleVersion": 3,
+                    "rule": "balanced_overlap_v4",
+                    "ruleVersion": 4,
                     "reviewId": "strict-review",
                     "reviewRevision": 4,
                     "candidateId": "strict-candidate"
@@ -2606,7 +2631,7 @@ mod tests {
         }
     }
 
-    fn strict_omnibus_review() -> DownloadOverlapReview {
+    fn strict_complete_containment_review() -> DownloadOverlapReview {
         let mut review = strict_automatic_review();
         review.incoming.title = "Collected Edition [Censored]".to_owned();
         review.incoming.page_count = 20;
@@ -2660,18 +2685,25 @@ mod tests {
             .expect("the NFKC-normalized uncensored marker should take priority");
 
         let mut weak_evidence = review.clone();
-        weak_evidence.candidates[0].confidence = 0.89;
+        weak_evidence.candidates[0].confidence = 0.849;
         assert!(validate_strict_overlap_automatic_decision(&weak_evidence, &request).is_err());
 
-        let mut excessive_page_gap = review.clone();
-        excessive_page_gap.incoming.page_count = 26;
-        assert!(validate_strict_overlap_automatic_decision(&excessive_page_gap, &request).is_err());
+        let mut complete_page_gap = review.clone();
+        complete_page_gap.incoming.page_count = 26;
+        validate_strict_overlap_automatic_decision(&complete_page_gap, &request)
+            .expect("complete containment is stronger than the old five-page gap guard");
+
+        let mut incomplete_page_gap = complete_page_gap;
+        incomplete_page_gap.candidates[0].existing_coverage = 0.99;
+        assert!(
+            validate_strict_overlap_automatic_decision(&incomplete_page_gap, &request).is_err()
+        );
 
         let mut mismatched_snapshot = strict_automatic_request();
         mismatched_snapshot.feature_snapshot_json = Some(
             serde_json::json!({
-                "rule": "balanced_overlap_v3",
-                "ruleVersion": 3,
+                "rule": "balanced_overlap_v4",
+                "ruleVersion": 4,
                 "reviewId": "strict-review",
                 "reviewRevision": 3,
                 "candidateId": "strict-candidate"
@@ -2682,15 +2714,16 @@ mod tests {
     }
 
     #[test]
-    fn strict_overlap_automation_accepts_observed_omnibus_boundary() {
-        let review = strict_omnibus_review();
+    fn strict_overlap_automation_accepts_observed_complete_containment_boundary() {
+        let review = strict_complete_containment_review();
         validate_strict_overlap_automatic_decision(&review, &strict_automatic_request())
             .expect("the observed 20-to-12 clear-containment boundary should be eligible");
     }
 
     #[test]
-    fn strict_overlap_automation_removes_a_small_uncensored_incoming_from_an_existing_omnibus() {
-        let mut review = strict_omnibus_review();
+    fn strict_overlap_automation_removes_a_small_uncensored_incoming_from_an_existing_compilation()
+    {
+        let mut review = strict_complete_containment_review();
         review.incoming.title = "Chapter [Decensored]".to_owned();
         review.incoming.page_count = 12;
         let candidate = &mut review.candidates[0];
@@ -2709,8 +2742,8 @@ mod tests {
     }
 
     #[test]
-    fn strict_overlap_automation_rejects_omnibus_unique_pages_or_nonmonotonic_pairs() {
-        let mut unique_page = strict_omnibus_review();
+    fn strict_overlap_automation_rejects_complete_containment_unique_pages_or_nonmonotonic_pairs() {
+        let mut unique_page = strict_complete_containment_review();
         unique_page.candidates[0].existing_unique_pages = 1;
         assert!(validate_strict_overlap_automatic_decision(
             &unique_page,
@@ -2718,7 +2751,7 @@ mod tests {
         )
         .is_err());
 
-        let mut nonmonotonic = strict_omnibus_review();
+        let mut nonmonotonic = strict_complete_containment_review();
         let repeated_existing_page = nonmonotonic.candidates[0].page_pairs[3].existing_source_page;
         nonmonotonic.candidates[0].page_pairs[4].existing_source_page = repeated_existing_page;
         assert!(validate_strict_overlap_automatic_decision(
@@ -2729,8 +2762,85 @@ mod tests {
     }
 
     #[test]
+    fn strict_overlap_automation_accepts_observed_short_and_split_run_containment_cases() {
+        let mut fanbox = strict_automatic_review();
+        fanbox.incoming.gallery_id = GalleryId::new(1_585_943).unwrap();
+        fanbox.incoming.page_count = 67;
+        let candidate = &mut fanbox.candidates[0];
+        candidate.existing.gallery_id = GalleryId::new(1_779_804).unwrap();
+        candidate.existing.page_count = 4;
+        candidate.confidence = 0.856_351_720_588_666_3;
+        candidate.matched_pages = 4;
+        candidate.exact_pages = 0;
+        candidate.visual_pages = 4;
+        candidate.existing_coverage = 1.0;
+        candidate.incoming_coverage = 4.0 / 67.0;
+        candidate.existing_unique_pages = 0;
+        candidate.incoming_unique_pages = 63;
+        candidate.longest_aligned_run = 4;
+        candidate.page_pairs.truncate(4);
+        for pair in &mut candidate.page_pairs {
+            pair.exact_sha256 = false;
+            pair.low_information = false;
+        }
+        validate_strict_overlap_automatic_decision(&fanbox, &strict_automatic_request())
+            .expect("1585943 completely contains the four-page existing work");
+
+        let mut split_run = strict_automatic_review();
+        split_run.incoming.gallery_id = GalleryId::new(1_890_795).unwrap();
+        split_run.incoming.page_count = 7;
+        let candidate = &mut split_run.candidates[0];
+        candidate.relation = DownloadOverlapRelation::ExistingContainsIncoming;
+        candidate.existing.gallery_id = GalleryId::new(1_900_461).unwrap();
+        candidate.existing.page_count = 23;
+        candidate.confidence = 0.906_378_709_711_646_4;
+        candidate.matched_pages = 7;
+        candidate.exact_pages = 0;
+        candidate.visual_pages = 7;
+        candidate.existing_coverage = 7.0 / 23.0;
+        candidate.incoming_coverage = 1.0;
+        candidate.existing_unique_pages = 16;
+        candidate.incoming_unique_pages = 0;
+        candidate.longest_aligned_run = 2;
+        candidate.page_pairs.truncate(7);
+        for pair in &mut candidate.page_pairs {
+            pair.exact_sha256 = false;
+            pair.low_information = false;
+        }
+        let mut remove_incoming = strict_automatic_request();
+        remove_incoming.action = DownloadOverlapDecisionAction::RemoveIncoming;
+        validate_strict_overlap_automatic_decision(&split_run, &remove_incoming)
+            .expect("1890795 is completely contained despite its split aligned run");
+
+        let mut marker_conflict = strict_automatic_review();
+        marker_conflict.incoming.gallery_id = GalleryId::new(1_860_999).unwrap();
+        marker_conflict.incoming.title = "Nightingale [Censored]".to_owned();
+        marker_conflict.incoming.page_count = 9;
+        let candidate = &mut marker_conflict.candidates[0];
+        candidate.existing.gallery_id = GalleryId::new(3_809_665).unwrap();
+        candidate.existing.title = "Nightingale [Decensored]".to_owned();
+        candidate.existing.page_count = 5;
+        candidate.confidence = 0.939_895_495_061_802_4;
+        candidate.matched_pages = 5;
+        candidate.exact_pages = 1;
+        candidate.visual_pages = 4;
+        candidate.existing_coverage = 1.0;
+        candidate.incoming_coverage = 5.0 / 9.0;
+        candidate.existing_unique_pages = 0;
+        candidate.incoming_unique_pages = 4;
+        candidate.longest_aligned_run = 5;
+        candidate.page_pairs.truncate(5);
+        for (index, pair) in candidate.page_pairs.iter_mut().enumerate() {
+            pair.exact_sha256 = index == 0;
+            pair.low_information = false;
+        }
+        validate_strict_overlap_automatic_decision(&marker_conflict, &strict_automatic_request())
+            .expect("1860999 containment takes priority over the smaller decensored marker");
+    }
+
+    #[test]
     fn strict_overlap_automation_requires_every_pending_candidate_to_keep_the_same_winner() {
-        let mut all_incoming = strict_omnibus_review();
+        let mut all_incoming = strict_complete_containment_review();
         let mut second = all_incoming.candidates[0].clone();
         second.candidate_id = "strict-candidate-2".to_owned();
         second.existing.entry_id = "existing-entry-2".to_owned();

@@ -38,7 +38,7 @@ afterEach(() => {
 
 describe("BackendThumbnailAdapter", () => {
   it("turns one backend completion into a revocable display URL", async () => {
-    const createObjectURL = vi.fn(() => "blob:https://atsumi.local/thumbnail-1");
+    const createObjectURL = vi.fn((_blob: Blob) => "blob:https://atsumi.local/thumbnail-1");
     const revokeObjectURL = vi.fn();
     Object.defineProperty(URL, "createObjectURL", { configurable: true, value: createObjectURL });
     Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revokeObjectURL });
@@ -51,8 +51,11 @@ describe("BackendThumbnailAdapter", () => {
       url: "blob:https://atsumi.local/thumbnail-1",
       width: 512,
       height: 512,
+      byteLength: expect.any(Number),
     });
     expect(createObjectURL).toHaveBeenCalledOnce();
+    expect(asset.kind === "image" ? asset.byteLength : undefined)
+      .toBe((createObjectURL.mock.calls[0]?.[0] as Blob | undefined)?.size);
 
     adapter.release(request, asset);
     expect(revokeObjectURL).toHaveBeenCalledWith("blob:https://atsumi.local/thumbnail-1");

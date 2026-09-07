@@ -49,8 +49,14 @@ const normalizedFixtureCell = (value: number): number => {
 };
 
 export function galleryCoverThumbnailKey(
-  gallery: Pick<Gallery, "id" | "thumbnailKey" | "coverIndex">,
-): GalleryCoverThumbnailKey {
+  gallery: Pick<Gallery, "id" | "thumbnailKey" | "coverIndex" | "download" | "representativePreview">,
+): GalleryCoverThumbnailKey | ArtifactPageThumbnailKey {
+  const preview = gallery.representativePreview;
+  if (preview?.sourcePage && preview.entryId
+    && preview.entryId === gallery.download?.entryId
+    && gallery.download.state === "completed") {
+    return artifactPageThumbnailKey(preview.entryId, preview.sourcePage, gallery.coverIndex);
+  }
   return {
     kind: "gallery-cover",
     galleryId: gallery.id,

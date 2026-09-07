@@ -3398,6 +3398,7 @@ impl DownloadPipelineRepository for SqliteRepository {
     fn pipeline_mark_artifact_issue(
         &self,
         entry_id: &DownloadEntryId,
+        expected_artifact: Option<&DownloadArtifact>,
         code: &str,
         message: &str,
     ) -> Result<Option<DownloadJobProjection>, RepositoryError> {
@@ -3405,6 +3406,43 @@ impl DownloadPipelineRepository for SqliteRepository {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite_error)?;
+        let expected_revision = expected_artifact
+            .map(|artifact| to_sql_integer(artifact.revision, "inspected artifact revision"))
+            .transpose()?;
+        // Inspection runs outside the DB lock. A relocation can start or finish
+        // after its snapshot was read, so only that same snapshot may be marked.
+        // The immediate transaction also keeps a new relocation from beginning
+        // between this guard and the artifact/job updates below.
+        let current_snapshot = transaction
+            .query_row(
+                r#"
+                    SELECT EXISTS (
+                        SELECT 1 FROM download_artifacts artifact
+                        WHERE artifact.entry_id = ?1
+                          AND (?2 IS NULL OR (
+                              artifact.revision = ?2
+                              AND artifact.relative_directory = ?3
+                              AND artifact.state = ?4
+                          ))
+                          AND NOT EXISTS (
+                              SELECT 1 FROM excluded_artifact_relocations relocation
+                              WHERE relocation.entry_id = artifact.entry_id
+                                AND relocation.state IN ('pending_exclude', 'pending_restore')
+                          )
+                    )
+                "#,
+                params![
+                    entry_id.as_str(),
+                    expected_revision,
+                    expected_artifact.map(|artifact| artifact.relative_directory.as_str()),
+                    expected_artifact.map(|artifact| artifact.state.as_str()),
+                ],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(map_sqlite_error)?;
+        if !current_snapshot {
+            return Ok(None);
+        }
         let Some(target) = read_download_target(&transaction, entry_id)? else {
             return Err(RepositoryError::Corrupt(format!(
                 "artifact references missing download entry {entry_id}"
@@ -3504,7 +3542,7 @@ impl DownloadPipelineRepository for SqliteRepository {
         let entry_ids = {
             let connection = self.connection()?;
             let mut statement = connection
-                .prepare("SELECT entry_id FROM download_artifacts ORDER BY entry_id ASC")
+                .prepare("SELECT entry_id FROM download_artifacts WHERE NOT EXISTS (SELECT 1 FROM excluded_artifact_relocations relocation WHERE relocation.entry_id = download_artifacts.entry_id AND relocation.state IN ('pending_exclude', 'pending_restore')) ORDER BY entry_id ASC")
                 .map_err(map_sqlite_error)?;
             let rows = statement
                 .query_map([], |row| row.get::<_, String>(0))
@@ -9966,6 +10004,194 @@ mod download_repository_tests {
             .expect("list history after restart");
         assert_eq!(persisted.unacknowledged_items, 1);
         assert_eq!(persisted.items[0].acknowledged_at, Some(acknowledged_at));
+    }
+}
+
+#[cfg(test)]
+mod artifact_issue_snapshot_tests {
+    use super::*;
+
+    fn fixture() -> (SqliteRepository, DownloadArtifact) {
+        let repository = SqliteRepository::open_in_memory().unwrap();
+        let gallery_id = GalleryId::new(810).unwrap();
+        let DownloadQueueAddOutcome::Added(added) = repository
+            .download_queue_add("artifact-issue-snapshot", &[gallery_id])
+            .unwrap()
+        else {
+            panic!("fixture must create a download");
+        };
+        let entry_id = added.entries[0].entry_id.clone();
+        {
+            let connection = repository.connection().unwrap();
+            connection.execute(
+                "INSERT INTO galleries(gallery_id,revision,title,source_page_count) VALUES(?1,0,'snapshot fixture',1)",
+                [gallery_id.get()],
+            ).unwrap();
+            connection
+                .execute(
+                    "UPDATE download_entries SET state='completed' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "UPDATE download_jobs SET state='completed' WHERE entry_id=?1",
+                    [entry_id.as_str()],
+                )
+                .unwrap();
+            connection.execute(
+                "INSERT INTO download_artifacts(entry_id,gallery_id,revision,relative_directory,expected_page_count,state,manifest_relative_path,manifest_schema_version,writer_version,hash_profile_version,completed_at,root_snapshot)
+                 VALUES(?1,?2,0,'album-810',1,'complete','album-810/manifest.json',1,'snapshot-test',1,'now','C:/snapshot-root')",
+                params![entry_id.as_str(),gallery_id.get()],
+            ).unwrap();
+        }
+        let artifact = DownloadArtifact::new(
+            entry_id,
+            gallery_id,
+            0,
+            ArtifactRelativePath::new("album-810").unwrap(),
+            1,
+            DownloadArtifactState::Complete,
+        )
+        .unwrap();
+        (repository, artifact)
+    }
+
+    fn states(
+        repository: &SqliteRepository,
+        entry_id: &DownloadEntryId,
+    ) -> (i64, String, String, String, String) {
+        repository
+            .connection()
+            .unwrap()
+            .query_row(
+                "SELECT a.revision,a.state,a.relative_directory,e.state,j.state
+             FROM download_artifacts a JOIN download_entries e USING(entry_id)
+             JOIN download_jobs j USING(entry_id) WHERE a.entry_id=?1",
+                [entry_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap()
+    }
+
+    fn pending_relocation(repository: &SqliteRepository, artifact: &DownloadArtifact) {
+        repository.connection().unwrap().execute(
+            "INSERT INTO excluded_artifact_relocations(record_id,entry_id,gallery_id,root_snapshot,original_relative_path,excluded_relative_path,state,artifact_revision,backup_json,reason,created_at,updated_at)
+             VALUES('snapshot-relocation',?1,?2,'C:/snapshot-root','album-810','.atsumi-excluded/snapshot/album-810','pending_exclude',0,'{}','test','now','now')",
+            params![artifact.entry_id.as_str(),artifact.gallery_id.get()],
+        ).unwrap();
+    }
+
+    #[test]
+    fn current_inspected_snapshot_can_mark_artifact_and_job_failed() {
+        let (repository, artifact) = fixture();
+        assert!(repository
+            .pipeline_mark_artifact_issue(
+                &artifact.entry_id,
+                Some(&artifact),
+                "ARTIFACT_MISSING",
+                "inspected file is missing",
+            )
+            .unwrap()
+            .is_some());
+        assert_eq!(
+            states(&repository, &artifact.entry_id),
+            (
+                1,
+                "missing_artifacts".into(),
+                "album-810".into(),
+                "failed".into(),
+                "failed".into(),
+            )
+        );
+    }
+
+    #[test]
+    fn inspection_requires_matching_revision_directory_and_state() {
+        let (repository, artifact) = fixture();
+        let before = states(&repository, &artifact.entry_id);
+        let mut wrong_revision = artifact.clone();
+        wrong_revision.revision += 1;
+        let mut wrong_directory = artifact.clone();
+        wrong_directory.relative_directory = ArtifactRelativePath::new("old-album-810").unwrap();
+        let mut wrong_state = artifact.clone();
+        wrong_state.state = DownloadArtifactState::Incomplete;
+        for inspected in [wrong_revision, wrong_directory, wrong_state] {
+            assert!(repository
+                .pipeline_mark_artifact_issue(
+                    &artifact.entry_id,
+                    Some(&inspected),
+                    "ARTIFACT_MISSING",
+                    "stale inspection",
+                )
+                .unwrap()
+                .is_none());
+            assert_eq!(states(&repository, &artifact.entry_id), before);
+        }
+    }
+
+    #[test]
+    fn pending_relocation_blocks_both_inspection_and_worker_issue_marks() {
+        let (repository, artifact) = fixture();
+        pending_relocation(&repository, &artifact);
+        let before = states(&repository, &artifact.entry_id);
+        for pending_state in ["pending_exclude", "pending_restore"] {
+            repository.connection().unwrap().execute(
+                "UPDATE excluded_artifact_relocations SET state=?1 WHERE record_id='snapshot-relocation'",
+                [pending_state],
+            ).unwrap();
+            for expected in [Some(&artifact), None] {
+                assert!(repository
+                    .pipeline_mark_artifact_issue(
+                        &artifact.entry_id,
+                        expected,
+                        "ARTIFACT_MISSING",
+                        "folder is moving",
+                    )
+                    .unwrap()
+                    .is_none());
+                assert_eq!(states(&repository, &artifact.entry_id), before);
+            }
+        }
+    }
+
+    #[test]
+    fn completed_relocation_invalidates_an_already_collected_inspection() {
+        let (repository, inspected) = fixture();
+        pending_relocation(&repository, &inspected);
+        {
+            let mut connection = repository.connection().unwrap();
+            let transaction = connection.transaction().unwrap();
+            transaction.execute(
+                "UPDATE download_artifacts SET relative_directory='.atsumi-excluded/snapshot/album-810',revision=revision+1 WHERE entry_id=?1",
+                [inspected.entry_id.as_str()],
+            ).unwrap();
+            transaction.execute(
+                "UPDATE excluded_artifact_relocations SET state='excluded' WHERE record_id='snapshot-relocation'",
+                [],
+            ).unwrap();
+            transaction.commit().unwrap();
+        }
+        let after_move = states(&repository, &inspected.entry_id);
+        assert_eq!(after_move.2, ".atsumi-excluded/snapshot/album-810");
+        assert!(repository
+            .pipeline_mark_artifact_issue(
+                &inspected.entry_id,
+                Some(&inspected),
+                "ARTIFACT_MISSING",
+                "old directory disappeared during inspection",
+            )
+            .unwrap()
+            .is_none());
+        assert_eq!(states(&repository, &inspected.entry_id), after_move);
     }
 }
 

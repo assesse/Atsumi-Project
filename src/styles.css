@@ -1132,6 +1132,372 @@ h2 {
   white-space: nowrap;
 }
 
+.gallery-group-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.download-artist-folder-grid {
+  display: grid;
+  min-width: 0;
+  align-items: start;
+  gap: 12px;
+}
+
+.download-artist-folder-card {
+  min-width: 0;
+  height: calc(var(--preview-width) * 1.5);
+}
+
+.download-artist-folder-card > h2 {
+  height: 100%;
+  margin: 0;
+}
+
+.download-artist-folder-button {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  grid-template-columns: minmax(112px, var(--preview-width)) minmax(0, 1fr);
+  padding: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  background:
+    linear-gradient(128deg, color-mix(in srgb, var(--primary) 11%, transparent), transparent 52%),
+    color-mix(in srgb, var(--surface-raised) 94%, #071217);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+  border-radius: 9px;
+  box-shadow: 0 5px 16px rgba(2, 9, 13, 0.2), inset 0 1px rgba(255, 255, 255, 0.025);
+  transition: border-color 160ms ease, box-shadow 180ms ease;
+}
+
+.download-artist-folder-button:hover,
+.download-artist-folder-button:focus-visible,
+.download-artist-folder-card.is-expanded .download-artist-folder-button {
+  border-color: color-mix(in srgb, var(--primary) 72%, var(--text));
+  box-shadow: 0 10px 25px rgba(2, 9, 13, 0.34), inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.download-artist-folder-button:focus-visible {
+  outline: 2px solid var(--primary-strong);
+  outline-offset: 2px;
+}
+
+.download-artist-folder-preview-stack {
+  position: relative;
+  display: block;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 52% 42%, color-mix(in srgb, var(--primary) 15%, transparent), transparent 56%),
+    var(--thumbnail-frame);
+  border-right: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+  isolation: isolate;
+}
+
+.download-artist-folder-preview {
+  position: absolute !important;
+  top: 11px;
+  bottom: 11px;
+  left: 10px;
+  width: calc(100% - 28px);
+  background: var(--thumbnail-frame);
+  border: 1px solid rgba(220, 239, 241, 0.3);
+  border-radius: 6px;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.42);
+  transform-origin: center;
+  transition: border-color 160ms ease, box-shadow 180ms ease;
+}
+
+.download-artist-folder-preview .cover-image,
+.download-artist-folder-preview .thumbnail-sprite-viewport {
+  object-fit: cover !important;
+  object-position: center top;
+}
+
+.download-artist-folder-preview.is-preview-1 {
+  z-index: 4;
+  transform: translate(-5px, 5px);
+}
+
+.download-artist-folder-preview-stack:hover .download-artist-folder-preview,
+.download-artist-folder-button:focus-visible .download-artist-folder-preview {
+  border-color: var(--primary-strong);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.5), 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.download-artist-folder-tab {
+  position: absolute;
+  top: 0;
+  left: 12px;
+  z-index: 6;
+  width: 46px;
+  height: 8px;
+  background: color-mix(in srgb, var(--primary) 78%, #dceff1);
+  border-radius: 0 0 5px 5px;
+  box-shadow: 0 3px 7px rgba(0, 0, 0, 0.35);
+}
+
+.download-artist-folder-type {
+  position: absolute;
+  top: 13px;
+  left: 8px;
+  z-index: 7;
+  padding: 3px 7px;
+  color: #e7f7f8;
+  font-size: 10px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  background: rgba(5, 15, 19, 0.83);
+  border: 1px solid rgba(178, 223, 226, 0.36);
+  border-radius: 999px;
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(5px);
+}
+
+.download-artist-folder-copy {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: 7px;
+  padding: var(--card-padding);
+}
+
+.download-artist-folder-name {
+  display: -webkit-box;
+  overflow: hidden;
+  font-size: var(--card-title-size);
+  line-height: var(--card-title-line);
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.download-artist-folder-count {
+  width: fit-content;
+  padding: 3px 8px;
+  color: color-mix(in srgb, var(--primary) 76%, var(--text));
+  font-size: var(--card-body-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: 720;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--primary) 28%, var(--line));
+  border-radius: 999px;
+}
+
+.download-artist-folder-tags {
+  display: flex;
+  min-width: 0;
+  max-height: 78px;
+  align-content: flex-start;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 3px;
+  overflow: hidden;
+}
+
+.download-artist-folder-tags.is-empty {
+  color: var(--muted);
+  font-size: var(--card-footer-size);
+  line-height: 1.35;
+}
+
+.download-artist-folder-tag {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  color: color-mix(in srgb, var(--text) 84%, var(--muted));
+  font-size: var(--card-footer-size);
+  font-weight: 630;
+  line-height: 1.1;
+  background: color-mix(in srgb, var(--surface) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+  border-radius: 999px;
+}
+
+.download-artist-folder-tag.is-favorite {
+  color: color-mix(in srgb, #f2ca72 76%, var(--text));
+  background: color-mix(in srgb, #d9a441 12%, var(--surface));
+  border-color: color-mix(in srgb, #d9a441 50%, var(--line));
+}
+
+.download-artist-folder-tag i {
+  flex: 0 0 auto;
+  color: #efbd59;
+  font-size: 10px;
+  font-style: normal;
+}
+
+.download-artist-folder-tag b {
+  overflow: hidden;
+  font: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-artist-folder-tag small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.download-artist-folder-action {
+  position: absolute;
+  right: var(--card-padding);
+  bottom: var(--card-padding);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--primary-strong);
+  font-size: var(--card-footer-size);
+  font-weight: 700;
+}
+
+.download-artist-folder-action i {
+  font-size: 18px;
+  font-style: normal;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.download-artist-folder-card.is-expanded .download-artist-folder-action i {
+  transform: rotate(90deg);
+}
+
+.download-artist-folder-contents {
+  display: grid;
+  min-width: 0;
+  grid-column: 1 / -1;
+  gap: 12px;
+  padding: 12px;
+  background: color-mix(in srgb, var(--surface) 96%, var(--primary) 4%);
+  border: 1px solid color-mix(in srgb, var(--primary) 31%, var(--line));
+  border-radius: 9px;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.02);
+  animation: download-artist-folder-open 170ms ease-out both;
+}
+
+.download-artist-folder-contents > header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 1px 2px 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 19%, var(--line));
+}
+
+.download-artist-folder-contents > header > div {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.download-artist-folder-contents > header span,
+.download-artist-folder-contents > header small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.download-artist-folder-contents > header strong {
+  overflow: hidden;
+  font-size: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-artist-folder-preview-overlay {
+  position: fixed;
+  z-index: 70;
+  display: grid;
+  min-width: 0;
+  gap: var(--folder-preview-gap);
+  pointer-events: none;
+}
+
+.download-artist-folder-overlay-preview {
+  position: relative !important;
+  display: block;
+  width: var(--folder-preview-width);
+  min-width: 0;
+  height: var(--folder-preview-height);
+  overflow: hidden;
+  background: var(--thumbnail-frame);
+  border: 1px solid color-mix(in srgb, var(--primary) 54%, #dceff1);
+  border-radius: 6px;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.52), 0 3px 8px rgba(0, 0, 0, 0.38);
+  transform-origin: center 85%;
+  animation: download-artist-folder-cover-deal 420ms cubic-bezier(0.16, 0.85, 0.23, 1) var(--folder-preview-delay) both;
+}
+
+.download-artist-folder-overlay-preview::after,
+.download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 24%, rgba(230, 251, 255, 0.2) 49%, transparent 74%);
+}
+
+.download-artist-folder-overlay-preview::after {
+  animation: download-artist-folder-cover-sheen 620ms ease-out var(--folder-preview-delay) both;
+}
+
+.download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::after {
+  opacity: 0;
+}
+
+.download-artist-folder-preview-stack[data-work-count="1"]:hover .download-artist-folder-preview:is([data-thumbnail-state="image"], [data-thumbnail-state="sprite"])::after,
+.download-artist-folder-button:focus-visible .download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview:is([data-thumbnail-state="image"], [data-thumbnail-state="sprite"])::after {
+  animation: download-artist-folder-cover-sheen 620ms ease-out both;
+}
+
+.download-artist-folder-overlay-preview .thumbnail-sprite-viewport {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+}
+
+.download-artist-folder-overlay-preview > .cover-image:not(.cover-image--sprite) {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  object-position: center top;
+}
+
+@keyframes download-artist-folder-cover-deal {
+  from {
+    opacity: 0.5;
+    transform: translate3d(var(--folder-preview-origin-x), var(--folder-preview-origin-y), 0) rotate(var(--folder-preview-tilt));
+  }
+  to { opacity: 1; transform: translate3d(0, 0, 0) rotate(0deg); }
+}
+
+@keyframes download-artist-folder-cover-sheen {
+  from { opacity: 0; transform: translateX(-100%); }
+  35% { opacity: 1; }
+  to { opacity: 0; transform: translateX(100%); }
+}
+
+@keyframes download-artist-folder-open {
+  from { opacity: 0; transform: translateY(-5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 .gallery-group-count {
   padding: 2px 7px;
   color: color-mix(in srgb, var(--primary) 72%, var(--text));
@@ -1148,9 +1514,18 @@ h2 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .gallery-group-toggle-icon {
+  .gallery-group-toggle-icon,
+  .download-artist-folder-button,
+  .download-artist-folder-preview,
+  .download-artist-folder-action i {
     transition: none;
   }
+
+  .download-artist-folder-contents,
+  .download-artist-folder-overlay-preview { animation: none; }
+
+  .download-artist-folder-overlay-preview::after,
+  .download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::after { display: none; }
 }
 
 .gallery-card,
@@ -1872,6 +2247,20 @@ h2 {
   bottom: auto;
 }
 
+.gallery-card.is-compact.has-compact-favorites .status-pill,
+.gallery-card.is-compact.has-compact-favorites .download-check {
+  right: 58px;
+}
+
+.gallery-grid.is-selection-context .gallery-card.is-compact.has-compact-favorites .compact-favorite-count-badge {
+  right: 40px;
+}
+
+.gallery-grid.is-selection-context .gallery-card.is-compact.has-compact-favorites .status-pill,
+.gallery-grid.is-selection-context .gallery-card.is-compact.has-compact-favorites .download-check {
+  right: 90px;
+}
+
 .compact-card-summary {
   position: absolute;
   right: 0;
@@ -1942,38 +2331,153 @@ h2 {
 .compact-card-summary small > b.is-failed,
 .compact-card-summary small > b.is-interrupted { background: rgba(150, 87, 23, 0.94); }
 
-.compact-favorite-tags {
+.compact-favorite-count-badge {
   position: absolute;
-  top: 40px;
-  right: 7px;
-  left: 7px;
-  z-index: 6;
-  display: none;
-  height: 22px;
+  top: 8px;
+  right: 8px;
+  z-index: 9;
+  display: inline-flex;
+  min-width: 42px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  color: #ffe0a7;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+  pointer-events: none;
+  background: rgba(10, 19, 24, 0.9);
+  border: 1px solid rgba(242, 166, 90, 0.82);
+  border-radius: 999px;
+  box-shadow: 0 2px 9px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(7px);
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+}
+
+.compact-favorite-count-badge > span {
+  color: var(--favorite);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.compact-favorite-count-badge > b {
+  font: inherit;
+  line-height: 1;
+}
+
+.compact-favorite-reveal {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 7;
+  display: grid;
+  max-height: 62%;
+  min-height: 92px;
+  align-content: start;
+  gap: 9px;
+  padding: 42px 9px 11px;
+  overflow: hidden;
+  color: #f6fbfc;
+  pointer-events: none;
+  visibility: hidden;
+  background: linear-gradient(180deg, rgba(5, 12, 16, 0.96), rgba(7, 17, 22, 0.9) 78%, rgba(7, 17, 22, 0.7));
+  border-bottom: 1px solid rgba(242, 166, 90, 0.34);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(-18px);
+  transition:
+    opacity 160ms ease,
+    transform 190ms cubic-bezier(0.2, 0.8, 0.2, 1),
+    visibility 0s linear 190ms;
+  backdrop-filter: blur(9px);
+}
+
+.gallery-card.is-compact:hover .compact-favorite-reveal,
+.gallery-card.is-compact:focus-within .compact-favorite-reveal {
+  pointer-events: auto;
+  visibility: visible;
+  opacity: 1;
+  transform: translateY(0);
+  transition-delay: 0s;
+}
+
+.gallery-card.is-compact:hover .compact-favorite-count-badge,
+.gallery-card.is-compact:focus-within .compact-favorite-count-badge {
+  color: #fff4de;
+  background: rgba(19, 31, 37, 0.96);
+  border-color: var(--favorite);
+}
+
+.compact-favorite-reveal-heading {
+  display: flex;
   min-width: 0;
   align-items: center;
-  gap: 4px;
+  justify-content: space-between;
+  gap: 8px;
+  color: #f8e2bd;
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.compact-favorite-reveal-heading strong {
   overflow: hidden;
+  font-weight: 750;
+  letter-spacing: 0.01em;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-@container (min-width: 220px) {
-  .compact-favorite-tags { display: flex; }
+.compact-favorite-reveal-heading span {
+  flex: 0 0 auto;
+  color: rgba(255, 235, 201, 0.78);
+  font-variant-numeric: tabular-nums;
 }
 
-.compact-favorite-tags .tag {
+.compact-favorite-tags {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(242, 166, 90, 0.58) transparent;
+}
+
+.gallery-card.is-compact .compact-favorite-tags .tag.favorite {
   flex: 0 1 auto;
-  max-width: 92px;
-  height: 22px;
-  min-height: 22px;
-  padding: 0 7px;
-  color: #ffe1ae;
-  font-size: 10px;
-  line-height: 14px;
-  background: rgba(14, 24, 29, 0.82);
-  border: 1px solid rgba(242, 166, 90, 0.72);
-  box-shadow: 0 2px 7px rgba(0, 0, 0, 0.28);
-  backdrop-filter: blur(5px);
+  max-width: 100%;
+  height: 28px;
+  min-height: 28px;
+  padding: 0 10px;
+  color: #ffe6ba;
+  font-size: 12px;
+  line-height: 16px;
+  background: rgba(31, 43, 48, 0.96);
+  border: 1px solid rgba(242, 166, 90, 0.78);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.34);
+  backdrop-filter: none;
+}
+
+.gallery-card.is-compact .compact-favorite-tags .tag.favorite:hover,
+.gallery-card.is-compact .compact-favorite-tags .tag.favorite:focus-visible {
+  color: #fff4df;
+  background: rgba(62, 55, 44, 0.98);
+  border-color: #ffc470;
+  outline: 2px solid rgba(255, 196, 112, 0.42);
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-favorite-count-badge,
+  .compact-favorite-reveal {
+    transition: none;
+  }
 }
 
 .compact-internal-result-badge {
@@ -2011,6 +2515,7 @@ h2 {
 .gallery-grid-skeleton.is-compact .skeleton-media { width: 100%; }
 
 .pager {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2021,6 +2526,66 @@ h2 {
 .pager span {
   color: var(--muted);
   font-size: 13px;
+}
+
+.pager-page-form {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 0;
+}
+
+.pager-page-input {
+  width: 54px;
+  height: 30px;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+  outline: none;
+  appearance: textfield;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+}
+
+.pager-page-input::-webkit-inner-spin-button,
+.pager-page-input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.pager-page-input:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 58%, var(--line));
+}
+
+.pager-page-input:focus-visible {
+  border-color: var(--primary);
+  background: var(--surface);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 25%, transparent);
+}
+
+.pager-page-input:disabled {
+  cursor: progress;
+  opacity: 0.62;
+}
+
+.pager-page-total {
+  min-width: 28px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.pager-busy {
+  position: absolute;
+  margin-top: 48px;
+  font-size: 11px !important;
 }
 
 .next-ready {
@@ -2766,6 +3331,48 @@ dialog::backdrop {
   margin: 2px 0 0;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.page-preview-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+}
+
+.page-preview-save-status {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.page-preview-save-status.is-error {
+  color: var(--danger);
+}
+
+.page-preview-representative > svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.page-preview-representative[aria-pressed="true"] {
+  color: var(--primary-strong);
+  border-color: var(--primary);
+}
+
+.page-preview-representative-check {
+  position: absolute;
+  right: 2px;
+  bottom: 1px;
+  color: var(--primary-strong);
+  font-size: 10px;
+  line-height: 1;
 }
 
 .page-preview-media-stage {
@@ -3907,6 +4514,82 @@ dialog::backdrop {
 .setting-row span {
   color: var(--muted);
   font-size: 12px;
+}
+
+.setting-copy {
+  min-width: 0;
+}
+
+.setting-copy-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.setting-copy-heading strong {
+  min-width: 0;
+}
+
+.setting-summary {
+  display: -webkit-box;
+  overflow: hidden;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.setting-help-trigger {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  color: var(--muted);
+  cursor: help;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
+  transition: color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+
+.setting-help-trigger .fluent {
+  font-size: 13px;
+}
+
+.setting-copy:hover .setting-help-trigger,
+.setting-help-trigger:focus-visible {
+  color: var(--primary-strong);
+  background: color-mix(in srgb, var(--primary) 15%, transparent);
+  transform: scale(1.08);
+}
+
+.setting-help-trigger:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 60%, transparent);
+  outline-offset: 1px;
+}
+
+.setting-help-tooltip {
+  position: fixed;
+  z-index: 1500;
+  width: min(380px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 9px 10px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setting-help-trigger { transition: none; }
 }
 
 .setting-row .setting-validation-error {

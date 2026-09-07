@@ -70,7 +70,7 @@ const galleryCardMaximumCoverHeightRatio = 3 / 2;
 export function compactFavoriteTagValues(
   tags: readonly string[],
   favoriteMetadata: ReadonlySet<string>,
-  limit = 3,
+  limit = Number.POSITIVE_INFINITY,
 ): string[] {
   if (limit <= 0) return [];
   return tags.filter((tag) => favoriteMetadata.has(tag)).slice(0, limit);
@@ -126,6 +126,7 @@ function GalleryCardComponent({
   const compactFavoriteTags = displayMode === "compact"
     ? compactFavoriteTagValues(gallery.tags, favoriteMetadata)
     : [];
+  const compactFavoriteTagCount = compactFavoriteTags.length;
   const tagLayoutKey = `${gallery.title}\u0000${gallery.subtitle ?? ""}\u0000${sortedTags
     .map((tag) => `${tag.namespace}:${Number(tag.favorite)}:${tag.value}`)
     .join("\u0001")}`;
@@ -292,7 +293,7 @@ function GalleryCardComponent({
 
   return (
     <article
-      className={`gallery-card${displayMode === "compact" ? " is-compact" : ""}${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
+      className={`gallery-card${displayMode === "compact" ? " is-compact" : ""}${compactFavoriteTagCount ? " has-compact-favorites" : ""}${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
       ref={cardRef}
       data-gallery-id={gallery.id}
       data-display-mode={displayMode}
@@ -401,20 +402,40 @@ function GalleryCardComponent({
             <span style={{ width: `${progress}%` }} />
           </div>
         ) : null}
-        {displayMode === "compact" && compactFavoriteTags.length ? (
-          <div className="compact-favorite-tags" aria-label={`즐겨찾기 태그: ${compactFavoriteTags.join(", ")}`}>
-            {compactFavoriteTags.map((tag) => (
-              <MetadataChip
-                key={tag}
-                value={tag}
-                favorite
-                kind="tag"
-                onClickCapture={selectFromInteractiveTarget}
-                onSearch={onMetadataSearch}
-                onToggleFavorite={onMetadataFavorite}
-              />
-            ))}
-          </div>
+        {displayMode === "compact" && compactFavoriteTagCount ? (
+          <>
+            <span
+              className="compact-favorite-count-badge"
+              role="note"
+              aria-label={`즐겨찾기 태그 ${compactFavoriteTagCount}개`}
+              title={`즐겨찾기 태그 ${compactFavoriteTagCount}개 · 카드에 마우스를 올리거나 초점을 두면 태그를 볼 수 있습니다`}
+            >
+              <span aria-hidden="true">★</span>
+              <b>{compactFavoriteTagCount}</b>
+            </span>
+            <div
+              className="compact-favorite-reveal"
+              aria-label={`즐겨찾기 태그 ${compactFavoriteTagCount}개: ${compactFavoriteTags.join(", ")}`}
+            >
+              <div className="compact-favorite-reveal-heading" aria-hidden="true">
+                <strong>즐겨찾기 태그</strong>
+                <span>{compactFavoriteTagCount}</span>
+              </div>
+              <div className="compact-favorite-tags">
+                {compactFavoriteTags.map((tag) => (
+                  <MetadataChip
+                    key={tag}
+                    value={tag}
+                    favorite
+                    kind="tag"
+                    onClickCapture={selectFromInteractiveTarget}
+                    onSearch={onMetadataSearch}
+                    onToggleFavorite={onMetadataFavorite}
+                  />
+                ))}
+              </div>
+            </div>
+          </>
         ) : null}
         {displayMode === "compact" ? (
           <div className="compact-card-summary">
@@ -453,7 +474,7 @@ function GalleryCardComponent({
             value={`artist:${gallery.artist}`}
             label={gallery.artist}
             kind="byline"
-            favorite={gallery.favorite}
+            favorite={favoriteMetadata.has(`artist:${gallery.artist}`)}
             onClickCapture={selectFromInteractiveTarget}
             onSearch={onMetadataSearch}
             onToggleFavorite={onMetadataFavorite}

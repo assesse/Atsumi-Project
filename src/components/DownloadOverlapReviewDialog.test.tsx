@@ -59,7 +59,7 @@ const fixture = (): DownloadOverlapReview => ({
 });
 
 describe("DownloadOverlapReviewDialog", () => {
-  it("shows the 95 percent recommendation only for an eligible review", async () => {
+  it("shows the strict recommendation only for an eligible review", async () => {
     const review = fixture();
     review.incoming.pageCount = 25;
     const eligible = review.candidates[1]!;
@@ -100,9 +100,9 @@ describe("DownloadOverlapReviewDialog", () => {
 
     expect(container.querySelector(".download-overlap-auto-recommendation")?.textContent)
       .toContain("안전 기준 추천");
-    expect(container.textContent).toContain("신규 앨범 B가 기존 앨범 A와 95% 이상 일치");
-    expect(container.textContent).toContain("무검열 표식이 확인되면 그 판본을 우선");
-    expect(container.textContent).toContain("명확한 합본이면 작은 판본의 무검열 표식보다 합본을 우선");
+    expect(container.textContent).toContain("신규 앨범 B가 기존 앨범 A의 모든 페이지를 포함");
+    expect(container.textContent).toContain("100% 포함관계는 크기와 무검열 표식보다 포함관계를 우선");
+    expect(container.textContent).toContain("거의 같은 판본끼리는 무검열 표식을 우선");
     expect(container.textContent).not.toContain("무검열 표식이 충돌하면 자동 처리하지 않습니다");
 
     await act(async () => root.unmount());

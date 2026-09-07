@@ -261,9 +261,38 @@ describe("SettingsDialog operational boundaries", () => {
         await Promise.resolve();
       });
       expect(onLoadExplorationExclusions).not.toHaveBeenCalled();
-      expect(container.textContent).toContain("무검열 표식이 확인되면 그 판본을 우선");
-      expect(container.textContent).toContain("1.5배·8장 이상 큰 합본이면 무검열 표식보다 합본 보존을 우선");
-      expect(container.textContent).not.toContain("무검열 표식을 우선하며, 표식이 충돌");
+      expect(container.textContent).toContain("확실한 포함·거의 동일 판본만 자동 추천하거나 격리합니다.");
+      expect(container.textContent).toContain("후보를 찾기 시작할 기록 범위를 선택합니다.");
+      expect(container.textContent).not.toContain("일반 판본은 포함률 95% 이상");
+      expect(container.textContent).not.toContain("변경한 기준은 다음 Auto Find 실행부터 적용됩니다.");
+
+      const overlapHelp = container.querySelector<HTMLButtonElement>(
+        '[aria-label="다운로드 판본 자동 판정 자세한 설명"]',
+      );
+      expect(overlapHelp).not.toBeNull();
+      expect(overlapHelp).not.toHaveAttribute("aria-describedby");
+      await act(async () => overlapHelp?.focus());
+      const focusedTooltip = container.querySelector<HTMLElement>('[role="tooltip"]');
+      expect(focusedTooltip).not.toBeNull();
+      expect(overlapHelp).toHaveAttribute("aria-describedby", focusedTooltip?.id);
+      expect(focusedTooltip).toHaveTextContent("포함률 95% 이상");
+      expect(focusedTooltip).toHaveTextContent("1.5배·8장 이상");
+      expect(focusedTooltip).toHaveTextContent("복구 가능한 격리");
+      await act(async () => {
+        overlapHelp?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(container.querySelector('[role="tooltip"]')).toBeNull();
+
+      const overlapCopy = overlapHelp?.closest<HTMLElement>(".setting-copy");
+      await act(async () => {
+        overlapCopy?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await new Promise((resolve) => window.setTimeout(resolve, 200));
+      });
+      expect(container.querySelector('[role="tooltip"]')).toHaveTextContent("일반 판본은 포함률 95% 이상");
+      await act(async () => {
+        overlapCopy?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+      });
+      expect(container.querySelector('[role="tooltip"]')).toBeNull();
       const searchCatalog = container.querySelector<HTMLElement>(".search-catalog-panel");
       expect(searchCatalog).toHaveTextContent("검색어 자동완성 데이터");
       expect(searchCatalog).toHaveTextContent("10,000개 항목 저장됨");

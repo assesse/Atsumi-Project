@@ -97,9 +97,10 @@ pub(crate) fn normalize_search_tags(
     Ok(normalized)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GallerySummary {
+    #[serde(deserialize_with = "deserialize_summary_gallery_id")]
     pub id: GalleryId,
     pub title: String,
     pub artist: String,
@@ -116,6 +117,13 @@ pub struct GallerySummary {
     pub thumbnail_key: Option<String>,
     pub thumbnail_width: u32,
     pub thumbnail_height: u32,
+}
+
+fn deserialize_summary_gallery_id<'de, D>(deserializer: D) -> Result<GalleryId, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    GalleryId::new(i64::deserialize(deserializer)?).map_err(serde::de::Error::custom)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

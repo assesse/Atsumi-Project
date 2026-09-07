@@ -26,6 +26,37 @@ const callbacks = {
 describe("GalleryCard event projection", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it("does not paint the visible artist chip from a different Auto Find favorite match", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const gallery: Gallery = {
+      ...mockGalleries[0]!,
+      artist: "chisunosuke",
+      favorite: true,
+    };
+    const render = (favoriteMetadata: ReadonlySet<string>) => root.render(
+      <GalleryCard
+        gallery={gallery}
+        view="auto-find"
+        selected={false}
+        selectionContext={false}
+        favoriteMetadata={favoriteMetadata}
+        {...callbacks}
+      />,
+    );
+
+    try {
+      await act(async () => render(new Set(["artist:horieros"])));
+      expect(container.querySelector(".gallery-card")).toHaveClass("is-favorite");
+      expect(container.querySelector(".card-byline .byline.artist")).not.toHaveClass("favorite");
+
+      await act(async () => render(new Set(["artist:horieros", "artist:chisunosuke"])));
+      expect(container.querySelector(".card-byline .byline.artist")).toHaveClass("favorite");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it("keeps the English tag label while exposing the shared Korean tooltip", async () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -72,6 +103,8 @@ describe("GalleryCard event projection", () => {
       expect(container.querySelector(".card-content")).toBeNull();
       expect(container.querySelector(".tag-list")).toBeNull();
       expect(container.querySelector(".compact-favorite-tags")).toBeNull();
+      expect(container.querySelector(".compact-favorite-count-badge")).toBeNull();
+      expect(container.querySelector(".compact-favorite-reveal")).toBeNull();
       expect(container.querySelector(".compact-card-summary")).toHaveTextContent(gallery.title.split("|")[0]!.trim());
       expect(container.querySelector(".compact-card-summary")).toHaveTextContent(gallery.artist);
       expect(container.querySelector(".compact-card-summary")).toHaveTextContent(`${gallery.pages}p · #${gallery.id}`);
@@ -86,10 +119,11 @@ describe("GalleryCard event projection", () => {
     }
   });
 
-  it("projects at most three favorite tags into the fixed compact overlay", async () => {
+  it("summarizes every favorite tag by count and exposes the larger compact hover panel", async () => {
     const tags = ["female:a", "female:b", "male:c", "neutral_d", "neutral_e"];
     const favorites = new Set(tags.slice(0, 4));
-    expect(compactFavoriteTagValues(tags, favorites)).toEqual(tags.slice(0, 3));
+    expect(compactFavoriteTagValues(tags, favorites)).toEqual(tags.slice(0, 4));
+    expect(compactFavoriteTagValues(tags, favorites, 3)).toEqual(tags.slice(0, 3));
 
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -105,13 +139,50 @@ describe("GalleryCard event projection", () => {
           {...callbacks}
         />,
       ));
+      const card = container.querySelector<HTMLElement>(".gallery-card")!;
+      expect(card).toHaveClass("has-compact-favorites");
+      expect(container.querySelector(".compact-favorite-count-badge")).toHaveAccessibleName("즐겨찾기 태그 4개");
+      expect(container.querySelector(".compact-favorite-count-badge")).toHaveTextContent("★4");
+      expect(container.querySelector(".compact-favorite-reveal")).toHaveAccessibleName(
+        "즐겨찾기 태그 4개: female:a, female:b, male:c, neutral_d",
+      );
       const rendered = [...container.querySelectorAll<HTMLButtonElement>(".compact-favorite-tags .tag")];
-      expect(rendered).toHaveLength(3);
+      expect(rendered).toHaveLength(4);
       expect(rendered.map((tag) => tag.getAttribute("aria-label"))).toEqual([
         expect.stringContaining("a, Female 태그, 즐겨찾기"),
         expect.stringContaining("b, Female 태그, 즐겨찾기"),
         expect.stringContaining("c, Male 태그, 즐겨찾기"),
+        expect.stringContaining("neutral d, 중립 태그, 즐겨찾기"),
       ]);
+
+      await act(async () => rendered[0]!.click());
+      expect(callbacks.onMetadataSearch).toHaveBeenCalledWith("female:a");
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("keeps favorite tags in the ordinary metadata layout for detail cards", async () => {
+    const favoriteTag = "female:glasses";
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <GalleryCard
+          gallery={{ ...mockGalleries[0]!, tags: [favoriteTag, "male:suit"] }}
+          view="explore"
+          displayMode="detail"
+          selected={false}
+          selectionContext={false}
+          favoriteMetadata={new Set([favoriteTag])}
+          {...callbacks}
+        />,
+      ));
+      expect(container.querySelector(".compact-favorite-count-badge")).toBeNull();
+      expect(container.querySelector(".compact-favorite-reveal")).toBeNull();
+      expect(container.querySelector(".tag-list .tag.favorite")).toHaveAccessibleName(
+        expect.stringContaining("glasses, Female 태그, 즐겨찾기"),
+      );
     } finally {
       await act(async () => root.unmount());
     }

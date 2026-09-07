@@ -15,14 +15,14 @@ type ProgressiveDetailHeroProps = {
 type OriginalState =
   | { kind: "idle" }
   | { kind: "preparing"; requestId: string }
-  | { kind: "prepared"; requestId: string; media: DetailOriginalPrepared }
-  | { kind: "displayed"; requestId: string; media: DetailOriginalPrepared }
+  | { kind: "prepared"; requestId: string; entryId?: string; media: DetailOriginalPrepared }
+  | { kind: "displayed"; requestId: string; entryId?: string; media: DetailOriginalPrepared }
   | { kind: "failed"; reason: string };
 
 const newRequestId = (): string => crypto.randomUUID();
 
 /**
- * A retained cover is always the first visual layer. The full page-one image
+ * A retained cover is always the first visual layer. The matching full image
  * is prepared through one terminal backend command and disposed on lifecycle
  * boundaries; no readiness event or automatic retry path is involved.
  */
@@ -30,12 +30,20 @@ export function ProgressiveDetailHero({ gallery, pageDimension, client, backend 
   const [original, setOriginal] = useState<OriginalState>({ kind: "idle" });
   const generation = useRef(0);
   const originalImage = useRef<HTMLImageElement | null>(null);
-  const ratio = pageDimension ?? gallery.pageDimensions?.find((page) => page.sourcePage === 1);
+  const thumbnailKey = galleryCoverThumbnailKey(gallery);
+  const sourcePage = thumbnailKey.kind === "artifact-page" ? thumbnailKey.page : 1;
+  const completedEntryId = gallery.download?.state === "completed" ? gallery.download.entryId : undefined;
+  const representative = thumbnailKey.kind === "artifact-page" ? gallery.representativePreview : undefined;
+  const ratio = pageDimension?.sourcePage === sourcePage
+    ? pageDimension
+    : gallery.pageDimensions?.find((page) => page.sourcePage === sourcePage);
   const expectedAspectRatio = ratio?.width !== undefined && ratio?.height !== undefined
     ? { width: ratio.width, height: ratio.height }
-    : gallery.thumbnailWidth !== undefined && gallery.thumbnailHeight !== undefined
-      ? { width: gallery.thumbnailWidth, height: gallery.thumbnailHeight }
-      : { width: 1, height: 1 };
+    : representative?.width && representative.height
+      ? { width: representative.width, height: representative.height }
+      : sourcePage === 1 && gallery.thumbnailWidth !== undefined && gallery.thumbnailHeight !== undefined
+        ? { width: gallery.thumbnailWidth, height: gallery.thumbnailHeight }
+        : { width: 1, height: 1 };
 
   useEffect(() => {
     const requestId = newRequestId();
@@ -54,7 +62,12 @@ export function ProgressiveDetailHero({ gallery, pageDimension, client, backend 
       fail("timeout");
     }, 60_000);
 
-    void backend.detailOriginalPrepare({ requestId, galleryId: gallery.id, sourcePage: 1 }).then((result) => {
+    void backend.detailOriginalPrepare({
+      requestId,
+      galleryId: gallery.id,
+      sourcePage,
+      ...(completedEntryId ? { entryId: completedEntryId } : {}),
+    }).then((result) => {
       if (!active || terminal || generation.current !== currentGeneration) {
         if (result.ok) void backend.detailOriginalDispose(requestId);
         return;
@@ -64,12 +77,12 @@ export function ProgressiveDetailHero({ gallery, pageDimension, client, backend 
         fail(result.error.code);
         return;
       }
-      if (result.data.requestId !== requestId || result.data.galleryId !== gallery.id || result.data.sourcePage !== 1) {
+      if (result.data.requestId !== requestId || result.data.galleryId !== gallery.id || result.data.sourcePage !== sourcePage) {
         void backend.detailOriginalDispose(requestId);
         fail("invalid-response");
         return;
       }
-      setOriginal({ kind: "prepared", requestId, media: result.data });
+      setOriginal({ kind: "prepared", requestId, entryId: completedEntryId, media: result.data });
     }).catch(() => {
       window.clearTimeout(timeout);
       fail("unavailable");
@@ -82,7 +95,7 @@ export function ProgressiveDetailHero({ gallery, pageDimension, client, backend 
       generation.current = Math.max(generation.current, currentGeneration + 1);
       void backend.detailOriginalDispose(requestId);
     };
-  }, [backend, gallery.id]);
+  }, [backend, completedEntryId, gallery.id, sourcePage]);
 
   const abandon = (requestId: string, reason: string) => {
     setOriginal((current) => {
@@ -93,19 +106,22 @@ export function ProgressiveDetailHero({ gallery, pageDimension, client, backend 
     });
     void backend.detailOriginalDispose(requestId);
   };
-  const media = (original.kind === "prepared" || original.kind === "displayed") && original.media.galleryId === gallery.id
+  const media = (original.kind === "prepared" || original.kind === "displayed")
+    && original.entryId === completedEntryId
+    && original.media.galleryId === gallery.id
+    && original.media.sourcePage === sourcePage
     ? original.media
     : undefined;
 
   useEffect(() => {
-    if (original.kind !== "prepared" || original.media.galleryId !== gallery.id) return;
+    if (original.kind !== "prepared" || !media) return;
     const image = originalImage.current;
     if (image?.complete && image.naturalWidth > 0) {
       setOriginal((current) => current.kind === "prepared" && current.requestId === original.requestId
-        ? { kind: "displayed", requestId: current.requestId, media: current.media }
+        ? { ...current, kind: "displayed" }
         : current);
     }
-  }, [gallery.id, original]);
+  }, [media, original]);
 
   return (
     <div
@@ -117,7 +133,7 @@ export function ProgressiveDetailHero({ gallery, pageDimension, client, backend 
     >
       <GalleryThumbnail
         className="detail-cover"
-        thumbnailKey={galleryCoverThumbnailKey(gallery)}
+        thumbnailKey={thumbnailKey}
         consumer="detail"
         priority="critical"
         client={client}
@@ -127,14 +143,16 @@ export function ProgressiveDetailHero({ gallery, pageDimension, client, backend 
       />
       {media ? (
         <img
+          key={media.requestId}
           ref={originalImage}
           className={`detail-hero-original${original.kind === "displayed" ? " is-ready" : ""}`}
           src={media.mediaUrl}
           width={media.width}
           height={media.height}
           alt=""
-          onLoad={() => setOriginal((current) => current.kind === "prepared" && current.requestId === media.requestId && current.media.galleryId === gallery.id
-            ? { kind: "displayed", requestId: current.requestId, media: current.media }
+          onLoad={() => setOriginal((current) => current.kind === "prepared" && current.requestId === media.requestId
+            && current.media.galleryId === gallery.id && current.media.sourcePage === sourcePage && current.entryId === completedEntryId
+            ? { ...current, kind: "displayed" }
             : current)}
           onError={() => abandon(media.requestId, "display-error")}
         />

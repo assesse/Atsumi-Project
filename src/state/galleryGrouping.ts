@@ -9,6 +9,12 @@ export type GalleryGroup = {
   items: Gallery[];
 };
 
+export type ArtistFolderTag = {
+  value: string;
+  count: number;
+  favorite: boolean;
+};
+
 const UNKNOWN_ARTIST = "작가 정보 없음";
 const UNKNOWN_DAY = "날짜 정보 없음";
 
@@ -74,3 +80,70 @@ export const galleryGroupStorageKey = (
   view: "auto-find" | "downloads",
   group: Pick<GalleryGroup, "key">,
 ): string => `${view}\u001f${group.key}`;
+
+const downloadRecency = (gallery: Gallery): string => (
+  gallery.download?.createdAt
+  ?? gallery.download?.updatedAt
+  ?? gallery.publishedAt
+);
+
+/**
+ * Returns the virtual folder covers in download-recency order. The gallery id
+ * tie-breaker keeps the three-cover stack deterministic when legacy entries do
+ * not have timestamps.
+ */
+export function recentDownloadedGalleries(
+  galleries: readonly Gallery[],
+  limit = 3,
+): Gallery[] {
+  if (limit <= 0) return [];
+  return [...galleries]
+    .sort((left, right) => {
+      const order = downloadRecency(right).localeCompare(downloadRecency(left));
+      return order || Number(right.id) - Number(left.id);
+    })
+    .slice(0, Math.trunc(limit));
+}
+
+/** Chooses the cover shown for a virtual artist folder. */
+export function latestDownloadedGallery(galleries: readonly Gallery[]): Gallery | undefined {
+  return recentDownloadedGalleries(galleries, 1)[0];
+}
+
+/**
+ * Summarizes the metadata that has already been resolved for an artist folder.
+ * A tag is counted once per gallery, favorite tags are kept ahead of ordinary
+ * tags, and frequency then determines the display order.
+ */
+export function summarizeArtistFolderTags(
+  galleries: readonly Gallery[],
+  favoriteMetadata: ReadonlySet<string>,
+  limit = 6,
+): ArtistFolderTag[] {
+  if (limit <= 0) return [];
+  const normalizedFavorites = new Set([...favoriteMetadata].map((value) => value.trim().toLocaleLowerCase()));
+  const counts = new Map<string, { value: string; count: number }>();
+
+  for (const gallery of galleries) {
+    const seen = new Set<string>();
+    for (const value of gallery.tags) {
+      const normalized = value.trim().toLocaleLowerCase();
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      const current = counts.get(normalized);
+      if (current) current.count += 1;
+      else counts.set(normalized, { value: value.trim(), count: 1 });
+    }
+  }
+
+  return [...counts.entries()]
+    .map(([normalized, tag]) => ({
+      ...tag,
+      favorite: normalizedFavorites.has(normalized),
+    }))
+    .sort((left, right) =>
+      Number(right.favorite) - Number(left.favorite)
+      || right.count - left.count
+      || left.value.localeCompare(right.value, "en"))
+    .slice(0, Math.trunc(limit));
+}

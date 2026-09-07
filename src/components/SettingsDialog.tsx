@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import packageMetadata from "../../package.json";
 import type {
   ApiError,
@@ -93,6 +94,117 @@ const copyText = async (value: string) => {
   textarea.remove();
   if (!copied) throw new Error("clipboard unavailable");
 };
+
+function SettingCopy({ title, summary, detail }: {
+  title: string;
+  summary: string;
+  detail?: string;
+}) {
+  const tooltipId = useId();
+  const trigger = useRef<HTMLButtonElement>(null);
+  const hoverTimer = useRef<number | undefined>(undefined);
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [tooltip, setTooltip] = useState<HTMLSpanElement | null>(null);
+  const [position, setPosition] = useState({ left: -10_000, top: -10_000 });
+  const open = Boolean(detail) && (hovered || focused);
+
+  const clearHoverTimer = useCallback(() => {
+    if (hoverTimer.current === undefined) return;
+    window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = undefined;
+  }, []);
+
+  useEffect(() => () => clearHoverTimer(), [clearHoverTimer]);
+
+  useLayoutEffect(() => {
+    if (!open || !trigger.current || !tooltip) return undefined;
+    const updatePlacement = () => {
+      if (!trigger.current) return;
+      const triggerRect = trigger.current.getBoundingClientRect();
+      const tooltipRect = tooltip.getBoundingClientRect();
+      const viewportPadding = 8;
+      const gap = 8;
+      const left = Math.max(
+        viewportPadding,
+        Math.min(
+          triggerRect.left + triggerRect.width / 2 - tooltipRect.width / 2,
+          window.innerWidth - tooltipRect.width - viewportPadding,
+        ),
+      );
+      const above = triggerRect.top - tooltipRect.height - gap;
+      const below = Math.min(
+        triggerRect.bottom + gap,
+        window.innerHeight - tooltipRect.height - viewportPadding,
+      );
+      setPosition({ left, top: Math.max(viewportPadding, above >= viewportPadding ? above : below) });
+    };
+    updatePlacement();
+    window.addEventListener("resize", updatePlacement);
+    window.addEventListener("scroll", updatePlacement, true);
+    return () => {
+      window.removeEventListener("resize", updatePlacement);
+      window.removeEventListener("scroll", updatePlacement, true);
+    };
+  }, [detail, open, tooltip]);
+
+  const portalHost = trigger.current?.closest("dialog") ?? document.body;
+  return (
+    <div
+      className={`setting-copy${detail ? " has-help" : ""}`}
+      onMouseEnter={() => {
+        if (!detail) return;
+        clearHoverTimer();
+        hoverTimer.current = window.setTimeout(() => {
+          hoverTimer.current = undefined;
+          setHovered(true);
+        }, 180);
+      }}
+      onMouseLeave={() => {
+        clearHoverTimer();
+        setHovered(false);
+      }}
+    >
+      <div className="setting-copy-heading">
+        <strong>{title}</strong>
+        {detail ? (
+          <button
+            ref={trigger}
+            type="button"
+            className="setting-help-trigger"
+            aria-label={`${title} 자세한 설명`}
+            aria-describedby={open ? tooltipId : undefined}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            onKeyDown={(event) => {
+              if (event.key !== "Escape") return;
+              event.preventDefault();
+              clearHoverTimer();
+              setHovered(false);
+              setFocused(false);
+              event.currentTarget.blur();
+            }}
+          >
+            <FluentIcon glyph="\uE946" />
+          </button>
+        ) : null}
+      </div>
+      <span className="setting-summary">{summary}</span>
+      {open && detail ? createPortal(
+        <span
+          ref={setTooltip}
+          id={tooltipId}
+          role="tooltip"
+          className="setting-help-tooltip"
+          style={position}
+        >
+          {detail}
+        </span>,
+        portalHost,
+      ) : null}
+    </div>
+  );
+}
 
 export function SettingsDialog({
   open,
@@ -512,9 +624,9 @@ export function SettingsDialog({
                         <small>현재 실행 중인 RAM 사용량</small>
                       </article>
                       <article>
-                        <span>디스크 임시 캐시</span>
+                        <span>디스크 캐시</span>
                         <data value={storageUsage.diskCache.bytes}>{formatBytes(storageUsage.diskCache.bytes)}</data>
-                        <small>열려 있는 원본 페이지 미리보기</small>
+                        <small title="썸네일은 앱을 다시 실행해도 재사용합니다. 원본 페이지 미리보기용 임시 파일도 포함합니다.">저장된 썸네일·원본 미리보기</small>
                       </article>
                       <article>
                         <span>앱 데이터</span>
@@ -591,11 +703,11 @@ export function SettingsDialog({
                   </div>
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
-                  <div>
-                    <strong>Auto Find 기록 기준</strong>
-                    <span>변경한 기준은 다음 Auto Find 실행부터 적용됩니다.</span>
-                    <span>최신 기준은 검증 완료·격리된 소유 작품의 gallery ID 이후만 후보로 봅니다.</span>
-                  </div>
+                  <SettingCopy
+                    title="Auto Find 기록 기준"
+                    summary="후보를 찾기 시작할 기록 범위를 선택합니다."
+                    detail="변경한 기준은 다음 Auto Find 실행부터 적용됩니다. ‘가장 오래된 소유 작품 이후’는 검증 완료·격리된 소유 작품 중 가장 오래된 gallery ID보다 최신인 항목만 후보로 봅니다."
+                  />
                   <div className="settings-select-control">
                     <select
                       aria-label="Auto Find 기록 기준"
@@ -609,11 +721,11 @@ export function SettingsDialog({
                   </div>
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
-                  <div>
-                    <strong>다운로드 판본 자동 판정</strong>
-                    <span>일반 판본은 포함률 95% 이상이면서 판본 간 페이지 차이가 5장 이하인 포함·거의 동일 판본만 판단합니다.</span>
-                    <span>제목에서 무검열 표식이 확인되면 그 판본을 우선합니다. 단, 작은 판본에 고유 페이지가 없고 98% 이상 포함되며 큰 판본이 1.5배·8장 이상 큰 합본이면 무검열 표식보다 합본 보존을 우선합니다. 근거가 부족한 경우에는 직접 검토하며, 자동 제거도 영구 삭제가 아닌 복구 가능한 격리입니다.</span>
-                  </div>
+                  <SettingCopy
+                    title="다운로드 판본 자동 판정"
+                    summary="확실한 포함·거의 동일 판본만 자동 추천하거나 격리합니다."
+                    detail="일반 판본은 포함률 95% 이상이고 페이지 차이가 5장 이하일 때만 판정합니다. 제목의 무검열 표식을 우선하되, 작은 판본에 고유 페이지가 없고 포함률 98% 이상이며 큰 판본이 1.5배·8장 이상 큰 합본이면 합본을 보존합니다. 근거가 부족하면 직접 검토하며 자동 제거 항목도 영구 삭제하지 않고 복구 가능한 격리로 옮깁니다."
+                  />
                   <div className="settings-select-control">
                     <select
                       aria-label="다운로드 판본 자동 판정"

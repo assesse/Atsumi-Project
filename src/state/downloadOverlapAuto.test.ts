@@ -115,12 +115,12 @@ describe("buildStrictOverlapPlan", () => {
     expect(buildStrictOverlapPlan(unknownTitles)?.winner).toBe("existing");
   });
 
-  it("does not remove a marked uncensored contained edition for a censored larger one", () => {
+  it("prioritizes verified containment over an uncensored marker", () => {
     const censoredIncoming = review([candidate({
       existing: { ...candidate().existing, title: "Edition [Uncensored]" },
     })]);
     censoredIncoming.incoming = { ...censoredIncoming.incoming, title: "Edition [Censored]" };
-    expect(buildStrictOverlapPlan(censoredIncoming)).toBeNull();
+    expect(buildStrictOverlapPlan(censoredIncoming)?.winner).toBe("incoming");
   });
 
   it("keeps a clearly larger incoming omnibus even when contained editions are marked uncensored", () => {
@@ -152,7 +152,7 @@ describe("buildStrictOverlapPlan", () => {
       { action: "remove_existing_continue", candidateId: "candidate-a" },
       { action: "remove_existing_continue", candidateId: "candidate-c" },
     ]);
-    expect(plan?.summary).toContain("큰 합본");
+    expect(plan?.summary).toContain("완전 포함");
 
     const snapshot = JSON.parse(plan!.steps[0]!.featureSnapshotJson) as {
       rule: string;
@@ -172,8 +172,8 @@ describe("buildStrictOverlapPlan", () => {
       rule: DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
       ruleVersion: DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
       winner: "incoming",
-      decisionPath: "omnibus_containment",
-      preferenceReason: "omnibus_containment",
+      decisionPath: "complete_containment",
+      preferenceReason: "complete_containment",
       editionPreference: { incoming: "censored", existing: "uncensored" },
       metrics: {
         containingPageCount: 60,
@@ -214,7 +214,7 @@ describe("buildStrictOverlapPlan", () => {
     const plan = buildStrictOverlapPlan(smallUncensored);
     expect(plan?.winner).toBe("existing");
     expect(plan?.steps).toMatchObject([{ action: "remove_incoming", candidateId: "candidate-a" }]);
-    expect(plan?.summary).toContain("큰 합본");
+    expect(plan?.summary).toContain("완전 포함");
   });
 
   it("keeps uncertain size or containment evidence on the manual-review path", () => {
@@ -230,7 +230,7 @@ describe("buildStrictOverlapPlan", () => {
     };
 
     expect(buildStrictOverlapPlan(omnibusReview({ existingCoverage: 0.979 }))).toBeNull();
-    expect(buildStrictOverlapPlan(omnibusReview({ confidence: 0.859 }))).toBeNull();
+    expect(buildStrictOverlapPlan(omnibusReview({ confidence: 0.849 }))).toBeNull();
     expect(buildStrictOverlapPlan(omnibusReview({ existingUniquePages: 1 }))).toBeNull();
     expect(buildStrictOverlapPlan(omnibusReview({
       pagePairs: candidate().pagePairs.map((pair, index, pairs) => index === pairs.length - 1
@@ -284,7 +284,7 @@ describe("buildStrictOverlapPlan", () => {
     expect(plan?.winner).toBe("incoming");
     expect(plan?.steps[0]).toMatchObject({ action: "remove_existing_continue" });
     expect(JSON.parse(plan!.steps[0]!.featureSnapshotJson)).toMatchObject({
-      decisionPath: "omnibus_containment",
+      decisionPath: "complete_containment",
       metrics: {
         confidence: 0.8646,
         pageDifference: 8,
@@ -293,6 +293,88 @@ describe("buildStrictOverlapPlan", () => {
         informativeMatchRatio: 1,
         monotonicPageOrder: true,
       },
+    });
+  });
+
+  it("covers the observed short, split-run, and asymmetric 100% containment cases", () => {
+    const visualPairs = (count: number) => Array.from({ length: count }, (_, index) => ({
+      incomingSourcePage: index + 1,
+      existingSourcePage: index + 1,
+      exactSha256: false,
+      dHashDistance: 2,
+      pHashDistance: 3,
+      detailHashDistance: 3,
+      edgeSimilarity: 0.98,
+      visualSimilarity: 0.98,
+      lowInformation: false,
+    }));
+
+    const fanbox = review([candidate({
+      existing: { ...candidate().existing, galleryId: galleryId(1779804), pageCount: 4 },
+      confidence: 0.8563517205886663,
+      matchedPages: 4,
+      exactPages: 0,
+      visualPages: 4,
+      incomingCoverage: 4 / 67,
+      incomingUniquePages: 63,
+      longestAlignedRun: 4,
+      pagePairs: visualPairs(4),
+    })]);
+    fanbox.incoming = { ...fanbox.incoming, galleryId: galleryId(1585943), pageCount: 67 };
+    expect(buildStrictOverlapPlan(fanbox)).toMatchObject({
+      winner: "incoming",
+      steps: [{ action: "remove_existing_continue" }],
+    });
+
+    const existingCompilation = review([candidate({
+      relation: "existing_contains_incoming",
+      existing: { ...candidate().existing, galleryId: galleryId(1900461), pageCount: 23 },
+      confidence: 0.9063787097116464,
+      matchedPages: 7,
+      exactPages: 0,
+      visualPages: 7,
+      existingCoverage: 7 / 23,
+      incomingCoverage: 1,
+      existingUniquePages: 16,
+      incomingUniquePages: 0,
+      longestAlignedRun: 2,
+      pagePairs: visualPairs(7),
+    })]);
+    existingCompilation.incoming = {
+      ...existingCompilation.incoming,
+      galleryId: galleryId(1890795),
+      pageCount: 7,
+    };
+    expect(buildStrictOverlapPlan(existingCompilation)).toMatchObject({
+      winner: "existing",
+      steps: [{ action: "remove_incoming" }],
+    });
+
+    const largerCensored = review([candidate({
+      existing: {
+        ...candidate().existing,
+        galleryId: galleryId(3809665),
+        title: "Nightingale (decensored)",
+        pageCount: 5,
+      },
+      confidence: 0.9398954950618024,
+      matchedPages: 5,
+      exactPages: 1,
+      visualPages: 4,
+      incomingCoverage: 5 / 9,
+      incomingUniquePages: 4,
+      longestAlignedRun: 5,
+      pagePairs: visualPairs(5).map((pair, index) => ({ ...pair, exactSha256: index === 0 })),
+    })]);
+    largerCensored.incoming = {
+      ...largerCensored.incoming,
+      galleryId: galleryId(1860999),
+      title: "Nightingale",
+      pageCount: 9,
+    };
+    expect(buildStrictOverlapPlan(largerCensored)).toMatchObject({
+      winner: "incoming",
+      steps: [{ action: "remove_existing_continue" }],
     });
   });
 
@@ -307,7 +389,7 @@ describe("buildStrictOverlapPlan", () => {
     expect(buildStrictOverlapPlan(review([candidate(), { ...second, relation: "near_equivalent" }]))).toBeNull();
   });
 
-  it("leaves a mixed review manual when a same-size uncensored candidate beats the omnibus", () => {
+  it("leaves a mixed review manual when a same-size uncensored candidate beats the compilation", () => {
     const contained = candidate({
       existing: { ...candidate().existing, title: "Chapter", pageCount: 20 },
       incomingCoverage: 1 / 3,

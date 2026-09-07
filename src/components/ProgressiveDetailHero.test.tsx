@@ -2,6 +2,8 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { BackendClient } from "../api/backend";
+import type { DetailOriginalPrepared, DetailOriginalPrepareRequest } from "../api/contracts";
+import type { Gallery } from "../core/types";
 import { mockGalleries } from "../data/mockGalleries";
 import { ThumbnailClient } from "../thumbnail";
 import { ProgressiveDetailHero } from "./ProgressiveDetailHero";
@@ -27,6 +29,67 @@ const renderHero = async (backend: Partial<BackendClient>) => {
 };
 
 describe("ProgressiveDetailHero", () => {
+  it("switches the original to the representative page and ignores a late page-one response", async () => {
+    const completed: Gallery = {
+      ...gallery,
+      download: { entryId: "hero-representative", state: "completed", progress: 100 },
+      pageDimensions: [
+        { sourcePage: 1, width: 720, height: 1080 },
+        { sourcePage: 3, width: 1600, height: 900 },
+      ],
+    };
+    const selected: Gallery = {
+      ...completed,
+      representativePreview: {
+        galleryId: gallery.id, mode: "manual", sourcePage: 3, manualSourcePage: 3,
+        entryId: "hero-representative", width: 1600, height: 900,
+        candidates: [1, 3], algorithmVersion: 1, updatedAt: "2026-09-07T00:00:00Z",
+      },
+    };
+    const pending = new Map<string, (value: { ok: true; data: DetailOriginalPrepared }) => void>();
+    const prepare = vi.fn((request: DetailOriginalPrepareRequest) => new Promise<{ ok: true; data: DetailOriginalPrepared }>((resolve) => {
+      pending.set(request.requestId, resolve);
+    }));
+    const dispose = vi.fn(async () => ({ ok: true as const, data: true }));
+    const backend = { detailOriginalPrepare: prepare, detailOriginalDispose: dispose } as unknown as BackendClient;
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const render = (currentGallery: Gallery) => root.render(
+      <ProgressiveDetailHero gallery={currentGallery} pageDimension={gallery.pageDimensions[0]} client={client} backend={backend} />,
+    );
+    try {
+      await act(async () => render(completed));
+      const pageOneRequest = prepare.mock.calls[0]![0];
+      expect(pageOneRequest).toMatchObject({ sourcePage: 1, entryId: "hero-representative" });
+      await act(async () => render(selected));
+      const representativeRequest = prepare.mock.calls[1]![0];
+      expect(representativeRequest).toMatchObject({ sourcePage: 3, entryId: "hero-representative" });
+      expect(container.querySelector(".detail-cover")).toHaveAttribute("data-thumbnail-kind", "artifact-page");
+      expect(container.querySelector(".detail-hero")).toHaveStyle({ aspectRatio: "1600 / 900" });
+      await act(async () => pending.get(representativeRequest.requestId)?.({
+        ok: true,
+        data: { ...media(representativeRequest.requestId), sourcePage: 3, width: 1600, height: 900 },
+      }));
+      await act(async () => container.querySelector<HTMLImageElement>(".detail-hero-original")?.dispatchEvent(new Event("load")));
+      await act(async () => pending.get(pageOneRequest.requestId)?.({ ok: true, data: media(pageOneRequest.requestId) }));
+      expect(container.querySelector(".detail-hero-original")).toHaveAttribute("src", media(representativeRequest.requestId).mediaUrl);
+      expect(container.querySelector(".detail-hero-original")).toHaveClass("is-ready");
+      expect(dispose).toHaveBeenCalledWith(pageOneRequest.requestId);
+
+      await act(async () => render({ ...selected, download: { ...selected.download!, entryId: "replacement-entry" } }));
+      expect(prepare.mock.calls[2]![0]).toMatchObject({ sourcePage: 1, entryId: "replacement-entry" });
+      expect(container.querySelector(".detail-cover")).toHaveAttribute("data-thumbnail-kind", "gallery-cover");
+      expect(container.querySelector(".detail-hero-original")).toBeNull();
+      expect(container.querySelector(".detail-hero")).toHaveStyle({ aspectRatio: "720 / 1080" });
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+    }
+  });
+
   it("shows the thumbnail immediately and prepares one frontend-created request ID", async () => {
     const prepare = vi.fn(async (request) => ({ ok: true as const, data: media(request.requestId) }));
     const dispose = vi.fn(async () => ({ ok: true as const, data: true }));

@@ -427,8 +427,153 @@ fn invalidation_evicts_cached_data_and_leaves_in_flight_work_alone() {
     assert!(in_flight.recv().is_ok());
     assert_eq!(resolver.calls.load(Ordering::SeqCst), 2);
     assert_eq!(coordinator.stats().cancelled_work, 0);
+    assert_eq!(coordinator.stats().success_cache_entries, 0);
+    let fresh = coordinator
+        .request(request(key, ThumbnailPriority::Visible))
+        .unwrap()
+        .recv()
+        .unwrap();
+    assert_eq!(fresh.cache_status, ThumbnailCacheStatus::Resolved);
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 3);
     assert_eq!(coordinator.stats().success_cache_entries, 1);
     coordinator.shutdown();
+}
+
+struct CacheFenceResolver {
+    started: mpsc::Sender<()>,
+    release: Mutex<mpsc::Receiver<()>>,
+    calls: AtomicUsize,
+    fail: bool,
+}
+
+impl ThumbnailResolver for CacheFenceResolver {
+    fn resolve(
+        &self,
+        key: &ThumbnailKey,
+        cancellation: &CancellationToken,
+    ) -> Result<ResolvedThumbnail, ThumbnailResolveError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+        }
+        if cancellation.is_cancelled() {
+            return Err(ThumbnailResolveError::cancelled());
+        }
+        if self.fail {
+            Err(ThumbnailResolveError::new(
+                ThumbnailFailureCode::NotFound,
+                "fenced fixture",
+                false,
+            ))
+        } else {
+            Ok(ResolvedThumbnail {
+                content_type: "image/png".into(),
+                bytes: key.cache_id().into_bytes(),
+                width: 1,
+                height: 1,
+                source_revision: None,
+            })
+        }
+    }
+}
+
+fn assert_fenced_deliveries_are_not_cached(clear_all: bool, fail: bool) {
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let resolver = Arc::new(CacheFenceResolver {
+        started: started_tx,
+        release: Mutex::new(release_rx),
+        calls: AtomicUsize::new(0),
+        fail,
+    });
+    let mut runtime = config(1);
+    runtime.permanent_failure_cache_ttl = Duration::from_secs(60);
+    let coordinator = ThumbnailCoordinator::new(resolver.clone(), runtime).unwrap();
+    let running_key = ThumbnailKey::gallery_cover(801).unwrap();
+    let queued_key = ThumbnailKey::gallery_cover(802).unwrap();
+    let running = coordinator
+        .request(request(running_key.clone(), ThumbnailPriority::Visible))
+        .unwrap();
+    started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let queued = coordinator
+        .request(request(queued_key.clone(), ThumbnailPriority::Visible))
+        .unwrap();
+    assert_eq!(coordinator.stats().queued_keys, 1);
+
+    if clear_all {
+        let cleared = coordinator.clear_cache();
+        assert_eq!(cleared.success_entries_removed, 0);
+        assert_eq!(cleared.negative_entries_removed, 0);
+    } else {
+        coordinator.invalidate(&running_key).unwrap();
+        coordinator.invalidate(&queued_key).unwrap();
+    }
+    // Existing de-duplication remains intact, including subscribers joining an
+    // invalidated generation before it finishes.
+    let joined = coordinator
+        .request(request(running_key.clone(), ThumbnailPriority::Critical))
+        .unwrap();
+    release_tx.send(()).unwrap();
+    for handle in [running, queued, joined] {
+        let result = handle.recv();
+        if fail {
+            let failure = result.unwrap_err();
+            assert_eq!(failure.code, ThumbnailFailureCode::NotFound);
+            assert!(!failure.negative_cache_hit);
+        } else {
+            assert_eq!(result.unwrap().cache_status, ThumbnailCacheStatus::Resolved);
+        }
+    }
+    let after_fence = coordinator.stats();
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(after_fence.success_cache_entries, 0);
+    assert_eq!(after_fence.success_cache_bytes, 0);
+    assert_eq!(after_fence.negative_cache_entries, 0);
+    assert_eq!(after_fence.cancelled_work, 0);
+    assert_eq!(after_fence.joined_in_flight, 1);
+
+    for key in [&running_key, &queued_key] {
+        let fresh = coordinator
+            .request(request(key.clone(), ThumbnailPriority::Visible))
+            .unwrap()
+            .recv();
+        if fail {
+            assert!(!fresh.unwrap_err().negative_cache_hit);
+        } else {
+            assert_eq!(fresh.unwrap().cache_status, ThumbnailCacheStatus::Resolved);
+        }
+    }
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 4);
+    // Newly resolved work belongs to a fresh generation and can cache normally.
+    let cached = coordinator
+        .request(request(running_key, ThumbnailPriority::Visible))
+        .unwrap()
+        .recv();
+    if fail {
+        assert!(cached.unwrap_err().negative_cache_hit);
+    } else {
+        assert_eq!(cached.unwrap().cache_status, ThumbnailCacheStatus::Memory);
+    }
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 4);
+    coordinator.shutdown();
+}
+
+#[test]
+fn invalidation_fences_queued_and_running_positive_and_negative_results() {
+    for fail in [false, true] {
+        assert_fenced_deliveries_are_not_cached(false, fail);
+    }
+}
+
+#[test]
+fn cache_clear_fences_queued_and_running_positive_and_negative_results() {
+    for fail in [false, true] {
+        assert_fenced_deliveries_are_not_cached(true, fail);
+    }
 }
 
 #[test]

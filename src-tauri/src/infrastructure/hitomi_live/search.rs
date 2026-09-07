@@ -219,7 +219,7 @@ impl HitomiLiveAdapter {
             }
             let rank = progress.cursor;
             let id = snapshot.candidate_ids[rank];
-            match self.fetch_metadata_with_cancellation(id, cancellation) {
+            match self.fetch_metadata_and_cache_summary(id, cancellation) {
                 Ok(metadata) => {
                     if let Some(cancellation) = cancellation {
                         check_cancelled(cancellation)?;
@@ -309,13 +309,30 @@ impl SearchRepository for HitomiLiveAdapter {
             .transpose()
     }
 
+    fn gallery_summary_get(
+        &self,
+        gallery_id: GalleryId,
+    ) -> Result<Option<GallerySummary>, RepositoryError> {
+        if let Some(summary) = self.cached_summary(gallery_id) {
+            return Ok(Some(summary));
+        }
+        let id = u64::try_from(gallery_id.get())
+            .map_err(|_| SourceContractError::validation("galleryId", "must be positive"))?;
+        let metadata = match self.fetch_metadata_and_cache_summary(id, None) {
+            Ok(metadata) => metadata,
+            Err(error) if error.code == SourceErrorCode::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        Ok(Some(gallery_summary(&metadata, SearchSort::Recent, 0)?))
+    }
+
     fn gallery_detail_get(
         &self,
         gallery_id: GalleryId,
     ) -> Result<Option<GalleryDetail>, RepositoryError> {
         let id = u64::try_from(gallery_id.get())
             .map_err(|_| SourceContractError::validation("galleryId", "must be positive"))?;
-        let metadata = match self.fetch_metadata(id) {
+        let metadata = match self.fetch_metadata_and_cache_summary(id, None) {
             Ok(metadata) => metadata,
             Err(error) if error.code == SourceErrorCode::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
@@ -470,7 +487,7 @@ impl AutoFindSource for HitomiLiveAdapter {
         check_auto_find_cancelled(cancellation)?;
         let source_id = u64::try_from(gallery_id.get())
             .map_err(|_| SourceContractError::validation("galleryId", "must be positive"))?;
-        match self.fetch_metadata_with_cancellation(source_id, Some(cancellation)) {
+        match self.fetch_metadata_and_cache_summary(source_id, Some(cancellation)) {
             Ok(metadata) => {
                 check_auto_find_cancelled(cancellation)?;
                 Ok(Some(gallery_summary(&metadata, SearchSort::Recent, 0)?))
@@ -593,7 +610,7 @@ fn metadata_matches(metadata: &HitomiGalleryMetadata, terms: &[ResidualTerm]) ->
     })
 }
 
-fn gallery_summary(
+pub(super) fn gallery_summary(
     metadata: &HitomiGalleryMetadata,
     sort: SearchSort,
     rank: usize,

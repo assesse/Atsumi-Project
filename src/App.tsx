@@ -45,6 +45,7 @@ import {
 import { AutoFindPager } from "./components/AutoFindPager";
 import { DetailWorkspace } from "./components/DetailWorkspace";
 import { DanbooruWorkspace } from "./components/DanbooruWorkspace";
+import { DownloadArtistFolderGrid } from "./components/DownloadArtistFolderGrid";
 import { DuplicateReviewDialog } from "./components/DuplicateReviewDialog";
 import { DownloadOverlapReviewDialog } from "./components/DownloadOverlapReviewDialog";
 import { ExploreContextBar, type ExploreContextTab } from "./components/ExploreContextBar";
@@ -66,6 +67,7 @@ import { UpdateDialog } from "./components/UpdateDialog";
 import { ViewHeader, type SearchSuggestion } from "./components/ViewHeader";
 import { galleryId, retryableDownloadStates, type ContentSource, type DownloadFilter, type DownloadState, type Gallery, type GalleryDisplayMode, type GalleryId, type Language, type SearchSort, type ViewId } from "./core/types";
 import { useSettings } from "./hooks/useSettings";
+import { useSavedGalleryPreviews } from "./hooks/useSavedGalleryPreviews";
 import { useProgressiveGalleryWindow } from "./hooks/useProgressiveGalleryWindow";
 import { useWindowPlacement } from "./hooks/useWindowPlacement";
 import { resolveCompactGalleryColumns, resolveGalleryColumns } from "./layout/galleryColumns";
@@ -73,7 +75,8 @@ import { alignPageSizeToColumns } from "./layout/pageSizeAlignment";
 import { buildSearchSuggestionCatalog, catalogSuggestion } from "./search/searchSuggestions";
 import { activeSearchToken, metadataSearchToken, searchTokenKind } from "./search/searchTokens";
 import { applyDownloadChanged } from "./state/downloadProjection";
-import { paginateAutoFindItems } from "./state/autoFindPagination";
+import { pickArtistBalancedCompletedDownload } from "./state/downloadRandom";
+import { paginateAutoFindItems, paginateGalleryItems } from "./state/autoFindPagination";
 import {
   duplicateEventNeedsSnapshot,
   duplicateRunIsNewer,
@@ -84,7 +87,12 @@ import { mergeDownloadEntries, mergeDownloadLibraryPage, mergeGalleryDetail, mer
 import { galleryQueryReducer, initialGalleryQueryState, type GalleryQueryState } from "./state/galleryQuery";
 import { ExplorePageSession } from "./state/explorePageSession";
 import { isPendingAutoFindCandidate, visibleGalleries } from "./state/selectors";
-import { galleryGroupStorageKey, groupGalleries, type GalleryGroup, type GalleryGrouping } from "./state/galleryGrouping";
+import {
+  galleryGroupStorageKey,
+  groupGalleries,
+  type GalleryGroup,
+  type GalleryGrouping,
+} from "./state/galleryGrouping";
 import {
   buildStrictOverlapPlan,
   DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
@@ -92,7 +100,12 @@ import {
 } from "./state/downloadOverlapAuto";
 import { initialUiState, uiReducer } from "./state/uiState";
 import { loadContentSource, saveContentSource } from "./state/sourcePreference";
-import { useThumbnailClient } from "./thumbnail";
+import {
+  GalleryCoverSessionRetainer,
+  galleryCoverPageSignature,
+  prefetchNextGalleryPageAfterCurrent,
+  useThumbnailClient,
+} from "./thumbnail";
 import { isTutorialDismissed, setTutorialDismissed } from "./tutorial/tutorialPreference";
 import { useAppUpdater } from "./update/useAppUpdater";
 
@@ -103,6 +116,15 @@ const viewConfig: Record<ViewId, { eyebrow: string; title: string }> = {
 };
 
 const viewOrder: ViewId[] = ["explore", "auto-find", "downloads"];
+
+const useStableGalleryCoverPage = (items: readonly Gallery[]): readonly Gallery[] => {
+  const signature = galleryCoverPageSignature(items);
+  const retained = useRef<{ signature: string; items: readonly Gallery[] } | null>(null);
+  if (!retained.current || retained.current.signature !== signature) {
+    retained.current = { signature, items };
+  }
+  return retained.current.items;
+};
 
 const sortOptions: Array<{ value: SearchSort; label: string }> = [
   { value: "recent", label: "최신순" },
@@ -233,6 +255,10 @@ const internalStatusLabel = (loading: boolean, error: string | null, run?: Inter
 
 export default function App() {
   const thumbnailClient = useThumbnailClient();
+  const sessionCoverRetainer = useRef<GalleryCoverSessionRetainer | null>(null);
+  if (!sessionCoverRetainer.current) {
+    sessionCoverRetainer.current = new GalleryCoverSessionRetainer(thumbnailClient);
+  }
   const [contentSource, setContentSource] = useState<ContentSource>(loadContentSource);
   const [ui, dispatch] = useReducer(uiReducer, initialUiState);
   const [query, dispatchQuery] = useReducer(galleryQueryReducer, initialGalleryQueryState);
@@ -240,12 +266,16 @@ export default function App() {
   const [exploreIds, setExploreIds] = useState<GalleryId[]>([]);
   const [downloadIds, setDownloadIds] = useState<GalleryId[]>([]);
   const [duplicateHiddenGalleryIds, setDuplicateHiddenGalleryIds] = useState<ReadonlySet<GalleryId>>(() => new Set());
+  const [explorationExcludedGalleryIds, setExplorationExcludedGalleryIds] = useState<ReadonlySet<GalleryId>>(() => new Set());
+  const [explorationExclusionsReady, setExplorationExclusionsReady] = useState(false);
   const [downloadsLoading, setDownloadsLoading] = useState(true);
   const [downloadsError, setDownloadsError] = useState<string | null>(null);
   const [searchRefresh, setSearchRefresh] = useState(0);
   const [exploreContextIds, setExploreContextIds] = useState<string[]>([]);
   const [activeExploreContextId, setActiveExploreContextId] = useState<string | null>(null);
   const [downloadsRefresh, setDownloadsRefresh] = useState(0);
+  const [downloadsPage, setDownloadsPage] = useState(1);
+  const downloadsPageContext = useRef<string | null>(null);
   const [favoriteMetadata, setFavoriteMetadata] = useState<ReadonlySet<string>>(() => new Set());
   const [favoriteRecords, setFavoriteRecords] = useState<FavoriteRecord[]>([]);
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
@@ -339,12 +369,14 @@ export default function App() {
   const internalArtifactProgressRef = useRef<InternalArtifactScanProgress | null>(null);
   const internalPendingRef = useRef(false);
   const downloadHydrationToken = useRef(0);
+  const explorationExclusionsHydrationToken = useRef(0);
   const queueRequestSequence = useRef(0);
   const pendingDownloadEntriesRef = useRef(new Set<string>());
   const sessionDownloadStatesRef = useRef(new Map<GalleryId, DownloadState | undefined>());
   const automaticOverlapActivityIdsRef = useRef(new Set<string>());
   const undoPendingRef = useRef(false);
   const pendingFavoriteTokens = useRef(new Set<string>());
+  const pendingFavoriteIntents = useRef(new Map<string, boolean>());
   const openingDownloadFolders = useRef(new Set<string>());
   const hydratedDetails = useRef(new Set<GalleryId>());
   const hydratingDetails = useRef(new Set<GalleryId>());
@@ -352,6 +384,9 @@ export default function App() {
   const hydratingCardDetails = useRef(new Set<GalleryId>());
   const nearbyDetailQueue = useRef<GalleryId[]>([]);
   const nearbyDetailQueued = useRef(new Set<GalleryId>());
+  const artistDetailQueue = useRef<GalleryId[]>([]);
+  const artistDetailWanted = useRef(new Set<GalleryId>());
+  const artistDetailAttempted = useRef(new Set<GalleryId>());
   const nearbyDetailWorkers = useRef(0);
   const nearbyDetailPump = useRef<() => void>(() => undefined);
   const galleriesRef = useRef(galleries);
@@ -438,6 +473,7 @@ export default function App() {
   const currentGalleryDisplayMode = ui.displayMode[ui.view];
   const appUpdater = useAppUpdater(backend.runtime);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<ReadonlySet<string>>(() => new Set());
+  const [expandedDownloadGroupKeys, setExpandedDownloadGroupKeys] = useState<ReadonlySet<string>>(() => new Set());
   const listPreferencePersistence = useRef<{ active: boolean; queued: SettingsPatch | null }>({ active: false, queued: null });
 
   useEffect(() => {
@@ -449,11 +485,13 @@ export default function App() {
   const maximumColumns = settingsPreview?.maxColumns ?? settings.maxColumns;
   const previewWidth = settingsPreview?.previewWidth ?? settings.previewWidth;
   const [galleryColumns, setGalleryColumns] = useState(1);
+  const [artistFolderColumns, setArtistFolderColumns] = useState(1);
   const hitomiPageSize = alignPageSizeToColumns(settings.explorePageSize, galleryColumns, 200);
 
   useWindowPlacement();
 
   useEffect(() => () => {
+    sessionCoverRetainer.current?.clear();
     for (const context of exploreContexts.current.values()) context.session.clear();
     if (exploreContexts.current.size === 0) explorePageSession.current?.clear();
     if (exploreRestoreFrame.current !== null) window.cancelAnimationFrame(exploreRestoreFrame.current);
@@ -735,11 +773,16 @@ export default function App() {
   }, [restoreExploreContext, snapshotActiveExploreContext]);
 
   const loadExplorationExclusionsAndSync = useCallback(async () => {
+    const token = ++explorationExclusionsHydrationToken.current;
+    setExplorationExclusionsReady(false);
     const result = await loadExplorationExclusions();
+    if (token !== explorationExclusionsHydrationToken.current) return result;
     if (result.ok) {
+      setExplorationExcludedGalleryIds(new Set(result.data.map((item) => item.galleryId)));
       setDuplicateHiddenGalleryIds(new Set(result.data
         .filter((item) => item.reasons.some((reason) => reason.kind === "duplicate_hidden"))
         .map((item) => item.galleryId)));
+      setExplorationExclusionsReady(true);
     }
     return result;
   }, []);
@@ -747,11 +790,15 @@ export default function App() {
   const restoreExplorationExclusionsAndSync = useCallback(async (galleryIds: GalleryId[]) => {
     const result = await restoreExplorationExclusions(galleryIds);
     if (result.ok) {
+      ++explorationExclusionsHydrationToken.current;
+      setExplorationExclusionsReady(false);
       const restored = new Set(result.data.restoredGalleryIds);
+      setExplorationExcludedGalleryIds((current) => new Set([...current].filter((id) => !restored.has(id))));
       setDuplicateHiddenGalleryIds((current) => new Set([...current].filter((id) => !restored.has(id))));
+      void loadExplorationExclusionsAndSync().catch(() => undefined);
     }
     return result;
-  }, []);
+  }, [loadExplorationExclusionsAndSync]);
 
   const beginDownloadOverlapAutomationHistoryMutation = useCallback((reviewId: string): boolean => {
     if (downloadOverlapAutomationHistoryPendingRef.current.has(reviewId)) return false;
@@ -898,6 +945,13 @@ export default function App() {
     setCollapsedGroupKeys(new Set(settings.collapsedGroupKeys));
   }, [settings.collapsedGroupKeys]);
 
+  useEffect(() => {
+    // Download groups are intentionally a session-local folder view. Entering a
+    // different grouping starts closed so thousands of cards are never mounted
+    // merely by opening Downloads.
+    setExpandedDownloadGroupKeys(new Set());
+  }, [ui.grouping.downloads]);
+
   const persistCollapsedGroupKeys = useCallback((nextKeys: ReadonlySet<string>) => {
     const serialized = [...nextKeys].sort((left, right) => left.localeCompare(right));
     setCollapsedGroupKeys(new Set(serialized));
@@ -911,6 +965,7 @@ export default function App() {
       const result = await backend.maintenanceExecute(preview.data.previewId, action);
       if (!result.ok) return result;
       if (action.kind === "quickRepair" || (action.kind === "rebuildLibrary" && action.rebuildThumbnailData)) {
+        sessionCoverRetainer.current?.clear();
         thumbnailClient.clearRetainedCache();
         for (const context of exploreContexts.current.values()) context.session.clear();
         if (exploreContexts.current.size === 0) explorePageSession.current?.clear();
@@ -1113,10 +1168,12 @@ export default function App() {
     const viewport = galleryViewport.current;
     if (!viewport) return;
     const update = () => {
+      const detailColumns = resolveGalleryColumns(viewport.clientWidth, maximumColumns, previewWidth);
       const next = currentGalleryDisplayMode === "compact"
         ? resolveCompactGalleryColumns(viewport.clientWidth, previewWidth)
-        : resolveGalleryColumns(viewport.clientWidth, maximumColumns, previewWidth);
+        : detailColumns;
       setGalleryColumns((current) => current === next ? current : next);
+      setArtistFolderColumns((current) => current === detailColumns ? current : detailColumns);
     };
     update();
     if (typeof ResizeObserver === "undefined") return;
@@ -1418,19 +1475,39 @@ export default function App() {
   const autoFindMatchedFavoriteTokens = useMemo(() => new Map(
     autoFindSnapshot.candidates.map((candidate) => [candidate.id, favoriteToken(candidate.matchedFavorite)]),
   ), [autoFindSnapshot.candidates]);
+  const savedPreviews = useSavedGalleryPreviews(backend, galleries);
+  const setRepresentativePreview = useCallback(async (id: GalleryId, sourcePage: number | null): Promise<boolean> => {
+    try {
+      await savedPreviews.save(id, sourcePage);
+      showToast(sourcePage === null ? "대표 미리보기를 자동 선택으로 되돌렸습니다." : `${sourcePage}페이지를 대표 미리보기로 저장했습니다.`);
+      return true;
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "대표 미리보기를 저장하지 못했습니다.");
+      return false;
+    }
+  }, [savedPreviews.save, showToast]);
   const displayGalleries = useMemo<ReadonlyMap<GalleryId, Gallery>>(() => {
     const next = new Map<GalleryId, Gallery>();
     galleries.forEach((gallery, id) => {
       const matchedFavoriteToken = autoFindMatchedFavoriteTokens.get(id);
       const favorite = favoriteMetadata.has(`artist:${normalizeMetadataToken(gallery.artist)}`)
         || (matchedFavoriteToken !== undefined && favoriteMetadata.has(matchedFavoriteToken));
-      next.set(id, gallery.favorite === favorite ? gallery : { ...gallery, favorite });
+      const representativePreview = savedPreviews.previews.get(id);
+      const validPreview = representativePreview?.sourcePage && representativePreview.entryId === gallery.download?.entryId
+        && gallery.download?.state === "completed";
+      next.set(id, !representativePreview && gallery.favorite === favorite ? gallery : {
+        ...gallery, favorite, representativePreview,
+        ...(validPreview && representativePreview.width && representativePreview.height
+          ? { thumbnailWidth: representativePreview.width, thumbnailHeight: representativePreview.height } : {}),
+      });
     });
     return next;
-  }, [autoFindMatchedFavoriteTokens, favoriteMetadata, galleries]);
+  }, [autoFindMatchedFavoriteTokens, favoriteMetadata, galleries, savedPreviews.previews]);
   const favoriteMetadataForDisplay = useMemo<ReadonlySet<string>>(() => {
     const next = new Set(favoriteMetadata);
     galleries.forEach((gallery) => {
+      const artistToken = `artist:${gallery.artist}`;
+      if (favoriteMetadata.has(normalizeMetadataToken(artistToken))) next.add(artistToken);
       if (gallery.group) {
         const token = `group:${gallery.group}`;
         if (favoriteMetadata.has(normalizeMetadataToken(token))) next.add(token);
@@ -1600,7 +1677,7 @@ export default function App() {
       || hydratingCardDetails.current.has(id)) return;
     hydratingCardDetails.current.add(id);
     try {
-      const result = await backend.galleryDetailGet(id);
+      const result = await backend.gallerySummaryGet(id);
       if (!result.ok) return;
       hydratedCardDetails.current.add(id);
       setGalleries((current) => mergeGalleryPage(current, {
@@ -1615,10 +1692,16 @@ export default function App() {
     }
   }, []);
   const pumpNearbyDownloadDetails = useCallback(() => {
-    while (nearbyDetailWorkers.current < 6 && nearbyDetailQueue.current.length) {
-      const id = nearbyDetailQueue.current.shift();
+    while (nearbyDetailWorkers.current < 6 && (nearbyDetailQueue.current.length || artistDetailQueue.current.length)) {
+      const nearby = nearbyDetailQueue.current.length > 0;
+      const id = nearby ? nearbyDetailQueue.current.shift() : artistDetailQueue.current.shift();
       if (id === undefined) break;
-      if (!nearbyDetailQueued.current.delete(id)) continue;
+      if (nearby) {
+        if (!nearbyDetailQueued.current.delete(id)) continue;
+      } else {
+        if (!artistDetailWanted.current.has(id) || artistDetailAttempted.current.has(id)) continue;
+        artistDetailAttempted.current.add(id);
+      }
       if (hydratedDetails.current.has(id)
         || hydratingDetails.current.has(id)
         || hydratedCardDetails.current.has(id)
@@ -1647,10 +1730,16 @@ export default function App() {
     for (const id of ids) nearbyDetailQueued.current.delete(id);
   }, []);
   useEffect(() => {
-    if (ui.view === "downloads") return;
+    if (ui.view === "downloads" && contentSource === "hitomi") return;
     nearbyDetailQueued.current.clear();
     nearbyDetailQueue.current = [];
-  }, [ui.view]);
+  }, [contentSource, ui.view]);
+  useEffect(() => () => {
+    nearbyDetailQueued.current.clear();
+    nearbyDetailQueue.current = [];
+    artistDetailWanted.current.clear();
+    artistDetailQueue.current = [];
+  }, []);
   const openDetail = useCallback((id: GalleryId) => {
     dispatch({ type: "detail.open", id });
     void hydrateDetail(id);
@@ -1660,11 +1749,20 @@ export default function App() {
     if (ui.view === "auto-find") {
       return filteredPendingAutoFindGalleries.some((gallery) => !duplicateHiddenGalleryIds.has(gallery.id));
     }
+    if (downloadsLoading || downloadsError !== null || !explorationExclusionsReady) return false;
     return downloadIds.some((id) => displayGalleries.get(id)?.download?.state === "completed"
+      && !explorationExcludedGalleryIds.has(id)
       && !duplicateHiddenGalleryIds.has(id));
-  }, [displayGalleries, downloadIds, duplicateHiddenGalleryIds, filteredPendingAutoFindGalleries, ui.view]);
+  }, [displayGalleries, downloadIds, downloadsError, downloadsLoading, duplicateHiddenGalleryIds, explorationExcludedGalleryIds, explorationExclusionsReady, filteredPendingAutoFindGalleries, ui.view]);
   const openRandomGallery = useCallback(async () => {
     if (randomOpenPending) return;
+
+    if (ui.view === "downloads" && (downloadsLoading || downloadsError !== null || !explorationExclusionsReady)) {
+      showToast(downloadsError
+        ? "다운로드 목록을 완전히 불러오지 못해 랜덤 열기를 사용할 수 없습니다. 목록을 새로고침해 주세요."
+        : "다운로드 및 제외 목록을 모두 확인한 뒤 랜덤 열기를 사용할 수 있습니다.");
+      return;
+    }
 
     let candidates: Gallery[] = [];
     if (ui.view === "auto-find") {
@@ -1672,16 +1770,24 @@ export default function App() {
         (gallery) => !duplicateHiddenGalleryIds.has(gallery.id),
       );
     } else if (ui.view === "downloads") {
-      candidates = downloadIds.flatMap((id) => {
-        const gallery = displayGalleries.get(id);
-        return gallery?.download?.state === "completed" && !duplicateHiddenGalleryIds.has(id)
-          ? [gallery]
-          : [];
-      });
+      const excludedGalleryIds = new Set([
+        ...explorationExcludedGalleryIds,
+        ...duplicateHiddenGalleryIds,
+      ]);
+      const gallery = pickArtistBalancedCompletedDownload(
+        downloadIds.flatMap((id) => {
+          const candidate = displayGalleries.get(id);
+          return candidate ? [candidate] : [];
+        }),
+        excludedGalleryIds,
+      );
+      candidates = gallery ? [gallery] : [];
     }
 
     if (ui.view !== "explore") {
-      const gallery = candidates[Math.floor(Math.random() * candidates.length)];
+      const gallery = ui.view === "downloads"
+        ? candidates[0]
+        : candidates[Math.floor(Math.random() * candidates.length)];
       if (!gallery) {
         showToast(ui.view === "auto-find"
           ? "현재 로드된 Auto Find 후보가 없습니다."
@@ -1718,7 +1824,7 @@ export default function App() {
     } finally {
       setRandomOpenPending(false);
     }
-  }, [displayGalleries, downloadIds, duplicateHiddenGalleryIds, filteredPendingAutoFindGalleries, openDetail, randomOpenPending, showToast, ui.view]);
+  }, [displayGalleries, downloadIds, downloadsError, downloadsLoading, duplicateHiddenGalleryIds, explorationExcludedGalleryIds, explorationExclusionsReady, filteredPendingAutoFindGalleries, openDetail, randomOpenPending, showToast, ui.view]);
   const openRelatedDetail = useCallback((id: GalleryId, parentId: GalleryId, options?: { activate?: boolean }) => {
     dispatch({ type: "detail.open", id, parentId, activate: options?.activate });
     void hydrateDetail(id);
@@ -2388,31 +2494,43 @@ export default function App() {
 
   const toggleMetadataFavorite = useCallback(async (value: string) => {
     const token = normalizeMetadataToken(value);
-    if (!token || pendingFavoriteTokens.current.has(token)) return;
+    if (!token) return;
     const key = favoriteKeyFromToken(token);
-    const enabled = !favoriteMetadata.has(token);
+    const currentIntent = pendingFavoriteIntents.current.get(token) ?? favoriteMetadata.has(token);
+    pendingFavoriteIntents.current.set(token, !currentIntent);
+    if (pendingFavoriteTokens.current.has(token)) return;
     pendingFavoriteTokens.current.add(token);
+    let persistedEnabled: boolean | undefined;
     try {
-      const result = await backend.favoriteSet(key, enabled);
-      if (!result.ok) {
-        showToast(result.error.message);
-        return;
+      while (true) {
+        const enabled = pendingFavoriteIntents.current.get(token);
+        if (enabled === undefined) break;
+        const result = await backend.favoriteSet(key, enabled);
+        if (!result.ok) {
+          showToast(result.error.message);
+          return;
+        }
+        persistedEnabled = result.data.enabled;
+        const normalizedToken = result.data.favorite ? favoriteToken(result.data.favorite) : token;
+        setFavoriteMetadata((current) => {
+          const next = new Set(current);
+          if (result.data.enabled) next.add(normalizedToken);
+          else next.delete(normalizedToken);
+          return next;
+        });
+        setFavoriteRecords((current) => {
+          const withoutKey = current.filter((favorite) => favoriteToken(favorite) !== normalizedToken);
+          return result.data.favorite ? [...withoutKey, result.data.favorite] : withoutKey;
+        });
+        if (pendingFavoriteIntents.current.get(token) === result.data.enabled) break;
       }
-      const normalizedToken = result.data.favorite ? favoriteToken(result.data.favorite) : token;
-      setFavoriteMetadata((current) => {
-        const next = new Set(current);
-        if (result.data.enabled) next.add(normalizedToken);
-        else next.delete(normalizedToken);
-        return next;
-      });
-      setFavoriteRecords((current) => {
-        const withoutKey = current.filter((favorite) => favoriteToken(favorite) !== normalizedToken);
-        return result.data.favorite ? [...withoutKey, result.data.favorite] : withoutKey;
-      });
-      showToast(`${value} 즐겨찾기를 ${result.data.enabled ? "추가" : "해제"}했습니다.`);
+      if (persistedEnabled !== undefined) {
+        showToast(`${value} 즐겨찾기를 ${persistedEnabled ? "추가" : "해제"}했습니다.`);
+      }
     } catch {
       showToast("즐겨찾기 변경을 저장하지 못했습니다.");
     } finally {
+      pendingFavoriteIntents.current.delete(token);
       pendingFavoriteTokens.current.delete(token);
     }
   }, [favoriteMetadata, showToast]);
@@ -2638,6 +2756,13 @@ export default function App() {
         return;
       }
       applyAutoFindSnapshot(result.data.snapshot);
+      ++explorationExclusionsHydrationToken.current;
+      setExplorationExclusionsReady(false);
+      setExplorationExcludedGalleryIds((current) => new Set([
+        ...current,
+        ...result.data.excludedGalleryIds,
+      ]));
+      void loadExplorationExclusionsAndSync().catch(() => undefined);
       dispatch({ type: "selection.clear" });
       setLastUndoAction({
         kind: "auto-find-exclusion",
@@ -2647,7 +2772,7 @@ export default function App() {
     } catch {
       showToast("자동 탐색 후보 제외 요청을 저장하지 못했습니다.");
     }
-  }, [applyAutoFindSnapshot, autoFindIds, showToast]);
+  }, [applyAutoFindSnapshot, autoFindIds, loadExplorationExclusionsAndSync, showToast]);
 
   const undoLastGalleryAction = useCallback(async () => {
     const action = lastUndoAction;
@@ -2665,6 +2790,12 @@ export default function App() {
           return;
         }
         applyAutoFindSnapshot(result.data.snapshot);
+        ++explorationExclusionsHydrationToken.current;
+        setExplorationExclusionsReady(false);
+        const restored = new Set(result.data.restoredGalleryIds);
+        setExplorationExcludedGalleryIds((current) => new Set([...current].filter((id) => !restored.has(id))));
+        setDuplicateHiddenGalleryIds((current) => new Set([...current].filter((id) => !restored.has(id))));
+        void loadExplorationExclusionsAndSync().catch(() => undefined);
         showToast(`${result.data.restoredGalleryIds.length}개 Auto Find 후보 제외를 취소했습니다.`);
       } else {
         const result = await backend.downloadQuarantineUndo(action.entryIds);
@@ -2684,7 +2815,7 @@ export default function App() {
     } finally {
       undoPendingRef.current = false;
     }
-  }, [applyAutoFindSnapshot, lastUndoAction, showToast]);
+  }, [applyAutoFindSnapshot, lastUndoAction, loadExplorationExclusionsAndSync, showToast]);
 
   const startDuplicateScan = useCallback(async () => {
     if (duplicatePendingRef.current || duplicateRun?.state === "running") return;
@@ -2890,9 +3021,92 @@ export default function App() {
     () => paginateAutoFindItems(autoFindPaginationSource, autoFindPage, hitomiPageSize),
     [autoFindPage, autoFindPaginationSource, hitomiPageSize],
   );
-  const renderedVisible = ui.view === "auto-find" ? autoFindPagination.items : visible;
+  const autoFindNextPageItems = useMemo(() => {
+    if (autoFindPagination.page >= autoFindPagination.totalPages) return [];
+    const start = autoFindPagination.startIndex + autoFindPagination.pageSize;
+    return autoFindPaginationSource.slice(start, start + autoFindPagination.pageSize);
+  }, [autoFindPagination, autoFindPaginationSource]);
+  const downloadsPageContextKey = useMemo(() => [
+    ui.search.downloads.committed.trim(),
+    [...ui.search.downloads.languages].sort().join(","),
+    ui.downloadsFilter,
+    ui.grouping.downloads,
+    hitomiPageSize,
+  ].join("\u001f"), [hitomiPageSize, ui.downloadsFilter, ui.grouping.downloads, ui.search.downloads]);
+  useEffect(() => {
+    const previous = downloadsPageContext.current;
+    downloadsPageContext.current = downloadsPageContextKey;
+    if (previous === null || previous === downloadsPageContextKey) return;
+    setDownloadsPage(1);
+    setKeyboardFocusId(null);
+    if (ui.view === "downloads" && galleryViewport.current) galleryViewport.current.scrollTop = 0;
+  }, [downloadsPageContextKey, ui.view]);
+  const downloadsPagination = useMemo(
+    () => paginateGalleryItems(
+      ui.view === "downloads" && ui.grouping.downloads === "all" ? visible : [],
+      downloadsPage,
+      hitomiPageSize,
+    ),
+    [downloadsPage, hitomiPageSize, ui.grouping.downloads, ui.view, visible],
+  );
+  const downloadsNextPageItems = useMemo(() => {
+    if (downloadsPagination.page >= downloadsPagination.totalPages) return [];
+    const start = downloadsPagination.startIndex + downloadsPagination.pageSize;
+    return visible.slice(start, start + downloadsPagination.pageSize);
+  }, [downloadsPagination, visible]);
+  const autoFindCurrentCoverItems = useStableGalleryCoverPage(autoFindPagination.items);
+  const autoFindNextCoverItems = useStableGalleryCoverPage(autoFindNextPageItems);
+  const downloadsCurrentCoverItems = useStableGalleryCoverPage(downloadsPagination.items);
+  const downloadsNextCoverItems = useStableGalleryCoverPage(downloadsNextPageItems);
+  const renderedVisible = ui.view === "auto-find"
+    ? autoFindPagination.items
+    : ui.view === "downloads" && ui.grouping.downloads === "all"
+      ? downloadsPagination.items
+      : visible;
+
+  useEffect(() => {
+    if (ui.view === "auto-find") {
+      sessionCoverRetainer.current?.visit("auto-find", autoFindCurrentCoverItems);
+      return;
+    }
+    if (ui.view === "downloads" && ui.grouping.downloads === "all") {
+      sessionCoverRetainer.current?.visit("downloads", downloadsCurrentCoverItems);
+    }
+  }, [autoFindCurrentCoverItems, downloadsCurrentCoverItems, ui.grouping.downloads, ui.view]);
+
+  useEffect(() => {
+    if (ui.view === "auto-find" && autoFindNextCoverItems.length > 0) {
+      return prefetchNextGalleryPageAfterCurrent(
+        thumbnailClient,
+        "auto-find",
+        autoFindCurrentCoverItems,
+        autoFindNextCoverItems,
+      );
+    }
+    if (
+      ui.view === "downloads"
+      && ui.grouping.downloads === "all"
+      && downloadsNextCoverItems.length > 0
+    ) {
+      return prefetchNextGalleryPageAfterCurrent(
+        thumbnailClient,
+        "downloads",
+        downloadsCurrentCoverItems,
+        downloadsNextCoverItems,
+      );
+    }
+    return undefined;
+  }, [
+    autoFindCurrentCoverItems,
+    autoFindNextCoverItems,
+    downloadsCurrentCoverItems,
+    downloadsNextCoverItems,
+    thumbnailClient,
+    ui.grouping.downloads,
+    ui.view,
+  ]);
   const renderedActionableIds = useMemo(() => {
-    if (ui.view !== "auto-find") return actionableVisibleIds;
+    if (ui.view === "explore") return actionableVisibleIds;
     return renderedVisible
       .filter((gallery) => gallery.download?.state !== "quarantined"
         && !duplicateHiddenGalleryIds.has(gallery.id))
@@ -2907,6 +3121,15 @@ export default function App() {
     if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
   }, [autoFindPage, autoFindPagination.page, ui.view]);
 
+  useEffect(() => {
+    if (ui.view !== "downloads"
+      || ui.grouping.downloads !== "all"
+      || downloadsPage === downloadsPagination.page) return;
+    setDownloadsPage(downloadsPagination.page);
+    setKeyboardFocusId(null);
+    if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
+  }, [downloadsPage, downloadsPagination.page, ui.grouping.downloads, ui.view]);
+
   const groupedVisible = useMemo(() => {
     if (ui.view !== "auto-find" && ui.view !== "downloads") return [];
     const grouping = ui.grouping[ui.view] as GalleryGrouping;
@@ -2915,15 +3138,32 @@ export default function App() {
       ? autoFindDiscoveryDates.get(gallery.id) ?? gallery.publishedAt
       : gallery.download?.updatedAt ?? gallery.download?.createdAt ?? gallery.publishedAt);
   }, [autoFindDiscoveryDates, renderedVisible, ui.grouping, ui.view]);
+  const artistDetailPreloadKey = contentSource === "hitomi" && ui.view === "downloads" && ui.grouping.downloads === "artist"
+    ? JSON.stringify([...new Set(groupedVisible.flatMap((group) => group.items.map((gallery) => gallery.id)))])
+    : "";
+  useEffect(() => {
+    const ids = artistDetailPreloadKey ? JSON.parse(artistDetailPreloadKey) as GalleryId[] : [];
+    artistDetailWanted.current = new Set(ids);
+    if (!artistDetailPreloadKey) artistDetailAttempted.current.clear();
+    artistDetailQueue.current = ids.filter((id) => !artistDetailAttempted.current.has(id)
+      && !hydratedDetails.current.has(id) && !hydratedCardDetails.current.has(id));
+    // Share the six-worker budget with viewport work. Hover/visible cards take
+    // priority, but leaving a folder never cancels its background tag loading.
+    nearbyDetailPump.current();
+  }, [artistDetailPreloadKey]);
   const groupedStorageKeys = useMemo(() => groupedVisible.map((group) => galleryGroupStorageKey(
     ui.view === "auto-find" ? "auto-find" : "downloads",
     group,
   )), [groupedVisible, ui.view]);
+  const visibleCollapsedGroupKeys = useMemo<ReadonlySet<string>>(() => {
+    if (ui.view !== "downloads") return collapsedGroupKeys;
+    return new Set(groupedStorageKeys.filter((key) => !expandedDownloadGroupKeys.has(key)));
+  }, [collapsedGroupKeys, expandedDownloadGroupKeys, groupedStorageKeys, ui.view]);
   const progressiveDownloadsObserveKey = useMemo(() => {
     if (ui.view !== "downloads") return "inactive";
-    const collapsed = [...collapsedGroupKeys].sort().join("\u001f");
+    const collapsed = [...visibleCollapsedGroupKeys].sort().join("\u001f");
     return `${currentGalleryDisplayMode}\u001e${ui.grouping.downloads}\u001e${collapsed}\u001e${renderedVisible.map((gallery) => gallery.id).join(",")}`;
-  }, [collapsedGroupKeys, currentGalleryDisplayMode, renderedVisible, ui.grouping.downloads, ui.view]);
+  }, [currentGalleryDisplayMode, renderedVisible, ui.grouping.downloads, ui.view, visibleCollapsedGroupKeys]);
   const nearbyDownloadIds = useProgressiveGalleryWindow({
     rootRef: galleryViewport,
     enabled: ui.view === "downloads",
@@ -2938,9 +3178,9 @@ export default function App() {
     const groupedView = ui.view;
     return groupedVisible.flatMap((group) => {
       const key = galleryGroupStorageKey(groupedView, group);
-      return collapsedGroupKeys.has(key) ? [] : group.items.map((gallery) => gallery.id);
+      return visibleCollapsedGroupKeys.has(key) ? [] : group.items.map((gallery) => gallery.id);
     });
-  }, [collapsedGroupKeys, groupedVisible, renderedActionableIds, ui.grouping, ui.view]);
+  }, [groupedVisible, renderedActionableIds, ui.grouping, ui.view, visibleCollapsedGroupKeys]);
   const effectiveKeyboardFocusId = useMemo(() => {
     if (keyboardFocusId !== null && keyboardNavigableIds.includes(keyboardFocusId)) return keyboardFocusId;
     return selectedIds.find((id) => keyboardNavigableIds.includes(id))
@@ -2962,6 +3202,11 @@ export default function App() {
     setKeyboardFocusId(null);
     if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
   }, []);
+  const changeDownloadsPage = useCallback((page: number) => {
+    setDownloadsPage(page);
+    setKeyboardFocusId(null);
+    if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
+  }, []);
   const refreshCurrentView = useCallback(() => {
     if (ui.view === "explore") {
       const activeId = activeExploreContextIdRef.current;
@@ -2980,21 +3225,34 @@ export default function App() {
     setDownloadsRefresh((current) => current + 1);
   }, [hydrateAutoFind, showToast, startExploreSearch, ui.view]);
   const allVisibleGroupsCollapsed = groupedStorageKeys.length > 0
-    && groupedStorageKeys.every((key) => collapsedGroupKeys.has(key));
+    && groupedStorageKeys.every((key) => visibleCollapsedGroupKeys.has(key));
   const toggleGroupCollapsed = useCallback((key: string) => {
+    if (ui.view === "downloads") {
+      setExpandedDownloadGroupKeys((current) => {
+        const next = new Set(current);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+      return;
+    }
     const next = new Set(collapsedGroupKeys);
     if (next.has(key)) next.delete(key);
     else next.add(key);
     persistCollapsedGroupKeys(next);
-  }, [collapsedGroupKeys, persistCollapsedGroupKeys]);
+  }, [collapsedGroupKeys, persistCollapsedGroupKeys, ui.view]);
   const setAllVisibleGroupsCollapsed = useCallback((collapsed: boolean) => {
+    if (ui.view === "downloads") {
+      setExpandedDownloadGroupKeys(collapsed ? new Set() : new Set(groupedStorageKeys));
+      return;
+    }
     const next = new Set(collapsedGroupKeys);
     for (const key of groupedStorageKeys) {
       if (collapsed) next.add(key);
       else next.delete(key);
     }
     persistCollapsedGroupKeys(next);
-  }, [collapsedGroupKeys, groupedStorageKeys, persistCollapsedGroupKeys]);
+  }, [collapsedGroupKeys, groupedStorageKeys, persistCollapsedGroupKeys, ui.view]);
 
   useEffect(() => {
     if (contentSource !== "hitomi") return;
@@ -3495,25 +3753,57 @@ export default function App() {
               (ui.view === "auto-find" || ui.view === "downloads") ? (
                 ui.grouping[ui.view] === "all"
                   ? renderGalleryGrid(renderedVisible, `${config.title} 전체 목록`)
-                  : <GalleryAccordionGroups
-                      groups={groupedVisible}
-                      view={ui.view}
-                      previewWidth={previewWidth}
-                      collapsedGroupKeys={collapsedGroupKeys}
-                      onToggle={toggleGroupCollapsed}
-                      renderGrid={renderGalleryGrid}
-                    />
+                  : ui.view === "downloads" && ui.grouping.downloads === "artist"
+                    ? <DownloadArtistFolderGrid
+                        groups={groupedVisible}
+                        thumbnailClient={thumbnailClient}
+                        coverRetainer={sessionCoverRetainer.current!}
+                        previewGalleryIdsByArtist={savedPreviews.artistGalleryIds}
+                        columns={artistFolderColumns}
+                        previewWidth={previewWidth}
+                        favoriteMetadata={favoriteMetadataForDisplay}
+                        collapsedGroupKeys={visibleCollapsedGroupKeys}
+                        onToggle={toggleGroupCollapsed}
+                        onPreviewItems={hydrateNearbyDownloadDetails}
+                        onStopPreviewItems={discardNearbyDownloadDetails}
+                        renderGrid={renderGalleryGrid}
+                      />
+                    : <GalleryAccordionGroups
+                        groups={groupedVisible}
+                        view={ui.view}
+                        previewWidth={previewWidth}
+                        collapsedGroupKeys={visibleCollapsedGroupKeys}
+                        onToggle={toggleGroupCollapsed}
+                        renderGrid={renderGalleryGrid}
+                      />
               ) : renderGalleryGrid(renderedVisible, config.title)
             ) : (
               <div className="empty-state"><FluentIcon glyph="\uE11A" /><h2>표시할 갤러리가 없습니다</h2><p>{ui.view === "auto-find" ? "즐겨찾기 작가를 추가한 뒤 명시적으로 갱신하거나 현재 검색·언어 필터를 바꿔 보세요." : "검색어나 언어·상태 필터를 바꿔 보세요."}</p></div>
             )}
-            {ui.view === "explore" && query.page ? <div className="pager"><button type="button" className="text-button" disabled={query.phase === "loading-page" || query.page.page <= 1} onClick={() => void loadExplorePage(query.page!.page - 1)}>이전</button><span>{query.page.page} / {Math.max(1, query.page.totalPages)}{query.phase === "loading-page" ? " · 불러오는 중" : ""}</span><button type="button" className="text-button" disabled={query.phase === "loading-page" || query.page.page >= query.page.totalPages} onClick={() => void loadExplorePage(query.page!.page + 1)}>다음</button></div> : null}
+            {ui.view === "explore" && query.page ? (
+              <AutoFindPager
+                page={query.pendingPage ?? query.page.page}
+                totalPages={Math.max(1, query.page.totalPages)}
+                onPageChange={(page) => void loadExplorePage(page)}
+                ariaLabel="Explore 페이지"
+                className="explore-pager"
+                busy={query.phase === "loading-page"}
+              />
+            ) : null}
             {ui.view === "auto-find" ? (
               <AutoFindPager
                 page={autoFindPagination.page}
                 totalPages={autoFindPagination.totalPages}
-                totalItems={autoFindPagination.totalItems}
                 onPageChange={changeAutoFindPage}
+              />
+            ) : null}
+            {ui.view === "downloads" && ui.grouping.downloads === "all" ? (
+              <AutoFindPager
+                page={downloadsPagination.page}
+                totalPages={downloadsPagination.totalPages}
+                onPageChange={changeDownloadsPage}
+                ariaLabel="다운로드 목록 페이지"
+                className="downloads-pager"
               />
             ) : null}
           </section>
@@ -3545,6 +3835,7 @@ export default function App() {
         onRestore={() => dispatch({ type: "detail.minimize", minimized: false })}
         onOpenRelated={openRelatedDetail}
         onQueue={(id) => void queueGalleries([id])}
+        onSetRepresentativePreview={setRepresentativePreview}
         onOpenDownloadFolder={(entryId) => void openDownloadFolder(entryId)}
         onMetadataSearch={searchMetadata}
         onMetadataFavorite={toggleMetadataFavorite}
@@ -3795,7 +4086,9 @@ function GalleryAccordionGroups({
                 aria-expanded={!collapsed}
                 onClick={() => onToggle(storageKey)}
               >
-                <span className="gallery-group-title" style={{ fontSize: `${titleSize}px` }}>{label}</span>
+                <span className="gallery-group-copy">
+                  <span className="gallery-group-title" style={{ fontSize: `${titleSize}px` }}>{label}</span>
+                </span>
                 <small className="gallery-group-count">{group.items.length}개 {view === "auto-find" ? "후보" : "작품"}</small>
                 <span className="gallery-group-toggle-icon" aria-hidden="true">▾</span>
               </button>

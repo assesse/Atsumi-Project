@@ -21,6 +21,53 @@ const searchRequest = (patch: Partial<SearchRequest> = {}): SearchRequest => ({
   ...patch,
 });
 
+describe("saved gallery preview contract", () => {
+  it("returns card tags without related albums or full page dimensions", async () => {
+    const id = galleryId(4051038);
+    const detail = await backend.galleryDetailGet(id);
+    const summary = await backend.gallerySummaryGet(id);
+    expect(detail.ok && summary.ok).toBe(true);
+    if (!detail.ok || !summary.ok) return;
+    const { related: _related, pageDimensions: _dimensions, ...card } = detail.data;
+    expect(summary.data).toEqual(card);
+    expect(summary.data).not.toHaveProperty("related");
+    expect(summary.data).not.toHaveProperty("pageDimensions");
+    expect((await backend.gallerySummaryGet(galleryId(0))).ok).toBe(false);
+  });
+
+  it("requires completed local work and persists manual selection with an automatic reset", async () => {
+    const id = galleryId(4400441);
+    const result = await backend.downloadQueueAdd([id], "saved-preview-contract");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const entry = result.data[0]!;
+    const fixture = backend as unknown as {
+      downloadEntries: Map<string, DownloadEntry>;
+      galleryPreviews: Map<number, unknown>;
+    };
+    const storage = window.localStorage.getItem("atsumi.browser.previews.v1");
+    try {
+      expect((await backend.galleryPreviewSet({ galleryId: id, sourcePage: 1 })).ok).toBe(false);
+      fixture.downloadEntries.set(entry.entryId, { ...entry, state: "completed", progress: 100 });
+      expect((await backend.galleryPreviewSet({ galleryId: id, sourcePage: 0 })).ok).toBe(false);
+      expect(await backend.galleryPreviewSet({ galleryId: id, sourcePage: 1 })).toMatchObject({
+        ok: true, data: { mode: "manual", sourcePage: 1, manualSourcePage: 1, entryId: entry.entryId },
+      });
+      expect(await backend.galleryPreviewList([id])).toMatchObject({ ok: true, data: [{ galleryId: id, mode: "manual" }] });
+      expect(JSON.parse(window.localStorage.getItem("atsumi.browser.previews.v1")!).galleries)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ galleryId: id, manualSourcePage: 1 })]));
+      expect(await backend.galleryPreviewSet({ galleryId: id, sourcePage: null })).toMatchObject({
+        ok: true, data: { mode: "automatic", sourcePage: 1, manualSourcePage: null },
+      });
+    } finally {
+      fixture.downloadEntries.delete(entry.entryId);
+      fixture.galleryPreviews.delete(id);
+      if (storage === null) window.localStorage.removeItem("atsumi.browser.previews.v1");
+      else window.localStorage.setItem("atsumi.browser.previews.v1", storage);
+    }
+  });
+});
+
 describe("browser Danbooru search contract", () => {
   it("does not charge unlimited metadata against the anonymous two-term limit", async () => {
     await expect(backend.danbooruSearch({
@@ -1657,8 +1704,8 @@ describe("browser backend active-work exit contract", () => {
       action: "remove_existing_continue",
       candidateId: firstCandidate.candidateId,
       actor: "automation",
-      reasonCode: "balanced_overlap_v3",
-      ruleVersion: 3,
+      reasonCode: "balanced_overlap_v4",
+      ruleVersion: 4,
       featureSnapshotJson: "[]",
     })).resolves.toMatchObject({
       ok: false,
@@ -1769,8 +1816,8 @@ describe("browser backend active-work exit contract", () => {
         action: "remove_existing_continue",
         candidateId,
         actor: "automation",
-        reasonCode: "balanced_overlap_v3",
-        ruleVersion: 3,
+        reasonCode: "balanced_overlap_v4",
+        ruleVersion: 4,
         featureSnapshotJson: "{}",
       });
 
@@ -1784,8 +1831,8 @@ describe("browser backend active-work exit contract", () => {
       candidateId: review.candidates[0]!.candidateId,
       action: "remove_existing_continue",
       actor: "automation",
-      reasonCode: "balanced_overlap_v3",
-      ruleVersion: 3,
+      reasonCode: "balanced_overlap_v4",
+      ruleVersion: 4,
       featureSnapshotJson: "{}",
       createdAt: expect.any(String),
     });

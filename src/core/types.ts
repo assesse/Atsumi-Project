@@ -27,6 +27,25 @@ export type DownloadState =
   | "quarantined"
   | "cancelled";
 
+export type GalleryPreview = {
+  galleryId: GalleryId;
+  mode: "automatic" | "manual";
+  sourcePage: number | null;
+  manualSourcePage: number | null;
+  entryId: string | null;
+  width: number | null;
+  height: number | null;
+  candidates: number[];
+  algorithmVersion: number;
+  updatedAt: string;
+};
+
+export type ArtistPreview = {
+  artist: string;
+  galleryIds: GalleryId[];
+  updatedAt: string;
+};
+
 export type Gallery = {
   id: GalleryId;
   title: string;
@@ -46,6 +65,7 @@ export type Gallery = {
   thumbnailKey?: string;
   thumbnailWidth?: number;
   thumbnailHeight?: number;
+  representativePreview?: GalleryPreview;
   /** Present only after the Detail metadata request has completed. */
   pageDimensions?: ReadonlyArray<{ readonly sourcePage: number; readonly width?: number; readonly height?: number }>;
   relatedIds?: GalleryId[];

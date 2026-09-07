@@ -332,6 +332,50 @@ mod tests {
         )
     }
 
+    fn heavy_typesetting_artifacts() -> (HashedArtifact, HashedArtifact) {
+        let mut existing = artifact(1_011_663, 23, 0);
+        existing.gallery.title = "Saimin nante Kakaru Wake Naijanaidesuka".into();
+        existing.gallery.artist = Some("typehatena".into());
+        existing.gallery.group = Some("second color".into());
+        let mut incoming = artifact(1_012_753, 23, 10_000);
+        incoming.gallery.title =
+            "Saimin nante Kakaru Wake Naijanaidesuka | localized edition".into();
+        incoming.gallery.artist = Some("TYPEHATENA".into());
+        incoming.gallery.group = Some("SECOND_COLOR".into());
+        for artifact in [&mut existing, &mut incoming] {
+            for page in &mut artifact.pages {
+                let source_page = page.source_page_number.get();
+                let scene = u64::from(source_page)
+                    .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                    .rotate_left(source_page);
+                page.coarse_d_hash = scene;
+                page.p_hash = scene.rotate_left(17);
+                page.detail_d_hash_hex = format!("{scene:016x}").repeat(16);
+            }
+        }
+        existing.pages[18].low_information = true;
+        for (source_page, page) in incoming.pages.iter_mut().enumerate() {
+            let source_page = source_page + 1;
+            if !matches!(source_page, 1 | 19 | 21 | 22) {
+                page.edge_density = 0.35;
+            }
+            if source_page == 19 {
+                page.low_information = false;
+                page.edge_density = 0.22;
+            }
+            if matches!(source_page, 21 | 22) {
+                page.artifact_sha256 = existing.pages[source_page - 1].artifact_sha256.clone();
+            }
+            if source_page == 23 {
+                page.low_information = true;
+                page.std_dev = 0.0;
+                page.non_uniform_ratio = 0.0;
+                page.edge_density = 0.0;
+            }
+        }
+        (existing, incoming)
+    }
+
     #[test]
     fn artist_normalization_is_nfkc_case_and_whitespace_exact() {
         assert_eq!(
@@ -437,6 +481,28 @@ mod tests {
         assert_eq!(candidate.incoming_coverage, 0.88);
         assert_eq!(candidate.existing_coverage, 0.88);
         assert_eq!(candidate.longest_aligned_run, 22);
+    }
+
+    #[test]
+    fn heavily_relettered_same_edition_is_near_equivalent_and_auto_rule_ready() {
+        let profile = HashProfile::current();
+        let (existing, incoming) = heavy_typesetting_artifacts();
+        let candidate = analyze_download_overlap_pair(
+            "heavy-typesetting-review",
+            &incoming,
+            &existing,
+            "8".repeat(64),
+            &profile,
+        )
+        .expect("95%-aligned same-edition lettering changes should pause at the overlap gate");
+        assert_eq!(candidate.relation, DownloadOverlapRelation::NearEquivalent);
+        assert_eq!(candidate.matched_pages, 22);
+        assert_eq!(candidate.exact_pages, 2);
+        assert_eq!(candidate.visual_pages, 20);
+        assert_eq!(candidate.incoming_coverage, 22.0 / 23.0);
+        assert_eq!(candidate.existing_coverage, 22.0 / 23.0);
+        assert_eq!(candidate.longest_aligned_run, 22);
+        assert!(candidate.confidence >= 0.90);
     }
 
     #[test]

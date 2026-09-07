@@ -21,16 +21,16 @@ use application::{
     ApplicationService, ArtifactRepository, ArtifactStore, AutoFindSource, AutoFindSupervisor,
     AutomationRepository, DetailOriginalSupervisor, DisabledDuplicateRelationProvider,
     DownloadOverlapRepository, DownloadPipelineRepository, DownloadSourcePort, DownloadSupervisor,
-    DuplicateRepository, DuplicateSupervisor, InternalDuplicateRepository,
-    InternalDuplicateSupervisor, StateRepository,
+    DuplicateRepository, DuplicateSupervisor, GalleryPreviewService, GalleryPreviewUpdate,
+    InternalDuplicateRepository, InternalDuplicateSupervisor, StateRepository,
 };
 use domain::{
     AutoFindRun, DownloadJobProjection, DuplicateScanRun, InternalArtifactScanProgress,
     InternalScanRun,
 };
 use infrastructure::{
-    CompositeThumbnailResolver, FilesystemArtifactStore, HitomiLiveAdapter, HitomiLiveConfig,
-    SqliteRepository, WindowsFolderPicker,
+    CompositeThumbnailResolver, ExcludedArtifactService, FilesystemArtifactStore,
+    HitomiLiveAdapter, HitomiLiveConfig, SqliteRepository, ThumbnailDiskCache, WindowsFolderPicker,
 };
 use interface::{AppQuitRequest, AppState};
 use tauri::{
@@ -40,7 +40,8 @@ use tauri::{
     Emitter, Manager,
 };
 use thumbnail::{
-    ThumbnailCompletionEventDto, ThumbnailCoordinator, ThumbnailCoordinatorConfig,
+    ThumbnailCompletionEventDto, ThumbnailConsumer, ThumbnailCoordinator,
+    ThumbnailCoordinatorConfig, ThumbnailKey, ThumbnailPriority, ThumbnailRequestDto,
     ThumbnailResolver,
 };
 
@@ -60,6 +61,10 @@ fn apply_pending_factory_reset(data_dir: &std::path::Path) -> std::io::Result<()
         if source.exists() {
             std::fs::rename(&source, backup.join(format!("atsumi-next.sqlite3{suffix}")))?;
         }
+    }
+    let thumbnail_cache = data_dir.join("thumbnail-cache");
+    if thumbnail_cache.exists() {
+        std::fs::rename(&thumbnail_cache, backup.join("thumbnail-cache"))?;
     }
     std::fs::remove_file(marker)?;
     Ok(())
@@ -595,7 +600,7 @@ pub fn run() -> tauri::Result<()> {
                     settings.request_start_interval_ms,
                 ),
                 ..HitomiLiveConfig::default()
-            })?);
+            })?.with_summary_cache(repository.clone()));
             let service = ApplicationService::new(repository.clone())
                 .with_download_repository(repository.clone())
                 .with_search_repository(live_source.clone())
@@ -629,6 +634,19 @@ pub fn run() -> tauri::Result<()> {
                 })?;
             let artifact_store: Arc<dyn ArtifactStore> =
                 Arc::new(FilesystemArtifactStore::new());
+            let (preview_event_tx, preview_event_rx) = mpsc::channel::<GalleryPreviewUpdate>();
+            let gallery_previews = GalleryPreviewService::new(
+                repository.clone(), repository.clone(), repository.clone(),
+                Arc::clone(&artifact_store), preview_event_tx,
+            )?;
+            let excluded_artifacts = Arc::new(ExcludedArtifactService::new(repository.clone(), Arc::clone(&artifact_store)));
+            match excluded_artifacts.reconcile_pending() {
+                Ok(report) => {
+                    for issue in &report.issues { tracing::warn!(issue, "startup excluded folder move was deferred"); }
+                    for id in report.gallery_ids { if let Ok(id) = domain::GalleryId::new(id) { gallery_previews.enqueue(id); } }
+                }
+                Err(error) => tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred"),
+            }
             let thumbnail_config = ThumbnailCoordinatorConfig {
                 max_concurrency: settings.concurrent_image_requests as usize,
                 request_start_interval: Duration::from_millis(settings.request_start_interval_ms),
@@ -637,15 +655,45 @@ pub fn run() -> tauri::Result<()> {
             let remote_thumbnail_resolver: Arc<dyn ThumbnailResolver> = live_source.clone();
             let artifact_repository: Arc<dyn ArtifactRepository> = repository.clone();
             let thumbnail_settings: Arc<dyn StateRepository> = repository.clone();
+            let thumbnail_disk_cache = Arc::new(ThumbnailDiskCache::new(
+                data_dir.join("thumbnail-cache"),
+                u64::from(settings.cache_limit_gb) * 1024 * 1024 * 1024,
+            ));
             let thumbnail_resolver: Arc<dyn ThumbnailResolver> = Arc::new(
                 CompositeThumbnailResolver::new(
                     remote_thumbnail_resolver,
                     Arc::clone(&artifact_repository),
                     thumbnail_settings,
                     Arc::clone(&artifact_store),
-                ),
+                ).with_disk_cache(Arc::clone(&thumbnail_disk_cache)),
             );
             let thumbnails = ThumbnailCoordinator::new(thumbnail_resolver, thumbnail_config)?;
+            let preview_app = app.handle().clone();
+            let preview_thumbnails = thumbnails.clone();
+            // Warming uses the shared, low-priority queue but has no UI subscriber.
+            // Dropping the receiver discards completions without an extra waiter thread.
+            let (preview_warm_tx, _) = mpsc::channel::<ThumbnailCompletionEventDto>();
+            thread::Builder::new().name("atsumi-gallery-preview-events".into()).spawn(move || {
+                while let Ok(update) = preview_event_rx.recv() {
+                    if let Some(preview) = update.preview {
+                        if let Err(error) = preview_app.emit("gallery-preview:updated", &preview) {
+                            tracing::warn!(error = %error, "could not emit gallery-preview:updated");
+                        }
+                        if let (Some(entry_id), Some(page)) = (preview.entry_id, preview.source_page) {
+                            if let Ok(key) = ThumbnailKey::artifact_page(entry_id, page) {
+                                let _ = preview_thumbnails.request_with_completion(ThumbnailRequestDto {
+                                    key, consumer: ThumbnailConsumer::Downloads, priority: ThumbnailPriority::Prefetch,
+                                }, preview_warm_tx.clone());
+                            }
+                        }
+                    }
+                    for artist in update.artists {
+                        if let Err(error) = preview_app.emit("artist-preview:updated", &artist) {
+                            tracing::warn!(error = %error, "could not emit artist-preview:updated");
+                        }
+                    }
+                }
+            })?;
             let (thumbnail_completion_tx, thumbnail_completion_rx) =
                 mpsc::channel::<ThumbnailCompletionEventDto>();
             let thumbnail_app = app.handle().clone();
@@ -775,6 +823,19 @@ pub fn run() -> tauri::Result<()> {
                 download_event_tx,
                 2,
             )?;
+            let completion_previews = gallery_previews.clone();
+            downloads.set_completion_handler(Arc::new(move |gallery_id| completion_previews.enqueue(gallery_id)));
+            let exclusion_service = Arc::clone(&excluded_artifacts);
+            let exclusion_previews = gallery_previews.clone();
+            downloads.set_exclusion_handler(Arc::new(move || {
+                match exclusion_service.reconcile() {
+                    Ok(report) => {
+                        for issue in &report.issues { tracing::warn!(issue, "excluded folder move was deferred"); }
+                        for id in report.gallery_ids { if let Ok(id) = domain::GalleryId::new(id) { exclusion_previews.enqueue(id); } }
+                    }
+                    Err(error) => tracing::warn!(error = %error, "excluded folder reconciliation was deferred"),
+                }
+            }));
             let (startup_recovery_issues, resumed_jobs) =
                 if download_root_configured {
                     match downloads.recover_startup_state() {
@@ -789,6 +850,18 @@ pub fn run() -> tauri::Result<()> {
                 } else {
                     (0, 0)
                 };
+            gallery_previews.start_backfill();
+            let startup_excluded = Arc::clone(&excluded_artifacts);
+            let startup_previews = gallery_previews.clone();
+            thread::Builder::new().name("atsumi-excluded-folders".into()).spawn(move || {
+                match startup_excluded.reconcile() {
+                    Ok(report) => {
+                        for issue in &report.issues { tracing::warn!(issue, "startup excluded folder move was deferred"); }
+                        for id in report.gallery_ids { if let Ok(id) = domain::GalleryId::new(id) { startup_previews.enqueue(id); } }
+                    }
+                    Err(error) => tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred"),
+                }
+            })?;
             app.manage(AppState::new(
                 service,
                 danbooru,
@@ -803,7 +876,8 @@ pub fn run() -> tauri::Result<()> {
                 artifact_store,
                 live_source.clone(),
                 data_dir,
-            ));
+            ).with_gallery_previews(gallery_previews).with_excluded_artifacts(excluded_artifacts)
+                .with_thumbnail_disk_cache(thumbnail_disk_cache));
             let tray_status = MenuItem::with_id(
                 app,
                 TRAY_WORK_STATUS_ID,
@@ -848,6 +922,9 @@ pub fn run() -> tauri::Result<()> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            interface::commands::gallery_preview_list,
+            interface::commands::gallery_preview_set,
+            interface::commands::artist_preview_list,
             interface::commands::settings_get,
             interface::danbooru::danbooru_search,
             interface::danbooru::danbooru_random,
@@ -864,6 +941,7 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::search_page_get,
             interface::commands::search_page_cancel,
             interface::commands::gallery_detail_get,
+            interface::commands::gallery_summary_get,
             interface::commands::favorites_list,
             interface::commands::favorite_set,
             interface::commands::search_history_list,

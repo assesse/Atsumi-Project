@@ -6,12 +6,12 @@ use thiserror::Error;
 use crate::{
     domain::{
         ArtifactBundle, ArtifactManifest, ArtifactRelativePath, ArtifactSha256,
-        ArtifactStorageFormat, DownloadEntryId, DownloadJobDescriptor, DownloadJobProjection,
-        DownloadOverlapAutomationHistoryItem, DownloadOverlapAutomationHistoryListRequest,
-        DownloadOverlapAutomationHistoryPage, DownloadOverlapCandidateIdentity,
-        DownloadOverlapDecisionApplyOutcome, DownloadOverlapDecisionRequest, DownloadOverlapReview,
-        DownloadOverlapReviewDraft, DuplicatePageHash, Gallery, GalleryId, JobRef, JobState,
-        PageArtifact, SourcePageNumber,
+        ArtifactStorageFormat, DownloadArtifact, DownloadEntryId, DownloadJobDescriptor,
+        DownloadJobProjection, DownloadOverlapAutomationHistoryItem,
+        DownloadOverlapAutomationHistoryListRequest, DownloadOverlapAutomationHistoryPage,
+        DownloadOverlapCandidateIdentity, DownloadOverlapDecisionApplyOutcome,
+        DownloadOverlapDecisionRequest, DownloadOverlapReview, DownloadOverlapReviewDraft,
+        DuplicatePageHash, Gallery, GalleryId, JobRef, JobState, PageArtifact, SourcePageNumber,
     },
     source::{SourceCandidateDiagnostic, SourceContractError},
     thumbnail::CancellationToken,
@@ -344,9 +344,12 @@ pub trait DownloadPipelineRepository: Send + Sync {
         jobs: &[JobRef],
     ) -> Result<Vec<DownloadJobDescriptor>, RepositoryError>;
 
+    /// Background inspections must pass their artifact snapshot. `None` is only
+    /// for a current worker's checkpoint failure; pending relocations are always skipped.
     fn pipeline_mark_artifact_issue(
         &self,
         entry_id: &DownloadEntryId,
+        expected_artifact: Option<&DownloadArtifact>,
         code: &str,
         message: &str,
     ) -> Result<Option<DownloadJobProjection>, RepositoryError>;

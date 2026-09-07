@@ -7,11 +7,12 @@ use crate::domain::{
     DuplicateScanRun, DuplicateScanState, DuplicateSnapshot, ExplorationDataResetResult,
     ExplorationExclusion, ExplorationExclusionRestoreResult, ExternalRelationEvidence, FavoriteKey,
     FavoriteMutationResult, FavoriteRecord, FixtureDownloadJobStep, GalleryDetail, GalleryId,
-    GalleryPage, InternalDuplicateReview, InternalDuplicateSnapshot, InternalGroupRecord,
-    InternalRemovalPlan, InternalRemovalSelection, InternalScanRun, InternalScanState, JobRef,
-    JobState, PageQuarantineRecord, PageQuarantineSaga, SearchHistoryEntry, SearchRequest,
-    SearchSubmission, SettingsSnapshot, SourcePageNumber, TagCatalogEntry, TagCatalogStatus,
-    TagSuggestion, TagSuggestionRequest, WindowPlacementSnapshot,
+    GalleryPage, GallerySummary, InternalDuplicateReview, InternalDuplicateSnapshot,
+    InternalGroupRecord, InternalRemovalPlan, InternalRemovalSelection, InternalScanRun,
+    InternalScanState, JobRef, JobState, PageQuarantineRecord, PageQuarantineSaga,
+    SearchHistoryEntry, SearchRequest, SearchSubmission, SettingsSnapshot, SourcePageNumber,
+    TagCatalogEntry, TagCatalogStatus, TagSuggestion, TagSuggestionRequest,
+    WindowPlacementSnapshot,
 };
 
 use super::RepositoryError;
@@ -65,6 +66,19 @@ pub trait ArtifactRepository: Send + Sync {
     ) -> Result<Option<ArtifactBundle>, RepositoryError>;
 }
 
+/// Durable display metadata only. This cache must never supply source-page
+/// hashes or routing metadata to a download.
+pub trait GallerySummaryCache: Send + Sync {
+    fn gallery_summary_cache_get(
+        &self,
+        gallery_id: GalleryId,
+    ) -> Result<Option<GallerySummary>, RepositoryError>;
+
+    fn gallery_summary_cache_put(&self, summary: &GallerySummary) -> Result<(), RepositoryError>;
+
+    fn gallery_summary_cache_clear(&self) -> Result<u64, RepositoryError>;
+}
+
 pub trait SearchRepository: Send + Sync {
     fn search_submit(&self, request: &SearchRequest) -> Result<SearchSubmission, RepositoryError>;
 
@@ -98,6 +112,15 @@ pub trait SearchRepository: Send + Sync {
         &self,
         gallery_id: GalleryId,
     ) -> Result<Option<GalleryDetail>, RepositoryError>;
+
+    fn gallery_summary_get(
+        &self,
+        gallery_id: GalleryId,
+    ) -> Result<Option<GallerySummary>, RepositoryError> {
+        Ok(self
+            .gallery_detail_get(gallery_id)?
+            .map(|detail| detail.summary))
+    }
 }
 
 /// A fixed-source catalog. Implementations never accept caller-provided URLs.

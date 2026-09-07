@@ -99,7 +99,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -184,7 +184,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -295,7 +295,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36, 37, 38, 39
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42
         ]
     );
     let metadata: (String, String) = connection
@@ -359,7 +359,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -2354,6 +2354,36 @@ fn fixture_search_applies_tag_language_and_group_clauses() {
             .collect::<Vec<_>>(),
         vec![4_051_038, 4_050_754]
     );
+}
+
+#[test]
+fn fixture_gallery_summary_matches_detail_and_validates_gallery_id() {
+    let service = fixture_search_service();
+    let summary = service
+        .gallery_summary_get(4_051_038)
+        .expect("load fixture gallery summary through the default repository projection");
+    let detail = service
+        .gallery_detail_get(4_051_038)
+        .expect("load fixture gallery detail");
+    assert_eq!(summary, detail.summary);
+    let serialized =
+        serde_json::to_value(ApiResult::success(summary)).expect("serialize gallery summary");
+    assert_eq!(serialized["data"]["id"], json!(4_051_038));
+    assert!(serialized["data"].get("related").is_none());
+    assert!(serialized["data"].get("pageDimensions").is_none());
+
+    for gallery_id in [0, -1] {
+        assert!(matches!(
+            service.gallery_summary_get(gallery_id),
+            Err(ApplicationError::Validation(_))
+        ));
+    }
+    let missing = ApiError::from(
+        service
+            .gallery_summary_get(9_999_999)
+            .expect_err("unknown gallery summary must fail"),
+    );
+    assert_eq!(missing.code, "SOURCE_NOT_FOUND");
 }
 
 #[test]

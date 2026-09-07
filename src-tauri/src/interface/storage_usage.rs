@@ -59,8 +59,13 @@ pub fn collect_storage_usage(
 ) -> StorageUsageSnapshot {
     let mut warnings = Vec::new();
     let data_usage = directory_usage(data_dir);
-    let disk_cache_path = data_dir.join("detail-original");
-    let disk_cache_usage = directory_usage(&disk_cache_path);
+    let original_cache = directory_usage(&data_dir.join("detail-original"));
+    let thumbnail_cache = directory_usage(&data_dir.join("thumbnail-cache"));
+    let disk_cache_usage = DirectoryUsage {
+        bytes: original_cache.bytes.saturating_add(thumbnail_cache.bytes),
+        exists: original_cache.exists || thumbnail_cache.exists,
+        complete: original_cache.complete && thumbnail_cache.complete,
+    };
     let app_data_bytes = data_usage.bytes.saturating_sub(disk_cache_usage.bytes);
 
     if !data_usage.complete {
@@ -68,7 +73,7 @@ pub fn collect_storage_usage(
             .push("일부 앱 데이터 파일을 읽지 못해 표시 용량이 실제보다 작을 수 있습니다.".into());
     }
     if disk_cache_usage.exists && !disk_cache_usage.complete {
-        warnings.push("일부 디스크 임시 캐시 파일을 읽지 못했습니다.".into());
+        warnings.push("일부 디스크 캐시 파일을 읽지 못했습니다.".into());
     }
 
     let configured_download_root = download_root.filter(|path| !path.as_os_str().is_empty());
@@ -353,7 +358,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn splits_transient_cache_app_data_and_download_files() {
+    fn splits_persistent_and_transient_caches_app_data_and_download_files() {
         let temporary = tempfile::tempdir().unwrap();
         let data_dir = temporary.path().join("data");
         let cache_dir = data_dir.join("detail-original");
@@ -362,18 +367,20 @@ mod tests {
         fs::create_dir_all(download_root.join("album")).unwrap();
         fs::write(data_dir.join("atsumi-next.sqlite3"), [0_u8; 5]).unwrap();
         fs::write(cache_dir.join("preview.webp"), [0_u8; 3]).unwrap();
+        fs::create_dir_all(data_dir.join("thumbnail-cache")).unwrap();
+        fs::write(data_dir.join("thumbnail-cache/thumbnail.bin"), [0_u8; 13]).unwrap();
         fs::write(download_root.join("album/0001.webp"), [0_u8; 7]).unwrap();
 
         let usage = collect_storage_usage(&data_dir, Some(&download_root), 11);
 
         assert_eq!(usage.memory_cache_bytes, 11);
-        assert_eq!(usage.disk_cache.bytes, 3);
+        assert_eq!(usage.disk_cache.bytes, 16);
         assert_eq!(usage.app_data.bytes, 5);
         assert_eq!(usage.downloads.bytes, 7);
         assert!(usage.disk_cache.scan_complete);
         assert!(usage.downloads.scan_complete);
         assert_eq!(usage.volumes.len(), 1);
-        assert_eq!(usage.volumes[0].atsumi_bytes, 15);
+        assert_eq!(usage.volumes[0].atsumi_bytes, 28);
     }
 
     #[test]

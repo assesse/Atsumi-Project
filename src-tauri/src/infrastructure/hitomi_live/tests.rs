@@ -10,10 +10,11 @@ use reqwest::Url;
 use crate::{
     application::{
         ArtifactStore, AutoFindSource, AutoFindSourceRequest, DownloadSourcePort,
-        ExistingPageVerification, RepositoryError, SearchRepository, TagCatalogSource,
+        ExistingPageVerification, GallerySummaryCache, RepositoryError, SearchRepository,
+        TagCatalogSource,
     },
     domain::{ArtifactRelativePath, GalleryId, Language, SearchRequest, SearchSort},
-    infrastructure::FilesystemArtifactStore,
+    infrastructure::{FilesystemArtifactStore, SqliteRepository},
     source::{
         hitomi::{
             download_full_candidates, galleryinfo_script_url, gg_script_url,
@@ -112,7 +113,352 @@ impl FakeTransport {
 }
 
 #[test]
+fn gallery_summary_fetches_only_main_metadata_and_reuses_the_shared_cache() {
+    let transport = Arc::new(FakeTransport::default());
+    let main_url = galleryinfo_script_url(7_001).unwrap();
+    let related_url = galleryinfo_script_url(7_002).unwrap();
+    transport.respond(
+        main_url.clone(),
+        "text/javascript",
+        gallery_script(7_001, "Main summary fixture", "[7002]").into_bytes(),
+    );
+    transport.fail(
+        related_url.clone(),
+        crate::source::map_http_status(503, None).unwrap_err(),
+    );
+    let adapter = HitomiLiveAdapter::with_transport(
+        HitomiLiveConfig {
+            request_start_interval: Duration::ZERO,
+            ..HitomiLiveConfig::default()
+        },
+        transport.clone(),
+    );
+    let gallery_id = GalleryId::new(7_001).unwrap();
+
+    let summary = adapter
+        .gallery_summary_get(gallery_id)
+        .expect("load main summary without fetching related galleries")
+        .expect("main summary exists");
+    assert_eq!(summary.title, "Main summary fixture");
+    assert_eq!(summary.pages, 2);
+    assert_eq!(
+        summary.tags,
+        vec!["landscape", "female:blue_sky", "daylight"]
+    );
+    assert_eq!(
+        (summary.thumbnail_width, summary.thumbnail_height),
+        (1200, 1600)
+    );
+    assert!(summary.thumbnail_key.is_some());
+    assert_eq!(
+        adapter.gallery_summary_get(gallery_id).unwrap(),
+        Some(summary),
+    );
+    let snapshot = adapter
+        .gallery_snapshot(gallery_id, &CancellationToken::new())
+        .expect("download source also reuses the warmed metadata");
+    assert_eq!(snapshot.pages.len(), 2);
+    assert_eq!(transport.call_count(&main_url), 1);
+    assert_eq!(transport.call_count(&related_url), 0);
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn persisted_gallery_summaries_survive_restart_with_empty_tags_and_no_network() {
+    let temporary = tempfile::tempdir().unwrap();
+    let path = temporary.path().join("summary-cache.sqlite");
+    let loaded = {
+        let repository = Arc::new(SqliteRepository::open(&path).unwrap());
+        let transport = Arc::new(FakeTransport::default());
+        transport.respond(
+            galleryinfo_script_url(7_001).unwrap(),
+            "text/javascript",
+            gallery_script(7_001, "Persisted tags", "[7002]").into_bytes(),
+        );
+        transport.respond(
+            galleryinfo_script_url(7_003).unwrap(),
+            "text/javascript",
+            gallery_script(7_003, "Persisted empty tags", "[7002]")
+                .replace("\"tags\": [", "\"unused_tags\": [")
+                .into_bytes(),
+        );
+        let adapter =
+            HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone())
+                .with_summary_cache(repository.clone());
+        let loaded = [7_001, 7_003].map(|id| {
+            adapter
+                .gallery_summary_get(GalleryId::new(id).unwrap())
+                .unwrap()
+                .unwrap()
+        });
+        assert!(!loaded[0].tags.is_empty());
+        assert!(loaded[1].tags.is_empty());
+        assert_eq!(transport.calls.lock().unwrap().len(), 2);
+        assert_eq!(
+            transport.call_count(&galleryinfo_script_url(7_002).unwrap()),
+            0
+        );
+        repository
+            .connection()
+            .unwrap()
+            .execute(
+                "UPDATE gallery_summary_cache SET updated_at = '1999-01-01T00:00:00Z'",
+                [],
+            )
+            .unwrap();
+        loaded
+    };
+    let offline = Arc::new(FakeTransport::default());
+    let repository = Arc::new(SqliteRepository::open(&path).unwrap());
+    let restarted = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), offline.clone())
+        .with_summary_cache(repository);
+    for summary in loaded {
+        assert_eq!(
+            restarted.gallery_summary_get(summary.id).unwrap(),
+            Some(summary)
+        );
+    }
+    assert!(offline.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn download_resolution_refreshes_persisted_summary_and_never_uses_it_for_pages() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let gallery_id = GalleryId::new(7_001).unwrap();
+    let initial = super::search::gallery_summary(
+        &parse_galleryinfo_script(&gallery_script(7_001, "Old summary", "[]")).unwrap(),
+        SearchSort::Recent,
+        0,
+    )
+    .unwrap();
+    repository.gallery_summary_cache_put(&initial).unwrap();
+    let offline = Arc::new(FakeTransport::default());
+    let restarted = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), offline.clone())
+        .with_summary_cache(repository.clone());
+    assert_eq!(
+        restarted.gallery_summary_get(gallery_id).unwrap(),
+        Some(initial.clone())
+    );
+    assert!(restarted
+        .gallery_snapshot(gallery_id, &CancellationToken::new())
+        .is_err());
+    assert_eq!(offline.calls.lock().unwrap().len(), 1);
+
+    let transport = Arc::new(FakeTransport::default());
+    let main_url = galleryinfo_script_url(7_001).unwrap();
+    transport.respond(
+        main_url.clone(),
+        "text/javascript",
+        gallery_script(7_001, "New download metadata", "[7002]")
+            .replace("blue_sky", "updated_tag")
+            .into_bytes(),
+    );
+    let downloader =
+        HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone())
+            .with_summary_cache(repository.clone());
+    assert_eq!(
+        downloader.gallery_summary_get(gallery_id).unwrap(),
+        Some(initial)
+    );
+    let snapshot = downloader
+        .gallery_snapshot(gallery_id, &CancellationToken::new())
+        .unwrap();
+    assert_eq!(snapshot.pages.len(), 2);
+    let updated = downloader.gallery_summary_get(gallery_id).unwrap().unwrap();
+    assert_eq!(updated.title, "New download metadata");
+    assert!(updated.tags.contains(&"female:updated_tag".to_owned()));
+    assert_eq!(
+        repository.gallery_summary_cache_get(gallery_id).unwrap(),
+        Some(updated)
+    );
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+    assert_eq!(transport.call_count(&main_url), 1);
+}
+
+#[test]
+fn corrupt_or_incompatible_persisted_gallery_summary_is_refetched_and_repaired() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let gallery_id = GalleryId::new(7_001).unwrap();
+    let expected = super::search::gallery_summary(
+        &parse_galleryinfo_script(&gallery_script(7_001, "Recovered summary", "[7002]")).unwrap(),
+        SearchSort::Recent,
+        0,
+    )
+    .unwrap();
+    let valid_json = serde_json::to_string(&expected).unwrap();
+    let mismatched_id = valid_json.replace("\"id\":7001", "\"id\":7002");
+    for (profile, version, json) in [
+        ("hitomi-gallery-summary-v1", 1, "{broken"),
+        ("hitomi-gallery-summary-v1", 1, "{}"),
+        ("hitomi-gallery-summary-v1", 1, mismatched_id.as_str()),
+        ("hitomi-gallery-summary-v1", 2, valid_json.as_str()),
+        ("obsolete-profile", 1, valid_json.as_str()),
+    ] {
+        repository.connection().unwrap().execute(
+            "INSERT OR REPLACE INTO gallery_summary_cache (gallery_id, profile, schema_version, summary_json) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![gallery_id.get(), profile, version, json],
+        ).unwrap();
+        let transport = Arc::new(FakeTransport::default());
+        transport.respond(
+            galleryinfo_script_url(7_001).unwrap(),
+            "text/javascript",
+            gallery_script(7_001, "Recovered summary", "[7002]").into_bytes(),
+        );
+        let adapter =
+            HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone())
+                .with_summary_cache(repository.clone());
+        assert_eq!(
+            adapter.gallery_summary_get(gallery_id).unwrap(),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            adapter.gallery_summary_get(gallery_id).unwrap(),
+            Some(expected.clone())
+        );
+        assert_eq!(
+            repository.gallery_summary_cache_get(gallery_id).unwrap(),
+            Some(expected.clone())
+        );
+        assert_eq!(transport.calls.lock().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn clearing_persisted_gallery_summary_requires_a_new_main_metadata_fetch() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let transport = Arc::new(FakeTransport::default());
+    let main_url = galleryinfo_script_url(7_001).unwrap();
+    for title in ["Before clear", "After clear"] {
+        transport.respond(
+            main_url.clone(),
+            "text/javascript",
+            gallery_script(7_001, title, "[]").into_bytes(),
+        );
+    }
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone())
+        .with_summary_cache(repository.clone());
+    let gallery_id = GalleryId::new(7_001).unwrap();
+    assert_eq!(
+        adapter
+            .gallery_summary_get(gallery_id)
+            .unwrap()
+            .unwrap()
+            .title,
+        "Before clear"
+    );
+    adapter.clear_derived_caches();
+    assert!(repository
+        .gallery_summary_cache_get(gallery_id)
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        adapter
+            .gallery_summary_get(gallery_id)
+            .unwrap()
+            .unwrap()
+            .title,
+        "After clear"
+    );
+    assert_eq!(transport.call_count(&main_url), 2);
+}
+
+#[test]
+fn clearing_persisted_gallery_summary_rejects_inflight_metadata_repopulation() {
+    struct BlockingTransport {
+        started: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl HttpTransport for BlockingTransport {
+        fn execute(&self, _: HttpRequest) -> Result<HttpPayload, SourceContractError> {
+            self.started.send(()).unwrap();
+            self.release
+                .lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
+            Ok(HttpPayload {
+                status: 200,
+                content_type: "text/javascript".into(),
+                bytes: gallery_script(7_001, "In-flight old summary", "[]").into_bytes(),
+            })
+        }
+    }
+    let (started, waiting) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let adapter = Arc::new(
+        HitomiLiveAdapter::with_transport(
+            HitomiLiveConfig::default(),
+            Arc::new(BlockingTransport {
+                started,
+                release: Mutex::new(released),
+            }),
+        )
+        .with_summary_cache(repository.clone()),
+    );
+    let worker_adapter = adapter.clone();
+    let gallery_id = GalleryId::new(7_001).unwrap();
+    let worker = std::thread::spawn(move || worker_adapter.gallery_summary_get(gallery_id));
+    waiting.recv_timeout(Duration::from_secs(5)).unwrap();
+    adapter.clear_derived_caches();
+    release.send(()).unwrap();
+    assert!(worker.join().unwrap().unwrap().is_some());
+    assert!(repository
+        .gallery_summary_cache_get(gallery_id)
+        .unwrap()
+        .is_none());
+    assert!(adapter
+        .metadata_cache
+        .lock()
+        .unwrap()
+        .get_fresh(&7_001, Duration::from_secs(60))
+        .is_none());
+}
+
+#[test]
+fn persisted_gallery_summary_cache_failure_does_not_fail_download_resolution() {
+    struct BrokenCache;
+    impl GallerySummaryCache for BrokenCache {
+        fn gallery_summary_cache_get(
+            &self,
+            _: GalleryId,
+        ) -> Result<Option<crate::domain::GallerySummary>, RepositoryError> {
+            Err(RepositoryError::Other("cache read unavailable".into()))
+        }
+        fn gallery_summary_cache_put(
+            &self,
+            _: &crate::domain::GallerySummary,
+        ) -> Result<(), RepositoryError> {
+            Err(RepositoryError::Other("cache write unavailable".into()))
+        }
+        fn gallery_summary_cache_clear(&self) -> Result<u64, RepositoryError> {
+            Err(RepositoryError::Other("cache clear unavailable".into()))
+        }
+    }
+    let transport = Arc::new(FakeTransport::default());
+    transport.respond(
+        galleryinfo_script_url(7_001).unwrap(),
+        "text/javascript",
+        gallery_script(7_001, "Cache-independent download", "[]").into_bytes(),
+    );
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone())
+        .with_summary_cache(Arc::new(BrokenCache));
+    let gallery_id = GalleryId::new(7_001).unwrap();
+    assert!(adapter.gallery_summary_get(gallery_id).unwrap().is_some());
+    assert_eq!(
+        adapter
+            .gallery_snapshot(gallery_id, &CancellationToken::new())
+            .unwrap()
+            .pages
+            .len(),
+        2
+    );
+    assert_eq!(transport.calls.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn detail_keeps_main_page_dimensions_when_related_metadata_is_temporarily_unavailable() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
     let transport = Arc::new(FakeTransport::default());
     transport.respond(
         galleryinfo_script_url(7_001).unwrap(),
@@ -129,7 +475,8 @@ fn detail_keeps_main_page_dimensions_when_related_metadata_is_temporarily_unavai
             ..HitomiLiveConfig::default()
         },
         transport,
-    );
+    )
+    .with_summary_cache(repository.clone());
 
     let detail = adapter
         .gallery_detail_get(GalleryId::new(7_001).unwrap())
@@ -139,6 +486,16 @@ fn detail_keeps_main_page_dimensions_when_related_metadata_is_temporarily_unavai
     assert_eq!(detail.summary.title, "Main detail fixture");
     assert!(!detail.page_dimensions.is_empty());
     assert!(detail.related.is_empty());
+    assert_eq!(
+        repository
+            .gallery_summary_cache_get(GalleryId::new(7_001).unwrap())
+            .unwrap(),
+        Some(detail.summary)
+    );
+    assert!(repository
+        .gallery_summary_cache_get(GalleryId::new(7_002).unwrap())
+        .unwrap()
+        .is_none());
 }
 
 impl HttpTransport for FakeTransport {

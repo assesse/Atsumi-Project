@@ -1,4 +1,4 @@
-export type AutoFindPageSlice<T> = {
+export type GalleryPageSlice<T> = {
   items: T[];
   page: number;
   pageSize: number;
@@ -11,15 +11,12 @@ const positiveInteger = (value: number, fallback: number): number => (
   Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback
 );
 
-/**
- * Client-only pagination for the already persisted Auto Find snapshot.
- * It deliberately has no knowledge of Explore queries or Downloads pages.
- */
-export function paginateAutoFindItems<T>(
+/** Client-only pagination for an already persisted list of gallery summaries. */
+export function paginateGalleryItems<T>(
   items: readonly T[],
   requestedPage: number,
   requestedPageSize: number,
-): AutoFindPageSlice<T> {
+): GalleryPageSlice<T> {
   const pageSize = positiveInteger(requestedPageSize, 1);
   const totalItems = items.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -35,3 +32,8 @@ export function paginateAutoFindItems<T>(
     startIndex,
   };
 }
+
+/** Backwards-compatible name kept for the Auto Find call sites and tests. */
+export const paginateAutoFindItems = paginateGalleryItems;
+
+export type AutoFindPageSlice<T> = GalleryPageSlice<T>;

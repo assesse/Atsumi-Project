@@ -14,10 +14,11 @@ use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::{
     application::{
-        ApplicationError, ApplicationService, ArtifactStore, AutoFindSupervisor,
+        ApplicationError, ApplicationService, ArtifactStore, ArtistPreview, AutoFindSupervisor,
         DetailOriginalError, DetailOriginalPrepareRequest, DetailOriginalPrepared,
         DetailOriginalSupervisor, DownloadPipelineError, DownloadPipelineErrorCode,
-        DownloadRootPicker, DownloadSupervisor, DuplicateSupervisor, InternalDuplicateSupervisor,
+        DownloadRootPicker, DownloadSupervisor, DuplicateSupervisor, GalleryPreview,
+        GalleryPreviewService, GalleryPreviewSetRequest, InternalDuplicateSupervisor,
         ReconcileReport,
     },
     domain::{
@@ -28,7 +29,7 @@ use crate::{
         DownloadOverlapDecisionResult, DownloadOverlapReview, DownloadPage,
         DuplicateDecisionRequest, DuplicateReview, DuplicateScanRun, DuplicateSnapshot,
         ExplorationDataResetRequest, ExplorationDataResetResult, FavoriteKey,
-        FavoriteMutationResult, FavoriteRecord, GalleryDetail, GalleryPage,
+        FavoriteMutationResult, FavoriteRecord, GalleryDetail, GalleryPage, GallerySummary,
         InternalArtifactScanProgress, InternalDuplicateReview, InternalDuplicateSnapshot,
         InternalRemovalApplyRequest, InternalRemovalPlan, InternalRemovalPlanRequest,
         InternalRemovalResult, InternalRemovalUndoRequest, InternalScanRequest, InternalScanRun,
@@ -37,7 +38,7 @@ use crate::{
         TagSuggestion, TagSuggestionRequest, ValidationError, WindowPlacement,
         WindowPlacementSnapshot,
     },
-    infrastructure::HitomiLiveAdapter,
+    infrastructure::{ExcludedArtifactService, HitomiLiveAdapter, ThumbnailDiskCache},
     thumbnail::{
         CancellationToken, ThumbnailCacheClearDto, ThumbnailCompletionEventDto,
         ThumbnailCoordinator, ThumbnailCoordinatorError, ThumbnailInvalidationDto, ThumbnailKey,
@@ -240,12 +241,15 @@ pub struct AppState {
     service: ApplicationService,
     pub(crate) danbooru: Arc<super::danbooru::DanbooruClient>,
     thumbnails: ThumbnailCoordinator,
+    thumbnail_disk_cache: Option<Arc<ThumbnailDiskCache>>,
     thumbnail_completions: Sender<ThumbnailCompletionEventDto>,
     detail_originals: DetailOriginalSupervisor,
     downloads: DownloadSupervisor,
     auto_find: AutoFindSupervisor,
     duplicates: DuplicateSupervisor,
     internal_duplicates: InternalDuplicateSupervisor,
+    gallery_previews: Option<GalleryPreviewService>,
+    excluded_artifacts: Option<Arc<ExcludedArtifactService>>,
     download_root_picker: Arc<dyn DownloadRootPicker>,
     artifact_store: Arc<dyn ArtifactStore>,
     live_source: Arc<HitomiLiveAdapter>,
@@ -343,12 +347,15 @@ impl AppState {
             service,
             danbooru,
             thumbnails,
+            thumbnail_disk_cache: None,
             thumbnail_completions,
             detail_originals,
             downloads,
             auto_find,
             duplicates,
             internal_duplicates,
+            gallery_previews: None,
+            excluded_artifacts: None,
             download_root_picker,
             artifact_store,
             live_source,
@@ -357,6 +364,28 @@ impl AppState {
             maintenance_previews: Mutex::new(HashMap::new()),
             managed_work: ManagedWorkGate::default(),
         }
+    }
+
+    pub fn with_gallery_previews(mut self, previews: GalleryPreviewService) -> Self {
+        self.gallery_previews = Some(previews);
+        self
+    }
+
+    pub fn with_thumbnail_disk_cache(mut self, cache: Arc<ThumbnailDiskCache>) -> Self {
+        self.thumbnail_disk_cache = Some(cache);
+        self
+    }
+
+    pub fn with_excluded_artifacts(mut self, excluded: Arc<ExcludedArtifactService>) -> Self {
+        self.excluded_artifacts = Some(excluded);
+        self
+    }
+
+    fn preview_service(&self) -> Result<GalleryPreviewService, ApplicationError> {
+        self.gallery_previews.clone().ok_or_else(|| {
+            crate::application::RepositoryError::Other("gallery previews are unavailable".into())
+                .into()
+        })
     }
 
     pub(crate) fn settings_snapshot(&self) -> Result<SettingsSnapshot, ApplicationError> {
@@ -728,9 +757,24 @@ pub async fn exploration_exclusions_restore(
     gallery_ids: Vec<i64>,
 ) -> Result<ApiResult<crate::domain::ExplorationExclusionRestoreResult>, ApiError> {
     let service = state.service.clone();
+    let excluded = state.excluded_artifacts.clone();
+    let previews = state.gallery_previews.clone();
     Ok(
         run_application_blocking("exploration_exclusions_restore", move || {
-            service.exploration_exclusions_restore(gallery_ids)
+            let result = match excluded {
+                Some(excluded) => excluded.restore_then(&gallery_ids, || {
+                    service.exploration_exclusions_restore(gallery_ids.clone())
+                })?,
+                None => service.exploration_exclusions_restore(gallery_ids.clone())?,
+            };
+            if let Some(previews) = previews {
+                for id in gallery_ids {
+                    if let Ok(id) = crate::domain::GalleryId::new(id) {
+                        previews.enqueue(id);
+                    }
+                }
+            }
+            Ok(result)
         })
         .await,
     )
@@ -786,9 +830,23 @@ pub async fn duplicate_decision_apply(
     request: DuplicateDecisionRequest,
 ) -> Result<ApiResult<DuplicateReview>, ApiError> {
     let duplicates = state.duplicates.clone();
+    let excluded = state.excluded_artifacts.clone();
+    let previews = state.gallery_previews.clone();
     Ok(
         run_application_blocking("duplicate_decision_apply", move || {
-            duplicates.decision_apply(request)
+            let review = duplicates.decision_apply(request)?;
+            if let Some(excluded) = excluded {
+                match excluded.reconcile() {
+                    Ok(report) => {
+                        for issue in &report.issues { tracing::warn!(issue, "excluded folder move was deferred"); }
+                        if let Some(previews) = previews {
+                            for id in report.gallery_ids { if let Ok(id) = crate::domain::GalleryId::new(id) { previews.enqueue(id); } }
+                        }
+                    }
+                    Err(error) => tracing::warn!(error = %error, "excluded folder reconciliation was deferred"),
+                }
+            }
+            Ok(review)
         })
         .await,
     )
@@ -939,8 +997,20 @@ pub async fn internal_removal_apply(
     request: InternalRemovalApplyRequest,
 ) -> Result<ApiResult<InternalRemovalResult>, ApiError> {
     let supervisor = state.internal_duplicates.clone();
+    let previews = state.gallery_previews.clone();
     Ok(run_application_blocking("internal_removal_apply", move || {
-        supervisor.removal_apply(request)
+        let result = supervisor.removal_apply(request)?;
+        if let Some(previews) = previews {
+            let ids = result
+                .records
+                .iter()
+                .map(|record| record.gallery_id)
+                .collect::<Vec<_>>();
+            if let Err(error) = previews.publish_saved(&ids, false) {
+                tracing::warn!(error = %error, "could not publish updated gallery preview");
+            }
+        }
+        Ok(result)
     })
     .await)
 }
@@ -951,8 +1021,20 @@ pub async fn internal_removal_undo(
     request: InternalRemovalUndoRequest,
 ) -> Result<ApiResult<InternalRemovalResult>, ApiError> {
     let supervisor = state.internal_duplicates.clone();
+    let previews = state.gallery_previews.clone();
     Ok(run_application_blocking("internal_removal_undo", move || {
-        supervisor.removal_undo(request)
+        let result = supervisor.removal_undo(request)?;
+        if let Some(previews) = previews {
+            let ids = result
+                .records
+                .iter()
+                .map(|record| record.gallery_id)
+                .collect::<Vec<_>>();
+            if let Err(error) = previews.publish_saved(&ids, false) {
+                tracing::warn!(error = %error, "could not publish updated gallery preview");
+            }
+        }
+        Ok(result)
     })
     .await)
 }
@@ -1004,6 +1086,7 @@ pub async fn settings_update(
     patch: SettingsPatch,
     expected_revision: u64,
 ) -> Result<ApiResult<SettingsSnapshot>, ApiError> {
+    let cache_limit_changed = patch.cache_limit_gb.is_some();
     match state.service.settings_update(patch, expected_revision) {
         Ok(snapshot) => {
             if let Err(error) = state.thumbnails.reconfigure(ThumbnailRuntimeConfigDto {
@@ -1014,6 +1097,19 @@ pub async fn settings_update(
             }
             if let Err(error) = app.emit("settings:changed", &snapshot) {
                 tracing::warn!(error = %error, "could not emit settings:changed");
+            }
+            if let Some(cache) = state
+                .thumbnail_disk_cache
+                .clone()
+                .filter(|_| cache_limit_changed)
+            {
+                let max_bytes = u64::from(snapshot.cache_limit_gb) * 1024 * 1024 * 1024;
+                match tauri::async_runtime::spawn_blocking(move || cache.set_max_bytes(max_bytes))
+                    .await
+                {
+                    Ok(Ok(())) => {}
+                    error => tracing::warn!(?error, "could not apply disk thumbnail cache limit"),
+                }
             }
             Ok(ApiResult::success(snapshot))
         }
@@ -1081,6 +1177,52 @@ pub async fn download_queue_add(
 }
 
 #[tauri::command(rename_all = "camelCase")]
+pub async fn gallery_preview_list(
+    state: State<'_, AppState>,
+    gallery_ids: Vec<i64>,
+) -> Result<ApiResult<Vec<GalleryPreview>>, ApiError> {
+    let previews = match state.preview_service() {
+        Ok(service) => service,
+        Err(error) => return Ok(Err::<Vec<GalleryPreview>, _>(error).into()),
+    };
+    Ok(run_application_blocking("gallery_preview_list", move || {
+        let ids = gallery_ids
+            .into_iter()
+            .map(crate::domain::GalleryId::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        previews.list(&ids)
+    })
+    .await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn gallery_preview_set(
+    state: State<'_, AppState>,
+    request: GalleryPreviewSetRequest,
+) -> Result<ApiResult<GalleryPreview>, ApiError> {
+    let previews = match state.preview_service() {
+        Ok(service) => service,
+        Err(error) => return Ok(Err::<GalleryPreview, _>(error).into()),
+    };
+    Ok(run_application_blocking("gallery_preview_set", move || previews.set(request)).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn artist_preview_list(
+    state: State<'_, AppState>,
+    artists: Vec<String>,
+) -> Result<ApiResult<Vec<ArtistPreview>>, ApiError> {
+    let previews = match state.preview_service() {
+        Ok(service) => service,
+        Err(error) => return Ok(Err::<Vec<ArtistPreview>, _>(error).into()),
+    };
+    Ok(run_application_blocking("artist_preview_list", move || {
+        previews.artist_list(&artists)
+    })
+    .await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
 pub async fn download_entries_list(
     state: State<'_, AppState>,
     request: DownloadListRequest,
@@ -1138,20 +1280,34 @@ pub fn thumbnail_reprioritize(
 }
 
 #[tauri::command(rename_all = "camelCase")]
-pub fn thumbnail_invalidate(
+pub async fn thumbnail_invalidate(
     state: State<'_, AppState>,
     key: ThumbnailKey,
 ) -> Result<ApiResult<ThumbnailInvalidationDto>, ApiError> {
-    match state.thumbnails.invalidate(&key) {
-        Ok(result) => Ok(ApiResult::success(result)),
-        Err(error) => Ok(ApiResult::failure(ApiError {
+    if let Err(error) = key.validate() {
+        return Ok(ApiResult::failure(ApiError {
             code: "THUMBNAIL_REQUEST_INVALID".into(),
             message: error.to_string(),
             retryable: false,
             action: Some(super::ApiAction::None),
             details: None,
-        })),
+        }));
     }
+    let thumbnails = state.thumbnails.clone();
+    let disk = state.thumbnail_disk_cache.clone();
+    Ok(run_application_blocking("thumbnail_invalidate", move || {
+        let mut result = thumbnails.invalidate(&key).expect("key was validated");
+        let disk_result = disk
+            .as_ref()
+            .map(|cache| cache.invalidate(&key))
+            .transpose();
+        let after = thumbnails.invalidate(&key).expect("key was validated");
+        result.success_cache_removed |= after.success_cache_removed;
+        result.negative_cache_removed |= after.negative_cache_removed;
+        result.success_cache_removed |= disk_result.map_err(thumbnail_disk_error)?.unwrap_or(false);
+        Ok(result)
+    })
+    .await)
 }
 
 #[tauri::command]
@@ -1162,10 +1318,37 @@ pub fn thumbnail_stats(
 }
 
 #[tauri::command]
-pub fn thumbnail_cache_clear(
+pub async fn thumbnail_cache_clear(
     state: State<'_, AppState>,
 ) -> Result<ApiResult<ThumbnailCacheClearDto>, ApiError> {
-    Ok(ApiResult::success(state.thumbnails.clear_cache()))
+    let thumbnails = state.thumbnails.clone();
+    let disk = state.thumbnail_disk_cache.clone();
+    Ok(run_application_blocking("thumbnail_cache_clear", move || {
+        clear_thumbnail_caches(&thumbnails, disk.as_deref())
+    })
+    .await)
+}
+
+fn thumbnail_disk_error(error: std::io::Error) -> ApplicationError {
+    crate::application::RepositoryError::Other(format!(
+        "thumbnail disk cache operation failed: {error}"
+    ))
+    .into()
+}
+
+fn clear_thumbnail_caches(
+    thumbnails: &ThumbnailCoordinator,
+    disk: Option<&ThumbnailDiskCache>,
+) -> Result<ThumbnailCacheClearDto, ApplicationError> {
+    let mut result = thumbnails.clear_cache();
+    let disk_result = disk.map(ThumbnailDiskCache::clear).transpose();
+    // Also fence work which started during disk cleanup, even when cleanup failed.
+    let after = thumbnails.clear_cache();
+    result.success_entries_removed += after.success_entries_removed;
+    result.success_bytes_removed += after.success_bytes_removed;
+    result.negative_entries_removed += after.negative_entries_removed;
+    disk_result.map_err(thumbnail_disk_error)?;
+    Ok(result)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1255,8 +1438,19 @@ pub async fn download_quarantine(
     reason: String,
 ) -> Result<ApiResult<Vec<DownloadEntry>>, ApiError> {
     let downloads = state.downloads.clone();
+    let previews = state.gallery_previews.clone();
     Ok(run_application_blocking("download_quarantine", move || {
-        downloads.quarantine_entries(entry_ids, reason)
+        let result = downloads.quarantine_entries(entry_ids, reason)?;
+        if let Some(previews) = previews {
+            let ids = result
+                .iter()
+                .map(|entry| entry.gallery_id)
+                .collect::<Vec<_>>();
+            if let Err(error) = previews.publish_saved(&ids, true) {
+                tracing::warn!(error = %error, "could not publish updated gallery availability");
+            }
+        }
+        Ok(result)
     })
     .await)
 }
@@ -1267,9 +1461,15 @@ pub async fn download_quarantine_undo(
     entry_ids: Vec<String>,
 ) -> Result<ApiResult<Vec<DownloadEntry>>, ApiError> {
     let downloads = state.downloads.clone();
+    let previews = state.gallery_previews.clone();
     Ok(
         run_application_blocking("download_quarantine_undo", move || {
-            downloads.restore_entries(entry_ids)
+            let result = downloads.restore_entries(entry_ids)?;
+            if let Some(previews) = previews {
+                let ids = result.iter().map(|entry| entry.gallery_id).collect::<Vec<_>>();
+                if let Err(error) = previews.publish_saved(&ids, true) { tracing::warn!(error = %error, "could not publish updated gallery availability"); }
+            }
+            Ok(result)
         })
         .await,
     )
@@ -1371,6 +1571,7 @@ pub async fn maintenance_execute(
 
     let thumbnails = state.thumbnails.clone();
     let live_source = Arc::clone(&state.live_source);
+    let thumbnail_disk_cache = state.thumbnail_disk_cache.clone();
     let downloads = state.downloads.clone();
     let auto_find = state.auto_find.clone();
     let duplicates = state.duplicates.clone();
@@ -1383,7 +1584,9 @@ pub async fn maintenance_execute(
         let mut warnings = Vec::new();
         match &execute_action {
             MaintenanceAction::QuickRepair => {
-                thumbnails.clear_cache();
+                if let Err(error) = clear_thumbnail_caches(&thumbnails, thumbnail_disk_cache.as_deref()) {
+                    warnings.push(error.to_string());
+                }
                 live_source.clear_derived_caches();
                 let mut download_recovery = downloads.recover_startup_state_without_resume()?;
                 auto_find.recover_interrupted()?;
@@ -1410,7 +1613,9 @@ pub async fn maintenance_execute(
                 let mut report = downloads.reconcile_without_resume()?;
                 completed_steps.push(format!("{} artifacts inspected", report.inspected_artifacts));
                 if *rebuild_thumbnail_data {
-                    thumbnails.clear_cache();
+                    if let Err(error) = clear_thumbnail_caches(&thumbnails, thumbnail_disk_cache.as_deref()) {
+                        warnings.push(error.to_string());
+                    }
                     live_source.clear_derived_caches();
                     completed_steps.push("thumbnail derived caches cleared".into());
                 }
@@ -1548,6 +1753,18 @@ pub async fn search_page_cancel(
         ));
     }
     Ok(ApiResult::success(state.search_pages.cancel(request_id)))
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn gallery_summary_get(
+    state: State<'_, AppState>,
+    gallery_id: i64,
+) -> Result<ApiResult<GallerySummary>, ApiError> {
+    let service = state.service.clone();
+    Ok(run_application_blocking("gallery_summary_get", move || {
+        service.gallery_summary_get(gallery_id)
+    })
+    .await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1692,6 +1909,75 @@ mod tests {
 
     use super::*;
     use crate::domain::ValidationError;
+
+    #[test]
+    fn thumbnail_cleanup_clears_persistent_and_memory_entries() {
+        use crate::thumbnail::{
+            FixtureThumbnailResolver, ThumbnailConsumer, ThumbnailCoordinatorConfig,
+        };
+        let temporary = tempfile::tempdir().unwrap();
+        let disk = ThumbnailDiskCache::new(temporary.path().join("cache"), 4096);
+        let thumbnails = ThumbnailCoordinator::with_resolver(
+            FixtureThumbnailResolver::new(),
+            ThumbnailCoordinatorConfig::default(),
+        )
+        .unwrap();
+        let key = ThumbnailKey::gallery_cover(1).unwrap();
+        let delivery = thumbnails
+            .request(ThumbnailRequestDto {
+                key: key.clone(),
+                consumer: ThumbnailConsumer::Downloads,
+                priority: ThumbnailPriority::Visible,
+            })
+            .unwrap()
+            .recv()
+            .unwrap();
+        disk.put(
+            &key,
+            "test-profile",
+            disk.ticket(),
+            &delivery.thumbnail,
+            &CancellationToken::new(),
+        )
+        .unwrap();
+        assert_eq!(disk.usage().entries, 1);
+        let result = clear_thumbnail_caches(&thumbnails, Some(&disk)).unwrap();
+        assert_eq!(result.success_entries_removed, 1);
+        assert_eq!(disk.usage().entries, 0);
+        assert_eq!(thumbnails.clear_cache().success_entries_removed, 0);
+        let restarted = ThumbnailDiskCache::new(temporary.path().join("cache"), 4096);
+        assert!(restarted
+            .get(&key, "test-profile", restarted.ticket())
+            .is_none());
+    }
+
+    #[test]
+    fn thumbnail_cleanup_reports_unavailable_disk_and_still_clears_memory() {
+        use crate::thumbnail::{
+            FixtureThumbnailResolver, ThumbnailConsumer, ThumbnailCoordinatorConfig,
+        };
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("not-a-cache-directory");
+        std::fs::write(&path, b"keep").unwrap();
+        let disk = ThumbnailDiskCache::new(&path, 4096);
+        let thumbnails = ThumbnailCoordinator::with_resolver(
+            FixtureThumbnailResolver::new(),
+            ThumbnailCoordinatorConfig::default(),
+        )
+        .unwrap();
+        thumbnails
+            .request(ThumbnailRequestDto {
+                key: ThumbnailKey::gallery_cover(1).unwrap(),
+                consumer: ThumbnailConsumer::Downloads,
+                priority: ThumbnailPriority::Visible,
+            })
+            .unwrap()
+            .recv()
+            .unwrap();
+        assert!(clear_thumbnail_caches(&thumbnails, Some(&disk)).is_err());
+        assert_eq!(thumbnails.clear_cache().success_entries_removed, 0);
+        assert_eq!(std::fs::read(path).unwrap(), b"keep");
+    }
 
     #[test]
     fn application_blocking_helper_runs_off_the_calling_thread() {

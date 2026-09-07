@@ -10,6 +10,7 @@ import type {
   DownloadOverlapAutomationHistoryItem,
   DownloadOverlapReview,
   DownloadPage,
+  GalleryDetail,
   GalleryPage,
   InternalArtifactScanProgress,
   InternalDuplicateReview,
@@ -883,6 +884,7 @@ describe("App Phase 3A backend flow", () => {
       language: "japanese" as const,
     };
     const completedSummary = asSummary(2);
+    const excludedCompletedSummary = asSummary(5);
     const searchSubmit = vi.spyOn(backend, "searchSubmit").mockResolvedValue({
       ok: true,
       data: { queryId: "random-source-query", firstPage: { page: 1, totalPages: 1, items: [randomSummary] } },
@@ -891,7 +893,15 @@ describe("App Phase 3A backend flow", () => {
       ok: true,
       data: [{ namespace: "artist", value: autoFindSummary.artist, revision: 1, createdAt: "2026-08-30T00:00:00Z", updatedAt: "2026-08-30T00:00:00Z" }],
     });
-    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({ ok: true, data: [] });
+    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({
+      ok: true,
+      data: [{
+        galleryId: excludedCompletedSummary.id,
+        title: excludedCompletedSummary.title,
+        artist: excludedCompletedSummary.artist,
+        reasons: [{ kind: "manual", detail: "사용자가 제외", excludedAt: "2026-08-30T00:00:00Z" }],
+      }],
+    });
     vi.spyOn(backend, "autoFindSnapshot").mockResolvedValue({
       ok: true,
       data: {
@@ -909,9 +919,10 @@ describe("App Phase 3A backend flow", () => {
       ok: true,
       data: {
         page: 1,
-        totalItems: 2,
+        totalItems: 3,
         entries: [
           { entryId: "random-completed", galleryId: completedSummary.id, revision: 1, state: "completed", progress: 100 },
+          { entryId: "random-excluded", galleryId: excludedCompletedSummary.id, revision: 1, state: "completed", progress: 100 },
           { entryId: "random-active", galleryId: mockGalleries[1]!.id, revision: 1, state: "downloading", progress: 20 },
         ],
       },
@@ -965,6 +976,73 @@ describe("App Phase 3A backend flow", () => {
       });
       expect(searchSubmit).toHaveBeenCalledTimes(1);
       expect(container.querySelector(".detail-workspace")).toHaveAttribute("aria-label", `${completedSummary.title} 상세`);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("keeps Downloads random disabled until both complete library and exclusion snapshots are ready", async () => {
+    const completed = mockGalleries[2]!;
+    let resolveLibrary!: (value: Awaited<ReturnType<typeof backend.downloadLibraryPageList>>) => void;
+    let resolveExclusions!: (value: Awaited<ReturnType<typeof backend.explorationExclusionsList>>) => void;
+    vi.spyOn(backend, "downloadLibraryPageList").mockImplementation(() => new Promise((resolve) => {
+      resolveLibrary = resolve;
+    }));
+    vi.spyOn(backend, "explorationExclusionsList").mockImplementation(() => new Promise((resolve) => {
+      resolveExclusions = resolve;
+    }));
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await act(async () => {
+        clickButtonContaining(container, "Downloads");
+        await settle();
+      });
+
+      const randomButton = () => container.querySelector<HTMLButtonElement>('button[aria-label="랜덤 열기"]');
+      expect(randomButton()).toBeDisabled();
+
+      await act(async () => {
+        resolveExclusions({ ok: true, data: [] });
+        await settle();
+      });
+      expect(randomButton()).toBeDisabled();
+
+      await act(async () => {
+        resolveLibrary({
+          ok: true,
+          data: {
+            page: 1,
+            totalItems: 1,
+            items: [{
+              gallery: {
+                id: completed.id,
+                title: completed.title,
+                artist: completed.artist,
+                pages: completed.pages,
+                language: completed.language,
+                publishedRank: Number(completed.publishedAt.replaceAll("-", "")),
+              },
+              download: {
+                entryId: "complete-random-hydration",
+                galleryId: completed.id,
+                revision: 1,
+                state: "completed",
+                progress: 100,
+              },
+            }],
+          },
+        });
+        await settle(40);
+      });
+      expect(randomButton()).toBeEnabled();
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -1446,6 +1524,64 @@ describe("App Phase 3A backend flow", () => {
     await backend.favoriteSet({ namespace: "character", value: "mira lane" }, false);
   });
 
+  it("serializes rapid add then remove input for the same metadata favorite", async () => {
+    const artist = mockGalleries[0]!.artist;
+    const key = { namespace: "artist" as const, value: artist };
+    const originalFavoriteSet = backend.favoriteSet.bind(backend);
+    await originalFavoriteSet(key, false);
+    let resolveFirst!: (value: Awaited<ReturnType<typeof backend.favoriteSet>>) => void;
+    const favoriteSet = vi.spyOn(backend, "favoriteSet")
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFirst = resolve;
+      }))
+      .mockImplementation(originalFavoriteSet);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await submitExploreSearch(container);
+      const artistChip = container.querySelector<HTMLButtonElement>(`[data-gallery-id="${mockGalleries[0]!.id}"] .byline.artist`);
+      if (!artistChip) throw new Error("Artist metadata chip was not rendered");
+
+      await act(async () => {
+        artistChip.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+        artistChip.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+        await Promise.resolve();
+      });
+      expect(favoriteSet).toHaveBeenCalledTimes(1);
+      expect(favoriteSet).toHaveBeenNthCalledWith(1, key, true);
+
+      await act(async () => {
+        resolveFirst({
+          ok: true,
+          data: {
+            enabled: true,
+            favorite: {
+              ...key,
+              revision: 0,
+              createdAt: "2026-09-07T00:00:00Z",
+              updatedAt: "2026-09-07T00:00:00Z",
+            },
+          },
+        });
+        await settle(40);
+      });
+
+      expect(favoriteSet).toHaveBeenCalledTimes(2);
+      expect(favoriteSet).toHaveBeenNthCalledWith(2, key, false);
+      expect(container.querySelector(`[data-gallery-id="${mockGalleries[0]!.id}"] .byline.artist`)).not.toHaveClass("favorite");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      await originalFavoriteSet(key, false);
+    }
+  });
+
   it("cancels, restores, groups, and excludes Auto Find candidates", async () => {
     await backend.favoriteSet({ namespace: "artist", value: "serein" }, true);
     await backend.favoriteSet({ namespace: "artist", value: "mizuno" }, true);
@@ -1749,11 +1885,6 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       expect(container.querySelector(".gallery-group-toggle")).not.toBeNull();
-      expect(container).toHaveTextContent("전부 접기");
-      await act(async () => {
-        clickButtonContaining(container, "전부 접기");
-        await settle();
-      });
       expect(container.querySelectorAll(".gallery-groups[data-group-view='downloads'] .gallery-group-toggle[aria-expanded='true']")).toHaveLength(0);
       expect(container).toHaveTextContent("전부 펼치기");
       await act(async () => {
@@ -1761,11 +1892,19 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       expect(container.querySelector(".gallery-groups[data-group-view='downloads'] .gallery-group-toggle[aria-expanded='true']")).not.toBeNull();
+      expect(container).toHaveTextContent("전부 접기");
       await act(async () => {
         clickButtonContaining(container, "작가별");
         await settle();
       });
-      expect(container.querySelector(".gallery-groups[data-group-view='downloads'] .gallery-group-toggle")).not.toBeNull();
+      const artistFolderGrid = container.querySelector<HTMLElement>(".download-artist-folder-grid[data-group-view='downloads']");
+      const artistFolder = artistFolderGrid?.querySelector(".download-artist-folder-card");
+      expect(artistFolderGrid).not.toBeNull();
+      expect(artistFolder?.querySelector(".download-artist-folder-button")).toHaveAttribute("aria-expanded", "false");
+      expect(artistFolder?.querySelector(".download-artist-folder-preview-stack")).not.toBeNull();
+      expect(artistFolder?.querySelector(".download-artist-folder-latest")).toBeNull();
+      expect(artistFolder?.querySelector(".download-artist-folder-tags")).not.toBeNull();
+      expect(container.querySelector(".download-artist-folder-contents")).toBeNull();
       await vi.waitFor(() => expect(settingsUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ downloadsGrouping: "artist" }),
         expect.any(Number),
@@ -1800,6 +1939,96 @@ describe("App Phase 3A backend flow", () => {
         autoFindGrouping: originalSettings.data.autoFindGrouping,
         downloadsGrouping: originalSettings.data.downloadsGrouping,
       }, latest.data.revision);
+    }
+  });
+
+  it("loads every collapsed artist folder's tags without opening or hovering, using six shared workers", async () => {
+    const settings = await backend.settingsGet();
+    if (!settings.ok) throw new Error("settings fixture unavailable");
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({ ok: true, data: { ...settings.data, downloadsGrouping: "artist" } });
+    const details: GalleryDetail[] = Array.from({ length: 16 }, (_, index) => ({
+      id: galleryId(4_600_001 + index), title: `Background work ${index}`, artist: "Background artist",
+      pages: 12, language: "korean", tags: index === 0 ? ["full_color"] : ["female:glasses"],
+      series: [], characters: [], publishedRank: 20260901, popularity: 0,
+      thumbnailWidth: 400, thumbnailHeight: 600, related: [], pageDimensions: [],
+    }));
+    vi.mocked(backend.downloadLibraryPageList).mockResolvedValue({ ok: true, data: {
+      page: 1, totalItems: details.length, items: details.map((detail) => ({
+        gallery: { id: detail.id, title: detail.title, artist: detail.artist, pages: detail.pages, language: detail.language },
+        download: { entryId: `background-${detail.id}`, galleryId: detail.id, revision: 1, state: "completed", progress: 100, createdAt: "2026-09-01T00:00:00Z" },
+      })),
+    } });
+    const pending = new Map<number, () => void>();
+    let active = 0;
+    let maximumActive = 0;
+    const fullDetail = vi.spyOn(backend, "galleryDetailGet");
+    const getDetail = vi.spyOn(backend, "gallerySummaryGet").mockImplementation((id) => {
+      const detail = details.find((item) => item.id === id)!;
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      return new Promise((resolve) => pending.set(id, () => {
+        pending.delete(id);
+        active -= 1;
+        resolve({ ok: true, data: detail });
+      }));
+    });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      expect(getDetail).not.toHaveBeenCalled();
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expect(container.querySelector(".download-artist-folder-button")).toHaveAttribute("aria-expanded", "false");
+      expect(container.querySelector(".download-artist-folder-contents")).toBeNull();
+      expect(getDetail).toHaveBeenCalledTimes(6);
+      for (let batch = 0; batch < 4 && pending.size; batch += 1) {
+        await act(async () => { [...pending.values()].forEach((finish) => finish()); await settle(); });
+      }
+      expect(getDetail).toHaveBeenCalledTimes(16);
+      expect(maximumActive).toBe(6);
+      expect(fullDetail).not.toHaveBeenCalled();
+      expect(new Set(getDetail.mock.calls.map(([id]) => id)).size).toBe(16);
+      expect(container.querySelector(".download-artist-folder-tags")).toHaveTextContent("full color1");
+      expect(container.querySelector(".download-artist-folder-tags")).toHaveTextContent("glasses15");
+      expect(container.querySelector(".download-artist-folder-contents")).toBeNull();
+      await act(async () => { clickButtonContaining(container, "Explore"); await settle(); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expect(getDetail).toHaveBeenCalledTimes(16);
+    } finally {
+      await act(async () => { root.unmount(); [...pending.values()].forEach((finish) => finish()); });
+      container.remove();
+    }
+  });
+
+  it("stops unopened artist-folder metadata work when leaving Downloads", async () => {
+    const settings = await backend.settingsGet();
+    if (!settings.ok) throw new Error("settings fixture unavailable");
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({ ok: true, data: { ...settings.data, downloadsGrouping: "artist" } });
+    const ids = Array.from({ length: 12 }, (_, index) => galleryId(4_700_001 + index));
+    vi.mocked(backend.downloadLibraryPageList).mockResolvedValue({ ok: true, data: {
+      page: 1, totalItems: ids.length, items: ids.map((id) => ({
+        gallery: { id, title: `Queued ${id}`, artist: "Queued artist", pages: 1, language: "korean" },
+        download: { entryId: `queued-${id}`, galleryId: id, revision: 1, state: "completed", progress: 100 },
+      })),
+    } });
+    const pending: Array<() => void> = [];
+    const getDetail = vi.spyOn(backend, "gallerySummaryGet").mockImplementation(() => new Promise((resolve) => {
+      pending.push(() => resolve({ ok: false, error: { code: "UNAVAILABLE", message: "fixture unavailable", retryable: false } }));
+    }));
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expect(getDetail).toHaveBeenCalledTimes(6);
+      await act(async () => { clickButtonContaining(container, "Explore"); await settle(); });
+      await act(async () => { pending.splice(0).forEach((finish) => finish()); await settle(); });
+      expect(getDetail).toHaveBeenCalledTimes(6);
+    } finally {
+      await act(async () => { root.unmount(); pending.splice(0).forEach((finish) => finish()); });
+      container.remove();
     }
   });
 
@@ -2927,6 +3156,87 @@ describe("App Phase 3A backend flow", () => {
       container.remove();
       if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
       else delete (HTMLDialogElement.prototype as unknown as { showModal?: unknown }).showModal;
+    }
+  });
+
+  it("limits the Downloads all view to the configured Hitomi page size", async () => {
+    const originalSettings = await backend.settingsGet();
+    if (!originalSettings.ok) throw new Error(originalSettings.error.message);
+    const configured = await backend.settingsUpdate({
+      explorePageSize: 10,
+      downloadsGrouping: "all",
+    }, originalSettings.data.revision);
+    if (!configured.ok) throw new Error(configured.error.message);
+
+    const items: DownloadLibraryPage["items"] = Array.from({ length: 12 }, (_, index) => {
+      const id = galleryId(6_100_000 + index);
+      return {
+        gallery: {
+          id,
+          title: `Downloaded page item ${index + 1}`,
+          artist: `Downloaded artist ${Math.floor(index / 3) + 1}`,
+          pages: 20 + index,
+          language: "korean" as const,
+          publishedRank: 20260901 - index,
+        },
+        download: {
+          entryId: `download-pagination-${index + 1}`,
+          galleryId: id,
+          revision: 1,
+          state: "completed" as const,
+          progress: 100,
+          createdAt: `2026-09-${String(12 - index).padStart(2, "0")}T00:00:00Z`,
+          updatedAt: `2026-09-${String(12 - index).padStart(2, "0")}T00:00:00Z`,
+        },
+      };
+    });
+    vi.spyOn(backend, "downloadLibraryPageList").mockImplementation(async ({ page }) => ({
+      ok: true,
+      data: { page, totalItems: items.length, items: page === 1 ? items : [] },
+    }));
+
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle(80);
+      });
+      await act(async () => {
+        clickButtonContaining(container, "Downloads");
+        await settle(40);
+      });
+
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(10);
+      expect(container.querySelector(".downloads-pager")).toHaveTextContent("1 / 2");
+      expect(container).toHaveTextContent("Downloaded page item 1");
+      expect(container).not.toHaveTextContent("Downloaded page item 12");
+
+      const viewport = container.querySelector<HTMLElement>(".gallery-viewport");
+      if (!viewport) throw new Error("gallery viewport missing");
+      viewport.scrollTop = 420;
+      await act(async () => {
+        [...container.querySelectorAll<HTMLButtonElement>(".downloads-pager button")]
+          .find((button) => button.textContent === "다음")
+          ?.click();
+        await settle();
+      });
+
+      expect(viewport.scrollTop).toBe(0);
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(2);
+      expect(container.querySelector(".downloads-pager")).toHaveTextContent("2 / 2");
+      expect(container).toHaveTextContent("Downloaded page item 12");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      const latest = await backend.settingsGet();
+      if (latest.ok) {
+        await backend.settingsUpdate({
+          explorePageSize: originalSettings.data.explorePageSize,
+          downloadsGrouping: originalSettings.data.downloadsGrouping,
+        }, latest.data.revision);
+      }
     }
   });
 

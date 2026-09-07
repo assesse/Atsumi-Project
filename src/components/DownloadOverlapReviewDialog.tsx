@@ -76,6 +76,7 @@ type AutomaticDecisionSnapshot = {
   winner: "incoming" | "existing";
   preferenceReason:
     | "containment"
+    | "complete_containment"
     | "omnibus_containment"
     | "uncensored"
     | "page_count"
@@ -137,6 +138,7 @@ const automaticDecisionSnapshot = (
       || winner !== expectedWinner
       || ![
         "containment",
+        "complete_containment",
         "omnibus_containment",
         "uncensored",
         "page_count",
@@ -198,6 +200,10 @@ const automaticArtifactReason = (
       return isWinner
         ? `상대 판본 ${percent(loserCoverage)} 포함`
         : `보존판에 ${percent(loserCoverage)} 포함`;
+    case "complete_containment":
+      return isWinner
+        ? `완전 포함 · 상대 판본 ${percent(loserCoverage)} 포함`
+        : `보존판에 모든 페이지 포함`;
     case "omnibus_containment":
       return isWinner
         ? `큰 합본 · 상대 판본 ${percent(loserCoverage)} 포함`
@@ -729,7 +735,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
                   <strong>{autoMode === "strict_quarantine" ? "안전 기준 자동 정리 대상" : "안전 기준 추천"}</strong>
                   <span>{autoPlan.summary}</span>
                   <small>
-                    일반 판본은 포함률 95% 이상·페이지 차이 5장 이하에서 판단하며, 무검열 표식이 확인되면 그 판본을 우선합니다. 작은 판본에 고유 페이지가 없고 98% 이상 포함되며 큰 판본이 1.5배·8장 이상 큰 명확한 합본이면 작은 판본의 무검열 표식보다 합본을 우선합니다. 그 밖의 근거 부족은 직접 검토합니다.
+                    모든 페이지가 순서대로 대응되고 고유 페이지가 없는 100% 포함관계는 크기와 무검열 표식보다 포함관계를 우선합니다. 그 밖의 판본은 포함률 95% 이상·페이지 차이 5장 이하에서 판단하며, 거의 같은 판본끼리는 무검열 표식을 우선합니다. 근거가 부족하면 직접 검토합니다.
                     {autoMode === "strict_quarantine" ? " 이 창을 닫으면 기존 재검증 후 영구 삭제 대신 격리 영역으로 이동합니다." : " 최종 선택은 직접 적용해 주세요."}
                   </small>
                 </div>

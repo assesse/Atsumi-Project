@@ -395,6 +395,7 @@ impl ThumbnailCoordinator {
                 request.key.clone(),
                 WorkEntry {
                     generation,
+                    cacheable: true,
                     queue_version: 1,
                     queue_sequence: sequence,
                     priority: request.priority,
@@ -433,7 +434,8 @@ impl ThumbnailCoordinator {
 
     /// Removes cached data for a key without cancelling or reprioritizing any
     /// queued or running work. Intended for display decode failures and
-    /// explicit retry actions.
+    /// explicit retry actions. Current work still delivers to its subscribers,
+    /// but its result cannot repopulate either cache after this invalidation.
     pub fn invalidate(
         &self,
         key: &ThumbnailKey,
@@ -453,6 +455,9 @@ impl ThumbnailCoordinator {
             false
         };
         let negative_cache_removed = state.negative_cache.remove(key).is_some();
+        if let Some(work) = state.work.get_mut(key) {
+            work.cacheable = false;
+        }
         Ok(ThumbnailInvalidationDto {
             key: key.clone(),
             success_cache_removed,
@@ -460,8 +465,8 @@ impl ThumbnailCoordinator {
         })
     }
 
-    /// Clears only completed positive/negative cache entries. Queued/running
-    /// work and current subscribers are intentionally left untouched.
+    /// Clears positive/negative cache entries and fences results of existing
+    /// queued/running work. That work still completes for current subscribers.
     pub fn clear_cache(&self) -> ThumbnailCacheClearDto {
         let mut state = self
             .core
@@ -476,6 +481,9 @@ impl ThumbnailCoordinator {
         state.success_cache.clear();
         state.success_cache_bytes = 0;
         state.negative_cache.clear();
+        for work in state.work.values_mut() {
+            work.cacheable = false;
+        }
         result
     }
 
@@ -753,6 +761,7 @@ struct CoordinatorCounters {
 
 struct WorkEntry {
     generation: u64,
+    cacheable: bool,
     queue_version: u64,
     queue_sequence: u64,
     priority: ThumbnailPriority,
@@ -981,12 +990,14 @@ fn complete_work(
     let result = match resolution {
         Ok(thumbnail) => {
             state.counters.resolved_success += 1;
-            insert_success_cache(
-                &mut state,
-                &core.config,
-                item.key.clone(),
-                thumbnail.clone(),
-            );
+            if work.cacheable {
+                insert_success_cache(
+                    &mut state,
+                    &core.config,
+                    item.key.clone(),
+                    thumbnail.clone(),
+                );
+            }
             Ok(ThumbnailDeliveryDto {
                 key: item.key,
                 thumbnail,
@@ -1002,10 +1013,12 @@ fn complete_work(
                 retryable: error.retryable,
                 negative_cache_hit: false,
             };
-            if !matches!(
-                failure.code,
-                ThumbnailFailureCode::Cancelled | ThumbnailFailureCode::CoordinatorClosed
-            ) {
+            if work.cacheable
+                && !matches!(
+                    failure.code,
+                    ThumbnailFailureCode::Cancelled | ThumbnailFailureCode::CoordinatorClosed
+                )
+            {
                 let ttl = if failure.retryable {
                     core.config.retryable_failure_cache_ttl
                 } else {

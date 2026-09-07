@@ -17,9 +17,13 @@ use image::{
 use crate::{
     application::{
         DownloadGallerySnapshot, DownloadPagePayload, DownloadSourceImageFormat,
-        DownloadSourcePage, DownloadSourcePort, RepositoryError, TagCatalogSource,
+        DownloadSourcePage, DownloadSourcePort, GallerySummaryCache, RepositoryError,
+        TagCatalogSource,
     },
-    domain::{Gallery, GalleryId, GalleryMetadata, SourcePageNumber, TagCatalogEntry},
+    domain::{
+        Gallery, GalleryId, GalleryMetadata, GallerySummary, SearchSort, SourcePageNumber,
+        TagCatalogEntry,
+    },
     source::{
         hitomi::{
             all_catalog_pages, download_full_candidates, galleryinfo_script_url, gg_script_url,
@@ -93,6 +97,8 @@ impl Default for HitomiLiveConfig {
 pub struct HitomiLiveAdapter {
     transport: Arc<dyn HttpTransport>,
     config: HitomiLiveConfig,
+    summary_cache: Option<Arc<dyn GallerySummaryCache>>,
+    cache_generation: Mutex<u64>,
     metadata_cache: Mutex<TimedCache<u64, Arc<HitomiGalleryMetadata>>>,
     metadata_inflight: Mutex<HashMap<u64, Weak<Mutex<()>>>>,
     gg_cache: Mutex<Option<TimedValue<Arc<GgRoutingTable>>>>,
@@ -123,6 +129,8 @@ impl HitomiLiveAdapter {
         Self {
             transport,
             config,
+            summary_cache: None,
+            cache_generation: Mutex::new(0),
             metadata_cache: Mutex::new(TimedCache::new(metadata_capacity)),
             metadata_inflight: Mutex::new(HashMap::new()),
             gg_cache: Mutex::new(None),
@@ -131,13 +139,80 @@ impl HitomiLiveAdapter {
         }
     }
 
-    /// Drops only in-memory derived source state. The HTTP scheduler and its
+    pub fn with_summary_cache(mut self, cache: Arc<dyn GallerySummaryCache>) -> Self {
+        self.summary_cache = Some(cache);
+        self
+    }
+
+    /// Drops derived source state, including durable display summaries. The HTTP scheduler and its
     /// host cooldowns deliberately survive so a repair cannot bypass Retry-After.
     pub fn clear_derived_caches(&self) {
+        let mut generation = unpoison(self.cache_generation.lock());
+        *generation = generation.wrapping_add(1);
         unpoison(self.metadata_cache.lock()).values.clear();
         unpoison(self.metadata_inflight.lock()).clear();
         *unpoison(self.gg_cache.lock()) = None;
         unpoison(self.queries.lock()).clear();
+        if let Some(cache) = &self.summary_cache {
+            if let Err(error) = cache.gallery_summary_cache_clear() {
+                tracing::warn!(
+                    code = error.stable_code(),
+                    "could not clear persisted gallery summaries"
+                );
+            }
+        }
+    }
+
+    fn cached_summary(&self, gallery_id: GalleryId) -> Option<GallerySummary> {
+        // Serialize durable reads with explicit clearing so a returned row is
+        // from a single cache generation. Empty tag arrays remain cache hits.
+        let _generation = unpoison(self.cache_generation.lock());
+        match self
+            .summary_cache
+            .as_ref()?
+            .gallery_summary_cache_get(gallery_id)
+        {
+            Ok(summary) => summary,
+            Err(error) => {
+                tracing::debug!(
+                    gallery_id = gallery_id.get(),
+                    code = error.stable_code(),
+                    "persisted gallery summary unavailable"
+                );
+                None
+            }
+        }
+    }
+
+    fn fetch_metadata_and_cache_summary(
+        &self,
+        gallery_id: u64,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Arc<HitomiGalleryMetadata>, SourceContractError> {
+        let generation = *unpoison(self.cache_generation.lock());
+        let metadata = self.fetch_metadata_with_cancellation(gallery_id, cancellation)?;
+        if let Some(cache) = &self.summary_cache {
+            let current_generation = unpoison(self.cache_generation.lock());
+            if *current_generation == generation {
+                // Persist presentation data only. Downloads still resolve
+                // hashes/page revisions from the live metadata path above.
+                match search::gallery_summary(&metadata, SearchSort::Recent, 0) {
+                    Ok(summary) => {
+                        if let Err(error) = cache.gallery_summary_cache_put(&summary) {
+                            tracing::debug!(
+                                gallery_id,
+                                code = error.stable_code(),
+                                "could not persist gallery summary"
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        tracing::debug!(gallery_id, code = ?error.code, "could not derive gallery summary for persistence")
+                    }
+                }
+            }
+        }
+        Ok(metadata)
     }
 
     fn fetch_metadata(
@@ -152,6 +227,7 @@ impl HitomiLiveAdapter {
         gallery_id: u64,
         cancellation: Option<&CancellationToken>,
     ) -> Result<Arc<HitomiGalleryMetadata>, SourceContractError> {
+        let generation = *unpoison(self.cache_generation.lock());
         if let Some(cancellation) = cancellation {
             check_cancelled(cancellation)?;
         }
@@ -209,7 +285,10 @@ impl HitomiLiveAdapter {
                 format!("requested {gallery_id}, received {}", metadata.id),
             ));
         }
-        unpoison(self.metadata_cache.lock()).insert(gallery_id, Arc::clone(&metadata));
+        let current_generation = unpoison(self.cache_generation.lock());
+        if *current_generation == generation {
+            unpoison(self.metadata_cache.lock()).insert(gallery_id, Arc::clone(&metadata));
+        }
         Ok(metadata)
     }
 
@@ -466,7 +545,7 @@ impl DownloadSourcePort for HitomiLiveAdapter {
         let source_id = u64::try_from(gallery_id.get()).map_err(|_| {
             SourceContractError::validation("galleryId", "must be a positive integer")
         })?;
-        let metadata = self.fetch_metadata(source_id)?;
+        let metadata = self.fetch_metadata_and_cache_summary(source_id, Some(cancellation))?;
         check_cancelled(cancellation)?;
         let source_page_count = u32::try_from(metadata.pages.len()).map_err(|_| {
             SourceContractError::invalid_data(

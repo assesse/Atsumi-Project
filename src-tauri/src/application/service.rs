@@ -9,9 +9,10 @@ use crate::domain::{
     DownloadLibraryPage, DownloadListRequest, DownloadPage, ExplorationDataResetRequest,
     ExplorationDataResetResult, ExplorationExclusion, ExplorationExclusionRestoreResult,
     FavoriteKey, FavoriteMutationResult, FavoriteRecord, FixtureDownloadJobStep, Gallery,
-    GalleryDetail, GalleryId, GalleryMetadata, GalleryPage, JobRef, SearchHistoryEntry,
-    SearchRequest, SearchSubmission, SettingsPatch, SettingsSnapshot, TagCatalogStatus,
-    TagSuggestion, TagSuggestionRequest, ValidationError, WindowPlacement, WindowPlacementSnapshot,
+    GalleryDetail, GalleryId, GalleryMetadata, GalleryPage, GallerySummary, JobRef,
+    SearchHistoryEntry, SearchRequest, SearchSubmission, SettingsPatch, SettingsSnapshot,
+    TagCatalogStatus, TagSuggestion, TagSuggestionRequest, ValidationError, WindowPlacement,
+    WindowPlacementSnapshot,
 };
 
 use super::{
@@ -394,6 +395,13 @@ impl ApplicationService {
         let gallery_id = GalleryId::new(gallery_id)?;
         self.search_repository()?
             .gallery_detail_get(gallery_id)?
+            .ok_or(ApplicationError::GalleryNotFound(gallery_id))
+    }
+
+    pub fn gallery_summary_get(&self, gallery_id: i64) -> Result<GallerySummary, ApplicationError> {
+        let gallery_id = GalleryId::new(gallery_id)?;
+        self.search_repository()?
+            .gallery_summary_get(gallery_id)?
             .ok_or(ApplicationError::GalleryNotFound(gallery_id))
     }
 

@@ -286,6 +286,7 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
         url,
         width: thumbnail.width,
         height: thumbnail.height,
+        byteLength: bytes.byteLength,
       };
       this.displayUrls.set(identity, url);
       pending.resolve(asset);

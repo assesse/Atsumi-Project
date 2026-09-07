@@ -66,6 +66,7 @@ type DetailWorkspaceProps = {
   ) => void;
   onQueue: (id: GalleryId) => void;
   onOpenDownloadFolder?: (entryId: string) => void;
+  onSetRepresentativePreview?: (galleryId: GalleryId, sourcePage: number | null) => Promise<boolean>;
   onMetadataSearch: (value: string) => void;
   onMetadataFavorite: (value: string) => void;
 };
@@ -159,6 +160,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     onOpenRelated,
     onQueue,
     onOpenDownloadFolder,
+    onSetRepresentativePreview,
     onMetadataSearch,
     onMetadataFavorite,
   } = props;
@@ -172,6 +174,8 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   const previewOpener = useRef<HTMLButtonElement | null>(null);
   const previewClosingInternally = useRef(false);
   const previewResizeSession = useRef<PreviewResizeSession | null>(null);
+  const representativeSaveInFlight = useRef(false);
+  const [representativeSave, setRepresentativeSave] = useState<{ galleryId: GalleryId; status: "busy" | "error" } | null>(null);
   const [previewPage, setPreviewPage] = useState<number | null>(null);
   const [twoPageView, setTwoPageView] = useState(false);
   const [previewPageInput, setPreviewPageInput] = useState("1");
@@ -290,6 +294,12 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
       : [previewPage];
   const previewNavigationStep = isTwoPagePreview ? 2 : 1;
   const previewResizable = gallery?.download?.state === "completed";
+  const representativeBusy = representativeSave?.status === "busy";
+  const representativeError = representativeSave?.galleryId === gallery?.id && representativeSave?.status === "error";
+  const currentManualRepresentative = gallery?.representativePreview?.mode === "manual"
+    && gallery.representativePreview.entryId === gallery.download?.entryId
+    && gallery.representativePreview.sourcePage === previewPage
+    && gallery.representativePreview.manualSourcePage === previewPage;
   const previewSourceOrientation = pagePreviewOrientation(previewPageDimension) ?? "pending";
   const previewResizeLimits = pagePreviewResizeBounds(previewViewport);
   const previewWindowSlideDirection = gallery
@@ -297,6 +307,24 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     && previewWindowTransition.start === previewWindowStart
     ? previewWindowTransition.direction
     : "none";
+
+  useEffect(() => {
+    setRepresentativeSave((current) => current?.status === "error" ? null : current);
+  }, [activeId, previewPage]);
+
+  const setRepresentativePreview = async (sourcePage: number | null) => {
+    if (!gallery || !previewResizable || !onSetRepresentativePreview || representativeSaveInFlight.current) return;
+    representativeSaveInFlight.current = true;
+    setRepresentativeSave({ galleryId: gallery.id, status: "busy" });
+    try {
+      const saved = await onSetRepresentativePreview(gallery.id, sourcePage);
+      setRepresentativeSave(saved ? null : { galleryId: gallery.id, status: "error" });
+    } catch {
+      setRepresentativeSave({ galleryId: gallery.id, status: "error" });
+    } finally {
+      representativeSaveInFlight.current = false;
+    }
+  };
 
   useEffect(() => {
     if (!gallery || !metadataLayout || previewLayouts.current.has(gallery.id)) return;
@@ -802,7 +830,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                 </div>
                 <div className="detail-metadata-layout">
                   <div className="detail-metadata-primary">
-                    <MetadataBox label="작가" values={[gallery.artist]} type="artist" favorite={gallery.favorite} onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
+                    <MetadataBox label="작가" values={[gallery.artist]} type="artist" favoriteMetadata={favoriteMetadata} onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
                     <MetadataBox label="그룹" values={gallery.group ? [gallery.group] : []} type="group" favoriteMetadata={favoriteMetadata} onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
                     <MetadataBox label="언어" values={[gallery.language]} type="language" onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
                     <MetadataBox label="시리즈" values={gallery.series ?? []} type="series" favoriteMetadata={favoriteMetadata} onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
@@ -874,7 +902,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                           <div className="related-copy card-content">
                             <div className="card-title"><strong>{item.title}</strong>{item.subtitle ? <span className="title-sub">{item.subtitle}</span> : null}</div>
                             <div className="card-byline">
-                              <MetadataChip value={`artist:${item.artist}`} label={item.artist} kind="byline" favorite={item.favorite} onSearch={onMetadataSearch} onToggleFavorite={onMetadataFavorite} />
+                              <MetadataChip value={`artist:${item.artist}`} label={item.artist} kind="byline" favorite={favoriteMetadata.has(`artist:${item.artist}`)} onSearch={onMetadataSearch} onToggleFavorite={onMetadataFavorite} />
                               {item.group ? <MetadataChip value={`group:${item.group}`} label={item.group} kind="byline" favorite={favoriteMetadata.has(`group:${item.group}`)} onSearch={onMetadataSearch} onToggleFavorite={onMetadataFavorite} /> : null}
                             </div>
                             <div className="tag-list">
@@ -939,9 +967,47 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                   {gallery.title} · {isTwoPagePreview ? `${previewPage}–${companionPreviewPage}페이지` : `${previewPage}페이지`}
                 </h2>
               </div>
-              <button ref={previewCloseButton} type="button" className="icon-button small" title="페이지 미리보기 닫기" aria-label="페이지 미리보기 닫기" onClick={() => setPreviewPage(null)}>
-                <FluentIcon glyph="\uE711" />
-              </button>
+              <div className="page-preview-header-actions">
+                {previewResizable && onSetRepresentativePreview ? (
+                  <>
+                    {representativeBusy ? <span className="page-preview-save-status" role="status">저장 중</span> : null}
+                    {representativeError ? <span className="page-preview-save-status is-error" role="alert">저장 실패</span> : null}
+                    <button
+                      type="button"
+                      className="icon-button small page-preview-representative"
+                      aria-label="대표 미리보기로 지정"
+                      aria-pressed={currentManualRepresentative}
+                      title={currentManualRepresentative
+                        ? `${previewPage}페이지가 대표 미리보기로 지정됨`
+                        : isTwoPagePreview ? `${previewPage}페이지를 대표 미리보기로 지정` : "대표 미리보기로 지정"}
+                      disabled={representativeBusy || currentManualRepresentative}
+                      onClick={() => { void setRepresentativePreview(previewPage); }}
+                    >
+                      <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <rect x="3" y="4" width="18" height="16" rx="2" />
+                        <circle cx="8" cy="9" r="1.5" />
+                        <path d="m3 16 5-4 4 3 4-5 5 7" />
+                      </svg>
+                      {currentManualRepresentative ? <span className="page-preview-representative-check" aria-hidden="true">✓</span> : null}
+                    </button>
+                    {gallery.representativePreview?.mode === "manual" ? (
+                      <button
+                        type="button"
+                        className="icon-button small"
+                        aria-label="자동 선택으로 되돌리기"
+                        title="자동 선택으로 되돌리기"
+                        disabled={representativeBusy}
+                        onClick={() => { void setRepresentativePreview(null); }}
+                      >
+                        <FluentIcon glyph="\uE72C" />
+                      </button>
+                    ) : null}
+                  </>
+                ) : null}
+                <button ref={previewCloseButton} type="button" className="icon-button small" title="페이지 미리보기 닫기" aria-label="페이지 미리보기 닫기" onClick={() => setPreviewPage(null)}>
+                  <FluentIcon glyph="\uE711" />
+                </button>
+              </div>
             </header>
             <div
               className="page-preview-media-stage"

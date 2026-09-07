@@ -6,6 +6,7 @@ mod download_supervisor;
 mod duplicate_analyzer;
 mod duplicate_supervisor;
 mod error;
+mod gallery_preview;
 mod internal_duplicate_analyzer;
 #[cfg(test)]
 mod internal_duplicate_corpus;
@@ -36,12 +37,18 @@ pub use download_pipeline::{
 pub use download_supervisor::DownloadSupervisor;
 pub use duplicate_supervisor::{DisabledDuplicateRelationProvider, DuplicateSupervisor};
 pub use error::{ApplicationError, RepositoryError};
+pub use gallery_preview::{
+    ArtistPreview, GalleryPreview, GalleryPreviewRepository, GalleryPreviewService,
+    GalleryPreviewSetRequest, GalleryPreviewUpdate, PreviewCandidate,
+    GALLERY_PREVIEW_ALGORITHM_VERSION,
+};
 pub use internal_duplicate_supervisor::InternalDuplicateSupervisor;
 pub use ports::{
     ArtifactRepository, AutoFindCheckpointStage, AutoFindIncrementalCheckpoint, AutoFindSource,
     AutoFindSourceRequest, AutoFindSourceResult, AutomationRepository, DownloadMutationOutcome,
     DownloadQueueAddOutcome, DownloadQueueRecord, DownloadRepository, DuplicateRelationProvider,
-    DuplicateRepository, InternalDuplicateRepository, InternalPlanPrepareOutcome, SearchRepository,
-    StateRepository, TagCatalogRepository, TagCatalogSource,
+    DuplicateRepository, GallerySummaryCache, InternalDuplicateRepository,
+    InternalPlanPrepareOutcome, SearchRepository, StateRepository, TagCatalogRepository,
+    TagCatalogSource,
 };
 pub use service::{ApplicationService, DownloadQueueLaunch};

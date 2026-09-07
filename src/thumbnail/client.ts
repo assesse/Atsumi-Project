@@ -10,6 +10,8 @@ export type ThumbnailImageAsset = {
   readonly url: string;
   readonly width: number;
   readonly height: number;
+  /** Exact compressed delivery size when supplied by the backend adapter. */
+  readonly byteLength?: number;
 };
 
 export type ThumbnailSpriteAsset = {
@@ -103,6 +105,9 @@ const validatedAsset = (asset: ThumbnailAsset): ThumbnailAsset => {
     if (!asset.url.trim()) throw new Error("Thumbnail adapter returned an empty image URL");
     if (!validPositiveDimension(asset.width) || !validPositiveDimension(asset.height)) {
       throw new Error("Thumbnail adapter returned invalid intrinsic dimensions");
+    }
+    if (asset.byteLength !== undefined && (!Number.isSafeInteger(asset.byteLength) || asset.byteLength < 0)) {
+      throw new Error("Thumbnail adapter returned an invalid byte length");
     }
   } else if (asset.kind === "sprite") {
     if (!asset.url.trim()) throw new Error("Thumbnail adapter returned an empty sprite URL");
@@ -213,11 +218,14 @@ export class ThumbnailClient {
 
   /** Clears only inactive, recreatable display handles; visible subscribers stay intact. */
   clearRetainedCache(): number {
-    const retained = [...this.entries.values()].filter(
-      (entry) => entry.active && entry.retained && entry.listeners.size === 0,
+    const recreatable = [...this.entries.values()].filter(
+      (entry) => entry.active
+        && entry.listeners.size === 0
+        && entry.snapshot.status === "resolved"
+        && retainsDisplayHandle(entry.request),
     );
-    for (const entry of retained) this.cleanup(entry);
-    return retained.length;
+    for (const entry of recreatable) this.cleanup(entry);
+    return recreatable.length;
   }
 
   reportDisplayFailure(request: ThumbnailRequest, reason: string): void {

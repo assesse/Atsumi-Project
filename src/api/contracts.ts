@@ -1,5 +1,12 @@
 import type { DownloadState, GalleryId, Language, SearchSort } from "../core/types";
 
+export type { ArtistPreview, GalleryPreview } from "../core/types";
+
+export type GalleryPreviewSetRequest = {
+  galleryId: GalleryId;
+  sourcePage: number | null;
+};
+
 export type ApiErrorAction = "retry" | "review" | "reconnect" | "reveal" | "none";
 
 export type ApiError = {

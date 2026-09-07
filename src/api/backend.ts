@@ -52,7 +52,11 @@ import type {
   FavoriteMutationResult,
   FavoriteRecord,
   GalleryDetail,
+  GallerySummary,
   GalleryPage,
+  GalleryPreview,
+  GalleryPreviewSetRequest,
+  ArtistPreview,
   JobEvent,
   JobRef,
   InternalDuplicateReview,
@@ -107,6 +111,8 @@ export type BackendEventMap = {
   "internal-duplicate:artifact-progress": InternalArtifactScanProgress;
   "job:changed": JobEvent;
   "download:changed": DownloadChangedEvent;
+  "gallery-preview:updated": GalleryPreview;
+  "artist-preview:updated": ArtistPreview;
   "thumbnail:ready": ThumbnailCompletionEvent;
   "settings:changed": SettingsSnapshot;
   "app:exit-requested": AppExitRequestedEvent;
@@ -138,6 +144,7 @@ export interface BackendClient {
   searchPageGet(queryId: string, page: number, requestId: string): Promise<ApiResult<GalleryPage>>;
   searchPageCancel(requestId: string): Promise<ApiResult<boolean>>;
   galleryDetailGet(galleryId: GalleryDetail["id"]): Promise<ApiResult<GalleryDetail>>;
+  gallerySummaryGet(galleryId: GalleryId): Promise<ApiResult<GallerySummary>>;
   favoritesList(): Promise<ApiResult<FavoriteRecord[]>>;
   favoriteSet(key: FavoriteKey, enabled: boolean): Promise<ApiResult<FavoriteMutationResult>>;
   searchHistoryList(limit: number): Promise<ApiResult<SearchHistoryEntry[]>>;
@@ -171,6 +178,9 @@ export interface BackendClient {
   downloadQueueAdd(galleries: GalleryId[], requestId: string): Promise<ApiResult<DownloadEntry[]>>;
   downloadEntriesList(request: DownloadListRequest): Promise<ApiResult<DownloadPage>>;
   downloadLibraryPageList(request: DownloadListRequest): Promise<ApiResult<DownloadLibraryPage>>;
+  galleryPreviewList(galleryIds: GalleryId[]): Promise<ApiResult<GalleryPreview[]>>;
+  galleryPreviewSet(request: GalleryPreviewSetRequest): Promise<ApiResult<GalleryPreview>>;
+  artistPreviewList(artists: string[]): Promise<ApiResult<ArtistPreview[]>>;
   downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>>;
   downloadCancel(entryIds: string[]): Promise<ApiResult<DownloadEntry[]>>;
   downloadQuarantine(entryIds: string[], reason: string): Promise<ApiResult<DownloadEntry[]>>;
@@ -258,6 +268,20 @@ const browserFolderPreviewFixtures = new Map<string, string>([
 ]);
 
 const BROWSER_SETTINGS_STORAGE_KEY = "atsumi.browser.settings.v1";
+const BROWSER_PREVIEW_STORAGE_KEY = "atsumi.browser.previews.v1";
+type BrowserPreviewRecords = { galleries: GalleryPreview[]; artists: ArtistPreview[] };
+const readBrowserPreviewRecords = (): BrowserPreviewRecords => {
+  try {
+    const data = JSON.parse(window.localStorage.getItem(BROWSER_PREVIEW_STORAGE_KEY) ?? "null") as BrowserPreviewRecords | null;
+    return {
+      galleries: Array.isArray(data?.galleries) ? data.galleries.filter((item) => item
+        && Number.isInteger(item.galleryId) && Array.isArray(item.candidates)
+        && (item.mode === "manual" || item.mode === "automatic") && typeof item.updatedAt === "string") : [],
+      artists: Array.isArray(data?.artists) ? data.artists.filter((item) => item
+        && typeof item.artist === "string" && Array.isArray(item.galleryIds) && typeof item.updatedAt === "string") : [],
+    };
+  } catch { return { galleries: [], artists: [] }; }
+};
 
 const readPersistedBrowserSettings = (): SettingsSnapshot => {
   if (typeof window === "undefined") return { ...defaultSettings };
@@ -857,12 +881,16 @@ class BrowserMockBackend implements BackendClient {
     "internal-duplicate:artifact-progress": new Set(),
     "job:changed": new Set(),
     "download:changed": new Set(),
+    "gallery-preview:updated": new Set(),
+    "artist-preview:updated": new Set(),
     "thumbnail:ready": new Set(),
     "settings:changed": new Set(),
     "app:exit-requested": new Set(),
   };
   private searchQueries = new Map<string, SearchFixtureResult>();
   private downloadEntries = new Map<string, DownloadEntry>();
+  private galleryPreviews = new Map<GalleryId, GalleryPreview>(readBrowserPreviewRecords().galleries.map((item) => [item.galleryId, item]));
+  private artistPreviews = new Map<string, ArtistPreview>(readBrowserPreviewRecords().artists.map((item) => [item.artist.toLocaleLowerCase(), item]));
   private activeDownloadEntryByGallery = new Map<number, string>();
   private downloadQueueRequests = new Map<string, { gallerySetKey: string; entries: DownloadEntry[] }>();
   private danbooruDownloads = new Map<number, DanbooruDownloadRecord>();
@@ -1262,6 +1290,14 @@ class BrowserMockBackend implements BackendClient {
         "The gallery could not be found in the current source",
         { galleryId },
       );
+  }
+
+  async gallerySummaryGet(galleryId: GalleryId): Promise<ApiResult<GallerySummary>> {
+    if (!Number.isInteger(galleryId) || galleryId <= 0) return validationError("galleryId", "must be a positive integer");
+    const detail = galleryDetailFixture(galleryId);
+    if (!detail) return notFoundError("SOURCE_NOT_FOUND", "The gallery could not be found in the current source", { galleryId });
+    const { related: _related, pageDimensions: _dimensions, ...summary } = detail;
+    return ok(summary);
   }
 
   async favoritesList(): Promise<ApiResult<FavoriteRecord[]>> {
@@ -1786,8 +1822,8 @@ class BrowserMockBackend implements BackendClient {
     if (request.actor === "automation") {
       if (!request.candidateId
         || (request.action !== "remove_existing_continue" && request.action !== "remove_incoming")
-        || request.reasonCode !== "balanced_overlap_v3"
-        || request.ruleVersion !== 3
+        || request.reasonCode !== "balanced_overlap_v4"
+        || request.ruleVersion !== 4
         || !request.featureSnapshotJson) {
         return validationError("request", "자동 중복 판정 감사 정보가 올바르지 않습니다");
       }
@@ -2370,6 +2406,49 @@ class BrowserMockBackend implements BackendClient {
       language: summary.language,
       publishedRank: summary.publishedRank,
     };
+  }
+
+  async galleryPreviewList(galleryIds: GalleryId[]): Promise<ApiResult<GalleryPreview[]>> {
+    return ok(galleryIds.flatMap((id) => {
+      const preview = this.galleryPreviews.get(id);
+      return preview ? [{ ...preview, candidates: [...preview.candidates] }] : [];
+    }));
+  }
+
+  async galleryPreviewSet(request: GalleryPreviewSetRequest): Promise<ApiResult<GalleryPreview>> {
+    const entry = [...this.downloadEntries.values()].find((item) => item.galleryId === request.galleryId && item.state === "completed");
+    if (!entry) return validationError("galleryId", "requires a completed download");
+    const pages = this.localDownloadGallery(request.galleryId).pages ?? 1;
+    if (request.sourcePage !== null && (!Number.isInteger(request.sourcePage) || request.sourcePage < 1 || request.sourcePage > pages)) {
+      return validationError("sourcePage", "must reference an existing page");
+    }
+    const previous = this.galleryPreviews.get(request.galleryId);
+    const preview: GalleryPreview = {
+      galleryId: request.galleryId,
+      mode: request.sourcePage === null ? "automatic" : "manual",
+      sourcePage: request.sourcePage ?? previous?.candidates[0] ?? 1,
+      manualSourcePage: request.sourcePage,
+      entryId: entry.entryId,
+      width: null, height: null,
+      candidates: previous?.candidates ?? [1],
+      algorithmVersion: 1,
+      updatedAt: new Date().toISOString(),
+    };
+    this.galleryPreviews.set(request.galleryId, preview);
+    try {
+      window.localStorage.setItem(BROWSER_PREVIEW_STORAGE_KEY, JSON.stringify({
+        galleries: [...this.galleryPreviews.values()], artists: [...this.artistPreviews.values()],
+      }));
+    } catch { /* The browser fixture remains usable without local storage. */ }
+    this.emit("gallery-preview:updated", preview);
+    return ok({ ...preview, candidates: [...preview.candidates] });
+  }
+
+  async artistPreviewList(artists: string[]): Promise<ApiResult<ArtistPreview[]>> {
+    return ok(artists.flatMap((artist) => {
+      const preview = this.artistPreviews.get(artist.trim().toLocaleLowerCase());
+      return preview ? [{ ...preview, galleryIds: [...preview.galleryIds] }] : [];
+    }));
   }
 
   async downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>> {
@@ -3081,6 +3160,10 @@ class TauriBackend implements BackendClient {
     return invoke("gallery_detail_get", { galleryId });
   }
 
+  gallerySummaryGet(galleryId: GalleryId): Promise<ApiResult<GallerySummary>> {
+    return invoke("gallery_summary_get", { galleryId });
+  }
+
   favoritesList(): Promise<ApiResult<FavoriteRecord[]>> {
     return invoke("favorites_list");
   }
@@ -3207,6 +3290,18 @@ class TauriBackend implements BackendClient {
 
   downloadLibraryPageList(request: DownloadListRequest): Promise<ApiResult<DownloadLibraryPage>> {
     return invoke("download_library_page_list", { request });
+  }
+
+  galleryPreviewList(galleryIds: GalleryId[]): Promise<ApiResult<GalleryPreview[]>> {
+    return invoke("gallery_preview_list", { galleryIds });
+  }
+
+  galleryPreviewSet(request: GalleryPreviewSetRequest): Promise<ApiResult<GalleryPreview>> {
+    return invoke("gallery_preview_set", { request });
+  }
+
+  artistPreviewList(artists: string[]): Promise<ApiResult<ArtistPreview[]>> {
+    return invoke("artist_preview_list", { artists });
   }
 
   downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>> {

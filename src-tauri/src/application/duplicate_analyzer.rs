@@ -22,6 +22,17 @@ const TYPESETTING_STD_SIMILARITY_MIN: f64 = 0.80;
 const TYPESETTING_ASPECT_RATIO_SIMILARITY_MIN: f64 = 0.98;
 const TYPESETTING_MIN_OVERLAP_COVERAGE: f64 = 0.75;
 const TYPESETTING_MIN_ALIGNED_RUN: usize = 8;
+// A second, much narrower fallback for editions whose artwork is unchanged but
+// whose lettering/effect layers were rebuilt across almost every page.  These
+// per-page thresholds are intentionally usable only behind the exact
+// artist/group/title/page-count album gate below.
+const HEAVY_TYPESETTING_EDGE_SIMILARITY_MIN: f64 = 0.24;
+const HEAVY_TYPESETTING_VISUAL_SIMILARITY_MIN: f64 = 0.73;
+const HEAVY_TYPESETTING_CONTENT_SIMILARITY_MIN: f64 = 0.80;
+const HEAVY_TYPESETTING_STD_SIMILARITY_MIN: f64 = 0.70;
+const HEAVY_TYPESETTING_ASPECT_RATIO_SIMILARITY_MIN: f64 = 0.995;
+const HEAVY_TYPESETTING_MIN_OVERLAP_PERCENT: usize = 95;
+const HEAVY_TYPESETTING_MIN_ALIGNED_RUN: usize = 12;
 
 #[derive(Debug, Clone)]
 pub(crate) struct HashedArtifact {
@@ -135,33 +146,51 @@ pub(crate) fn analyze_artifact_pair(
         return analyze_artifact_pair(run_id, candidate, parent, profile, external_relation);
     }
     let page_metrics = page_metric_matrix(&parent.pages, &candidate.pages, profile);
-    let strict_alignment = align_metric_matrix(&page_metrics, false);
+    let strict_alignment = align_metric_matrix(&page_metrics, MatchTier::Strict);
     let strict_relation = classify_alignment(
         &strict_alignment,
         parent.pages.len(),
         candidate.pages.len(),
         profile,
     );
-    let alignment =
-        if should_try_typesetting_fallback(parent, candidate, &strict_alignment, strict_relation) {
-            // Reuse the already-computed hash metrics and repeat only the tiny
-            // in-memory DP alignment for a narrow near-miss. Images are not
-            // decoded and hashes/metric distances are not regenerated.
-            let tolerant_alignment = align_metric_matrix(&page_metrics, true);
-            if typesetting_alignment_is_safe(
-                &strict_alignment,
-                &tolerant_alignment,
-                parent.pages.len(),
-                candidate.pages.len(),
-                profile,
-            ) {
-                tolerant_alignment
-            } else {
-                strict_alignment
-            }
-        } else {
-            strict_alignment
-        };
+    let mut alignment = strict_alignment.clone();
+    let mut selected_tier = MatchTier::Strict;
+    if should_try_typesetting_fallback(parent, candidate, &strict_alignment, strict_relation) {
+        // Reuse the already-computed hash metrics and repeat only the tiny
+        // in-memory DP alignment for a narrow near-miss. Images are not
+        // decoded and hashes/metric distances are not regenerated.
+        let tolerant_alignment = align_metric_matrix(&page_metrics, MatchTier::Typesetting);
+        if typesetting_alignment_is_safe(
+            &strict_alignment,
+            &tolerant_alignment,
+            parent.pages.len(),
+            candidate.pages.len(),
+            profile,
+        ) {
+            alignment = tolerant_alignment;
+            selected_tier = MatchTier::Typesetting;
+        }
+    }
+    if selected_tier == MatchTier::Strict
+        && should_try_heavy_typesetting_fallback(
+            parent,
+            candidate,
+            &strict_alignment,
+            strict_relation,
+        )
+    {
+        let heavy_alignment = align_metric_matrix(&page_metrics, MatchTier::HeavyTypesetting);
+        if heavy_typesetting_alignment_is_safe(
+            &strict_alignment,
+            &heavy_alignment,
+            parent.pages.len(),
+            candidate.pages.len(),
+            profile,
+        ) {
+            alignment = heavy_alignment;
+            selected_tier = MatchTier::HeavyTypesetting;
+        }
+    }
     if alignment.is_empty() {
         return None;
     }
@@ -201,6 +230,15 @@ pub(crate) fn analyze_artifact_pair(
             (average_visual * 0.45 + coverage_confidence * 0.40 + 0.05).min(0.90)
         }
     };
+    if selected_tier == MatchTier::HeavyTypesetting
+        && relation == DuplicateRelation::TranslationVisual
+    {
+        // The heavy fallback has already established exact album metadata,
+        // 95% sequence coverage, stable offset, long run, and exact anchors.
+        // Include that album-level evidence instead of penalizing the result a
+        // second time for deliberately relaxed edge density.
+        confidence = (average_visual * 0.45 + coverage_confidence * 0.45 + 0.10).min(0.94);
+    }
     if let Some(external) = &external_relation {
         confidence = (confidence * 0.9 + external.confidence.clamp(0.0, 1.0) * 0.1).min(1.0);
     }
@@ -223,15 +261,14 @@ pub(crate) fn analyze_artifact_pair(
     }
     let visual_pages = matched_pages - exact_pages;
     if visual_pages > 0 {
-        let used_typesetting_fallback = alignment
-            .iter()
-            .any(|pair| !pair.exact_sha256 && pair.edge_similarity < STRICT_EDGE_SIMILARITY_MIN);
         evidence.push(DuplicateEvidence {
             evidence_id: format!("{candidate_id}-visual"),
             kind: DuplicateEvidenceKind::VisualHash,
             confidence: average_visual,
             matched_pages: visual_pages as u32,
-            description: if used_typesetting_fallback {
+            description: if selected_tier == MatchTier::HeavyTypesetting {
+                "Non-blank pages match through a same-edition, long-sequence fallback guarded by exact artist, group, title stem, page count, and sequence anchors".into()
+            } else if selected_tier == MatchTier::Typesetting {
                 "Non-blank pages match through perceptual and 1024-bit detail hashes, with a guarded typesetting-tolerant edge fallback".into()
             } else {
                 "Non-blank pages match through perceptual, 1024-bit detail, and edge gates".into()
@@ -373,11 +410,18 @@ fn perceptual_hash(image: &image::GrayImage) -> u64 {
         })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum MatchTier {
+    Strict,
+    Typesetting,
+    HeavyTypesetting,
+}
+
 #[derive(Debug, Clone)]
 struct PairMetric {
     score: f64,
     pair: DuplicatePagePair,
-    typesetting_fallback: bool,
+    tier: MatchTier,
 }
 
 fn classify_alignment(
@@ -493,6 +537,99 @@ fn typesetting_alignment_is_safe(
             == Some(DuplicateRelation::TranslationVisual)
 }
 
+fn should_try_heavy_typesetting_fallback(
+    parent: &HashedArtifact,
+    candidate: &HashedArtifact,
+    strict_alignment: &[DuplicatePagePair],
+    strict_relation: Option<DuplicateRelation>,
+) -> bool {
+    if matches!(
+        strict_relation,
+        Some(
+            DuplicateRelation::Exact
+                | DuplicateRelation::Contains
+                | DuplicateRelation::TranslationVisual
+        )
+    ) || parent.pages.len() != candidate.pages.len()
+        || parent.pages.len() < HEAVY_TYPESETTING_MIN_ALIGNED_RUN
+        || strict_alignment.len() < 3
+        || longest_aligned_run(strict_alignment) < 2
+        || strict_alignment
+            .iter()
+            .filter(|pair| pair.exact_sha256)
+            .count()
+            < 2
+        || !same_creator_context(&parent.gallery, &candidate.gallery)
+        || !same_nonempty_group_context(&parent.gallery, &candidate.gallery)
+    {
+        return false;
+    }
+    same_long_title_stem(&parent.gallery, &candidate.gallery)
+}
+
+fn heavy_typesetting_alignment_is_safe(
+    strict_alignment: &[DuplicatePagePair],
+    tolerant_alignment: &[DuplicatePagePair],
+    parent_pages: usize,
+    candidate_pages: usize,
+    profile: &HashProfile,
+) -> bool {
+    let larger_pages = parent_pages.max(candidate_pages);
+    if larger_pages == 0 || tolerant_alignment.len() <= strict_alignment.len() {
+        return false;
+    }
+    let retained_strict_pages = tolerant_alignment
+        .iter()
+        .filter(|tolerant| {
+            strict_alignment.iter().any(|strict| {
+                strict.parent_source_page == tolerant.parent_source_page
+                    && strict.candidate_source_page == tolerant.candidate_source_page
+            })
+        })
+        .count();
+    let exact_pages = tolerant_alignment
+        .iter()
+        .filter(|pair| pair.exact_sha256)
+        .count();
+    let informative_pages = tolerant_alignment
+        .iter()
+        .filter(|pair| !pair.low_information)
+        .count();
+    let average_visual = tolerant_alignment
+        .iter()
+        .map(|pair| pair.visual_similarity)
+        .sum::<f64>()
+        / tolerant_alignment.len() as f64;
+    let dominant_offset_pages = tolerant_alignment
+        .iter()
+        .map(|pair| i64::from(pair.parent_source_page) - i64::from(pair.candidate_source_page))
+        .map(|offset| {
+            tolerant_alignment
+                .iter()
+                .filter(|pair| {
+                    i64::from(pair.parent_source_page) - i64::from(pair.candidate_source_page)
+                        == offset
+                })
+                .count()
+        })
+        .max()
+        .unwrap_or(0);
+
+    tolerant_alignment.len() * 100 >= larger_pages * HEAVY_TYPESETTING_MIN_OVERLAP_PERCENT
+        && tolerant_alignment
+            .len()
+            .saturating_sub(retained_strict_pages)
+            >= 8
+        && retained_strict_pages >= 3
+        && exact_pages >= 2
+        && informative_pages * 5 >= tolerant_alignment.len() * 4
+        && average_visual >= 0.82
+        && longest_aligned_run(tolerant_alignment) >= HEAVY_TYPESETTING_MIN_ALIGNED_RUN
+        && dominant_offset_pages * 10 >= tolerant_alignment.len() * 9
+        && classify_alignment(tolerant_alignment, parent_pages, candidate_pages, profile)
+            == Some(DuplicateRelation::TranslationVisual)
+}
+
 fn normalized_context(value: Option<&str>) -> Option<String> {
     let normalized = value?
         .nfkc()
@@ -517,6 +654,22 @@ fn compatible_group_context(left: &DuplicateGalleryRef, right: &DuplicateGallery
         (Some(left), Some(right)) => left == right,
         _ => true,
     }
+}
+
+fn same_nonempty_group_context(left: &DuplicateGalleryRef, right: &DuplicateGalleryRef) -> bool {
+    normalized_context(left.group.as_deref())
+        .zip(normalized_context(right.group.as_deref()))
+        .is_some_and(|(left, right)| left == right)
+}
+
+fn normalized_title_stem(title: &str) -> Option<String> {
+    normalized_context(Some(title.split('|').next().unwrap_or(title)))
+}
+
+fn same_long_title_stem(left: &DuplicateGalleryRef, right: &DuplicateGalleryRef) -> bool {
+    normalized_title_stem(&left.title)
+        .zip(normalized_title_stem(&right.title))
+        .is_some_and(|(left, right)| left.chars().count() >= 12 && left == right)
 }
 
 fn longest_aligned_run(pairs: &[DuplicatePagePair]) -> usize {
@@ -544,10 +697,10 @@ fn align_pages(
     parent: &[DuplicatePageHash],
     candidate: &[DuplicatePageHash],
     profile: &HashProfile,
-    allow_typesetting_fallback: bool,
+    maximum_tier: MatchTier,
 ) -> Vec<DuplicatePagePair> {
     let metrics = page_metric_matrix(parent, candidate, profile);
-    align_metric_matrix(&metrics, allow_typesetting_fallback)
+    align_metric_matrix(&metrics, maximum_tier)
 }
 
 fn page_metric_matrix(
@@ -567,7 +720,7 @@ fn page_metric_matrix(
 
 fn align_metric_matrix(
     metrics: &[Vec<Option<PairMetric>>],
-    allow_typesetting_fallback: bool,
+    maximum_tier: MatchTier,
 ) -> Vec<DuplicatePagePair> {
     let parent_len = metrics.len();
     let candidate_len = metrics.first().map_or(0, Vec::len);
@@ -582,7 +735,7 @@ fn align_metric_matrix(
             let left = scores[i][j - 1];
             let diagonal = metrics[i - 1][j - 1]
                 .as_ref()
-                .filter(|metric| allow_typesetting_fallback || !metric.typesetting_fallback)
+                .filter(|metric| metric.tier <= maximum_tier)
                 .map_or(f64::NEG_INFINITY, |metric| {
                     scores[i - 1][j - 1] + metric.score
                 });
@@ -623,7 +776,8 @@ fn page_metric(
     candidate: &DuplicatePageHash,
     profile: &HashProfile,
 ) -> Option<PairMetric> {
-    page_metric_candidate(parent, candidate, profile).filter(|metric| !metric.typesetting_fallback)
+    page_metric_candidate(parent, candidate, profile)
+        .filter(|metric| metric.tier == MatchTier::Strict)
 }
 
 fn page_metric_candidate(
@@ -675,12 +829,52 @@ fn page_metric_candidate(
             >= profile
                 .visual_match_threshold
                 .max(TYPESETTING_VISUAL_SIMILARITY_MIN);
-    if !exact && !strict_visual_match && !typesetting_visual_match {
+    let heavy_typesetting_nonblank_match = !low_information
+        && detail_distance <= 160
+        && central_detail_distance <= 48
+        && ((p_distance <= 16 && coarse_distance <= 16)
+            || (p_distance <= 28 && coarse_distance <= 6 && detail_distance <= 140))
+        && edge_similarity >= HEAVY_TYPESETTING_EDGE_SIMILARITY_MIN
+        && content_similarity >= HEAVY_TYPESETTING_CONTENT_SIMILARITY_MIN
+        && std_similarity >= HEAVY_TYPESETTING_STD_SIMILARITY_MIN
+        && aspect_ratio_similarity(parent, candidate)
+            >= HEAVY_TYPESETTING_ASPECT_RATIO_SIMILARITY_MIN
+        && visual_similarity >= HEAVY_TYPESETTING_VISUAL_SIMILARITY_MIN;
+    // Permit a single-sided low-information page only when every remaining
+    // signal is unusually close. Album-level safety still requires at least
+    // 80% informative pairs, so blank end pages cannot establish a match.
+    let heavy_typesetting_low_information_match = parent.low_information
+        != candidate.low_information
+        && detail_distance <= 140
+        && central_detail_distance <= 40
+        && p_distance <= 28
+        && coarse_distance <= 6
+        && edge_similarity >= 0.80
+        && content_similarity >= 0.90
+        && std_similarity >= 0.90
+        && aspect_ratio_similarity(parent, candidate)
+            >= HEAVY_TYPESETTING_ASPECT_RATIO_SIMILARITY_MIN
+        && visual_similarity >= 0.82;
+    let heavy_typesetting_visual_match = !strict_visual_match
+        && !typesetting_visual_match
+        && (heavy_typesetting_nonblank_match || heavy_typesetting_low_information_match);
+    if !exact
+        && !strict_visual_match
+        && !typesetting_visual_match
+        && !heavy_typesetting_visual_match
+    {
         return None;
     }
+    let tier = if exact || strict_visual_match {
+        MatchTier::Strict
+    } else if typesetting_visual_match {
+        MatchTier::Typesetting
+    } else {
+        MatchTier::HeavyTypesetting
+    };
     Some(PairMetric {
         score: if exact { 1.0 } else { visual_similarity },
-        typesetting_fallback: !exact && !strict_visual_match && typesetting_visual_match,
+        tier,
         pair: DuplicatePagePair {
             parent_source_page: parent.source_page_number.get(),
             candidate_source_page: candidate.source_page_number.get(),
@@ -852,6 +1046,70 @@ mod tests {
         )
     }
 
+    fn heavy_typesetting_fixture() -> (HashedArtifact, HashedArtifact) {
+        let title = "Saimin nante Kakaru Wake Naijanaidesuka";
+        let mut parent_gallery = gallery(1_011_663, 23);
+        parent_gallery.title = title.into();
+        parent_gallery.artist = Some("typehatena".into());
+        parent_gallery.group = Some("second color".into());
+        let mut candidate_gallery = gallery(1_012_753, 23);
+        candidate_gallery.title = format!("{title} | localized edition");
+        candidate_gallery.artist = Some("TYPEHATENA".into());
+        candidate_gallery.group = Some("SECOND_COLOR".into());
+
+        let mut parent_pages = Vec::new();
+        let mut candidate_pages = Vec::new();
+        for source_page in 1..=23 {
+            let mut parent = exact_hash(1_011_663, source_page, u64::from(source_page));
+            let scene = u64::from(source_page)
+                .wrapping_mul(0x9e37_79b9_7f4a_7c15)
+                .rotate_left(source_page);
+            parent.coarse_d_hash = scene;
+            parent.p_hash = scene.rotate_left(17);
+            parent.detail_d_hash_hex = format!("{scene:016x}").repeat(16);
+            if source_page == 19 {
+                parent.low_information = true;
+            }
+            let mut candidate = parent.clone();
+            candidate.entry_id = "entry-1012753".into();
+            candidate.gallery_id = GalleryId::new(1_012_753).unwrap();
+            candidate.artifact_sha256 =
+                ArtifactSha256::new(format!("{:064x}", 100_000 + source_page)).unwrap();
+
+            if !matches!(source_page, 1 | 19 | 21 | 22) {
+                // Rebuilt dialogue/effect layers can more than double edge
+                // density even though the underlying page composition and
+                // detail hashes remain stable.
+                candidate.edge_density = 0.35;
+            }
+            if source_page == 19 {
+                candidate.low_information = false;
+                candidate.edge_density = 0.22;
+            }
+            if matches!(source_page, 21 | 22) {
+                candidate.artifact_sha256 = parent.artifact_sha256.clone();
+            }
+            if source_page == 23 {
+                candidate.low_information = true;
+                candidate.std_dev = 0.0;
+                candidate.non_uniform_ratio = 0.0;
+                candidate.edge_density = 0.0;
+            }
+            parent_pages.push(parent);
+            candidate_pages.push(candidate);
+        }
+        (
+            HashedArtifact {
+                gallery: parent_gallery,
+                pages: parent_pages,
+            },
+            HashedArtifact {
+                gallery: candidate_gallery,
+                pages: candidate_pages,
+            },
+        )
+    }
+
     fn contained_artifacts() -> (HashedArtifact, HashedArtifact) {
         let parent_pages = (1..=20)
             .map(|page| exact_hash(1, page, u64::from(page)))
@@ -923,6 +1181,7 @@ mod tests {
         let second = computed_hash(2, &second);
         assert!(first.low_information && second.low_information);
         assert!(page_metric(&first, &second, &HashProfile::current()).is_none());
+        assert!(page_metric_candidate(&first, &second, &HashProfile::current()).is_none());
     }
 
     #[test]
@@ -970,14 +1229,19 @@ mod tests {
     fn guarded_typesetting_fallback_recovers_an_edge_only_album_near_miss() {
         let (parent, candidate) = typesetting_fixture();
         let profile = HashProfile::current();
-        let strict = align_pages(&parent.pages, &candidate.pages, &profile, false);
+        let strict = align_pages(&parent.pages, &candidate.pages, &profile, MatchTier::Strict);
         assert_eq!(strict.len(), 11);
         assert!(
             classify_alignment(&strict, parent.pages.len(), candidate.pages.len(), &profile,)
                 .is_none()
         );
 
-        let tolerant = align_pages(&parent.pages, &candidate.pages, &profile, true);
+        let tolerant = align_pages(
+            &parent.pages,
+            &candidate.pages,
+            &profile,
+            MatchTier::Typesetting,
+        );
         assert_eq!(tolerant.len(), 22);
         assert_eq!(longest_aligned_run(&tolerant), 22);
         assert_eq!(
@@ -1027,6 +1291,54 @@ mod tests {
         }
         assert!(
             analyze_artifact_pair("run", &parent, &candidate, &HashProfile::current(), None,)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn heavy_typesetting_fallback_recovers_an_exact_context_full_edition() {
+        let (parent, candidate) = heavy_typesetting_fixture();
+        let profile = HashProfile::current();
+        let strict = align_pages(&parent.pages, &candidate.pages, &profile, MatchTier::Strict);
+        assert_eq!(strict.len(), 3);
+        assert_eq!(longest_aligned_run(&strict), 2);
+        let record = analyze_artifact_pair("run", &parent, &candidate, &profile, None)
+            .expect("a fully contextualized, 95%-aligned relettered edition should be detected");
+        assert_eq!(
+            record.candidate.relation,
+            DuplicateRelation::TranslationVisual
+        );
+        assert_eq!(record.candidate.matched_pages, 22);
+        assert_eq!(record.candidate.parent_coverage, 22.0 / 23.0);
+        assert_eq!(record.candidate.candidate_coverage, 22.0 / 23.0);
+        assert!(record.candidate.confidence >= 0.90);
+        assert!(record.evidence.iter().any(|evidence| {
+            evidence.kind == DuplicateEvidenceKind::VisualHash
+                && evidence.description.contains("same-edition")
+        }));
+    }
+
+    #[test]
+    fn heavy_typesetting_fallback_rejects_a_different_title_in_the_same_catalog_context() {
+        let (parent, mut candidate) = heavy_typesetting_fixture();
+        candidate.gallery.title = "A different work by the same circle".into();
+        assert!(
+            analyze_artifact_pair("run", &parent, &candidate, &HashProfile::current(), None)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn heavy_typesetting_fallback_rejects_incomplete_visual_coverage() {
+        let (parent, mut candidate) = heavy_typesetting_fixture();
+        for page in candidate.pages.iter_mut().take(20).skip(16) {
+            page.low_information = true;
+            page.std_dev = 0.0;
+            page.non_uniform_ratio = 0.0;
+            page.edge_density = 0.0;
+        }
+        assert!(
+            analyze_artifact_pair("run", &parent, &candidate, &HashProfile::current(), None)
                 .is_none()
         );
     }
