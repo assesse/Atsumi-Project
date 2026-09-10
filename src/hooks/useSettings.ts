@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { backend } from "../api/backend";
+import { backend, type BackendClient, type Unsubscribe } from "../api/backend";
 import type { ApiError, ApiResult, SettingsPatch, SettingsSnapshot } from "../api/contracts";
 
 const fallback: SettingsSnapshot = {
@@ -35,7 +35,11 @@ const runtimeError = (operation: string): ApiError => ({
   action: "retry",
 });
 
-export function useSettings() {
+export type SettingsApi = Pick<BackendClient, "settingsGet" | "settingsUpdate"> & {
+  on(event: "settings:changed", handler: (snapshot: SettingsSnapshot) => void): Promise<Unsubscribe>;
+};
+
+export function useSettings(api: SettingsApi = backend) {
   const [settings, setSettings] = useState<SettingsSnapshot>(fallback);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
@@ -46,7 +50,7 @@ export function useSettings() {
     void (async () => {
       let subscriptionError: ApiError | null = null;
       try {
-        const cleanup = await backend.on("settings:changed", (snapshot) => {
+        const cleanup = await api.on("settings:changed", (snapshot) => {
           if (cancelled) return;
           setSettings((current) => snapshot.revision > current.revision ? snapshot : current);
           setError(null);
@@ -61,7 +65,7 @@ export function useSettings() {
       }
 
       try {
-        const result = await backend.settingsGet();
+        const result = await api.settingsGet();
         if (cancelled) return;
         if (result.ok) {
           setSettings((current) => result.data.revision >= current.revision ? result.data : current);
@@ -79,13 +83,13 @@ export function useSettings() {
       cancelled = true;
       unsubscribe?.();
     };
-  }, []);
+  }, [api]);
 
   const save = useCallback(
     async (patch: SettingsPatch) => {
       let result: ApiResult<SettingsSnapshot>;
       try {
-        result = await backend.settingsUpdate(patch, settings.revision);
+        result = await api.settingsUpdate(patch, settings.revision);
       } catch {
         const error = runtimeError("설정을 저장하는");
         setError(error);
@@ -98,7 +102,7 @@ export function useSettings() {
         setError(result.error);
         if (result.error.code === "REVISION_CONFLICT") {
           try {
-            const refreshed = await backend.settingsGet();
+            const refreshed = await api.settingsGet();
             if (refreshed.ok) {
               setSettings((current) => refreshed.data.revision >= current.revision ? refreshed.data : current);
             }
@@ -109,7 +113,7 @@ export function useSettings() {
       }
       return result;
     },
-    [settings.revision],
+    [api, settings.revision],
   );
 
   return { settings, loading, error, save };

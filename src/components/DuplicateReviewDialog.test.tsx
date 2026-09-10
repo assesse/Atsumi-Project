@@ -3,7 +3,8 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import type { DuplicateReview } from "../api/contracts";
 import { galleryId } from "../core/types";
-import { ThumbnailClient, type ThumbnailRequest } from "../thumbnail";
+import { ThumbnailClient } from "../thumbnail";
+import { completedPairReview } from "../state/completedPairReview";
 import { DuplicateReviewDialog } from "./DuplicateReviewDialog";
 
 const reviewFixture = (patch: Partial<DuplicateReview> = {}): DuplicateReview => ({
@@ -68,197 +69,69 @@ const reviewFixture = (patch: Partial<DuplicateReview> = {}): DuplicateReview =>
   ...patch,
 });
 
-describe("DuplicateReviewDialog backend evidence", () => {
-  it("renders persisted confidence and exact artifact source-page pairs without placeholder values", async () => {
-    const resolve = vi.fn((_request: ThumbnailRequest) => ({
-      kind: "missing" as const,
-      reason: "test fixture",
-    }));
-    const client = new ThumbnailClient({ resolve });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-
-    await act(async () => root.render(
-      <DuplicateReviewDialog
-        open={false}
-        review={reviewFixture()}
-        thumbnailClient={client}
-        onClose={vi.fn()}
-        onRetry={vi.fn()}
-        onRescan={vi.fn()}
-        onDecision={vi.fn()}
-      />,
-    ));
-
-    expect(container.querySelector(".review-summary")).toHaveTextContent("신뢰도 73%");
-    expect(container.querySelector(".review-summary")).toHaveTextContent("2개 페이지 일치");
-    expect(container.querySelector(".match-pairs summary")).toHaveTextContent("2쌍");
-    expect(container.textContent).toContain("Persisted one-to-one sequence evidence");
-    expect(container.textContent).toContain("detail 37 · edge 91%");
-    expect(container.textContent).not.toContain("82%");
-    expect(container.textContent).not.toContain("first gid");
-    expect(container.textContent).not.toContain("parent gid");
-
-    const artifactPages = resolve.mock.calls
-      .map(([request]) => request.key)
-      .filter((key) => key.kind === "artifact-page")
-      .map((key) => [key.entryId, key.page]);
-    expect(artifactPages).toEqual([
-      ["verified-parent-entry", 2],
-      ["verified-candidate-entry", 9],
-      ["verified-parent-entry", 11],
-      ["verified-candidate-entry", 14],
-    ]);
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
-  });
-
-  it("keeps both hide choices for non-containment reviews and hides series classification controls", async () => {
-    const onDecision = vi.fn();
-    const client = new ThumbnailClient({
-      resolve: () => ({ kind: "missing", reason: "test fixture" }),
-    });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    await act(async () => root.render(
-      <DuplicateReviewDialog
-        open={false}
-        review={reviewFixture()}
-        thumbnailClient={client}
-        onClose={vi.fn()}
-        onRetry={vi.fn()}
-        onRescan={vi.fn()}
-        onDecision={onDecision}
-      />,
-    ));
-
+describe("completed pairs share DownloadOverlapReviewDialog", () => {
+  const mount = async (review = reviewFixture()) => {
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container); const onDecision = vi.fn(); const onMergePages = vi.fn();
+    await act(async () => root.render(<DuplicateReviewDialog open={false} review={review} previewWidth={420}
+      thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onRescan={vi.fn()}
+      onDecision={onDecision} onMergePages={onMergePages} />));
     const click = async (label: string) => {
-      const button = [...container.querySelectorAll<HTMLButtonElement>("button")]
-        .find((item) => item.textContent?.includes(label));
-      if (!button) throw new Error(`${label} button missing`);
-      await act(async () => button.click());
+      const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label);
+      expect(button).toBeDefined(); await act(async () => button!.click());
     };
-    await click("작품 A 숨기기");
-    await click("작품 B 숨기기");
-    await click("이 작품 쌍 제외");
-
-    expect(onDecision).toHaveBeenCalledWith({
-      candidateId: "candidate-real-evidence",
-      expectedRevision: 7,
-      action: "hide_parent",
-    });
-    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({ action: "hide_candidate", expectedRevision: 7 }));
-    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({ action: "exclude_pair", expectedRevision: 7 }));
-    expect(container.querySelector(".series-decision")).toBeNull();
-    expect(container.textContent).not.toContain("연작 관계");
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
+    return { container, onDecision, onMergePages, click, dispose: async () => {
+      await act(async () => root.unmount()); client.dispose(); container.remove();
+    } };
+  };
+  it("uses the shared heading, full A/B alignment and source coordinates", async () => {
+    const f = await mount();
+    expect(f.container.textContent).toContain("DOWNLOAD OVERLAP REVIEW");
+    expect(f.container.textContent).not.toContain("DUPLICATE REVIEW");
+    expect(f.container.textContent).toContain("완료 앨범 A/B 수동 대조");
+    expect(f.container.querySelector(".download-overlap-page-map")).toHaveTextContent("2쌍 일치");
+    expect(f.container.querySelector('.download-overlap-page-cell[aria-label^="기존 A 2페이지"]')).not.toBeNull();
+    expect(f.container.querySelector('.download-overlap-page-cell[aria-label^="신규 B 9페이지"]')).not.toBeNull();
+    expect(f.container.querySelector(".download-overlap-metrics")).toHaveTextContent("1 / 1");
+    await f.dispose();
   });
-
-  it("forces a contains decision to keep the longer parent and hide only the shorter candidate", async () => {
-    const onDecision = vi.fn();
-    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const review = reviewFixture();
-    review.candidate.relation = "contains";
-
-    await act(async () => root.render(
-      <DuplicateReviewDialog
-        open={false}
-        review={review}
-        thumbnailClient={client}
-        onClose={vi.fn()}
-        onRetry={vi.fn()}
-        onRescan={vi.fn()}
-        onDecision={onDecision}
-      />,
-    ));
-
-    expect(container.querySelector(".containment-policy")).toHaveTextContent("20p 포괄 작품을 남깁니다");
-    expect(container.querySelectorAll(".review-card h3")[0]).toHaveTextContent("포괄 작품");
-    expect(container.querySelectorAll(".review-card h3")[1]).toHaveTextContent("귀속 작품");
-    expect(container.textContent).not.toContain("작품 A 숨기기");
-    expect(container.textContent).not.toContain("작품 B 숨기기");
-    const action = container.querySelector<HTMLButtonElement>(".containment-keep-action");
-    expect(action).toHaveTextContent("20p 포괄 작품 유지 · 16p 귀속 작품 숨기기");
-    await act(async () => action?.click());
-    expect(onDecision).toHaveBeenCalledWith({
-      candidateId: "candidate-real-evidence",
-      expectedRevision: 7,
-      action: "hide_candidate",
-    });
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
+  it("keeps A/B explicit choices and distinct keep/false-positive labels", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const f = await mount();
+    await f.click("A 제외"); await f.click("B 제외"); await f.click("오탐 판정"); await f.click("둘 다 보존");
+    for (const action of ["remove_existing_continue", "remove_incoming", "false_positive_continue", "keep_both_continue"]) {
+      expect(f.onDecision).toHaveBeenCalledWith({ reviewId: "duplicate:candidate-real-evidence", candidateId: "candidate-real-evidence", expectedRevision: 7, action });
+    }
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("완료 앨범 B"));
+    await f.dispose(); confirm.mockRestore();
   });
-
-  it("forces the inverse contains decision to keep a longer candidate", async () => {
-    const onDecision = vi.fn();
-    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const review = reviewFixture();
-    review.candidate.relation = "contains";
-    review.candidate.parent.pageCount = 16;
-    review.candidate.candidate.pageCount = 20;
-
-    await act(async () => root.render(
-      <DuplicateReviewDialog
-        open={false}
-        review={review}
-        thumbnailClient={client}
-        onClose={vi.fn()}
-        onRetry={vi.fn()}
-        onRescan={vi.fn()}
-        onDecision={onDecision}
-      />,
-    ));
-
-    await act(async () => container.querySelector<HTMLButtonElement>(".containment-keep-action")?.click());
-    expect(onDecision).toHaveBeenCalledWith(expect.objectContaining({ action: "hide_parent" }));
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
+  it("maps inverse containment and both unequal page numbers without swapping A/B", () => {
+    const review = reviewFixture(); review.candidate.relation = "contains";
+    const result = completedPairReview(review);
+    expect(result.candidates[0]!.relation).toBe("existing_contains_incoming");
+    expect(result.candidates[0]!.pagePairs[0]).toMatchObject({ existingSourcePage: 2, incomingSourcePage: 9 });
+    review.candidate.candidate.pageCount = 21;
+    expect(completedPairReview(review).candidates[0]!.relation).toBe("incoming_contains_existing");
+    expect(result.entryId).toBe("verified-candidate-entry");
   });
-
-  it("retains the safe two-sided choice when contains page counts are equal", async () => {
-    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const review = reviewFixture();
-    review.candidate.relation = "contains";
-    review.candidate.candidate.pageCount = 20;
-
-    await act(async () => root.render(
-      <DuplicateReviewDialog
-        open={false}
-        review={review}
-        thumbnailClient={client}
-        onClose={vi.fn()}
-        onRetry={vi.fn()}
-        onRescan={vi.fn()}
-        onDecision={vi.fn()}
-      />,
-    ));
-
-    expect(container.querySelector(".containment-policy")).toBeNull();
-    expect(container.textContent).toContain("작품 A 숨기기");
-    expect(container.textContent).toContain("작품 B 숨기기");
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
+  it("provides shared Ctrl-selection and merge for a fully mapped donor", async () => {
+    const review = reviewFixture(); review.candidate.parent.pageCount = 2;
+    review.pagePairs = review.pagePairs.map((p, i) => ({ ...p, parentSourcePage: i + 1 }));
+    const f = await mount(review);
+    for (const page of [2,1]) {
+      const cell = f.container.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="기존 A ${page}페이지"]`)!;
+      await act(async () => cell.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    }
+    await f.click("선택한 2장 병합");
+    expect(f.onMergePages).toHaveBeenCalledWith({ reviewId: "duplicate:candidate-real-evidence", candidateId: "candidate-real-evidence", expectedRevision: 7, sourceSide: "existing", sourcePages: [1,2] });
+    await f.dispose();
+  });
+  it("shows previously processed decisions read-only", async () => {
+    const review = reviewFixture({ decisions: [{ decisionId: "d", candidateId: "candidate-real-evidence", candidateRevision: 7, action: "exclude_pair", createdAt: "now" }] });
+    const f = await mount(review);
+    expect(f.container.textContent).toContain("읽기 전용 판정 기록");
+    expect([...f.container.querySelectorAll("button")].some((b) => b.textContent === "A 제외")).toBe(false);
+    await f.dispose();
   });
 });

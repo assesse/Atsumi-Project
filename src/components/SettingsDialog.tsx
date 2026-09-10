@@ -30,6 +30,7 @@ import {
   galleryPreviewPresetIndex,
 } from "../layout/galleryPreviewPresets";
 import { parseGlobalSearchTagInput } from "../search/globalSearchRules";
+import { DOWNLOAD_OVERLAP_AUTO_HELP } from "../state/downloadOverlapAuto";
 import type { AppUpdateCheckResult } from "../update/useAppUpdater";
 import { FluentIcon } from "./FluentIcon";
 import { DropdownSelect } from "./DropdownSelect";
@@ -724,7 +725,7 @@ export function SettingsDialog({
                   <SettingCopy
                     title="다운로드 판본 자동 판정"
                     summary="확실한 포함·거의 동일 판본만 자동 추천하거나 격리합니다."
-                    detail="일반 판본은 포함률 95% 이상이고 페이지 차이가 5장 이하일 때만 판정합니다. 제목의 무검열 표식을 우선하되, 작은 판본에 고유 페이지가 없고 포함률 98% 이상이며 큰 판본이 1.5배·8장 이상 큰 합본이면 합본을 보존합니다. 근거가 부족하면 직접 검토하며 자동 제거 항목도 영구 삭제하지 않고 복구 가능한 격리로 옮깁니다."
+                    detail={DOWNLOAD_OVERLAP_AUTO_HELP}
                   />
                   <div className="settings-select-control">
                     <select

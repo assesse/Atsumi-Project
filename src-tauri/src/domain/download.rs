@@ -97,6 +97,10 @@ pub struct DownloadLibraryGallery {
     pub language: Option<Language>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published_rank: Option<u32>,
+    /// None means the persisted source summary is unavailable; an empty list
+    /// means the source summary was loaded and genuinely contains no tags.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

@@ -71,6 +71,7 @@ export function projectGallerySummary(summary: GallerySummary, current?: Gallery
   const thumbnailKey = incomingThumbnailKey ?? current?.thumbnailKey;
   const thumbnailWidth = positiveInteger(runtime.thumbnailWidth) ?? current?.thumbnailWidth;
   const thumbnailHeight = positiveInteger(runtime.thumbnailHeight) ?? current?.thumbnailHeight;
+  const incomingTags = stringArray(runtime.tags);
 
   return {
     id: summary.id,
@@ -85,7 +86,8 @@ export function projectGallerySummary(summary: GallerySummary, current?: Gallery
       : publishedAtFromRank(incomingPublishedRank),
     coverIndex: current?.coverIndex ?? coverIndexFor(summary.id, thumbnailKey),
     language: language(runtime.language) ?? current?.language ?? "korean",
-    tags: stringArray(runtime.tags) ?? (current ? [...current.tags] : []),
+    tags: incomingTags ?? (current ? [...current.tags] : []),
+    tagsKnown: incomingTags !== undefined || (current !== undefined && current.tagsKnown !== false),
     series: stringArray(runtime.series) ?? (Array.isArray(current?.series) ? [...current.series] : []),
     characters: stringArray(runtime.characters) ?? (Array.isArray(current?.characters) ? [...current.characters] : []),
     ...(thumbnailKey ? { thumbnailKey } : {}),
@@ -138,6 +140,7 @@ const placeholderGallery = (id: GalleryId): Gallery => ({
   language: "korean",
   languageKnown: false,
   tags: [],
+  tagsKnown: false,
   series: [],
   characters: [],
 });
@@ -182,6 +185,8 @@ export function mergeDownloadLibraryPage(
   const next = new Map(galleries);
   for (const item of page.items) {
     const current = next.get(item.gallery.id);
+    const savedTags = stringArray(item.gallery.tags);
+    const currentTagsKnown = current !== undefined && current.tagsKnown !== false;
     const summary = {
       id: item.gallery.id,
       title: item.gallery.title ?? current?.title ?? `Gallery #${item.gallery.id}`,
@@ -189,7 +194,8 @@ export function mergeDownloadLibraryPage(
       ...(item.gallery.group ?? current?.group ? { group: item.gallery.group ?? current?.group } : {}),
       pages: item.gallery.pages ?? current?.pages ?? 0,
       language: item.gallery.language ?? current?.language ?? "korean",
-      tags: current ? [...current.tags] : [],
+      // A late list response must not replace tags already resolved this session.
+      tags: currentTagsKnown ? [...current.tags] : savedTags ?? [],
       series: current ? [...current.series] : [],
       characters: current ? [...current.characters] : [],
       ...(item.gallery.publishedRank !== undefined ? { publishedRank: item.gallery.publishedRank } : {}),
@@ -203,6 +209,7 @@ export function mergeDownloadLibraryPage(
       ...projected,
       languageKnown: item.gallery.language !== undefined
         || (current !== undefined && current.languageKnown !== false),
+      tagsKnown: currentTagsKnown || savedTags !== undefined,
       download: {
         entryId: item.download.entryId,
         revision: item.download.revision,

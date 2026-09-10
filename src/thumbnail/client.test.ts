@@ -11,6 +11,140 @@ const coverKey = {
 };
 
 describe("ThumbnailClient", () => {
+  it("invalidates an active display handle and refreshes all existing listeners", async () => {
+    const oldAsset: ThumbnailAsset = { kind: "image", url: "blob:old-cover", width: 100, height: 150 };
+    const freshAsset: ThumbnailAsset = { kind: "image", url: "blob:fresh-cover", width: 100, height: 150 };
+    let finish: ((asset: ThumbnailAsset) => void) | undefined;
+    const pending = new Promise<ThumbnailAsset>((resolve) => { finish = resolve; });
+    const resolve = vi.fn().mockReturnValueOnce(oldAsset).mockReturnValueOnce(pending);
+    const release = vi.fn();
+    const client = new ThumbnailClient({ resolve, release });
+    const request: ThumbnailRequest = { key: coverKey, consumer: "downloads", priority: "visible" };
+    const first = vi.fn();
+    const second = vi.fn();
+    const unsubscribeFirst = client.subscribe(request, first);
+    const unsubscribeSecond = client.subscribe(request, second);
+    first.mockClear();
+
+    expect(client.invalidate((key) => key.kind === "gallery-cover" && key.galleryId === coverKey.galleryId)).toBe(1);
+    expect(client.getSnapshot(coverKey)).toEqual({ status: "loading" });
+    expect(release).toHaveBeenCalledExactlyOnceWith(request, oldAsset);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledOnce();
+
+    finish?.(freshAsset);
+    await pending;
+    await Promise.resolve();
+    expect(client.getSnapshot(coverKey)).toEqual({ status: "resolved", asset: freshAsset });
+    expect(first).toHaveBeenCalledTimes(2);
+    expect(second).toHaveBeenCalledTimes(2);
+    unsubscribeFirst();
+    unsubscribeSecond();
+    client.dispose();
+  });
+
+  it("invalidates only matching inactive keys without evicting unrelated retained albums", async () => {
+    vi.useFakeTimers();
+    try {
+      const asset: ThumbnailAsset = { kind: "image", url: "blob:retained", width: 100, height: 150 };
+      const resolve = vi.fn(() => asset);
+      const release = vi.fn();
+      const client = new ThumbnailClient({ resolve, release });
+      const request: ThumbnailRequest = { key: coverKey, consumer: "downloads", priority: "visible" };
+      const artifactRequest: ThumbnailRequest = {
+        ...request, key: { kind: "artifact-page", entryId: "merged-entry", page: 1 },
+      };
+      const unrelated: ThumbnailRequest = { ...request, key: { ...coverKey, galleryId: galleryId(9) } };
+      client.subscribe(request, vi.fn())();
+      client.subscribe(unrelated, vi.fn())();
+      await vi.advanceTimersByTimeAsync(400);
+      // Also invalidate an inactive handle still inside its orphan grace period.
+      client.subscribe(artifactRequest, vi.fn())();
+
+      const predicate = (key: ThumbnailRequest["key"]) => key.kind === "artifact-page"
+        ? key.entryId === "merged-entry"
+        : key.galleryId === coverKey.galleryId;
+      expect(client.invalidate(predicate)).toBe(2);
+      expect(client.invalidate(predicate)).toBe(0);
+      expect(client.getSnapshot(coverKey)).toEqual({ status: "idle" });
+      expect(client.getSnapshot(artifactRequest.key)).toEqual({ status: "idle" });
+      expect(client.getSnapshot(unrelated.key)).toEqual({ status: "resolved", asset });
+      expect(release).toHaveBeenCalledTimes(2);
+      expect(release).not.toHaveBeenCalledWith(unrelated, expect.anything());
+      const unsubscribe = client.subscribe(unrelated, vi.fn());
+      expect(resolve).toHaveBeenCalledTimes(3);
+      unsubscribe();
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels invalidated in-flight work and releases a late old image without replacing the fresh image", async () => {
+    let finishOld: ((asset: ThumbnailAsset) => void) | undefined;
+    let finishFresh: ((asset: ThumbnailAsset) => void) | undefined;
+    const oldPending = new Promise<ThumbnailAsset>((resolve) => { finishOld = resolve; });
+    const freshPending = new Promise<ThumbnailAsset>((resolve) => { finishFresh = resolve; });
+    const resolve = vi.fn().mockReturnValueOnce(oldPending).mockReturnValueOnce(freshPending);
+    const cancel = vi.fn();
+    const release = vi.fn();
+    const client = new ThumbnailClient({ resolve, cancel, release });
+    const request: ThumbnailRequest = {
+      key: { kind: "source-page", galleryId: coverKey.galleryId, page: 1 },
+      consumer: "detail", priority: "critical",
+    };
+    const listener = vi.fn();
+    const unsubscribe = client.subscribe(request, listener);
+
+    expect(client.invalidate((key) => key.kind === "source-page" && key.galleryId === coverKey.galleryId)).toBe(1);
+    expect(cancel).toHaveBeenCalledExactlyOnceWith(request);
+    expect(resolve).toHaveBeenCalledTimes(2);
+    const freshAsset: ThumbnailAsset = { kind: "image", url: "blob:fresh-page", width: 100, height: 150 };
+    finishFresh?.(freshAsset);
+    await freshPending;
+    await Promise.resolve();
+    listener.mockClear();
+
+    const oldAsset: ThumbnailAsset = { kind: "image", url: "blob:late-old-page", width: 100, height: 150 };
+    finishOld?.(oldAsset);
+    await oldPending;
+    await Promise.resolve();
+    expect(client.getSnapshot(request.key)).toEqual({ status: "resolved", asset: freshAsset });
+    expect(release).toHaveBeenCalledExactlyOnceWith(request, oldAsset);
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+    client.dispose();
+  });
+
+  it("resets display retry counters and clears old retry timers when invalidating", async () => {
+    vi.useFakeTimers();
+    try {
+      const asset: ThumbnailAsset = { kind: "image", url: "blob:retry-display", width: 100, height: 150 };
+      const resolve = vi.fn(() => asset);
+      const client = new ThumbnailClient({ resolve });
+      const request: ThumbnailRequest = { key: coverKey, consumer: "downloads", priority: "visible" };
+      const unsubscribe = client.subscribe(request, vi.fn());
+      client.reportDisplayFailure(request, "old asset decode failed");
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(client.invalidate(() => true)).toBe(1);
+      expect(resolve).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(resolve).toHaveBeenCalledTimes(2);
+      client.reportDisplayFailure(request, "new asset needs one fresh retry");
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(resolve).toHaveBeenCalledTimes(3);
+      expect(client.getSnapshot(coverKey)).toEqual({ status: "resolved", asset });
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(resolve).toHaveBeenCalledTimes(3);
+      unsubscribe();
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("coalesces consumers for one structured key and promotes the shared work", async () => {
     let finish: ((asset: ThumbnailAsset) => void) | undefined;
     const pending = new Promise<ThumbnailAsset>((resolve) => { finish = resolve; });

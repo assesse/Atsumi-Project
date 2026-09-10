@@ -6,10 +6,12 @@ use crate::source::{
 };
 
 use super::{
-    download_full_candidates, galleryinfo_script_url, gg_script_url, index_all_nozomi_url,
+    download_full_candidates, galleries_index_file_url, galleries_index_version_url,
+    gallery_index_term_key, galleryinfo_script_url, gg_script_url, index_all_nozomi_url,
+    parse_gallery_index_data, parse_gallery_index_node, parse_gallery_index_version,
     parse_galleryinfo_script, parse_gg_routing, parse_nozomi_ids, parse_nozomi_range,
-    webp_full_candidates, webp_thumbnail_candidates, HitomiImageFormat, HitomiTagKind,
-    NozomiByteRange, ThumbnailSize, HITOMI_METADATA_ORIGIN, HITOMI_PARSER_VERSION,
+    webp_full_candidates, webp_thumbnail_candidates, GalleryIndexLookup, HitomiImageFormat,
+    HitomiTagKind, NozomiByteRange, ThumbnailSize, HITOMI_METADATA_ORIGIN, HITOMI_PARSER_VERSION,
     HITOMI_RESOLVER_VERSION, NOZOMI_CONTENT_TYPE,
 };
 
@@ -28,6 +30,52 @@ const TRANSPORT_POLICY: &str = include_str!("../../../fixtures/hitomi/transport-
 fn parser_and_resolver_contracts_are_explicitly_versioned() {
     assert_eq!(HITOMI_PARSER_VERSION, 1);
     assert_eq!(HITOMI_RESOLVER_VERSION, 1);
+}
+
+#[test]
+fn gallery_title_index_binary_contract_supports_utf8_terms_and_rejects_corruption() {
+    let term = "줄곧";
+    assert_eq!(gallery_index_term_key(term), [0x86, 0xcb, 0xff, 0x9f]);
+    assert_eq!(
+        parse_gallery_index_version(b"  2026090801\n").unwrap(),
+        "2026090801"
+    );
+    assert!(parse_gallery_index_version(b"../unsafe").is_err());
+
+    let key = gallery_index_term_key(term);
+    let mut node = Vec::new();
+    node.extend_from_slice(&1_u32.to_be_bytes());
+    node.extend_from_slice(&4_u32.to_be_bytes());
+    node.extend_from_slice(&key);
+    node.extend_from_slice(&1_u32.to_be_bytes());
+    node.extend_from_slice(&512_u64.to_be_bytes());
+    node.extend_from_slice(&12_u32.to_be_bytes());
+    for _ in 0..17 {
+        node.extend_from_slice(&0_u64.to_be_bytes());
+    }
+    node.resize(464, 0);
+
+    let parsed = parse_gallery_index_node(&node).unwrap();
+    let matched = parsed.lookup(&key).unwrap();
+    let GalleryIndexLookup::Match(range) = matched else {
+        panic!("UTF-8 title hash must match the encoded B-tree key");
+    };
+    assert_eq!(range.header_value().unwrap(), "bytes=512-523");
+    assert_eq!(
+        parsed.lookup(&gallery_index_term_key("없는말")).unwrap(),
+        GalleryIndexLookup::Missing
+    );
+
+    let mut data = Vec::new();
+    data.extend_from_slice(&2_u32.to_be_bytes());
+    data.extend_from_slice(&3657124_u32.to_be_bytes());
+    data.extend_from_slice(&683455_u32.to_be_bytes());
+    assert_eq!(
+        parse_gallery_index_data(&data).unwrap(),
+        vec![3_657_124, 683_455]
+    );
+    assert!(parse_gallery_index_node(&node[..160]).is_err());
+    assert!(parse_gallery_index_data(&data[..data.len() - 1]).is_err());
 }
 
 #[test]
@@ -283,11 +331,25 @@ fn endpoint_helpers_are_allowlisted_and_validate_gallery_ids() {
         index_all_nozomi_url(),
         format!("{HITOMI_METADATA_ORIGIN}/index-all.nozomi")
     );
+    assert_eq!(
+        galleries_index_version_url(),
+        format!("{HITOMI_METADATA_ORIGIN}/galleriesindex/version")
+    );
+    assert_eq!(
+        galleries_index_file_url("2026090801", "index").unwrap(),
+        format!("{HITOMI_METADATA_ORIGIN}/galleriesindex/galleries.2026090801.index")
+    );
+    assert_eq!(
+        galleries_index_file_url("2026090801", "data").unwrap(),
+        format!("{HITOMI_METADATA_ORIGIN}/galleriesindex/galleries.2026090801.data")
+    );
     assert_eq!(NOZOMI_CONTENT_TYPE, "application/x-nozomi");
     assert_eq!(
         galleryinfo_script_url(0).unwrap_err().code,
         SourceErrorCode::Validation
     );
+    assert!(galleries_index_file_url("../unsafe", "index").is_err());
+    assert!(galleries_index_file_url("2026090801", "script").is_err());
 }
 
 fn decode_hex_fixture(fixture: &str) -> Vec<u8> {

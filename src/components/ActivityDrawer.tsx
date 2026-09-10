@@ -2,8 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
 import type { DownloadState, Gallery, GalleryId } from "../core/types";
 import { FluentIcon } from "./FluentIcon";
+import type { DownloadOverlapContainmentGroup } from "../state/downloadOverlapContainment";
 
 type ActivityDrawerProps = {
+  containmentGroups?: DownloadOverlapContainmentGroup[];
+  containmentLoading?: boolean;
+  onReviewContainment?: (keeperId: GalleryId, reviewId: string) => void;
   open: boolean;
   galleries: Gallery[];
   sessionDownloads: SessionDownloadActivity[];
@@ -116,6 +120,9 @@ const formatOccurredAt = (occurredAt: string): string => {
 };
 
 export function ActivityDrawer({
+  containmentGroups = [],
+  containmentLoading = false,
+  onReviewContainment,
   open,
   galleries,
   sessionDownloads,
@@ -237,6 +244,20 @@ export function ActivityDrawer({
           자동분류 검토{automationHistoryUnacknowledgedItems > 0 ? ` ${automationHistoryUnacknowledgedItems}` : ""}
         </button>
       </nav>
+      {(containmentGroups.length > 0 || containmentLoading) && (
+        <section className="activity-containment-priority" aria-label="합본 우선 검토">
+          <h3>합본 우선 검토</h3>
+          {containmentLoading && <small role="status">연관 검토를 모으는 중…</small>}
+          {containmentGroups.map((group) => (
+            <article className="activity-item" key={group.keeper.galleryId}>
+              <span className="activity-icon"><FluentIcon glyph="\uE8B7" /></span>
+              <div><strong>{group.keeper.title}</strong><span>#{group.keeper.galleryId} · {group.keeper.pageCount}p · 포함 앨범 {group.items.length}개</span></div>
+              <button type="button" className="text-button" disabled={containmentLoading}
+                onClick={() => onReviewContainment?.(group.keeper.galleryId, group.items[0]!.review.reviewId)}>한 번에 검토</button>
+            </article>
+          ))}
+        </section>
+      )}
       {activeSection === "session" ? <div id="activity-session-panel" role="tabpanel" className="activity-list">
         {feed.map((item) => {
           if (item.kind === "danbooru") {

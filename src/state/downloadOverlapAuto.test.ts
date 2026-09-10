@@ -55,6 +55,7 @@ describe("buildStrictOverlapPlan", () => {
     const plan = buildStrictOverlapPlan(review([candidate()]));
     expect(plan?.winner).toBe("incoming");
     expect(plan?.steps).toMatchObject([{ action: "remove_existing_continue", candidateId: "candidate-a" }]);
+    expect(plan?.summary).toBe("신규 B 유지 · 기존 #100 제외 (완전 포함)");
   });
 
   it("removes an incoming edition when one existing edition safely contains it", () => {
@@ -80,7 +81,9 @@ describe("buildStrictOverlapPlan", () => {
         lowInformation: false,
       })),
     });
-    expect(buildStrictOverlapPlan(review([containingExisting]))?.steps[0]?.action).toBe("remove_incoming");
+    const plan = buildStrictOverlapPlan(review([containingExisting]));
+    expect(plan?.steps[0]?.action).toBe("remove_incoming");
+    expect(plan?.summary).toBe("기존 #100 유지 · 신규 B 제외 (완전 포함)");
   });
 
   it("does not automate unsupported or predominantly low-information comparisons", () => {
@@ -378,7 +381,7 @@ describe("buildStrictOverlapPlan", () => {
     });
   });
 
-  it("removes multiple existing candidates only when incoming strictly wins every direct edge", () => {
+  it("removes independently proven candidates and leaves uncertain comparisons pending", () => {
     const second = candidate({
       candidateId: "candidate-c",
       existing: { entryId: "entry-c", galleryId: galleryId(300), title: "C", artists: ["artist"], pageCount: 20 },
@@ -386,10 +389,16 @@ describe("buildStrictOverlapPlan", () => {
       rank: 2,
     });
     expect(buildStrictOverlapPlan(review([candidate(), second]))?.steps).toHaveLength(2);
-    expect(buildStrictOverlapPlan(review([candidate(), { ...second, relation: "near_equivalent" }]))).toBeNull();
+    expect(buildStrictOverlapPlan(review([candidate(), { ...second, relation: "partial_overlap" }]))).toMatchObject({
+      winner: "incoming",
+      steps: [{ candidateId: "candidate-a" }],
+      pendingCandidateCount: 2,
+      remainingCandidateCount: 1,
+      isPartial: true,
+    });
   });
 
-  it("leaves a mixed review manual when a same-size uncensored candidate beats the compilation", () => {
+  it("preserves an existing witness without removing other candidates in a mixed review", () => {
     const contained = candidate({
       existing: { ...candidate().existing, title: "Chapter", pageCount: 20 },
       incomingCoverage: 1 / 3,
@@ -415,6 +424,65 @@ describe("buildStrictOverlapPlan", () => {
     const mixed = review([contained, competingEdition]);
     mixed.incoming = { ...mixed.incoming, title: "Collected Edition [Censored]", pageCount: 60 };
 
-    expect(buildStrictOverlapPlan(mixed)).toBeNull();
+    expect(buildStrictOverlapPlan(mixed)).toMatchObject({
+      winner: "existing", steps: [{ action: "remove_incoming", candidateId: "candidate-c" }],
+      isPartial: false,
+    });
+  });
+
+  it("handles the 3103029 exact duplicate even with the unrelated partial 3208280 candidate", () => {
+    const exact = candidate({
+      existing: { ...candidate().existing, galleryId: galleryId(3103020), pageCount: 13 },
+      relation: "near_equivalent", confidence: 1, matchedPages: 13, exactPages: 13,
+      existingCoverage: 1, incomingCoverage: 1, existingUniquePages: 0, incomingUniquePages: 0,
+      longestAlignedRun: 13, pagePairs: candidate().pagePairs.slice(0, 13),
+    });
+    const partial = candidate({
+      candidateId: "candidate-3208280", rank: 2,
+      existing: { ...candidate().existing, entryId: "entry-3208280", galleryId: galleryId(3208280), pageCount: 7 },
+      relation: "partial_overlap", confidence: 0.6572022699991891, matchedPages: 6, exactPages: 0, visualPages: 6,
+      existingCoverage: 6 / 7, incomingCoverage: 6 / 13, existingUniquePages: 1, incomingUniquePages: 7,
+      longestAlignedRun: 6, pagePairs: candidate().pagePairs.slice(0, 6),
+    });
+    const observed = review([exact, partial]);
+    observed.incoming = { ...observed.incoming, galleryId: galleryId(3103029), pageCount: 13 };
+    expect(buildStrictOverlapPlan(observed)).toMatchObject({
+      winner: "existing", steps: [{ action: "remove_incoming", candidateId: "candidate-a" }],
+      pendingCandidateCount: 2, remainingCandidateCount: 0,
+    });
+  });
+
+  it("never uses the incoming album itself or an already removed candidate as a preservation witness", () => {
+    const self = candidate({
+      relation: "near_equivalent", incomingCoverage: 1,
+      existing: { ...candidate().existing, galleryId: galleryId(200), pageCount: 25 },
+    });
+    expect(buildStrictOverlapPlan(review([self]))).toBeNull();
+    expect(buildStrictOverlapPlan(review([{ ...self, existing: { ...self.existing, galleryId: galleryId(100) }, decision: "existing_removed" }]))).toBeNull();
+  });
+
+  it("handles 2775264 through its complete 3003760 witness despite a separate translation candidate", () => {
+    const compilation = candidate({
+      existing: { ...candidate().existing, galleryId: galleryId(3003760), pageCount: 155 },
+      relation: "existing_contains_incoming", confidence: 0.8769347622483706,
+      matchedPages: 9, exactPages: 0, visualPages: 9, existingCoverage: 9 / 155,
+      incomingCoverage: 1, existingUniquePages: 146, incomingUniquePages: 0, longestAlignedRun: 9,
+      pagePairs: candidate().pagePairs.slice(0, 9).map((pair, index) => ({
+        ...pair, exactSha256: false, existingSourcePage: 83 + index,
+      })),
+    });
+    const translation = candidate({
+      candidateId: "translation-3118349", rank: 2,
+      existing: { ...candidate().existing, entryId: "entry-3118349", galleryId: galleryId(3118349), pageCount: 9 },
+      relation: "translation_edition", confidence: 0.8995066114866955,
+      matchedPages: 8, exactPages: 0, visualPages: 8, existingCoverage: 8 / 9, incomingCoverage: 8 / 9,
+      existingUniquePages: 1, incomingUniquePages: 1, longestAlignedRun: 8,
+      pagePairs: candidate().pagePairs.slice(0, 8),
+    });
+    const observed = review([compilation, translation]);
+    observed.incoming = { ...observed.incoming, galleryId: galleryId(2775264), pageCount: 9 };
+    const plan = buildStrictOverlapPlan(observed);
+    expect(plan).toMatchObject({ winner: "existing", steps: [{ candidateId: "candidate-a", action: "remove_incoming" }] });
+    expect(JSON.parse(plan!.steps[0]!.featureSnapshotJson)).toMatchObject({ decisionPath: "complete_containment" });
   });
 });

@@ -5,9 +5,11 @@ import App from "./App";
 import { backend, type BackendEventMap } from "./api/backend";
 import type {
   AppActiveWorkSnapshot,
+  ApiResult,
   DownloadEntry,
   DownloadLibraryPage,
   DownloadOverlapAutomationHistoryItem,
+  DownloadOverlapMergeResult,
   DownloadOverlapReview,
   DownloadPage,
   GalleryDetail,
@@ -95,6 +97,105 @@ const submitExploreSearch = async (container: HTMLElement, delay = 20): Promise<
     button.click();
     await settle(delay);
   });
+};
+
+const prepareContainmentBatchApp = async (failSecond = false) => {
+  const settings = await backend.settingsGet();
+  if (!settings.ok) throw new Error(settings.error.message);
+  vi.spyOn(backend, "settingsGet").mockResolvedValue({
+    ok: true, data: { ...settings.data, downloadOverlapAutoMode: "off" },
+  });
+  const galleries = [mockGalleries[0]!, mockGalleries[3]!, mockGalleries[5]!, mockGalleries[6]!];
+  const refs = galleries.map((gallery, index) => ({
+    entryId: `containment-batch-entry-${index}`,
+    galleryId: gallery.id,
+    title: index === 0 ? "Containment keeper anthology" : `Contained volume ${index}`,
+    artists: [galleries[0]!.artist],
+    pageCount: index === 0 ? 30 : 7 - index,
+  }));
+  const keeper = refs[0]!;
+  const candidate = (index: number, reverse = false): DownloadOverlapReview["candidates"][number] => {
+    const small = refs[index]!;
+    return {
+      candidateId: `containment-batch-candidate-${index}`,
+      existing: reverse ? keeper : small,
+      existingFingerprint: String(index).repeat(64),
+      relation: reverse ? "existing_contains_incoming" : "incoming_contains_existing",
+      confidence: 0.99,
+      matchedPages: small.pageCount, exactPages: small.pageCount, visualPages: 0,
+      existingCoverage: reverse ? small.pageCount / keeper.pageCount : 1,
+      incomingCoverage: reverse ? 1 : small.pageCount / keeper.pageCount,
+      existingUniquePages: reverse ? keeper.pageCount - small.pageCount : 0,
+      incomingUniquePages: reverse ? 0 : keeper.pageCount - small.pageCount,
+      longestAlignedRun: small.pageCount, rank: index,
+      pagePairs: Array.from({ length: small.pageCount }, (_, page) => ({
+        incomingSourcePage: page + 1, existingSourcePage: page + 1,
+        exactSha256: true, dHashDistance: 0, pHashDistance: 0, detailHashDistance: 0,
+        edgeSimilarity: 1, visualSimilarity: 1, lowInformation: false,
+      })),
+    };
+  };
+  const direct: DownloadOverlapReview = {
+    reviewId: "containment-batch-direct", entryId: keeper.entryId, incoming: keeper,
+    revision: 3, state: "pending", profileVersion: 1, policyVersion: 2,
+    incomingFingerprint: "a".repeat(64), candidates: [candidate(1), candidate(2)],
+    createdAt: "2026-09-07T00:00:00Z", updatedAt: "2026-09-07T00:00:00Z",
+  };
+  const reverse: DownloadOverlapReview = {
+    ...direct, reviewId: "containment-batch-reverse", entryId: refs[3]!.entryId,
+    incoming: refs[3]!, revision: 5, candidates: [candidate(3, true)],
+  };
+  const reviews = new Map([direct, reverse].map((review) => [review.reviewId, review]));
+  const entries: DownloadEntry[] = refs.map((ref, index) => ({
+    entryId: ref.entryId, galleryId: ref.galleryId, revision: 1, progress: 100,
+    state: index === 0 || index === 3 ? "review_required" : "completed",
+    ...(index === 0 || index === 3 ? {
+      reviewKind: "gallery_duplicate" as const,
+      reviewId: index === 0 ? direct.reviewId : reverse.reviewId,
+    } : {}),
+  }));
+  vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({
+    ok: true, data: { page: 1, totalItems: entries.length, entries },
+  });
+  const overlapGet = vi.spyOn(backend, "downloadOverlapReviewGet").mockImplementation(async (reviewId) => {
+    const review = reviews.get(reviewId);
+    if (!review) throw new Error(`Unexpected batch review ${reviewId}`);
+    return { ok: true, data: review };
+  });
+  const appliedIds: number[] = [];
+  vi.spyOn(backend, "explorationExclusionsList").mockImplementation(async () => ({
+    ok: true, data: appliedIds.map((id) => ({
+      galleryId: galleryId(id), title: refs.find((ref) => Number(ref.galleryId) === id)!.title,
+      artist: "Containment fixture artist",
+      reasons: [{ kind: "duplicate_hidden", detail: "Containment batch decision", excludedAt: "2026-09-08T00:00:00Z" }],
+    })),
+  }));
+  const decision = vi.spyOn(backend, "downloadOverlapDecisionApply").mockImplementation(async (request) => {
+    if (failSecond && appliedIds.length === 1) return {
+      ok: false, error: { code: "QUARANTINE_CONFLICT", message: "Fixture destination is occupied", retryable: false },
+    };
+    const current = reviews.get(request.reviewId)!;
+    const selected = current.candidates.find((item) => item.candidateId === request.candidateId)!;
+    const removeIncoming = request.action === "remove_incoming";
+    const updated: DownloadOverlapReview = {
+      ...current, revision: current.revision + 7,
+      ...(removeIncoming ? { state: "cancelled" as const } : {
+        candidates: current.candidates.map((item) => item === selected ? { ...item, decision: "existing_removed" as const } : item),
+      }),
+    };
+    reviews.set(updated.reviewId, updated);
+    appliedIds.push(Number(removeIncoming ? current.incoming.galleryId : selected.existing.galleryId));
+    return { ok: true, data: { review: updated, resumed: false, cancelled: removeIncoming } };
+  });
+  vi.spyOn(backend, "searchSubmit").mockResolvedValue({
+    ok: true, data: { queryId: "containment-batch-explore", firstPage: {
+      ...selectionFixturePage(), items: galleries.map((gallery) => ({
+        ...gallery, publishedRank: Number(gallery.publishedAt.replaceAll("-", "")),
+        popularity: gallery.score, thumbnailWidth: 512, thumbnailHeight: 768,
+      })),
+    } },
+  });
+  return { keeper, refs, direct, reverse, reviews, decision, overlapGet, appliedIds, entries };
 };
 
 describe("App Phase 3A backend flow", () => {
@@ -446,6 +547,160 @@ describe("App Phase 3A backend flow", () => {
       await vi.waitFor(() => expect(card).toHaveClass("is-exploration-blind"));
       expect(card).toHaveAttribute("aria-disabled", "true");
       expect(card).toHaveTextContent("중복 판정으로 제외");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("excludes an Explore card with Delete without moving files and restores its original slot with Ctrl+Z", async () => {
+    const snapshot = { candidates: [], cutoffEvidence: [], truncations: [] };
+    const page = selectionFixturePage();
+    const selected = page.items[0]!;
+    let excluded = false;
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({ ok: true, data: { page: 1, totalItems: 0, entries: [] } });
+    vi.spyOn(backend, "searchSubmit").mockResolvedValue({ ok: true, data: { queryId: "explore-delete-slots", firstPage: page } });
+    vi.spyOn(backend, "explorationExclusionsList").mockImplementation(async () => ({
+      ok: true, data: excluded ? [{
+        galleryId: selected.id, title: selected.title, artist: selected.artist,
+        reasons: [{ kind: "manual", detail: "사용자가 Explore 탐색에서 제외함", excludedAt: "2026-09-08T00:00:00Z" }],
+      }] : [],
+    }));
+    const exclude = vi.spyOn(backend, "autoFindExclude").mockImplementation(async (ids) => {
+      excluded = true;
+      return { ok: true, data: { excludedGalleryIds: ids, snapshot } };
+    });
+    const restore = vi.spyOn(backend, "explorationExclusionsRestore").mockImplementation(async (ids) => {
+      excluded = false;
+      return { ok: true, data: { restoredGalleryIds: ids, snapshot } };
+    });
+    const quarantine = vi.spyOn(backend, "downloadQuarantine");
+    const undoQuarantine = vi.spyOn(backend, "downloadQuarantineUndo");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(container);
+      const cards = () => [...container.querySelectorAll<HTMLElement>(".gallery-grid > .gallery-card")];
+      const originalIds = cards().map((card) => card.dataset.galleryId);
+      const card = cards()[0]!;
+      const input = container.querySelector<HTMLInputElement>('.view-header input[aria-label="검색"]')!;
+      await act(async () => {
+        card.focus();
+        input.focus();
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+        await settle();
+      });
+      expect(exclude).not.toHaveBeenCalled();
+      await act(async () => {
+        card.focus();
+        card.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true, cancelable: true }));
+        await settle();
+      });
+      expect(exclude).toHaveBeenCalledExactlyOnceWith([selected.id], "사용자가 Explore 탐색에서 제외함");
+      await vi.waitFor(() => expect(cards()[0]).toHaveClass("is-exploration-blind"));
+      expect(cards().map((item) => item.dataset.galleryId)).toEqual(originalIds);
+      expect(cards()[0]).toHaveTextContent("탐색에서 제외");
+      expect(cards()[0]).toHaveAttribute("aria-disabled", "true");
+      expect(quarantine).not.toHaveBeenCalled();
+      await act(async () => {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "z", code: "KeyZ", ctrlKey: true }));
+        await settle();
+      });
+      expect(restore).toHaveBeenCalledExactlyOnceWith([selected.id]);
+      await vi.waitFor(() => expect(cards()[0]).not.toHaveClass("is-exploration-blind"));
+      expect(cards().map((item) => item.dataset.galleryId)).toEqual(originalIds);
+      expect(undoQuarantine).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("collects direct and reverse containment reviews from Activity and fetches each latest revision for a selected batch", async () => {
+    const fixture = await prepareContainmentBatchApp();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')!.click();
+        await settle();
+      });
+      await vi.waitFor(() => expect(container.querySelector('[aria-label="합본 우선 검토"]')).toHaveTextContent("Containment keeper anthology"));
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="합본 우선 검토"] button')!.click();
+        await settle();
+      });
+      await vi.waitFor(() => expect(container.querySelectorAll(".download-overlap-containment-item")).toHaveLength(3));
+      const rows = [...container.querySelectorAll<HTMLElement>(".download-overlap-containment-item")];
+      rows.forEach((row, index) => {
+        expect(row).toHaveTextContent(`Contained volume ${index + 1}`);
+        expect(row.querySelector('input[type="checkbox"]')).toBeChecked();
+      });
+      expect(container.querySelector(".download-overlap-containment-keeper")).toHaveTextContent("Containment keeper anthology");
+      // Another operation advanced each review after the grouped screen loaded.
+      fixture.reviews.set(fixture.direct.reviewId, { ...fixture.direct, revision: 11 });
+      fixture.reviews.set(fixture.reverse.reviewId, { ...fixture.reverse, revision: 19 });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>(".download-overlap-containment-apply")!.click();
+        await settle();
+      });
+      await vi.waitFor(() => expect(fixture.decision).toHaveBeenCalledTimes(3));
+      expect(fixture.decision.mock.calls.map(([request]) => request)).toMatchObject([
+        { reviewId: fixture.direct.reviewId, candidateId: "containment-batch-candidate-1", expectedRevision: 11, action: "remove_existing_continue", actor: "human" },
+        { reviewId: fixture.direct.reviewId, candidateId: "containment-batch-candidate-2", expectedRevision: 18, action: "remove_existing_continue", actor: "human" },
+        { reviewId: fixture.reverse.reviewId, candidateId: "containment-batch-candidate-3", expectedRevision: 19, action: "remove_incoming", actor: "human" },
+      ]);
+      expect(fixture.appliedIds).toEqual(fixture.refs.slice(1).map((ref) => Number(ref.galleryId)));
+      expect(fixture.appliedIds).not.toContain(Number(fixture.keeper.galleryId));
+      expect(container).toHaveTextContent("포함 앨범 3개 제외 완료");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("keeps the first containment batch exclusion after the second fails and leaves remaining editions unchanged", async () => {
+    const fixture = await prepareContainmentBatchApp(true);
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')!.click();
+        await settle();
+      });
+      await vi.waitFor(() => expect(container.querySelector('[aria-label="합본 우선 검토"] button')).not.toBeNull());
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="합본 우선 검토"] button')!.click();
+        await settle();
+      });
+      await vi.waitFor(() => expect(container.querySelectorAll(".download-overlap-containment-item")).toHaveLength(3));
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>(".download-overlap-containment-apply")!.click();
+        await settle();
+      });
+      await vi.waitFor(() => expect(fixture.decision).toHaveBeenCalledTimes(2));
+      expect(fixture.appliedIds).toEqual([Number(fixture.refs[1]!.galleryId)]);
+      expect(fixture.reviews.get(fixture.direct.reviewId)!.candidates[0]!.decision).toBe("existing_removed");
+      expect(fixture.reviews.get(fixture.direct.reviewId)!.candidates[1]!.decision).toBeUndefined();
+      expect(fixture.reviews.get(fixture.reverse.reviewId)).toEqual(fixture.reverse);
+      expect(container).toHaveTextContent("1/3개 처리 완료 · 나머지는 변경하지 않았습니다.");
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('.download-overlap-dialog button[aria-label="닫기"]')!.click();
+        await settle();
+      });
+      // The gallery projection retains the first durable removal even after the
+      // rest of the batch failed and the dialog fetched its current review.
+      await submitExploreSearch(container);
+      const first = container.querySelector(`[data-gallery-id="${fixture.refs[1]!.galleryId}"]`);
+      await vi.waitFor(() => expect(first).toHaveClass("is-exploration-blind"));
+      expect(container.querySelector(`[data-gallery-id="${fixture.refs[2]!.galleryId}"]`)).not.toHaveClass("is-exploration-blind");
+      expect(container.querySelector(`[data-gallery-id="${fixture.refs[3]!.galleryId}"]`)).not.toHaveClass("is-exploration-blind");
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -1942,6 +2197,113 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it("shows persisted artist-folder tags on cold mounts while only legacy metadata waits or fails", async () => {
+    const settings = await backend.settingsGet();
+    if (!settings.ok) throw new Error("settings fixture unavailable");
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({ ok: true, data: { ...settings.data, downloadsGrouping: "artist" } });
+    const ids = [galleryId(4_610_001), galleryId(4_610_002), galleryId(4_610_003)];
+    vi.mocked(backend.downloadLibraryPageList).mockResolvedValue({ ok: true, data: {
+      page: 1, totalItems: ids.length, items: ids.map((id, index) => ({
+        gallery: {
+          id, title: `Persisted ${id}`, artist: ["Saved tags artist", "Known empty artist", "Legacy artist"][index],
+          pages: 12, language: "korean", ...(index === 0 ? { tags: ["female:glasses"] } : index === 1 ? { tags: [] } : {}),
+        },
+        download: { entryId: `persisted-${id}`, galleryId: id, revision: 1, state: "completed", progress: 100 },
+      })),
+    } });
+    let failPending!: () => void;
+    const failure = { ok: false as const, error: { code: "UNAVAILABLE", message: "metadata unavailable", retryable: false } };
+    const getSummary = vi.spyOn(backend, "gallerySummaryGet").mockResolvedValue(failure)
+      .mockImplementationOnce(() => new Promise((resolve) => { failPending = () => resolve(failure); }));
+    const fullDetail = vi.spyOn(backend, "galleryDetailGet");
+    const container = document.createElement("div");
+    document.body.append(container);
+    let root = createRoot(container);
+    const folder = (artist: string) => [...container.querySelectorAll<HTMLElement>(".download-artist-folder-card")]
+      .find((item) => item.querySelector(".download-artist-folder-name")?.textContent === artist);
+    const expectPersistedFolders = () => {
+      expect(folder("Saved tags artist")?.querySelector(".download-artist-folder-tags")).toHaveTextContent("glasses1");
+      expect(folder("Known empty artist")?.querySelector(".download-artist-folder-tags")).toHaveTextContent("표시할 태그가 없습니다");
+      expect(folder("Legacy artist")?.querySelector(".download-artist-folder-tags")).toHaveTextContent("태그 정보 미확인");
+      expect(container.querySelectorAll(".download-artist-folder-button[aria-expanded='false']")).toHaveLength(3);
+      expect(container.querySelector(".download-artist-folder-contents")).toBeNull();
+    };
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      expect(getSummary).not.toHaveBeenCalled();
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expectPersistedFolders();
+      expect(getSummary.mock.calls.map(([id]) => id)).toEqual([ids[2]]);
+      await act(async () => { failPending(); await settle(); });
+      expectPersistedFolders();
+
+      await act(async () => root.unmount());
+      container.replaceChildren();
+      root = createRoot(container);
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expectPersistedFolders();
+      expect(getSummary.mock.calls.map(([id]) => id)).toEqual([ids[2], ids[2]]);
+      expect(fullDetail).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => { root.unmount(); failPending?.(); });
+      container.remove();
+    }
+  });
+
+  it("fills only missing artist-folder tags and treats a successful empty response as loaded", async () => {
+    const settings = await backend.settingsGet();
+    if (!settings.ok) throw new Error("settings fixture unavailable");
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({ ok: true, data: { ...settings.data, downloadsGrouping: "artist" } });
+    const details: GalleryDetail[] = ["Saved artist", "Filled artist", "Empty artist"].map((artist, index) => ({
+      id: galleryId(4_620_001 + index), title: `Tags ${index}`, artist,
+      pages: 12, language: "korean", tags: index === 0 ? ["female:glasses"] : index === 1 ? ["full_color"] : [],
+      series: [], characters: [], publishedRank: 20260901, popularity: 0,
+      thumbnailWidth: 400, thumbnailHeight: 600, related: [], pageDimensions: [],
+    }));
+    vi.mocked(backend.downloadLibraryPageList).mockResolvedValue({ ok: true, data: {
+      page: 1, totalItems: details.length, items: details.map((detail, index) => ({
+        gallery: {
+          id: detail.id, title: detail.title, artist: detail.artist, pages: detail.pages, language: detail.language,
+          ...(index === 0 ? { tags: detail.tags } : {}),
+        },
+        download: { entryId: `tags-${detail.id}`, galleryId: detail.id, revision: 1, state: "completed", progress: 100 },
+      })),
+    } });
+    const pending: Array<() => void> = [];
+    const getSummary = vi.spyOn(backend, "gallerySummaryGet").mockImplementation((id) => new Promise((resolve) => {
+      const detail = details.find((item) => item.id === id)!;
+      pending.push(() => resolve({ ok: true, data: detail }));
+    }));
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const folderTags = (artist: string) => [...container.querySelectorAll<HTMLElement>(".download-artist-folder-card")]
+      .find((item) => item.querySelector(".download-artist-folder-name")?.textContent === artist)
+      ?.querySelector(".download-artist-folder-tags");
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expect(folderTags("Saved artist")).toHaveTextContent("glasses1");
+      expect(folderTags("Filled artist")).toHaveTextContent("태그 정보 미확인");
+      expect(folderTags("Empty artist")).toHaveTextContent("태그 정보 미확인");
+      expect(new Set(getSummary.mock.calls.map(([id]) => id))).toEqual(new Set(details.slice(1).map((detail) => detail.id)));
+      await act(async () => { pending.splice(0).forEach((finish) => finish()); await settle(); });
+      expect(folderTags("Filled artist")).toHaveTextContent("full color1");
+      expect(folderTags("Empty artist")).toHaveTextContent("표시할 태그가 없습니다");
+      await act(async () => { clickButtonContaining(container, "Explore"); await settle(); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expect(folderTags("Saved artist")).toHaveTextContent("glasses1");
+      expect(folderTags("Filled artist")).toHaveTextContent("full color1");
+      expect(folderTags("Empty artist")).toHaveTextContent("표시할 태그가 없습니다");
+      expect(getSummary).toHaveBeenCalledTimes(2);
+      expect(container.querySelector(".download-artist-folder-contents")).toBeNull();
+    } finally {
+      await act(async () => { root.unmount(); pending.splice(0).forEach((finish) => finish()); });
+      container.remove();
+    }
+  });
+
   it("loads every collapsed artist folder's tags without opening or hovering, using six shared workers", async () => {
     const settings = await backend.settingsGet();
     if (!settings.ok) throw new Error("settings fixture unavailable");
@@ -2172,6 +2534,112 @@ describe("App Phase 3A backend flow", () => {
       });
       expect(scanStart).toHaveBeenLastCalledWith({ entryIds: ["selected-entry-a"] });
       expect(scanStart).toHaveBeenCalledTimes(3);
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it.each([false, true])("keeps Ctrl-selected merge pages and applies source exclusion only after success (failure=%s)", async (fail) => {
+    const fixture = await prepareContainmentBatchApp();
+    const review = { ...fixture.direct, candidates: [fixture.direct.candidates[0]!] };
+    fixture.reviews.set(review.reviewId, review);
+    const source = fixture.refs[1]!;
+    let finish: ((result: ApiResult<DownloadOverlapMergeResult>) => void) | undefined;
+    const pending = new Promise<ApiResult<DownloadOverlapMergeResult>>((resolve) => { finish = resolve; });
+    const merge = vi.spyOn(backend, "downloadOverlapMerge").mockReturnValue(pending);
+    const invalidate = vi.spyOn(testThumbnailClient, "invalidate");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => {
+        root.render(<TestApp />);
+        await settle();
+      });
+      await act(async () => {
+        clickButtonContaining(container, "Downloads");
+        await settle();
+      });
+      const status = container.querySelector<HTMLButtonElement>(`[data-gallery-id="${fixture.keeper.galleryId}"] .status-pill`);
+      expect(status).not.toBeNull();
+      await act(async () => {
+        status!.click();
+        await settle();
+      });
+      const dialog = container.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
+      expect(dialog).toHaveAttribute("open");
+      const sourceCell = (page: number) => dialog.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="기존 A ${page}페이지"]`)!;
+      for (const page of [3, 1]) await act(async () => {
+        sourceCell(page).dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, button: 0 }));
+      });
+      expect(dialog.querySelectorAll(".is-merge-source")).toHaveLength(2);
+      expect(dialog.querySelectorAll(".is-merge-target")).toHaveLength(2);
+      const apply = dialog.querySelector<HTMLButtonElement>(".download-overlap-merge-apply")!;
+      expect(apply).toHaveTextContent("선택한 2장 병합");
+      await act(async () => { apply.click(); });
+      expect(merge).toHaveBeenCalledExactlyOnceWith({
+        reviewId: review.reviewId, expectedRevision: review.revision,
+        candidateId: review.candidates[0]!.candidateId,
+        sourceSide: "existing", sourcePages: [1, 3], excludeSource: true,
+      });
+      expect(apply).toBeDisabled();
+      expect(dialog.querySelector(".download-overlap-merge-clear")).toBeDisabled();
+      await act(async () => {
+        apply.click();
+        sourceCell(2).dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, button: 0 }));
+      });
+      expect(merge).toHaveBeenCalledOnce();
+      expect(dialog.querySelectorAll(".is-merge-source")).toHaveLength(2);
+      expect(invalidate).not.toHaveBeenCalled();
+      expect(fixture.appliedIds).toEqual([]);
+
+      await act(async () => {
+        if (fail) {
+          finish?.({ ok: false, error: { code: "DOWNLOAD_OVERLAP_MERGE_FAILED", message: "Fixture merge verification failed; original files retained", retryable: false } });
+        } else {
+          fixture.appliedIds.push(Number(source.galleryId));
+          const index = fixture.entries.findIndex((entry) => entry.entryId === source.entryId);
+          fixture.entries[index] = { ...fixture.entries[index]!, state: "cancelled", revision: 2 };
+          fixture.reviews.set(review.reviewId, { ...review, state: "stale", revision: review.revision + 1 });
+          finish?.({ ok: true, data: {
+            mergeId: "app-merge-fixture", sourceGalleryId: source.galleryId,
+            targetGalleryId: fixture.keeper.galleryId, replacedPages: 2,
+            backupPath: ".atsumi-merge-backups/app-merge-fixture", affectedReviewIds: [review.reviewId], sourceExcluded: true,
+          } });
+        }
+        await pending;
+        await settle();
+      });
+      expect(fixture.decision).not.toHaveBeenCalled();
+      if (fail) {
+        expect(dialog).toHaveAttribute("open");
+        expect(dialog).toHaveTextContent("Fixture merge verification failed; original files retained");
+        expect(dialog.querySelectorAll(".is-merge-source")).toHaveLength(2);
+        expect(apply).not.toBeDisabled();
+        expect(invalidate).not.toHaveBeenCalled();
+        expect(fixture.appliedIds).toEqual([]);
+        await act(async () => dialog.querySelector<HTMLButtonElement>('button[aria-label="닫기"]')!.click());
+      } else {
+        expect(container.querySelector(".download-overlap-dialog[open]")).toBeNull();
+        expect(container).toHaveTextContent("2장 병합 완료");
+        expect(invalidate).toHaveBeenCalledOnce();
+        const predicate = invalidate.mock.calls[0]![0];
+        expect(predicate({ kind: "gallery-cover", galleryId: fixture.keeper.galleryId })).toBe(true);
+        expect(predicate({ kind: "source-page", galleryId: fixture.keeper.galleryId, page: 1 })).toBe(true);
+        expect(predicate({ kind: "artifact-page", entryId: fixture.keeper.entryId, page: 1 })).toBe(true);
+        expect(predicate({ kind: "gallery-cover", galleryId: source.galleryId })).toBe(false);
+        expect(predicate({ kind: "artifact-page", entryId: source.entryId, page: 1 })).toBe(false);
+      }
+      await act(async () => {
+        clickButtonContaining(container, "Explore");
+        await settle();
+      });
+      await submitExploreSearch(container);
+      const sourceCard = container.querySelector(`.gallery-card[data-gallery-id="${source.galleryId}"]`)!;
+      const keeperCard = container.querySelector(`.gallery-card[data-gallery-id="${fixture.keeper.galleryId}"]`)!;
+      expect(sourceCard.classList.contains("is-exploration-blind")).toBe(!fail);
+      expect(keeperCard).not.toHaveClass("is-exploration-blind");
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -2857,7 +3325,37 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it("submits only the two manually entered album IDs without starting a library scan", async () => {
+    const run = { runId: "selected-only", revision: 1, state: "completed" as const, totalArtifacts: 2, hashedArtifacts: 2, totalPairs: 1, comparedPairs: 1, candidatesFound: 0, startedAt: "now", updatedAt: "now" };
+    const scan = vi.spyOn(backend, "duplicateScanStart").mockResolvedValue({ ok: true, data: run });
+    vi.spyOn(backend, "duplicateSnapshot").mockResolvedValue({ ok: true, data: { profile: { profileVersion: 1, dHashBits: 1024, pHashBits: 64 } as never, candidates: [] } });
+    const container=document.createElement("div"); document.body.append(container);
+    const root=createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => { clickButtonContaining(container,"Downloads"); await settle(); });
+      await act(async () => clickButtonContaining(container,"두 앨범 직접 대조"));
+      const inputs=container.querySelectorAll<HTMLInputElement>(".pair-compare-panel input");
+      for (const [index,value] of ["1012753","1011663"].entries()) {
+        await act(async () => {
+          Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(inputs[index],value);
+          inputs[index]!.dispatchEvent(new Event("input",{bubbles:true}));
+        });
+      }
+      await act(async () => { container.querySelector(".pair-compare-panel form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})); await settle(); });
+      expect(scan).toHaveBeenCalledExactlyOnceWith([galleryId(1012753),galleryId(1011663)]);
+      expect(container.querySelector(".pair-compare-panel")).toHaveTextContent("자동 제외하지 않습니다");
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,"value")!.set!.call(inputs[1],"1012753");
+        inputs[1]!.dispatchEvent(new Event("input",{bubbles:true}));
+      });
+      await act(async () => container.querySelector(".pair-compare-panel form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})));
+      expect(scan).toHaveBeenCalledTimes(1);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
   it("recovers a failed snapshot, scans and cancels explicitly, then reviews real evidence with CAS reload", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await backend.explorationExclusionsRestore([galleryId(4051038), galleryId(4050754)]);
     const seededDownloads = await backend.downloadQueueAdd(
       [galleryId(4051038), galleryId(4050754)],
@@ -2867,12 +3365,7 @@ describe("App Phase 3A backend flow", () => {
     const removedCandidateEntry = seededDownloads.data.find((entry) => entry.galleryId === galleryId(4050754));
     if (!removedCandidateEntry) throw new Error("duplicate candidate download fixture missing");
     const browserState = backend as unknown as { downloadEntries: Map<string, DownloadEntry> };
-    browserState.downloadEntries.set(removedCandidateEntry.entryId, {
-      ...removedCandidateEntry,
-      state: "failed",
-      errorCode: "DOWNLOAD_OVERLAP_CHECK_FAILED",
-      errorMessage: "The verified download could not be compared safely with owned editions",
-    });
+    for (const entry of seededDownloads.data) browserState.downloadEntries.set(entry.entryId, { ...entry, state: "completed" });
     const snapshot = vi.spyOn(backend, "duplicateSnapshot").mockResolvedValueOnce({
       ok: false,
       error: {
@@ -2884,7 +3377,7 @@ describe("App Phase 3A backend flow", () => {
     });
     const scanStart = vi.spyOn(backend, "duplicateScanStart");
     const scanCancel = vi.spyOn(backend, "duplicateScanCancel");
-    const decision = vi.spyOn(backend, "duplicateDecisionApply");
+    const decision = vi.spyOn(backend, "downloadOverlapDecisionApply");
     const quarantine = vi.spyOn(backend, "downloadQuarantine");
     const container = document.createElement("div");
     document.body.append(container);
@@ -2931,9 +3424,9 @@ describe("App Phase 3A backend flow", () => {
       await settle();
     });
     expect(container.querySelector(".review-dialog")).toHaveAttribute("open");
-    expect(container.querySelector(".review-summary")).toHaveTextContent("신뢰도 94%");
+    expect(container.querySelector(".review-dialog")).toHaveTextContent("DOWNLOAD OVERLAP REVIEW");
     expect(container.textContent).toContain("브라우저 검토 fixture");
-    expect(container.textContent).toContain("원본 페이지 번호를 보존한 순서 정렬");
+    expect(container.textContent).toContain("판본 페이지 정렬");
     expect(container.textContent).not.toContain("82%");
     expect(container.textContent).not.toContain("first gid");
 
@@ -2958,17 +3451,17 @@ describe("App Phase 3A backend flow", () => {
       },
     });
     await act(async () => {
-      clickButtonContaining(container, "38p 포괄 작품 유지 · 24p 귀속 작품 숨기기");
+      clickButtonContaining(container, "B 제외");
       await settle();
     });
-    expect(container.textContent).toContain("다른 창에서 판정이 변경되어 최신 근거와 이력을 다시 불러왔습니다.");
+    expect(container.textContent).toContain("다른 창에서 판정이 변경되어 최신 근거를 다시 불러왔습니다.");
 
     await act(async () => {
-      clickButtonContaining(container, "38p 포괄 작품 유지 · 24p 귀속 작품 숨기기");
+      clickButtonContaining(container, "B 제외");
       await settle();
     });
-    expect(container.querySelector(".decision-history")).toHaveTextContent("귀속 작품 숨김");
-    expect(container.textContent).toContain("자동으로 파일을 삭제하지 않으며");
+    expect(container.querySelector(".review-dialog[open]")).toBeNull();
+    expect(container.textContent).toContain("파일은 영구 삭제하지 않습니다.");
     expect(quarantine).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -3377,6 +3870,61 @@ describe("App Phase 3A backend flow", () => {
     } finally {
       await act(async () => root.unmount());
       container.remove();
+    }
+  });
+
+  it("retains loaded Hitomi results and one set of app/work subscriptions during mode round trips", async () => {
+    window.localStorage.removeItem("atsumi.content-source.v1");
+    const page = explorePage(1, 1);
+    const search = vi.spyOn(backend, "searchSubmit").mockResolvedValue({
+      ok: true, data: { queryId: "retained-workspace", firstPage: page },
+    });
+    const pageGet = vi.spyOn(backend, "searchPageGet");
+    const subscribe = vi.spyOn(backend, "on");
+    const cancel = vi.spyOn(backend, "downloadCancel");
+    const settingsGet = vi.spyOn(backend, "settingsGet");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const switchMode = async (name: string) => {
+      await act(async () => container.querySelector<HTMLButtonElement>('.brand[aria-haspopup="menu"]')!.click());
+      const button = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
+        .find((item) => item.querySelector("strong")?.textContent === name)!;
+      await act(async () => { button.click(); await settle(30); });
+    };
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(50); });
+      await submitExploreSearch(container);
+      expect(container.querySelector(`[data-gallery-id="${page.items[0]!.id}"]`)).not.toBeNull();
+      const downloadSubscription = subscribe.mock.calls.find(([event]) => event === "download:changed")!;
+      const publishDownload = downloadSubscription[1] as (event: BackendEventMap["download:changed"]) => void;
+      const countSubscriptions = (event: keyof BackendEventMap) => subscribe.mock.calls.filter(([name]) => name === event).length;
+      const initialSettingsReads = settingsGet.mock.calls.length;
+      const initialCounts = ["settings:changed", "app:exit-requested", "download:changed"].map((name) => countSubscriptions(name as keyof BackendEventMap));
+      expect(initialCounts).toEqual([1, 1, 1]);
+
+      await switchMode("Danbooru");
+      expect(container.querySelector(".gallery-viewport")).toBeNull();
+      await act(async () => {
+        publishDownload({ entryId: "background-entry", galleryId: Number(page.items[0]!.id), revision: 100, state: "failed", errorMessage: "background fixture" });
+        await settle();
+      });
+      await switchMode("Hitomi");
+      const retained = container.querySelector(`[data-gallery-id="${page.items[0]!.id}"]`);
+      expect(retained).toHaveTextContent("Explore page 1");
+      expect(retained).toHaveTextContent("실패");
+      await switchMode("Danbooru");
+      await switchMode("Hitomi");
+
+      expect(search).toHaveBeenCalledTimes(1);
+      expect(pageGet).not.toHaveBeenCalled();
+      expect(settingsGet).toHaveBeenCalledTimes(initialSettingsReads);
+      expect(["settings:changed", "app:exit-requested", "download:changed"].map((name) => countSubscriptions(name as keyof BackendEventMap))).toEqual(initialCounts);
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      window.localStorage.removeItem("atsumi.content-source.v1");
     }
   });
 

@@ -30,6 +30,7 @@ type GalleryCardProps = {
   view: ViewId;
   displayMode?: GalleryDisplayMode;
   explorationExcluded?: boolean;
+  explorationExcludedLabel?: string;
   selected: boolean;
   /** True only for the derived two-or-more-card batch selection mode. */
   selectionContext: boolean;
@@ -83,6 +84,7 @@ function GalleryCardComponent({
   view,
   displayMode = "detail",
   explorationExcluded = false,
+  explorationExcludedLabel = "중복 판정으로 제외",
   selected,
   selectionContext,
   favoriteMetadata,
@@ -106,7 +108,7 @@ function GalleryCardComponent({
     && (download?.state === "quarantined" || explorationExcluded);
   const explorationBlindLabel = download?.state === "quarantined"
     ? "격리된 앨범"
-    : "중복 판정으로 제외";
+    : explorationExcludedLabel;
   const gestureSelectionContext = useRef(selectionContext);
   useEffect(() => {
     gestureSelectionContext.current = selectionContext;

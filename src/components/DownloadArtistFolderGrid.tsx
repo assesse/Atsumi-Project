@@ -239,6 +239,9 @@ export function DownloadArtistFolderGrid({
               const collapsed = collapsedGroupKeys.has(storageKey);
               const latest = groupPreviews.get(group.key)?.[0];
               const tagSummary = summarizeArtistFolderTags(group.items, favoriteMetadata, 6);
+              const emptyTagLabel = group.items.some((gallery) => gallery.tagsKnown === false)
+                ? "태그 정보 미확인"
+                : "표시할 태그가 없습니다";
               const priority: ThumbnailPriority = groupIndex < safeColumns ? "visible" : "prefetch";
               const headingId = `download-artist-folder-${groupIndex}`;
               return (
@@ -305,7 +308,7 @@ export function DownloadArtistFolderGrid({
                           className={`download-artist-folder-tags${tagSummary.length ? "" : " is-empty"}`}
                           aria-label={tagSummary.length
                             ? `자주 사용하거나 즐겨찾기한 태그: ${tagSummary.map((tag) => tag.value).join(", ")}`
-                            : "표시할 태그가 없습니다"}
+                            : emptyTagLabel}
                         >
                           {tagSummary.length ? tagSummary.map((tag) => (
                             <span
@@ -317,7 +320,7 @@ export function DownloadArtistFolderGrid({
                               <b>{visibleTagLabel(tag.value)}</b>
                               <small>{tag.count}</small>
                             </span>
-                          )) : <span>표시할 태그가 없습니다</span>}
+                          )) : <span>{emptyTagLabel}</span>}
                         </span>
                         <span className="download-artist-folder-action" aria-hidden="true">
                           {collapsed ? "작품 보기" : "폴더 접기"}<i>›</i>

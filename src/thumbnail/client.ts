@@ -228,6 +228,48 @@ export class ThumbnailClient {
     return recreatable.length;
   }
 
+  /**
+   * Drop stale display handles after the backend has invalidated canonical data.
+   * Keep live subscriptions attached, but fence off any older resolution before
+   * cancelling it so a late completion cannot restore the pre-change image.
+   * Returns the number of matching registered keys, including inactive handles.
+   */
+  invalidate(predicate: (key: ThumbnailKey) => boolean): number {
+    const matches = [...this.entries.values()].filter(
+      (entry) => entry.active && predicate(entry.request.key),
+    );
+    for (const entry of matches) {
+      if (!entry.active || this.entries.get(entry.identity) !== entry) continue;
+      if (entry.listeners.size === 0) {
+        this.cleanup(entry);
+        continue;
+      }
+
+      const invalidationVersion = ++entry.resolutionVersion;
+      this.clearRetryTimer(entry);
+      this.clearOrphanTimer(entry);
+      this.clearRetainedTimer(entry);
+      entry.retained = false;
+      entry.retryableError = false;
+      entry.priorityRetryTriggered = false;
+      entry.displayFailureRetries = 0;
+      if (entry.snapshot.status === "loading") {
+        this.callLifecycleHook(() => this.adapter.cancel?.(entry.request));
+      } else if (entry.snapshot.status === "resolved") {
+        this.release(entry, entry.snapshot.asset);
+      }
+      this.publish(entry, { status: "loading" });
+      // Listener callbacks can unsubscribe, dispose, or invalidate again.
+      if (entry.active
+        && entry.listeners.size > 0
+        && this.entries.get(entry.identity) === entry
+        && entry.resolutionVersion === invalidationVersion) {
+        this.resolve(entry);
+      }
+    }
+    return matches.length;
+  }
+
   reportDisplayFailure(request: ThumbnailRequest, reason: string): void {
     const entry = this.entries.get(thumbnailKeyIdentity(request.key));
     if (!entry || entry.snapshot.status === "error") return;

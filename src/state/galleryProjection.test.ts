@@ -164,6 +164,7 @@ describe("gallery API projection", () => {
           pages: 24,
           language: "japanese",
           publishedRank: 20260831,
+          tags: ["older-cached-tag"],
         },
         download: {
           entryId: "entry-library",
@@ -187,9 +188,43 @@ describe("gallery API projection", () => {
         progress: 100,
       },
       tags: ["favorite-tag"],
+      tagsKnown: true,
       series: ["series-one"],
       characters: ["character-one"],
     });
+  });
+
+  it("restores saved tags on a cold list load and distinguishes absent data from known empty tags", () => {
+    const ids = [81, 82, 83].map(galleryId);
+    const page: DownloadLibraryPage = {
+      page: 1,
+      totalItems: 3,
+      items: ids.map((id, index) => ({
+        gallery: {
+          id, title: `Saved ${id}`, artist: "saved artist",
+          ...(index === 0 ? { tags: ["female:glasses", "full_color"] } : index === 1 ? { tags: [] } : {}),
+        },
+        download: { entryId: `saved-${id}`, galleryId: id, revision: 1, state: "completed" },
+      })),
+    };
+    // A download event may arrive before the list. Its placeholder is not an
+    // authoritative empty tag list and must still accept the saved metadata.
+    const placeholders = mergeDownloadEntries(new Map(), page.items.map((item) => item.download));
+    const loaded = mergeDownloadLibraryPage(placeholders, page).galleries;
+    expect(loaded.get(ids[0]!)).toMatchObject({ tags: ["female:glasses", "full_color"], tagsKnown: true });
+    expect(loaded.get(ids[1]!)).toMatchObject({ tags: [], tagsKnown: true });
+    expect(loaded.get(ids[2]!)).toMatchObject({ tags: [], tagsKnown: false });
+
+    const enriched = mergeGalleryPage(loaded, {
+      page: 1, totalPages: 1, items: [{ ...summary(83), tags: ["fresh-tag"] }],
+    }).galleries;
+    const reloaded = mergeDownloadLibraryPage(enriched, page).galleries;
+    expect(reloaded.get(ids[2]!)).toMatchObject({ tags: ["fresh-tag"], tagsKnown: true });
+    const cleared = mergeGalleryPage(reloaded, {
+      page: 1, totalPages: 1, items: [{ ...summary(81), tags: [] }],
+    }).galleries;
+    expect(mergeDownloadLibraryPage(cleared, page).galleries.get(ids[0]!))
+      .toMatchObject({ tags: [], tagsKnown: true });
   });
 
   it("marks a legacy download language unknown until local detail metadata hydrates it", () => {

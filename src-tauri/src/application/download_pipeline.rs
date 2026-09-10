@@ -398,6 +398,15 @@ pub trait DownloadOverlapRepository: DownloadPipelineRepository {
         candidate_entry_id: &DownloadEntryId,
     ) -> Result<bool, RepositoryError>;
 
+    fn overlap_candidate_is_terminally_removed(
+        &self,
+        candidate_entry_id: &DownloadEntryId,
+    ) -> Result<bool, RepositoryError>;
+
+    /// Reconcile candidates removed by another review and advance the review CAS.
+    /// A supervisor rechecks the library when no pending candidate remains.
+    fn overlap_review_reconcile_removed(&self, review_id: &str) -> Result<(), RepositoryError>;
+
     fn overlap_page_hash_get(
         &self,
         entry_id: &str,

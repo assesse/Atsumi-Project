@@ -8,6 +8,7 @@ import { applyDownloadChanged } from "../state/downloadProjection";
 import { browserFixtureThumbnailAdapter, ThumbnailClient } from "../thumbnail";
 import { GalleryCard, compactFavoriteTagValues } from "./GalleryCard";
 import { fitTagChips, sortGalleryTags, splitGalleryTitle } from "./galleryCardLayout";
+import cardStyles from "../styles.css?raw";
 
 const defaultThumbnailClient = new ThumbnailClient(browserFixtureThumbnailAdapter);
 
@@ -186,6 +187,22 @@ describe("GalleryCard event projection", () => {
     } finally {
       await act(async () => root.unmount());
     }
+  });
+
+  it("keeps compact review controls above the expanded favorite tags", async () => {
+    const control = cardStyles.match(/\.gallery-card\.is-compact \.status-pill,\s*\.gallery-card\.is-compact \.download-check\s*\{([^}]+)/)![1]!;
+    const reveal = cardStyles.match(/\.compact-favorite-reveal\s*\{([^}]+)/)![1]!;
+    const layer = (rule: string) => Number(rule.match(/z-index:\s*(\d+)/)![1]);
+    expect(layer(control)).toBeGreaterThan(layer(reveal));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      const gallery = { ...mockGalleries[0]!, tags: ["female:glasses"], download: { entryId: "compact-review", state: "review_required" as const, progress: 100, reviewKind: "gallery_duplicate" as const, reviewId: "review" } };
+      await act(async () => root.render(<GalleryCard gallery={gallery} view="downloads" displayMode="compact" selected={false} selectionContext={false} favoriteMetadata={new Set(["female:glasses"])} {...callbacks} />));
+      expect(container.querySelector(".compact-favorite-reveal")).not.toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>(".status-pill")!.click());
+      expect(callbacks.onOpenReview).toHaveBeenCalledWith(gallery.id);
+    } finally { await act(async () => root.unmount()); }
   });
 
   it("blinds a quarantined Explore result in place and blocks every card interaction", async () => {

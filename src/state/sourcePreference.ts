@@ -1,11 +1,12 @@
-import type { ContentSource } from "../core/types";
+import { isContentSource, type ContentSource } from "../app/workspaceRegistry";
 
 const storageKey = "atsumi.content-source.v1";
 
 export const loadContentSource = (): ContentSource => {
   if (typeof window === "undefined") return "hitomi";
   try {
-    return window.localStorage.getItem(storageKey) === "danbooru" ? "danbooru" : "hitomi";
+    const source = window.localStorage.getItem(storageKey);
+    return isContentSource(source) ? source : "hitomi";
   } catch {
     return "hitomi";
   }

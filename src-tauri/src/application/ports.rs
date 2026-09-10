@@ -304,6 +304,12 @@ pub trait AutomationRepository: Send + Sync {
 pub trait DuplicateRepository: Send + Sync {
     fn duplicate_artifact_bundles(&self) -> Result<Vec<ArtifactBundle>, RepositoryError>;
 
+    /// Targeted lookup must not hydrate the full download library.
+    fn duplicate_selected_bundles(
+        &self,
+        gallery_ids: &[GalleryId],
+    ) -> Result<Vec<ArtifactBundle>, RepositoryError>;
+
     fn duplicate_page_hash_get(
         &self,
         entry_id: &str,

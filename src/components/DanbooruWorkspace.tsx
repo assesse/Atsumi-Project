@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import type { BackendClient } from "../api/backend";
+import type { DanbooruApi } from "../api/featureClients";
 import type {
   DanbooruAutocompleteItem,
   DanbooruDownloadRecord,
@@ -34,7 +34,7 @@ import { SideRail } from "./SideRail";
 type DanbooruView = "explore" | "downloads";
 
 type DanbooruWorkspaceProps = {
-  backend: BackendClient;
+  backend: DanbooruApi;
   railCollapsed: boolean;
   pageSize: number;
   previewWidth: number;
@@ -714,7 +714,7 @@ function DanbooruDetail({
   onMetadataFavorite,
   onSearch,
 }: {
-  backend: BackendClient;
+  backend: Pick<DanbooruApi, "danbooruRelated">;
   post: DanbooruPost;
   downloaded: boolean;
   pending: boolean;

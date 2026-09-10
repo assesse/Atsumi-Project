@@ -681,6 +681,8 @@ export type SeriesGroup = {
 };
 
 export type DuplicateReview = {
+  resolved?: boolean;
+  artifactStale?: boolean;
   candidate: DuplicateCandidate;
   evidence: DuplicateEvidence[];
   pagePairs: DuplicatePagePair[];
@@ -806,6 +808,26 @@ export type DownloadOverlapDecisionResult = {
   review: DownloadOverlapReview;
   resumed: boolean;
   cancelled: boolean;
+};
+
+/** Copy selected source pages over their verified counterparts in the other edition. */
+export type DownloadOverlapMergeRequest = {
+  reviewId: string;
+  expectedRevision: number;
+  candidateId: string;
+  sourceSide: "existing" | "incoming";
+  sourcePages: number[];
+  excludeSource?: boolean;
+};
+
+export type DownloadOverlapMergeResult = {
+  mergeId: string;
+  sourceGalleryId: GalleryId;
+  targetGalleryId: GalleryId;
+  replacedPages: number;
+  backupPath: string;
+  affectedReviewIds: string[];
+  sourceExcluded: boolean;
 };
 
 export type DuplicateSnapshot = {
@@ -1012,6 +1034,8 @@ export type DownloadLibraryGallery = {
   pages?: number;
   language?: Language;
   publishedRank?: number;
+  /** Omitted when no valid saved summary exists; [] is a known empty tag list. */
+  tags?: string[];
 };
 
 export type DownloadLibraryItem = {

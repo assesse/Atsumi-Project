@@ -29,6 +29,20 @@ fn valid_summary(summary: &GallerySummary, gallery_id: GalleryId) -> bool {
     summary.id == gallery_id && !summary.title.trim().is_empty() && summary.pages > 0
 }
 
+pub(super) fn decode_persisted_summary(
+    gallery_id: GalleryId,
+    profile: &str,
+    version: u32,
+    json: &str,
+) -> Option<GallerySummary> {
+    (profile == SUMMARY_PROFILE
+        && version == SUMMARY_SCHEMA_VERSION
+        && json.len() <= MAX_SUMMARY_BYTES)
+        .then(|| serde_json::from_str::<GallerySummary>(json).ok())
+        .flatten()
+        .filter(|summary| valid_summary(summary, gallery_id))
+}
+
 impl GallerySummaryCache for SqliteRepository {
     fn gallery_summary_cache_get(
         &self,
@@ -48,12 +62,7 @@ impl GallerySummaryCache for SqliteRepository {
         };
         // No wall-clock expiry: once fetched, tags survive app restarts until
         // new main-gallery metadata replaces them or the user clears caches.
-        let summary = (profile == SUMMARY_PROFILE
-            && version == SUMMARY_SCHEMA_VERSION
-            && json.len() <= MAX_SUMMARY_BYTES)
-            .then(|| serde_json::from_str::<GallerySummary>(&json).ok())
-            .flatten()
-            .filter(|summary| valid_summary(summary, gallery_id));
+        let summary = decode_persisted_summary(gallery_id, &profile, version, &json);
         if summary.is_none() {
             tracing::debug!(
                 gallery_id = gallery_id.get(),

@@ -38,7 +38,10 @@ use crate::{
         TagSuggestion, TagSuggestionRequest, ValidationError, WindowPlacement,
         WindowPlacementSnapshot,
     },
-    infrastructure::{ExcludedArtifactService, HitomiLiveAdapter, ThumbnailDiskCache},
+    infrastructure::{
+        DownloadOverlapMergeRequest, DownloadOverlapMergeResult, DownloadOverlapMergeSide,
+        ExcludedArtifactService, HitomiLiveAdapter, OverlapMergeService, ThumbnailDiskCache,
+    },
     thumbnail::{
         CancellationToken, ThumbnailCacheClearDto, ThumbnailCompletionEventDto,
         ThumbnailCoordinator, ThumbnailCoordinatorError, ThumbnailInvalidationDto, ThumbnailKey,
@@ -250,6 +253,7 @@ pub struct AppState {
     internal_duplicates: InternalDuplicateSupervisor,
     gallery_previews: Option<GalleryPreviewService>,
     excluded_artifacts: Option<Arc<ExcludedArtifactService>>,
+    overlap_merges: Option<Arc<OverlapMergeService>>,
     download_root_picker: Arc<dyn DownloadRootPicker>,
     artifact_store: Arc<dyn ArtifactStore>,
     live_source: Arc<HitomiLiveAdapter>,
@@ -356,6 +360,7 @@ impl AppState {
             internal_duplicates,
             gallery_previews: None,
             excluded_artifacts: None,
+            overlap_merges: None,
             download_root_picker,
             artifact_store,
             live_source,
@@ -378,6 +383,11 @@ impl AppState {
 
     pub fn with_excluded_artifacts(mut self, excluded: Arc<ExcludedArtifactService>) -> Self {
         self.excluded_artifacts = Some(excluded);
+        self
+    }
+
+    pub fn with_overlap_merges(mut self, merges: Arc<OverlapMergeService>) -> Self {
+        self.overlap_merges = Some(merges);
         self
     }
 
@@ -791,13 +801,17 @@ pub async fn duplicate_snapshot(
 #[tauri::command]
 pub async fn duplicate_scan_start(
     state: State<'_, AppState>,
+    gallery_ids: Option<Vec<i64>>,
 ) -> Result<ApiResult<DuplicateScanRun>, ApiError> {
     let managed_work = state.managed_work();
     let duplicates = state.duplicates.clone();
     Ok(run_application_blocking("duplicate_scan_start", move || {
         prepare_then_commit_managed_work(
             &managed_work,
-            || duplicates.prepare_start(),
+            || match gallery_ids {
+                Some(ids) => duplicates.prepare_selected(ids),
+                None => duplicates.prepare_start(),
+            },
             |prepared| duplicates.commit_start(prepared),
         )
     })
@@ -901,12 +915,101 @@ pub async fn download_overlap_decision_apply(
     request: DownloadOverlapDecisionRequest,
 ) -> Result<ApiResult<DownloadOverlapDecisionResult>, ApiError> {
     let downloads = state.downloads.clone();
+    let merges = state.overlap_merges.clone();
+    let managed_work = state.managed_work.clone();
+    let excluded = state.excluded_artifacts.clone();
     Ok(
         run_application_blocking("download_overlap_decision_apply", move || {
+            if request.review_id.starts_with("completed-pair:") {
+                return Err(ApplicationError::DownloadOverlapDecisionInvalid("완료 앨범의 원래 대조 결과를 다시 열어 판정해 주세요".into()));
+            }
+            if request.review_id.starts_with("duplicate:") {
+                return managed_work.run(|| {
+                    let merges = merges.ok_or_else(|| crate::application::RepositoryError::Other("page merge service is unavailable".into()))?;
+                    let request = merges.prepare_completed_decision(request)?;
+                    let review_id = request.review_id.clone();
+                    let result = downloads.with_overlap_review_lock(&review_id, || merges.decide_completed_pair(request))?;
+                    if let Some(excluded) = excluded {
+                        match excluded.reconcile() {
+                            Ok(report) => for issue in report.issues { tracing::warn!(issue, "completed pair exclusion relocation deferred"); },
+                            Err(error) => tracing::warn!(%error, "completed pair exclusion relocation deferred"),
+                        }
+                    }
+                    Ok(result)
+                });
+            }
             downloads.overlap_decision_apply(request)
         })
         .await,
     )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn download_overlap_merge(
+    state: State<'_, AppState>,
+    request: DownloadOverlapMergeRequest,
+) -> Result<ApiResult<DownloadOverlapMergeResult>, ApiError> {
+    let downloads = state.downloads.clone();
+    let merges = state.overlap_merges.clone();
+    let managed_work = state.managed_work.clone();
+    let thumbnails = state.thumbnails.clone();
+    let disk = state.thumbnail_disk_cache.clone();
+    let previews = state.gallery_previews.clone();
+    let excluded = state.excluded_artifacts.clone();
+    Ok(run_application_blocking("download_overlap_merge", move || {
+        managed_work.run(|| {
+            let merges = merges.ok_or_else(|| {
+                crate::application::RepositoryError::Other("page merge service is unavailable".into())
+            })?;
+            let request = merges.prepare_completed_merge(request)?;
+            let review_id = request.review_id.clone();
+            let review = downloads.overlap_review_get(&review_id)?
+                .ok_or_else(|| ApplicationError::DownloadOverlapReviewNotFound(review_id.clone()))?;
+            let candidate = review.candidates.iter().find(|item| item.candidate_id == request.candidate_id)
+                .ok_or_else(|| ApplicationError::DownloadOverlapDecisionInvalid("병합할 후보가 변경되었습니다".into()))?;
+            let source_is_existing = matches!(request.source_side, DownloadOverlapMergeSide::Existing);
+            let target = if source_is_existing { &review.incoming } else { &candidate.existing };
+            let mut keys = vec![ThumbnailKey::GalleryCover { gallery_id: target.gallery_id.get() }];
+            for pair in &candidate.page_pairs {
+                let (source_page, target_page) = if source_is_existing {
+                    (pair.existing_source_page, pair.incoming_source_page)
+                } else { (pair.incoming_source_page, pair.existing_source_page) };
+                if request.source_pages.contains(&source_page) {
+                    keys.push(ThumbnailKey::ArtifactPage { entry_id: target.entry_id.clone(), source_page: target_page });
+                    keys.push(ThumbnailKey::GalleryPage { gallery_id: target.gallery_id.get(), source_page: target_page });
+                }
+            }
+            let result = downloads.with_overlap_merge_lock(&review_id, || merges.apply(request))?;
+            // A committed merge must never be reported as failed because a
+            // recreatable preview or delayed exclusion refresh failed afterward.
+            for key in keys {
+                let _ = thumbnails.invalidate(&key);
+                if let Some(cache) = disk.as_ref() {
+                    if let Err(error) = cache.invalidate(&key) {
+                        tracing::warn!(merge_id = %result.merge_id, error = %error, "merged page disk thumbnail invalidation deferred");
+                    }
+                }
+                let _ = thumbnails.invalidate(&key);
+            }
+            if let Some(previews) = previews {
+                previews.enqueue(result.target_gallery_id);
+                if let Err(error) = previews.publish_saved(&[result.source_gallery_id, result.target_gallery_id], true) {
+                    tracing::warn!(merge_id = %result.merge_id, error = %error, "merged gallery preview update deferred");
+                }
+            }
+            if result.source_excluded {
+                if let Some(excluded) = excluded {
+                    match excluded.reconcile() {
+                        Ok(report) => for issue in report.issues {
+                            tracing::warn!(merge_id = %result.merge_id, issue, "merged source folder relocation deferred");
+                        },
+                        Err(error) => tracing::warn!(merge_id = %result.merge_id, error = %error, "merged source folder relocation deferred"),
+                    }
+                }
+            }
+            Ok(result)
+        })
+    }).await)
 }
 
 #[tauri::command]

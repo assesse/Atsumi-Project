@@ -12,9 +12,10 @@ use std::{
 
 use crate::{
     domain::{
-        ArtifactBundle, ArtifactSha256, DuplicateDecisionApplyOutcome, DuplicateDecisionRequest,
-        DuplicatePageHash, DuplicateReview, DuplicateScanRun, DuplicateScanState,
-        DuplicateSnapshot, ExternalRelationEvidence, GalleryId, HashProfile, SourcePageNumber,
+        ArtifactBundle, ArtifactSha256, DownloadArtifact, DuplicateDecisionApplyOutcome,
+        DuplicateDecisionRequest, DuplicatePageHash, DuplicateReview, DuplicateScanRun,
+        DuplicateScanState, DuplicateSnapshot, ExternalRelationEvidence, GalleryId, HashProfile,
+        SourcePageNumber,
     },
     thumbnail::CancellationToken,
 };
@@ -70,6 +71,7 @@ struct ActiveRun {
 }
 
 pub(crate) struct PreparedDuplicateScan {
+    selected_gallery_ids: Option<Vec<GalleryId>>,
     root: PathBuf,
     bundles: Vec<ArtifactBundle>,
     candidate_pairs: Vec<CandidatePair>,
@@ -168,11 +170,53 @@ impl DuplicateSupervisor {
         let total_artifacts = u32::try_from(bundles.len()).unwrap_or(u32::MAX);
         let total_pairs = u64::try_from(candidate_pairs.len()).unwrap_or(u64::MAX);
         Ok(PreparedDuplicateScan {
+            selected_gallery_ids: None,
             root,
             bundles,
             candidate_pairs,
             total_artifacts,
             total_pairs,
+            profile: HashProfile::current(),
+        })
+    }
+
+    pub(crate) fn prepare_selected(
+        &self,
+        ids: Vec<i64>,
+    ) -> Result<PreparedDuplicateScan, ApplicationError> {
+        if ids.len() != 2 || ids[0] == ids[1] {
+            return Err(crate::domain::ValidationError::new(
+                "galleryIds",
+                "서로 다른 완료 앨범 두 개를 선택하세요",
+            )
+            .into());
+        }
+        let ids = ids
+            .into_iter()
+            .map(GalleryId::new)
+            .collect::<Result<Vec<_>, _>>()?;
+        let settings = self.inner.settings.settings_get()?;
+        if settings.download_root.trim().is_empty() {
+            return Err(super::DownloadPipelineError::root_required().into());
+        }
+        let root = self
+            .inner
+            .store
+            .validate_download_root(&PathBuf::from(settings.download_root))?;
+        let bundles = select_scan_bundles(self.inner.repository.duplicate_selected_bundles(&ids)?);
+        if bundles.len() != 2 {
+            return Err(crate::domain::ValidationError::new("galleryIds", "두 앨범 모두 다운로드 완료 상태여야 하며 제외·격리·병합 중인 앨범은 대조할 수 없습니다").into());
+        }
+        Ok(PreparedDuplicateScan {
+            selected_gallery_ids: Some(ids),
+            root,
+            bundles,
+            candidate_pairs: vec![CandidatePair {
+                parent_index: 0,
+                candidate_index: 1,
+            }],
+            total_artifacts: 2,
+            total_pairs: 1,
             profile: HashProfile::current(),
         })
     }
@@ -187,9 +231,13 @@ impl DuplicateSupervisor {
         let _control = self.control_lock()?;
         self.reap_finished_worker();
         if let Some(run) = self.active_run()? {
+            if prepared.selected_gallery_ids.is_some() {
+                return Err(RepositoryError::OperationActive("다른 중복 검사가 실행 중입니다. 완료하거나 취소한 뒤 두 앨범 대조를 시작하세요".into()).into());
+            }
             return Ok(run);
         }
         let PreparedDuplicateScan {
+            selected_gallery_ids,
             root,
             bundles,
             candidate_pairs,
@@ -197,6 +245,25 @@ impl DuplicateSupervisor {
             total_pairs,
             profile,
         } = prepared;
+        if !bundles.is_empty() {
+            // Preflight runs outside the managed-work gate. A completed page
+            // merge may have replaced its immutable input before this commit.
+            // This repository has no per-entry artifact getter, so index one
+            // fresh inventory and compare only the prepared artifact records.
+            let current = match &selected_gallery_ids {
+                Some(ids) => self.inner.repository.duplicate_selected_bundles(ids)?,
+                None => self.inner.repository.duplicate_artifact_bundles()?,
+            }
+            .into_iter()
+            .map(|bundle| (bundle.artifact.entry_id.clone(), bundle.artifact))
+            .collect::<BTreeMap<_, _>>();
+            for bundle in &bundles {
+                validate_prepared_scan_artifact(
+                    &bundle.artifact,
+                    current.get(&bundle.artifact.entry_id),
+                )?;
+            }
+        }
         let run = self.inner.repository.duplicate_scan_start(
             profile.profile_version,
             total_artifacts,
@@ -946,6 +1013,32 @@ fn stable_scan_error(error: &RepositoryError) -> String {
     .into()
 }
 
+pub(super) fn validate_prepared_scan_artifact(
+    prepared: &DownloadArtifact,
+    current: Option<&DownloadArtifact>,
+) -> Result<(), ApplicationError> {
+    let Some(current) = current else {
+        return Err(RepositoryError::OperationActive(
+            "A prepared scan album is no longer available; restart the scan".into(),
+        )
+        .into());
+    };
+    if prepared.revision != current.revision {
+        return Err(ApplicationError::RevisionConflict {
+            resource: "duplicateScanArtifact",
+            expected: prepared.revision,
+            actual: current.revision,
+        });
+    }
+    if prepared != current {
+        return Err(RepositoryError::OperationActive(
+            "A prepared scan album changed; restart the scan with its current files".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn short_id(value: &str) -> &str {
     value.rsplit('-').next().unwrap_or("run")
 }
@@ -958,7 +1051,10 @@ mod tests {
         time::{Duration, Instant},
     };
 
-    use crate::application::{ArtifactStore, DuplicateRepository, StateRepository};
+    use crate::application::{
+        ApplicationError, ApplicationService, ArtifactRepository, ArtifactStore,
+        DuplicateRepository, RepositoryError, StateRepository,
+    };
     use crate::domain::{
         ArtifactBundle, ArtifactRelativePath, ArtifactSha256, ArtifactStorageFormat,
         DownloadArtifact, DownloadArtifactState, DownloadEntryId, DuplicateScanState, Gallery,
@@ -969,9 +1065,10 @@ mod tests {
     use tempfile::tempdir;
 
     use super::{
-        duplicate_hash_worker_count, same_artist_scan_plan, select_scan_bundles, ActiveRun,
-        DisabledDuplicateRelationProvider, DuplicateHashJob, DuplicateHashPool,
-        DuplicateScanTiming, DuplicateSupervisor, MAX_DUPLICATE_HASH_WORKERS,
+        duplicate_hash_worker_count, same_artist_scan_plan, select_scan_bundles,
+        validate_prepared_scan_artifact, ActiveRun, DisabledDuplicateRelationProvider,
+        DuplicateHashJob, DuplicateHashPool, DuplicateScanTiming, DuplicateSupervisor,
+        MAX_DUPLICATE_HASH_WORKERS,
     };
 
     fn bundle(
@@ -1022,6 +1119,70 @@ mod tests {
         )
         .unwrap();
         ArtifactBundle::new(gallery, artifact, vec![page]).unwrap()
+    }
+
+    #[test]
+    fn selected_pair_preflight_is_bounded_and_rechecks_exclusion_before_commit() {
+        let temporary = tempdir().unwrap();
+        let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+        let mut settings = StateRepository::settings_get(repository.as_ref()).unwrap();
+        let revision = settings.revision;
+        settings.revision += 1;
+        settings.download_root = temporary.path().to_string_lossy().into_owned();
+        StateRepository::settings_compare_and_set(repository.as_ref(), &settings, revision)
+            .unwrap();
+        let service = ApplicationService::new(repository.clone())
+            .with_download_repository(repository.clone());
+        let entries = service
+            .download_queue_add(vec![101, 102, 103], "selected-pair".into())
+            .unwrap();
+        for entry in &entries.entries {
+            let artifact = bundle(entry.gallery_id.get(), entry.entry_id.as_str(), 2, "now");
+            // Each gallery has no artist metadata: explicit pairs bypass artist buckets.
+            ArtifactRepository::artifact_bundle_replace(repository.as_ref(), &artifact).unwrap();
+            repository
+                .connection()
+                .unwrap()
+                .execute(
+                    "UPDATE download_entries SET state='completed' WHERE entry_id=?1",
+                    [entry.entry_id.as_str()],
+                )
+                .unwrap();
+        }
+        let (events, _receiver) = mpsc::channel();
+        let supervisor = DuplicateSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            Arc::new(FilesystemArtifactStore::new()),
+            Arc::new(DisabledDuplicateRelationProvider),
+            events,
+        );
+        for ids in [
+            vec![],
+            vec![101],
+            vec![101, 101],
+            vec![101, 102, 103],
+            vec![101, -1],
+            vec![101, 999],
+        ] {
+            assert!(supervisor.prepare_selected(ids).is_err());
+        }
+        let prepared = supervisor.prepare_selected(vec![102, 101]).unwrap();
+        assert_eq!(
+            prepared
+                .bundles
+                .iter()
+                .map(|b| b.gallery.id.get())
+                .collect::<Vec<_>>(),
+            vec![101, 102]
+        );
+        assert_eq!(prepared.total_artifacts, 2);
+        assert_eq!(prepared.total_pairs, 1);
+        assert_eq!(supervisor.prepare_start().unwrap().total_pairs, 0);
+        repository.connection().unwrap().execute("INSERT INTO duplicate_hidden_galleries(gallery_id,decision_id,created_at) VALUES(102,'manual','now')",[]).unwrap();
+        assert!(supervisor.commit_start(prepared).is_err());
+        assert!(supervisor.prepare_selected(vec![101, 102]).is_err());
+        assert!(supervisor.active_lock().unwrap().is_none());
     }
 
     #[test]
@@ -1249,6 +1410,101 @@ mod tests {
             .expect("read terminal duplicate run")
             .is_none());
         *supervisor.active_lock().unwrap() = None;
+    }
+
+    #[test]
+    fn prepared_scan_identity_check_rejects_missing_or_replaced_artifacts() {
+        let prepared = bundle(1, "prepared-entry", 2, "now").artifact;
+        assert!(validate_prepared_scan_artifact(&prepared, Some(&prepared)).is_ok());
+        assert!(matches!(
+            validate_prepared_scan_artifact(&prepared, None),
+            Err(ApplicationError::Repository(
+                RepositoryError::OperationActive(_)
+            ))
+        ));
+        let mut changed = prepared.clone();
+        changed.relative_directory = ArtifactRelativePath::new("another-directory").unwrap();
+        assert!(matches!(
+            validate_prepared_scan_artifact(&prepared, Some(&changed)),
+            Err(ApplicationError::Repository(
+                RepositoryError::OperationActive(_)
+            ))
+        ));
+    }
+
+    #[test]
+    fn commit_rejects_artifact_changed_after_preflight_without_creating_scan_or_worker() {
+        let temporary = tempdir().unwrap();
+        let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+        let mut settings = StateRepository::settings_get(repository.as_ref()).unwrap();
+        let expected_revision = settings.revision;
+        settings.revision += 1;
+        settings.download_root = temporary.path().to_string_lossy().into_owned();
+        assert!(StateRepository::settings_compare_and_set(
+            repository.as_ref(),
+            &settings,
+            expected_revision
+        )
+        .unwrap());
+        let service = ApplicationService::new(repository.clone())
+            .with_download_repository(repository.clone());
+        let launch = service
+            .download_queue_add(vec![101, 102], "prepared-global-scan".into())
+            .unwrap();
+        let mut seeded = Vec::new();
+        for entry in &launch.entries {
+            let mut artifact = bundle(entry.gallery_id.get(), entry.entry_id.as_str(), 2, "now");
+            artifact.gallery.metadata.primary_artist = Some("prepared fixture artist".into());
+            artifact.gallery.metadata.artists = vec!["prepared fixture artist".into()];
+            ArtifactRepository::artifact_bundle_replace(repository.as_ref(), &artifact).unwrap();
+            seeded.push(artifact);
+        }
+        let (events, _receiver) = mpsc::channel();
+        let supervisor = DuplicateSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            Arc::new(FilesystemArtifactStore::new()),
+            Arc::new(DisabledDuplicateRelationProvider),
+            events,
+        );
+        for change_revision in [true, false] {
+            let prepared = supervisor.prepare_start().unwrap();
+            assert_eq!(prepared.bundles.len(), 2);
+            let mut changed = seeded[0].clone();
+            if change_revision {
+                changed.artifact.revision += 1;
+            } else {
+                changed.artifact.state = DownloadArtifactState::Quarantined;
+            }
+            ArtifactRepository::artifact_bundle_replace(repository.as_ref(), &changed).unwrap();
+            let error = supervisor.commit_start(prepared).unwrap_err();
+            if change_revision {
+                assert!(matches!(
+                    error,
+                    ApplicationError::RevisionConflict {
+                        resource: "duplicateScanArtifact",
+                        expected: 2,
+                        actual: 3,
+                    }
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    ApplicationError::Repository(RepositoryError::OperationActive(_))
+                ));
+            }
+            assert!(supervisor.active_lock().unwrap().is_none());
+            assert_eq!(
+                repository
+                    .connection()
+                    .unwrap()
+                    .query_row("SELECT count(*) FROM duplicate_scan_runs", [], |row| row
+                        .get::<_, i64>(0))
+                    .unwrap(),
+                0
+            );
+            ArtifactRepository::artifact_bundle_replace(repository.as_ref(), &seeded[0]).unwrap();
+        }
     }
 
     #[test]

@@ -7,6 +7,7 @@ mod gallery_summary_cache;
 mod hitomi_live;
 mod internal_duplicate_repository;
 mod migrations;
+mod overlap_merge;
 mod preview_repository;
 mod sqlite_repository;
 pub mod telemetry;
@@ -20,6 +21,10 @@ pub use excluded_artifacts::{ExcludedArtifactReport, ExcludedArtifactService};
 pub use fixture_search::FixtureSearchRepository;
 pub use hitomi_live::{HitomiLiveAdapter, HitomiLiveConfig};
 pub use migrations::{MigrationReport, MigrationRunner, MIGRATIONS};
+pub use overlap_merge::{
+    DownloadOverlapMergeRequest, DownloadOverlapMergeResult, DownloadOverlapMergeSide,
+    OverlapMergeService,
+};
 pub use sqlite_repository::SqliteRepository;
 pub use thumbnail_disk_cache::ThumbnailDiskCache;
 pub use windows_folder_picker::WindowsFolderPicker;

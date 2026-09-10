@@ -21,7 +21,7 @@ const shortcutGroups = [
     shortcuts: [
       ["Enter", "앨범 상세 또는 완료 폴더 열기"],
       ["Ctrl+Enter", "선택 항목 다운로드 또는 재시도"],
-      ["Delete", "Auto Find 제외 또는 Downloads 격리"],
+      ["Delete", "Explore·Auto Find 탐색 제외 또는 Downloads 격리"],
       ["Ctrl+Z", "마지막 제외 또는 격리 실행 취소"],
     ],
   },

@@ -265,6 +265,8 @@ pub struct SeriesGroup {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateReview {
+    pub resolved: bool,
+    pub artifact_stale: bool,
     pub candidate: DuplicateCandidate,
     pub evidence: Vec<DuplicateEvidence>,
     pub page_pairs: Vec<DuplicatePagePair>,

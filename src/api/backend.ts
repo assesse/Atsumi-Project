@@ -35,6 +35,8 @@ import type {
   DownloadOverlapAutomationHistoryRequest,
   DownloadOverlapDecisionRequest,
   DownloadOverlapDecisionResult,
+  DownloadOverlapMergeRequest,
+  DownloadOverlapMergeResult,
   DownloadOverlapReview,
   DownloadListRequest,
   DownloadPage,
@@ -94,6 +96,7 @@ import type {
 } from "./contracts";
 import { hasActiveWork } from "./contracts";
 import { applyGlobalSearchRules } from "../search/globalSearchRules";
+import { strictCandidateEvaluation } from "../state/downloadOverlapAuto";
 import {
   galleryDetailFixture,
   normalizeSearchRequest,
@@ -155,7 +158,7 @@ export interface BackendClient {
   explorationExclusionsList(): Promise<ApiResult<ExplorationExclusion[]>>;
   explorationExclusionsRestore(galleryIds: GalleryId[]): Promise<ApiResult<ExplorationExclusionRestoreResult>>;
   duplicateSnapshot(): Promise<ApiResult<DuplicateSnapshot>>;
-  duplicateScanStart(): Promise<ApiResult<DuplicateScanRun>>;
+  duplicateScanStart(galleryIds?: GalleryId[]): Promise<ApiResult<DuplicateScanRun>>;
   duplicateScanCancel(): Promise<ApiResult<DuplicateScanRun>>;
   duplicateReviewGet(candidateId: string): Promise<ApiResult<DuplicateReview>>;
   duplicateDecisionApply(request: DuplicateDecisionRequest): Promise<ApiResult<DuplicateReview>>;
@@ -167,6 +170,7 @@ export interface BackendClient {
     reviewId: string,
   ): Promise<ApiResult<DownloadOverlapAutomationHistoryItem>>;
   downloadOverlapDecisionApply(request: DownloadOverlapDecisionRequest): Promise<ApiResult<DownloadOverlapDecisionResult>>;
+  downloadOverlapMerge(request: DownloadOverlapMergeRequest): Promise<ApiResult<DownloadOverlapMergeResult>>;
   internalDuplicateSnapshot(): Promise<ApiResult<InternalDuplicateSnapshot>>;
   internalDuplicateActiveArtifact(): Promise<ApiResult<InternalArtifactScanProgress | null>>;
   internalDuplicateScanStart(request: InternalScanRequest): Promise<ApiResult<InternalScanRun>>;
@@ -620,6 +624,8 @@ const cloneDuplicateCandidate = (candidate: DuplicateCandidate): DuplicateCandid
 const cloneDuplicateScanRun = (run: DuplicateScanRun): DuplicateScanRun => ({ ...run });
 
 const cloneDuplicateReview = (review: DuplicateReview): DuplicateReview => ({
+  resolved: review.resolved,
+  artifactStale: review.artifactStale,
   candidate: cloneDuplicateCandidate(review.candidate),
   evidence: review.evidence.map((evidence) => ({ ...evidence })),
   pagePairs: review.pagePairs.map((pair) => ({ ...pair })),
@@ -917,6 +923,7 @@ class BrowserMockBackend implements BackendClient {
   private duplicateResolvedCandidates = new Set<string>();
   private duplicateHiddenGalleryIds = new Set<GalleryId>();
   private duplicateGeneration = 0;
+  private duplicateSelectedIds: GalleryId[] | undefined;
   private nextDuplicateRunId = 1;
   private nextDuplicateDecisionId = 1;
   private internalSnapshotState: InternalDuplicateSnapshot = { groups: [], quarantineRecords: [], skips: [] };
@@ -1565,9 +1572,17 @@ class BrowserMockBackend implements BackendClient {
     return ok(cloneDuplicateSnapshot(this.duplicateSnapshotState));
   }
 
-  async duplicateScanStart(): Promise<ApiResult<DuplicateScanRun>> {
+  async duplicateScanStart(galleryIds?: GalleryId[]): Promise<ApiResult<DuplicateScanRun>> {
+    if (galleryIds !== undefined && (galleryIds.length !== 2 || new Set(galleryIds).size !== 2 || galleryIds.some((id) => !Number.isSafeInteger(id) || id <= 0))) {
+      return validationError("galleryIds", "서로 다른 앨범 ID 두 개를 입력하세요");
+    }
     const current = this.duplicateSnapshotState.run;
+    if (galleryIds && current?.state === "running") return validationError("galleryIds", "다른 중복 검사가 실행 중입니다");
+    if (galleryIds?.some((id) => ![...this.downloadEntries.values()].some((entry) => entry.galleryId === id && entry.state === "completed") || this.isDuplicateExplorationExcluded(id))) {
+      return validationError("galleryIds", "두 앨범 모두 제외되지 않은 다운로드 완료 상태여야 합니다");
+    }
     if (current?.state === "running") return ok(cloneDuplicateScanRun(current));
+    this.duplicateSelectedIds = galleryIds ? [...galleryIds] : undefined;
 
     const generation = ++this.duplicateGeneration;
     const now = new Date().toISOString();
@@ -1819,11 +1834,61 @@ class BrowserMockBackend implements BackendClient {
   async downloadOverlapDecisionApply(
     request: DownloadOverlapDecisionRequest,
   ): Promise<ApiResult<DownloadOverlapDecisionResult>> {
+    if (request.reviewId.startsWith("duplicate:")) {
+      const id = request.reviewId.slice("duplicate:".length);
+      const old = this.duplicateReviews.get(id);
+      if (!old) return notFoundError("DUPLICATE_CANDIDATE_NOT_FOUND", "완료 앨범 대조를 찾을 수 없습니다.");
+      if (old.candidate.revision !== request.expectedRevision) return conflict("duplicateCandidate");
+      if (request.actor === "automation" || request.candidateId !== id || this.duplicateResolvedCandidates.has(id)
+        || [old.candidate.parent, old.candidate.candidate].some((ref) => this.downloadEntries.get(ref.entryId)?.state !== "completed" || this.duplicateHiddenGalleryIds.has(ref.galleryId))) {
+        return validationError("request", "현재 완료된 두 앨범에 대한 수동 판정이 필요합니다");
+      }
+      const base = completedPairReview(old);
+      const action = request.action === "remove_existing_continue" ? "hide_parent" : request.action === "remove_incoming" ? "hide_candidate" : "exclude_pair";
+      const saved = await this.duplicateDecisionApply({ candidateId: id, expectedRevision: request.expectedRevision, action });
+      if (!saved.ok) return saved;
+      const removed = action === "hide_parent" ? old.candidate.parent : action === "hide_candidate" ? old.candidate.candidate : undefined;
+      if (removed) {
+        const entry = this.downloadEntries.get(removed.entryId)!;
+        this.downloadEntries.set(entry.entryId, { ...entry, state: "cancelled", revision: entry.revision + 1, reviewId: undefined, reviewKind: undefined });
+      }
+      const review: DownloadOverlapReview = { ...base, revision: base.revision + 1, state: request.action === "remove_incoming" ? "cancelled" : "resolved",
+        candidates: base.candidates.map((c) => ({ ...c, decision: request.action === "keep_both_continue" ? "keep_both" : request.action === "false_positive_continue" ? "false_positive" : request.action === "remove_existing_continue" ? "existing_removed" : undefined })),
+        decisions: [{ candidateId: id, action: request.action, actor: "human", createdAt: new Date().toISOString() }] };
+      this.downloadOverlapReviews.set(request.reviewId, review);
+      return ok({ review: cloneDownloadOverlapReview(review), resumed: false, cancelled: false });
+    }
+    const manualContainmentBatch = (request.actor ?? "human") === "human"
+      && request.reasonCode === "manual_containment_batch_v1";
+    let manualBatchSnapshot: Record<string, unknown> | undefined;
+    if (manualContainmentBatch) {
+      if (!request.candidateId || request.ruleVersion !== 1
+        || !["remove_existing_continue", "remove_incoming"].includes(request.action)
+        || !request.featureSnapshotJson || request.featureSnapshotJson.length > 65_536) {
+        return validationError("request", "합본 일괄 정리 감사 정보가 올바르지 않습니다");
+      }
+      try {
+        const snapshot = JSON.parse(request.featureSnapshotJson) as unknown;
+        if (typeof snapshot !== "object" || snapshot === null || Array.isArray(snapshot)) {
+          return validationError("request.featureSnapshotJson", "JSON 객체여야 합니다");
+        }
+        manualBatchSnapshot = snapshot as Record<string, unknown>;
+        if (manualBatchSnapshot.rule !== "manual_containment_batch_v1"
+          || manualBatchSnapshot.ruleVersion !== 1
+          || manualBatchSnapshot.reviewId !== request.reviewId
+          || manualBatchSnapshot.reviewRevision !== request.expectedRevision
+          || manualBatchSnapshot.candidateId !== request.candidateId) {
+          return validationError("request.featureSnapshotJson", "현재 검토와 후보를 확인한 감사 정보가 필요합니다");
+        }
+      } catch {
+        return validationError("request.featureSnapshotJson", "올바른 JSON이어야 합니다");
+      }
+    }
     if (request.actor === "automation") {
       if (!request.candidateId
         || (request.action !== "remove_existing_continue" && request.action !== "remove_incoming")
-        || request.reasonCode !== "balanced_overlap_v4"
-        || request.ruleVersion !== 4
+        || request.reasonCode !== "balanced_overlap_v5"
+        || request.ruleVersion !== 5
         || !request.featureSnapshotJson) {
         return validationError("request", "자동 중복 판정 감사 정보가 올바르지 않습니다");
       }
@@ -1849,6 +1914,34 @@ class BrowserMockBackend implements BackendClient {
     const selectedCandidate = review.candidates.find((item) => item.candidateId === request.candidateId);
     if (candidateScoped && (!selectedCandidate || selectedCandidate.decision !== undefined)) {
       return validationError("request.candidateId", "검토에 포함된 후보를 선택해야 합니다");
+    }
+    if (manualContainmentBatch) {
+      const evaluation = selectedCandidate ? strictCandidateEvaluation(review, selectedCandidate) : null;
+      const expectedWinner = request.action === "remove_incoming" ? "existing" : "incoming";
+      if (review.state !== "pending" || !selectedCandidate || selectedCandidate.decision !== undefined
+        || evaluation?.decisionPath !== "complete_containment" || evaluation.winner !== expectedWinner) {
+        return validationError("request.candidateId", "현재 후보가 확인한 완전 포함관계를 충족하지 않습니다");
+      }
+      const keeper = expectedWinner === "incoming" ? review.incoming : selectedCandidate.existing;
+      const excluded = expectedWinner === "incoming" ? selectedCandidate.existing : review.incoming;
+      if (manualBatchSnapshot?.keeperGalleryId !== keeper.galleryId
+        || manualBatchSnapshot?.excludedGalleryId !== excluded.galleryId) {
+        return validationError("request.featureSnapshotJson", "확인한 보존·제외 앨범이 현재 판정과 다릅니다");
+      }
+      const isAvailable = (ref: DownloadOverlapReview["incoming"]): boolean => {
+        const entry = this.downloadEntries.get(ref.entryId);
+        if (!entry || entry.galleryId !== ref.galleryId
+          || (this.duplicateHiddenGalleryIds.has(ref.galleryId)
+            && !this.explorationRestoredGalleryIds.has(ref.galleryId))) return false;
+        if (entry.state === "completed") return true;
+        const currentReview = entry.reviewId ? this.downloadOverlapReviews.get(entry.reviewId) : undefined;
+        return entry.state === "review_required" && entry.reviewKind === "gallery_duplicate"
+          && currentReview?.state === "pending" && currentReview.entryId === ref.entryId
+          && currentReview.incoming.galleryId === ref.galleryId;
+      };
+      if (!isAvailable(review.incoming) || !isAvailable(keeper)) {
+        return validationError("request.candidateId", "보존할 앨범의 현재 상태가 변경되어 일괄 정리를 중단했습니다");
+      }
     }
     const existingEntry = request.action === "remove_existing_continue" && selectedCandidate
       ? this.downloadEntries.get(selectedCandidate.existing.entryId)
@@ -1974,6 +2067,104 @@ class BrowserMockBackend implements BackendClient {
       });
     }
     return ok({ review: cloneDownloadOverlapReview(next), resumed: !cancelled && !pending, cancelled });
+  }
+
+  async downloadOverlapMerge(request: DownloadOverlapMergeRequest): Promise<ApiResult<DownloadOverlapMergeResult>> {
+    if (request.reviewId.startsWith("duplicate:")) {
+      const id = request.reviewId.slice("duplicate:".length);
+      const old = this.duplicateReviews.get(id);
+      if (!old) return notFoundError("DUPLICATE_CANDIDATE_NOT_FOUND", "완료 앨범 대조를 찾을 수 없습니다.");
+      if (old.candidate.revision !== request.expectedRevision) return conflict("duplicateCandidate");
+      if (request.candidateId !== id || this.duplicateResolvedCandidates.has(id)
+        || [old.candidate.parent, old.candidate.candidate].some((ref) => this.downloadEntries.get(ref.entryId)?.state !== "completed")) {
+        return validationError("request", "현재 완료된 두 앨범을 선택해야 합니다");
+      }
+      this.downloadOverlapReviews.set(request.reviewId, completedPairReview(old));
+    }
+    const review = this.downloadOverlapReviews.get(request.reviewId);
+    if (!review) return notFoundError("DOWNLOAD_OVERLAP_REVIEW_NOT_FOUND", "다운로드 판본 검토를 찾을 수 없습니다.");
+    if (review.revision !== request.expectedRevision) return conflict("downloadOverlapReview");
+    const candidate = review.candidates.find((item) => item.candidateId === request.candidateId);
+    if (review.state !== "pending" || !candidate || candidate.decision !== undefined
+      || !["existing", "incoming"].includes(request.sourceSide)
+      || !request.sourcePages.length || request.sourcePages.length > 200
+      || new Set(request.sourcePages).size !== request.sourcePages.length) {
+      return validationError("request", "현재 검토의 한쪽 페이지를 선택해야 합니다");
+    }
+    const source = request.sourceSide === "existing" ? candidate.existing : review.incoming;
+    const target = request.sourceSide === "existing" ? review.incoming : candidate.existing;
+    if (source.entryId === target.entryId || [source, target].some((ref) => {
+      const entry = this.downloadEntries.get(ref.entryId);
+      return !entry || !["completed", "review_required"].includes(entry.state)
+        || this.duplicateHiddenGalleryIds.has(ref.galleryId);
+    })) return validationError("request", "병합할 앨범의 상태가 변경되었습니다");
+    const targets = new Set<number>();
+    for (const page of request.sourcePages) {
+      const pairs = candidate.pagePairs.filter((pair) => (request.sourceSide === "existing"
+        ? pair.existingSourcePage : pair.incomingSourcePage) === page);
+      const pair = pairs[0];
+      const targetPage = pair && (request.sourceSide === "existing" ? pair.incomingSourcePage : pair.existingSourcePage);
+      if (!Number.isSafeInteger(page) || page < 1 || page > source.pageCount || pairs.length !== 1
+        || !targetPage || !Number.isSafeInteger(targetPage) || targetPage < 1 || targetPage > target.pageCount || targets.has(targetPage)
+        || candidate.pagePairs.filter((item) => (request.sourceSide === "existing"
+          ? item.incomingSourcePage : item.existingSourcePage) === targetPage).length !== 1) {
+        return validationError("request.sourcePages", "일대일 대응이 확인된 페이지만 병합할 수 있습니다");
+      }
+      targets.add(targetPage);
+    }
+    if (request.excludeSource) {
+      const sourceCounts = new Map<number, number>();
+      const targetCounts = new Map<number, number>();
+      for (const pair of candidate.pagePairs) {
+        const sourcePage = request.sourceSide === "existing" ? pair.existingSourcePage : pair.incomingSourcePage;
+        const targetPage = request.sourceSide === "existing" ? pair.incomingSourcePage : pair.existingSourcePage;
+        if (!Number.isSafeInteger(sourcePage) || sourcePage < 1 || sourcePage > source.pageCount
+          || !Number.isSafeInteger(targetPage) || targetPage < 1 || targetPage > target.pageCount) {
+          return validationError("request.excludeSource", "원본 전체 페이지의 대응을 확인할 수 없습니다");
+        }
+        sourceCounts.set(sourcePage, (sourceCounts.get(sourcePage) ?? 0) + 1);
+        targetCounts.set(targetPage, (targetCounts.get(targetPage) ?? 0) + 1);
+      }
+      if (sourceCounts.size !== source.pageCount || [...sourceCounts.values(), ...targetCounts.values()].some((count) => count !== 1)) {
+        return validationError("request.excludeSource", "원본에만 있는 페이지가 있어 제외하며 병합할 수 없습니다");
+      }
+    }
+    const mergeId = `browser-merge-${crypto.randomUUID()}`;
+    const affectedReviewIds: string[] = [];
+    for (const [id, record] of this.downloadOverlapReviews) {
+      if (record.state === "pending" && (record.entryId === target.entryId
+        || record.candidates.some((item) => item.existing.entryId === target.entryId)
+        || (request.excludeSource && (record.entryId === source.entryId
+          || record.candidates.some((item) => item.existing.entryId === source.entryId))))) {
+        affectedReviewIds.push(id);
+        const cancelled = request.excludeSource && record.entryId === source.entryId;
+        this.downloadOverlapReviews.set(id, { ...record, state: cancelled ? "cancelled" : "stale", revision: record.revision + 1 });
+        const entry = this.downloadEntries.get(record.entryId);
+        if (!cancelled && entry?.state === "review_required" && entry.reviewId === id) {
+          this.downloadEntries.set(entry.entryId, { ...entry, state: "queued", revision: entry.revision + 1,
+            reviewKind: undefined, reviewId: undefined });
+        }
+      }
+    }
+    const targetEntry = this.downloadEntries.get(target.entryId)!;
+    for (const [id, old] of this.duplicateReviews) {
+      if ([old.candidate.parent.entryId, old.candidate.candidate.entryId].includes(target.entryId)) {
+        this.duplicateResolvedCandidates.add(id);
+        this.duplicateReviews.set(id, { ...old, resolved: true, artifactStale: true, candidate: { ...old.candidate, revision: old.candidate.revision + 1 } });
+        this.duplicateSnapshotState = { ...this.duplicateSnapshotState, candidates: this.duplicateSnapshotState.candidates.filter((c) => c.candidateId !== id) };
+      }
+    }
+    if (targetEntry.state === "completed") this.downloadEntries.set(target.entryId, { ...targetEntry, revision: targetEntry.revision + 1 });
+    if (request.excludeSource) {
+      this.explorationRestoredGalleryIds.delete(source.galleryId);
+      this.duplicateHiddenGalleryIds.add(source.galleryId);
+      const entry = this.downloadEntries.get(source.entryId)!;
+      this.downloadEntries.set(source.entryId, { ...entry, state: "cancelled", revision: entry.revision + 1,
+        reviewKind: undefined, reviewId: undefined });
+    }
+    return ok({ mergeId, sourceGalleryId: source.galleryId, targetGalleryId: target.galleryId,
+      replacedPages: targets.size, backupPath: `.atsumi-page-merges/${mergeId}/original`,
+      affectedReviewIds, sourceExcluded: request.excludeSource === true });
   }
 
   async internalDuplicateSnapshot(): Promise<ApiResult<InternalDuplicateSnapshot>> {
@@ -2405,6 +2596,7 @@ class BrowserMockBackend implements BackendClient {
       pages: summary.pages,
       language: summary.language,
       publishedRank: summary.publishedRank,
+      tags: [...summary.tags],
     };
   }
 
@@ -2940,9 +3132,16 @@ class BrowserMockBackend implements BackendClient {
 
     const now = new Date().toISOString();
     let candidates = this.duplicateSnapshotState.candidates;
-    if (complete) {
+    if (complete && (!this.duplicateSelectedIds || this.duplicateSelectedIds.every((id) => {
+      const pair = browserDuplicateReviewFixture(now).candidate;
+      return id === pair.parent.galleryId || id === pair.candidate.galleryId;
+    }))) {
       const fixture = this.duplicateReviews.get("browser-duplicate-archive-tram")
         ?? browserDuplicateReviewFixture(now);
+      for (const ref of [fixture.candidate.parent, fixture.candidate.candidate]) {
+        const entry = [...this.downloadEntries.values()].find((e) => e.galleryId === ref.galleryId && e.state === "completed");
+        if (entry) ref.entryId = entry.entryId;
+      }
       this.duplicateReviews.set(fixture.candidate.candidateId, fixture);
       candidates = this.duplicateResolvedCandidates.has(fixture.candidate.candidateId)
         ? []
@@ -2954,7 +3153,7 @@ class BrowserMockBackend implements BackendClient {
       state: complete ? "completed" : "running",
       hashedArtifacts: complete ? current.totalArtifacts : 1,
       comparedPairs: complete ? current.totalPairs : 0,
-      candidatesFound: candidates.length,
+      candidatesFound: this.duplicateSelectedIds ? candidates.filter((item) => this.duplicateSelectedIds!.includes(item.parent.galleryId) && this.duplicateSelectedIds!.includes(item.candidate.galleryId)).length : candidates.length,
       updatedAt: now,
       ...(complete ? { finishedAt: now } : {}),
     };
@@ -3209,8 +3408,8 @@ class TauriBackend implements BackendClient {
     return invoke("duplicate_snapshot");
   }
 
-  duplicateScanStart(): Promise<ApiResult<DuplicateScanRun>> {
-    return invoke("duplicate_scan_start");
+  duplicateScanStart(galleryIds?: GalleryId[]): Promise<ApiResult<DuplicateScanRun>> {
+    return invoke("duplicate_scan_start", galleryIds === undefined ? undefined : { galleryIds });
   }
 
   duplicateScanCancel(): Promise<ApiResult<DuplicateScanRun>> {
@@ -3243,6 +3442,10 @@ class TauriBackend implements BackendClient {
 
   downloadOverlapDecisionApply(request: DownloadOverlapDecisionRequest): Promise<ApiResult<DownloadOverlapDecisionResult>> {
     return invoke("download_overlap_decision_apply", { request });
+  }
+
+  downloadOverlapMerge(request: DownloadOverlapMergeRequest): Promise<ApiResult<DownloadOverlapMergeResult>> {
+    return invoke("download_overlap_merge", { request });
   }
 
   internalDuplicateSnapshot(): Promise<ApiResult<InternalDuplicateSnapshot>> {
@@ -3410,3 +3613,4 @@ declare global {
 export const backend: BackendClient = window.__TAURI_INTERNALS__
   ? new TauriBackend()
   : new BrowserMockBackend();
+import { completedPairReview } from "../state/completedPairReview";

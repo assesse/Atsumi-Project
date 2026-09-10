@@ -15,13 +15,21 @@ use crate::{
         SearchRequest, SearchSort, SearchSubmission,
     },
     source::{
-        hitomi::{HitomiGalleryMetadata, HitomiTagKind},
+        hitomi::{
+            galleries_index_file_url, galleries_index_version_url, gallery_index_term_key,
+            parse_gallery_index_data, parse_gallery_index_node, parse_gallery_index_version,
+            GalleryIndexLookup, GalleryIndexNode, HitomiGalleryMetadata, HitomiTagKind,
+            GALLERIES_INDEX_MAX_DEPTH, GALLERIES_INDEX_NODE_BYTES,
+        },
         SourceContractError, SourceErrorCode,
     },
     thumbnail::CancellationToken,
 };
 
-use super::{check_cancelled, unpoison, HitomiLiveAdapter};
+use super::{
+    check_cancelled, http::ExpectedContent, http::HttpPriority, http::HttpRequest, unpoison,
+    HitomiLiveAdapter, NOZOMI_RESPONSE_LIMIT,
+};
 
 const AUTO_FIND_CANDIDATE_LIMIT: u32 = 50_000;
 
@@ -67,7 +75,6 @@ impl QueryCache {
 struct QuerySnapshot {
     request: SearchRequest,
     candidate_ids: Vec<u64>,
-    residual_terms: Vec<ResidualTerm>,
     progress: Mutex<QueryProgress>,
 }
 
@@ -78,7 +85,7 @@ struct QueryProgress {
 }
 
 #[derive(Debug, Clone)]
-struct ResidualTerm {
+struct TitleTerm {
     value: String,
     negative: bool,
 }
@@ -96,7 +103,7 @@ impl HitomiLiveAdapter {
         };
         let language_ids = ordered.iter().copied().collect::<HashSet<_>>();
         let mut structured = Vec::new();
-        let mut residual_terms = Vec::new();
+        let mut title_terms = Vec::new();
 
         for value in &request.include_tags {
             structured.push((tag_nozomi_path(value), false));
@@ -118,10 +125,12 @@ impl HitomiLiveAdapter {
             if let Some(path) = prefixed_nozomi_path(token) {
                 structured.push((Some(path), negative));
             } else {
-                residual_terms.push(ResidualTerm {
-                    value: normalize_text(token),
-                    negative,
-                });
+                title_terms.extend(normalize_text(token).split_whitespace().map(|value| {
+                    TitleTerm {
+                        value: value.to_owned(),
+                        negative,
+                    }
+                }));
             }
         }
 
@@ -142,6 +151,24 @@ impl HitomiLiveAdapter {
                 ordered.retain(|id| ids.contains(id));
             }
         }
+        if !ordered.is_empty() && !title_terms.is_empty() {
+            let version = self.fetch_galleries_index_version()?;
+            let mut node_cache = HashMap::new();
+            for term in title_terms {
+                let ids = self
+                    .fetch_title_index_ids(&version, &term.value, &mut node_cache)?
+                    .into_iter()
+                    .collect::<HashSet<_>>();
+                if term.negative {
+                    ordered.retain(|id| !ids.contains(id));
+                } else {
+                    ordered.retain(|id| ids.contains(id));
+                }
+                if ordered.is_empty() {
+                    break;
+                }
+            }
+        }
 
         ordered.dedup();
         if request.sort == SearchSort::Random {
@@ -157,9 +184,104 @@ impl HitomiLiveAdapter {
         Ok(Arc::new(QuerySnapshot {
             request: request.clone(),
             candidate_ids: ordered,
-            residual_terms,
             progress: Mutex::new(QueryProgress::default()),
         }))
+    }
+
+    fn fetch_galleries_index_version(&self) -> Result<String, SourceContractError> {
+        let payload = self.transport.execute(HttpRequest {
+            url: galleries_index_version_url(),
+            expected: ExpectedContent::Index,
+            max_bytes: 128,
+            range: None,
+            priority: HttpPriority::Critical,
+            cancellation: None,
+        })?;
+        parse_gallery_index_version(&payload.bytes)
+    }
+
+    fn fetch_title_index_ids(
+        &self,
+        version: &str,
+        term: &str,
+        node_cache: &mut HashMap<u64, GalleryIndexNode>,
+    ) -> Result<Vec<u64>, SourceContractError> {
+        let index_url = galleries_index_file_url(version, "index")?;
+        let data_url = galleries_index_file_url(version, "data")?;
+        let key = gallery_index_term_key(term);
+        let mut address = 0_u64;
+        let mut visited = HashSet::new();
+
+        for _ in 0..GALLERIES_INDEX_MAX_DEPTH {
+            if !visited.insert(address) {
+                return Err(SourceContractError::invalid_data(
+                    "galleries index",
+                    format!("B-tree traversal revisited node address {address}"),
+                ));
+            }
+            let node = if let Some(node) = node_cache.get(&address) {
+                node.clone()
+            } else {
+                let end_inclusive = address
+                    .checked_add(GALLERIES_INDEX_NODE_BYTES - 1)
+                    .ok_or_else(|| {
+                        SourceContractError::invalid_data(
+                            "galleries index node",
+                            "byte range overflows u64",
+                        )
+                    })?;
+                let payload = self.transport.execute(HttpRequest {
+                    url: index_url.clone(),
+                    expected: ExpectedContent::Index,
+                    max_bytes: GALLERIES_INDEX_NODE_BYTES as usize,
+                    range: Some(format!("bytes={address}-{end_inclusive}")),
+                    priority: HttpPriority::Critical,
+                    cancellation: None,
+                })?;
+                let node = parse_gallery_index_node(&payload.bytes)?;
+                node_cache.insert(address, node.clone());
+                node
+            };
+
+            match node.lookup(&key)? {
+                GalleryIndexLookup::Missing => return Ok(Vec::new()),
+                GalleryIndexLookup::Child(child) => address = child,
+                GalleryIndexLookup::Match(range) => {
+                    let byte_length = range.length as usize;
+                    if byte_length > NOZOMI_RESPONSE_LIMIT {
+                        return Err(SourceContractError::invalid_data(
+                            "galleries index data",
+                            format!(
+                                "declared payload exceeds the {NOZOMI_RESPONSE_LIMIT}-byte limit"
+                            ),
+                        ));
+                    }
+                    let payload = self.transport.execute(HttpRequest {
+                        url: data_url,
+                        expected: ExpectedContent::Index,
+                        max_bytes: byte_length,
+                        range: Some(range.header_value()?),
+                        priority: HttpPriority::Critical,
+                        cancellation: None,
+                    })?;
+                    if payload.bytes.len() != byte_length {
+                        return Err(SourceContractError::invalid_data(
+                            "galleries index data",
+                            format!(
+                                "expected {byte_length} ranged bytes, got {}",
+                                payload.bytes.len()
+                            ),
+                        ));
+                    }
+                    return parse_gallery_index_data(&payload.bytes);
+                }
+            }
+        }
+
+        Err(SourceContractError::invalid_data(
+            "galleries index",
+            format!("B-tree traversal exceeded {GALLERIES_INDEX_MAX_DEPTH} nodes"),
+        ))
     }
 
     fn order_ids(
@@ -224,13 +346,9 @@ impl HitomiLiveAdapter {
                     if let Some(cancellation) = cancellation {
                         check_cancelled(cancellation)?;
                     }
-                    if metadata_matches(&metadata, &snapshot.residual_terms) {
-                        progress.matches.push(gallery_summary(
-                            &metadata,
-                            snapshot.request.sort,
-                            rank,
-                        )?);
-                    }
+                    progress
+                        .matches
+                        .push(gallery_summary(&metadata, snapshot.request.sort, rank)?);
                     progress.cursor += 1;
                 }
                 Err(error) if error.code == SourceErrorCode::NotFound => {
@@ -585,29 +703,6 @@ fn percent_encode(value: &str) -> String {
         }
     }
     encoded
-}
-
-fn metadata_matches(metadata: &HitomiGalleryMetadata, terms: &[ResidualTerm]) -> bool {
-    if terms.is_empty() {
-        return true;
-    }
-    let mut fields = vec![metadata.title.clone()];
-    fields.extend(metadata.alternate_title.clone());
-    fields.extend(metadata.artists.clone());
-    fields.extend(metadata.groups.clone());
-    fields.extend(metadata.series.clone());
-    fields.extend(metadata.characters.clone());
-    fields.extend(metadata.tags.iter().map(|tag| tag.name.clone()));
-    fields.extend(metadata.language.clone());
-    let haystack = normalize_text(&fields.join(" "));
-    terms.iter().all(|term| {
-        let found = haystack.contains(&term.value);
-        if term.negative {
-            !found
-        } else {
-            found
-        }
-    })
 }
 
 pub(super) fn gallery_summary(

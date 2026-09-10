@@ -77,6 +77,7 @@ pub(super) enum ExpectedContent {
     Script,
     Html,
     Nozomi,
+    Index,
     Image,
 }
 
@@ -86,6 +87,7 @@ impl ExpectedContent {
             Self::Script => "text/javascript, application/javascript;q=0.9, text/plain;q=0.5",
             Self::Html => "text/html, application/xhtml+xml;q=0.9",
             Self::Nozomi => "application/x-nozomi, application/octet-stream;q=0.5",
+            Self::Index => "application/octet-stream, text/plain;q=0.5",
             Self::Image => "image/webp, image/avif;q=0.9, image/jpeg;q=0.8, image/png;q=0.7",
         }
     }
@@ -112,6 +114,7 @@ impl ExpectedContent {
                     "application/x-nozomi" | "application/octet-stream"
                 )
             }
+            Self::Index => matches!(mime.as_str(), "application/octet-stream" | "text/plain"),
             Self::Image => {
                 matches!(mime.as_str(), "" | "application/octet-stream")
                     || mime.starts_with("image/")
@@ -1019,6 +1022,9 @@ mod tests {
         assert!(!ExpectedContent::Script.accepts("text/html; charset=utf-8"));
         assert!(!ExpectedContent::Image.accepts("text/html"));
         assert!(ExpectedContent::Image.accepts("image/webp"));
+        assert!(ExpectedContent::Index.accepts("application/octet-stream"));
+        assert!(ExpectedContent::Index.accepts("text/plain; charset=utf-8"));
+        assert!(!ExpectedContent::Index.accepts("text/html"));
         assert_eq!(
             invalid_response(ExpectedContent::Image, "HTML error body").code,
             SourceErrorCode::ImageResponseInvalid

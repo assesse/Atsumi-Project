@@ -1,7 +1,7 @@
 export type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
 export type GalleryId = Brand<number, "GalleryId">;
-export type ContentSource = "hitomi" | "danbooru";
+export type { ContentSource } from "../app/workspaceRegistry";
 export type ViewId = "explore" | "auto-find" | "downloads";
 export type GalleryDisplayMode = "detail" | "compact";
 export type Language = "korean" | "japanese" | "chinese" | "english";
@@ -60,6 +60,8 @@ export type Gallery = {
   /** False only while a legacy local download summary has not resolved its language yet. */
   languageKnown?: boolean;
   tags: string[];
+  /** False when a local list has not yet supplied saved or fetched tags. */
+  tagsKnown?: boolean;
   series: string[];
   characters: string[];
   thumbnailKey?: string;
@@ -112,9 +114,9 @@ export const retryableDownloadStates: ReadonlySet<DownloadState> = new Set([
   "cancelled",
 ]);
 
-export type UiState = {
+/** Hitomi presentation state; application chrome is owned by AppShell. */
+export type HitomiUiState = {
   view: ViewId;
-  railCollapsed: boolean;
   search: Record<ViewId, SearchUi>;
   exploreSort: SearchSort;
   downloadsFilter: DownloadFilter;
@@ -123,11 +125,11 @@ export type UiState = {
   selection: SelectionState;
   detail: DetailState;
   overlays: {
-    activityOpen: boolean;
-    settingsOpen: boolean;
     reviewGalleryId: GalleryId | null;
-    exitConfirmOpen: boolean;
   };
 };
+
+/** Compatibility name for existing gallery selectors and reducers. */
+export type UiState = HitomiUiState;
 
 export const galleryId = (value: number): GalleryId => value as GalleryId;

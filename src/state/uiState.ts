@@ -18,7 +18,6 @@ const searchState = () => ({
 
 export const initialUiState: UiState = {
   view: "explore",
-  railCollapsed: false,
   search: {
     explore: searchState(),
     "auto-find": searchState(),
@@ -31,16 +30,12 @@ export const initialUiState: UiState = {
   selection: { ids: new Set(), anchorId: null },
   detail: { tabs: [], activeId: null, minimized: false },
   overlays: {
-    activityOpen: false,
-    settingsOpen: false,
     reviewGalleryId: null,
-    exitConfirmOpen: false,
   },
 };
 
 export type UiAction =
   | { type: "navigate"; view: ViewId }
-  | { type: "rail.toggle" }
   | { type: "search.draft"; view: ViewId; value: string }
   | { type: "search.suggestions"; view: ViewId; open: boolean; active?: number | null }
   | { type: "search.commit"; view: ViewId; value?: string }
@@ -71,10 +66,7 @@ export type UiAction =
   | { type: "detail.close"; id: GalleryId }
   | { type: "detail.closeAll" }
   | { type: "detail.minimize"; minimized: boolean }
-  | { type: "overlay.activity"; open: boolean }
-  | { type: "overlay.settings"; open: boolean }
-  | { type: "overlay.review"; galleryId: GalleryId | null }
-  | { type: "overlay.exit"; open: boolean };
+  | { type: "overlay.review"; galleryId: GalleryId | null };
 
 function updateSearch(
   state: UiState,
@@ -149,8 +141,6 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
           [state.view]: { ...state.search[state.view], suggestionsOpen: false, activeSuggestion: null },
         },
       };
-    case "rail.toggle":
-      return { ...state, railCollapsed: !state.railCollapsed };
     case "search.draft":
       return updateSearch(state, action.view, { draft: action.value, activeSuggestion: null });
     case "search.suggestions":
@@ -241,13 +231,7 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
       return { ...state, detail: { tabs: [], activeId: null, minimized: false } };
     case "detail.minimize":
       return { ...state, detail: { ...state.detail, minimized: action.minimized } };
-    case "overlay.activity":
-      return { ...state, overlays: { ...state.overlays, activityOpen: action.open } };
-    case "overlay.settings":
-      return { ...state, overlays: { ...state.overlays, settingsOpen: action.open } };
     case "overlay.review":
       return { ...state, overlays: { ...state.overlays, reviewGalleryId: action.galleryId } };
-    case "overlay.exit":
-      return { ...state, overlays: { ...state.overlays, exitConfirmOpen: action.open } };
   }
 }

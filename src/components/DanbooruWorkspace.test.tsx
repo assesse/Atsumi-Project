@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BackendClient } from "../api/backend";
+import { createDanbooruApi, type DanbooruApi } from "../api/featureClients";
 import type { DanbooruPost } from "../api/contracts";
 import { defaultDanbooruSearchFilters } from "../danbooru/searchPreferences";
 import { DanbooruWorkspace } from "./DanbooruWorkspace";
@@ -47,7 +47,7 @@ const videoPost: DanbooruPost = {
   largeUrl: "data:image/svg+xml,%3Csvg data-size='video-poster'/%3E",
 };
 
-const backend = {
+const backend: DanbooruApi = {
   runtime: "browser-mock",
   danbooruSearch: vi.fn(async () => ({ ok: true as const, data: { items: [post], page: 1, hasMore: false } })),
   danbooruRandom: vi.fn(async () => ({ ok: true as const, data: post })),
@@ -64,7 +64,9 @@ const backend = {
     ok: true as const,
     data: { items: [], page: 1, total: 0, totalPages: 1 },
   })),
-} as unknown as BackendClient;
+};
+
+const danbooruApi = createDanbooruApi(backend);
 
 describe("DanbooruWorkspace", () => {
   beforeEach(() => {
@@ -81,7 +83,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}
@@ -126,7 +128,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={190}
@@ -154,7 +156,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}
@@ -233,7 +235,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}
@@ -274,7 +276,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}
@@ -313,7 +315,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={60}
             previewWidth={190}
@@ -362,7 +364,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}
@@ -404,7 +406,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}
@@ -444,7 +446,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}
@@ -500,7 +502,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => {
         root.render(
           <DanbooruWorkspace
-            backend={backend}
+            backend={danbooruApi}
             railCollapsed={false}
             pageSize={50}
             previewWidth={220}

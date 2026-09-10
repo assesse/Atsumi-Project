@@ -1,4 +1,5 @@
 mod endpoints;
+mod gallery_index;
 mod galleryinfo;
 mod model;
 mod nozomi;
@@ -11,8 +12,13 @@ pub const HITOMI_PARSER_VERSION: u32 = 1;
 pub const HITOMI_RESOLVER_VERSION: u32 = 1;
 
 pub use endpoints::{
-    galleryinfo_script_url, gg_script_url, index_all_nozomi_url, HITOMI_METADATA_ORIGIN,
-    NOZOMI_CONTENT_TYPE,
+    galleries_index_file_url, galleries_index_version_url, galleryinfo_script_url, gg_script_url,
+    index_all_nozomi_url, HITOMI_METADATA_ORIGIN, NOZOMI_CONTENT_TYPE,
+};
+pub(crate) use gallery_index::{
+    gallery_index_term_key, parse_gallery_index_data, parse_gallery_index_node,
+    parse_gallery_index_version, GalleryIndexLookup, GalleryIndexNode, GALLERIES_INDEX_MAX_DEPTH,
+    GALLERIES_INDEX_NODE_BYTES,
 };
 pub use galleryinfo::parse_galleryinfo_script;
 pub use model::{

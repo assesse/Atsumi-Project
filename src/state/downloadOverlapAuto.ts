@@ -5,8 +5,8 @@ import type {
   DownloadOverlapReview,
 } from "../api/contracts";
 
-export const DOWNLOAD_OVERLAP_AUTO_RULE_VERSION = 4;
-export const DOWNLOAD_OVERLAP_AUTO_REASON_CODE = "balanced_overlap_v4";
+export const DOWNLOAD_OVERLAP_AUTO_RULE_VERSION = 5;
+export const DOWNLOAD_OVERLAP_AUTO_REASON_CODE = "balanced_overlap_v5";
 
 export const strictOverlapThresholds = Object.freeze({
   loserCoverage: 0.95,
@@ -33,6 +33,14 @@ export const completeContainmentThresholds = Object.freeze({
   informativeMatchRatio: 0.75,
 });
 
+export const DOWNLOAD_OVERLAP_AUTO_HELP = [
+  "완전 포함: 작은 판본의 모든 페이지 대응 · 고유 페이지 0 · 순서 일치 · 신뢰도 85% 이상.",
+  "일반 판본: 포함률 95% 이상 · 페이지 차이 5장 이하 · 신뢰도 90% 이상.",
+  "정보성·연속 일치 기준도 충족해야 합니다. 3장 이하 작품은 정확한 SHA-256 일치가 필요합니다.",
+  "포함 판본을 우선합니다. 거의 동일하면 제목 표식(무검열 > 미표시 > 검열) → 페이지 수 → 기존본 순으로 보존합니다.",
+  "자동 모드는 재검증 후 적용하며 UTC 하루 10건까지입니다. 완료본은 격리, 신규·대기본은 취소·제외 처리합니다. 영구 삭제하지 않습니다.",
+].join("\n");
+
 type StrictWinner = "incoming" | "existing";
 type EditionPreference = "uncensored" | "censored" | "unknown";
 
@@ -49,9 +57,12 @@ export type StrictOverlapPlan = {
   winner: StrictWinner;
   steps: StrictOverlapDecisionStep[];
   summary: string;
+  pendingCandidateCount: number;
+  remainingCandidateCount: number;
+  isPartial: boolean;
 };
 
-type CandidateEvaluation = {
+export type CandidateEvaluation = {
   winner: StrictWinner;
   decisionPath: "balanced" | "complete_containment";
   featureSnapshotJson: string;
@@ -80,10 +91,12 @@ const editionPreference = (gallery: DownloadOverlapGalleryRef): EditionPreferenc
 const preferenceRank = (preference: EditionPreference): number =>
   preference === "uncensored" ? 1 : preference === "censored" ? -1 : 0;
 
-const strictCandidateEvaluation = (
+export const strictCandidateEvaluation = (
   review: DownloadOverlapReview,
   candidate: DownloadOverlapCandidate,
 ): CandidateEvaluation | null => {
+  if (candidate.existing.galleryId === review.incoming.galleryId
+    || candidate.existing.entryId === review.incoming.entryId) return null;
   const incomingPageCount = review.incoming.pageCount;
   const existingPageCount = candidate.existing.pageCount;
   const pageDifference = Math.abs(incomingPageCount - existingPageCount);
@@ -238,9 +251,9 @@ const strictCandidateEvaluation = (
 };
 
 /**
- * Produces an all-or-nothing plan. Multi-candidate cleanup is automatic only
- * when the incoming edition wins every direct comparison. Mixed candidate
- * graphs remain pending because existing-vs-existing edges are not inferred.
+ * Each step is justified by one direct comparison. Prefer a surviving existing
+ * witness before removing any candidates; otherwise remove only candidates the
+ * incoming edition safely replaces and leave uncertain comparisons pending.
  */
 export const buildStrictOverlapPlan = (
   review: DownloadOverlapReview,
@@ -255,42 +268,42 @@ export const buildStrictOverlapPlan = (
     candidate,
     result: strictCandidateEvaluation(review, candidate),
   }));
-  if (evaluated.some(({ result }) => result === null)) return null;
-
-  const incomingWinsAll = evaluated.every(({ result }) => result?.winner === "incoming");
-  if (incomingWinsAll) {
-    const completeContainmentCount = evaluated.filter(
-      ({ result }) => result?.decisionPath === "complete_containment",
-    ).length;
-    return {
-      winner: "incoming",
-      steps: evaluated.map(({ candidate, result }) => ({
-        action: "remove_existing_continue",
-        candidateId: candidate.candidateId,
-        featureSnapshotJson: result!.featureSnapshotJson,
-      })),
-      summary: completeContainmentCount === pending.length
-        ? pending.length === 1
-          ? "신규 앨범 B가 기존 앨범 A의 모든 페이지를 포함하는 판본으로 판정됐습니다. 무검열 표식보다 완전 포함관계를 우선합니다."
-          : `신규 앨범 B가 기존 판본 ${pending.length}개의 모든 페이지를 포함하는 합본으로 판정됐습니다. 무검열 표식보다 완전 포함관계를 우선합니다.`
-        : pending.length === 1
-          ? "신규 앨범 B가 기존 앨범 A와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다."
-          : `신규 앨범 B가 미처리 후보 ${pending.length}개와 각각 안전하게 일치하며 더 보존할 판본으로 판정됐습니다.`,
-    };
-  }
-
-  const only = evaluated.length === 1 ? evaluated[0] : undefined;
-  if (only?.result?.winner === "existing") {
+  const witness = evaluated.find(({ result }) => result?.winner === "existing");
+  if (witness?.result) {
     return {
       winner: "existing",
       steps: [{
         action: "remove_incoming",
-        candidateId: only.candidate.candidateId,
-        featureSnapshotJson: only.result.featureSnapshotJson,
+        candidateId: witness.candidate.candidateId,
+        featureSnapshotJson: witness.result.featureSnapshotJson,
       }],
-      summary: only.result.decisionPath === "complete_containment"
-        ? "기존 앨범 A가 신규 앨범 B의 모든 페이지를 포함하는 판본으로 판정됐습니다. 무검열 표식보다 완전 포함관계를 우선합니다."
-        : "기존 앨범 A가 신규 앨범 B와 95% 이상 일치하며 더 보존할 판본으로 판정됐습니다.",
+      pendingCandidateCount: pending.length,
+      remainingCandidateCount: 0,
+      isPartial: false,
+      summary: witness.result.decisionPath === "complete_containment"
+        ? `기존 #${witness.candidate.existing.galleryId} 유지 · 신규 B 제외 (완전 포함)`
+        : `기존 #${witness.candidate.existing.galleryId} 유지 · 신규 B 제외`,
+    };
+  }
+
+  const incomingWins = evaluated.filter(({ result }) => result?.winner === "incoming");
+  if (incomingWins.length) {
+    const completeContainmentCount = incomingWins.filter(
+      ({ result }) => result?.decisionPath === "complete_containment",
+    ).length;
+    return {
+      winner: "incoming",
+      steps: incomingWins.map(({ candidate, result }) => ({
+        action: "remove_existing_continue",
+        candidateId: candidate.candidateId,
+        featureSnapshotJson: result!.featureSnapshotJson,
+      })),
+      pendingCandidateCount: pending.length,
+      remainingCandidateCount: pending.length - incomingWins.length,
+      isPartial: incomingWins.length < pending.length,
+      summary: incomingWins.length < pending.length
+        ? `신규 B 유지 · 기존 ${incomingWins.length}개 제외 · ${pending.length - incomingWins.length}개 직접 검토`
+        : `신규 B 유지 · ${pending.length === 1 ? `기존 #${incomingWins[0]!.candidate.existing.galleryId}` : `기존 ${pending.length}개`} 제외${completeContainmentCount === pending.length ? " (완전 포함)" : ""}`,
     };
   }
 

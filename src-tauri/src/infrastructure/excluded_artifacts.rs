@@ -3,13 +3,14 @@
 //! promotes a cancelled or failed download into a completed artifact.
 use std::{
     fs::{self, OpenOptions},
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
-use rusqlite::{params, TransactionBehavior};
+use rusqlite::{params, Connection, TransactionBehavior};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{
@@ -17,7 +18,10 @@ use crate::{
         ApplicationError, ArtifactLayout, ArtifactRepository, ArtifactStore, DownloadPipelineError,
         DownloadPipelineErrorCode, RepositoryError,
     },
-    domain::{ArtifactManifest, ArtifactRelativePath, DownloadArtifactState, DownloadEntryId},
+    domain::{
+        ArtifactBundle, ArtifactManifest, ArtifactRelativePath, DownloadArtifactState,
+        DownloadEntryId, PageArtifactState,
+    },
 };
 
 use super::SqliteRepository;
@@ -48,6 +52,29 @@ pub(super) const EXCLUDED_ARTIFACTS_SCHEMA: &str = r#"
       AND NOT EXISTS (
         SELECT 1 FROM excluded_artifact_relocations x
         WHERE x.entry_id=OLD.entry_id AND x.root_snapshot=OLD.root_snapshot
+          AND x.artifact_revision=OLD.revision AND NEW.revision=OLD.revision+1
+          AND NEW.state=OLD.state
+          AND ((x.state='pending_exclude' AND x.original_relative_path=OLD.relative_directory AND x.excluded_relative_path=NEW.relative_directory)
+            OR (x.state='pending_restore' AND x.excluded_relative_path=OLD.relative_directory AND x.original_relative_path=NEW.relative_directory))
+      )
+    BEGIN
+        SELECT RAISE(ABORT, 'download artifact relative_directory is immutable');
+    END;
+"#;
+
+// Deployed v41/v42 databases can still contain the original unconditional
+// trigger. A new migration must repair them; changing historical SQL cannot.
+pub(super) const REPAIR_EXCLUDED_ARTIFACT_TRIGGER: &str = r#"
+    DROP TRIGGER IF EXISTS download_artifacts_relative_directory_immutable;
+    CREATE TRIGGER download_artifacts_relative_directory_immutable
+    BEFORE UPDATE OF relative_directory ON download_artifacts
+    FOR EACH ROW
+    WHEN NEW.relative_directory <> OLD.relative_directory
+      AND NOT EXISTS (
+        SELECT 1 FROM excluded_artifact_relocations x
+        WHERE x.entry_id=OLD.entry_id AND x.gallery_id=OLD.gallery_id
+          AND x.root_snapshot=OLD.root_snapshot AND NEW.root_snapshot=OLD.root_snapshot
+          AND NEW.entry_id=OLD.entry_id AND NEW.gallery_id=OLD.gallery_id
           AND x.artifact_revision=OLD.revision AND NEW.revision=OLD.revision+1
           AND NEW.state=OLD.state
           AND ((x.state='pending_exclude' AND x.original_relative_path=OLD.relative_directory AND x.excluded_relative_path=NEW.relative_directory)
@@ -375,9 +402,16 @@ impl ExcludedArtifactService {
         let root = checked_root(&record.root)?;
         let source = checked_path(&root, from)?;
         let destination = checked_path(&root, to)?;
+        let mut remove_empty_source = false;
         match (source.exists(), destination.exists()) {
             (true, false) => {}
             (false, true) => {} // Interrupted after rename; the DB still has the old paths.
+            (true, true) if !restoring && empty_directory(&source)? && destination.is_dir() => {
+                // A reader from an older build could recreate the original
+                // directory after rename. Only discard that empty shell after
+                // the destination, journal and immutable backup are verified.
+                remove_empty_source = true;
+            }
             _ => {
                 return Err(conflict(
                     "Excluded-folder recovery found conflicting or missing locations",
@@ -398,12 +432,24 @@ impl ExcludedArtifactService {
                 "The excluded album changed while its folder move was pending",
             ));
         }
+        verify_relocation_snapshot(
+            &*self.repository.connection()?,
+            record,
+            &backup,
+            from,
+            &bundle,
+        )?;
         // Retain both the database saga and a synced, immutable sidecar backup.
-        // No album bytes are deleted by this service.
-        self.write_backup(&root, record)?;
-        if source.exists() {
+        // A post-rename recovery must already have the synced sidecar; never
+        // invent independent evidence for an existing destination.
+        if destination.exists() {
+            self.verify_backup(&root, record)?;
+            self.verify_page_files(&root, to, &bundle, remove_empty_source)?;
+        } else {
+            self.write_backup(&root, record)?;
             self.reject_nested_artifacts(&record.entry_id, &source)?;
             self.verify_manifest(&root, from, &bundle, backup.manifest.is_some(), None)?;
+            self.verify_page_files(&root, from, &bundle, false)?;
             self.store.move_managed_directory(&root, from, to)?;
         }
         if let Some(mut expected) = self.expected_manifest(&bundle, backup.manifest.is_some())? {
@@ -415,10 +461,21 @@ impl ExcludedArtifactService {
         } else {
             self.verify_manifest(&root, to, &bundle, false, None)?;
         }
+        if remove_empty_source {
+            self.reject_nested_artifacts(&record.entry_id, &source)?;
+            // Recheck the exact managed path after all verification. remove_dir
+            // atomically refuses a directory that gained even one new entry.
+            let empty_source = checked_path(&root, from)?;
+            if !empty_directory(&empty_source)? {
+                return Err(conflict("The recreated original folder is no longer empty"));
+            }
+            fs::remove_dir(&empty_source).map_err(io_error)?;
+        }
         let mut connection = self.repository.connection()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(db_error)?;
+        verify_relocation_snapshot(&transaction, record, &backup, from, &bundle)?;
         let changed = transaction.execute(
             "UPDATE download_artifacts SET relative_directory=?1,
              manifest_relative_path=CASE WHEN manifest_relative_path IS NULL THEN NULL ELSE ?1 || substr(manifest_relative_path,length(?2)+1) END,
@@ -462,6 +519,75 @@ impl ExcludedArtifactService {
         Ok(())
     }
 
+    fn verify_page_files(
+        &self,
+        root: &Path,
+        directory: &ArtifactRelativePath,
+        bundle: &ArtifactBundle,
+        require_verified_page: bool,
+    ) -> Result<(), ApplicationError> {
+        let prefix = format!("{}/", bundle.artifact.relative_directory.as_str());
+        let mut verified = 0;
+        for page in &bundle.pages {
+            let suffix = page
+                .relative_path
+                .as_str()
+                .strip_prefix(&prefix)
+                .ok_or_else(|| conflict("A recorded page escapes its album folder"))?;
+            if !matches!(
+                page.state,
+                PageArtifactState::Present | PageArtifactState::Quarantined
+            ) {
+                continue;
+            }
+            let expected_length = page
+                .byte_length
+                .ok_or_else(|| conflict("A stored page has no verified byte length"))?;
+            let expected_sha = page
+                .sha256
+                .as_ref()
+                .ok_or_else(|| conflict("A stored page has no verified SHA-256"))?;
+            let relative = ArtifactRelativePath::new(format!("{}/{suffix}", directory.as_str()))?;
+            let path = checked_path(root, &relative)?;
+            let mut file = fs::File::open(&path).map_err(io_error)?;
+            let metadata = file.metadata().map_err(io_error)?;
+            if !metadata.is_file() || metadata.len() != expected_length {
+                return Err(conflict(
+                    "A relocated page does not match its recorded byte length",
+                ));
+            }
+            let mut digest = Sha256::new();
+            let mut buffer = [0_u8; 64 * 1024];
+            loop {
+                let count = file.read(&mut buffer).map_err(io_error)?;
+                if count == 0 {
+                    break;
+                }
+                digest.update(&buffer[..count]);
+            }
+            if format!("{:x}", digest.finalize()) != expected_sha.as_str() {
+                return Err(conflict(
+                    "A relocated page does not match its recorded SHA-256",
+                ));
+            }
+            verified += 1;
+        }
+        if require_verified_page && verified == 0 {
+            return Err(conflict(
+                "No verified destination page supports removing the empty original folder",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_backup(&self, root: &Path, record: &Relocation) -> Result<(), ApplicationError> {
+        let path = checked_path(root, &backup_path(record)?)?;
+        if fs::read_to_string(path).map_err(io_error)? != record.backup_json {
+            return Err(conflict("The excluded-folder recovery backup was modified"));
+        }
+        Ok(())
+    }
+
     fn expected_manifest(
         &self,
         bundle: &crate::domain::ArtifactBundle,
@@ -498,10 +624,7 @@ impl ExcludedArtifactService {
     }
 
     fn write_backup(&self, root: &Path, record: &Relocation) -> Result<(), ApplicationError> {
-        let relative = ArtifactRelativePath::new(format!(
-            ".atsumi-excluded/{}/.atsumi-recovery-{}.json",
-            record.entry_id, record.record_id
-        ))?;
+        let relative = backup_path(record)?;
         let path = checked_path(root, &relative)?;
         if path.exists() {
             if fs::read_to_string(&path).map_err(io_error)? != record.backup_json {
@@ -597,6 +720,119 @@ impl ExcludedArtifactService {
         })
         .collect()
     }
+}
+
+fn backup_path(record: &Relocation) -> Result<ArtifactRelativePath, ApplicationError> {
+    Ok(ArtifactRelativePath::new(format!(
+        ".atsumi-excluded/{}/.atsumi-recovery-{}.json",
+        record.entry_id, record.record_id
+    ))?)
+}
+
+fn empty_directory(path: &Path) -> Result<bool, ApplicationError> {
+    if !path.is_dir() {
+        return Ok(false);
+    }
+    Ok(fs::read_dir(path)
+        .map_err(io_error)?
+        .next()
+        .transpose()
+        .map_err(io_error)?
+        .is_none())
+}
+
+fn verify_relocation_snapshot(
+    connection: &Connection,
+    record: &Relocation,
+    backup: &RelocationBackup,
+    from: &ArtifactRelativePath,
+    bundle: &ArtifactBundle,
+) -> Result<(), ApplicationError> {
+    if backup.schema_version != 1
+        || backup.entry_id != record.entry_id
+        || backup.gallery_id != record.gallery_id
+        || Path::new(&backup.root_snapshot) != record.root
+        || backup.original_relative_path != record.original.as_str()
+        || backup.excluded_relative_path != record.excluded.as_str()
+        || bundle.gallery.id.get() != record.gallery_id
+    {
+        return Err(conflict(
+            "The recovery backup does not identify this album relocation",
+        ));
+    }
+    let unchanged: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM download_artifacts a JOIN download_entries e USING(entry_id)
+         JOIN excluded_artifact_relocations x USING(entry_id)
+         WHERE x.record_id=?1 AND x.state=?2 AND x.backup_json=?3
+           AND x.gallery_id=?4 AND x.root_snapshot=?5
+           AND x.original_relative_path=?6 AND x.excluded_relative_path=?7
+           AND x.artifact_revision=?8 AND a.revision=?8 AND a.relative_directory=?9
+           AND a.gallery_id=?4 AND a.root_snapshot=?5
+           AND e.state=?10 AND a.state=?11",
+            params![
+                record.record_id,
+                record.state,
+                record.backup_json,
+                record.gallery_id,
+                record.root.to_string_lossy(),
+                record.original.as_str(),
+                record.excluded.as_str(),
+                record.artifact_revision,
+                from.as_str(),
+                backup.entry_state,
+                backup.artifact_state
+            ],
+            |row| row.get(0),
+        )
+        .map_err(db_error)?;
+    if unchanged != 1 {
+        return Err(conflict(
+            "The recorded album state changed while relocation was pending",
+        ));
+    }
+    let mut statement = connection
+        .prepare(
+            "SELECT json_object('sourcePageNumber',source_page_number,'relativePath',relative_path,
+         'state',state,'byteLength',byte_length,'sha256',sha256,'storageFormat',storage_format,
+         'sourceRevision',source_revision,'verifiedAt',verified_at,'excluded',excluded)
+         FROM download_pages WHERE entry_id=?1 ORDER BY source_page_number",
+        )
+        .map_err(db_error)?;
+    let rows = statement
+        .query_map([&record.entry_id], |row| row.get::<_, String>(0))
+        .map_err(db_error)?;
+    let prefix = format!("{}/", from.as_str());
+    let mut current_pages = Vec::new();
+    for row in rows {
+        let mut page: serde_json::Value =
+            serde_json::from_str(&row.map_err(db_error)?).map_err(json_error)?;
+        let suffix = page["relativePath"]
+            .as_str()
+            .and_then(|path| path.strip_prefix(&prefix))
+            .ok_or_else(|| conflict("A recorded page escapes the pending relocation"))?;
+        page["relativePath"] =
+            serde_json::Value::String(format!("{}/{suffix}", record.original.as_str()));
+        current_pages.push(page);
+    }
+    if current_pages != backup.pages {
+        return Err(conflict(
+            "The recorded page checkpoints changed after the recovery backup",
+        ));
+    }
+    let expected_manifest = if bundle.artifact.state == DownloadArtifactState::Complete {
+        let mut manifest = ArtifactManifest::from_bundle(bundle)?;
+        rebase_manifest(&mut manifest, from, &record.original)?;
+        Some(manifest)
+    } else {
+        None
+    };
+    if backup.manifest != expected_manifest {
+        return Err(conflict(
+            "The recovery manifest does not match the recorded album",
+        ));
+    }
+    Ok(())
 }
 
 fn rebase_manifest(
@@ -780,7 +1016,7 @@ mod tests {
     use crate::{
         application::{AutomationRepository, DownloadQueueAddOutcome, DownloadRepository},
         domain::GalleryId,
-        infrastructure::FilesystemArtifactStore,
+        infrastructure::{FilesystemArtifactStore, MigrationRunner},
     };
     use tempfile::TempDir;
 
@@ -849,7 +1085,7 @@ mod tests {
                 connection.execute(
                     "INSERT INTO download_pages(entry_id,gallery_id,source_page_number,relative_path,state,byte_length,sha256,storage_format,source_revision,verified_at)
                      VALUES(?1,?2,1,?3,'present',19,?4,'webp','fixture-revision','2026-09-01T00:00:00Z')",
-                    params![entry_id,gallery_id,format!("{directory}/0001.webp"),"a".repeat(64)],
+                    params![entry_id,gallery_id,format!("{directory}/0001.webp"),format!("{:x}", Sha256::digest(b"original page bytes"))],
                 ).unwrap();
                 connection.execute("INSERT INTO duplicate_hidden_galleries(gallery_id,decision_id,created_at) VALUES(?1,?2,'2026-09-01T00:00:00Z')",params![gallery_id,format!("hide-{gallery_id}")]).unwrap();
                 if state == "completed" {
@@ -1147,5 +1383,235 @@ mod tests {
         assert!(connection.execute(
             "UPDATE download_artifacts SET relative_directory='other',revision=revision+1 WHERE entry_id=?1",[&entry],
         ).is_err());
+    }
+
+    #[test]
+    fn v43_repairs_deployed_v42_trigger_and_recovers_renamed_folders_without_state_changes() {
+        let fixture = Fixture::new();
+        {
+            // Reconstruct the actual v42 schema in this in-memory fixture.
+            // Removing only the v43 history row becomes invalid once v44 exists.
+            let connection = fixture.repository.connection().unwrap();
+            let names = {
+                let mut statement = connection.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name GLOB 'overlap_merge_*'").unwrap();
+                let values = statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .unwrap()
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap();
+                values
+            };
+            for name in names {
+                assert!(name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_'));
+                connection
+                    .execute_batch(&format!("DROP TRIGGER {name}"))
+                    .unwrap();
+            }
+            connection.execute_batch("DROP TABLE overlap_page_merges; ALTER TABLE duplicate_candidates DROP COLUMN artifact_stale; DELETE FROM schema_migrations WHERE version=44;").unwrap();
+        }
+        fixture
+            .repository
+            .connection()
+            .unwrap()
+            .execute_batch(
+                "DELETE FROM schema_migrations WHERE version=43;
+             DROP TRIGGER download_artifacts_relative_directory_immutable;
+             CREATE TRIGGER download_artifacts_relative_directory_immutable
+             BEFORE UPDATE OF relative_directory ON download_artifacts
+             FOR EACH ROW WHEN NEW.relative_directory <> OLD.relative_directory
+             BEGIN SELECT RAISE(ABORT, 'download artifact relative_directory is immutable'); END;",
+            )
+            .unwrap();
+        let mut records = Vec::new();
+        for (gallery_id, state, recreate_empty) in [
+            (201, "cancelled", false),
+            (202, "failed", true),
+            (203, "completed", true),
+        ] {
+            let entry = fixture.seed(gallery_id, state);
+            let record = fixture.service.begin(&entry).unwrap();
+            // Reproduce the actual failure: rename (and manifest rewrite) works,
+            // but the deployed trigger aborts the path update and transaction.
+            let error = fixture.service.finish(&record).unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("relative_directory is immutable"),
+                "{error}"
+            );
+            assert!(fixture
+                .temporary
+                .path()
+                .join(record.excluded.as_str())
+                .join("0001.webp")
+                .is_file());
+            assert_eq!(fixture.artifact(&entry).2, record.original.as_str());
+            if recreate_empty {
+                fs::create_dir(fixture.temporary.path().join(record.original.as_str())).unwrap();
+            }
+            records.push((record, state));
+        }
+        {
+            let mut connection = fixture.repository.connection().unwrap();
+            let migrated = MigrationRunner::run(&mut connection).unwrap();
+            assert_eq!(migrated.applied_versions, vec![43, 44]);
+            assert_eq!(migrated.current_version, 44);
+            assert!(MigrationRunner::run(&mut connection)
+                .unwrap()
+                .applied_versions
+                .is_empty());
+        }
+        let report = fixture.service.reconcile_pending().unwrap();
+        assert!(report.issues.is_empty(), "{:?}", report.issues);
+        assert_eq!(report.moved, 3);
+        for (record, state) in records {
+            let artifact = fixture.artifact(&record.entry_id);
+            assert_eq!(artifact.0, state);
+            assert_eq!(
+                artifact.1,
+                if state == "completed" {
+                    "complete"
+                } else {
+                    "incomplete"
+                }
+            );
+            assert_eq!(artifact.2, record.excluded.as_str());
+            assert!(!fixture
+                .temporary
+                .path()
+                .join(record.original.as_str())
+                .exists());
+            assert_eq!(
+                fs::read(
+                    fixture
+                        .temporary
+                        .path()
+                        .join(record.excluded.as_str())
+                        .join("0001.webp")
+                )
+                .unwrap(),
+                b"original page bytes"
+            );
+            fixture
+                .service
+                .verify_backup(&checked_root(fixture.temporary.path()).unwrap(), &record)
+                .unwrap();
+        }
+        assert_eq!(fixture.service.reconcile_pending().unwrap().moved, 0);
+    }
+
+    #[test]
+    fn recovery_never_merges_a_recreated_nonempty_original_with_the_excluded_album() {
+        let fixture = Fixture::new();
+        let entry = fixture.seed(204, "cancelled");
+        let record = fixture.service.begin(&entry).unwrap();
+        fixture
+            .service
+            .write_backup(&checked_root(fixture.temporary.path()).unwrap(), &record)
+            .unwrap();
+        fixture
+            .service
+            .store
+            .move_managed_directory(&record.root, &record.original, &record.excluded)
+            .unwrap();
+        let original = fixture.temporary.path().join(record.original.as_str());
+        fs::create_dir(&original).unwrap();
+        fs::write(original.join("new-user-file.txt"), b"keep this file").unwrap();
+        let report = fixture.service.reconcile_pending().unwrap();
+        assert_eq!(report.moved, 0);
+        assert_eq!(report.issues.len(), 1);
+        assert_eq!(
+            fs::read(original.join("new-user-file.txt")).unwrap(),
+            b"keep this file"
+        );
+        assert_eq!(
+            fs::read(
+                fixture
+                    .temporary
+                    .path()
+                    .join(record.excluded.as_str())
+                    .join("0001.webp")
+            )
+            .unwrap(),
+            b"original page bytes"
+        );
+        assert_eq!(fixture.artifact(&entry).2, record.original.as_str());
+    }
+
+    #[test]
+    fn empty_original_is_preserved_until_files_backup_and_database_all_match() {
+        for (gallery_id, damage, expected) in [
+            (205, "page", "SHA-256"),
+            (206, "backup", "backup was modified"),
+            (207, "checkpoint", "page checkpoints changed"),
+            (208, "missing_backup", "filesystem operation failed"),
+        ] {
+            let fixture = Fixture::new();
+            let entry = fixture.seed(gallery_id, "failed");
+            let record = fixture.service.begin(&entry).unwrap();
+            if damage != "missing_backup" {
+                fixture
+                    .service
+                    .write_backup(&checked_root(fixture.temporary.path()).unwrap(), &record)
+                    .unwrap();
+            }
+            fixture
+                .service
+                .store
+                .move_managed_directory(&record.root, &record.original, &record.excluded)
+                .unwrap();
+            let original = fixture.temporary.path().join(record.original.as_str());
+            fs::create_dir(&original).unwrap();
+            match damage {
+                "page" => fs::write(
+                    fixture
+                        .temporary
+                        .path()
+                        .join(record.excluded.as_str())
+                        .join("0001.webp"),
+                    b"Xriginal page bytes",
+                )
+                .unwrap(),
+                "backup" => fs::write(
+                    fixture
+                        .temporary
+                        .path()
+                        .join(backup_path(&record).unwrap().as_str()),
+                    b"changed backup",
+                )
+                .unwrap(),
+                "checkpoint" => {
+                    fixture
+                        .repository
+                        .connection()
+                        .unwrap()
+                        .execute(
+                            "UPDATE download_pages SET source_revision='changed' WHERE entry_id=?1",
+                            [&entry],
+                        )
+                        .unwrap();
+                }
+                _ => {}
+            }
+            let report = fixture.service.reconcile_pending().unwrap();
+            assert_eq!(report.moved, 0, "{damage}");
+            assert_eq!(report.issues.len(), 1, "{damage}");
+            assert!(
+                report.issues[0].contains(expected),
+                "{damage}: {:?}",
+                report.issues
+            );
+            assert!(empty_directory(&original).unwrap(), "{damage}");
+            assert_eq!(
+                fixture.artifact(&entry),
+                (
+                    "failed".into(),
+                    "incomplete".into(),
+                    record.original.as_str().into()
+                )
+            );
+        }
     }
 }

@@ -99,7 +99,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -184,7 +184,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
+            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -295,7 +295,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36, 37, 38, 39, 40, 41, 42
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
         ]
     );
     let metadata: (String, String) = connection
@@ -359,7 +359,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -982,6 +982,160 @@ fn download_library_projection_keeps_one_latest_entry_per_gallery() {
     assert_eq!(page.items.len(), 1);
     assert_eq!(page.items[0].download.entry_id, second_entry_id);
     assert_eq!(page.items[0].download.state, JobState::Queued);
+}
+
+#[test]
+fn download_library_projection_restores_cached_tags_on_first_page_after_restart() {
+    let temporary = tempfile::tempdir().expect("create temporary directory");
+    let database_path = temporary.path().join("download-library.sqlite3");
+    {
+        let repository = Arc::new(SqliteRepository::open(&database_path).unwrap());
+        let service = ApplicationService::new(repository.clone())
+            .with_download_repository(repository.clone());
+        service
+            .download_queue_add(vec![7_010_021, 7_010_022], "cached-library-tags".into())
+            .unwrap();
+        let summary = json!({
+            "id": 7_010_022,
+            "title": "Previously loaded album",
+            "artist": "cached artist",
+            "series": [],
+            "characters": [],
+            "pages": 12,
+            "language": "korean",
+            "tags": ["female:glasses", "full_color"],
+            "publishedRank": 20260801,
+            "popularity": 0,
+            "thumbnailWidth": 600,
+            "thumbnailHeight": 800
+        });
+        repository.connection().unwrap().execute(
+            "INSERT INTO gallery_summary_cache (gallery_id, profile, schema_version, summary_json, updated_at)
+             VALUES (?1, 'hitomi-gallery-summary-v1', 1, ?2, '1999-01-01T00:00:00Z')",
+            params![7_010_022, summary.to_string()],
+        ).unwrap();
+    }
+
+    // A newly opened repository has no warm in-memory source summaries and no
+    // live source adapter. The very first library response must restore tags.
+    let repository = Arc::new(SqliteRepository::open(&database_path).unwrap());
+    let service = ApplicationService::new(repository.clone()).with_download_repository(repository);
+    let first = service
+        .download_library_page_list(DownloadListRequest {
+            state: None,
+            query: None,
+            page: 1,
+            page_size: 1,
+        })
+        .unwrap();
+    assert_eq!(first.total_items, 2);
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].gallery.id.get(), 7_010_022);
+    assert_eq!(
+        first.items[0].gallery.tags,
+        Some(vec!["female:glasses".into(), "full_color".into()])
+    );
+    assert_eq!(
+        serde_json::to_value(&first).unwrap()["items"][0]["gallery"]["tags"],
+        json!(["female:glasses", "full_color"])
+    );
+    let second = service
+        .download_library_page_list(DownloadListRequest {
+            state: None,
+            query: None,
+            page: 2,
+            page_size: 1,
+        })
+        .unwrap();
+    assert_eq!(second.items[0].gallery.id.get(), 7_010_021);
+    assert_eq!(second.items[0].gallery.tags, None);
+    assert!(
+        serde_json::to_value(&second).unwrap()["items"][0]["gallery"]
+            .get("tags")
+            .is_none()
+    );
+}
+
+#[test]
+fn download_library_projection_distinguishes_empty_tags_from_unusable_cached_summaries() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let service =
+        ApplicationService::new(repository.clone()).with_download_repository(repository.clone());
+    let ids = (7_010_031..=7_010_036).collect::<Vec<_>>();
+    service
+        .download_queue_add(ids.clone(), "unusable-library-tags".into())
+        .unwrap();
+    for (index, gallery_id) in ids.into_iter().enumerate() {
+        let mut summary = json!({
+            "id": gallery_id,
+            "title": "Cached album",
+            "artist": "cached artist",
+            "series": [],
+            "characters": [],
+            "pages": 12,
+            "language": "korean",
+            "tags": [],
+            "publishedRank": 20260801,
+            "popularity": 0,
+            "thumbnailWidth": 600,
+            "thumbnailHeight": 800
+        });
+        if index == 4 {
+            summary["id"] = json!(123);
+        }
+        let profile = if index == 2 {
+            "obsolete"
+        } else {
+            "hitomi-gallery-summary-v1"
+        };
+        let version: i64 = if index == 3 {
+            2
+        } else if index == 5 {
+            i64::MAX
+        } else {
+            1
+        };
+        let json = if index == 1 {
+            "{broken".into()
+        } else {
+            summary.to_string()
+        };
+        repository.connection().unwrap().execute(
+            "INSERT INTO gallery_summary_cache (gallery_id, profile, schema_version, summary_json) VALUES (?1, ?2, ?3, ?4)",
+            params![gallery_id, profile, version, json],
+        ).unwrap();
+    }
+    let page = service
+        .download_library_page_list(DownloadListRequest {
+            state: None,
+            query: None,
+            page: 1,
+            page_size: 20,
+        })
+        .unwrap();
+    assert_eq!(page.total_items, 6);
+    for item in page.items {
+        if item.gallery.id.get() == 7_010_031 {
+            assert_eq!(item.gallery.tags, Some(Vec::new()));
+            assert_eq!(
+                serde_json::to_value(&item.gallery).unwrap()["tags"],
+                json!([])
+            );
+        } else {
+            assert_eq!(item.gallery.tags, None);
+        }
+    }
+    // Listing the library only reads the cache, including invalid rows.
+    assert_eq!(
+        repository
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM gallery_summary_cache", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap(),
+        6
+    );
 }
 
 #[test]

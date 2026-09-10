@@ -1,0 +1,519 @@
+.download-overlap-containment {
+  display: grid;
+  gap: 10px;
+  margin: 12px 14px 0;
+  padding: 13px;
+  background:
+    linear-gradient(145deg, color-mix(in srgb, var(--success) 7%, transparent), transparent 46%),
+    color-mix(in srgb, var(--surface) 92%, black);
+  border: 1px solid color-mix(in srgb, var(--success) 38%, var(--line));
+  border-radius: 8px;
+}
+
+.download-overlap-stale-note {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 9px;
+  margin: 9px 14px 0;
+  padding: 10px 11px;
+  color: var(--warning);
+  background: var(--warning-bg);
+  border: 1px solid color-mix(in srgb, var(--warning) 44%, var(--line));
+  border-radius: 6px;
+}
+
+.download-overlap-stale-note > .fluent {
+  margin-top: 2px;
+}
+
+.download-overlap-stale-note > div {
+  display: grid;
+  gap: 3px;
+}
+
+.download-overlap-stale-note span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.download-overlap-containment > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.download-overlap-containment > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.download-overlap-containment h3,
+.download-overlap-containment p {
+  margin: 0;
+}
+
+.download-overlap-containment h3 {
+  font-size: 17px;
+}
+
+.download-overlap-containment p {
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.download-overlap-containment-count {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--success) 11%, var(--surface-soft));
+  border: 1px solid color-mix(in srgb, var(--success) 45%, var(--line));
+  border-radius: 999px;
+}
+
+.download-overlap-containment-keeper {
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px 11px;
+  background: color-mix(in srgb, var(--success) 10%, var(--surface-soft));
+  border: 1px solid color-mix(in srgb, var(--success) 62%, var(--line));
+  border-left-width: 4px;
+  border-radius: 6px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success) 8%, transparent);
+}
+
+.download-overlap-containment-keeper-cover,
+.download-overlap-containment-cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  overflow: hidden;
+  object-fit: cover;
+  background: var(--thumbnail-frame);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+}
+
+.download-overlap-containment-keeper > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.download-overlap-containment-keeper span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--success);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.download-overlap-containment-keeper strong,
+.download-overlap-containment-keeper small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-overlap-containment-keeper strong {
+  font-size: 15px;
+}
+
+.download-overlap-containment-keeper small {
+  color: var(--text-soft);
+}
+
+.download-overlap-containment-list {
+  display: grid;
+  gap: 7px;
+}
+
+.download-overlap-containment-item {
+  display: grid;
+  grid-template-columns: 30px 64px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--surface-soft) 92%, black);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  transition: border-color 140ms ease, background-color 140ms ease, opacity 140ms ease;
+}
+
+.download-overlap-containment-item.is-selected {
+  background: color-mix(in srgb, var(--danger) 5%, var(--surface-soft));
+  border-color: color-mix(in srgb, var(--danger) 46%, var(--line));
+}
+
+.download-overlap-containment-item.is-processed {
+  opacity: 0.58;
+  border-color: color-mix(in srgb, var(--success) 38%, var(--line));
+}
+
+.download-overlap-containment-check {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 44px;
+  cursor: pointer;
+}
+
+.download-overlap-containment-check input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.download-overlap-containment-checkmark {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: transparent;
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease, transform 120ms ease;
+}
+
+.download-overlap-containment-check:hover .download-overlap-containment-checkmark {
+  border-color: var(--primary-strong);
+  transform: scale(1.06);
+}
+
+.download-overlap-containment-check input:focus-visible + .download-overlap-containment-checkmark {
+  outline: 2px solid var(--primary-strong);
+  outline-offset: 2px;
+}
+
+.download-overlap-containment-check input:checked + .download-overlap-containment-checkmark {
+  color: #07120e;
+  background: var(--success);
+  border-color: var(--success);
+}
+
+.download-overlap-containment-check input:disabled + .download-overlap-containment-checkmark {
+  cursor: default;
+  opacity: 0.68;
+  transform: none;
+}
+
+.download-overlap-containment-copy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.download-overlap-containment-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.download-overlap-containment-heading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.download-overlap-containment-heading small {
+  flex: 0 0 auto;
+  color: var(--muted);
+}
+
+.download-overlap-containment-exclude {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--danger);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.download-overlap-containment-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 14px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.download-overlap-containment-facts b {
+  margin-right: 3px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.download-overlap-containment-row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.download-overlap-containment-row-actions .text-button {
+  min-height: 28px;
+  padding: 2px 8px;
+}
+
+.download-overlap-containment-evidence {
+  grid-column: 1 / -1;
+  min-width: 0;
+  padding-top: 3px;
+  border-top: 1px solid var(--line);
+}
+
+.download-overlap-containment-evidence .download-overlap-page-map {
+  margin: 8px 0 0;
+}
+
+.download-overlap-containment-ambiguous {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.7fr) minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 11px;
+  background: var(--warning-bg);
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, var(--line));
+  border-radius: 6px;
+}
+
+.download-overlap-containment-ambiguous > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.download-overlap-containment-ambiguous > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.download-overlap-containment-ambiguous strong {
+  color: var(--warning);
+}
+
+.download-overlap-containment-ambiguous span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.download-overlap-containment-ambiguous .text-button {
+  min-height: 30px;
+  padding: 3px 8px;
+}
+
+.download-overlap-containment > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 3px;
+}
+
+.download-overlap-containment-status,
+.download-overlap-containment-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.download-overlap-containment-status .spinner,
+.download-overlap-containment-loading .spinner {
+  width: 14px;
+  height: 14px;
+}
+
+.download-overlap-containment-apply {
+  flex: 0 0 auto;
+  min-width: 214px;
+}
+
+@media (max-width: 760px) {
+  .download-overlap-containment > header,
+  .download-overlap-containment > footer,
+  .download-overlap-containment-row-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .download-overlap-containment-item {
+    grid-template-columns: 28px 56px minmax(0, 1fr);
+  }
+
+  .download-overlap-containment-ambiguous {
+    grid-template-columns: 1fr;
+  }
+
+  .download-overlap-containment-apply {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .download-overlap-containment-item,
+  .download-overlap-containment-checkmark {
+    transition: none;
+  }
+}
+
+.download-overlap-merge-guide {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.45;
+  background: color-mix(in srgb, var(--primary) 7%, var(--surface));
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
+}
+
+.download-overlap-merge-guide > .fluent {
+  flex: 0 0 auto;
+  color: var(--primary-strong);
+}
+
+.download-overlap-merge-guide.has-message {
+  color: color-mix(in srgb, var(--warning) 82%, var(--text));
+  background: color-mix(in srgb, var(--warning) 10%, var(--surface));
+  border-bottom-color: color-mix(in srgb, var(--warning) 42%, var(--line));
+}
+
+.download-overlap-merge-guide.has-message > .fluent {
+  color: var(--warning);
+}
+
+.download-overlap-page-cell.can-merge {
+  cursor: copy;
+}
+
+.download-overlap-page-cell.can-merge:hover {
+  border-color: color-mix(in srgb, var(--success) 72%, var(--line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--success) 22%, transparent);
+}
+
+.download-overlap-page-cell.is-merge-source-blocked,
+.download-overlap-page-cell.is-merge-side-locked {
+  cursor: not-allowed;
+}
+
+.download-overlap-page-cell.is-merge-source-blocked::after,
+.download-overlap-page-cell.is-merge-side-locked::after {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  content: "";
+  background: repeating-linear-gradient(
+    -45deg,
+    transparent,
+    transparent 8px,
+    rgba(7, 13, 16, 0.16) 8px,
+    rgba(7, 13, 16, 0.16) 16px
+  );
+}
+
+.download-overlap-page-cell.is-merge-source {
+  z-index: 2;
+  border-color: var(--success);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--success) 38%, transparent),
+    inset 0 0 0 2px color-mix(in srgb, var(--success) 28%, transparent);
+}
+
+.download-overlap-page-cell.is-merge-target {
+  z-index: 2;
+  border-color: var(--warning);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--warning) 34%, transparent),
+    inset 0 0 0 2px color-mix(in srgb, var(--warning) 28%, transparent);
+}
+
+.download-overlap-page-cell.is-merge-source::after,
+.download-overlap-page-cell.is-merge-target::after {
+  display: none;
+}
+
+.download-overlap-page-merge-state {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 3;
+  padding: 2px 5px;
+  color: #07120e;
+  background: var(--success);
+  border-radius: 999px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.download-overlap-page-cell.is-merge-target .download-overlap-page-merge-state {
+  color: #251803;
+  background: var(--warning);
+}
+
+.download-overlap-action-note.is-page-merge {
+  align-items: center;
+  color: var(--text-soft);
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+  border-color: color-mix(in srgb, var(--success) 44%, var(--line));
+}
+
+.download-overlap-action-note.is-page-merge > .fluent {
+  color: var(--success);
+}
+
+.download-overlap-action-note.is-page-merge > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.download-overlap-action-note.is-page-merge strong {
+  color: var(--success);
+}
+
+.download-overlap-merge-clear {
+  flex: 0 0 auto;
+  min-height: 30px;
+  white-space: nowrap;
+}
+
+.download-overlap-merge-apply {
+  color: #07120e;
+  background: var(--success);
+  border-color: color-mix(in srgb, var(--success) 82%, white);
+}
+
+.download-overlap-merge-apply:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--success) 84%, white);
+}
+
+@media (max-width: 760px) {
+  .download-overlap-action-note.is-page-merge {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .download-overlap-merge-clear {
+    align-self: flex-end;
+  }
+}

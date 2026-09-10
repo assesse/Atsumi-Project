@@ -276,8 +276,10 @@ describe("SettingsDialog operational boundaries", () => {
       expect(focusedTooltip).not.toBeNull();
       expect(overlapHelp).toHaveAttribute("aria-describedby", focusedTooltip?.id);
       expect(focusedTooltip).toHaveTextContent("포함률 95% 이상");
-      expect(focusedTooltip).toHaveTextContent("1.5배·8장 이상");
-      expect(focusedTooltip).toHaveTextContent("복구 가능한 격리");
+      expect(focusedTooltip).toHaveTextContent("작은 판본의 모든 페이지 대응");
+      expect(focusedTooltip).toHaveTextContent("신뢰도 85% 이상");
+      expect(focusedTooltip).toHaveTextContent("완료본은 격리, 신규·대기본은 취소·제외 처리");
+      expect(focusedTooltip).not.toHaveTextContent("1.5배·8장 이상");
       await act(async () => {
         overlapHelp?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
       });
@@ -288,7 +290,7 @@ describe("SettingsDialog operational boundaries", () => {
         overlapCopy?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
         await new Promise((resolve) => window.setTimeout(resolve, 200));
       });
-      expect(container.querySelector('[role="tooltip"]')).toHaveTextContent("일반 판본은 포함률 95% 이상");
+      expect(container.querySelector('[role="tooltip"]')).toHaveTextContent("일반 판본: 포함률 95% 이상");
       await act(async () => {
         overlapCopy?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
       });

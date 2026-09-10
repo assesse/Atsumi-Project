@@ -2,7 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap, VecDeque},
     io::Cursor,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use reqwest::Url;
@@ -17,7 +17,8 @@ use crate::{
     infrastructure::{FilesystemArtifactStore, SqliteRepository},
     source::{
         hitomi::{
-            download_full_candidates, galleryinfo_script_url, gg_script_url,
+            download_full_candidates, galleries_index_file_url, galleries_index_version_url,
+            gallery_index_term_key, galleryinfo_script_url, gg_script_url,
             parse_galleryinfo_script, parse_gg_routing, webp_full_candidates,
             webp_thumbnail_candidates, ThumbnailSize, HITOMI_METADATA_ORIGIN,
         },
@@ -73,6 +74,7 @@ const GG_SCRIPT: &str = include_str!("../../../fixtures/hitomi/gg-current.js");
 struct FakeTransport {
     responses: Mutex<HashMap<String, VecDeque<Result<HttpPayload, SourceContractError>>>>,
     calls: Mutex<Vec<String>>,
+    requests: Mutex<Vec<(String, Option<String>)>>,
 }
 
 impl FakeTransport {
@@ -109,6 +111,16 @@ impl FakeTransport {
 
     fn was_called(&self, url: &str) -> bool {
         self.call_count(url) > 0
+    }
+
+    fn ranges_for(&self, url: &str) -> Vec<Option<String>> {
+        self.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(request_url, _)| request_url == url)
+            .map(|(_, range)| range.clone())
+            .collect()
     }
 }
 
@@ -501,6 +513,10 @@ fn detail_keeps_main_page_dimensions_when_related_metadata_is_temporarily_unavai
 impl HttpTransport for FakeTransport {
     fn execute(&self, request: HttpRequest) -> Result<HttpPayload, SourceContractError> {
         self.calls.lock().unwrap().push(request.url.clone());
+        self.requests
+            .lock()
+            .unwrap()
+            .push((request.url.clone(), request.range.clone()));
         self.responses
             .lock()
             .unwrap()
@@ -654,6 +670,250 @@ fn structured_search_intersects_artist_and_gender_tag_indexes() {
             .map(|gallery| gallery.id.get())
             .collect::<Vec<_>>(),
         vec![1001]
+    );
+}
+
+#[test]
+fn korean_title_search_uses_galleries_index_ranges_before_fetching_metadata() {
+    let transport = Arc::new(FakeTransport::default());
+    let origin = HITOMI_METADATA_ORIGIN;
+    let version = "2026090801";
+    let version_url = galleries_index_version_url();
+    let index_url = galleries_index_file_url(version, "index").unwrap();
+    let data_url = galleries_index_file_url(version, "data").unwrap();
+    let title_data = gallery_index_data(&[1001, 1003]);
+
+    transport.respond(
+        format!("{origin}/n/index-korean.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[1001, 1002, 1003]),
+    );
+    transport.respond(
+        version_url.clone(),
+        "text/plain",
+        format!("{version}\n").into_bytes(),
+    );
+    transport.respond(
+        index_url.clone(),
+        "application/octet-stream",
+        gallery_index_node(&[("줄곧", 1_200, title_data.len() as u32)]),
+    );
+    transport.respond(data_url.clone(), "application/octet-stream", title_data);
+    transport.respond(
+        galleryinfo_script_url(1003).unwrap(),
+        "text/javascript",
+        gallery_script(1003, "줄곧 이어지는 기록", "[]").into_bytes(),
+    );
+    let adapter = HitomiLiveAdapter::with_transport(
+        HitomiLiveConfig {
+            request_start_interval: Duration::ZERO,
+            ..HitomiLiveConfig::default()
+        },
+        transport.clone(),
+    );
+
+    let result = adapter
+        .search_submit(&SearchRequest {
+            text: "줄곧".into(),
+            include_tags: Vec::new(),
+            exclude_tags: Vec::new(),
+            languages: vec![Language::Korean],
+            sort: SearchSort::Recent,
+            page_size: 1,
+        })
+        .unwrap();
+
+    assert_eq!(result.first_page.items[0].id.get(), 1003);
+    assert_eq!(transport.ranges_for(&version_url), vec![None]);
+    assert_eq!(
+        transport.ranges_for(&index_url),
+        vec![Some("bytes=0-463".into())]
+    );
+    assert_eq!(
+        transport.ranges_for(&data_url),
+        vec![Some("bytes=1200-1211".into())]
+    );
+    assert_eq!(
+        transport.call_count(&galleryinfo_script_url(1002).unwrap()),
+        0,
+        "a gallery outside the title index result must not be metadata-scanned"
+    );
+    assert_eq!(
+        transport.call_count(&galleryinfo_script_url(1001).unwrap()),
+        0,
+        "the first page must fetch only the first indexed result"
+    );
+}
+
+#[test]
+fn title_search_intersects_multiple_positive_terms_and_subtracts_negative_terms() {
+    let transport = Arc::new(FakeTransport::default());
+    let origin = HITOMI_METADATA_ORIGIN;
+    let version = "multi-term-v1";
+    let index_url = galleries_index_file_url(version, "index").unwrap();
+    let data_url = galleries_index_file_url(version, "data").unwrap();
+    let first = gallery_index_data(&[10, 20, 30]);
+    let second = gallery_index_data(&[20, 30, 40]);
+    let excluded = gallery_index_data(&[30]);
+
+    transport.respond(
+        format!("{origin}/n/index-korean.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[10, 20, 30, 40]),
+    );
+    transport.respond(
+        galleries_index_version_url(),
+        "text/plain",
+        version.as_bytes().to_vec(),
+    );
+    transport.respond(
+        index_url.clone(),
+        "application/octet-stream",
+        gallery_index_node(&[
+            ("푸른", 100, first.len() as u32),
+            ("줄곧", 200, second.len() as u32),
+            ("비밀", 300, excluded.len() as u32),
+        ]),
+    );
+    transport.respond(data_url.clone(), "application/octet-stream", first);
+    transport.respond(data_url.clone(), "application/octet-stream", second);
+    transport.respond(data_url.clone(), "application/octet-stream", excluded);
+    transport.respond(
+        galleryinfo_script_url(20).unwrap(),
+        "text/javascript",
+        gallery_script(20, "푸른 줄곧 기록", "[]").into_bytes(),
+    );
+    let adapter = HitomiLiveAdapter::with_transport(
+        HitomiLiveConfig {
+            request_start_interval: Duration::ZERO,
+            ..HitomiLiveConfig::default()
+        },
+        transport.clone(),
+    );
+
+    let result = adapter
+        .search_submit(&SearchRequest {
+            text: "푸른 줄곧 -비밀".into(),
+            include_tags: Vec::new(),
+            exclude_tags: Vec::new(),
+            languages: vec![Language::Korean],
+            sort: SearchSort::Recent,
+            page_size: 20,
+        })
+        .unwrap();
+
+    assert_eq!(
+        result
+            .first_page
+            .items
+            .iter()
+            .map(|gallery| gallery.id.get())
+            .collect::<Vec<_>>(),
+        vec![20]
+    );
+    assert_eq!(
+        transport.call_count(&index_url),
+        1,
+        "all terms in one search must share the fetched root node"
+    );
+    assert_eq!(
+        transport.ranges_for(&data_url),
+        vec![
+            Some("bytes=100-115".into()),
+            Some("bytes=200-215".into()),
+            Some("bytes=300-307".into()),
+        ]
+    );
+    for gallery_id in [10, 30, 40] {
+        assert_eq!(
+            transport.call_count(&galleryinfo_script_url(gallery_id).unwrap()),
+            0,
+            "non-matching gallery {gallery_id} must not be metadata-scanned"
+        );
+    }
+}
+
+#[test]
+fn missing_or_invalid_title_index_never_falls_back_to_metadata_scanning() {
+    let origin = HITOMI_METADATA_ORIGIN;
+    let version = "missing-v1";
+    let version_url = galleries_index_version_url();
+    let index_url = galleries_index_file_url(version, "index").unwrap();
+
+    let missing = Arc::new(FakeTransport::default());
+    missing.respond(
+        format!("{origin}/n/index-korean.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[1001, 1002]),
+    );
+    missing.respond(
+        version_url.clone(),
+        "text/plain",
+        version.as_bytes().to_vec(),
+    );
+    missing.respond(
+        index_url.clone(),
+        "application/octet-stream",
+        gallery_index_node(&[("다른", 100, 8)]),
+    );
+    let missing_adapter = HitomiLiveAdapter::with_transport(
+        HitomiLiveConfig {
+            request_start_interval: Duration::ZERO,
+            ..HitomiLiveConfig::default()
+        },
+        missing.clone(),
+    );
+    let result = missing_adapter
+        .search_submit(&SearchRequest {
+            text: "줄곧".into(),
+            include_tags: Vec::new(),
+            exclude_tags: Vec::new(),
+            languages: vec![Language::Korean],
+            sort: SearchSort::Recent,
+            page_size: 20,
+        })
+        .unwrap();
+    assert!(result.first_page.items.is_empty());
+    assert_eq!(result.first_page.total_pages, 0);
+    for gallery_id in [1001, 1002] {
+        assert_eq!(
+            missing.call_count(&galleryinfo_script_url(gallery_id).unwrap()),
+            0
+        );
+    }
+
+    let invalid = Arc::new(FakeTransport::default());
+    invalid.respond(
+        format!("{origin}/n/index-korean.nozomi"),
+        "application/x-nozomi",
+        nozomi(&[1001]),
+    );
+    invalid.respond(version_url, "text/plain", version.as_bytes().to_vec());
+    invalid.respond(index_url, "application/octet-stream", vec![0; 4]);
+    let invalid_adapter = HitomiLiveAdapter::with_transport(
+        HitomiLiveConfig {
+            request_start_interval: Duration::ZERO,
+            ..HitomiLiveConfig::default()
+        },
+        invalid.clone(),
+    );
+    let error = invalid_adapter
+        .search_submit(&SearchRequest {
+            text: "줄곧".into(),
+            include_tags: Vec::new(),
+            exclude_tags: Vec::new(),
+            languages: vec![Language::Korean],
+            sort: SearchSort::Recent,
+            page_size: 20,
+        })
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        RepositoryError::Source(error) if error.code == SourceErrorCode::InvalidData
+    ));
+    assert_eq!(
+        invalid.call_count(&galleryinfo_script_url(1001).unwrap()),
+        0
     );
 }
 
@@ -1033,6 +1293,23 @@ fn live_search_contract_covers_paging_filters_popular_and_related_without_networ
         "application/x-nozomi",
         nozomi(&[1002]),
     );
+    let title_index_version = "fixture-v1";
+    let title_data = gallery_index_data(&[1003]);
+    transport.respond(
+        galleries_index_version_url(),
+        "text/plain",
+        title_index_version.as_bytes().to_vec(),
+    );
+    transport.respond(
+        galleries_index_file_url(title_index_version, "index").unwrap(),
+        "application/octet-stream",
+        gallery_index_node(&[("sunlit", 80, title_data.len() as u32)]),
+    );
+    transport.respond(
+        galleries_index_file_url(title_index_version, "data").unwrap(),
+        "application/octet-stream",
+        title_data,
+    );
     transport.respond(
         format!("{origin}/n/popular/week-english.nozomi"),
         "application/x-nozomi",
@@ -1154,6 +1431,38 @@ fn nozomi(ids: &[u32]) -> Vec<u8> {
     ids.iter().flat_map(|id| id.to_be_bytes()).collect()
 }
 
+fn gallery_index_data(ids: &[u32]) -> Vec<u8> {
+    let mut data = Vec::with_capacity(4 + ids.len() * 4);
+    data.extend_from_slice(&(ids.len() as u32).to_be_bytes());
+    data.extend(ids.iter().flat_map(|id| id.to_be_bytes()));
+    data
+}
+
+fn gallery_index_node(entries: &[(&str, u64, u32)]) -> Vec<u8> {
+    let mut entries = entries
+        .iter()
+        .map(|(term, offset, length)| (gallery_index_term_key(term), *offset, *length))
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|(key, _, _)| *key);
+    let mut node = Vec::new();
+    node.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    for (key, _, _) in &entries {
+        node.extend_from_slice(&(key.len() as u32).to_be_bytes());
+        node.extend_from_slice(key);
+    }
+    node.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+    for (_, offset, length) in entries {
+        node.extend_from_slice(&offset.to_be_bytes());
+        node.extend_from_slice(&length.to_be_bytes());
+    }
+    for _ in 0..17 {
+        node.extend_from_slice(&0_u64.to_be_bytes());
+    }
+    assert!(node.len() <= 464);
+    node.resize(464, 0);
+    node
+}
+
 fn gallery_script(id: u64, title: &str, related: &str) -> String {
     GALLERY_SCRIPT
         .replace("\"id\": \"424242\"", &format!("\"id\": \"{id}\""))
@@ -1184,6 +1493,39 @@ fn live_floating_detail_metadata_for_reported_galleries() {
         assert_eq!(detail.summary.pages as usize, detail.page_dimensions.len());
         assert!(!detail.page_dimensions.is_empty());
     }
+}
+
+#[test]
+#[ignore = "opt-in live Korean galleriesindex search smoke"]
+fn live_korean_title_index_search_smoke() {
+    assert_eq!(
+        std::env::var("ATSUMI_ALLOW_LIVE_SMOKE").as_deref(),
+        Ok("1"),
+        "live network access requires ATSUMI_ALLOW_LIVE_SMOKE=1"
+    );
+    let adapter = HitomiLiveAdapter::new(HitomiLiveConfig {
+        request_start_interval: Duration::ZERO,
+        max_retries: 0,
+        ..HitomiLiveConfig::default()
+    })
+    .expect("construct live adapter");
+    let started = Instant::now();
+    let result = adapter
+        .search_submit(&SearchRequest {
+            text: "줄곧".into(),
+            include_tags: Vec::new(),
+            exclude_tags: Vec::new(),
+            languages: vec![Language::Korean],
+            sort: SearchSort::Recent,
+            page_size: 5,
+        })
+        .expect("query the live galleries title index with a Hangul token");
+    assert!(result.query_id.starts_with("hitomi-"));
+    assert!(result.first_page.items.len() <= 5);
+    assert!(
+        started.elapsed() < Duration::from_secs(30),
+        "indexed Hangul title search unexpectedly behaved like a metadata scan"
+    );
 }
 
 #[test]

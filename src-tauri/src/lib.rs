@@ -592,6 +592,13 @@ pub fn run() -> tauri::Result<()> {
             let database_path = data_dir.join("atsumi-next.sqlite3");
             let repository = SqliteRepository::open(&database_path)?;
             let repository = Arc::new(repository);
+            let overlap_merges = Arc::new(infrastructure::OverlapMergeService::new(repository.clone()));
+            // Restore an interrupted filesystem swap before any ordinary worker
+            // or recovery path can read or change its page checkpoints.
+            let recovered_merges = overlap_merges.recover_pending()?;
+            if recovered_merges > 0 {
+                tracing::info!(recovered_merges, "Recovered interrupted edition page merges");
+            }
             let settings = ApplicationService::new(repository.clone()).settings_get()?;
             let download_root_configured = !settings.download_root.trim().is_empty();
             let live_source = Arc::new(HitomiLiveAdapter::new(HitomiLiveConfig {
@@ -877,6 +884,7 @@ pub fn run() -> tauri::Result<()> {
                 live_source.clone(),
                 data_dir,
             ).with_gallery_previews(gallery_previews).with_excluded_artifacts(excluded_artifacts)
+                .with_overlap_merges(overlap_merges)
                 .with_thumbnail_disk_cache(thumbnail_disk_cache));
             let tray_status = MenuItem::with_id(
                 app,
@@ -966,6 +974,7 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::download_overlap_automation_history_list,
             interface::commands::download_overlap_automation_history_acknowledge,
             interface::commands::download_overlap_decision_apply,
+            interface::commands::download_overlap_merge,
             interface::commands::internal_duplicate_snapshot,
             interface::commands::internal_duplicate_active_artifact,
             interface::commands::internal_duplicate_scan_start,

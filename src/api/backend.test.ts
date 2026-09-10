@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { galleryId } from "../core/types";
+import { galleryId, type GalleryId } from "../core/types";
 import { backend } from "./backend";
 import type {
   AutoFindSnapshot,
   DownloadEntry,
+  DownloadOverlapDecisionRequest,
+  DownloadOverlapMergeRequest,
   DownloadOverlapReview,
   DuplicateSnapshot,
   InternalArtifactScanProgress,
@@ -19,6 +21,184 @@ const searchRequest = (patch: Partial<SearchRequest> = {}): SearchRequest => ({
   sort: "recent",
   pageSize: 3,
   ...patch,
+});
+
+const prepareOverlapMergeContract = (sourceSide: DownloadOverlapMergeRequest["sourceSide"]) => {
+  const state = backend as unknown as {
+    downloadEntries: Map<string, DownloadEntry>;
+    downloadOverlapReviews: Map<string, DownloadOverlapReview>;
+    duplicateHiddenGalleryIds: Set<number>;
+    explorationRestoredGalleryIds: Set<number>;
+  };
+  const saved = {
+    downloadEntries: state.downloadEntries, downloadOverlapReviews: state.downloadOverlapReviews,
+    duplicateHiddenGalleryIds: state.duplicateHiddenGalleryIds,
+    explorationRestoredGalleryIds: state.explorationRestoredGalleryIds,
+  };
+  const incoming = { entryId: "merge-incoming", galleryId: galleryId(7_310_201), title: "Incoming merge fixture", artists: ["fixture"], pageCount: sourceSide === "incoming" ? 4 : 6 };
+  const existing = { entryId: "merge-existing", galleryId: galleryId(7_310_202), title: "Existing merge fixture", artists: ["fixture"], pageCount: sourceSide === "existing" ? 4 : 6 };
+  const review: DownloadOverlapReview = {
+    reviewId: "merge-contract", entryId: incoming.entryId, incoming, revision: 7, state: "pending",
+    profileVersion: 1, policyVersion: 2, incomingFingerprint: "a".repeat(64),
+    createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z",
+    candidates: [{
+      candidateId: "merge-candidate", existing, existingFingerprint: "b".repeat(64),
+      relation: sourceSide === "incoming" ? "existing_contains_incoming" : "incoming_contains_existing",
+      confidence: 0.99, matchedPages: 4, exactPages: 4, visualPages: 0,
+      incomingCoverage: 4 / incoming.pageCount, existingCoverage: 4 / existing.pageCount,
+      incomingUniquePages: incoming.pageCount - 4, existingUniquePages: existing.pageCount - 4,
+      longestAlignedRun: 4, rank: 1,
+      pagePairs: Array.from({ length: 4 }, (_, i) => ({
+        incomingSourcePage: i + (sourceSide === "incoming" ? 1 : 2),
+        existingSourcePage: i + (sourceSide === "existing" ? 1 : 2),
+        exactSha256: true, dHashDistance: 0, pHashDistance: 0, detailHashDistance: 0,
+        edgeSimilarity: 1, visualSimilarity: 1, lowInformation: false,
+      })),
+    }],
+  };
+  state.downloadEntries = new Map([incoming, existing].map((ref) => [ref.entryId, {
+    entryId: ref.entryId, galleryId: ref.galleryId, revision: 3, progress: 100,
+    state: ref === incoming ? "review_required" : "completed",
+    ...(ref === incoming ? { reviewKind: "gallery_duplicate" as const, reviewId: review.reviewId } : {}),
+  }]));
+  state.downloadOverlapReviews = new Map([[review.reviewId, review]]);
+  state.duplicateHiddenGalleryIds = new Set();
+  state.explorationRestoredGalleryIds = new Set();
+  const request: DownloadOverlapMergeRequest = {
+    reviewId: review.reviewId, expectedRevision: review.revision, candidateId: review.candidates[0]!.candidateId,
+    sourceSide, sourcePages: [1, 3], excludeSource: true,
+  };
+  return {
+    state, review, request,
+    source: sourceSide === "incoming" ? incoming : existing,
+    target: sourceSide === "incoming" ? existing : incoming,
+    restore: () => Object.assign(state, saved),
+  };
+};
+
+describe("browser download overlap page merge contract", () => {
+  it.each(["existing", "incoming"] as const)("rejects invalid %s page merges without changing either album", async (side) => {
+    const fixture = prepareOverlapMergeContract(side);
+    const { state, review, request, source, target } = fixture;
+    const initialEntries = [...state.downloadEntries];
+    const candidate = review.candidates[0]!;
+    const reject = async (patch: Partial<DownloadOverlapMergeRequest> = {}) => {
+      const beforeReview = structuredClone(state.downloadOverlapReviews.get(review.reviewId));
+      const beforeEntries = structuredClone([...state.downloadEntries]);
+      const beforeHidden = [...state.duplicateHiddenGalleryIds];
+      expect((await backend.downloadOverlapMerge({ ...request, ...patch })).ok).toBe(false);
+      expect(state.downloadOverlapReviews.get(review.reviewId)).toEqual(beforeReview);
+      expect([...state.downloadEntries]).toEqual(beforeEntries);
+      expect([...state.duplicateHiddenGalleryIds]).toEqual(beforeHidden);
+    };
+    const replacePairs = (pairs: typeof candidate.pagePairs) => state.downloadOverlapReviews.set(review.reviewId, {
+      ...review, candidates: [{ ...candidate, pagePairs: pairs }],
+    });
+    try {
+      for (const sourcePages of [[], [-1], [0], [1.5], [source.pageCount + 1], [1, 1]]) await reject({ sourcePages });
+      await reject({ candidateId: "different-candidate" });
+      await reject({ sourceSide: "both" as DownloadOverlapMergeRequest["sourceSide"] });
+      await reject({ expectedRevision: review.revision + 1 });
+      await reject({ reviewId: "missing-merge-review" });
+
+      for (const stateName of ["resolved", "cancelled", "stale"] as const) {
+        state.downloadOverlapReviews.set(review.reviewId, { ...review, state: stateName });
+        await reject();
+      }
+      state.downloadOverlapReviews.set(review.reviewId, { ...review, candidates: [{ ...candidate, decision: "keep_both" }] });
+      await reject();
+      state.downloadOverlapReviews.set(review.reviewId, review);
+
+      for (const ref of [source, target]) {
+        state.duplicateHiddenGalleryIds.add(ref.galleryId);
+        await reject();
+        state.duplicateHiddenGalleryIds.delete(ref.galleryId);
+        const original = state.downloadEntries.get(ref.entryId)!;
+        for (const entryState of ["cancelled", "quarantined", "failed", "queued"] as const) {
+          state.downloadEntries.set(ref.entryId, { ...original, state: entryState });
+          await reject();
+        }
+        state.downloadEntries.delete(ref.entryId);
+        await reject();
+        state.downloadEntries.set(ref.entryId, original);
+      }
+
+      replacePairs(candidate.pagePairs.slice(1));
+      await reject({ sourcePages: [1], excludeSource: false }); // The selected source page has no mapping.
+      replacePairs([...candidate.pagePairs, candidate.pagePairs[0]!]);
+      await reject({ sourcePages: [1], excludeSource: false }); // Duplicate source mapping.
+      const targetField = side === "existing" ? "incomingSourcePage" : "existingSourcePage";
+      for (const targetPage of [-1, 0, 1.5, target.pageCount + 1]) {
+        replacePairs(candidate.pagePairs.map((pair, index) => index === 0 ? { ...pair, [targetField]: targetPage } : pair));
+        await reject({ sourcePages: [1], excludeSource: false });
+      }
+      replacePairs(candidate.pagePairs.map((pair, index) => index === 1
+        ? { ...pair, [targetField]: candidate.pagePairs[0]![targetField] } : pair));
+      await reject({ sourcePages: [1], excludeSource: false }); // Another source claims the same target.
+      expect(state.downloadEntries).toEqual(new Map(initialEntries));
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  it.each(["existing", "incoming"] as const)("requires complete unique source coverage before excluding the %s merge source", async (side) => {
+    const fixture = prepareOverlapMergeContract(side);
+    const { state, review, request, source } = fixture;
+    try {
+      const candidate = review.candidates[0]!;
+      state.downloadOverlapReviews.set(review.reviewId, {
+        ...review, candidates: [{ ...candidate, pagePairs: candidate.pagePairs.slice(0, 3) }],
+      });
+      // The selected page is mapped, but the unselected last source page is not.
+      expect(await backend.downloadOverlapMerge({ ...request, sourcePages: [1] })).toMatchObject({
+        ok: false, error: { details: { field: "request.excludeSource" } },
+      });
+      expect(state.duplicateHiddenGalleryIds.has(source.galleryId)).toBe(false);
+      expect(state.downloadOverlapReviews.get(review.reviewId)?.state).toBe("pending");
+      expect((await backend.downloadOverlapMerge({ ...request, sourcePages: [1], excludeSource: false })).ok).toBe(true);
+      expect(state.duplicateHiddenGalleryIds.has(source.galleryId)).toBe(false);
+      expect(state.downloadEntries.get(source.entryId)?.state).not.toBe("cancelled");
+    } finally {
+      fixture.restore();
+    }
+  });
+
+  it.each(["existing", "incoming"] as const)("preserves the target and excludes only the successful %s merge source", async (side) => {
+    const fixture = prepareOverlapMergeContract(side);
+    const { state, review, request, source, target } = fixture;
+    const targetBefore = structuredClone(state.downloadEntries.get(target.entryId)!);
+    const sourceBefore = state.downloadEntries.get(source.entryId)!;
+    const unrelated: DownloadEntry = { entryId: "unrelated-merge-entry", galleryId: galleryId(7_310_203), revision: 9, state: "completed", progress: 100 };
+    state.downloadEntries.set(unrelated.entryId, unrelated);
+    state.explorationRestoredGalleryIds.add(source.galleryId);
+    state.explorationRestoredGalleryIds.add(target.galleryId);
+    try {
+      expect(await backend.downloadOverlapMerge(request)).toMatchObject({
+        ok: true, data: {
+          mergeId: expect.any(String), sourceGalleryId: source.galleryId, targetGalleryId: target.galleryId,
+          replacedPages: 2, backupPath: expect.stringContaining(".atsumi-page-merges/"),
+          affectedReviewIds: [review.reviewId], sourceExcluded: true,
+        },
+      });
+      expect(state.downloadEntries.get(target.entryId)).toEqual({ ...targetBefore,
+        revision: targetBefore.revision + 1,
+        ...(targetBefore.state === "review_required" ? { state: "queued", reviewId: undefined, reviewKind: undefined } : {}),
+      });
+      expect(state.downloadEntries.get(unrelated.entryId)).toEqual(unrelated);
+      expect(state.downloadEntries.get(source.entryId)).toMatchObject({
+        state: "cancelled", revision: sourceBefore.revision + 1, reviewId: undefined, reviewKind: undefined,
+      });
+      expect([...state.duplicateHiddenGalleryIds]).toEqual([source.galleryId]);
+      expect(state.explorationRestoredGalleryIds.has(source.galleryId)).toBe(false);
+      expect(state.explorationRestoredGalleryIds.has(target.galleryId)).toBe(true);
+      expect(state.downloadOverlapReviews.get(review.reviewId)).toMatchObject({
+        state: side === "incoming" ? "cancelled" : "stale", revision: review.revision + 1,
+      });
+      expect((await backend.downloadOverlapMerge(request)).ok).toBe(false);
+    } finally {
+      fixture.restore();
+    }
+  });
 });
 
 describe("saved gallery preview contract", () => {
@@ -1073,6 +1253,28 @@ describe("browser backend download contract", () => {
 });
 
 describe("browser backend duplicate review contract", () => {
+  it("limits explicit comparison to two completed visible albums and rejects invalid selections", async () => {
+    const state = backend as unknown as { downloadEntries: Map<string, DownloadEntry>; duplicateSnapshotState: DuplicateSnapshot; duplicateHiddenGalleryIds: Set<GalleryId>; duplicateGeneration: number };
+    const saved = { entries: state.downloadEntries, snapshot: state.duplicateSnapshotState, hidden: state.duplicateHiddenGalleryIds };
+    vi.useFakeTimers();
+    try {
+      state.downloadEntries = new Map([4051038, 4050754, 4050000].map((id) => [`pair-${id}`, { entryId: `pair-${id}`, galleryId: galleryId(id), revision: 0, state: "completed", progress: 100 }]));
+      state.duplicateSnapshotState = { ...state.duplicateSnapshotState, run: undefined, candidates: [] };
+      state.duplicateHiddenGalleryIds = new Set();
+      for (const ids of [[], [4051038], [4051038, 4051038], [4051038, 4050754, 4050000], [4051038, -1], [4051038, 999]]) {
+        expect(await backend.duplicateScanStart(ids.map(galleryId))).toMatchObject({ ok: false });
+      }
+      expect(await backend.duplicateScanStart([galleryId(4051038), galleryId(4050754)])).toMatchObject({ ok: true, data: { totalArtifacts: 2, totalPairs: 1 } });
+      expect(await backend.duplicateScanStart([galleryId(4051038), galleryId(4050000)])).toMatchObject({ ok: false });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await backend.duplicateSnapshot()).toMatchObject({ ok: true, data: { run: { state: "completed", comparedPairs: 1 } } });
+    } finally {
+      state.duplicateGeneration++;
+      state.downloadEntries = saved.entries; state.duplicateSnapshotState = saved.snapshot; state.duplicateHiddenGalleryIds = saved.hidden;
+      vi.useRealTimers();
+    }
+  });
+
   it("persists scan progress, cancellation, deterministic evidence, and revision-CAS decisions", async () => {
     vi.useFakeTimers();
     const events: string[] = [];
@@ -1704,8 +1906,8 @@ describe("browser backend active-work exit contract", () => {
       action: "remove_existing_continue",
       candidateId: firstCandidate.candidateId,
       actor: "automation",
-      reasonCode: "balanced_overlap_v4",
-      ruleVersion: 4,
+      reasonCode: "balanced_overlap_v5",
+      ruleVersion: 5,
       featureSnapshotJson: "[]",
     })).resolves.toMatchObject({
       ok: false,
@@ -1816,8 +2018,8 @@ describe("browser backend active-work exit contract", () => {
         action: "remove_existing_continue",
         candidateId,
         actor: "automation",
-        reasonCode: "balanced_overlap_v4",
-        ruleVersion: 4,
+        reasonCode: "balanced_overlap_v5",
+        ruleVersion: 5,
         featureSnapshotJson: "{}",
       });
 
@@ -1831,8 +2033,8 @@ describe("browser backend active-work exit contract", () => {
       candidateId: review.candidates[0]!.candidateId,
       action: "remove_existing_continue",
       actor: "automation",
-      reasonCode: "balanced_overlap_v4",
-      ruleVersion: 4,
+      reasonCode: "balanced_overlap_v5",
+      ruleVersion: 5,
       featureSnapshotJson: "{}",
       createdAt: expect.any(String),
     });
@@ -1868,6 +2070,116 @@ describe("browser backend active-work exit contract", () => {
     });
     expect(reopenedPage.data.items.find((item) => item.reviewId === review.reviewId)?.acknowledgedAt).toBeUndefined();
   });
+
+  it.each(["remove_existing_continue", "remove_incoming"] as const)(
+    "validates human containment batch %s against its audit, current pair, and surviving keeper",
+    async (action) => {
+      const state = backend as unknown as {
+        downloadEntries: Map<string, DownloadEntry>;
+        downloadOverlapReviews: Map<string, DownloadOverlapReview>;
+        duplicateHiddenGalleryIds: Set<number>;
+        explorationRestoredGalleryIds: Set<number>;
+        downloadOverlapAutomationHistory: Map<string, unknown>;
+      };
+      const fixture = await backend.downloadOverlapReviewGet(`browser-manual-containment-${action}`);
+      if (!fixture.ok) throw new Error("browser overlap fixture missing");
+      const reverse = action === "remove_incoming";
+      const incomingId = galleryId(reverse ? 7_310_001 : 7_310_003);
+      const existingId = galleryId(reverse ? 7_310_002 : 7_310_004);
+      const incomingEntryId = `batch-${incomingId}`;
+      const existingEntryId = `batch-${existingId}`;
+      const candidate = {
+        ...fixture.data.candidates[0]!,
+        existing: { ...fixture.data.candidates[0]!.existing, entryId: existingEntryId, galleryId: existingId, pageCount: reverse ? 8 : 4 },
+        relation: reverse ? "existing_contains_incoming" as const : "incoming_contains_existing" as const,
+        confidence: 0.99, matchedPages: 4, exactPages: 4, visualPages: 0,
+        existingCoverage: reverse ? 0.5 : 1, incomingCoverage: reverse ? 1 : 0.5,
+        existingUniquePages: reverse ? 4 : 0, incomingUniquePages: reverse ? 0 : 4,
+        longestAlignedRun: 4,
+        pagePairs: fixture.data.candidates[0]!.pagePairs.map((pair, index) => ({
+          ...pair, incomingSourcePage: index + 1, existingSourcePage: index + 1,
+          exactSha256: true, lowInformation: false,
+        })),
+      };
+      const review: DownloadOverlapReview = {
+        ...fixture.data, entryId: incomingEntryId,
+        incoming: { ...fixture.data.incoming, entryId: incomingEntryId, galleryId: incomingId, pageCount: reverse ? 4 : 8 },
+        candidates: [candidate],
+      };
+      const incomingEntry: DownloadEntry = {
+        entryId: incomingEntryId, galleryId: incomingId, revision: 0, state: "review_required", progress: 100,
+        reviewKind: "gallery_duplicate", reviewId: review.reviewId,
+      };
+      const existingEntry: DownloadEntry = {
+        entryId: existingEntryId, galleryId: existingId, revision: 0, state: "completed", progress: 100,
+      };
+      const keeper = reverse ? candidate.existing : review.incoming;
+      const excluded = reverse ? review.incoming : candidate.existing;
+      const keeperEntry = reverse ? existingEntry : incomingEntry;
+      const snapshot = {
+        rule: "manual_containment_batch_v1", ruleVersion: 1,
+        reviewId: review.reviewId, reviewRevision: review.revision, candidateId: candidate.candidateId,
+        keeperGalleryId: keeper.galleryId, excludedGalleryId: excluded.galleryId,
+      };
+      const request: DownloadOverlapDecisionRequest = {
+        reviewId: review.reviewId, expectedRevision: review.revision, candidateId: candidate.candidateId,
+        action, actor: "human", reasonCode: "manual_containment_batch_v1", ruleVersion: 1,
+        featureSnapshotJson: JSON.stringify(snapshot),
+      };
+      state.downloadOverlapReviews.set(review.reviewId, review);
+      state.downloadEntries.set(incomingEntryId, incomingEntry);
+      state.downloadEntries.set(existingEntryId, existingEntry);
+      const reject = async (override: Partial<DownloadOverlapDecisionRequest> = {}) => {
+        expect((await backend.downloadOverlapDecisionApply({ ...request, ...override })).ok).toBe(false);
+        expect(state.downloadOverlapReviews.get(review.reviewId)).toMatchObject({ revision: 0, state: "pending" });
+        expect(state.duplicateHiddenGalleryIds.has(excluded.galleryId)).toBe(false);
+      };
+      try {
+        for (const patch of [
+          { rule: "unverified-rule" }, { reviewRevision: review.revision + 1 },
+          { candidateId: "another-candidate" }, { keeperGalleryId: excluded.galleryId },
+          { excludedGalleryId: keeper.galleryId },
+        ]) await reject({ featureSnapshotJson: JSON.stringify({ ...snapshot, ...patch }) });
+        await reject({ ruleVersion: 2 });
+        await reject({ featureSnapshotJson: "[]" });
+
+        state.downloadOverlapReviews.set(review.reviewId, {
+          ...review, candidates: [{ ...candidate, relation: "near_equivalent" }],
+        });
+        await reject();
+        state.downloadOverlapReviews.set(review.reviewId, review);
+
+        state.duplicateHiddenGalleryIds.add(keeper.galleryId);
+        await reject();
+        state.duplicateHiddenGalleryIds.delete(keeper.galleryId);
+        state.downloadEntries.delete(keeper.entryId);
+        await reject();
+        for (const terminal of ["quarantined", "cancelled", "failed"] as const) {
+          state.downloadEntries.set(keeper.entryId, { ...keeperEntry, state: terminal });
+          await reject();
+        }
+        state.downloadEntries.set(keeper.entryId, keeperEntry);
+
+        const result = await backend.downloadOverlapDecisionApply(request);
+        expect(result).toMatchObject({ ok: true, data: {
+          cancelled: reverse, resumed: !reverse,
+          review: { decisions: [expect.objectContaining({ actor: "human", reasonCode: "manual_containment_batch_v1", ruleVersion: 1 })] },
+        } });
+        expect(state.downloadEntries.get(keeper.entryId)?.state).toBe(reverse ? "completed" : "queued");
+        expect(state.duplicateHiddenGalleryIds.has(excluded.galleryId)).toBe(true);
+        expect(state.duplicateHiddenGalleryIds.has(keeper.galleryId)).toBe(false);
+        expect(state.downloadOverlapAutomationHistory.has(review.reviewId)).toBe(false);
+      } finally {
+        state.downloadEntries.delete(incomingEntryId);
+        state.downloadEntries.delete(existingEntryId);
+        state.downloadOverlapReviews.delete(review.reviewId);
+        for (const id of [incomingId, existingId]) {
+          state.duplicateHiddenGalleryIds.delete(id);
+          state.explorationRestoredGalleryIds.delete(id);
+        }
+      }
+    },
+  );
 
   it("cancels only a chained staging review when it is removed from a newer overlap review", async () => {
     const state = backend as unknown as {
