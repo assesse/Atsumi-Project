@@ -3,6 +3,7 @@ import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
 import type { DownloadState, Gallery, GalleryId } from "../core/types";
 import { FluentIcon } from "./FluentIcon";
 import type { DownloadOverlapContainmentGroup } from "../state/downloadOverlapContainment";
+import "./ActivityDrawer.css";
 
 type ActivityDrawerProps = {
   containmentGroups?: DownloadOverlapContainmentGroup[];
@@ -18,6 +19,7 @@ type ActivityDrawerProps = {
   automationHistoryTotalItems?: number;
   automationHistoryUnacknowledgedItems?: number;
   automationHistoryPendingReviewIds?: ReadonlySet<string>;
+  automationSequenceLoading?: boolean;
   danbooruActivities?: DanbooruSessionActivity[];
   duplicateExcludedGalleryIds?: ReadonlySet<GalleryId>;
   onClose: () => void;
@@ -27,6 +29,7 @@ type ActivityDrawerProps = {
   onRestoreAutomationExclusions?: (reviewId: string, galleryIds: GalleryId[]) => void;
   onRetryAutomationHistory?: () => void;
   onLoadMoreAutomationHistory?: () => void;
+  onStartAutomationSequence?: () => void;
   onRetry: (id: GalleryId) => void;
   onCancel: (id: GalleryId) => void;
   pendingEntryIds?: ReadonlySet<string>;
@@ -67,6 +70,16 @@ const runningDownloadStates = new Set([
 ]);
 
 const duplicateProcessedDetail = "중복 처리 완료 · 목록에서 제외";
+
+// Keep live work and decisions visible, then failures, then finished history.
+// Excluded downloads can retain a failed/review state after duplicate removal.
+const sessionActivityPriority = (state: DownloadState, duplicateExcluded = false): number => {
+  if (runningDownloadStates.has(state)) return 0;
+  if (duplicateExcluded) return 2;
+  if (state === "review_required") return 0;
+  if (state === "failed" || state === "interrupted") return 1;
+  return 2;
+};
 
 const stateDetail: Partial<Record<NonNullable<Gallery["download"]>["state"], string>> = {
   queued: "대기 중",
@@ -133,6 +146,7 @@ export function ActivityDrawer({
   automationHistoryTotalItems = 0,
   automationHistoryUnacknowledgedItems = 0,
   automationHistoryPendingReviewIds = new Set(),
+  automationSequenceLoading = false,
   danbooruActivities = [],
   duplicateExcludedGalleryIds = new Set(),
   onClose,
@@ -142,6 +156,7 @@ export function ActivityDrawer({
   onRestoreAutomationExclusions,
   onRetryAutomationHistory,
   onLoadMoreAutomationHistory,
+  onStartAutomationSequence,
   onRetry,
   onCancel,
   pendingEntryIds = new Set(),
@@ -157,7 +172,12 @@ export function ActivityDrawer({
   const galleryById = new Map(galleries.map((gallery) => [gallery.id, gallery]));
   const downloadActivities = sessionDownloads.flatMap(({ galleryId, occurredAt }) => {
     const gallery = galleryById.get(galleryId);
-    return gallery?.download ? [{ kind: "download" as const, gallery, occurredAt }] : [];
+    return gallery?.download ? [{
+      kind: "download" as const,
+      gallery,
+      occurredAt,
+      priority: sessionActivityPriority(gallery.download.state, duplicateExcludedGalleryIds.has(gallery.id)),
+    }] : [];
   });
   const latestAutomaticActivities = [...automaticOverlapActivities]
     .sort((left, right) => right.occurredAt - left.occurredAt)
@@ -169,14 +189,16 @@ export function ActivityDrawer({
       kind: "automatic-overlap" as const,
       activity,
       occurredAt: activity.occurredAt,
+      priority: sessionActivityPriority(activity.state),
     })),
     ...danbooruActivities.map((activity) => ({
       kind: "danbooru" as const,
       activity,
       occurredAt: activity.occurredAt,
+      priority: sessionActivityPriority(activity.state),
     })),
   ]
-    .sort((left, right) => right.occurredAt - left.occurredAt);
+    .sort((left, right) => left.priority - right.priority || right.occurredAt - left.occurredAt);
   const liveAutomaticByReviewId = new Map(latestAutomaticActivities.map((activity) => [activity.reviewId, activity]));
   const persistedReviewIds = new Set(automationHistory.map((item) => item.reviewId));
   const automationReviewRows = [
@@ -362,6 +384,14 @@ export function ActivityDrawer({
         ) : null}
       </div> : (
         <div id="activity-automation-panel" role="tabpanel" className="activity-list">
+          {onStartAutomationSequence ? (
+            <div className="activity-history-toolbar">
+              <button type="button" className="mini-command" disabled={automationSequenceLoading || automationHistoryPendingReviewIds.size > 0 || (automationHistoryUnacknowledgedItems === 0 && !automationHistory.some((item) => !item.acknowledgedAt))} onClick={onStartAutomationSequence} title="미확인 기록 전체를 순서대로 검토합니다. 확인 완료하거나 목록에 복원하면 다음 기록으로 이동합니다.">
+                {automationSequenceLoading ? <><span className="spinner" /> 검토 목록 준비 중…</> : <><FluentIcon glyph="\uE8FD" /> 미확인 순차 검토</>}
+              </button>
+              <small>확인·복원 후 다음 항목으로 이동</small>
+            </div>
+          ) : null}
           <p className="activity-history-note" title="탐색·목록 제외만 해제하며 격리된 실제 파일은 복원하지 않습니다.">
             목록 복원은 탐색·목록 제외만 해제합니다. 격리된 실제 파일은 복원하지 않습니다.
           </p>

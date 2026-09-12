@@ -3,7 +3,7 @@ use std::{
     io::Read,
     sync::{Arc, Condvar, Mutex, MutexGuard},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use reqwest::{
@@ -17,12 +17,15 @@ use reqwest::{
 };
 
 use crate::{
+    application::{image_work_budget, DownloadTuningProfile, DownloadTuningStore},
     source::{
         map_http_status, map_transport_failure, SourceContractError, SourceErrorCode,
         TransportFailureKind,
     },
     thumbnail::{CancellationToken, ThumbnailPriority},
 };
+
+use super::tuning::{DownloadSample, DownloadTuner, PROFILE_HOST};
 
 const USER_AGENT_VALUE: &str = concat!(
     "Atsumi/",
@@ -32,8 +35,9 @@ const USER_AGENT_VALUE: &str = concat!(
 const HITOMI_REFERER: &str = "https://hitomi.la/";
 const DEFAULT_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(30);
 const DEFAULT_UNAVAILABLE_COOLDOWN: Duration = Duration::from_secs(2);
-const MAX_RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(5 * 60);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(50);
+const RECOVERY_SUCCESS_COUNT: u32 = 30;
+const RECOVERY_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HttpPriority {
@@ -148,6 +152,7 @@ pub(super) struct ReqwestTransport {
     client: Client,
     gate: Arc<RequestGate>,
     retry: RetryPolicy,
+    tuning_store: Option<Arc<dyn DownloadTuningStore>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -203,7 +208,67 @@ impl ReqwestTransport {
                 base_delay: config.retry_base_delay,
                 max_delay: config.retry_max_delay,
             },
+            tuning_store: None,
         })
+    }
+
+    pub(super) fn with_download_tuning(
+        mut self,
+        ceiling: Option<usize>,
+        store: Arc<dyn DownloadTuningStore>,
+    ) -> Self {
+        let profiles = store.load_all().unwrap_or_else(|error| {
+            tracing::warn!(
+                code = error.stable_code(),
+                "download tuning history unavailable; using conservative start"
+            );
+            Vec::new()
+        });
+        let profile = profiles.iter().find(|profile| profile.host == PROFILE_HOST);
+        let now = Instant::now();
+        let wall_ms = unix_ms();
+        let mut tuner = DownloadTuner::new(
+            self.gate.max_active.min(5),
+            ceiling.unwrap_or(self.gate.max_active),
+            profile,
+            now,
+            wall_ms,
+        );
+        if ceiling.is_none() {
+            tuner.automatic = false;
+            tuner.current = self.gate.max_active.clamp(1, 8);
+        }
+        let mut state = unpoison(self.gate.state.lock());
+        state.download_tuner = Some(tuner);
+        // Restore actual host waits for thumbnails/metadata too, even when the
+        // user disables learning. A restart is not a Retry-After override.
+        for saved in &profiles {
+            if saved.host != PROFILE_HOST && saved.cooldown_until_unix_ms > wall_ms {
+                state.host_cooldowns.insert(
+                    saved.host.clone(),
+                    HostCooldown {
+                        started: now,
+                        duration: Duration::from_millis(saved.cooldown_until_unix_ms - wall_ms),
+                    },
+                );
+            }
+        }
+        drop(state);
+        self.tuning_store = Some(store);
+        self
+    }
+
+    fn save_tuning(&self, profile: Option<DownloadTuningProfile>) {
+        if let (Some(store), Some(profile)) = (&self.tuning_store, profile) {
+            // No scheduler lock is held across SQLite I/O. Old concurrent saves
+            // are rejected by the repository's monotonic observation timestamp.
+            if let Err(error) = store.save(&profile) {
+                tracing::warn!(
+                    code = error.stable_code(),
+                    "could not persist download tuning history"
+                );
+            }
+        }
     }
 
     fn execute_once(
@@ -213,9 +278,41 @@ impl ReqwestTransport {
         host: &str,
     ) -> Result<HttpPayload, SourceContractError> {
         ensure_not_cancelled(request.cancellation.as_ref())?;
-        let _permit = self
+        let permit = self
             .gate
             .acquire(host, request.priority, request.cancellation.as_ref())?;
+        let service_started = Instant::now();
+        let result = self.execute_acquired(request, url, host, &permit, service_started);
+        if let Err(error) = &result {
+            if request.priority == HttpPriority::Download
+                && request.expected == ExpectedContent::Image
+                && !matches!(
+                    error.code,
+                    SourceErrorCode::RateLimited
+                        | SourceErrorCode::TemporarilyUnavailable
+                        | SourceErrorCode::Cancelled
+                )
+            {
+                self.save_tuning(self.gate.download_failure(
+                    matches!(
+                        error.code,
+                        SourceErrorCode::Timeout | SourceErrorCode::Transport
+                    ),
+                    permit.tuning_generation,
+                ));
+            }
+        }
+        result
+    }
+
+    fn execute_acquired(
+        &self,
+        request: &HttpRequest,
+        url: &Url,
+        host: &str,
+        permit: &RequestPermit,
+        service_started: Instant,
+    ) -> Result<HttpPayload, SourceContractError> {
         let mut builder = self
             .client
             .get(url.clone())
@@ -246,11 +343,16 @@ impl ReqwestTransport {
             } else {
                 DEFAULT_UNAVAILABLE_COOLDOWN
             };
-            let duration = retry_after
-                .map(Duration::from_secs)
-                .unwrap_or(fallback)
-                .min(MAX_RATE_LIMIT_COOLDOWN);
-            self.gate.cool_down(host, duration);
+            let duration = retry_after.map(Duration::from_secs).unwrap_or(fallback);
+            let profile = self.gate.cool_down(host, duration);
+            if let Some(mut host_profile) = profile.clone() {
+                host_profile.host = host.to_owned();
+                host_profile.cooldown_until_unix_ms = self.gate.host_cooldown_until(host);
+                host_profile.blocked_until_unix_ms = 0;
+                host_profile.baseline_bytes_per_second = 0.0;
+                self.save_tuning(Some(host_profile));
+            }
+            self.save_tuning(profile);
         }
         map_http_status(status, retry_after)?;
         if request.range.is_some() {
@@ -271,7 +373,7 @@ impl ReqwestTransport {
             }
         }
 
-        read_payload(
+        let result = read_payload(
             response,
             status,
             request.expected,
@@ -283,7 +385,27 @@ impl ReqwestTransport {
                 error.http_status = Some(status);
             }
             error
-        })
+        });
+        if result.is_ok() {
+            self.gate.record_success(host, Instant::now());
+        }
+        if let Ok(payload) = &result {
+            if request.priority == HttpPriority::Download
+                && request.expected == ExpectedContent::Image
+            {
+                self.save_tuning(self.gate.observe_download(
+                    DownloadSample {
+                        bytes: payload.bytes.len(),
+                        service_time: service_started.elapsed(),
+                        had_demand: permit.had_download_demand,
+                        processing_backlogged: image_work_budget::is_backlogged(),
+                        stored_bytes: image_work_budget::stored_progress().0,
+                    },
+                    permit.tuning_generation,
+                ));
+            }
+        }
+        result
     }
 }
 
@@ -315,6 +437,7 @@ impl HttpTransport for ReqwestTransport {
                     return Ok(payload);
                 }
                 Err(error) => {
+                    self.gate.record_unsuccessful(&host);
                     let retry = attempt < self.retry.max_retries && should_retry(&error);
                     tracing::warn!(
                         host,
@@ -496,7 +619,6 @@ fn retry_delay(
     error
         .retry_after_seconds
         .map(Duration::from_secs)
-        .map(|delay| delay.min(MAX_RATE_LIMIT_COOLDOWN))
         .map_or(calculated, |delay| delay.max(calculated))
 }
 
@@ -523,12 +645,17 @@ fn wait_cooperatively(
     duration: Duration,
     cancellation: Option<&CancellationToken>,
 ) -> Result<(), SourceContractError> {
-    let deadline = Instant::now() + duration;
-    while Instant::now() < deadline {
+    // Compare elapsed time instead of adding an untrusted server delay to an
+    // Instant. Even an unrepresentable deadline must not panic or retry early.
+    let started = Instant::now();
+    loop {
         ensure_not_cancelled(cancellation)?;
-        thread::sleep((deadline - Instant::now()).min(CANCELLATION_POLL_INTERVAL));
+        let remaining = duration.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return Ok(());
+        }
+        thread::sleep(remaining.min(CANCELLATION_POLL_INTERVAL));
     }
-    ensure_not_cancelled(cancellation)
 }
 
 fn retry_after_seconds(response: &Response) -> Option<u64> {
@@ -536,7 +663,27 @@ fn retry_after_seconds(response: &Response) -> Option<u64> {
         .headers()
         .get(RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
+        .and_then(|value| parse_retry_after(value, SystemTime::now()))
+}
+
+fn parse_retry_after(value: &str, now: SystemTime) -> Option<u64> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        // Syntactically valid but oversized delays must not become a short
+        // fallback. Saturation leaves the request cancellable while preventing
+        // a retry within the lifetime of this process.
+        return Some(value.parse().unwrap_or(u64::MAX));
+    }
+
+    let deadline = httpdate::parse_http_date(value).ok()?;
+    let remaining = deadline.duration_since(now).unwrap_or(Duration::ZERO);
+    // The public error contract uses whole seconds. Round up so converting an
+    // HTTP-date never permits a retry before the server's deadline.
+    Some(
+        remaining
+            .as_secs()
+            .saturating_add(u64::from(remaining.subsec_nanos() != 0)),
+    )
 }
 
 pub(super) fn validate_source_url(url: &Url) -> Result<(), SourceContractError> {
@@ -575,17 +722,83 @@ pub(super) fn validate_source_url(url: &Url) -> Result<(), SourceContractError> 
 }
 
 #[derive(Debug)]
+struct HostCooldown {
+    started: Instant,
+    duration: Duration,
+}
+
+impl HostCooldown {
+    fn remaining_at(&self, now: Instant) -> Option<Duration> {
+        let remaining = self
+            .duration
+            .saturating_sub(now.saturating_duration_since(self.started));
+        (!remaining.is_zero()).then_some(remaining)
+    }
+}
+
+#[derive(Debug)]
 struct GateState {
     active: usize,
+    active_downloads: usize,
+    download_tuner: Option<DownloadTuner>,
     active_by_host: HashMap<String, usize>,
     last_started: Option<Instant>,
-    cooldown_until: HashMap<String, Instant>,
+    host_cooldowns: HashMap<String, HostCooldown>,
+    host_budgets: HashMap<String, AdaptiveHostBudget>,
     waiting: Vec<WaitingRequest>,
     next_ticket: u64,
     offline: bool,
     consecutive_transport_failures: u64,
     requests_started: u64,
     retries_scheduled: u64,
+}
+
+/// A response-driven reduction below the configured ceiling, never a limit probe.
+#[derive(Debug)]
+struct AdaptiveHostBudget {
+    max_active: usize,
+    start_interval: Duration,
+    last_started: Option<Instant>,
+    last_adjusted: Instant,
+    successes: u32,
+}
+
+impl AdaptiveHostBudget {
+    fn reduce(&mut self, now: Instant, base_interval: Duration) {
+        self.max_active = (self.max_active / 2).max(1);
+        self.start_interval = self
+            .start_interval
+            .saturating_mul(2)
+            .max(Duration::from_millis(100))
+            .min(Duration::from_secs(2))
+            .max(base_interval);
+        self.last_adjusted = now;
+        self.successes = 0;
+    }
+
+    fn spacing_delay(&self, now: Instant) -> Option<Duration> {
+        self.last_started
+            .map(|last| {
+                self.start_interval
+                    .saturating_sub(now.saturating_duration_since(last))
+            })
+            .filter(|delay| !delay.is_zero())
+    }
+
+    fn record_success(&mut self, now: Instant, ceiling: usize, base_interval: Duration) -> bool {
+        self.successes = self.successes.saturating_add(1);
+        if self.successes < RECOVERY_SUCCESS_COUNT
+            || now.saturating_duration_since(self.last_adjusted) < RECOVERY_INTERVAL
+        {
+            return false;
+        }
+        let previous = (self.max_active, self.start_interval);
+        self.max_active = self.max_active.saturating_add(1).min(ceiling);
+        self.start_interval = (self.start_interval / 2).max(base_interval);
+        self.successes = 0;
+        self.last_adjusted = now;
+        previous != (self.max_active, self.start_interval)
+    }
 }
 
 #[derive(Debug)]
@@ -605,9 +818,12 @@ impl RequestGate {
             start_interval,
             state: Mutex::new(GateState {
                 active: 0,
+                active_downloads: 0,
+                download_tuner: None,
                 active_by_host: HashMap::new(),
                 last_started: None,
-                cooldown_until: HashMap::new(),
+                host_cooldowns: HashMap::new(),
+                host_budgets: HashMap::new(),
                 waiting: Vec::new(),
                 next_ticket: 0,
                 offline: false,
@@ -640,12 +856,65 @@ impl RequestGate {
                 return Err(SourceContractError::cancelled());
             }
             let now = Instant::now();
-            let spacing_until = state
+            let download_limit = state
+                .download_tuner
+                .as_ref()
+                .map_or(self.max_active, |tuner| tuner.current);
+            let total_limit = self.max_active.max(download_limit);
+            let download_host_limit = state
+                .download_tuner
+                .as_ref()
+                .filter(|tuner| tuner.automatic)
+                .map_or(self.max_active_per_host, |_| {
+                    self.max_active_per_host.max(download_limit)
+                });
+            let download_delay = (priority == HttpPriority::Download)
+                .then(|| {
+                    state
+                        .download_tuner
+                        .as_ref()
+                        .and_then(|tuner| tuner.cooldown_remaining(now))
+                })
+                .flatten();
+            let spacing_delay = state
                 .last_started
-                .and_then(|last| last.checked_add(self.start_interval));
-            let host_cooldown = state.cooldown_until.get(host).copied();
-            let next_start = [spacing_until, host_cooldown].into_iter().flatten().max();
-            let delay = next_start.and_then(|deadline| deadline.checked_duration_since(now));
+                .map(|last| {
+                    self.start_interval
+                        .saturating_sub(now.saturating_duration_since(last))
+                })
+                .filter(|delay| !delay.is_zero());
+            let host_delay = state
+                .host_cooldowns
+                .get(host)
+                .and_then(|cooldown| cooldown.remaining_at(now));
+            let adaptive_delay = state
+                .host_budgets
+                .get(host)
+                .and_then(|budget| budget.spacing_delay(now));
+            let host_limit = state.host_budgets.get(host).map_or_else(
+                || {
+                    if priority == HttpPriority::Download {
+                        download_host_limit
+                    } else {
+                        self.max_active_per_host
+                    }
+                },
+                |budget| {
+                    budget
+                        .max_active
+                        .min(if priority == HttpPriority::Download {
+                            download_host_limit
+                        } else {
+                            self.max_active_per_host
+                        })
+                },
+            );
+            let delay = spacing_delay
+                .into_iter()
+                .chain(host_delay)
+                .chain(adaptive_delay)
+                .chain(download_delay)
+                .max();
             let host_active = state.active_by_host.get(host).copied().unwrap_or_default();
             let next_ticket = state
                 .waiting
@@ -657,26 +926,77 @@ impl RequestGate {
                         .copied()
                         .unwrap_or_default();
                     let candidate_cooled_down = state
-                        .cooldown_until
+                        .host_cooldowns
                         .get(&candidate.host)
-                        .is_some_and(|deadline| *deadline > now);
-                    candidate_host_active < self.max_active_per_host && !candidate_cooled_down
+                        .is_some_and(|cooldown| cooldown.remaining_at(now).is_some());
+                    let budget = state.host_budgets.get(&candidate.host);
+                    let is_download = candidate.priority == HttpPriority::Download;
+                    let candidate_limit = budget.map_or_else(
+                        || {
+                            if is_download {
+                                download_host_limit
+                            } else {
+                                self.max_active_per_host
+                            }
+                        },
+                        |budget| {
+                            budget.max_active.min(if is_download {
+                                download_host_limit
+                            } else {
+                                self.max_active_per_host
+                            })
+                        },
+                    );
+                    let class_available = if is_download {
+                        state.active_downloads < download_limit
+                            && state
+                                .download_tuner
+                                .as_ref()
+                                .and_then(|tuner| tuner.cooldown_remaining(now))
+                                .is_none()
+                    } else {
+                        state.active.saturating_sub(state.active_downloads) < self.max_active
+                    };
+                    candidate_host_active < candidate_limit
+                        && class_available
+                        && !candidate_cooled_down
+                        && budget
+                            .and_then(|budget| budget.spacing_delay(now))
+                            .is_none()
                 })
                 .min_by_key(|candidate| (candidate.priority.rank(), candidate.ticket))
                 .map(|candidate| candidate.ticket);
             if next_ticket == Some(ticket)
-                && state.active < self.max_active
-                && host_active < self.max_active_per_host
+                && state.active < total_limit
+                && host_active < host_limit
                 && delay.is_none()
             {
+                let had_download_demand = state.active_downloads.saturating_add(1)
+                    >= download_limit
+                    || state.waiting.iter().any(|candidate| {
+                        candidate.ticket != ticket && candidate.priority == HttpPriority::Download
+                    });
+                let tuning_generation = state
+                    .download_tuner
+                    .as_ref()
+                    .map_or(0, DownloadTuner::generation);
                 state.waiting.retain(|candidate| candidate.ticket != ticket);
                 state.active += 1;
+                if priority == HttpPriority::Download {
+                    state.active_downloads += 1;
+                }
                 *state.active_by_host.entry(host.to_owned()).or_default() += 1;
                 state.last_started = Some(now);
+                if let Some(budget) = state.host_budgets.get_mut(host) {
+                    budget.last_started = Some(now);
+                }
                 state.requests_started = state.requests_started.saturating_add(1);
                 return Ok(RequestPermit {
                     gate: Arc::clone(self),
                     host: host.to_owned(),
+                    priority,
+                    had_download_demand,
+                    tuning_generation,
                 });
             }
 
@@ -695,14 +1015,136 @@ impl RequestGate {
         }
     }
 
-    fn cool_down(&self, host: &str, duration: Duration) {
+    fn cool_down(&self, host: &str, duration: Duration) -> Option<DownloadTuningProfile> {
         let mut state = unpoison(self.state.lock());
-        let deadline = Instant::now() + duration;
-        let current = state.cooldown_until.get(host).copied();
-        if current.is_none_or(|current| deadline > current) {
-            state.cooldown_until.insert(host.to_owned(), deadline);
+        let now = Instant::now();
+        let current = state
+            .host_cooldowns
+            .get(host)
+            .and_then(|cooldown| cooldown.remaining_at(now));
+        if current.is_none_or(|remaining| duration > remaining) {
+            state.host_cooldowns.insert(
+                host.to_owned(),
+                HostCooldown {
+                    started: now,
+                    duration,
+                },
+            );
         }
+        let host_ceiling = state
+            .download_tuner
+            .as_ref()
+            .filter(|tuner| tuner.automatic)
+            .map_or(self.max_active_per_host, |tuner| {
+                self.max_active_per_host.max(tuner.current)
+            });
+        let budget = state
+            .host_budgets
+            .entry(host.to_owned())
+            .or_insert(AdaptiveHostBudget {
+                max_active: host_ceiling,
+                start_interval: self.start_interval,
+                last_started: None,
+                last_adjusted: now,
+                successes: 0,
+            });
+        budget.reduce(now, self.start_interval);
+        tracing::info!(
+            host,
+            effective_concurrency = budget.max_active,
+            request_interval_ms = budget.start_interval.as_millis(),
+            cooldown_seconds = duration.as_secs(),
+            "source request budget reduced after server backpressure"
+        );
         self.wake.notify_all();
+        // Pause all download routes as well as this host. Other CDN shards must
+        // not keep driving new download traffic through a server cooldown.
+        state
+            .download_tuner
+            .as_mut()
+            .map(|tuner| tuner.server_backpressure(duration, now, unix_ms()))
+    }
+
+    fn observe_download(
+        &self,
+        sample: DownloadSample,
+        generation: u64,
+    ) -> Option<DownloadTuningProfile> {
+        let mut state = unpoison(self.state.lock());
+        let tuner = state.download_tuner.as_mut()?;
+        let previous = tuner.current;
+        let profile = tuner.observe(sample, generation, Instant::now(), unix_ms());
+        if previous != tuner.current {
+            tracing::info!(
+                previous,
+                current = tuner.current,
+                ceiling = tuner.ceiling,
+                processing_pressure_epoch = image_work_budget::pressure_epoch(),
+                "download concurrency adjusted from measured transfer performance"
+            );
+            self.wake.notify_all();
+        }
+        profile
+    }
+
+    fn host_cooldown_until(&self, host: &str) -> u64 {
+        unpoison(self.state.lock())
+            .host_cooldowns
+            .get(host)
+            .and_then(|cooldown| cooldown.remaining_at(Instant::now()))
+            .map(|remaining| {
+                unix_ms()
+                    .saturating_add(u64::try_from(remaining.as_millis()).unwrap_or(u64::MAX))
+                    .saturating_add(1)
+                    .min(i64::MAX as u64)
+            })
+            .unwrap_or_default()
+    }
+
+    fn download_failure(&self, congestion: bool, generation: u64) -> Option<DownloadTuningProfile> {
+        let mut state = unpoison(self.state.lock());
+        let tuner = state.download_tuner.as_mut()?;
+        if tuner.generation() != generation {
+            return None;
+        }
+        let profile = tuner.failure(congestion, Instant::now(), unix_ms());
+        self.wake.notify_all();
+        profile
+    }
+
+    fn record_success(&self, host: &str, now: Instant) {
+        let mut state = unpoison(self.state.lock());
+        if state
+            .host_cooldowns
+            .get(host)
+            .is_some_and(|cooldown| cooldown.remaining_at(now).is_some())
+        {
+            return;
+        }
+        let host_ceiling = state
+            .download_tuner
+            .as_ref()
+            .filter(|tuner| tuner.automatic)
+            .map_or(self.max_active_per_host, |tuner| {
+                self.max_active_per_host.max(tuner.current)
+            });
+        if let Some(budget) = state.host_budgets.get_mut(host) {
+            if budget.record_success(now, host_ceiling, self.start_interval) {
+                tracing::info!(
+                    host,
+                    effective_concurrency = budget.max_active,
+                    request_interval_ms = budget.start_interval.as_millis(),
+                    "source request budget cautiously recovered within configured ceiling"
+                );
+                self.wake.notify_all();
+            }
+        }
+    }
+
+    fn record_unsuccessful(&self, host: &str) {
+        if let Some(budget) = unpoison(self.state.lock()).host_budgets.get_mut(host) {
+            budget.successes = 0;
+        }
     }
 
     fn record_online(&self) {
@@ -726,9 +1168,12 @@ impl RequestGate {
         state.retries_scheduled = state.retries_scheduled.saturating_add(1);
     }
 
-    fn release(&self, host: &str) {
+    fn release(&self, host: &str, priority: HttpPriority) {
         let mut state = unpoison(self.state.lock());
         state.active = state.active.saturating_sub(1);
+        if priority == HttpPriority::Download {
+            state.active_downloads = state.active_downloads.saturating_sub(1);
+        }
         if let Some(active) = state.active_by_host.get_mut(host) {
             *active = active.saturating_sub(1);
             if *active == 0 {
@@ -755,12 +1200,26 @@ impl RequestGate {
 struct RequestPermit {
     gate: Arc<RequestGate>,
     host: String,
+    priority: HttpPriority,
+    had_download_demand: bool,
+    tuning_generation: u64,
 }
 
 impl Drop for RequestPermit {
     fn drop(&mut self) {
-        self.gate.release(&self.host);
+        self.gate.release(&self.host, self.priority);
     }
+}
+
+fn unix_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| {
+            u64::try_from(duration.as_millis())
+                .unwrap_or(i64::MAX as u64)
+                .min(i64::MAX as u64)
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -811,6 +1270,325 @@ mod tests {
     };
 
     use super::*;
+
+    struct MemoryTuningStore(Vec<DownloadTuningProfile>);
+
+    impl DownloadTuningStore for MemoryTuningStore {
+        fn load_all(
+            &self,
+        ) -> Result<Vec<DownloadTuningProfile>, crate::application::RepositoryError> {
+            Ok(self.0.clone())
+        }
+        fn save(
+            &self,
+            _: &DownloadTuningProfile,
+        ) -> Result<(), crate::application::RepositoryError> {
+            Ok(())
+        }
+    }
+
+    fn transport_with_profile(ceiling: Option<usize>, cooldown: bool) -> ReqwestTransport {
+        let now = unix_ms();
+        let mut profiles = vec![DownloadTuningProfile {
+            host: PROFILE_HOST.into(),
+            algorithm_version: 1,
+            stable_limit: 7,
+            baseline_bytes_per_second: 10.0,
+            updated_at_unix_ms: now.saturating_sub(1000),
+            cooldown_until_unix_ms: if cooldown { now + 60_000 } else { 0 },
+            blocked_until_unix_ms: 0,
+        }];
+        if cooldown {
+            let mut host = profiles[0].clone();
+            host.host = "a.gold-usergeneratedcontent.net".into();
+            profiles.push(host);
+        }
+        ReqwestTransport::new(HttpSchedulerConfig {
+            max_concurrent_requests: 5,
+            max_concurrent_per_host: 5,
+            request_start_interval: Duration::ZERO,
+            connect_timeout: Duration::from_secs(1),
+            request_timeout: Duration::from_secs(1),
+            max_retries: 0,
+            retry_base_delay: Duration::ZERO,
+            retry_max_delay: Duration::ZERO,
+        })
+        .unwrap()
+        .with_download_tuning(ceiling, Arc::new(MemoryTuningStore(profiles)))
+    }
+
+    #[test]
+    fn restored_download_budget_really_allows_seven_and_blocks_the_eighth() {
+        let transport = transport_with_profile(Some(8), false);
+        let gate = &transport.gate;
+        let mut permits = Vec::new();
+        for _ in 0..7 {
+            permits.push(
+                gate.acquire("a.example", HttpPriority::Download, None)
+                    .unwrap(),
+            );
+        }
+        assert!(permits.last().unwrap().had_download_demand);
+        assert_eq!(gate.snapshot().active, 7);
+        let worker_gate = Arc::clone(gate);
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let worker = thread::spawn(move || {
+            worker_gate
+                .acquire("a.example", HttpPriority::Download, Some(&worker_token))
+                .map(drop)
+        });
+        wait_for_waiters(gate, 1);
+        token.cancel();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().code,
+            SourceErrorCode::Cancelled
+        );
+        drop(permits);
+        assert_eq!(unpoison(gate.state.lock()).active_downloads, 0);
+    }
+
+    #[test]
+    fn disabled_learning_preserves_manual_limit_and_restart_waits_on_all_download_routes() {
+        let transport = transport_with_profile(None, true);
+        let gate = &transport.gate;
+        assert_eq!(
+            unpoison(gate.state.lock())
+                .download_tuner
+                .as_ref()
+                .unwrap()
+                .current,
+            5
+        );
+        let token = CancellationToken::new();
+        let workers: Vec<_> = [
+            ("other.example", HttpPriority::Download),
+            ("a.gold-usergeneratedcontent.net", HttpPriority::Visible),
+        ]
+        .into_iter()
+        .map(|(host, priority)| {
+            let gate = Arc::clone(gate);
+            let token = token.clone();
+            thread::spawn(move || gate.acquire(host, priority, Some(&token)).map(drop))
+        })
+        .collect();
+        wait_for_waiters(gate, 2);
+        assert_eq!(gate.snapshot().active, 0);
+        token.cancel();
+        for worker in workers {
+            assert_eq!(
+                worker.join().unwrap().unwrap_err().code,
+                SourceErrorCode::Cancelled
+            );
+        }
+    }
+
+    #[test]
+    fn static_downloads_do_not_bypass_the_original_per_host_limit() {
+        let gate = Arc::new(RequestGate::new(5, 1, Duration::ZERO));
+        let blocker = gate
+            .acquire("a.example", HttpPriority::Download, None)
+            .unwrap();
+        let token = CancellationToken::new();
+        let worker_token = token.clone();
+        let worker_gate = Arc::clone(&gate);
+        let worker = thread::spawn(move || {
+            worker_gate
+                .acquire("a.example", HttpPriority::Download, Some(&worker_token))
+                .map(drop)
+        });
+        wait_for_waiters(&gate, 1);
+        assert_eq!(gate.snapshot().active, 1);
+        token.cancel();
+        assert_eq!(
+            worker.join().unwrap().unwrap_err().code,
+            SourceErrorCode::Cancelled
+        );
+        drop(blocker);
+    }
+
+    #[test]
+    fn old_failure_samples_do_not_reduce_a_new_generation() {
+        let transport = transport_with_profile(Some(8), false);
+        let gate = &transport.gate;
+        let old_generation = unpoison(gate.state.lock())
+            .download_tuner
+            .as_ref()
+            .unwrap()
+            .generation();
+        gate.cool_down("a.example", Duration::ZERO);
+        let reduced = unpoison(gate.state.lock())
+            .download_tuner
+            .as_ref()
+            .unwrap()
+            .current;
+        for _ in 0..3 {
+            assert!(gate.download_failure(true, old_generation).is_none());
+        }
+        assert_eq!(
+            unpoison(gate.state.lock())
+                .download_tuner
+                .as_ref()
+                .unwrap()
+                .current,
+            reduced
+        );
+    }
+
+    #[test]
+    fn disabled_learning_never_expands_static_host_limit_during_recovery() {
+        let gate = RequestGate::new(30, 5, Duration::ZERO);
+        let mut tuner = DownloadTuner::new(8, 8, None, Instant::now(), unix_ms());
+        tuner.automatic = false;
+        unpoison(gate.state.lock()).download_tuner = Some(tuner);
+        gate.cool_down("a.example", Duration::ZERO);
+        assert_eq!(
+            unpoison(gate.state.lock()).host_budgets["a.example"].max_active,
+            2
+        );
+        let now = Instant::now();
+        for step in 1..=8 {
+            for _ in 0..30 {
+                gate.record_success("a.example", now + Duration::from_secs(step * 31));
+            }
+        }
+        assert_eq!(
+            unpoison(gate.state.lock()).host_budgets["a.example"].max_active,
+            5
+        );
+    }
+
+    #[test]
+    fn persisted_host_wait_does_not_inherit_another_hosts_longer_global_wait() {
+        let transport = transport_with_profile(Some(8), false);
+        let gate = &transport.gate;
+        gate.cool_down("a.example", Duration::from_secs(3600));
+        let global = gate.cool_down("b.example", Duration::from_secs(1)).unwrap();
+        assert!(global.cooldown_until_unix_ms > unix_ms() + 3_500_000);
+        let b_deadline = gate.host_cooldown_until("b.example");
+        assert!(b_deadline > unix_ms());
+        assert!(b_deadline <= unix_ms() + 1001);
+    }
+
+    #[test]
+    fn server_backpressure_reduces_concurrency_and_respects_slower_user_pacing() {
+        let gate = RequestGate::new(5, 5, Duration::from_millis(25));
+        gate.cool_down("a.example", Duration::ZERO);
+        {
+            let state = unpoison(gate.state.lock());
+            assert_eq!(state.host_budgets["a.example"].max_active, 2);
+            assert_eq!(
+                state.host_budgets["a.example"].start_interval,
+                Duration::from_millis(100)
+            );
+            assert!(!state.host_budgets.contains_key("b.example"));
+        }
+        for _ in 0..20 {
+            gate.cool_down("a.example", Duration::ZERO);
+        }
+        let state = unpoison(gate.state.lock());
+        assert_eq!(state.host_budgets["a.example"].max_active, 1);
+        assert_eq!(
+            state.host_budgets["a.example"].start_interval,
+            Duration::from_secs(2)
+        );
+        drop(state);
+        let slow = RequestGate::new(1, 1, Duration::from_secs(3));
+        slow.cool_down("a.example", Duration::ZERO);
+        assert_eq!(
+            unpoison(slow.state.lock()).host_budgets["a.example"].start_interval,
+            Duration::from_secs(3)
+        );
+    }
+
+    #[test]
+    fn adaptive_recovery_requires_both_elapsed_time_and_successes_and_never_exceeds_ceiling() {
+        let now = Instant::now();
+        let base = Duration::from_millis(25);
+        let mut budget = AdaptiveHostBudget {
+            max_active: 5,
+            start_interval: base,
+            last_started: None,
+            last_adjusted: now,
+            successes: 0,
+        };
+        budget.reduce(now, base);
+        for _ in 0..30 {
+            assert!(!budget.record_success(now + Duration::from_secs(29), 5, base));
+        }
+        assert_eq!(budget.max_active, 2);
+        assert!(budget.record_success(now + Duration::from_secs(30), 5, base));
+        assert_eq!(budget.max_active, 3);
+        for _ in 0..29 {
+            assert!(!budget.record_success(now + Duration::from_secs(60), 5, base));
+        }
+        assert!(budget.record_success(now + Duration::from_secs(60), 5, base));
+        assert_eq!(budget.max_active, 4);
+        for step in 3..12 {
+            for _ in 0..30 {
+                budget.record_success(now + Duration::from_secs(step * 30), 5, base);
+            }
+        }
+        assert_eq!(budget.max_active, 5);
+        assert_eq!(budget.start_interval, base);
+    }
+
+    #[test]
+    fn cooldown_successes_are_ignored_and_failed_requests_reset_recovery() {
+        let gate = RequestGate::new(5, 5, Duration::from_millis(25));
+        gate.cool_down("a.example", Duration::from_secs(60));
+        let now = unpoison(gate.state.lock()).host_budgets["a.example"].last_adjusted;
+        for _ in 0..40 {
+            gate.record_success("a.example", now + Duration::from_secs(31));
+        }
+        assert_eq!(
+            unpoison(gate.state.lock()).host_budgets["a.example"].successes,
+            0
+        );
+        for _ in 0..29 {
+            gate.record_success("a.example", now + Duration::from_secs(61));
+        }
+        gate.record_unsuccessful("a.example");
+        gate.record_success("a.example", now + Duration::from_secs(61));
+        let state = unpoison(gate.state.lock());
+        assert_eq!(state.host_budgets["a.example"].max_active, 2);
+        assert_eq!(state.host_budgets["a.example"].successes, 1);
+    }
+
+    #[test]
+    fn reduced_host_budget_blocks_new_work_until_active_requests_drain() {
+        let gate = Arc::new(RequestGate::new(5, 5, Duration::ZERO));
+        let first = gate
+            .acquire("a.example", HttpPriority::Download, None)
+            .unwrap();
+        let second = gate
+            .acquire("a.example", HttpPriority::Download, None)
+            .unwrap();
+        let third = gate
+            .acquire("a.example", HttpPriority::Download, None)
+            .unwrap();
+        gate.cool_down("a.example", Duration::ZERO);
+        let worker_gate = Arc::clone(&gate);
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let permit = worker_gate
+                .acquire("a.example", HttpPriority::Critical, None)
+                .unwrap();
+            sender.send(permit).unwrap();
+        });
+        wait_for_waiters(&gate, 1);
+        let other = gate
+            .acquire("b.example", HttpPriority::Visible, None)
+            .unwrap();
+        assert!(receiver.try_recv().is_err());
+        drop(first);
+        assert!(receiver.recv_timeout(Duration::from_millis(50)).is_err());
+        drop(second);
+        let permitted = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        drop((third, other, permitted));
+        assert_eq!(gate.snapshot().active, 0);
+    }
 
     fn wait_for_waiters(gate: &RequestGate, expected: usize) {
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -1015,6 +1793,189 @@ mod tests {
             retry_delay(policy, &limited, 1, "ltn.example"),
             Duration::from_secs(17)
         );
+
+        assert_eq!(
+            retry_delay(policy, &unavailable, u8::MAX, "ltn.example"),
+            policy.max_delay
+        );
+        for status in [429, 503] {
+            for seconds in [3600, u64::MAX] {
+                let error = map_http_status(status, Some(seconds)).unwrap_err();
+                assert_eq!(
+                    retry_delay(policy, &error, 1, "ltn.example"),
+                    Duration::from_secs(seconds)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn retry_after_parses_delay_seconds_without_shortening_large_values() {
+        let now = SystemTime::UNIX_EPOCH;
+        for (value, expected) in [
+            ("0", 0),
+            (" 17 ", 17),
+            ("00017", 17),
+            ("3600", 3600),
+            ("18446744073709551615", u64::MAX),
+            ("18446744073709551616", u64::MAX),
+        ] {
+            assert_eq!(parse_retry_after(value, now), Some(expected), "{value}");
+        }
+    }
+
+    #[test]
+    fn retry_after_parses_all_http_date_formats_and_rounds_up() {
+        // 1994-11-06 08:49:37 UTC, fixed independently of the HTTP-date parser.
+        let deadline = SystemTime::UNIX_EPOCH + Duration::from_secs(784_111_777);
+        for value in [
+            "Sun, 06 Nov 1994 08:49:37 GMT",
+            "Sunday, 06-Nov-94 08:49:37 GMT",
+            "Sun Nov  6 08:49:37 1994",
+        ] {
+            assert_eq!(
+                parse_retry_after(value, deadline - Duration::from_secs(3600)),
+                Some(3600),
+                "{value}"
+            );
+            assert_eq!(
+                parse_retry_after(value, deadline - Duration::from_millis(1250)),
+                Some(2),
+                "{value}"
+            );
+            assert_eq!(parse_retry_after(value, deadline), Some(0), "{value}");
+            assert_eq!(
+                parse_retry_after(value, deadline + Duration::from_secs(1)),
+                Some(0),
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_retry_after_values_use_the_fallback() {
+        for value in [
+            "",
+            " ",
+            "not a date",
+            "+17",
+            "-1",
+            "1.5",
+            "17 seconds",
+            "Sun, 32 Nov 1994 08:49:37 GMT",
+        ] {
+            assert_eq!(
+                parse_retry_after(value, SystemTime::UNIX_EPOCH),
+                None,
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn host_cooldowns_preserve_long_delays_without_instant_overflow() {
+        let started = Instant::now();
+        for seconds in [3600, u64::MAX] {
+            let cooldown = HostCooldown {
+                started,
+                duration: Duration::from_secs(seconds),
+            };
+            assert_eq!(
+                cooldown.remaining_at(started),
+                Some(Duration::from_secs(seconds))
+            );
+            assert_eq!(
+                cooldown.remaining_at(started + Duration::from_secs(1)),
+                Some(Duration::from_secs(seconds - 1))
+            );
+        }
+        let cooldown = HostCooldown {
+            started,
+            duration: Duration::from_secs(1),
+        };
+        assert_eq!(
+            cooldown.remaining_at(started + Duration::from_secs(1)),
+            None
+        );
+
+        let gate = RequestGate::new(1, 1, Duration::ZERO);
+        gate.cool_down("source.example", Duration::from_secs(u64::MAX));
+        gate.cool_down("source.example", Duration::from_secs(1));
+        assert_eq!(
+            unpoison(gate.state.lock()).host_cooldowns["source.example"].duration,
+            Duration::from_secs(u64::MAX)
+        );
+    }
+
+    #[test]
+    fn an_overflow_sized_host_cooldown_blocks_its_host_and_allows_cancellation() {
+        let gate = Arc::new(RequestGate::new(1, 1, Duration::ZERO));
+        gate.cool_down("source.example", Duration::from_secs(u64::MAX));
+        let cancellation = CancellationToken::new();
+        let worker_token = cancellation.clone();
+        let worker_gate = Arc::clone(&gate);
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            let result = worker_gate
+                .acquire(
+                    "source.example",
+                    HttpPriority::Critical,
+                    Some(&worker_token),
+                )
+                .map(drop);
+            sender.send(result).unwrap();
+        });
+        wait_for_waiters(&gate, 1);
+        assert_eq!(gate.snapshot().requests_started, 0);
+        let other_host = gate
+            .acquire("other.example", HttpPriority::Visible, None)
+            .unwrap();
+        cancellation.cancel();
+        let error = receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.code, SourceErrorCode::Cancelled);
+        worker.join().unwrap();
+        assert_eq!(gate.snapshot().waiting, 0);
+        drop(other_host);
+    }
+
+    #[test]
+    fn cooperative_retry_waits_handle_zero_and_cancel_overflow_sized_delays() {
+        assert!(wait_cooperatively(Duration::ZERO, None).is_ok());
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        for duration in [Duration::ZERO, Duration::from_secs(u64::MAX)] {
+            assert_eq!(
+                wait_cooperatively(duration, Some(&cancelled))
+                    .unwrap_err()
+                    .code,
+                SourceErrorCode::Cancelled
+            );
+        }
+
+        let cancellation = CancellationToken::new();
+        let worker_token = cancellation.clone();
+        let (sender, receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            sender
+                .send(wait_cooperatively(
+                    Duration::from_secs(u64::MAX),
+                    Some(&worker_token),
+                ))
+                .unwrap();
+        });
+        cancellation.cancel();
+        assert_eq!(
+            receiver
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap_err()
+                .code,
+            SourceErrorCode::Cancelled
+        );
+        worker.join().unwrap();
     }
 
     #[test]

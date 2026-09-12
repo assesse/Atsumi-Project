@@ -34,8 +34,9 @@
         "connect-src": "ipc: http://ipc.localhost",
         "font-src": "'self'",
         "frame-src": "'none'",
-        "img-src": "'self' blob: data: detail-original://localhost http://detail-original.localhost danbooru-media://localhost http://danbooru-media.localhost",
-        "media-src": "'self' blob: data: https://cdn.donmai.us",
+        "img-src": "'self' blob: data: detail-original://localhost http://detail-original.localhost danbooru-media://localhost http://danbooru-media.localhost atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost",
+        "media-src": "'self' blob: data: https://cdn.donmai.us atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost",
+        "worker-src": "'self' blob:",
         "object-src": "'none'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'"
@@ -45,6 +46,9 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": {
+      "../.runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/": "media-tools/"
+    },
     "icon": ["icons/icon.ico"],
     "createUpdaterArtifacts": true
   },

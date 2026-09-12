@@ -237,7 +237,7 @@ impl ArtifactStore for FilesystemArtifactStore {
         let part_path = resolve_managed_path(&layout.root, &part_relative_path, false)?;
         reject_symlink_leaf(&final_path)?;
         reject_symlink_leaf(&part_path)?;
-        let bytes = normalized_webp_bytes(page)?;
+        let bytes = normalized_webp_bytes_with_cancellation(page, Some(cancellation))?;
         let expected_part = StoredPage {
             source_page_number: page.source_page_number,
             relative_path: part_relative_path.clone(),
@@ -740,6 +740,17 @@ fn recover_conflicting_page_files(
 pub(crate) fn normalized_webp_bytes(
     page: &DownloadPagePayload,
 ) -> Result<Cow<'_, [u8]>, DownloadPipelineError> {
+    normalized_webp_bytes_with_cancellation(page, None)
+}
+
+fn normalized_webp_bytes_with_cancellation<'a>(
+    page: &'a DownloadPagePayload,
+    cancellation: Option<&CancellationToken>,
+) -> Result<Cow<'a, [u8]>, DownloadPipelineError> {
+    // Hold one slot through decoding, conversion and output validation. The
+    // lower-level decode helpers must not acquire the same budget recursively.
+    let _image_work = crate::application::image_work_budget::acquire(cancellation)
+        .ok_or_else(DownloadPipelineError::cancelled)?;
     if page.source_format == DownloadSourceImageFormat::Webp {
         decode_image(&page.bytes, ImageFormat::WebP)?;
         return Ok(Cow::Borrowed(&page.bytes));
@@ -1112,6 +1123,17 @@ mod tests {
             candidate_index: 0,
             candidate_diagnostics: Vec::new(),
         }
+    }
+
+    #[test]
+    fn cancelled_page_conversion_stops_before_decoding() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let mut page = png_page();
+        page.bytes = b"undecodable image bytes".to_vec();
+        let error =
+            normalized_webp_bytes_with_cancellation(&page, Some(&cancellation)).unwrap_err();
+        assert_eq!(error.code, DownloadPipelineErrorCode::Cancelled);
     }
 
     #[test]

@@ -17,6 +17,8 @@ pub const DEFAULT_DANBOORU_PAGE_SIZE: u32 = 60;
 pub const DEFAULT_DANBOORU_PREVIEW_WIDTH: u32 = 190;
 pub const DEFAULT_CACHE_LIMIT_GB: u32 = 10;
 pub const DEFAULT_CONCURRENT_IMAGE_REQUESTS: u32 = 5;
+pub const DEFAULT_DOWNLOAD_ADAPTIVE_CONCURRENCY: bool = true;
+pub const DEFAULT_DOWNLOAD_ADAPTIVE_MAX_REQUESTS: u32 = 8;
 pub const DEFAULT_REQUEST_START_INTERVAL_MS: u64 = 25;
 pub const MAX_COLLAPSED_GROUP_KEYS: usize = 2_048;
 pub const MAX_COLLAPSED_GROUP_KEY_BYTES: usize = 256;
@@ -239,6 +241,10 @@ pub struct SettingsSnapshot {
     pub privacy_mode: bool,
     pub cache_limit_gb: u32,
     pub concurrent_image_requests: u32,
+    #[serde(default = "default_download_adaptive_concurrency")]
+    pub download_adaptive_concurrency: bool,
+    #[serde(default = "default_download_adaptive_max_requests")]
+    pub download_adaptive_max_requests: u32,
     pub request_start_interval_ms: u64,
     pub auto_find_history_mode: AutoFindHistoryMode,
     pub download_overlap_auto_mode: DownloadOverlapAutoMode,
@@ -267,6 +273,8 @@ impl Default for SettingsSnapshot {
             privacy_mode: false,
             cache_limit_gb: DEFAULT_CACHE_LIMIT_GB,
             concurrent_image_requests: DEFAULT_CONCURRENT_IMAGE_REQUESTS,
+            download_adaptive_concurrency: DEFAULT_DOWNLOAD_ADAPTIVE_CONCURRENCY,
+            download_adaptive_max_requests: DEFAULT_DOWNLOAD_ADAPTIVE_MAX_REQUESTS,
             request_start_interval_ms: DEFAULT_REQUEST_START_INTERVAL_MS,
             auto_find_history_mode: AutoFindHistoryMode::default(),
             download_overlap_auto_mode: DownloadOverlapAutoMode::default(),
@@ -296,6 +304,8 @@ pub struct SettingsPatch {
     pub privacy_mode: Option<bool>,
     pub cache_limit_gb: Option<u32>,
     pub concurrent_image_requests: Option<u32>,
+    pub download_adaptive_concurrency: Option<bool>,
+    pub download_adaptive_max_requests: Option<u32>,
     pub request_start_interval_ms: Option<u64>,
     pub auto_find_history_mode: Option<AutoFindHistoryMode>,
     pub download_overlap_auto_mode: Option<DownloadOverlapAutoMode>,
@@ -328,6 +338,14 @@ pub fn normalize_collapsed_group_keys(values: Vec<String>) -> Result<Vec<String>
         normalized.insert(value.to_owned());
     }
     Ok(normalized.into_iter().collect())
+}
+
+const fn default_download_adaptive_concurrency() -> bool {
+    DEFAULT_DOWNLOAD_ADAPTIVE_CONCURRENCY
+}
+
+const fn default_download_adaptive_max_requests() -> u32 {
+    DEFAULT_DOWNLOAD_ADAPTIVE_MAX_REQUESTS
 }
 
 impl SettingsSnapshot {
@@ -366,6 +384,12 @@ impl SettingsSnapshot {
         }
         if let Some(value) = patch.concurrent_image_requests {
             next.concurrent_image_requests = value;
+        }
+        if let Some(value) = patch.download_adaptive_concurrency {
+            next.download_adaptive_concurrency = value;
+        }
+        if let Some(value) = patch.download_adaptive_max_requests {
+            next.download_adaptive_max_requests = value;
         }
         if let Some(value) = patch.request_start_interval_ms {
             next.request_start_interval_ms = value;
@@ -463,6 +487,12 @@ impl SettingsSnapshot {
                 "must be between 1 and 30",
             ));
         }
+        if !(1..=8).contains(&self.download_adaptive_max_requests) {
+            return Err(ValidationError::new(
+                "downloadAdaptiveMaxRequests",
+                "must be between 1 and 8",
+            ));
+        }
         if self.request_start_interval_ms > 5_000 {
             return Err(ValidationError::new(
                 "requestStartIntervalMs",
@@ -510,6 +540,41 @@ impl SettingsSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn adaptive_download_settings_default_without_changing_existing_request_preferences() {
+        let mut legacy =
+            serde_json::to_value(SettingsSnapshot::default()).expect("serialize defaults");
+        let fields = legacy.as_object_mut().expect("settings object");
+        fields.remove("downloadAdaptiveConcurrency");
+        fields.remove("downloadAdaptiveMaxRequests");
+        fields.insert("concurrentImageRequests".into(), 2.into());
+        fields.insert("requestStartIntervalMs".into(), 500.into());
+        let restored: SettingsSnapshot = serde_json::from_value(legacy).expect("legacy snapshot");
+        assert!(restored.download_adaptive_concurrency);
+        assert_eq!(restored.download_adaptive_max_requests, 8);
+        assert_eq!(restored.concurrent_image_requests, 2);
+        assert_eq!(restored.request_start_interval_ms, 500);
+
+        let disabled = restored
+            .apply_patch(SettingsPatch {
+                download_adaptive_concurrency: Some(false),
+                download_adaptive_max_requests: Some(1),
+                ..SettingsPatch::default()
+            })
+            .expect("disable adaptive tuning");
+        assert!(!disabled.download_adaptive_concurrency);
+        assert_eq!(disabled.download_adaptive_max_requests, 1);
+        assert_eq!(disabled.concurrent_image_requests, 2);
+        for limit in [0, 9, u32::MAX] {
+            assert!(disabled
+                .apply_patch(SettingsPatch {
+                    download_adaptive_max_requests: Some(limit),
+                    ..SettingsPatch::default()
+                })
+                .is_err());
+        }
+    }
 
     #[test]
     fn windows_display_paths_remove_only_safe_verbatim_prefixes() {

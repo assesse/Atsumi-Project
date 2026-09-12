@@ -28,6 +28,8 @@ const settings: SettingsSnapshot = {
   privacyMode: false,
   cacheLimitGb: 5,
   concurrentImageRequests: 5,
+  downloadAdaptiveConcurrency: true,
+  downloadAdaptiveMaxRequests: 8,
   requestStartIntervalMs: 25,
   autoFindGrouping: "all",
   downloadsGrouping: "all",
@@ -261,6 +263,23 @@ describe("SettingsDialog operational boundaries", () => {
         await Promise.resolve();
       });
       expect(onLoadExplorationExclusions).not.toHaveBeenCalled();
+      const adaptive = container.querySelector<HTMLInputElement>('[aria-label="다운로드 동시 요청 자동 조절"]');
+      const adaptiveMaximum = container.querySelector<HTMLInputElement>('[aria-label="자동 조절 최대 요청"]');
+      expect(adaptive).toBeChecked();
+      expect(adaptiveMaximum).toHaveValue(8);
+      expect(adaptiveMaximum).toHaveAttribute("min", "1");
+      expect(adaptiveMaximum).toHaveAttribute("max", "8");
+      expect(adaptiveMaximum?.closest(".setting-row")).toHaveTextContent("재시작 후 적용");
+      await act(async () => {
+        if (!adaptiveMaximum) throw new Error("adaptive maximum input missing");
+        const setInputValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        setInputValue?.call(adaptiveMaximum, "6");
+        adaptiveMaximum.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => adaptive?.click());
+      expect(adaptive).not.toBeChecked();
+      expect(adaptiveMaximum).toBeDisabled();
+      expect(container.querySelector('[aria-label="동시 이미지 요청"]')).toHaveValue(5);
       expect(container.textContent).toContain("확실한 포함·거의 동일 판본만 자동 추천하거나 격리합니다.");
       expect(container.textContent).toContain("후보를 찾기 시작할 기록 범위를 선택합니다.");
       expect(container.textContent).not.toContain("일반 판본은 포함률 95% 이상");
@@ -366,6 +385,8 @@ describe("SettingsDialog operational boundaries", () => {
         danbooruPreviewWidth: 190,
         relatedPreviewWidth: 240,
         privacyMode: true,
+        downloadAdaptiveConcurrency: false,
+        downloadAdaptiveMaxRequests: 6,
         searchIncludeTags: ["female:glasses", "webtoon"],
         searchExcludeTags: ["male:glasses"],
       }));

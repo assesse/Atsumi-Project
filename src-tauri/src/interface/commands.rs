@@ -10,7 +10,7 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::{
     application::{
@@ -54,8 +54,8 @@ use super::storage_usage::{collect_storage_usage, StorageUsageSnapshot};
 use super::{
     api::{
         AppActiveAutoFindSnapshot, AppActiveDownloadsSnapshot, AppActiveDuplicateScanSnapshot,
-        AppActiveInternalDuplicateScanSnapshot, AppActiveWorkSnapshot, AppQuitRejectionReason,
-        AppQuitRequest, AppQuitResult,
+        AppActiveInternalDuplicateScanSnapshot, AppActiveRecordingsSnapshot, AppActiveWorkSnapshot,
+        AppQuitRejectionReason, AppQuitRequest, AppQuitResult,
     },
     ApiAction, ApiError, ApiResult,
 };
@@ -224,6 +224,26 @@ fn active_work_status_error(source_code: &str) -> ApiError {
     }
 }
 
+fn fingerprint_with_recordings(base: String, recording_ids: &[String]) -> String {
+    if recording_ids.is_empty() {
+        return base;
+    }
+    let mut ids = recording_ids.to_vec();
+    ids.sort();
+    ids.dedup();
+    let mut hash = Sha256::new();
+    hash.update(b"atsumi-work-with-recordings-v1");
+    hash.update(base.as_bytes());
+    for id in ids {
+        hash.update((id.len() as u64).to_be_bytes());
+        hash.update(id.as_bytes());
+    }
+    hash.finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 fn quit_rejection_reason(
     request: &AppQuitRequest,
     snapshot: &AppActiveWorkSnapshot,
@@ -254,6 +274,8 @@ pub struct AppState {
     gallery_previews: Option<GalleryPreviewService>,
     excluded_artifacts: Option<Arc<ExcludedArtifactService>>,
     overlap_merges: Option<Arc<OverlapMergeService>>,
+
+    browser: Option<crate::streaming::browser::OfficialBrowser>,
     download_root_picker: Arc<dyn DownloadRootPicker>,
     artifact_store: Arc<dyn ArtifactStore>,
     live_source: Arc<HitomiLiveAdapter>,
@@ -361,6 +383,8 @@ impl AppState {
             gallery_previews: None,
             excluded_artifacts: None,
             overlap_merges: None,
+
+            browser: None,
             download_root_picker,
             artifact_store,
             live_source,
@@ -391,6 +415,64 @@ impl AppState {
         self
     }
 
+    pub fn with_official_browser(
+        mut self,
+        browser: Option<crate::streaming::browser::OfficialBrowser>,
+    ) -> Self {
+        self.browser = browser;
+        self
+    }
+
+    pub(crate) fn official_browser(
+        &self,
+    ) -> Result<crate::streaming::browser::OfficialBrowser, crate::streaming::model::StreamError>
+    {
+        self.browser.clone().ok_or_else(|| crate::streaming::model::StreamError::new(
+            "BROWSER_UNAVAILABLE", "공식 시청 녹화 저장소를 초기화하지 못했습니다. 저장 공간과 앱 로그를 확인해 주세요.", true))
+    }
+
+    pub(crate) fn start_browser_managed(
+        &self,
+        app: &AppHandle,
+        rights: bool,
+        capture_chat: bool,
+    ) -> Result<(), crate::streaming::model::StreamError> {
+        self.start_browser_managed_for(app, None, rights, capture_chat)
+    }
+    pub(crate) fn start_browser_managed_for(
+        &self,
+        app: &AppHandle,
+        context: Option<&str>,
+        rights: bool,
+        capture_chat: bool,
+    ) -> Result<(), crate::streaming::model::StreamError> {
+        use crate::streaming::model::StreamError;
+        let browser = self.official_browser()?;
+        let settings = self.settings_snapshot().map_err(|_| {
+            StreamError::new("SETTINGS_UNAVAILABLE", "저장 위치를 읽지 못했습니다.", true)
+        })?;
+        let _control = self.managed_work.inner.control.lock().map_err(|_| {
+            StreamError::new(
+                "APP_WORK_UNAVAILABLE",
+                "앱 작업 상태를 확인하지 못했습니다.",
+                true,
+            )
+        })?;
+        if self.managed_work.inner.quitting.load(Ordering::Acquire) {
+            return Err(StreamError::new(
+                "APP_QUITTING",
+                "앱 종료 중에는 녹화를 시작할 수 없습니다.",
+                false,
+            ));
+        }
+        browser.capture_context(context)?.arm(
+            app,
+            PathBuf::from(settings.download_root),
+            rights,
+            capture_chat,
+        )
+    }
+
     fn preview_service(&self) -> Result<GalleryPreviewService, ApplicationError> {
         self.gallery_previews.clone().ok_or_else(|| {
             crate::application::RepositoryError::Other("gallery previews are unavailable".into())
@@ -418,6 +500,10 @@ impl AppState {
         let auto_find = self.auto_find.active_run_snapshot()?;
         let duplicate_scan = self.duplicates.active_run_snapshot()?;
         let internal_duplicate_scan = self.internal_duplicates.active_run_snapshot()?;
+        let recording_ids = self
+            .browser
+            .as_ref()
+            .map_or_else(Vec::new, |browser| browser.active_ids());
         let work_set_fingerprint = active_work_fingerprint(
             active_download_ids.iter().map(|entry_id| entry_id.as_str()),
             auto_find.as_ref().map(|run| run.run_id.as_str()),
@@ -428,7 +514,10 @@ impl AppState {
         );
         Ok(AppActiveWorkSnapshot {
             queried_at: now_unix_ms(),
-            work_set_fingerprint,
+            work_set_fingerprint: fingerprint_with_recordings(work_set_fingerprint, &recording_ids),
+            recordings: (!recording_ids.is_empty()).then_some(AppActiveRecordingsSnapshot {
+                active_count: recording_ids.len() as u64,
+            }),
             downloads: AppActiveDownloadsSnapshot {
                 active_count: u64::try_from(active_download_ids.len()).unwrap_or(u64::MAX),
             },
@@ -514,12 +603,20 @@ impl AppState {
     }
 
     fn spawn_graceful_shutdown(&self, app: AppHandle) {
+        let browser = self.browser.clone();
         let downloads = self.downloads.clone();
         let auto_find = self.auto_find.clone();
         let duplicates = self.duplicates.clone();
         let internal_duplicates = self.internal_duplicates.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = tauri::async_runtime::spawn_blocking(move || {
+                if let Some(replay) = app.try_state::<crate::streaming::replay::ReplayService>() {
+                    replay.shutdown_and_wait();
+                }
+                if let Some(browser) = browser {
+                    browser.shutdown_and_wait(&app);
+                }
+
                 crate::shutdown_all_then_exit(
                     || internal_duplicates.shutdown_and_wait(),
                     || duplicates.shutdown_and_wait(),
@@ -1682,6 +1779,9 @@ pub async fn maintenance_execute(
     let data_dir = state.data_dir.clone();
     let managed_work = state.managed_work();
     let execute_action = action.clone();
+
+    let browser = state.browser.clone();
+    let shutdown_app = app.clone();
     let result = run_application_blocking("maintenance_execute", move || {
         let mut completed_steps = Vec::new();
         let mut warnings = Vec::new();
@@ -1750,6 +1850,8 @@ pub async fn maintenance_execute(
                 Ok(MaintenanceResult { action: execute_action.clone(), completed_steps, warnings, restart_required: false })
             }
             MaintenanceAction::FactoryReset { .. } => {
+                if let Some(browser) = &browser { browser.shutdown_and_wait(&shutdown_app); }
+
                 internal_duplicates.shutdown_and_wait();
                 duplicates.shutdown_and_wait();
                 auto_find.shutdown_and_wait();
@@ -1774,7 +1876,7 @@ pub async fn maintenance_execute(
 }
 
 #[tauri::command]
-pub async fn app_minimize_to_tray(window: WebviewWindow) -> Result<ApiResult<()>, ApiError> {
+pub async fn app_minimize_to_tray(window: Window) -> Result<ApiResult<()>, ApiError> {
     match crate::minimize_to_tray(|| window.hide()) {
         Ok(()) => Ok(ApiResult::success(())),
         Err(error) => Ok(ApiResult::failure(ApiError {
@@ -2137,6 +2239,7 @@ mod tests {
         AppActiveWorkSnapshot {
             queried_at: "123".into(),
             work_set_fingerprint: "current-work".into(),
+            recordings: None,
             downloads: AppActiveDownloadsSnapshot {
                 active_count: active_downloads,
             },
@@ -2150,6 +2253,7 @@ mod tests {
         AppActiveWorkSnapshot {
             queried_at: "123".into(),
             work_set_fingerprint: "all-work".into(),
+            recordings: None,
             downloads: AppActiveDownloadsSnapshot { active_count: 2 },
             auto_find: Some(AppActiveAutoFindSnapshot {
                 run_id: "auto-run".into(),
@@ -2207,6 +2311,34 @@ mod tests {
             None,
         );
         assert_ne!(first, changed_run);
+    }
+
+    #[test]
+    fn recording_only_work_requires_confirmation_and_has_identity_fingerprint() {
+        let mut snapshot = active_work_snapshot(0);
+        snapshot.recordings = Some(AppActiveRecordingsSnapshot { active_count: 1 });
+        assert!(snapshot.has_active_work());
+        assert_eq!(snapshot.active_work_count(), 1);
+        let request = AppQuitRequest {
+            expected_work_set_fingerprint: snapshot.work_set_fingerprint.clone(),
+            confirm_active_work: false,
+            force_when_status_unknown: false,
+        };
+        assert_eq!(
+            quit_rejection_reason(&request, &snapshot),
+            Some(AppQuitRejectionReason::ActiveWorkConfirmationRequired)
+        );
+        let ids = vec!["session-b".into(), "session-a".into()];
+        let reversed = vec!["session-a".into(), "session-b".into(), "session-b".into()];
+        assert_eq!(
+            fingerprint_with_recordings("base".into(), &ids),
+            fingerprint_with_recordings("base".into(), &reversed)
+        );
+        assert_ne!(
+            fingerprint_with_recordings("base".into(), &ids),
+            fingerprint_with_recordings("base".into(), &["session-c".into()])
+        );
+        assert_eq!(fingerprint_with_recordings("base".into(), &[]), "base");
     }
 
     #[test]

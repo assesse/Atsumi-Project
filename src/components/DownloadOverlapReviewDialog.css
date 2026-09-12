@@ -517,3 +517,63 @@
     align-self: flex-end;
   }
 }
+
+.review-actions.download-overlap-history-actions {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.download-overlap-sequence {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.download-overlap-sequence > .text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 9px;
+}
+
+.download-overlap-sequence > [role="status"] {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.download-overlap-history-status,
+.download-overlap-history-commands {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.download-overlap-history-status {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.download-overlap-history-status > .fluent {
+  color: var(--primary-strong);
+}
+
+.download-overlap-history-commands > .download-overlap-action-with-help > button {
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  .review-actions.download-overlap-history-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .download-overlap-history-commands {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}

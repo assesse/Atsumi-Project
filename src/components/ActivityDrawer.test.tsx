@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import { galleryId, type Gallery } from "../core/types";
+import { galleryId, type DownloadState, type Gallery } from "../core/types";
 import { ActivityDrawer } from "./ActivityDrawer";
 
 const failedGallery: Gallery = {
@@ -28,6 +28,98 @@ const failedGallery: Gallery = {
 };
 
 describe("ActivityDrawer download controls", () => {
+  const sessionTitles = (container: HTMLElement) => [...container.querySelectorAll("#activity-session-panel .activity-item strong")]
+    .map((title) => title.textContent);
+  const activityGallery = (state: DownloadState, id: number): Gallery => ({
+    ...failedGallery,
+    id: galleryId(id),
+    title: `${state}-${id}`,
+    download: { entryId: `entry-${id}`, state },
+  });
+  const actions = { onClose: vi.fn(), onReview: vi.fn(), onRetry: vi.fn(), onCancel: vi.fn() };
+
+  it("sorts live work and reviews before failures and finished work, newest first within each group", async () => {
+    const states: DownloadState[] = [
+      "queued", "resolving_metadata", "downloading", "hashing", "verifying", "retry_wait", "review_required",
+      "interrupted", "failed", "completed", "quarantined", "cancelled",
+    ];
+    const galleries = states.map((state, index) => activityGallery(state, index + 1));
+    const sessionDownloads = galleries.map((gallery, index) => ({ galleryId: gallery.id, occurredAt: index + 1 }));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <ActivityDrawer open galleries={galleries} sessionDownloads={sessionDownloads} {...actions} />,
+      ));
+      expect(sessionTitles(container)).toEqual([
+        "review_required-7", "retry_wait-6", "verifying-5", "hashing-4", "downloading-3", "resolving_metadata-2", "queued-1",
+        "failed-9", "interrupted-8", "cancelled-12", "quarantined-11", "completed-10",
+      ]);
+      expect(sessionDownloads.map((activity) => activity.occurredAt)).toEqual(states.map((_, index) => index + 1));
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("reorders immediately using current download state and treats duplicate removal as finished", async () => {
+    const active = activityGallery("downloading", 1);
+    const review = activityGallery("review_required", 2);
+    const completed = activityGallery("completed", 3);
+    const sessionDownloads = [active, review, completed].map((gallery) => ({
+      galleryId: gallery.id, occurredAt: Number(gallery.id), state: "downloading" as const,
+    }));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const render = (galleries: Gallery[], excluded: ReadonlySet<Gallery["id"]> = new Set()) => act(async () => root.render(
+      <ActivityDrawer open galleries={galleries} sessionDownloads={sessionDownloads} duplicateExcludedGalleryIds={excluded} {...actions} />,
+    ));
+    try {
+      await render([active, review, completed]);
+      expect(sessionTitles(container)).toEqual([review.title, active.title, completed.title]);
+      await render([active, review, completed], new Set([active.id, review.id]));
+      expect(sessionTitles(container)).toEqual([active.title, completed.title, review.title]);
+      expect(container.querySelector(".duplicate-resolved strong")).toHaveTextContent(review.title);
+      const finished = { ...active, download: { ...active.download!, state: "completed" as const } };
+      await render([finished, review, completed]);
+      expect(sessionTitles(container)).toEqual([review.title, completed.title, active.title]);
+      await render([active, review, completed]);
+      expect(sessionTitles(container)).toEqual([review.title, active.title, completed.title]);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
+  it("groups mixed-source session activity without changing automatic history's newest-first ordering", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const gallery = activityGallery("hashing", 1);
+    try {
+      await act(async () => root.render(
+        <ActivityDrawer open galleries={[gallery]} sessionDownloads={[{ galleryId: gallery.id, occurredAt: 1 }]}
+          automaticOverlapActivities={[
+            { id: "old", reviewId: "resolved", galleryId: gallery.id, title: "Old failure", detail: "", occurredAt: 2, state: "failed" },
+            { id: "resolved", reviewId: "resolved", galleryId: gallery.id, title: "Automatic completed", detail: "", occurredAt: 8, state: "completed" },
+            { id: "failed", reviewId: "failed", galleryId: gallery.id, title: "Automatic failure", detail: "", occurredAt: 3, state: "failed" },
+          ]}
+          danbooruActivities={[
+            { id: "danbooru-completed", postId: 4, title: "Danbooru completed", detail: "", occurredAt: 9, state: "completed" },
+            { id: "danbooru-failed", postId: 5, title: "Danbooru failure", detail: "", occurredAt: 4, state: "failed" },
+          ]}
+          {...actions}
+        />,
+      ));
+      expect(sessionTitles(container)).toEqual([
+        gallery.title, "Danbooru failure", "Automatic failure", "Danbooru completed", "Automatic completed",
+      ]);
+      const automationTab = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!;
+      await act(async () => automationTab.click());
+      expect([...container.querySelectorAll(".activity-item strong")].map((item) => item.textContent))
+        .toEqual(["Automatic completed", "Automatic failure"]);
+    } finally {
+      await act(async () => root.unmount());
+    }
+  });
+
   it("truncates fractional progress for the visible and accessible value", async () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -270,6 +362,40 @@ describe("ActivityDrawer download controls", () => {
       expect.stringContaining("격리된 실제 파일은 복원하지 않습니다"),
     );
 
+    await act(async () => root.unmount());
+    container.remove();
+  });
+
+  it("starts sequential review for all unread records and disables duplicate starts", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const start = vi.fn();
+    const render = async (count: number, loading = false, pending = false) => {
+      await act(async () => root.render(
+        <ActivityDrawer open galleries={[]} sessionDownloads={[]}
+          automationHistoryUnacknowledgedItems={count} automationSequenceLoading={loading}
+          automationHistoryPendingReviewIds={new Set(pending ? ["review-busy"] : [])}
+          onStartAutomationSequence={start} onClose={vi.fn()} onReview={vi.fn()} onRetry={vi.fn()} onCancel={vi.fn()} />,
+      ));
+    };
+    await render(250);
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+      .find((button) => button.textContent?.includes("자동분류 검토"))!.click());
+    const button = container.querySelector<HTMLButtonElement>(".activity-history-toolbar button")!;
+    expect(button).toBeEnabled();
+    expect(button).toHaveTextContent("미확인 순차 검토");
+    await act(async () => button.click());
+    expect(start).toHaveBeenCalledOnce();
+    await render(250, true);
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("검토 목록 준비 중");
+    await act(async () => button.click());
+    await render(250, false, true);
+    expect(button).toBeDisabled();
+    await render(0);
+    expect(button).toBeDisabled();
+    expect(start).toHaveBeenCalledOnce();
     await act(async () => root.unmount());
     container.remove();
   });

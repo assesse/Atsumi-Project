@@ -277,11 +277,33 @@ select:focus-visible {
 
 .workspace {
   position: relative;
-  display: grid;
-  grid-template-rows: 72px 92px 52px 56px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   padding: 0 22px 18px;
+}
+
+/* Optional exploration tabs and comparison tools must not take the result
+   viewport's flexible space, or push it into an implicit grid row. */
+.workspace > * {
+  flex: 0 0 auto;
+}
+
+.workspace > .view-header {
+  min-height: 72px;
+}
+
+.workspace > .page-heading {
+  min-height: 92px;
+}
+
+.workspace > .context-row {
+  min-height: 52px;
+}
+
+.workspace > .gallery-viewport {
+  flex: 1 1 0px;
 }
 
 .view-header {
@@ -1443,25 +1465,27 @@ h2 {
   animation: download-artist-folder-cover-deal 420ms cubic-bezier(0.16, 0.85, 0.23, 1) var(--folder-preview-delay) both;
 }
 
-.download-artist-folder-overlay-preview::after,
-.download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::after {
+/* Keep decorative sheen separate from the shared ::after privacy mask. */
+.download-artist-folder-overlay-preview::before,
+.download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::before {
   position: absolute;
   inset: 0;
+  z-index: 1;
   content: "";
   pointer-events: none;
   background: linear-gradient(115deg, transparent 24%, rgba(230, 251, 255, 0.2) 49%, transparent 74%);
 }
 
-.download-artist-folder-overlay-preview::after {
+.download-artist-folder-overlay-preview::before {
   animation: download-artist-folder-cover-sheen 620ms ease-out var(--folder-preview-delay) both;
 }
 
-.download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::after {
+.download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::before {
   opacity: 0;
 }
 
-.download-artist-folder-preview-stack[data-work-count="1"]:hover .download-artist-folder-preview:is([data-thumbnail-state="image"], [data-thumbnail-state="sprite"])::after,
-.download-artist-folder-button:focus-visible .download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview:is([data-thumbnail-state="image"], [data-thumbnail-state="sprite"])::after {
+.download-artist-folder-preview-stack[data-work-count="1"]:hover .download-artist-folder-preview:is([data-thumbnail-state="image"], [data-thumbnail-state="sprite"])::before,
+.download-artist-folder-button:focus-visible .download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview:is([data-thumbnail-state="image"], [data-thumbnail-state="sprite"])::before {
   animation: download-artist-folder-cover-sheen 620ms ease-out both;
 }
 
@@ -1524,8 +1548,8 @@ h2 {
   .download-artist-folder-contents,
   .download-artist-folder-overlay-preview { animation: none; }
 
-  .download-artist-folder-overlay-preview::after,
-  .download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::after { display: none; }
+  .download-artist-folder-overlay-preview::before,
+  .download-artist-folder-preview-stack[data-work-count="1"] .download-artist-folder-preview::before { display: none; }
 }
 
 .gallery-card,

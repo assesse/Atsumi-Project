@@ -224,6 +224,8 @@ const defaultSettings: SettingsSnapshot = {
   privacyMode: false,
   cacheLimitGb: 10,
   concurrentImageRequests: 5,
+  downloadAdaptiveConcurrency: true,
+  downloadAdaptiveMaxRequests: 8,
   requestStartIntervalMs: 25,
   autoFindGrouping: "all",
   downloadsGrouping: "all",
@@ -315,6 +317,13 @@ const readPersistedBrowserSettings = (): SettingsSnapshot => {
         ? parsed.danbooruPreviewWidth ?? defaultSettings.danbooruPreviewWidth
         : defaultSettings.danbooruPreviewWidth,
       privacyMode: parsed.privacyMode === true,
+      downloadAdaptiveConcurrency: typeof parsed.downloadAdaptiveConcurrency === "boolean"
+        ? parsed.downloadAdaptiveConcurrency : defaultSettings.downloadAdaptiveConcurrency,
+      downloadAdaptiveMaxRequests: Number.isInteger(parsed.downloadAdaptiveMaxRequests)
+        && (parsed.downloadAdaptiveMaxRequests ?? 0) >= 1
+        && (parsed.downloadAdaptiveMaxRequests ?? 0) <= 8
+        ? parsed.downloadAdaptiveMaxRequests ?? defaultSettings.downloadAdaptiveMaxRequests
+        : defaultSettings.downloadAdaptiveMaxRequests,
       autoFindGrouping: isGalleryGrouping(parsed.autoFindGrouping) ? parsed.autoFindGrouping : "all",
       downloadsGrouping: isGalleryGrouping(parsed.downloadsGrouping) ? parsed.downloadsGrouping : "all",
       exploreDisplayMode: isGalleryDisplayMode(parsed.exploreDisplayMode) ? parsed.exploreDisplayMode : "detail",
@@ -1013,6 +1022,10 @@ class BrowserMockBackend implements BackendClient {
         : null) ??
       validateIntegerRange(next.cacheLimitGb, "cacheLimitGb", 1, 30) ??
       validateIntegerRange(next.concurrentImageRequests, "concurrentImageRequests", 1, 30) ??
+      (typeof next.downloadAdaptiveConcurrency !== "boolean"
+        ? validationError("downloadAdaptiveConcurrency", "must be a boolean")
+        : null) ??
+      validateIntegerRange(next.downloadAdaptiveMaxRequests, "downloadAdaptiveMaxRequests", 1, 8) ??
       validateIntegerRange(next.requestStartIntervalMs, "requestStartIntervalMs", 0, 5_000);
     if (invalid) return invalid;
     this.settings = {

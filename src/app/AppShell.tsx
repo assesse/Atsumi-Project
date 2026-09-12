@@ -8,7 +8,7 @@ import { useSettings, type SettingsApi } from "../hooks/useSettings";
 import { useWindowPlacement } from "../hooks/useWindowPlacement";
 import { loadContentSource, saveContentSource } from "../state/sourcePreference";
 import { isTutorialDismissed, setTutorialDismissed } from "../tutorial/tutorialPreference";
-import { useAppUpdater } from "../update/useAppUpdater";
+import { useAppUpdater, type UpdateInstallGuard } from "../update/useAppUpdater";
 import { createShellState, shellReducer, type ShellState } from "./shellState";
 import { useAppExit, type AppExitApi } from "./useAppExit";
 import { usePreferenceQueue } from "./usePreferenceQueue";
@@ -41,11 +41,11 @@ export function useAppShell(): AppShellServices {
 }
 
 /** One owner for app-wide services. Source switches never remount this provider. */
-export function AppShell({ api, children }: { api: AppShellApi; children: ReactNode }) {
+export function AppShell({ api, children, updateGuard }: { api: AppShellApi; children: ReactNode; updateGuard?: UpdateInstallGuard }) {
   const [state, dispatch] = useReducer(shellReducer, undefined, () => createShellState(loadContentSource()));
   const settingsStore = useSettings(api);
   const { settings, save: saveSettings } = settingsStore;
-  const updater = useAppUpdater(api.runtime);
+  const updater = useAppUpdater(api.runtime, updateGuard);
   const [tutorialOpen, setTutorialOpen] = useState(() => !isTutorialDismissed());
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);

@@ -19,6 +19,9 @@ tauri-build = { version = "2", features = [] }
 avif-rust = "=0.0.6"
 bin-rs = { version = "=0.0.10", features = ["stream", "util"] }
 base64 = "0.22"
+chrono = { version = "0.4.45", default-features = false, features = ["std"] }
+fs2 = "0.4"
+httpdate = "1"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 md-5 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
@@ -26,7 +29,7 @@ rusqlite = { version = "0.32", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-process = "2.3"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2.10"
@@ -34,18 +37,30 @@ thiserror = "2"
 tokio = { version = "1", features = ["time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4"] }
 windows = { version = "0.61.3", features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_UI_Shell",
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]
 tempfile = "3"
+tauri = { version = "=2.11.5", features = ["test"] }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "=0.38.2"
+
+# Remote official-site windows must not reach Tauri's shared IPC channel queue.
+# Keep this version pinned until the vendor policy patch is re-audited.
+[patch.crates-io]
+tauri = { path = "vendor/tauri-2.11.5" }
 
 # The current-source launcher uses the dev profile. Image decode/encode and
 # SHA-256 live mostly in dependencies, so keep app iteration fast while making

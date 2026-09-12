@@ -1,6 +1,7 @@
 mod artifact_store;
 mod artifact_thumbnail;
 mod avif_decode;
+mod download_tuning_repository;
 mod excluded_artifacts;
 mod fixture_search;
 mod gallery_summary_cache;

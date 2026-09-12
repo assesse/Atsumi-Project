@@ -3,10 +3,12 @@ mod detail_original;
 mod download_overlap;
 mod download_pipeline;
 mod download_supervisor;
+mod download_tuning;
 mod duplicate_analyzer;
 mod duplicate_supervisor;
 mod error;
 mod gallery_preview;
+pub(crate) mod image_work_budget;
 mod internal_duplicate_analyzer;
 #[cfg(test)]
 mod internal_duplicate_corpus;
@@ -35,6 +37,7 @@ pub use download_pipeline::{
     StoredPage,
 };
 pub use download_supervisor::DownloadSupervisor;
+pub use download_tuning::{DownloadTuningProfile, DownloadTuningStore};
 pub use duplicate_supervisor::{DisabledDuplicateRelationProvider, DuplicateSupervisor};
 pub use error::{ApplicationError, RepositoryError};
 pub use gallery_preview::{

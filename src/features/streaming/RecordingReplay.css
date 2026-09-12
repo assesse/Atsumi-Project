@@ -1,0 +1,68 @@
+.recording-replay-backdrop { position: fixed; inset: 0; z-index: 1300; display: grid; place-items: center; padding: 18px; background: #05080dea; }
+.recording-replay { display: flex; flex-direction: column; width: min(1600px, 100%); height: min(920px, calc(100dvh - 36px)); min-width: 0; overflow: hidden; border: 1px solid #35434b; border-radius: 12px; color: #edf1f3; background: #12171e; box-shadow: 0 20px 80px #0008; font-family: inherit; }
+.recording-replay:fullscreen { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+.recording-replay button, .recording-replay select, .recording-replay input { font: inherit; }
+.recording-replay button { color: #dfe8ec; border: 1px solid #3a4753; border-radius: 6px; padding: 6px 9px; background: #202b36; cursor: pointer; }
+.recording-replay button:hover:not(:disabled) { color: #9ff5d2; border-color: #5aa68d; background: #2a3b43; }
+.recording-replay button:disabled { opacity: .45; cursor: default; }
+.recording-replay :focus-visible { outline: 2px solid #78e4b8; outline-offset: 2px; }
+.recording-replay-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.recording-replay select, .recording-replay input[type="number"] { color: #dfe8ec; padding: 5px 7px; border: 1px solid #3b4652; border-radius: 5px; background: #1d2732; }
+.recording-replay-heading { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid #303b46; }
+.recording-replay-heading > div { display: flex; align-items: center; gap: 15px; min-width: 0; }
+.recording-replay-heading h2 { margin: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recording-replay-mark { color: #6ce5b5; white-space: nowrap; font-size: 14px; font-weight: 800; letter-spacing: .04em; }
+.recording-replay-mark > span { margin-left: 7px; font-size: 11px; font-weight: 500; color: #94a4af; letter-spacing: 0; }
+.recording-replay-offline { flex-shrink: 0; color: #8eaba3; font-size: 10px; padding: 3px 6px; background: #24332f; border-radius: 4px; }
+.recording-replay-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(270px, 26vw, 360px); }
+.recording-replay-body[hidden] { display: none; }
+.recording-replay-player { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0b1016; }
+.recording-replay-stage { flex: 1; position: relative; min-height: 100px; background: #000; overflow: hidden; }
+.recording-replay-stage video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
+.recording-replay-stage .recording-replay-center-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 64px; height: 64px; padding-left: 13px; border-radius: 50%; border: 1px solid #88e6c36b; color: #aaffda; background: #182e27d9; font-size: 25px; }
+.recording-replay-buffering { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); color: #d4e3de; padding: 8px 12px; border-radius: 5px; background: #18282edb; font-size: 12px; }
+.recording-replay-controls { flex-shrink: 0; padding: 5px 13px 8px; background: #10171f; }
+.recording-replay-seek { display: block; width: 100%; height: 14px; margin: 0 0 4px; accent-color: #68e2b3; cursor: pointer; }
+.recording-replay-control-row { display: flex; align-items: center; gap: 7px; }
+.recording-replay-control-row button { width: 32px; height: 30px; padding: 0; border-color: transparent; background: transparent; font-size: 18px; }
+.recording-replay-volume { width: 68px; accent-color: #68e2b3; }
+.recording-replay-clock { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.recording-replay-clock > span { color: #82909f; }
+.recording-replay-control-spacer { flex: 1; }
+.recording-replay-quality { color: #9ab3ae; font-size: 10px; white-space: nowrap; }
+.recording-replay-control-row select { font-size: 11px; }
+.recording-replay-info { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 9px 14px; border-top: 1px solid #27313c; color: #91a3b1; font-size: 10px; }
+.recording-replay-sync { padding: 12px 16px; color: #bdcbd4; font-size: 11px; border-top: 1px solid #2f3c47; max-height: 155px; overflow: auto; }
+.recording-replay-sync > div { display: flex; gap: 8px; margin-top: 8px; }
+.recording-replay-sync input { width: 100px; }
+.recording-replay-sync p { color: #93a3b0; line-height: 1.7; margin-bottom: 0; }
+.recording-replay-chat { min-height: 0; min-width: 0; display: flex; flex-direction: column; position: relative; border-left: 1px solid #303b46; background: #171e27; }
+.recording-replay-chat > header { display: flex; align-items: center; justify-content: space-between; padding: 14px; font-size: 13px; border-bottom: 1px solid #2c3641; }
+.recording-replay-chat-options { display: flex; align-items: center; gap: 5px; padding: 10px 10px 2px; }
+.recording-replay-chat-options select, .recording-replay-chat-options button { font-size: 10px; padding: 5px; }
+.recording-replay-chat-options button { margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+.recording-replay-chat-status { padding: 4px 12px 9px; margin: 0; font-size: 10px; color: #96a8b6; }
+.recording-replay-chat-scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; padding: 8px 10px; scrollbar-width: thin; scrollbar-color: #405264 transparent; }
+.recording-replay-message { position: relative; padding: 5px 16px 5px 0; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; color: #d5dde4; }
+.recording-replay-message > strong { color: #8ed7b9; font-weight: 650; }
+.recording-replay-chat-time { color: #8795a3; font-size: .75em; margin-right: 5px; font-variant-numeric: tabular-nums; }
+.recording-replay-badge { display: inline-block; vertical-align: baseline; margin-right: 4px; padding: 0 3px; color: #bfd4e6; background: #344654; font-size: .72em; border-radius: 3px; }
+.recording-replay-decoration { display: inline-block; max-width: 3em; height: 1.5em; object-fit: contain; vertical-align: middle; }
+.recording-replay-message .recording-replay-row-seek { position: absolute; top: 6px; right: 0; border: 0; padding: 0; color: #91a9bc; background: transparent; opacity: 0; font-size: 13px; }
+.recording-replay-message:hover .recording-replay-row-seek, .recording-replay-row-seek:focus-visible { opacity: 1; }
+.recording-replay-chat footer { flex-shrink: 0; padding: 12px; border-top: 1px solid #303a45; font-size: 10px; line-height: 1.6; color: #8fa0ae; background: #131b24; }
+.recording-replay-follow { align-self: center; margin: 6px 12px; font-size: 11px !important; color: #92edc7 !important; }
+.recording-replay-log-nav { display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; font-size: 9px; color: #96a8b6; }
+.recording-replay-log-nav button, .recording-replay-older { font-size: 10px !important; }
+.recording-replay-older { display: block; margin: 0 auto 10px; }
+.recording-replay-warning, .recording-replay-error { flex-shrink: 0; max-height: 90px; overflow: auto; margin: 0; padding: 8px 14px; font-size: 11px; line-height: 1.7; overflow-wrap: anywhere; }
+.recording-replay-warning { color: #d4bb85; background: #332d20; }
+.recording-replay-error { color: #ffb9c5; background: #3f2630; }
+.recording-replay-empty { color: #8b9aa8; text-align: center; padding: 25px 14px; font-size: 12px; line-height: 1.8; }
+.recording-replay-loading { display: grid; place-items: center; flex: 1; padding: 30px; color: #b6c4cf; font-size: 13px; }
+.recording-replay-heatstrip { display: flex; align-items: stretch; height: 20px; gap: 1px; }
+.recording-replay-heatstrip button { flex: 1; min-width: 1px; display: flex; align-items: flex-end; padding: 0; border: 0; border-radius: 0; background: transparent; }
+.recording-replay-heatstrip span { display: block; width: 100%; background: #53b79577; }
+.recording-replay-heatstrip button:hover span { background: #90f0c4; }
+@media (max-width: 780px) { .recording-replay-backdrop { padding: 5px; } .recording-replay { height: calc(100dvh - 10px); } .recording-replay-body { grid-template-columns: minmax(0, 1fr) 265px; } .recording-replay-mark { display: none; } .recording-replay-volume { display: none; } .recording-replay-control-row { gap: 2px; } .recording-replay-info { gap: 4px; } }
+@media (max-width: 590px) { .recording-replay-body { display: flex; flex-direction: column; } .recording-replay-player { flex: 1; min-height: 220px; } .recording-replay-chat { flex: 1; min-height: 160px; border-left: 0; border-top: 1px solid #303b46; } .recording-replay-chat > header { padding: 8px 12px; } .recording-replay-chat footer { padding: 6px 12px; } }

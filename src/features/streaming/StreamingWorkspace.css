@@ -1,0 +1,10 @@
+.streaming-workspace { min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding: clamp(12px, 1.4vw, 24px); background: var(--workspace); container-type: inline-size; }
+.streaming-workspace.is-official-view { overflow-x: hidden; scrollbar-gutter: stable; }
+.streaming-shell .sidebar-foot { gap: 8px; }
+.streaming-shell .live-indicator { min-width: 0; white-space: normal; line-height: 1.4; font-size: 11px; }
+.streaming-shell .live-indicator i, .streaming-shell .sidebar-toggle { flex-shrink: 0; }
+.streaming-workspace button { border: 1px solid var(--line); border-radius: 8px; padding: 9px 14px; color: var(--text); background: var(--surface-soft); cursor: pointer; }
+.streaming-workspace button:hover:not(:disabled) { background: var(--surface-hover); border-color: var(--line-strong); }
+.streaming-workspace button:disabled { opacity: .45; cursor: not-allowed; }
+.streaming-workspace button:focus-visible, .streaming-workspace input:focus-visible, .streaming-workspace select:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.streaming-workspace button[aria-pressed="true"] { background: var(--primary-soft); border-color: var(--primary); }

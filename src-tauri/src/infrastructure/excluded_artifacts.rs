@@ -1390,7 +1390,7 @@ mod tests {
         let fixture = Fixture::new();
         {
             // Reconstruct the actual v42 schema in this in-memory fixture.
-            // Removing only the v43 history row becomes invalid once v44 exists.
+            // Remove the v44/v45 schema additions and history before replaying v43.
             let connection = fixture.repository.connection().unwrap();
             let names = {
                 let mut statement = connection.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name GLOB 'overlap_merge_*'").unwrap();
@@ -1409,7 +1409,16 @@ mod tests {
                     .execute_batch(&format!("DROP TRIGGER {name}"))
                     .unwrap();
             }
-            connection.execute_batch("DROP TABLE overlap_page_merges; ALTER TABLE duplicate_candidates DROP COLUMN artifact_stale; DELETE FROM schema_migrations WHERE version=44;").unwrap();
+            connection
+                .execute_batch(
+                    "DROP TABLE download_tuning_profiles;
+                     ALTER TABLE settings DROP COLUMN download_adaptive_concurrency;
+                     ALTER TABLE settings DROP COLUMN download_adaptive_max_requests;
+                     DROP TABLE overlap_page_merges;
+                     ALTER TABLE duplicate_candidates DROP COLUMN artifact_stale;
+                     DELETE FROM schema_migrations WHERE version IN (44, 45);",
+                )
+                .unwrap();
         }
         fixture
             .repository
@@ -1456,8 +1465,8 @@ mod tests {
         {
             let mut connection = fixture.repository.connection().unwrap();
             let migrated = MigrationRunner::run(&mut connection).unwrap();
-            assert_eq!(migrated.applied_versions, vec![43, 44]);
-            assert_eq!(migrated.current_version, 44);
+            assert_eq!(migrated.applied_versions, vec![43, 44, 45]);
+            assert_eq!(migrated.current_version, 45);
             assert!(MigrationRunner::run(&mut connection)
                 .unwrap()
                 .applied_versions

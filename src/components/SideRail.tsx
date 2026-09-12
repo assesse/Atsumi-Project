@@ -96,6 +96,7 @@ export function SideRail<Source extends ContentSource>({
               type="button"
               className={`nav-item${view === item.view ? " is-active" : ""}`}
               aria-current={view === item.view ? "page" : undefined}
+              aria-label={item.label}
               onClick={() => onNavigate(item.view)}
             >
               <FluentIcon glyph={item.icon} />

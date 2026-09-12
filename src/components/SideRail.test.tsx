@@ -101,6 +101,7 @@ describe("SideRail source switcher", () => {
       expect(choices.map((choice) => choice.textContent)).toEqual([
         "Hitomi앨범 탐색·다운로드·중복 검토",
         "Danboorupost 검색·미리보기·원본 보관",
+        "CHZZK공개 라이브 시청·녹화·채팅 보관",
       ]);
       expect(choices[1]).toHaveAttribute("aria-checked", "true");
       await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));

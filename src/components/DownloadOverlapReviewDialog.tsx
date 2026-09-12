@@ -13,6 +13,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import type {
+  DownloadOverlapAutomationHistoryItem,
   DownloadOverlapCandidate,
   DownloadOverlapDecisionAudit,
   DownloadOverlapDecisionRequest,
@@ -22,6 +23,7 @@ import type {
   DownloadOverlapReview,
   SettingsSnapshot,
 } from "../api/contracts";
+import type { GalleryId } from "../core/types";
 import {
   buildDownloadOverlapAlignment,
   formatPageRanges,
@@ -46,6 +48,9 @@ type Props = {
   loading?: boolean;
   error?: string | null;
   decisionPending?: boolean;
+  automationHistoryItem?: DownloadOverlapAutomationHistoryItem;
+  automationHistoryPending?: boolean;
+  automationReviewSequence?: { position: number; total: number; canPrevious: boolean; canNext: boolean };
   containmentGroup?: DownloadOverlapContainmentGroup;
   containmentLoading?: boolean;
   batchProgress?: { completed: number; total: number };
@@ -59,6 +64,10 @@ type Props = {
   onDecision: (request: DownloadOverlapDecisionRequest) => void;
   onApplyContainmentBatch?: (itemKeys: string[]) => void;
   onMergePages?: (request: DownloadOverlapMergeRequest) => void;
+  onAcknowledgeAutomationHistory?: (reviewId: string) => void;
+  onRestoreAutomationExclusions?: (reviewId: string, galleryIds: GalleryId[]) => void;
+  onPreviousAutomationReview?: () => void;
+  onNextAutomationReview?: () => void;
 };
 
 const relationLabel: Record<DownloadOverlapCandidate["relation"], string> = {
@@ -1067,7 +1076,11 @@ function AutoPlanHelp() {
   </>;
 }
 
-export function DownloadOverlapReviewDialog({ open, review, loading = false, error = null, decisionPending = false, containmentGroup, containmentLoading = false, batchProgress, browserFixture = false, autoMode = "off", previewWidth, thumbnailClient, onClose, onRetry, onRescan, onDecision, onApplyContainmentBatch, onMergePages, completedPair = false }: Props) {
+export function DownloadOverlapReviewDialog({ open, review, loading = false, error = null, decisionPending: reviewDecisionPending = false, automationHistoryItem, automationHistoryPending = false, automationReviewSequence, containmentGroup, containmentLoading = false, batchProgress, browserFixture = false, autoMode = "off", previewWidth, thumbnailClient, onClose, onRetry, onRescan, onDecision, onApplyContainmentBatch, onMergePages, onAcknowledgeAutomationHistory, onRestoreAutomationExclusions, onPreviousAutomationReview, onNextAutomationReview, completedPair = false }: Props) {
+  const decisionPending = reviewDecisionPending || automationHistoryPending;
+  const historyItem = automationHistoryItem?.reviewId === review?.reviewId
+    && automationHistoryItem?.incomingGalleryId === review?.incoming.galleryId
+    ? automationHistoryItem : undefined;
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -1248,8 +1261,19 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
           <div>
             <span className="eyebrow">DOWNLOAD OVERLAP REVIEW</span>
             <h2 id={titleId}>다운로드 판본 중복 검토</h2>
+            {automationReviewSequence ? (
+              <nav className="download-overlap-sequence" aria-label="자동 분류 순차 검토">
+                <button type="button" className="text-button" aria-label="이전 자동 분류" title="확인 처리하지 않고 이전 기록으로 이동합니다." disabled={decisionPending || !automationReviewSequence.canPrevious || !onPreviousAutomationReview} onClick={onPreviousAutomationReview}>
+                  <FluentIcon glyph="\uE76B" /> 이전
+                </button>
+                <span role="status">순차 검토 · {automationReviewSequence.position} / {automationReviewSequence.total}</span>
+                <button type="button" className="text-button" aria-label="다음 자동 분류" title="확인 처리하지 않고 다음 기록으로 이동합니다." disabled={decisionPending || !automationReviewSequence.canNext || !onNextAutomationReview} onClick={onNextAutomationReview}>
+                  다음 <FluentIcon glyph="\uE76C" />
+                </button>
+              </nav>
+            ) : null}
           </div>
-          <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="닫기" onClick={onClose}><FluentIcon glyph="\uE711" /></button>
+          <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="닫기" disabled={decisionPending} onClick={onClose}><FluentIcon glyph="\uE711" /></button>
         </header>
 
         {completedPair && onRescan && <button type="button" className="text-button" disabled={loading || decisionPending} onClick={onRescan}>두 앨범 다시 대조</button>}
@@ -1271,7 +1295,9 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
               <span id={safetyId}>
                 {completedPair ? "A와 B 모두 이미 다운로드가 완료된 앨범입니다. 보존·오탐 판정은 재다운로드하지 않으며, 제거는 선택한 앨범만 목록에서 제외하고 파일을 제외 폴더로 이동합니다. 병합은 검증 후 제공 앨범을 제외합니다." : reviewPending
                   ? "신규 B 파일은 검증됐지만 아직 완료 manifest를 만들지 않았습니다. 제거는 영구 삭제가 아니며, 완료된 기존 A는 격리 영역으로 이동하고 검토 중 staging A와 신규 B는 취소 상태로 보존합니다."
-                  : "이 화면은 판정 당시의 A/B 비교 근거와 선택을 읽기 전용으로 보여줍니다. 탐색·목록 제외는 활동 기록이나 설정에서 해제할 수 있지만, 격리된 실제 파일은 이 판정 기록에서 복원되지 않습니다."}
+                  : historyItem
+                    ? "자동 분류 당시의 비교 근거입니다. 목록 복원은 격리된 실제 파일을 복원하지 않습니다."
+                    : "이 화면은 판정 당시의 A/B 비교 근거와 선택을 읽기 전용으로 보여줍니다. 탐색·목록 제외는 활동 기록이나 설정에서 해제할 수 있지만, 격리된 실제 파일은 이 판정 기록에서 복원되지 않습니다."}
                 {browserFixture ? " · 브라우저 검토 fixture" : ""}
               </span>
             </div>
@@ -1400,7 +1426,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
             <ReviewAction help="현재 A/B 후보가 중복이 아니라고 기록하고 둘 다 보존합니다. 같은 판본 지문 쌍은 다음 탐지에서 제외되며, 기존 제외나 격리를 복구하지 않습니다."><button type="button" className="text-button" disabled={!candidate || decisionPending || pageMergeCount > 0 || Boolean(candidate.decision)} onClick={() => candidate && decide("false_positive_continue", candidate.candidateId)}>오탐 판정</button></ReviewAction>
             <ReviewAction help={completedPair ? "현재 A/B를 둘 다 보존으로 확정합니다. 완료 상태를 유지하며 다시 다운로드하거나 기존 제외를 복구하지 않습니다." : "현재 A/B 후보를 둘 다 보존으로 확정합니다. 기존에 제외·격리된 앨범을 복구하는 기능은 아닙니다. 남은 후보가 있으면 계속 검토하고, 마지막 후보이면 신규 B 완료 절차를 재개합니다."}><button type="button" className="primary-button" disabled={!candidate || decisionPending || pageMergeCount > 0 || Boolean(candidate.decision)} onClick={() => candidate && decide("keep_both_continue", candidate.candidateId)}>둘 다 보존</button></ReviewAction>
           </div>
-        ) : (
+        ) : !historyItem ? (
           <div className="review-actions download-overlap-readonly-actions">
             <div role="note">
               <FluentIcon glyph="\uE8A5" />
@@ -1409,9 +1435,32 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
                 이 창에서는 판정을 바꾸거나 제외를 복구하지 않습니다. 탐색·목록 제외는 활동 기록이나 설정에서 해제할 수 있지만, 격리된 실제 파일은 이 판정 기록에서 복원되지 않습니다.
               </span>
             </div>
-            <button type="button" className="primary-button" onClick={onClose}>닫기</button>
           </div>
-        )}
+        ) : null}
+        {historyItem ? (
+          <div className="review-actions download-overlap-history-actions" aria-label="자동 분류 기록 처리" aria-busy={automationHistoryPending}>
+            <div className="download-overlap-history-status" role="status">
+              <FluentIcon glyph={historyItem.acknowledgedAt ? "\uE73E" : "\uE8A5"} />
+              <span>{automationHistoryPending ? "처리 중…" : historyItem.acknowledgedAt ? "확인 완료한 자동 분류 기록" : `자동 분류 · 제외 ${historyItem.removedGalleryIds.length}개`}</span>
+            </div>
+            {!historyItem.acknowledgedAt ? (
+              <div className="download-overlap-history-commands">
+                {historyItem.removedGalleryIds.length > 0 ? (
+                  <ReviewAction help="이 자동 분류로 제외된 앨범의 탐색·목록 제외를 해제하고 확인 완료합니다. 격리된 실제 파일은 복원하지 않습니다.">
+                    <button type="button" className="text-button" disabled={loading || decisionPending || !onRestoreAutomationExclusions} onClick={() => onRestoreAutomationExclusions?.(historyItem.reviewId, historyItem.removedGalleryIds)}>
+                      <FluentIcon glyph="\uE777" /> 목록에 복원
+                    </button>
+                  </ReviewAction>
+                ) : null}
+                <ReviewAction help={automationReviewSequence ? "자동 분류 결과를 유지하고 확인 완료한 뒤 다음 미확인 기록으로 이동합니다. 모두 확인하면 창을 닫습니다. 앨범이나 파일은 변경하지 않습니다." : "자동 분류 결과를 유지하고 기록을 확인 완료한 뒤 창을 닫습니다. 앨범이나 파일은 변경하지 않습니다."}>
+                  <button type="button" className="primary-button" disabled={loading || decisionPending || !onAcknowledgeAutomationHistory} onClick={() => onAcknowledgeAutomationHistory?.(historyItem.reviewId)}>
+                    <FluentIcon glyph="\uE73E" /> 확인 완료
+                  </button>
+                </ReviewAction>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </dialog>
   );

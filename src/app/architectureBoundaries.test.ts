@@ -38,7 +38,7 @@ function importsIncludingTypes(source: string): string[] {
 }
 
 const modulePath = (specifier: string): string => specifier.replace(/[?#].*$/, "").replace(/\.[cm]?[jt]sx?$/, "");
-const isFeatureEntry = (specifier: string): boolean => /(?:^|\/)(?:HitomiFeature|DanbooruWorkspace)$/.test(modulePath(specifier));
+const isFeatureEntry = (specifier: string): boolean => /(?:^|\/)(?:HitomiFeature|DanbooruWorkspace|StreamingWorkspace)$/.test(modulePath(specifier));
 const isBackendModule = (specifier: string): boolean => /(?:^|\/)api\/backend$/.test(modulePath(specifier));
 
 describe("first-stage architecture boundaries", () => {

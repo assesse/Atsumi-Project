@@ -152,3 +152,14 @@ node node_modules/typescript/bin/tsc --project tsconfig.node.json --noEmit --inc
 node node_modules/vite/bin/vite.js build --configLoader runner
 git diff --check
 ```
+
+## 후속 구현: CHZZK 1차 (2026-09-10)
+
+위의 1차 결과는 방송 기능 추가 전 구조 정리의 기록이다. 이후 CHZZK 전용 workspace와
+StreamingApi, Rust 수신·채팅·저장 서비스 및 로컬 HLS 재생을 추가했다.
+갤러리 계약과 DB migration을 재사용하지 않고 별도 파일 인덱스를 사용한다.
+앱 종료·트레이·업데이트에는 녹화 활성 상태와 안전한 종료 장벽만 연결했다.
+
+현재 provider는 CHZZK 하나이며, 다른 플랫폼까지 동작하는 범용 플러그인 시스템을 구현했다는 뜻은 아니다.
+두 번째 플랫폼 추가 시 실제 공통점에 맞춰 어댑터 계약을 추출한다. 기능 범위, 저장 형식,
+장애 시 보존 한계와 실제 연결 검증은 [CHZZK 명세](CHZZK.md)를 기준으로 한다.

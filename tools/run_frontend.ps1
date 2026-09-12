@@ -55,6 +55,7 @@ if (($env:Path -split ";") -notcontains $nodeDirectory) {
 }
 
 if ($Action -eq "tauri") {
+  & (Join-Path $PSScriptRoot "prepare_media_tools.ps1")
   $systemCargo = Get-Command cargo -ErrorAction SilentlyContinue
   $rustupCargo = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
 

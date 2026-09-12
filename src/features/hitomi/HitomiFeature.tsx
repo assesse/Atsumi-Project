@@ -92,6 +92,7 @@ import {
   DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
 } from "../../state/downloadOverlapAuto";
 import { buildDownloadOverlapContainmentGroup, prioritizeDownloadOverlapReviews, type DownloadOverlapContainmentGroup } from "../../state/downloadOverlapContainment";
+import { collectUnacknowledgedAutomationHistory } from "../../state/downloadOverlapAutomationSequence";
 import { initialUiState, uiReducer } from "../../state/uiState";
 import {
   GalleryCoverSessionRetainer,
@@ -142,6 +143,10 @@ const activityNotificationStates: ReadonlySet<DownloadState> = new Set([
 ]);
 const DOWNLOAD_OVERLAP_AUTOMATION_HISTORY_PAGE_SIZE = 50;
 
+type AutomationReviewSession = {
+  items: DownloadOverlapAutomationHistoryItem[];
+  index: number;
+};
 
 type UndoAction =
   | { kind: "auto-find-exclusion" | "explore-exclusion"; galleryIds: GalleryId[] }
@@ -356,6 +361,8 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   const [downloadOverlapAutomationHistoryLoading, setDownloadOverlapAutomationHistoryLoading] = useState(false);
   const [downloadOverlapAutomationHistoryError, setDownloadOverlapAutomationHistoryError] = useState<string | null>(null);
   const [downloadOverlapAutomationHistoryPendingReviewIds, setDownloadOverlapAutomationHistoryPendingReviewIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [automationReviewSession, setAutomationReviewSession] = useState<AutomationReviewSession | null>(null);
+  const [automationSequenceLoading, setAutomationSequenceLoading] = useState(false);
   const [unreadAutomaticOverlapReviewIds, setUnreadAutomaticOverlapReviewIds] = useState<ReadonlySet<string>>(() => new Set());
   const [automaticOverlapSweepRevision, setAutomaticOverlapSweepRevision] = useState(0);
   const [danbooruSessionActivities, setDanbooruSessionActivities] = useState<DanbooruSessionActivity[]>([]);
@@ -373,6 +380,9 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   const downloadOverlapAutomationHistoryBodyToken = useRef(0);
   const downloadOverlapAutomationHistoryCountToken = useRef(0);
   const downloadOverlapAutomationHistoryPendingRef = useRef(new Set<string>());
+  const automationReviewSessionRef = useRef<AutomationReviewSession | null>(null);
+  const automationSequenceToken = useRef(0);
+  const automationSequenceLoadingRef = useRef(false);
   const downloadOverlapDecisionPendingRef = useRef(false);
   const automaticOverlapInFlightRef = useRef(false);
   const automaticOverlapRescanRequestedRef = useRef(false);
@@ -497,10 +507,20 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
 
 
   useEffect(() => () => {
+    ++automationSequenceToken.current;
+    ++downloadOverlapReviewToken.current;
     sessionCoverRetainer.current?.clear();
     for (const context of exploreContexts.current.values()) context.session.clear();
     if (exploreContexts.current.size === 0) explorePageSession.current?.clear();
     if (exploreRestoreFrame.current !== null) window.cancelAnimationFrame(exploreRestoreFrame.current);
+  }, []);
+
+  const cancelAutomationReviewSequence = useCallback(() => {
+    ++automationSequenceToken.current;
+    automationSequenceLoadingRef.current = false;
+    setAutomationSequenceLoading(false);
+    automationReviewSessionRef.current = null;
+    setAutomationReviewSession(null);
   }, []);
 
   const applyDownloadOverlapAutomationHistoryCount = useCallback((
@@ -801,7 +821,8 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   }, [loadExplorationExclusionsAndSync]);
 
   const beginDownloadOverlapAutomationHistoryMutation = useCallback((reviewId: string): boolean => {
-    if (downloadOverlapAutomationHistoryPendingRef.current.has(reviewId)) return false;
+    if (downloadOverlapDecisionPendingRef.current
+      || downloadOverlapAutomationHistoryPendingRef.current.has(reviewId)) return false;
     downloadOverlapAutomationHistoryPendingRef.current.add(reviewId);
     setDownloadOverlapAutomationHistoryPendingReviewIds(
       new Set(downloadOverlapAutomationHistoryPendingRef.current),
@@ -819,8 +840,19 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   const applyAcknowledgedDownloadOverlapAutomationHistory = useCallback((
     item: DownloadOverlapAutomationHistoryItem,
   ) => {
+    ++downloadOverlapAutomationHistoryBodyToken.current;
+    setDownloadOverlapAutomationHistoryLoading(false);
     setDownloadOverlapAutomationHistory((current) => current.map((known) =>
       known.reviewId === item.reviewId ? item : known));
+    const session = automationReviewSessionRef.current;
+    if (session) {
+      const updated = {
+        ...session,
+        items: session.items.map((known) => known.reviewId === item.reviewId ? item : known),
+      };
+      automationReviewSessionRef.current = updated;
+      setAutomationReviewSession(updated);
+    }
     setUnreadAutomaticOverlapReviewIds((current) => {
       const next = new Set(current);
       next.delete(item.reviewId);
@@ -829,18 +861,20 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   }, []);
 
   const acknowledgeDownloadOverlapAutomationHistory = useCallback(async (reviewId: string) => {
-    if (!beginDownloadOverlapAutomationHistoryMutation(reviewId)) return;
+    if (!beginDownloadOverlapAutomationHistoryMutation(reviewId)) return false;
     try {
       const result = await backend.downloadOverlapAutomationHistoryAcknowledge(reviewId);
       if (!result.ok) {
         showToast(result.error.message);
-        return;
+        return false;
       }
       applyAcknowledgedDownloadOverlapAutomationHistory(result.data);
       setDownloadOverlapAutomationHistoryUnacknowledgedItems((current) => Math.max(0, current - 1));
       void hydrateDownloadOverlapAutomationHistoryMeta();
+      return true;
     } catch {
       showToast("자동 판본 분류 기록을 확인 처리하지 못했습니다.");
+      return false;
     } finally {
       finishDownloadOverlapAutomationHistoryMutation(reviewId);
     }
@@ -850,26 +884,28 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     reviewId: string,
     galleryIds: GalleryId[],
   ) => {
-    if (!galleryIds.length || !beginDownloadOverlapAutomationHistoryMutation(reviewId)) return;
+    if (!galleryIds.length || !beginDownloadOverlapAutomationHistoryMutation(reviewId)) return false;
     try {
       const restored = await restoreExplorationExclusionsAndSync(galleryIds);
       if (!restored.ok) {
         showToast(restored.error.message);
-        return;
+        return false;
       }
       setDownloadsRefresh((current) => current + 1);
       const acknowledged = await backend.downloadOverlapAutomationHistoryAcknowledge(reviewId);
       if (!acknowledged.ok) {
         showToast(`목록 제외 ${restored.data.restoredGalleryIds.length}개는 해제했지만 기록 확인 처리는 실패했습니다. ${acknowledged.error.message}`);
         void hydrateDownloadOverlapAutomationHistoryMeta();
-        return;
+        return false;
       }
       applyAcknowledgedDownloadOverlapAutomationHistory(acknowledged.data);
       setDownloadOverlapAutomationHistoryUnacknowledgedItems((current) => Math.max(0, current - 1));
       void hydrateDownloadOverlapAutomationHistoryMeta();
       showToast(`${restored.data.restoredGalleryIds.length}개 앨범의 탐색·목록 제외를 해제했습니다. 격리된 실제 파일은 복원하지 않았습니다.`);
+      return true;
     } catch {
       showToast("자동 분류 제외 앨범을 목록에 복원하지 못했습니다.");
+      return false;
     } finally {
       finishDownloadOverlapAutomationHistoryMutation(reviewId);
     }
@@ -1822,6 +1858,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     }
   }, []);
   const openReview = useCallback((id: GalleryId) => {
+    cancelAutomationReviewSequence();
     setContainmentKeeperId(null);
     setContainmentBatchGroup(undefined);
     setContainmentBatchProgress(undefined);
@@ -1854,7 +1891,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     setDuplicateReviewError(null);
     dispatch({ type: "overlay.review", galleryId: id });
     void hydrateDuplicateReview(candidate.candidateId);
-  }, [displayGalleries, duplicateSnapshot?.candidates, hydrateDownloadOverlapReview, hydrateDuplicateReview, hydrateDuplicateSnapshot, showToast]);
+  }, [cancelAutomationReviewSequence, displayGalleries, duplicateSnapshot?.candidates, hydrateDownloadOverlapReview, hydrateDuplicateReview, hydrateDuplicateSnapshot, showToast]);
   const closeDuplicateReview = useCallback(() => {
     if (duplicateDecisionPendingRef.current) return;
     duplicateReviewToken.current += 1;
@@ -1865,7 +1902,10 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     dispatch({ type: "overlay.review", galleryId: null });
   }, []);
   const closeDownloadOverlapReview = useCallback(() => {
-    if (downloadOverlapDecisionPendingRef.current) return;
+    if (downloadOverlapDecisionPendingRef.current
+      || (downloadOverlapReviewId !== null
+        && downloadOverlapAutomationHistoryPendingRef.current.has(downloadOverlapReviewId))) return;
+    cancelAutomationReviewSequence();
     downloadOverlapReviewToken.current += 1;
     setDownloadOverlapReviewId(null);
     setDownloadOverlapReview(null);
@@ -1875,7 +1915,66 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     setContainmentKeeperId(null);
     setContainmentBatchGroup(undefined);
     dispatch({ type: "overlay.review", galleryId: null });
-  }, []);
+  }, [cancelAutomationReviewSequence, downloadOverlapReviewId]);
+  const showAutomaticOverlapReview = useCallback((reviewId: string, id: GalleryId) => {
+    setContainmentKeeperId(null);
+    setContainmentBatchGroup(undefined);
+    setContainmentBatchProgress(undefined);
+    setDuplicateReviewCandidateId(null);
+    setDuplicateReview(null);
+    setDownloadOverlapReviewId(reviewId);
+    setDownloadOverlapReview(null);
+    setDownloadOverlapError(null);
+    dispatch({ type: "overlay.review", galleryId: id });
+    void hydrateDownloadOverlapReview(reviewId);
+  }, [hydrateDownloadOverlapReview]);
+  const navigateAutomationReviewSequence = useCallback((index: number) => {
+    const session = automationReviewSessionRef.current;
+    const current = session?.items[session.index];
+    const next = session?.items[index];
+    if (!session || !current || !next || index === session.index
+      || downloadOverlapDecisionPendingRef.current
+      || downloadOverlapAutomationHistoryPendingRef.current.has(current.reviewId)) return;
+    const updated = { ...session, index };
+    automationReviewSessionRef.current = updated;
+    setAutomationReviewSession(updated);
+    showAutomaticOverlapReview(next.reviewId, next.incomingGalleryId);
+  }, [showAutomaticOverlapReview]);
+  const completeAutomationReviewAction = useCallback((reviewId: string, reviewToken: number) => {
+    if (reviewToken !== downloadOverlapReviewToken.current) return;
+    const session = automationReviewSessionRef.current;
+    if (!session) {
+      closeDownloadOverlapReview();
+      return;
+    }
+    if (session.items[session.index]?.reviewId !== reviewId) return;
+    for (let offset = 1; offset <= session.items.length; offset += 1) {
+      const index = (session.index + offset) % session.items.length;
+      if (!session.items[index]!.acknowledgedAt) {
+        navigateAutomationReviewSequence(index);
+        return;
+      }
+    }
+    closeDownloadOverlapReview();
+    showToast(`자동분류 ${session.items.length}건의 순차 검토를 완료했습니다.`);
+  }, [closeDownloadOverlapReview, navigateAutomationReviewSequence, showToast]);
+  const downloadOverlapAutomationHistoryItem = downloadOverlapReview?.reviewId === downloadOverlapReviewId
+    ? (automationReviewSession?.items ?? downloadOverlapAutomationHistory).find((item) => item.reviewId === downloadOverlapReviewId
+      && item.incomingGalleryId === downloadOverlapReview.incoming.galleryId)
+    : undefined;
+  const acknowledgeDownloadOverlapAutomationReview = useCallback(async (reviewId: string) => {
+    if (reviewId !== downloadOverlapAutomationHistoryItem?.reviewId) return;
+    const reviewToken = downloadOverlapReviewToken.current;
+    const acknowledged = await acknowledgeDownloadOverlapAutomationHistory(reviewId);
+    if (acknowledged) completeAutomationReviewAction(reviewId, reviewToken);
+  }, [acknowledgeDownloadOverlapAutomationHistory, completeAutomationReviewAction, downloadOverlapAutomationHistoryItem]);
+  const restoreDownloadOverlapAutomationReview = useCallback(async (reviewId: string, galleryIds: GalleryId[]) => {
+    if (reviewId !== downloadOverlapAutomationHistoryItem?.reviewId
+      || galleryIds.some((id) => !downloadOverlapAutomationHistoryItem.removedGalleryIds.includes(id))) return;
+    const reviewToken = downloadOverlapReviewToken.current;
+    const restored = await restoreDownloadOverlapAutomationExclusions(reviewId, galleryIds);
+    if (restored) completeAutomationReviewAction(reviewId, reviewToken);
+  }, [completeAutomationReviewAction, downloadOverlapAutomationHistoryItem, restoreDownloadOverlapAutomationExclusions]);
   const applyDuplicateDecision = useCallback(async (request: DownloadOverlapDecisionRequest) => {
     if (duplicateDecisionPendingRef.current) return;
     duplicateDecisionPendingRef.current = true;
@@ -1947,7 +2046,8 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     }
   }, [closeDuplicateReview, duplicateReview, hydrateDuplicateReview, hydrateDuplicateSnapshot, recordSessionDownloadActivity, showToast, thumbnailClient]);
   const applyDownloadOverlapMerge = useCallback(async (request: DownloadOverlapMergeRequest) => {
-    if (downloadOverlapDecisionPendingRef.current) return;
+    if (downloadOverlapDecisionPendingRef.current
+      || downloadOverlapAutomationHistoryPendingRef.current.has(request.reviewId)) return;
     if (automaticOverlapInFlightRef.current) { showToast("진행 중인 자동 판정이 끝난 뒤 다시 시도해 주세요."); return; }
     const candidate = downloadOverlapReview?.candidates.find((item) => item.candidateId === request.candidateId);
     if (!downloadOverlapReview || !candidate || downloadOverlapReview.reviewId !== request.reviewId) return;
@@ -1986,7 +2086,8 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     }
   }, [closeDownloadOverlapReview, downloadOverlapReview, hydrateDownloadOverlapReview, recordSessionDownloadActivity, showToast, thumbnailClient]);
   const applyDownloadOverlapDecision = useCallback(async (request: DownloadOverlapDecisionRequest) => {
-    if (downloadOverlapDecisionPendingRef.current) return;
+    if (downloadOverlapDecisionPendingRef.current
+      || downloadOverlapAutomationHistoryPendingRef.current.has(request.reviewId)) return;
     if (automaticOverlapInFlightRef.current) { showToast("진행 중인 자동 판정이 끝난 뒤 다시 시도해 주세요."); return; }
     downloadOverlapDecisionPendingRef.current = true;
     setDownloadOverlapDecisionPending(true);
@@ -2039,7 +2140,9 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   }, [closeDownloadOverlapReview, hydrateDownloadOverlapReview, recordSessionDownloadActivity, showToast]);
 
   const applyContainmentBatch = useCallback(async (itemKeys: string[]) => {
-    if (downloadOverlapDecisionPendingRef.current || !containmentGroup) return;
+    if (downloadOverlapDecisionPendingRef.current || !containmentGroup
+      || (downloadOverlapReviewId !== null
+        && downloadOverlapAutomationHistoryPendingRef.current.has(downloadOverlapReviewId))) return;
     if (automaticOverlapInFlightRef.current) { showToast("진행 중인 자동 판정이 끝난 뒤 다시 시도해 주세요."); return; }
     const requested = new Set(itemKeys);
     const items = containmentGroup.items.filter((item) => requested.has(item.key));
@@ -2097,6 +2200,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   useEffect(() => {
     if (settingsLoading
       || settings.downloadOverlapAutoMode !== "strict_quarantine"
+      || automationSequenceLoadingRef.current
       || downloadOverlapReviewId !== null
       || downloadOverlapDecisionPending
       || downloadOverlapDecisionPendingRef.current) return;
@@ -2270,7 +2374,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
         }
       }
     })();
-  }, [allGalleries, automaticOverlapSweepRevision, downloadOverlapDecisionPending, downloadOverlapReviewId, recordAutomaticOverlapActivity, refreshDownloadOverlapAutomationHistory, settings.downloadOverlapAutoMode, settingsLoading, showToast]);
+  }, [allGalleries, automaticOverlapSweepRevision, automationSequenceLoading, downloadOverlapDecisionPending, downloadOverlapReviewId, recordAutomaticOverlapActivity, refreshDownloadOverlapAutomationHistory, settings.downloadOverlapAutoMode, settingsLoading, showToast]);
 
   const hydrateInternalReview = useCallback(async (entryId: string) => {
     const token = ++internalReviewToken.current;
@@ -2454,6 +2558,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     void hydrateDownloadOverlapAutomationHistoryPage(1, true);
   }, [hydrateDownloadOverlapAutomationHistoryPage, setActivityOpen]);
   const closeActivity = useCallback(() => {
+    if (automationSequenceLoadingRef.current) cancelAutomationReviewSequence();
     setActivityOpen(false);
     const target = activityOpener.current;
     activityOpener.current = null;
@@ -2461,17 +2566,53 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
       if (target?.isConnected) target.focus();
       else document.querySelector<HTMLElement>("[aria-controls='activity-panel']")?.focus();
     });
-  }, [setActivityOpen]);
+  }, [cancelAutomationReviewSequence, setActivityOpen]);
   const openAutomaticOverlapReview = useCallback((reviewId: string, id: GalleryId) => {
+    cancelAutomationReviewSequence();
     closeActivity();
-    setDuplicateReviewCandidateId(null);
-    setDuplicateReview(null);
-    setDownloadOverlapReviewId(reviewId);
-    setDownloadOverlapReview(null);
-    setDownloadOverlapError(null);
-    dispatch({ type: "overlay.review", galleryId: id });
-    void hydrateDownloadOverlapReview(reviewId);
-  }, [closeActivity, hydrateDownloadOverlapReview]);
+    showAutomaticOverlapReview(reviewId, id);
+  }, [cancelAutomationReviewSequence, closeActivity, showAutomaticOverlapReview]);
+  const startAutomationReviewSequence = useCallback(async () => {
+    if (automationSequenceLoadingRef.current || downloadOverlapDecisionPendingRef.current
+      || downloadOverlapAutomationHistoryPendingRef.current.size > 0) return;
+    if (automaticOverlapInFlightRef.current) {
+      showToast("진행 중인 자동 판정이 끝난 뒤 순차 검토를 시작해 주세요.");
+      return;
+    }
+    const token = ++automationSequenceToken.current;
+    automationSequenceLoadingRef.current = true;
+    setAutomationSequenceLoading(true);
+    setDownloadOverlapAutomationHistoryError(null);
+    try {
+      const items = await collectUnacknowledgedAutomationHistory(
+        (request) => backend.downloadOverlapAutomationHistoryList(request),
+        () => token === automationSequenceToken.current,
+      );
+      if (items === null || token !== automationSequenceToken.current) return;
+      if (items.length === 0) {
+        showToast("순차 검토할 미확인 자동분류 기록이 없습니다.");
+        void hydrateDownloadOverlapAutomationHistoryMeta();
+        return;
+      }
+      automationSequenceLoadingRef.current = false;
+      setAutomationSequenceLoading(false);
+      closeActivity();
+      const session = { items, index: 0 };
+      automationReviewSessionRef.current = session;
+      setAutomationReviewSession(session);
+      showAutomaticOverlapReview(items[0]!.reviewId, items[0]!.incomingGalleryId);
+    } catch (error) {
+      if (token !== automationSequenceToken.current) return;
+      const message = error instanceof Error ? error.message : "자동분류 순차 검토 목록을 불러오지 못했습니다.";
+      setDownloadOverlapAutomationHistoryError(message);
+      showToast(message);
+    } finally {
+      if (token === automationSequenceToken.current) {
+        automationSequenceLoadingRef.current = false;
+        setAutomationSequenceLoading(false);
+      }
+    }
+  }, [closeActivity, hydrateDownloadOverlapAutomationHistoryMeta, showAutomaticOverlapReview, showToast]);
   const openStatusDetail = useCallback((_: GalleryId) => openActivity(), [openActivity]);
 
   const openArtifact = useCallback(
@@ -4011,6 +4152,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
         containmentGroups={priorityContainmentGroups}
         containmentLoading={overlapInventoryLoading}
         onReviewContainment={(keeperId, reviewId) => {
+          cancelAutomationReviewSequence();
           setContainmentKeeperId(keeperId);
           setDownloadOverlapReviewId(reviewId);
           setDownloadOverlapReview(null);
@@ -4020,7 +4162,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
           closeActivity();
           void hydrateDownloadOverlapReview(reviewId);
         }}
-        open={shell.activityOpen}
+        open={shell.activityOpen && shell.source !== "chzzk"}
         galleries={allGalleries}
         sessionDownloads={sessionDownloadActivities}
         automaticOverlapActivities={automaticOverlapActivities}
@@ -4030,6 +4172,8 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
         automationHistoryTotalItems={downloadOverlapAutomationHistoryTotalItems}
         automationHistoryUnacknowledgedItems={downloadOverlapAutomationHistoryUnacknowledgedItems}
         automationHistoryPendingReviewIds={downloadOverlapAutomationHistoryPendingReviewIds}
+        automationSequenceLoading={automationSequenceLoading}
+        onStartAutomationSequence={() => void startAutomationReviewSequence()}
         danbooruActivities={danbooruSessionActivities}
         duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
         onClose={closeActivity}
@@ -4045,7 +4189,7 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
       />
 
       <SettingsDialog
-        open={shell.settingsOpen}
+        open={shell.settingsOpen && shell.source !== "chzzk"}
         settings={settings}
         loading={settingsLoading}
         error={settingsError}
@@ -4095,6 +4239,25 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
         loading={downloadOverlapLoading}
         error={downloadOverlapError}
         decisionPending={downloadOverlapDecisionPending}
+        automationHistoryItem={downloadOverlapAutomationHistoryItem}
+        automationHistoryPending={downloadOverlapReviewId !== null
+          && downloadOverlapAutomationHistoryPendingReviewIds.has(downloadOverlapReviewId)}
+        onAcknowledgeAutomationHistory={(reviewId) => void acknowledgeDownloadOverlapAutomationReview(reviewId)}
+        onRestoreAutomationExclusions={(reviewId, galleryIds) => void restoreDownloadOverlapAutomationReview(reviewId, galleryIds)}
+        automationReviewSequence={automationReviewSession ? {
+          position: automationReviewSession.index + 1,
+          total: automationReviewSession.items.length,
+          canPrevious: automationReviewSession.index > 0,
+          canNext: automationReviewSession.index < automationReviewSession.items.length - 1,
+        } : undefined}
+        onPreviousAutomationReview={() => {
+          const session = automationReviewSessionRef.current;
+          if (session) navigateAutomationReviewSequence(session.index - 1);
+        }}
+        onNextAutomationReview={() => {
+          const session = automationReviewSessionRef.current;
+          if (session) navigateAutomationReviewSequence(session.index + 1);
+        }}
         browserFixture={backend.runtime === "browser-mock"}
         autoMode={settings.downloadOverlapAutoMode}
         previewWidth={previewWidth}

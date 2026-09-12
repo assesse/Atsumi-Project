@@ -38,6 +38,16 @@ export const workspaceRegistry = {
       { view: "downloads", label: "Downloads", icon: "\uE896", badgeKey: "attentionCount", badgeWarning: true },
     ],
   },
+  chzzk: {
+    id: "chzzk",
+    label: "CHZZK",
+    subtitle: "CHZZK live recorder",
+    description: "공개 라이브 시청·녹화·채팅 보관",
+    navigation: [
+      { view: "live", label: "라이브", icon: "\uE714" },
+      { view: "recordings", label: "녹화 목록", icon: "\uE8B7" },
+    ],
+  },
 } as const satisfies Record<string, WorkspaceDefinition>;
 
 export type ContentSource = keyof typeof workspaceRegistry;

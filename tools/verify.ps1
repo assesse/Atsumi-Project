@@ -152,6 +152,7 @@ try {
     "-ExecutionPolicy", "Bypass",
     "-File", $frontendRunner
   )
+  Invoke-LoggedNative -Label "Pinned recording merge tools" -FilePath $powershellPath -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "prepare_media_tools.ps1"))
   Invoke-LoggedNative -Label "Frontend tests" -FilePath $powershellPath -Arguments ($frontendPrefix + @("test"))
   Invoke-LoggedNative -Label "Frontend typecheck" -FilePath $powershellPath -Arguments ($frontendPrefix + @("typecheck"))
   Invoke-LoggedNative -Label "Frontend production build" -FilePath $powershellPath -Arguments ($frontendPrefix + @("build"))

@@ -423,6 +423,8 @@ export function SettingsDialog({
       relatedPreviewWidth: 240,
       privacyMode: false,
       concurrentImageRequests: 5,
+      downloadAdaptiveConcurrency: true,
+      downloadAdaptiveMaxRequests: 8,
       requestStartIntervalMs: 25,
     }));
     previewLayout(maxColumns, previewWidth);
@@ -525,6 +527,8 @@ export function SettingsDialog({
       privacyMode: draft.privacyMode,
       cacheLimitGb: draft.cacheLimitGb,
       concurrentImageRequests: draft.concurrentImageRequests,
+      downloadAdaptiveConcurrency: draft.downloadAdaptiveConcurrency,
+      downloadAdaptiveMaxRequests: draft.downloadAdaptiveMaxRequests,
       requestStartIntervalMs: draft.requestStartIntervalMs,
       searchIncludeTags: draft.searchIncludeTags,
       searchExcludeTags: draft.searchExcludeTags,
@@ -790,6 +794,22 @@ export function SettingsDialog({
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>동시 이미지 요청</strong><span>안정 기본값 5</span></div>
                   <input type="number" min="1" max="30" value={draft.concurrentImageRequests} aria-label="동시 이미지 요청" onChange={(event) => patch("concurrentImageRequests", Number(event.target.value))} />
+                </div>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <SettingCopy
+                    title="다운로드 동시 요청 자동 조절"
+                    summary="다운로드 속도에 맞춰 조절 · 재시작 후 적용"
+                    detail="처음에는 5개, 기존 동시 이미지 요청 값, 설정한 최대 요청 수 중 가장 작은 값으로 시작하고, 속도와 오류를 살펴 동시 요청 수를 조절합니다. 학습한 안정값은 이 기기에 저장되어 다음 실행에 사용됩니다. 끄면 다운로드 요청 상한은 기존 동시 이미지 요청 값과 8 중 작은 값으로 고정되며, 서버의 대기 요구는 계속 따릅니다."
+                  />
+                  <input type="checkbox" checked={draft.downloadAdaptiveConcurrency} aria-label="다운로드 동시 요청 자동 조절" onChange={(event) => patch("downloadAdaptiveConcurrency", event.target.checked)} />
+                </div>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <SettingCopy
+                    title="자동 조절 최대 요청"
+                    summary="최대 8개 · 재시작 후 적용"
+                    detail="자동 조절 중 다운로드에 허용할 동시 요청 수의 상한입니다. 메모리 사용량을 제한하기 위해 1~8개로 설정할 수 있습니다. 일반 이미지 요청은 기존 동시 이미지 요청 설정을 따릅니다."
+                  />
+                  <input type="number" min="1" max="8" step="1" value={draft.downloadAdaptiveMaxRequests} disabled={!draft.downloadAdaptiveConcurrency} aria-label="자동 조절 최대 요청" onChange={(event) => patch("downloadAdaptiveMaxRequests", Number(event.target.value))} />
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>요청 시작 간격</strong><span>안정 기본값 25ms</span></div>

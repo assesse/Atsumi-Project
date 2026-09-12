@@ -54,10 +54,18 @@ pub struct AppActiveInternalDuplicateScanSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppActiveRecordingsSnapshot {
+    pub active_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppActiveWorkSnapshot {
     pub queried_at: String,
     pub work_set_fingerprint: String,
     pub downloads: AppActiveDownloadsSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recordings: Option<AppActiveRecordingsSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_find: Option<AppActiveAutoFindSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -69,6 +77,10 @@ pub struct AppActiveWorkSnapshot {
 impl AppActiveWorkSnapshot {
     pub fn has_active_work(&self) -> bool {
         self.downloads.active_count > 0
+            || self
+                .recordings
+                .as_ref()
+                .is_some_and(|recordings| recordings.active_count > 0)
             || self.auto_find.is_some()
             || self.duplicate_scan.is_some()
             || self.internal_duplicate_scan.is_some()
@@ -77,6 +89,11 @@ impl AppActiveWorkSnapshot {
     pub fn active_work_count(&self) -> u64 {
         self.downloads
             .active_count
+            .saturating_add(
+                self.recordings
+                    .as_ref()
+                    .map_or(0, |recordings| recordings.active_count),
+            )
             .saturating_add(u64::from(self.auto_find.is_some()))
             .saturating_add(u64::from(self.duplicate_scan.is_some()))
             .saturating_add(u64::from(self.internal_duplicate_scan.is_some()))
@@ -630,6 +647,7 @@ mod tests {
                 queried_at: "123".into(),
                 work_set_fingerprint: "work-set".into(),
                 downloads: AppActiveDownloadsSnapshot { active_count: 2 },
+                recordings: None,
                 auto_find: Some(AppActiveAutoFindSnapshot {
                     run_id: "auto-run".into(),
                     completed_favorites: 1,

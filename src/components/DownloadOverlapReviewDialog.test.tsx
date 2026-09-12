@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
-import type { DownloadOverlapReview } from "../api/contracts";
+import type { DownloadOverlapAutomationHistoryItem, DownloadOverlapReview } from "../api/contracts";
 import { galleryId } from "../core/types";
 import type { DownloadOverlapContainmentGroup } from "../state/downloadOverlapContainment";
 import { ThumbnailClient, type ThumbnailRequest } from "../thumbnail";
@@ -597,7 +597,9 @@ describe("DownloadOverlapReviewDialog", () => {
     expect(help).not.toHaveAttribute("aria-describedby");
     await act(async () => help.focus());
     tooltip = document.getElementById(help.getAttribute("aria-describedby")!);
-    expect(tooltip).toHaveTextContent("UTC 하루 10건");
+    expect(tooltip).toHaveTextContent("횟수 제한 없이 재검증 후 적용");
+    expect(tooltip).toHaveTextContent("영구 삭제하지 않습니다");
+    expect(tooltip).not.toHaveTextContent("하루 10건");
     await act(async () => help.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(help).not.toHaveAttribute("aria-describedby");
 
@@ -685,6 +687,175 @@ describe("DownloadOverlapReviewDialog", () => {
       ["existing-entry-1", 1],
       ["incoming-entry", 1],
     ]));
+
+    await act(async () => root.unmount());
+    client.dispose();
+    container.remove();
+  });
+
+  it.each(["resolved", "cancelled", "pending"] as const)("allows restoring and acknowledging automatic %s evidence without a footer close button", async (state) => {
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const review = { ...fixture(), state };
+    const removedGalleryIds = state === "cancelled"
+      ? [review.incoming.galleryId]
+      : [review.candidates[0]!.existing.galleryId, review.candidates[2]!.existing.galleryId];
+    const history: DownloadOverlapAutomationHistoryItem = {
+      reviewId: review.reviewId,
+      incomingGalleryId: review.incoming.galleryId,
+      title: review.incoming.title,
+      occurredAt: review.updatedAt,
+      reviewState: state,
+      removeIncomingCount: state === "cancelled" ? 1 : 0,
+      removeExistingCount: state === "cancelled" ? 0 : 2,
+      removedGalleryIds,
+    };
+    const onRestore = vi.fn();
+    const onAcknowledge = vi.fn();
+    const onClose = vi.fn();
+    const onDecision = vi.fn();
+    await act(async () => root.render(
+      <DownloadOverlapReviewDialog
+        open={false} review={review} previewWidth={220} thumbnailClient={client}
+        automationHistoryItem={history} onRestoreAutomationExclusions={onRestore}
+        onAcknowledgeAutomationHistory={onAcknowledge}
+        onClose={onClose} onRetry={vi.fn()} onDecision={onDecision}
+      />,
+    ));
+    const footer = container.querySelector('.download-overlap-history-actions')!;
+    const buttons = [...footer.querySelectorAll<HTMLButtonElement>("button")];
+    const restore = buttons.find((button) => button.textContent?.includes("목록에 복원"))!;
+    const acknowledge = buttons.find((button) => button.textContent?.includes("확인 완료"))!;
+    expect(restore).toBeEnabled();
+    expect(acknowledge).toBeEnabled();
+    expect(document.getElementById(restore.getAttribute("aria-describedby")!)).toHaveTextContent("격리된 실제 파일은 복원하지 않습니다");
+    expect(document.getElementById(acknowledge.getAttribute("aria-describedby")!)).toHaveTextContent("앨범이나 파일은 변경하지 않습니다");
+    expect(container.querySelector('.download-overlap-readonly-actions')).toBeNull();
+    expect(container.querySelectorAll('button[aria-label="닫기"]')).toHaveLength(1);
+    expect([...container.querySelectorAll(".review-actions button")].some((button) => button.textContent === "닫기")).toBe(false);
+    expect(Boolean(container.querySelector(".download-overlap-actions"))).toBe(state === "pending");
+
+    // Selecting another comparison must not replace the persisted removal targets.
+    await act(async () => container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click());
+    await act(async () => restore.click());
+    await act(async () => acknowledge.click());
+    expect(onRestore).toHaveBeenCalledExactlyOnceWith(review.reviewId, removedGalleryIds);
+    expect(onAcknowledge).toHaveBeenCalledExactlyOnceWith(review.reviewId);
+    expect(onDecision).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => root.unmount());
+    client.dispose();
+    container.remove();
+  });
+
+  it("navigates sequential evidence without acknowledging, including loading or failed items", async () => {
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const previous = vi.fn();
+    const next = vi.fn();
+    const acknowledge = vi.fn();
+    const review = { ...fixture(), state: "resolved" as const };
+    const history: DownloadOverlapAutomationHistoryItem = {
+      reviewId: review.reviewId, incomingGalleryId: review.incoming.galleryId,
+      title: review.incoming.title, occurredAt: review.updatedAt, reviewState: review.state,
+      removeIncomingCount: 0, removeExistingCount: 1, removedGalleryIds: [galleryId(100)],
+    };
+    const render = async (position: number, busy = false, loadState: "ready" | "loading" | "error" = "ready") => {
+      await act(async () => root.render(
+        <DownloadOverlapReviewDialog open review={loadState === "ready" ? review : undefined}
+          loading={loadState === "loading"} error={loadState === "error" ? "근거를 불러오지 못했습니다" : null}
+          previewWidth={220} thumbnailClient={client} automationHistoryItem={history}
+          automationHistoryPending={busy} onAcknowledgeAutomationHistory={acknowledge}
+          automationReviewSequence={{ position, total: 3, canPrevious: position > 1, canNext: position < 3 }}
+          onPreviousAutomationReview={previous} onNextAutomationReview={next}
+          onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} />,
+      ));
+    };
+    await render(2);
+    const nav = container.querySelector('nav[aria-label="자동 분류 순차 검토"]')!;
+    const previousButton = nav.querySelector<HTMLButtonElement>('[aria-label="이전 자동 분류"]')!;
+    const nextButton = nav.querySelector<HTMLButtonElement>('[aria-label="다음 자동 분류"]')!;
+    expect(nav).toHaveTextContent("순차 검토 · 2 / 3");
+    const acknowledgeButton = [...container.querySelectorAll<HTMLButtonElement>(".download-overlap-history-actions button")]
+      .find((button) => button.textContent?.includes("확인 완료"))!;
+    expect(document.getElementById(acknowledgeButton.getAttribute("aria-describedby")!)).toHaveTextContent("다음 미확인 기록으로 이동");
+    await act(async () => { previousButton.click(); nextButton.click(); });
+    expect(previous).toHaveBeenCalledOnce();
+    expect(next).toHaveBeenCalledOnce();
+    expect(acknowledge).not.toHaveBeenCalled();
+    await render(1);
+    expect(previousButton).toBeDisabled();
+    await render(3);
+    expect(nextButton).toBeDisabled();
+    await render(2, true);
+    expect(previousButton).toBeDisabled();
+    expect(nextButton).toBeDisabled();
+    for (const state of ["loading", "error"] as const) {
+      await render(2, false, state);
+      expect(nav).toBeInTheDocument();
+      expect(previousButton).toBeEnabled();
+      expect(nextButton).toBeEnabled();
+      expect(container.querySelector(".download-overlap-history-actions")).toBeNull();
+    }
+    await act(async () => root.unmount());
+    client.dispose();
+    container.remove();
+  });
+
+  it("guards history actions while busy and hides them for acknowledged or unrelated records", async () => {
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const review = fixture();
+    const history: DownloadOverlapAutomationHistoryItem = {
+      reviewId: review.reviewId, incomingGalleryId: review.incoming.galleryId,
+      title: review.incoming.title, occurredAt: review.updatedAt, reviewState: "pending",
+      removeIncomingCount: 0, removeExistingCount: 1,
+      removedGalleryIds: [review.candidates[0]!.existing.galleryId],
+    };
+    const onRestore = vi.fn();
+    const onAcknowledge = vi.fn();
+    const onDecision = vi.fn();
+    const render = async (item = history, pending = false, loading = false) => {
+      await act(async () => root.render(
+        <DownloadOverlapReviewDialog
+          open={false} review={review} previewWidth={220} thumbnailClient={client}
+          automationHistoryItem={item} automationHistoryPending={pending} loading={loading}
+          onRestoreAutomationExclusions={onRestore} onAcknowledgeAutomationHistory={onAcknowledge}
+          onClose={vi.fn()} onRetry={vi.fn()} onDecision={onDecision}
+        />,
+      ));
+    };
+    await render(history, true);
+    expect(container.querySelector('.download-overlap-history-actions')).toHaveAttribute("aria-busy", "true");
+    expect(container.querySelector('.download-overlap-history-status')).toHaveTextContent("처리 중");
+    const blocked = [...container.querySelectorAll<HTMLButtonElement>(".download-overlap-history-actions button, .download-overlap-actions .danger-button")];
+    for (const button of blocked) {
+      expect(button).toBeDisabled();
+      await act(async () => button.click());
+    }
+    expect(onRestore).not.toHaveBeenCalled();
+    expect(onAcknowledge).not.toHaveBeenCalled();
+    expect(onDecision).not.toHaveBeenCalled();
+    await render(history, false, true);
+    for (const button of container.querySelectorAll(".download-overlap-history-actions button")) expect(button).toBeDisabled();
+    await render({ ...history, acknowledgedAt: "2026-09-10T00:00:00Z" });
+    expect(container.querySelector('.download-overlap-history-actions')).toHaveTextContent("확인 완료한 자동 분류 기록");
+    expect(container.querySelectorAll(".download-overlap-history-actions button")).toHaveLength(0);
+    await render({ ...history, removedGalleryIds: [] });
+    const onlyAction = container.querySelectorAll(".download-overlap-history-actions button");
+    expect(onlyAction).toHaveLength(1);
+    expect(onlyAction[0]).toHaveTextContent("확인 완료");
+    await render({ ...history, reviewId: "different-review" });
+    expect(container.querySelector('.download-overlap-history-actions')).toBeNull();
+    await render({ ...history, incomingGalleryId: galleryId(999) });
+    expect(container.querySelector('.download-overlap-history-actions')).toBeNull();
 
     await act(async () => root.unmount());
     client.dispose();

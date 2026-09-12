@@ -85,6 +85,16 @@ afterEach(async () => {
 });
 
 describe("useAppExit", () => {
+  it("requires confirmation for recording-only work", async () => {
+    const fake = fakeApi();
+    fake.api.appActiveWorkSnapshot.mockResolvedValue(success({ ...idleSnapshot, workSetFingerprint: "recording-1", recordings: { activeCount: 1 } }));
+    const hook = await mountExit(fake.api);
+    await act(async () => { fake.requestExit(); });
+    expect(hook.current.dialogProps.snapshot?.recordings?.activeCount).toBe(1);
+    await act(async () => { await hook.current.dialogProps.onQuit(); });
+    expect(fake.api.appQuit).toHaveBeenCalledWith({ expectedWorkSetFingerprint: "recording-1", confirmActiveWork: true });
+    await hook.unmount();
+  });
   it("owns one exit subscription across dialog and toast changes and releases it on unmount", async () => {
     const fake = fakeApi();
     const hook = await mountExit(fake.api);

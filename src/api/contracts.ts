@@ -109,6 +109,7 @@ export type AppActiveWorkSnapshot = {
   downloads: {
     activeCount: number;
   };
+  recordings?: { activeCount: number };
   autoFind?: {
     runId: string;
     completedFavorites: number;
@@ -134,6 +135,7 @@ export type AppActiveWorkSnapshot = {
 
 export const hasActiveWork = (snapshot: AppActiveWorkSnapshot): boolean =>
   snapshot.downloads.activeCount > 0
+  || (snapshot.recordings?.activeCount ?? 0) > 0
   || snapshot.autoFind !== undefined
   || snapshot.duplicateScan !== undefined
   || snapshot.internalDuplicateScan !== undefined;
@@ -172,6 +174,8 @@ export type SettingsSnapshot = {
   privacyMode: boolean;
   cacheLimitGb: number;
   concurrentImageRequests: number;
+  downloadAdaptiveConcurrency: boolean;
+  downloadAdaptiveMaxRequests: number;
   requestStartIntervalMs: number;
   /** Persisted Auto Find list projection; defaults to the flat list. */
   autoFindGrouping: "all" | "day" | "artist";

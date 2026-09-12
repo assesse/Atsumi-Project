@@ -364,6 +364,38 @@ describe("browser backend settings contract", () => {
     });
   });
 
+  it("persists bounded adaptive download preferences independently of existing image limits", async () => {
+    const current = await backend.settingsGet();
+    if (!current.ok) throw new Error(current.error.message);
+    for (const downloadAdaptiveMaxRequests of [0, 9, 2.5]) {
+      await expect(backend.settingsUpdate({ downloadAdaptiveMaxRequests }, current.data.revision))
+        .resolves.toMatchObject({
+          ok: false,
+          error: { code: "VALIDATION_ERROR", details: { field: "downloadAdaptiveMaxRequests" } },
+        });
+    }
+    const updated = await backend.settingsUpdate({
+      downloadAdaptiveConcurrency: false,
+      downloadAdaptiveMaxRequests: 6,
+    }, current.data.revision);
+    expect(updated).toMatchObject({
+      ok: true,
+      data: {
+        downloadAdaptiveConcurrency: false,
+        downloadAdaptiveMaxRequests: 6,
+        concurrentImageRequests: current.data.concurrentImageRequests,
+        requestStartIntervalMs: current.data.requestStartIntervalMs,
+      },
+    });
+    if (!updated.ok) return;
+    expect(JSON.parse(window.localStorage.getItem("atsumi.browser.settings.v1") ?? "{}"))
+      .toMatchObject({ downloadAdaptiveConcurrency: false, downloadAdaptiveMaxRequests: 6 });
+    await expect(backend.settingsUpdate({
+      downloadAdaptiveConcurrency: current.data.downloadAdaptiveConcurrency,
+      downloadAdaptiveMaxRequests: current.data.downloadAdaptiveMaxRequests,
+    }, updated.data.revision)).resolves.toMatchObject({ ok: true });
+  });
+
   it("persists the Explore page size used by new searches", async () => {
     const current = await backend.settingsGet();
     if (!current.ok) throw new Error(current.error.message);

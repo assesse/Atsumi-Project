@@ -3,6 +3,7 @@ pub mod domain;
 pub mod infrastructure;
 pub mod interface;
 pub mod source;
+pub mod streaming;
 pub mod thumbnail;
 
 #[cfg(test)]
@@ -10,7 +11,7 @@ mod tests;
 
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc, Arc,
     },
     thread,
@@ -44,6 +45,40 @@ use thumbnail::{
     ThumbnailCoordinatorConfig, ThumbnailKey, ThumbnailPriority, ThumbnailRequestDto,
     ThumbnailResolver,
 };
+
+fn hitomi_config_for_settings(settings: &domain::SettingsSnapshot) -> HitomiLiveConfig {
+    let defaults = HitomiLiveConfig::default();
+    let max_concurrent_requests = settings.concurrent_image_requests as usize;
+    HitomiLiveConfig {
+        max_concurrent_requests,
+        max_concurrent_per_host: defaults
+            .max_concurrent_per_host
+            .min(max_concurrent_requests),
+        request_start_interval: Duration::from_millis(settings.request_start_interval_ms),
+        ..defaults
+    }
+}
+
+#[cfg(test)]
+mod download_request_config_tests {
+    use super::*;
+
+    #[test]
+    fn saved_request_limits_below_five_still_make_a_valid_source_config() {
+        for limit in [1, 2, 4, 5, 30] {
+            let settings = domain::SettingsSnapshot {
+                concurrent_image_requests: limit,
+                request_start_interval_ms: 250,
+                ..Default::default()
+            };
+            let config = hitomi_config_for_settings(&settings);
+            assert_eq!(config.max_concurrent_requests, limit as usize);
+            assert_eq!(config.max_concurrent_per_host, (limit as usize).min(5));
+            assert_eq!(config.request_start_interval, Duration::from_millis(250));
+            assert!(HitomiLiveAdapter::new(config).is_ok());
+        }
+    }
+}
 
 fn apply_pending_factory_reset(data_dir: &std::path::Path) -> std::io::Result<()> {
     let marker = data_dir.join("factory-reset.pending");
@@ -312,6 +347,7 @@ struct TrayMenuState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TrayWorkCounts {
     active_downloads: u64,
+    active_recordings: u64,
     auto_find_active: bool,
     duplicate_scan_active: bool,
     internal_duplicate_scan_active: bool,
@@ -324,6 +360,9 @@ fn tray_work_status_label(work: Option<TrayWorkCounts>) -> String {
     let mut kinds = Vec::new();
     if work.active_downloads > 0 {
         kinds.push(format!("다운로드 {}개", work.active_downloads));
+    }
+    if work.active_recordings > 0 {
+        kinds.push(format!("CHZZK 녹화 {}개", work.active_recordings));
     }
     if work.auto_find_active {
         kinds.push("Auto Find".into());
@@ -341,8 +380,8 @@ fn tray_work_status_label(work: Option<TrayWorkCounts>) -> String {
     }
 }
 
-fn restore_main_window(app: &tauri::AppHandle, action: &str) -> Option<tauri::WebviewWindow> {
-    let Some(window) = app.get_webview_window("main") else {
+fn restore_main_window(app: &tauri::AppHandle, action: &str) -> Option<tauri::Window> {
+    let Some(window) = app.get_window("main") else {
         tracing::warn!("could not {action}; the main Atsumi window is unavailable");
         return None;
     };
@@ -377,6 +416,10 @@ fn refresh_tray_work_status(app: &tauri::AppHandle) {
     let work = match state.active_work_snapshot() {
         Ok(snapshot) => Some(TrayWorkCounts {
             active_downloads: snapshot.downloads.active_count,
+            active_recordings: snapshot
+                .recordings
+                .as_ref()
+                .map_or(0, |recordings| recordings.active_count),
             auto_find_active: snapshot.auto_find.is_some(),
             duplicate_scan_active: snapshot.duplicate_scan.is_some(),
             internal_duplicate_scan_active: snapshot.internal_duplicate_scan.is_some(),
@@ -457,12 +500,56 @@ fn request_tray_quit(app: &tauri::AppHandle) {
     }
 }
 
+static REPLAY_IO_ACTIVE: AtomicUsize = AtomicUsize::new(0);
+struct ReplayIoPermit;
+impl ReplayIoPermit {
+    fn acquire() -> Option<Self> {
+        REPLAY_IO_ACTIVE
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+                (active < 8).then_some(active + 1)
+            })
+            .ok()
+            .map(|_| Self)
+    }
+}
+impl Drop for ReplayIoPermit {
+    fn drop(&mut self) {
+        REPLAY_IO_ACTIVE.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+fn replay_protocol_failure(status: StatusCode) -> Response<Vec<u8>> {
+    Response::builder()
+        .status(status)
+        .header("Cache-Control", "no-store")
+        .header("X-Content-Type-Options", "nosniff")
+        .body(Vec::new())
+        .expect("constant replay response")
+}
+
 pub fn run() -> tauri::Result<()> {
     infrastructure::telemetry::init();
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .register_asynchronous_uri_scheme_protocol("atsumi-replay", |context, request, responder| {
+            // Webview identity comes from native dispatch, not a forgeable HTTP
+            // Origin/Referer. Official remote pages must not read local replay.
+            let label = context.webview_label().to_owned();
+            if label != "main" {
+                responder.respond(replay_protocol_failure(StatusCode::FORBIDDEN)); return;
+            }
+            let Some(service) = context.app_handle().try_state::<streaming::replay::ReplayService>().map(|state| state.inner().clone()) else {
+                responder.respond(replay_protocol_failure(StatusCode::NOT_FOUND)); return;
+            };
+            let Some(permit) = ReplayIoPermit::acquire() else {
+                responder.respond(replay_protocol_failure(StatusCode::SERVICE_UNAVAILABLE)); return;
+            };
+            tauri::async_runtime::spawn_blocking(move || {
+                let _permit = permit;
+                responder.respond(service.media_response(&request, &label));
+            });
+        })
         .register_asynchronous_uri_scheme_protocol("detail-original", |context, request, responder| {
             let request_id = match detail_original_protocol_request_id(&request) {
                 Ok(request_id) => request_id,
@@ -535,7 +622,7 @@ pub fn run() -> tauri::Result<()> {
             });
         })
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_window("main") {
                 if let Err(error) = window
                     .show()
                     .and_then(|_| window.unminimize())
@@ -573,6 +660,23 @@ pub fn run() -> tauri::Result<()> {
             }
             restore_main_window(app, "restore Atsumi from the tray");
         })
+        .on_page_load(|view, payload| {
+            if view.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                if let Some(state) = view.app_handle().try_state::<AppState>() {
+                    if let Ok(browser) = state.official_browser() {
+                        browser.detach_viewport(view.app_handle());
+                        let app = view.app_handle().clone();
+                        // Hide old native paint immediately. A recording layout
+                        // survives main-document reload and is adopted by the new UI.
+                        if let Some(epoch) = browser.suspend_multiview(&app) {
+                            tauri::async_runtime::spawn_blocking(move || {
+                                let _ = browser.close_multiview(&app, Some(epoch));
+                            });
+                        }
+                    }
+                }
+            }
+        })
         .on_window_event(|window, event| {
             if window.label() != "main" {
                 return;
@@ -600,14 +704,27 @@ pub fn run() -> tauri::Result<()> {
                 tracing::info!(recovered_merges, "Recovered interrupted edition page merges");
             }
             let settings = ApplicationService::new(repository.clone()).settings_get()?;
+            // Only application-managed tools; never search a recording folder or PATH.
+            let media_bin = if cfg!(debug_assertions) {
+                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                    .join("../.runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/bin")
+            } else {
+                app.path().resource_dir()?.join("media-tools/bin")
+            };
+            let media_tools = streaming::browser_merge::MediaTools {
+                ffmpeg: media_bin.join("ffmpeg.exe"), ffprobe: media_bin.join("ffprobe.exe"),
+            };
+            let official_browser = match streaming::browser::OfficialBrowser::new_with_media_tools(data_dir.clone(), Some(media_tools)) {
+                Ok(service) => Some(service),
+                Err(error) => { tracing::warn!(code = %error.code, "official browser recording storage initialization failed"); None }
+            };
+            if let Some(browser) = &official_browser {
+                app.manage(streaming::replay::ReplayService::new(&data_dir, browser.capture_store()));
+            }
             let download_root_configured = !settings.download_root.trim().is_empty();
-            let live_source = Arc::new(HitomiLiveAdapter::new(HitomiLiveConfig {
-                max_concurrent_requests: settings.concurrent_image_requests as usize,
-                request_start_interval: Duration::from_millis(
-                    settings.request_start_interval_ms,
-                ),
-                ..HitomiLiveConfig::default()
-            })?.with_summary_cache(repository.clone()));
+            let live_config = hitomi_config_for_settings(&settings);
+            let live_source = HitomiLiveAdapter::new_with_download_tuning(live_config, settings.download_adaptive_concurrency.then_some(settings.download_adaptive_max_requests as usize), repository.clone())?;
+            let live_source = Arc::new(live_source.with_summary_cache(repository.clone()));
             let service = ApplicationService::new(repository.clone())
                 .with_download_repository(repository.clone())
                 .with_search_repository(live_source.clone())
@@ -828,7 +945,7 @@ pub fn run() -> tauri::Result<()> {
                 download_source,
                 Arc::clone(&artifact_store),
                 download_event_tx,
-                2,
+                DownloadSupervisor::worker_count_for_http_limit(if settings.download_adaptive_concurrency { settings.download_adaptive_max_requests as usize } else { settings.concurrent_image_requests as usize }),
             )?;
             let completion_previews = gallery_previews.clone();
             downloads.set_completion_handler(Arc::new(move |gallery_id| completion_previews.enqueue(gallery_id)));
@@ -885,7 +1002,9 @@ pub fn run() -> tauri::Result<()> {
                 data_dir,
             ).with_gallery_previews(gallery_previews).with_excluded_artifacts(excluded_artifacts)
                 .with_overlap_merges(overlap_merges)
-                .with_thumbnail_disk_cache(thumbnail_disk_cache));
+                .with_thumbnail_disk_cache(thumbnail_disk_cache)
+
+                .with_official_browser(official_browser));
             let tray_status = MenuItem::with_id(
                 app,
                 TRAY_WORK_STATUS_ID,
@@ -910,7 +1029,7 @@ pub fn run() -> tauri::Result<()> {
                 event_refresh_pending: Arc::new(AtomicBool::new(false)),
             });
             refresh_tray_work_status(app.handle());
-            if let Some(window) = app.get_webview_window("main") {
+            if let Some(window) = app.get_window("main") {
                 window.show()?;
                 window.unminimize()?;
                 window.set_focus()?;
@@ -930,6 +1049,48 @@ pub fn run() -> tauri::Result<()> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+
+            streaming::browser::chzzk_browser_open,
+            streaming::browser::chzzk_browser_snapshot,
+            streaming::browser::chzzk_browser_set_viewport,
+
+            streaming::browser::chzzk_browser_login,
+            streaming::browser::chzzk_browser_logout,
+            streaming::browser::chzzk_browser_open_installer,
+            streaming::browser::chzzk_browser_start,
+            streaming::browser::chzzk_browser_confirm_control,
+            streaming::browser::chzzk_browser_request_control,
+            streaming::browser::chzzk_browser_ack_ui_action,
+            streaming::browser::chzzk_browser_stop,
+            streaming::browser::chzzk_browser_connect_extension,
+            streaming::browser::chzzk_browser_open_folder,
+            streaming::browser::chzzk_browser_open_segment,
+            streaming::browser::chzzk_browser_open_merged,
+            streaming::browser::chzzk_browser_retry_merge,
+            streaming::replay::replay_open,
+            streaming::replay::replay_close,
+            streaming::replay::replay_chat_at,
+            streaming::replay::replay_chat_page,
+            streaming::replay::replay_timeline,
+            streaming::replay::replay_set_offset,
+            streaming::browser::multiview_commands::chzzk_multiview_configure,
+            streaming::browser::multiview_commands::chzzk_multiview_snapshot,
+            streaming::browser::multiview_commands::chzzk_multiview_close,
+            streaming::browser::multiview_commands::chzzk_multiview_set_viewport,
+            streaming::browser::multiview_commands::chzzk_multiview_set_audio,
+            streaming::browser::multiview_commands::chzzk_multiview_request_control,
+            streaming::browser::multiview_commands::chzzk_multiview_confirm_control,
+            streaming::browser::multiview_commands::chzzk_multiview_ack_ui_action,
+            streaming::browser::multiview_commands::chzzk_multiview_set_pane_audio,
+
+
+
+
+
+
+
+            streaming::commands::streaming_update_reserve,
+            streaming::commands::streaming_update_release,
             interface::commands::gallery_preview_list,
             interface::commands::gallery_preview_set,
             interface::commands::artist_preview_list,
@@ -1092,6 +1253,7 @@ mod tray_menu_tests {
         assert_eq!(
             tray_work_status_label(Some(TrayWorkCounts {
                 active_downloads: 0,
+                active_recordings: 0,
                 auto_find_active: false,
                 duplicate_scan_active: false,
                 internal_duplicate_scan_active: false,
@@ -1101,6 +1263,7 @@ mod tray_menu_tests {
         assert_eq!(
             tray_work_status_label(Some(TrayWorkCounts {
                 active_downloads: 2,
+                active_recordings: 0,
                 auto_find_active: false,
                 duplicate_scan_active: false,
                 internal_duplicate_scan_active: false,
@@ -1110,6 +1273,7 @@ mod tray_menu_tests {
         assert_eq!(
             tray_work_status_label(Some(TrayWorkCounts {
                 active_downloads: 2,
+                active_recordings: 0,
                 auto_find_active: true,
                 duplicate_scan_active: true,
                 internal_duplicate_scan_active: true,
@@ -1119,6 +1283,7 @@ mod tray_menu_tests {
         assert_eq!(
             tray_work_status_label(Some(TrayWorkCounts {
                 active_downloads: 0,
+                active_recordings: 0,
                 auto_find_active: false,
                 duplicate_scan_active: false,
                 internal_duplicate_scan_active: true,

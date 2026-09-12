@@ -35,6 +35,74 @@ use super::{
 };
 
 #[test]
+fn image_candidate_fallback_stops_after_server_backpressure() {
+    for status in [429, 503] {
+        let error = crate::source::map_http_status(status, Some(30)).unwrap_err();
+        assert!(error.retryable);
+        assert!(!super::candidate_fallback_allowed(&error));
+    }
+    assert!(super::candidate_fallback_allowed(
+        &SourceContractError::not_found("synthetic candidate", Some(404)),
+    ));
+    assert!(super::candidate_fallback_allowed(
+        &SourceContractError::image_decode_failed("synthetic invalid image"),
+    ));
+}
+
+#[test]
+fn downloads_and_thumbnails_do_not_switch_routes_after_server_backpressure() {
+    let metadata = parse_galleryinfo_script(GALLERY_SCRIPT).unwrap();
+    let routing = parse_gg_routing(GG_SCRIPT).unwrap();
+    let page = metadata.pages.first().unwrap();
+    for status in [429, 503] {
+        for download in [true, false] {
+            let transport = Arc::new(FakeTransport::default());
+            transport.respond(
+                galleryinfo_script_url(424_242).unwrap(),
+                "text/javascript",
+                GALLERY_SCRIPT.as_bytes().to_vec(),
+            );
+            transport.respond(
+                gg_script_url(),
+                "text/javascript",
+                GG_SCRIPT.as_bytes().to_vec(),
+            );
+            let candidates = if download {
+                download_full_candidates(page, &routing).unwrap()
+            } else {
+                webp_thumbnail_candidates(page, &routing, ThumbnailSize::Large).unwrap()
+            };
+            let expected_error = crate::source::map_http_status(status, Some(30)).unwrap_err();
+            transport.fail(candidates[0].url.clone(), expected_error.clone());
+            let adapter =
+                HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone());
+            let cancellation = CancellationToken::new();
+            let error = if download {
+                adapter
+                    .download_page(
+                        GalleryId::new(424_242).unwrap(),
+                        crate::domain::SourcePageNumber::new(1).unwrap(),
+                        &cancellation,
+                    )
+                    .unwrap_err()
+            } else {
+                adapter
+                    .resolve_thumbnail(
+                        &ThumbnailKey::gallery_page(424_242, 1).unwrap(),
+                        &cancellation,
+                        crate::thumbnail::ThumbnailPriority::Visible,
+                    )
+                    .unwrap_err()
+            };
+            assert_eq!(error.code, expected_error.code);
+            assert_eq!(error.http_status, Some(status));
+            assert_eq!(transport.calls.lock().unwrap().len(), 3);
+            assert_eq!(transport.call_count(&candidates[0].url), 1);
+        }
+    }
+}
+
+#[test]
 fn download_decode_accepts_empty_or_octet_stream_only_when_magic_matches() {
     let page = crate::domain::SourcePageNumber::new(1).unwrap();
     for content_type in ["", "application/octet-stream"] {

@@ -25,6 +25,7 @@ export type AppUpdateState = {
 
 type UpdateRuntime = "tauri" | "browser-mock";
 type CheckReason = "startup" | "manual";
+export type UpdateInstallGuard = { acquire: () => Promise<void>; release: () => Promise<void> };
 
 const initialState: AppUpdateState = {
   phase: "idle",
@@ -42,12 +43,13 @@ const updateInfo = (update: Update): AppUpdateInfo => ({
 const CHECK_FAILED_MESSAGE = "업데이트 정보를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.";
 const INSTALL_FAILED_MESSAGE = "업데이트를 설치하지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요.";
 
-export function useAppUpdater(runtime: UpdateRuntime) {
+export function useAppUpdater(runtime: UpdateRuntime, installGuard?: UpdateInstallGuard) {
   const [state, setState] = useState<AppUpdateState>(initialState);
   const updateRef = useRef<Update | null>(null);
   const checkInFlight = useRef<Promise<AppUpdateCheckResult> | null>(null);
   const startupAttempted = useRef(false);
   const mounted = useRef(true);
+  const installInFlight = useRef(false);
 
   useEffect(() => {
     mounted.current = true;
@@ -120,7 +122,10 @@ export function useAppUpdater(runtime: UpdateRuntime) {
 
   const installUpdate = useCallback(async () => {
     const activeUpdate = updateRef.current;
-    if (!activeUpdate || state.phase === "downloading" || state.phase === "installing") return;
+    if (!activeUpdate || installInFlight.current || state.phase === "downloading" || state.phase === "installing") return;
+    installInFlight.current = true;
+    let reserved = false;
+    let guardFailure: string | undefined;
 
     let downloadedBytes = 0;
     setState((current) => ({
@@ -132,6 +137,13 @@ export function useAppUpdater(runtime: UpdateRuntime) {
     }));
 
     try {
+      if (installGuard) {
+        try { await installGuard.acquire(); reserved = true; }
+        catch (error) {
+          guardFailure = error instanceof Error ? error.message : "녹화 상태를 확인하지 못해 업데이트를 보류했습니다.";
+          throw error;
+        }
+      }
       await activeUpdate.downloadAndInstall((event: DownloadEvent) => {
         if (!mounted.current) return;
         if (event.event === "Started") {
@@ -150,14 +162,17 @@ export function useAppUpdater(runtime: UpdateRuntime) {
       });
       await relaunch();
     } catch {
+      if (reserved) await installGuard?.release().catch(() => undefined);
       if (!mounted.current) return;
       setState((current) => ({
         ...current,
         phase: "error",
-        error: INSTALL_FAILED_MESSAGE,
+        error: guardFailure ?? INSTALL_FAILED_MESSAGE,
       }));
+    } finally {
+      installInFlight.current = false;
     }
-  }, [state.phase]);
+  }, [state.phase, installGuard]);
 
   return {
     state,

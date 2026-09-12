@@ -66,6 +66,9 @@ jobs:
           rustc +stable --version
           cargo +stable --version
 
+      - name: Prepare pinned recording merge tools
+        run: ./tools/prepare_media_tools.ps1
+
       - name: Build draft release and updater metadata
         uses: tauri-apps/tauri-action@v0.6.2
         env:

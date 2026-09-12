@@ -24,6 +24,9 @@ function ActiveWorkStatus({ snapshot }: { snapshot: AppActiveWorkSnapshot }) {
     <>
       <strong className="exit-work-heading">진행 중인 작업</strong>
       <ul className="exit-work-list">
+        {(snapshot.recordings?.activeCount ?? 0) > 0
+          ? <li>CHZZK 시청·녹화 {snapshot.recordings!.activeCount}개 — 종료하면 수신을 멈추고 저장한 구간을 보존합니다.</li>
+          : null}
         {snapshot.downloads.activeCount > 0
           ? <li>다운로드 {snapshot.downloads.activeCount}개</li>
           : null}

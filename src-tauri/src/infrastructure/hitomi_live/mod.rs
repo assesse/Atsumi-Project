@@ -1,5 +1,6 @@
 mod http;
 mod search;
+mod tuning;
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -108,6 +109,24 @@ pub struct HitomiLiveAdapter {
 
 impl HitomiLiveAdapter {
     pub fn new(config: HitomiLiveConfig) -> Result<Self, RepositoryError> {
+        Self::build(config, None)
+    }
+
+    pub fn new_with_download_tuning(
+        config: HitomiLiveConfig,
+        ceiling: Option<usize>,
+        store: Arc<dyn crate::application::DownloadTuningStore>,
+    ) -> Result<Self, RepositoryError> {
+        Self::build(config, Some((ceiling, store)))
+    }
+
+    fn build(
+        config: HitomiLiveConfig,
+        tuning: Option<(
+            Option<usize>,
+            Arc<dyn crate::application::DownloadTuningStore>,
+        )>,
+    ) -> Result<Self, RepositoryError> {
         validate_config(&config).map_err(RepositoryError::Source)?;
         let transport = ReqwestTransport::new(HttpSchedulerConfig {
             max_concurrent_requests: config.max_concurrent_requests,
@@ -120,6 +139,11 @@ impl HitomiLiveAdapter {
             retry_max_delay: config.retry_max_delay,
         })
         .map_err(RepositoryError::Source)?;
+        let transport = if let Some((ceiling, store)) = tuning {
+            transport.with_download_tuning(ceiling, store)
+        } else {
+            transport
+        };
         Ok(Self::with_transport(config, Arc::new(transport)))
     }
 
@@ -660,13 +684,21 @@ impl DownloadSourcePort for HitomiLiveAdapter {
             let http_status = payload.status;
             let content_type = sanitized_content_type(&payload.content_type);
             let bytes_received = u64::try_from(payload.bytes.len()).ok();
-            match decode_download_payload(
-                payload,
-                source_page_number,
-                candidate.source_revision.to_string(),
-                candidate_index,
-                candidate.format,
-            ) {
+            let decoded = {
+                // The HTTP response is complete before taking a decode slot;
+                // network concurrency must not be limited by image work.
+                let _image_work =
+                    crate::application::image_work_budget::acquire(Some(cancellation))
+                        .ok_or_else(SourceContractError::cancelled)?;
+                decode_download_payload(
+                    payload,
+                    source_page_number,
+                    candidate.source_revision.to_string(),
+                    candidate_index,
+                    candidate.format,
+                )
+            };
+            match decoded {
                 Ok(mut page) => {
                     diagnostics.push(SourceCandidateDiagnostic {
                         candidate_index,
@@ -735,6 +767,14 @@ fn download_list_published_rank(value: Option<&str>) -> Option<u32> {
 }
 
 fn candidate_fallback_allowed(error: &SourceContractError) -> bool {
+    // Retry policy already handled server backpressure. Trying another image
+    // route here would immediately resume requests after those retries end.
+    if matches!(
+        error.code,
+        SourceErrorCode::RateLimited | SourceErrorCode::TemporarilyUnavailable
+    ) {
+        return false;
+    }
     error.retryable
         || matches!(
             error.code,

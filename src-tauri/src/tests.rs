@@ -99,7 +99,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -184,7 +184,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -295,7 +295,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
         ]
     );
     let metadata: (String, String) = connection
@@ -359,7 +359,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -410,6 +410,8 @@ fn default_settings_match_the_approved_foundation_values() {
             "privacyMode": false,
             "cacheLimitGb": 10,
             "concurrentImageRequests": 5,
+            "downloadAdaptiveConcurrency": true,
+            "downloadAdaptiveMaxRequests": 8,
             "requestStartIntervalMs": 25,
             "autoFindHistoryMode": "include_all_history",
             "downloadOverlapAutoMode": "off",
@@ -566,6 +568,8 @@ fn settings_validation_matches_the_approved_ui_ranges() {
         privacy_mode: false,
         cache_limit_gb: 30,
         concurrent_image_requests: 30,
+        download_adaptive_concurrency: true,
+        download_adaptive_max_requests: 8,
         request_start_interval_ms: 5_000,
         auto_find_history_mode: AutoFindHistoryMode::IncludeAllHistory,
         download_overlap_auto_mode: Default::default(),
@@ -639,6 +643,35 @@ fn gallery_metadata_normalizes_blank_optional_group() {
     let grouped = GalleryMetadata::new("Gallery title", None, Some("  paper studio  ".into()), 12)
         .expect("valid grouped gallery metadata");
     assert_eq!(grouped.primary_group.as_deref(), Some("paper studio"));
+}
+
+#[test]
+fn adaptive_download_settings_round_trip_independently_of_shared_request_limits() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().expect("open repository"));
+    let service = ApplicationService::new(repository.clone());
+    let original = service.settings_get().expect("default settings");
+    assert!(original.download_adaptive_concurrency);
+    assert_eq!(original.download_adaptive_max_requests, 8);
+    let updated = service
+        .settings_update(
+            SettingsPatch {
+                concurrent_image_requests: Some(2),
+                request_start_interval_ms: Some(375),
+                download_adaptive_concurrency: Some(false),
+                download_adaptive_max_requests: Some(6),
+                ..SettingsPatch::default()
+            },
+            original.revision,
+        )
+        .expect("save adaptive preferences");
+    assert_eq!(
+        repository.settings_get().expect("read saved settings"),
+        updated
+    );
+    assert!(!updated.download_adaptive_concurrency);
+    assert_eq!(updated.download_adaptive_max_requests, 6);
+    assert_eq!(updated.concurrent_image_requests, 2);
+    assert_eq!(updated.request_start_interval_ms, 375);
 }
 
 #[test]

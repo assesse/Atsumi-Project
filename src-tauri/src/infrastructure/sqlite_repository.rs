@@ -57,8 +57,6 @@ use super::{
     migrations::{MigrationError, MigrationRunner},
 };
 
-const DOWNLOAD_OVERLAP_AUTOMATION_DAILY_DECISION_LIMIT: i64 = 10;
-
 pub struct SqliteRepository {
     connection: Mutex<Connection>,
 }
@@ -292,8 +290,10 @@ impl StateRepository for SqliteRepository {
                         auto_find_display_mode = ?20,
                         downloads_display_mode = ?21,
                         danbooru_page_size = ?22,
-                        danbooru_preview_width = ?23
-                    WHERE singleton = 1 AND revision = ?24
+                        danbooru_preview_width = ?23,
+                        download_adaptive_concurrency = ?24,
+                        download_adaptive_max_requests = ?25
+                    WHERE singleton = 1 AND revision = ?26
                 "#,
                 params![
                     to_sql_integer(next.revision, "settings revision")?,
@@ -319,6 +319,8 @@ impl StateRepository for SqliteRepository {
                     next.downloads_display_mode.as_str(),
                     i64::from(next.danbooru_page_size),
                     i64::from(next.danbooru_preview_width),
+                    next.download_adaptive_concurrency,
+                    i64::from(next.download_adaptive_max_requests),
                     to_sql_integer(expected_revision, "expected settings revision")?,
                 ],
             )
@@ -4503,25 +4505,6 @@ impl DownloadOverlapRepository for SqliteRepository {
             let transaction = connection
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(map_sqlite_error)?;
-            if request.actor == DownloadOverlapDecisionActor::Automation {
-                let automatic_decisions: i64 = transaction
-                    .query_row(
-                        r#"
-                            SELECT COUNT(*)
-                            FROM download_overlap_decisions
-                            WHERE actor = 'automation'
-                              AND created_at >= strftime('%Y-%m-%dT00:00:00Z', 'now')
-                        "#,
-                        [],
-                        |row| row.get(0),
-                    )
-                    .map_err(map_sqlite_error)?;
-                if automatic_decisions >= DOWNLOAD_OVERLAP_AUTOMATION_DAILY_DECISION_LIMIT {
-                    return Err(RepositoryError::Other(format!(
-                        "Automatic overlap quarantine reached its daily safety limit of {DOWNLOAD_OVERLAP_AUTOMATION_DAILY_DECISION_LIMIT} decisions"
-                    )));
-                }
-            }
             let stored = transaction
                 .query_row(
                     r#"
@@ -8962,7 +8945,8 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                        search_exclude_tags_json, explore_page_size,
                        download_overlap_auto_mode, explore_display_mode,
                        auto_find_display_mode, downloads_display_mode,
-                       danbooru_page_size, danbooru_preview_width
+                       danbooru_page_size, danbooru_preview_width,
+                       download_adaptive_concurrency, download_adaptive_max_requests
                 FROM settings
                 WHERE singleton = 1
             "#,
@@ -8992,6 +8976,8 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                     row.get::<_, String>(20)?,
                     row.get::<_, i64>(21)?,
                     row.get::<_, i64>(22)?,
+                    row.get::<_, bool>(23)?,
+                    row.get::<_, i64>(24)?,
                 ))
             },
         )
@@ -9015,6 +9001,11 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
         related_preview_width: stored_u32(values.5, "related preview width")?,
         cache_limit_gb: stored_u32(values.6, "cache limit")?,
         concurrent_image_requests: stored_u32(values.7, "concurrent image requests")?,
+        download_adaptive_concurrency: values.23,
+        download_adaptive_max_requests: stored_u32(
+            values.24,
+            "adaptive download maximum requests",
+        )?,
         request_start_interval_ms: stored_u64(values.8, "request start interval")?,
         auto_find_history_mode: AutoFindHistoryMode::from_database(&values.9).ok_or_else(|| {
             RepositoryError::Corrupt(format!(
@@ -10806,6 +10797,157 @@ mod duplicate_repository_tests {
             .write_image(&rgba, 256, 256, ExtendedColorType::Rgba8)
             .unwrap();
         bytes
+    }
+
+    #[test]
+    fn automatic_overlap_decisions_exceed_ten_in_one_day_after_reopening_database() {
+        let temporary = tempfile::tempdir().expect("create automatic decision fixture directory");
+        let database_path = temporary.path().join("unlimited-decisions.sqlite3");
+        let mut repository = SqliteRepository::open(&database_path).expect("open repository");
+        let existing_gallery_id = 4_500_000;
+        let existing_entry_id = "preserved-overlap-entry";
+        let existing_fingerprint = "b".repeat(64);
+        let incoming_fingerprint = "a".repeat(64);
+        seed_verified_gallery(&repository, existing_gallery_id, existing_entry_id);
+        let incoming_ids = (1..=12)
+            .map(|offset| GalleryId::new(existing_gallery_id + offset).unwrap())
+            .collect::<Vec<_>>();
+        let DownloadQueueAddOutcome::Added(queued) = repository
+            .download_queue_add("unlimited-automatic-decisions", &incoming_ids)
+            .expect("queue automatic decision fixtures")
+        else {
+            panic!("new fixture request should add downloads");
+        };
+
+        for (index, entry) in queued.entries.iter().enumerate() {
+            if index == 10 {
+                drop(repository);
+                repository = SqliteRepository::open(&database_path)
+                    .expect("reopen after ten committed automatic decisions");
+            }
+            let review_id = format!("unlimited-overlap-review-{index}");
+            let candidate_id = format!("unlimited-overlap-candidate-{index}");
+            {
+                let connection = repository.connection().expect("prepare review fixture");
+                connection
+                    .execute(
+                        "INSERT INTO galleries (gallery_id, revision, title, source_page_count)
+                     VALUES (?1, 0, 'Incoming automatic decision fixture', 1)",
+                        [entry.gallery_id.get()],
+                    )
+                    .unwrap();
+                connection
+                    .execute(
+                        "UPDATE download_entries SET state='review_required', progress=100,
+                         review_kind='gallery_duplicate', review_id=?1 WHERE entry_id=?2",
+                        params![review_id, entry.entry_id.as_str()],
+                    )
+                    .unwrap();
+                connection
+                    .execute(
+                        "UPDATE download_jobs SET state='review_required' WHERE entry_id=?1",
+                        [entry.entry_id.as_str()],
+                    )
+                    .unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO download_artifacts (entry_id, gallery_id, revision,
+                         relative_directory, expected_page_count, state)
+                     VALUES (?1, ?2, 0, ?3, 1, 'incomplete')",
+                        params![
+                            entry.entry_id.as_str(),
+                            entry.gallery_id.get(),
+                            format!("incoming-{index}")
+                        ],
+                    )
+                    .unwrap();
+                connection.execute(
+                    "INSERT INTO download_overlap_reviews (review_id, entry_id,
+                         incoming_gallery_id, revision, state, profile_version, policy_version,
+                         incoming_fingerprint, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, 0, 'pending', 1, 2, ?4,
+                         strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                    params![review_id, entry.entry_id.as_str(), entry.gallery_id.get(), incoming_fingerprint],
+                ).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO download_overlap_candidates (candidate_id, review_id,
+                         existing_entry_id, existing_gallery_id, existing_fingerprint, relation,
+                         confidence, matched_pages, exact_pages, visual_pages, existing_coverage,
+                         incoming_coverage, existing_unique_pages, incoming_unique_pages,
+                         longest_aligned_run, rank)
+                     VALUES (?1, ?2, ?3, ?4, ?5, 'near_equivalent', 1, 1, 1, 0, 1, 1, 0, 0, 1, 1)",
+                        params![
+                            candidate_id,
+                            review_id,
+                            existing_entry_id,
+                            existing_gallery_id,
+                            existing_fingerprint
+                        ],
+                    )
+                    .unwrap();
+                // Keep all preceding committed decisions in today's fixture
+                // even if this test happens to cross UTC midnight.
+                connection
+                    .execute(
+                        "UPDATE download_overlap_decisions
+                     SET created_at=strftime('%Y-%m-%dT00:00:00Z', 'now') WHERE actor='automation'",
+                        [],
+                    )
+                    .unwrap();
+                let committed: i64 = connection
+                    .query_row(
+                        "SELECT COUNT(*) FROM download_overlap_decisions WHERE actor='automation'",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(committed, index as i64);
+            }
+            let outcome = repository.overlap_decision_apply(
+                &DownloadOverlapDecisionRequest {
+                    review_id: review_id.clone(),
+                    expected_revision: 0,
+                    action: DownloadOverlapDecisionAction::RemoveIncoming,
+                    candidate_id: Some(candidate_id.clone()),
+                    actor: DownloadOverlapDecisionActor::Automation,
+                    reason_code: Some("balanced_overlap_v5".to_owned()),
+                    rule_version: Some(5),
+                    feature_snapshot_json: Some(serde_json::json!({
+                        "rule": "balanced_overlap_v5", "ruleVersion": 5,
+                        "reviewId": review_id, "reviewRevision": 0, "candidateId": candidate_id,
+                    }).to_string()),
+                },
+                &incoming_fingerprint,
+                &[(candidate_id, existing_fingerprint.clone())],
+            ).unwrap_or_else(|error| panic!("automatic decision {} should succeed: {error}", index + 1));
+            let DownloadOverlapDecisionApplyOutcome::Applied(applied) = outcome else {
+                panic!("automatic decision {} should apply", index + 1);
+            };
+            assert!(applied.result.cancelled);
+            assert!(!applied.result.resumed);
+            assert_eq!(applied.result.review.decisions.len(), 1);
+            assert_eq!(
+                applied.result.review.decisions[0].actor,
+                DownloadOverlapDecisionActor::Automation
+            );
+        }
+        let connection = repository
+            .connection()
+            .expect("inspect committed decisions");
+        let (decisions, excluded, preserved): (i64, i64, String) = connection
+            .query_row(
+                "SELECT (SELECT COUNT(*) FROM download_overlap_decisions WHERE actor='automation'),
+                    (SELECT COUNT(*) FROM duplicate_hidden_galleries),
+                    (SELECT state FROM download_entries WHERE entry_id=?1)",
+                [existing_entry_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            (decisions, excluded, preserved.as_str()),
+            (12, 12, "completed")
+        );
     }
 
     #[test]

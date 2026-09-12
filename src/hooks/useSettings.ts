@@ -17,6 +17,8 @@ const fallback: SettingsSnapshot = {
   privacyMode: false,
   cacheLimitGb: 10,
   concurrentImageRequests: 5,
+  downloadAdaptiveConcurrency: true,
+  downloadAdaptiveMaxRequests: 8,
   requestStartIntervalMs: 25,
   autoFindGrouping: "all",
   downloadsGrouping: "all",

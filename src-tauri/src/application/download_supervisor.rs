@@ -75,9 +75,13 @@ struct ActiveCancellation {
     token: CancellationToken,
 }
 
-const MAX_FULL_IMAGE_MEMORY_SLOTS: usize = 2;
+const MAX_GALLERY_DOWNLOAD_WORKERS: usize = 8;
 
 impl DownloadSupervisor {
+    pub fn worker_count_for_http_limit(limit: usize) -> usize {
+        limit.clamp(1, MAX_GALLERY_DOWNLOAD_WORKERS)
+    }
+
     pub fn new(
         repository: Arc<dyn DownloadOverlapRepository>,
         settings: Arc<dyn StateRepository>,
@@ -117,7 +121,7 @@ impl DownloadSupervisor {
             inner: Arc::clone(&inner),
         };
         let mut workers = unpoison(inner.workers.lock());
-        for index in 0..gallery_worker_count.min(MAX_FULL_IMAGE_MEMORY_SLOTS) {
+        for index in 0..Self::worker_count_for_http_limit(gallery_worker_count) {
             let worker_inner = Arc::clone(&inner);
             let handle = thread::Builder::new()
                 .name(format!("atsumi-download-{index}"))
@@ -1473,12 +1477,11 @@ fn run_download(
             .into());
         }
         let stored = inner.store.store_page(&layout, &payload, cancellation)?;
-        emit(
-            inner,
-            inner
-                .repository
-                .pipeline_page_verified(descriptor, &stored)?,
-        );
+        let projection = inner
+            .repository
+            .pipeline_page_verified(descriptor, &stored)?;
+        super::image_work_budget::record_stored_page(payload.bytes.len());
+        emit(inner, projection);
     }
 
     emit(
@@ -1921,15 +1924,21 @@ fn prepare_overlap_hashes(
             hashes.push(cached);
             continue;
         }
-        let bytes = inner.store.read_verified_page_bytes(&root, page)?;
-        let hash = compute_page_hash(
-            bundle.artifact.entry_id.as_str(),
-            bundle.gallery.id,
-            page.page_id.source_page_number,
-            sha.clone(),
-            &bytes,
-            profile,
-        )?;
+        let hash = {
+            // Reading a verified page also decodes it. Cover that validation
+            // and perceptual hashing with one slot, then release before DB work.
+            let _image_work = super::image_work_budget::acquire(Some(cancellation))
+                .ok_or_else(DownloadPipelineError::cancelled)?;
+            let bytes = inner.store.read_verified_page_bytes(&root, page)?;
+            compute_page_hash(
+                bundle.artifact.entry_id.as_str(),
+                bundle.gallery.id,
+                page.page_id.source_page_number,
+                sha.clone(),
+                &bytes,
+                profile,
+            )?
+        };
         inner.repository.overlap_page_hash_upsert(&hash)?;
         hashes.push(hash);
     }
@@ -3305,6 +3314,51 @@ mod tests {
             thread::sleep(Duration::from_millis(10));
         }
         panic!("stored download {entry_id} did not reach {expected}");
+    }
+
+    #[test]
+    fn gallery_workers_follow_the_http_limit_up_to_eight() {
+        for (http_limit, expected_workers) in [(0, 1), (1, 1), (2, 2), (5, 5), (8, 8), (30, 8)] {
+            assert_eq!(
+                DownloadSupervisor::worker_count_for_http_limit(http_limit),
+                expected_workers,
+            );
+        }
+    }
+
+    #[test]
+    fn network_workers_can_reach_eight_while_additional_jobs_stay_queued() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let source = Arc::new(FakeDownloadSource::new(1, Some(1)));
+        let (events, _receiver) = mpsc::channel();
+        let supervisor = DownloadSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            source.clone(),
+            Arc::new(FilesystemArtifactStore::new()),
+            events,
+            8,
+        )
+        .unwrap();
+        assert_eq!(unpoison(supervisor.inner.workers.lock()).len(), 8);
+        let queued = service
+            .download_queue_add(
+                vec![101, 102, 103, 104, 105, 106, 107, 108, 109],
+                "network-worker-budget".into(),
+            )
+            .unwrap();
+        supervisor.enqueue_all(queued.jobs).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while source.calls().len() < 8 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let active_source_calls = source.calls().len();
+        // Release the blocking fixture workers before asserting so a failure
+        // cannot leave detached test threads waiting indefinitely.
+        supervisor.shutdown_and_wait();
+        assert_eq!(active_source_calls, 8);
+        assert_eq!(source.calls().len(), 8);
     }
 
     #[test]

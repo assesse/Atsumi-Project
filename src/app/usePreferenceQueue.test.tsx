@@ -10,6 +10,7 @@ function snapshot(revision: number): SettingsSnapshot {
     downloadOverlapAutoMode: "off", explorePageSize: 50, danbooruPageSize: 50,
     maxColumns: 5, previewWidth: 200, danbooruPreviewWidth: 200, relatedPreviewWidth: 200,
     privacyMode: false, cacheLimitGb: 4, concurrentImageRequests: 4, requestStartIntervalMs: 0,
+    downloadAdaptiveConcurrency: true, downloadAdaptiveMaxRequests: 8,
     autoFindGrouping: "all", downloadsGrouping: "all", exploreDisplayMode: "detail",
     autoFindDisplayMode: "detail", downloadsDisplayMode: "detail", collapsedGroupKeys: [],
     searchIncludeTags: [], searchExcludeTags: [],

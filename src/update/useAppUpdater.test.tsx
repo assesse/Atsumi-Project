@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { useAppUpdater } from "./useAppUpdater";
+import { useAppUpdater, type UpdateInstallGuard } from "./useAppUpdater";
 
 const pluginMocks = vi.hoisted(() => ({
   check: vi.fn(),
@@ -14,10 +14,11 @@ vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: pluginMocks.relaunch })
 type HarnessProps = {
   runtime: "tauri" | "browser-mock";
   onReady: (updater: ReturnType<typeof useAppUpdater>) => void;
+  guard?: UpdateInstallGuard;
 };
 
-function Harness({ runtime, onReady }: HarnessProps) {
-  const updater = useAppUpdater(runtime);
+function Harness({ runtime, onReady, guard }: HarnessProps) {
+  const updater = useAppUpdater(runtime, guard);
   onReady(updater);
   return <span data-phase={updater.state.phase}>{updater.state.info?.version ?? "none"}</span>;
 }
@@ -28,6 +29,39 @@ afterEach(() => {
 });
 
 describe("useAppUpdater", () => {
+  it("does not install or relaunch while a recording holds the backend reservation", async () => {
+    const downloadAndInstall = vi.fn();
+    const guard = { acquire: vi.fn(async () => { throw new Error("녹화를 중지한 후 업데이트해 주세요."); }), release: vi.fn(async () => undefined) };
+    pluginMocks.check.mockResolvedValue({ currentVersion: "1.6.0", version: "1.7.0", downloadAndInstall, close: vi.fn(async () => undefined) });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    let updater!: ReturnType<typeof useAppUpdater>;
+    try {
+      await act(async () => root.render(<Harness runtime="tauri" guard={guard} onReady={(value) => { updater = value; }} />));
+      await act(async () => { await updater.installUpdate(); });
+      expect(guard.acquire).toHaveBeenCalledOnce();
+      expect(downloadAndInstall).not.toHaveBeenCalled();
+      expect(pluginMocks.relaunch).not.toHaveBeenCalled();
+      expect(guard.release).not.toHaveBeenCalled();
+      expect(updater.state.error).toContain("녹화를 중지");
+    } finally { await act(async () => root.unmount()); }
+  });
+
+  it("releases the start barrier when an installation fails", async () => {
+    const guard = { acquire: vi.fn(async () => undefined), release: vi.fn(async () => undefined) };
+    pluginMocks.check.mockResolvedValue({ currentVersion: "1.6.0", version: "1.7.0", downloadAndInstall: vi.fn(async () => { throw new Error("network"); }), close: vi.fn(async () => undefined) });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    let updater!: ReturnType<typeof useAppUpdater>;
+    try {
+      await act(async () => root.render(<Harness runtime="tauri" guard={guard} onReady={(value) => { updater = value; }} />));
+      await act(async () => { await updater.installUpdate(); });
+      expect(guard.acquire).toHaveBeenCalledOnce();
+      expect(guard.release).toHaveBeenCalledOnce();
+      expect(pluginMocks.relaunch).not.toHaveBeenCalled();
+    } finally { await act(async () => root.unmount()); }
+  });
+
   it("checks at desktop startup, downloads an accepted update, and relaunches", async () => {
     const close = vi.fn(async () => undefined);
     const downloadAndInstall = vi.fn(async (onEvent?: (event: unknown) => void) => {
