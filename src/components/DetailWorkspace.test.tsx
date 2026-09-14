@@ -12,6 +12,48 @@ afterEach(() => {
 });
 
 describe("DetailWorkspace page previews", () => {
+  it("shows every participating artist in Floating Detail with independent normalized favorites", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    const artists = ["clearite", "danimaru", "gomu", "h3y", "henrybird", "indo curry", "jagayamatarawo", "mance", "mikozin", "momonosuke", "moricocco", "murasaki shingou", "siseki hirame", "yamoge"];
+    const gallery: Gallery = { ...mockGalleries[0]!, artist: "clearite", artists, relatedIds: [], pageDimensions: [] };
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSearch = vi.fn();
+    const onFavorite = vi.fn();
+    const render = (favoriteMetadata: ReadonlySet<string>, value = gallery) => root.render(
+      <DetailWorkspace tabs={[value.id]} activeId={value.id} minimized={false}
+        galleries={new Map([[value.id, value]])} favoriteMetadata={favoriteMetadata} thumbnailClient={client}
+        onActivate={vi.fn()} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()}
+        onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={onSearch} onMetadataFavorite={onFavorite} />,
+    );
+    try {
+      await act(async () => render(new Set(["artist:indo_curry"])));
+      const box = container.querySelector<HTMLElement>(".detail-participating-artists")!;
+      expect(box).toHaveTextContent("작가 · 14명");
+      expect(box.querySelectorAll("button")).toHaveLength(14);
+      const first = box.querySelector<HTMLButtonElement>("button")!;
+      expect(first).toHaveTextContent("★ indo curry");
+      expect(first).toHaveClass("favorite");
+      await act(async () => first.click());
+      expect(onSearch).toHaveBeenCalledWith("artist:indo curry");
+      await act(async () => first.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+      expect(onFavorite).toHaveBeenCalledWith("artist:indo curry");
+      await act(async () => render(new Set()));
+      expect(box.querySelector("button")).toHaveTextContent("clearite");
+      expect(box.querySelector(".favorite")).toBeNull();
+      await act(async () => render(new Set(), { ...gallery, artists: undefined }));
+      expect(box.querySelectorAll("button")).toHaveLength(1);
+      expect(box).toHaveTextContent("clearite");
+      expect(box).not.toHaveTextContent("14명");
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+    }
+  });
+
   it("uses the fixed window regardless of Related height", () => {
     expect(detailPreviewWindowSize(18, 3)).toBe(9);
   });

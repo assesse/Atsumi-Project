@@ -7,6 +7,7 @@ type FixtureGallery = {
   id: number;
   title: string;
   artist: string;
+  artists?: string[];
   group: string | null;
   pages: number;
   language: Language;
@@ -100,6 +101,7 @@ const toSummary = (gallery: FixtureGallery): GallerySummary => ({
   id: galleryId(gallery.id),
   title: gallery.title.trim(),
   artist: gallery.artist.trim(),
+  artists: [...(gallery.artists ?? [gallery.artist.trim()])],
   ...(gallery.group?.trim() ? { group: gallery.group.trim() } : {}),
   pages: gallery.pages,
   language: gallery.language,

@@ -735,6 +735,7 @@ pub(super) fn gallery_summary(
             .first()
             .cloned()
             .unwrap_or_else(|| "Unknown artist".to_owned()),
+        artists: metadata.artists.clone(),
         group: metadata.groups.first().cloned(),
         series: metadata.series.clone(),
         characters: metadata.characters.clone(),

@@ -104,6 +104,10 @@ pub struct GallerySummary {
     pub id: GalleryId,
     pub title: String,
     pub artist: String,
+    /// Display-only participation metadata. Keep `artist` as the source's
+    /// original first name for existing grouping and search behavior.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub artists: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     pub series: Vec<String>,

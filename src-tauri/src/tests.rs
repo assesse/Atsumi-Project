@@ -99,7 +99,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -184,7 +184,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -295,7 +295,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
         ]
     );
     let metadata: (String, String) = connection
@@ -359,7 +359,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -926,6 +926,8 @@ fn download_library_projection_joins_local_gallery_metadata_without_live_detail_
                      'first circle', 21, 'japanese', 20260801),
                     (7010002, 0, 'Local second title', 'second artist',
                      NULL, 34, 'english', 20260802);
+                INSERT INTO owned_gallery_artists (gallery_id, artist) VALUES
+                    (7010001, 'first artist'), (7010001, 'favorite collaborator');
             "#,
         )
         .expect("seed local gallery presentation metadata");
@@ -946,6 +948,10 @@ fn download_library_projection_joins_local_gallery_metadata_without_live_detail_
     assert_eq!(item.gallery.id.get(), 7_010_001);
     assert_eq!(item.gallery.title.as_deref(), Some("Local first title"));
     assert_eq!(item.gallery.artist.as_deref(), Some("first artist"));
+    assert_eq!(
+        item.gallery.artists,
+        vec!["favorite collaborator", "first artist"]
+    );
     assert_eq!(item.gallery.group.as_deref(), Some("first circle"));
     assert_eq!(item.gallery.pages, Some(21));
     assert_eq!(item.gallery.language, Some(Language::Japanese));
@@ -1032,6 +1038,7 @@ fn download_library_projection_restores_cached_tags_on_first_page_after_restart(
             "id": 7_010_022,
             "title": "Previously loaded album",
             "artist": "cached artist",
+            "artists": ["cached artist", "second artist"],
             "series": [],
             "characters": [],
             "pages": 12,
@@ -1065,6 +1072,10 @@ fn download_library_projection_restores_cached_tags_on_first_page_after_restart(
     assert_eq!(first.items.len(), 1);
     assert_eq!(first.items[0].gallery.id.get(), 7_010_022);
     assert_eq!(
+        first.items[0].gallery.artists,
+        vec!["cached artist", "second artist"]
+    );
+    assert_eq!(
         first.items[0].gallery.tags,
         Some(vec!["female:glasses".into(), "full_color".into()])
     );
@@ -1081,6 +1092,12 @@ fn download_library_projection_restores_cached_tags_on_first_page_after_restart(
         })
         .unwrap();
     assert_eq!(second.items[0].gallery.id.get(), 7_010_021);
+    assert!(second.items[0].gallery.artists.is_empty());
+    assert!(
+        serde_json::to_value(&second).unwrap()["items"][0]["gallery"]
+            .get("artists")
+            .is_none()
+    );
     assert_eq!(second.items[0].gallery.tags, None);
     assert!(
         serde_json::to_value(&second).unwrap()["items"][0]["gallery"]
@@ -2613,6 +2630,7 @@ fn fixture_gallery_detail_matches_the_typescript_projection() {
                 "id": 4051038,
                 "title": "Archive of Rain",
                 "artist": "serein",
+                "artists": ["serein"],
                 "group": "nocturne circle",
                 "series": ["rain archives"],
                 "characters": ["mira lane", "ren kujo"],
@@ -2629,6 +2647,7 @@ fn fixture_gallery_detail_matches_the_typescript_projection() {
                         "id": 4050754,
                         "title": "The Last Tram",
                         "artist": "serein",
+                        "artists": ["serein"],
                         "group": "nocturne circle",
                         "series": ["rain archives"],
                         "characters": ["mira lane"],
@@ -2645,6 +2664,7 @@ fn fixture_gallery_detail_matches_the_typescript_projection() {
                         "id": 4050974,
                         "title": "The Green Window",
                         "artist": "paperlane",
+                        "artists": ["paperlane"],
                         "group": "paper studio",
                         "series": ["paper city"],
                         "characters": ["hana ito"],

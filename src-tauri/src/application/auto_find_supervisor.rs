@@ -1617,6 +1617,7 @@ mod tests {
             id: GalleryId::new(id).expect("valid test gallery id"),
             title: format!("Gallery {id}"),
             artist: artist.into(),
+            artists: vec![artist.into()],
             group: Some("test group".into()),
             series: vec!["test series".into()],
             characters: vec!["test character".into()],

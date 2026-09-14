@@ -27,6 +27,70 @@ const callbacks = {
 describe("GalleryCard event projection", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it.each(["detail", "compact"] as const)("shows favorite collaborators first with independent actions in %s cards", async (displayMode) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const gallery: Gallery = {
+      ...mockGalleries[0]!, artist: "primary artist",
+      artists: ["primary artist", "favorite artist", "third artist", "fourth artist"],
+    };
+    try {
+      await act(async () => root.render(
+        <GalleryCard gallery={gallery} view="auto-find" displayMode={displayMode}
+          selected={false} selectionContext={false} favoriteMetadata={new Set(["artist:favorite_artist"])} {...callbacks} />,
+      ));
+      const first = container.querySelector<HTMLButtonElement>(".gallery-artists > .gallery-artists-name")!;
+      expect(first).toHaveTextContent("★favorite artist");
+      expect(first).toHaveClass("favorite");
+      await act(async () => first.click());
+      expect(callbacks.onMetadataSearch).toHaveBeenCalledWith("artist:favorite artist");
+
+      const more = container.querySelector<HTMLButtonElement>(".gallery-artists-more")!;
+      await act(async () => more.click());
+      const popover = document.body.querySelector<HTMLElement>(".gallery-artists-popover")!;
+      expect(popover).toHaveTextContent("참여 작가 4명");
+      expect(container.contains(popover)).toBe(false);
+      const toggle = popover.querySelector<HTMLButtonElement>("button[aria-label='third artist 즐겨찾기 등록']")!;
+      await act(async () => toggle.click());
+      expect(callbacks.onMetadataFavorite).toHaveBeenCalledWith("artist:third artist");
+      expect(callbacks.onSelect).not.toHaveBeenCalled();
+      expect(callbacks.onOpenDetail).not.toHaveBeenCalled();
+      expect(gallery.artist).toBe("primary artist");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+    expect(document.body.querySelector(".gallery-artists-popover")).toBeNull();
+  });
+
+  it("keeps Ctrl artist clicks as card selection and never opens excluded artist popovers", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const gallery: Gallery = { ...mockGalleries[0]!, artists: ["first", "second", "third"] };
+    const render = (excluded: boolean) => root.render(
+      <GalleryCard gallery={gallery} view="explore" displayMode="compact"
+        explorationExcluded={excluded} selected={false} selectionContext={false}
+        favoriteMetadata={new Set()} {...callbacks} />,
+    );
+    try {
+      await act(async () => render(false));
+      const more = container.querySelector<HTMLButtonElement>(".gallery-artists-more")!;
+      await act(async () => more.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+      expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, expect.objectContaining({ ctrlKey: true }));
+      expect(document.body.querySelector(".gallery-artists-popover")).toBeNull();
+      expect(callbacks.onMetadataSearch).not.toHaveBeenCalled();
+      await act(async () => render(true));
+      expect(more).toBeDisabled();
+      await act(async () => more.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+      expect(document.body.querySelector(".gallery-artists-popover")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("does not paint the visible artist chip from a different Auto Find favorite match", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);

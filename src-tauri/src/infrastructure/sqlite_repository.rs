@@ -747,6 +747,7 @@ impl AutomationRepository for SqliteRepository {
                                published_rank, popularity,
                                thumbnail_key, thumbnail_width, thumbnail_height,
                                favorite_namespace, favorite_value, discovered_at,
+                               artists_json,
                                ROW_NUMBER() OVER (
                                    PARTITION BY candidate.gallery_id
                                    ORDER BY candidate.discovered_at DESC,
@@ -776,7 +777,7 @@ impl AutomationRepository for SqliteRepository {
                            language, tags_json, series_json, characters_json,
                            published_rank, popularity,
                            thumbnail_key, thumbnail_width, thumbnail_height,
-                           favorite_namespace, favorite_value, discovered_at
+                           favorite_namespace, favorite_value, discovered_at, artists_json
                     FROM ranked
                     WHERE candidate_rank = 1
                     ORDER BY gallery_id DESC
@@ -892,6 +893,8 @@ impl AutomationRepository for SqliteRepository {
             .map_err(|error| RepositoryError::Other(error.to_string()))?;
         let characters = serde_json::to_string(&candidate.gallery.characters)
             .map_err(|error| RepositoryError::Other(error.to_string()))?;
+        let artists = serde_json::to_string(&candidate.gallery.artists)
+            .map_err(|error| RepositoryError::Other(error.to_string()))?;
         let inserted = transaction
             .execute(
                 r#"
@@ -900,11 +903,11 @@ impl AutomationRepository for SqliteRepository {
                         language, tags_json, series_json, characters_json,
                         published_rank, popularity,
                         thumbnail_key, thumbnail_width, thumbnail_height,
-                        favorite_namespace, favorite_value, discovered_at
+                        favorite_namespace, favorite_value, discovered_at, artists_json
                     ) VALUES (
                         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
                         ?11, ?12, ?13, ?14, ?15, ?16, ?17,
-                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                        strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), ?18
                     )
                 "#,
                 params![
@@ -925,6 +928,7 @@ impl AutomationRepository for SqliteRepository {
                     i64::from(candidate.gallery.thumbnail_height),
                     candidate.matched_favorite.namespace.as_str(),
                     candidate.matched_favorite.value,
+                    artists,
                 ],
             )
             .map_err(map_sqlite_error)?;
@@ -1708,7 +1712,12 @@ impl DownloadRepository for SqliteRepository {
                     )
                     SELECT
                         library_page.*,
-                        summary.profile, summary.schema_version, summary.summary_json
+                        summary.profile, summary.schema_version, summary.summary_json,
+                        (SELECT json_group_array(artist) FROM (
+                            SELECT artist FROM owned_gallery_artists owned
+                            WHERE owned.gallery_id = library_page.gallery_id
+                            ORDER BY artist COLLATE NOCASE ASC
+                        )) AS artists_json
                     FROM library_page
                     LEFT JOIN gallery_summary_cache summary
                       ON summary.gallery_id = library_page.gallery_id
@@ -7344,6 +7353,7 @@ struct StoredDownloadLibraryItem {
     summary_profile: Option<String>,
     summary_version: Option<i64>,
     summary_json: Option<String>,
+    artists_json: String,
 }
 
 impl StoredDownloadLibraryItem {
@@ -7351,7 +7361,7 @@ impl StoredDownloadLibraryItem {
         let download = self.download.try_into_domain()?;
         // The join is limited to this library page. Decode the same durable
         // summary as gallery lookups without N+1 queries or live requests.
-        let tags = self
+        let summary = self
             .summary_profile
             .as_deref()
             .zip(
@@ -7361,12 +7371,19 @@ impl StoredDownloadLibraryItem {
             .zip(self.summary_json.as_deref())
             .and_then(|((profile, version), json)| {
                 decode_persisted_summary(download.gallery_id, profile, version, json)
-            })
-            .map(|summary| summary.tags);
+            });
+        let mut artists = summary
+            .as_ref()
+            .map(|summary| summary.artists.clone())
+            .unwrap_or_default();
+        if artists.is_empty() {
+            artists = serde_json::from_str(&self.artists_json).map_err(domain_corruption)?;
+        }
         let gallery = DownloadLibraryGallery {
             id: download.gallery_id,
             title: self.title,
             artist: self.artist,
+            artists,
             group: self.group,
             pages: self
                 .pages
@@ -7377,7 +7394,7 @@ impl StoredDownloadLibraryItem {
                 .published_rank
                 .map(|value| stored_u32(value, "download library published rank"))
                 .transpose()?,
-            tags,
+            tags: summary.map(|summary| summary.tags),
         };
         Ok(DownloadLibraryItem { gallery, download })
     }
@@ -7395,6 +7412,7 @@ fn stored_download_library_item(row: &Row<'_>) -> rusqlite::Result<StoredDownloa
         summary_profile: row.get(19)?,
         summary_version: row.get(20)?,
         summary_json: row.get(21)?,
+        artists_json: row.get(22)?,
     })
 }
 
@@ -8654,7 +8672,7 @@ fn read_auto_find_snapshot(connection: &Connection) -> Result<AutoFindSnapshot, 
                        language, tags_json, series_json, characters_json,
                        published_rank, popularity,
                        thumbnail_key, thumbnail_width, thumbnail_height,
-                       favorite_namespace, favorite_value, discovered_at
+                       favorite_namespace, favorite_value, discovered_at, artists_json
                 FROM auto_find_candidates candidate
                 WHERE run_id = ?1
                   AND NOT EXISTS (
@@ -8852,6 +8870,7 @@ struct StoredAutoFindCandidate {
     gallery_id: i64,
     title: String,
     artist: String,
+    artists_json: String,
     group: Option<String>,
     pages: i64,
     language: String,
@@ -8876,6 +8895,7 @@ impl StoredAutoFindCandidate {
                 id: GalleryId::new(self.gallery_id).map_err(domain_corruption)?,
                 title: self.title,
                 artist: self.artist,
+                artists: serde_json::from_str(&self.artists_json).map_err(domain_corruption)?,
                 group: self.group,
                 pages: stored_u32(self.pages, "Auto Find page count")?,
                 language: parse_language(&self.language)?,
@@ -8911,6 +8931,7 @@ fn stored_auto_find_candidate(row: &Row<'_>) -> rusqlite::Result<StoredAutoFindC
         gallery_id: row.get(1)?,
         title: row.get(2)?,
         artist: row.get(3)?,
+        artists_json: row.get(18)?,
         group: row.get(4)?,
         pages: row.get(5)?,
         language: row.get(6)?,
@@ -9224,6 +9245,7 @@ mod auto_find_repository_tests {
                 id: GalleryId::new(gallery_id).unwrap(),
                 title: title.into(),
                 artist: ARTIST.into(),
+                artists: vec![ARTIST.into()],
                 group: None,
                 pages: 10,
                 language: Language::English,
@@ -9241,6 +9263,96 @@ mod auto_find_repository_tests {
                 value: ARTIST.into(),
             },
         }
+    }
+
+    #[test]
+    fn auto_find_participating_artists_survive_restart_and_cached_candidate_reuse() {
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary.path().join("participating-artists.sqlite3");
+        let expected = {
+            let repository = SqliteRepository::open(&path).unwrap();
+            favorite_artist(&repository);
+            let run = repository.auto_find_start(1, HISTORY_MODE, &[]).unwrap();
+            let mut candidate = cached_candidate(&run.run_id, 7701, "Collaborative album");
+            candidate.gallery.artist = "non-favorite first artist".into();
+            candidate.gallery.artists = vec![candidate.gallery.artist.clone(), ARTIST.into()];
+            repository
+                .auto_find_candidate_add(&candidate)
+                .unwrap()
+                .unwrap();
+            candidate.gallery
+        };
+        let repository = SqliteRepository::open(&path).unwrap();
+        let snapshot = repository.auto_find_snapshot().unwrap();
+        assert_eq!(snapshot.candidates.len(), 1);
+        assert_eq!(snapshot.candidates[0].gallery, expected);
+        assert_eq!(snapshot.candidates[0].matched_favorite.value, ARTIST);
+        assert_eq!(
+            repository
+                .auto_find_cached_candidates(&[expected.id])
+                .unwrap(),
+            vec![expected]
+        );
+    }
+
+    #[test]
+    fn fresh_summary_enriches_only_participating_artists_of_legacy_auto_find_candidates() {
+        use crate::application::GallerySummaryCache;
+
+        let temporary = tempfile::tempdir().unwrap();
+        let path = temporary
+            .path()
+            .join("legacy-participating-artists.sqlite3");
+        let expected = {
+            let repository = SqliteRepository::open(&path).unwrap();
+            favorite_artist(&repository);
+            let run = repository.auto_find_start(1, HISTORY_MODE, &[]).unwrap();
+            for id in [7701, 7702] {
+                let mut candidate = cached_candidate(&run.run_id, id, "Legacy candidate");
+                candidate.gallery.artist = "original first artist".into();
+                candidate.gallery.artists.clear();
+                repository
+                    .auto_find_candidate_add(&candidate)
+                    .unwrap()
+                    .unwrap();
+            }
+            let before = repository.auto_find_snapshot().unwrap();
+            let mut fresh = before
+                .candidates
+                .iter()
+                .find(|item| item.gallery.id.get() == 7701)
+                .unwrap()
+                .gallery
+                .clone();
+            fresh.artists = vec!["original first artist".into(), ARTIST.into()];
+            // Cached source fields may differ, but only participating artists
+            // are updated in the durable discovery record.
+            fresh.artist = "changed source primary".into();
+            fresh.title = "new source title".into();
+            repository.gallery_summary_cache_put(&fresh).unwrap();
+            let mut expected = before;
+            expected
+                .candidates
+                .iter_mut()
+                .find(|item| item.gallery.id.get() == 7701)
+                .unwrap()
+                .gallery
+                .artists = fresh.artists.clone();
+            assert_eq!(repository.auto_find_snapshot().unwrap(), expected);
+            // An unknown/legacy cache payload must not erase learned names.
+            fresh.artists.clear();
+            repository.gallery_summary_cache_put(&fresh).unwrap();
+            assert_eq!(repository.auto_find_snapshot().unwrap(), expected);
+            repository.gallery_summary_cache_clear().unwrap();
+            expected
+        };
+        let repository = SqliteRepository::open(&path).unwrap();
+        assert_eq!(repository.auto_find_snapshot().unwrap(), expected);
+        let reused = repository
+            .auto_find_cached_candidates(&[GalleryId::new(7701).unwrap()])
+            .unwrap();
+        assert_eq!(reused[0].artist, "original first artist");
+        assert_eq!(reused[0].artists, vec!["original first artist", ARTIST]);
     }
 
     #[test]
@@ -10668,6 +10780,7 @@ mod duplicate_repository_tests {
                 id: GalleryId::new(gallery_id).unwrap(),
                 title: format!("Auto gallery {gallery_id}"),
                 artist: "Artist".into(),
+                artists: vec!["Artist".into()],
                 group: None,
                 pages: 10,
                 language: Language::English,

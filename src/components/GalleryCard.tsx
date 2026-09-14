@@ -20,6 +20,7 @@ import {
 } from "../thumbnail";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 import { GalleryStatusIcon } from "./GalleryStatusIcon";
+import { GalleryArtists } from "./GalleryArtists";
 import { MetadataChip } from "./MetadataChip";
 import { fitTagChips, sortGalleryTags, splitGalleryTitle, type TagFitResult } from "./galleryCardLayout";
 
@@ -442,7 +443,17 @@ function GalleryCardComponent({
         {displayMode === "compact" ? (
           <div className="compact-card-summary">
             <strong title={gallery.title}>{displayTitle}</strong>
-            <span title={gallery.artist}>{gallery.artist || "작가 정보 없음"}</span>
+            <GalleryArtists
+              key={gallery.id}
+              artist={gallery.artist}
+              artists={gallery.artists}
+              compact
+              disabled={isExplorationBlind}
+              favoriteMetadata={favoriteMetadata}
+              onClickCapture={selectFromInteractiveTarget}
+              onSearch={onMetadataSearch}
+              onToggleFavorite={onMetadataFavorite}
+            />
             <small>
               <span>{gallery.pages}p · #{gallery.id}</span>
               <b className={`is-${download?.state ?? (view === "auto-find" ? "candidate" : "explore")}`}>{compactStatusLabel}</b>
@@ -472,11 +483,12 @@ function GalleryCardComponent({
           {subtitle ? <span className="title-sub">{subtitle}</span> : null}
         </div>
         <div className="card-byline" aria-label="작가 및 그룹">
-          <MetadataChip
-            value={`artist:${gallery.artist}`}
-            label={gallery.artist}
-            kind="byline"
-            favorite={favoriteMetadata.has(`artist:${gallery.artist}`)}
+          <GalleryArtists
+            key={gallery.id}
+            artist={gallery.artist}
+            artists={gallery.artists}
+            disabled={isExplorationBlind}
+            favoriteMetadata={favoriteMetadata}
             onClickCapture={selectFromInteractiveTarget}
             onSearch={onMetadataSearch}
             onToggleFavorite={onMetadataFavorite}

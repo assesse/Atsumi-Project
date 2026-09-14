@@ -51,6 +51,8 @@ export type Gallery = {
   title: string;
   subtitle: string;
   artist: string;
+  /** Full participant list when known; artist remains the existing grouping key. */
+  artists?: string[];
   group?: string;
   pages: number;
   score: number;

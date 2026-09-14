@@ -441,6 +441,8 @@ export type GallerySummary = {
   id: GalleryId;
   title: string;
   artist: string;
+  /** Omitted by legacy caches which only retained the primary artist. */
+  artists?: string[];
   group?: string;
   pages: number;
   language: Language;
@@ -1034,6 +1036,7 @@ export type DownloadLibraryGallery = {
   id: GalleryId;
   title?: string;
   artist?: string;
+  artists?: string[];
   group?: string;
   pages?: number;
   language?: Language;

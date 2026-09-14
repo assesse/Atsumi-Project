@@ -20,6 +20,55 @@ const summary = (idValue: number, title = `Gallery ${idValue}`): GallerySummary 
 });
 
 describe("gallery API projection", () => {
+  it("carries participant artists without changing the primary artist or sharing source arrays", () => {
+    const artists = ["serein", "favorite collaborator", "another artist"];
+    const projected = projectGallerySummary({ ...summary(1), artists });
+    expect(projected.artist).toBe("serein");
+    expect(projected.artists).toEqual(artists);
+    expect(projected.artists).not.toBe(artists);
+    expect(projected.favorite).toBeUndefined();
+  });
+
+  it("keeps known participants through legacy summaries, empty lists and queue events", () => {
+    const existing = projectGallerySummary({ ...summary(1), artists: ["serein", "collaborator"] });
+    for (const incoming of [summary(1), { ...summary(1), artists: [] }]) {
+      const merged = mergeGalleryPage(new Map([[existing.id, existing]]), {
+        page: 1, totalPages: 1, items: [incoming],
+      }).galleries;
+      const queued = mergeDownloadEntries(merged, [{
+        entryId: "artists-queue", galleryId: existing.id, revision: 1, state: "queued",
+      }]);
+      expect(queued.get(existing.id)?.artists).toEqual(existing.artists);
+    }
+    expect(projectGallerySummary(summary(2))).not.toHaveProperty("artists");
+  });
+
+  it("hydrates full participants from details and related summaries", () => {
+    const merged = mergeGalleryDetail(new Map(), {
+      ...summary(1), artists: ["serein", "collaborator"], pageDimensions: [],
+      related: [{ ...summary(2), artists: ["serein", "another collaborator"] }],
+    });
+    expect(merged.get(galleryId(1))?.artists).toEqual(["serein", "collaborator"]);
+    expect(merged.get(galleryId(2))?.artists).toEqual(["serein", "another collaborator"]);
+  });
+
+  it("restores locally saved participants on cold download lists and preserves later source enrichment", () => {
+    const page: DownloadLibraryPage = {
+      page: 1, totalItems: 1, items: [{
+        gallery: { id: galleryId(1), artist: "serein", artists: ["serein", "saved collaborator"] },
+        download: { entryId: "saved-artists", galleryId: galleryId(1), revision: 1, state: "completed" },
+      }],
+    };
+    const loaded = mergeDownloadLibraryPage(new Map(), page).galleries;
+    expect(loaded.get(galleryId(1))?.artists).toEqual(["serein", "saved collaborator"]);
+    const enriched = mergeGalleryPage(loaded, {
+      page: 1, totalPages: 1,
+      items: [{ ...summary(1), artists: ["serein", "saved collaborator", "fresh collaborator"] }],
+    }).galleries;
+    expect(mergeDownloadLibraryPage(enriched, page).galleries.get(galleryId(1))?.artists)
+      .toEqual(["serein", "saved collaborator", "fresh collaborator"]);
+  });
+
   it("projects summary metadata while preserving an existing download projection", () => {
     const existing: Gallery = {
       ...projectGallerySummary(summary(1, "Old title")),

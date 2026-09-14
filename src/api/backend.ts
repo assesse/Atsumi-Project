@@ -506,6 +506,7 @@ const cloneAutoFindSnapshot = (snapshot: AutoFindSnapshot): AutoFindSnapshot => 
   ...(snapshot.run ? { run: cloneAutoFindRun(snapshot.run) } : {}),
   candidates: snapshot.candidates.map((candidate) => ({
     ...candidate,
+    ...(candidate.artists ? { artists: [...candidate.artists] } : {}),
     tags: [...candidate.tags],
     series: [...(candidate.series ?? [])],
     characters: [...(candidate.characters ?? [])],
@@ -2605,6 +2606,7 @@ class BrowserMockBackend implements BackendClient {
       id,
       title: summary.title,
       artist: summary.artist,
+      ...(summary.artists ? { artists: [...summary.artists] } : {}),
       ...(summary.group ? { group: summary.group } : {}),
       pages: summary.pages,
       language: summary.language,

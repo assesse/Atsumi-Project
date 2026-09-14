@@ -91,7 +91,9 @@ impl GallerySummaryCache for SqliteRepository {
                 "gallery summary cache payload is too large".into(),
             ));
         }
-        self.connection()?
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(db_error)?;
+        transaction
             .execute(
                 "INSERT INTO gallery_summary_cache (gallery_id, profile, schema_version, summary_json)
                  VALUES (?1, ?2, ?3, ?4)
@@ -101,6 +103,21 @@ impl GallerySummaryCache for SqliteRepository {
                 params![summary.id.get(), SUMMARY_PROFILE, SUMMARY_SCHEMA_VERSION, json],
             )
             .map_err(db_error)?;
+        if !summary.artists.is_empty() {
+            let artists = serde_json::to_string(&summary.artists)
+                .map_err(|error| RepositoryError::Other(error.to_string()))?;
+            // A normal metadata fetch gradually enriches legacy Auto Find
+            // cards, without re-scanning every candidate or changing their
+            // original first artist, discovery favorite, or run counters.
+            transaction
+                .execute(
+                    "UPDATE auto_find_candidates SET artists_json = ?1
+                     WHERE gallery_id = ?2 AND artists_json != ?1",
+                    params![artists, summary.id.get()],
+                )
+                .map_err(db_error)?;
+        }
+        transaction.commit().map_err(db_error)?;
         Ok(())
     }
 

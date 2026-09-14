@@ -244,6 +244,39 @@ fn gallery_summary_fetches_only_main_metadata_and_reuses_the_shared_cache() {
 }
 
 #[test]
+fn gallery_summary_preserves_all_artists_and_reads_legacy_cache_without_refetching() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let mut metadata = parse_galleryinfo_script(GALLERY_SCRIPT).unwrap();
+    metadata.artists = vec!["first artist".into(), "favorite collaborator".into()];
+    let summary = super::search::gallery_summary(&metadata, SearchSort::Recent, 0).unwrap();
+    assert_eq!(summary.artist, "first artist");
+    assert_eq!(summary.artists, metadata.artists);
+    repository.gallery_summary_cache_put(&summary).unwrap();
+    assert_eq!(
+        repository.gallery_summary_cache_get(summary.id).unwrap(),
+        Some(summary.clone())
+    );
+    let mut legacy = serde_json::to_value(&summary).unwrap();
+    assert_eq!(legacy["artists"], serde_json::json!(metadata.artists));
+    legacy.as_object_mut().unwrap().remove("artists");
+    repository
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE gallery_summary_cache SET summary_json = ?1 WHERE gallery_id = ?2",
+            rusqlite::params![legacy.to_string(), summary.id.get()],
+        )
+        .unwrap();
+    let transport = Arc::new(FakeTransport::default());
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone())
+        .with_summary_cache(repository);
+    let restored = adapter.gallery_summary_get(summary.id).unwrap().unwrap();
+    assert_eq!(restored.artist, "first artist");
+    assert!(restored.artists.is_empty());
+    assert!(transport.calls.lock().unwrap().is_empty());
+}
+
+#[test]
 fn persisted_gallery_summaries_survive_restart_with_empty_tags_and_no_network() {
     let temporary = tempfile::tempdir().unwrap();
     let path = temporary.path().join("summary-cache.sqlite");

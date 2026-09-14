@@ -89,6 +89,8 @@ pub struct DownloadLibraryGallery {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artist: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub artists: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -305,6 +305,7 @@ fn gallery_summary(gallery: &FixtureGallery) -> GallerySummary {
         id,
         title: gallery.title.clone(),
         artist: gallery.artist.clone(),
+        artists: vec![gallery.artist.clone()],
         group: gallery.group.clone(),
         series: gallery.series.clone(),
         characters: gallery.characters.clone(),

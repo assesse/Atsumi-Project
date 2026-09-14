@@ -72,12 +72,16 @@ export function projectGallerySummary(summary: GallerySummary, current?: Gallery
   const thumbnailWidth = positiveInteger(runtime.thumbnailWidth) ?? current?.thumbnailWidth;
   const thumbnailHeight = positiveInteger(runtime.thumbnailHeight) ?? current?.thumbnailHeight;
   const incomingTags = stringArray(runtime.tags);
+  const incomingArtists = stringArray(runtime.artists);
+  // Empty/absent legacy lists must not erase fuller metadata already loaded.
+  const artists = incomingArtists?.length ? incomingArtists : current?.artists;
 
   return {
     id: summary.id,
     title: summary.title,
     subtitle: current?.subtitle ?? "",
     artist: summary.artist,
+    ...(artists?.length ? { artists: [...artists] } : {}),
     ...(summary.group ? { group: summary.group } : {}),
     pages: summary.pages,
     score: finiteNumber(runtime.popularity) ?? current?.score ?? 0,
@@ -186,11 +190,14 @@ export function mergeDownloadLibraryPage(
   for (const item of page.items) {
     const current = next.get(item.gallery.id);
     const savedTags = stringArray(item.gallery.tags);
+    const savedArtists = stringArray(item.gallery.artists);
+    const artists = current?.artists?.length ? current.artists : savedArtists;
     const currentTagsKnown = current !== undefined && current.tagsKnown !== false;
     const summary = {
       id: item.gallery.id,
       title: item.gallery.title ?? current?.title ?? `Gallery #${item.gallery.id}`,
       artist: item.gallery.artist ?? current?.artist ?? "정보 불러오는 중",
+      ...(artists?.length ? { artists: [...artists] } : {}),
       ...(item.gallery.group ?? current?.group ? { group: item.gallery.group ?? current?.group } : {}),
       pages: item.gallery.pages ?? current?.pages ?? 0,
       language: item.gallery.language ?? current?.language ?? "korean",

@@ -1,0 +1,104 @@
+.gallery-artists {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  height: var(--card-chip-height, 24px);
+}
+
+.gallery-artists .gallery-artists-name {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  white-space: nowrap;
+  font: inherit;
+  font-size: var(--card-body-size, 12px);
+  line-height: var(--card-body-line, 16px);
+}
+
+.gallery-artists.is-compact { height: 15px; pointer-events: auto; --gallery-artist-color: rgba(235, 245, 247, .9); }
+.gallery-artists.is-compact .gallery-artists-name { min-height: 15px; font-size: 11px; line-height: 15px; }
+.gallery-artists.is-compact .gallery-artists-more { padding-block: 0; line-height: 15px; color: #c2e9e7; }
+/* Card-level favorite highlighting must not imply every participant is favorited. */
+.gallery-card .gallery-artists .gallery-artists-name:not(.favorite) { color: var(--gallery-artist-color, var(--text-soft, #c4d0d5)); }
+.gallery-card .gallery-artists .gallery-artists-name:hover,
+.gallery-card .gallery-artists .gallery-artists-name:focus-visible { color: var(--primary-strong, #78d2f2); }
+
+.gallery-artists-label { overflow: hidden; text-overflow: ellipsis; }
+.gallery-artists-star { flex: none; color: var(--favorite, #f2a65a); }
+
+.gallery-artists-more {
+  flex: none;
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 3px;
+  background: transparent;
+  color: var(--primary-strong, #78d2f2);
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.gallery-artists-more:hover,
+.gallery-artists-more[aria-expanded="true"] { background: var(--primary-soft, rgba(67, 184, 230, .14)); }
+.gallery-artists-more:focus-visible,
+.gallery-artists-name:focus-visible,
+.gallery-artists-popover button:focus-visible { outline: 2px solid var(--primary, #43b8e6); outline-offset: 2px; }
+
+.gallery-artists-measure {
+  position: absolute;
+  display: flex;
+  visibility: hidden;
+  pointer-events: none;
+  contain: layout;
+  width: max-content;
+  height: 0;
+  overflow: hidden;
+}
+.gallery-artists .gallery-artists-measure > * { flex: none; max-width: none; }
+
+.gallery-artists-popover {
+  position: fixed;
+  z-index: 12000;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+  max-height: min(360px, calc(100dvh - 16px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 12px;
+  border: 1px solid var(--line-strong, #3c535e);
+  border-radius: 10px;
+  background: var(--surface-raised, #1b2931);
+  color: var(--text, #e7eef1);
+  box-shadow: var(--shadow, 0 18px 48px rgba(0, 0, 0, .42));
+  font-size: 14px;
+  text-align: left;
+  animation: gallery-artists-reveal 120ms ease-out;
+}
+.gallery-artists-popover-heading { display: flex; justify-content: space-between; gap: 12px; padding: 1px 2px 9px; font-weight: 600; }
+.gallery-artists-popover-heading span { color: var(--muted, #98aab2); font-weight: 400; }
+.gallery-artists-popover ul { min-height: 0; margin: 0; padding: 2px; list-style: none; overflow-y: auto; overscroll-behavior: contain; }
+.gallery-artists-popover li { display: flex; align-items: center; gap: 6px; border-radius: 5px; }
+.gallery-artists-popover li:hover { background: var(--surface-hover, #22323b); }
+.gallery-artists-popover button { min-width: 0; margin: 0; padding: 7px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.gallery-artists-popover .gallery-artists-popover-search { flex: 1; text-align: left; overflow-wrap: anywhere; }
+.gallery-artists-popover-search:hover { color: var(--primary-strong, #78d2f2); }
+.gallery-artists-popover .gallery-artists-popover-favorite { flex: none; width: 34px; font-size: 20px; line-height: 20px; color: var(--muted, #98aab2); }
+.gallery-artists-popover-favorite[aria-pressed="true"],
+.gallery-artists-popover-favorite:hover { color: var(--favorite, #f2a65a); }
+.gallery-artists-popover-hint { flex: none; padding-top: 10px; color: var(--muted, #98aab2); font-size: 11px; }
+@keyframes gallery-artists-reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .gallery-artists-popover { animation: none; } }

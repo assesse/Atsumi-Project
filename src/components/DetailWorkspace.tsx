@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -16,6 +17,7 @@ import {
 import { FluentIcon } from "./FluentIcon";
 import { GalleryStatusIcon } from "./GalleryStatusIcon";
 import { GalleryThumbnail } from "./GalleryThumbnail";
+import { orderGalleryArtists } from "./GalleryArtists";
 import { ProgressiveDetailHero } from "./ProgressiveDetailHero";
 import { MetadataChip } from "./MetadataChip";
 import { detailPreviewLayout, type DetailPreviewLayout } from "./detailPreviewLayout";
@@ -253,6 +255,10 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   };
 
   const gallery = activeId === null ? undefined : galleries.get(activeId);
+  const participatingArtists = useMemo(
+    () => gallery ? orderGalleryArtists(gallery.artist, gallery.artists, favoriteMetadata) : [],
+    [gallery?.artist, gallery?.artists, favoriteMetadata],
+  );
   const totalPageCount = gallery ? galleryPageCount(gallery.pages) : 0;
   const pageOneDimension = gallery?.pageDimensions?.find((page) => page.sourcePage === 1);
   const metadataReady = gallery?.pageDimensions !== undefined;
@@ -830,7 +836,21 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                 </div>
                 <div className="detail-metadata-layout">
                   <div className="detail-metadata-primary">
-                    <MetadataBox label="작가" values={[gallery.artist]} type="artist" favoriteMetadata={favoriteMetadata} onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
+                    <div className="metadata-box detail-participating-artists" aria-label="참여 작가">
+                      <span>작가{participatingArtists.length > 1 ? ` · ${participatingArtists.length}명` : ""}</span>
+                      <div className="metadata-value">
+                        {participatingArtists.map((artist) => (
+                          <MetadataChip
+                            key={artist.key}
+                            value={artist.token}
+                            label={`${artist.favorite ? "★ " : ""}${artist.name}`}
+                            favorite={artist.favorite}
+                            onSearch={onMetadataSearch}
+                            onToggleFavorite={onMetadataFavorite}
+                          />
+                        ))}
+                      </div>
+                    </div>
                     <MetadataBox label="그룹" values={gallery.group ? [gallery.group] : []} type="group" favoriteMetadata={favoriteMetadata} onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
                     <MetadataBox label="언어" values={[gallery.language]} type="language" onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />
                     <MetadataBox label="시리즈" values={gallery.series ?? []} type="series" favoriteMetadata={favoriteMetadata} onSearch={onMetadataSearch} onFavorite={onMetadataFavorite} />

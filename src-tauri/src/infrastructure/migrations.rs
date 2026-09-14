@@ -2107,6 +2107,63 @@ pub const MIGRATIONS: &[Migration] = &[
                 ON download_tuning_profiles(updated_at_unix_ms DESC, host ASC);
         "#,
     },
+    Migration {
+        version: 46,
+        name: "persist_gallery_participating_artists",
+        sql: r#"
+            ALTER TABLE auto_find_candidates ADD COLUMN artists_json TEXT NOT NULL
+                DEFAULT '[]' CHECK (json_valid(artists_json) AND json_type(artists_json) = 'array');
+
+            -- Recover only known local participation metadata. A matching
+            -- favorite is not evidence for a complete list or an extra count.
+            UPDATE auto_find_candidates AS candidate
+            SET artists_json = (
+                SELECT json_extract(summary.summary_json, '$.artists')
+                FROM gallery_summary_cache summary
+                WHERE summary.gallery_id = candidate.gallery_id
+                  AND summary.profile = 'hitomi-gallery-summary-v1'
+                  AND summary.schema_version = 1
+                  AND CASE WHEN json_valid(summary.summary_json) THEN
+                      json_extract(summary.summary_json, '$.id') = candidate.gallery_id
+                      AND json_type(summary.summary_json, '$.artists') = 'array'
+                      AND json_array_length(summary.summary_json, '$.artists') > 0
+                      AND NOT EXISTS (
+                          SELECT 1 FROM json_each(summary.summary_json, '$.artists') artist
+                          WHERE artist.type != 'text'
+                      )
+                  ELSE 0 END
+            )
+            WHERE EXISTS (
+                SELECT 1 FROM gallery_summary_cache summary
+                WHERE summary.gallery_id = candidate.gallery_id
+                  AND summary.profile = 'hitomi-gallery-summary-v1'
+                  AND summary.schema_version = 1
+                  AND CASE WHEN json_valid(summary.summary_json) THEN
+                      json_extract(summary.summary_json, '$.id') = candidate.gallery_id
+                      AND json_type(summary.summary_json, '$.artists') = 'array'
+                      AND json_array_length(summary.summary_json, '$.artists') > 0
+                      AND NOT EXISTS (
+                          SELECT 1 FROM json_each(summary.summary_json, '$.artists') artist
+                          WHERE artist.type != 'text'
+                      )
+                  ELSE 0 END
+            );
+
+            UPDATE auto_find_candidates AS candidate
+            SET artists_json = (
+                SELECT json_group_array(artist) FROM (
+                    SELECT artist FROM owned_gallery_artists owned
+                    WHERE owned.gallery_id = candidate.gallery_id
+                    ORDER BY artist COLLATE NOCASE ASC
+                )
+            )
+            WHERE artists_json = '[]'
+              AND EXISTS (
+                  SELECT 1 FROM owned_gallery_artists owned
+                  WHERE owned.gallery_id = candidate.gallery_id
+              );
+        "#,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2262,6 +2319,125 @@ mod tests {
     use super::*;
 
     #[test]
+    fn participating_artist_migration_backfills_only_valid_known_local_lists() {
+        let mut connection = migration_history(&[]);
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 45)
+        {
+            connection.execute_batch(migration.sql).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                    params![migration.version, migration.name],
+                )
+                .unwrap();
+        }
+        connection
+            .execute_batch(
+                r#"
+            INSERT INTO auto_find_runs (
+                run_id, revision, state, total_favorites, completed_favorites,
+                candidates_found, started_at, updated_at
+            ) VALUES ('legacy-artists', 1, 'completed', 1, 1, 7, 'now', 'now');
+        "#,
+            )
+            .unwrap();
+        for id in 1..=7 {
+            connection
+                .execute(
+                    r#"
+                INSERT INTO auto_find_candidates (
+                    run_id, gallery_id, title, artist, pages, language, tags_json,
+                    published_rank, popularity, thumbnail_width, thumbnail_height,
+                    favorite_namespace, favorite_value, discovered_at
+                ) VALUES ('legacy-artists', ?1, 'Album', 'original first', 10, 'korean',
+                          '[]', 1, 1, 100, 150, 'artist', 'unproven matching name', 'now')
+            "#,
+                    [id],
+                )
+                .unwrap();
+        }
+        for (id, profile, version, json) in [
+            (
+                1,
+                "hitomi-gallery-summary-v1",
+                1,
+                r#"{"id":1,"artists":["original first","collaborator"]}"#,
+            ),
+            (
+                2,
+                "hitomi-gallery-summary-v1",
+                1,
+                r#"{"id":2,"artist":"original first"}"#,
+            ),
+            (3, "hitomi-gallery-summary-v1", 1, "{broken"),
+            (
+                4,
+                "hitomi-gallery-summary-v1",
+                1,
+                r#"{"id":4,"artists":["name",42]}"#,
+            ),
+            (
+                5,
+                "obsolete-profile",
+                1,
+                r#"{"id":5,"artists":["wrong profile"]}"#,
+            ),
+            (
+                6,
+                "hitomi-gallery-summary-v1",
+                2,
+                r#"{"id":6,"artists":["wrong version"]}"#,
+            ),
+            (
+                7,
+                "hitomi-gallery-summary-v1",
+                1,
+                r#"{"id":8,"artists":["wrong id"]}"#,
+            ),
+        ] {
+            connection.execute(
+                "INSERT INTO gallery_summary_cache (gallery_id, profile, schema_version, summary_json) VALUES (?1, ?2, ?3, ?4)",
+                params![id, profile, version, json],
+            ).unwrap();
+        }
+        connection
+            .execute_batch(
+                r#"
+            INSERT INTO galleries (gallery_id, revision, title, primary_artist, source_page_count)
+                VALUES (2, 0, 'Owned collaboration', 'original first', 10);
+            INSERT INTO owned_gallery_artists (gallery_id, artist) VALUES
+                (2, 'original first'), (2, 'owned collaborator');
+        "#,
+            )
+            .unwrap();
+        let report = MigrationRunner::run(&mut connection).unwrap();
+        assert_eq!(report.applied_versions, vec![46]);
+        for id in 1..=7 {
+            let (first, json): (String, String) = connection
+                .query_row(
+                    "SELECT artist, artists_json FROM auto_find_candidates WHERE gallery_id = ?1",
+                    [id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(first, "original first");
+            let names: Vec<String> = serde_json::from_str(&json).unwrap();
+            let expected = match id {
+                1 => vec!["original first", "collaborator"],
+                2 => vec!["original first", "owned collaborator"],
+                _ => vec![],
+            };
+            assert_eq!(names, expected, "gallery {id}");
+        }
+        assert!(MigrationRunner::run(&mut connection)
+            .unwrap()
+            .applied_versions
+            .is_empty());
+    }
+
+    #[test]
     fn adaptive_download_migration_preserves_explicit_request_settings() {
         let mut connection = migration_history(&[]);
         for migration in MIGRATIONS
@@ -2284,7 +2460,7 @@ mod tests {
         ).expect("store explicit request settings");
 
         let report = MigrationRunner::run(&mut connection).expect("upgrade adaptive downloads");
-        assert_eq!(report.applied_versions, vec![45]);
+        assert_eq!(report.applied_versions, vec![45, 46]);
         let settings: (i64, i64, i64, bool, i64) = connection.query_row(
             "SELECT revision, concurrent_image_requests, request_start_interval_ms, download_adaptive_concurrency, download_adaptive_max_requests FROM settings WHERE singleton = 1",
             [],
@@ -2446,7 +2622,7 @@ mod tests {
             report.applied_versions,
             vec![
                 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-                36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+                36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
             ]
         );
         let historical_import_tables: i64 = connection
@@ -2546,10 +2722,10 @@ mod tests {
             report.applied_versions,
             vec![
                 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
+                33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
             ]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let favorite: String = connection
             .query_row(
                 "SELECT value FROM favorites WHERE namespace = 'artist'",
@@ -2606,7 +2782,7 @@ mod tests {
             report.applied_versions,
             vec![
                 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
-                43, 44, 45,
+                43, 44, 45, 46,
             ]
         );
         let columns = connection
@@ -2663,10 +2839,10 @@ mod tests {
             report.applied_versions,
             vec![
                 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-                44, 45,
+                44, 45, 46,
             ]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let settings: (i64, i64) = connection
             .query_row(
                 "SELECT max_columns, privacy_mode FROM settings WHERE singleton = 1",
@@ -2742,10 +2918,10 @@ mod tests {
             report.applied_versions,
             vec![
                 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-                45
+                45, 46
             ]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let preserved: (String, i64, i64, i64) = connection
             .query_row(
                 r#"SELECT e.canonical_token, s.revision, s.artist_count, s.group_count
@@ -2828,9 +3004,11 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v25 to v26");
         assert_eq!(
             report.applied_versions,
-            vec![26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![
+                26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46
+            ]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let preserved: String = connection
             .query_row(
                 "SELECT title FROM galleries WHERE gallery_id=42",
@@ -2896,9 +3074,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v26 to current");
         assert_eq!(
             report.applied_versions,
-            vec![27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, search_include_tags_json, search_exclude_tags_json FROM settings WHERE singleton = 1",
@@ -2957,9 +3135,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v27 to v28");
         assert_eq!(
             report.applied_versions,
-            vec![28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, auto_find_grouping, downloads_grouping FROM settings WHERE singleton = 1",
@@ -3045,9 +3223,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v29 to current");
         assert_eq!(
             report.applied_versions,
-            vec![30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let hidden: (i64, String) = connection
             .query_row(
                 "SELECT gallery_id, decision_id FROM duplicate_hidden_galleries WHERE gallery_id=3668987",
@@ -3164,9 +3342,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v30 to current");
         assert_eq!(
             report.applied_versions,
-            vec![31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
 
         let hidden = connection
             .prepare(
@@ -3233,9 +3411,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v31 to current");
         assert_eq!(
             report.applied_versions,
-            vec![32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let settings: (i64, i64, String) = connection
             .query_row(
                 "SELECT max_columns, explore_page_size, download_overlap_auto_mode FROM settings WHERE singleton = 1",
@@ -3298,9 +3476,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v33 to current");
         assert_eq!(
             report.applied_versions,
-            vec![34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let modes: (String, String, String, i64) = connection
             .query_row(
                 "SELECT explore_display_mode, auto_find_display_mode, downloads_display_mode, max_columns FROM settings WHERE singleton = 1",
@@ -3380,9 +3558,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v34 to current");
         assert_eq!(
             report.applied_versions,
-            vec![35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let known: (Option<String>, Option<i64>) = connection
             .query_row(
                 "SELECT language, published_rank FROM galleries WHERE gallery_id = 701",
@@ -3438,9 +3616,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v35 to current");
         assert_eq!(
             report.applied_versions,
-            vec![36, 37, 38, 39, 40, 41, 42, 43, 44, 45]
+            vec![36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
         let preferences: (i64, i64, i64, i64) = connection
             .query_row(
                 "SELECT explore_page_size, preview_width, danbooru_page_size, danbooru_preview_width FROM settings WHERE singleton = 1",
@@ -3579,9 +3757,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate legacy v37 to v38");
         assert_eq!(
             report.applied_versions,
-            vec![38, 39, 40, 41, 42, 43, 44, 45]
+            vec![38, 39, 40, 41, 42, 43, 44, 45, 46]
         );
-        assert_eq!(report.current_version, 45);
+        assert_eq!(report.current_version, 46);
 
         let counts: (i64, i64, i64, i64, i64) = connection
             .query_row(
@@ -3675,6 +3853,6 @@ mod tests {
 
         let second = MigrationRunner::run(&mut connection).expect("migration remains idempotent");
         assert!(second.applied_versions.is_empty());
-        assert_eq!(second.current_version, 45);
+        assert_eq!(second.current_version, 46);
     }
 }
