@@ -15,6 +15,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager, Webview};
 
+#[path = "browser_auto.rs"]
+pub mod auto_record;
+
+#[path = "browser_auth.rs"]
+mod auth;
 #[path = "browser_contexts.rs"]
 mod contexts;
 #[path = "browser_encoded.rs"]
@@ -66,6 +71,7 @@ struct Inner {
     label: String,
     detached: AtomicBool,
     contexts: Arc<contexts::ContextGroup>,
+    auto_record: Arc<auto_record::AutoRecorder>,
     store: Arc<Mutex<BrowserCaptureStore>>,
     merges: super::browser_merge::BrowserMergeWorker,
     replay_assets: super::replay_assets::ReplayAssetCache,
@@ -86,6 +92,7 @@ struct PageChatLog {
     id: String,
     started_at: u64,
     broadcast_started_at: Option<u64>,
+    chat_channel_id: Option<String>,
     sequence: u64,
     last_clock: Option<(f64, u64)>,
     log: ChatStore,
@@ -195,6 +202,11 @@ struct ViewState {
     capture_chat: bool,
     viewport: BrowserViewport,
     login_status: String,
+    auth_status: auth::AuthStatus,
+    auth_generation: u64,
+    auth_last_probe: Option<Instant>,
+    auth_checking: bool,
+    auth_error: Option<String>,
     loaded_extensions: Vec<String>,
     extension_connecting: bool,
     extension_generation: u64,
@@ -202,6 +214,7 @@ struct ViewState {
     video_width: u32,
     video_height: u32,
     video_paused: bool,
+    capture_diagnostics: Option<Value>,
     page_generation: u64,
     account_busy: bool,
     viewport_epoch: u64,
@@ -230,6 +243,11 @@ impl Default for ViewState {
             capture_chat: false,
             viewport: BrowserViewport::default(),
             login_status: "브라우저 세션 유지 · 로그인 여부는 공식 화면에서 확인".into(),
+            auth_status: auth::AuthStatus::Unknown,
+            auth_generation: 0,
+            auth_last_probe: None,
+            auth_checking: false,
+            auth_error: None,
             loaded_extensions: Vec::new(),
             extension_connecting: false,
             extension_generation: 0,
@@ -237,6 +255,7 @@ impl Default for ViewState {
             video_width: 0,
             video_height: 0,
             video_paused: true,
+            capture_diagnostics: None,
             page_generation: 0,
             account_busy: false,
             viewport_epoch: 0,
@@ -253,6 +272,7 @@ impl Default for ViewState {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowserSnapshot {
+    capture_chat_enabled: bool,
     window_open: bool,
     channel_id: Option<String>,
     ready: bool,
@@ -265,9 +285,14 @@ pub struct BrowserSnapshot {
     chat_status: String,
     chat_count: u64,
     login_status: String,
+    auth_status: auth::AuthStatus,
     video_width: u32,
+    auth_checking: bool,
+    auth_error: Option<String>,
+    account_busy: bool,
     video_height: u32,
     video_paused: bool,
+    capture_diagnostics: Option<Value>,
     viewport_epoch: u64,
     pending_control: Option<PendingControl>,
     last_screenshot: Option<screenshot::SavedScreenshot>,
@@ -371,6 +396,8 @@ enum BrowserMessage {
         video_height: u32,
         #[serde(default)]
         paused: bool,
+        #[serde(default)]
+        capture_diagnostics: Option<Value>,
     },
     ChatBatch {
         recording_id: String,
@@ -393,6 +420,61 @@ impl BrowserMessage {
                 | Self::ScreenshotAbort { .. }
         )
     }
+}
+
+// Remote diagnostics are untrusted. Persist/display only bounded capability
+// facts; discard every unknown field, URL, identifier and free-form message.
+fn sanitized_capture_diagnostics(value: Option<Value>) -> Option<Value> {
+    let value = value?;
+    let reason = value["reason"].as_str()?;
+    let reason = match reason {
+        "ready"
+        | "buffering"
+        | "waiting_video"
+        | "waiting_tracks"
+        | "waiting_init"
+        | "mse_unavailable"
+        | "observer_changed"
+        | "encrypted"
+        | "source_object_unsupported"
+        | "source_not_observed"
+        | "timeline_unsupported"
+        | "timeline_changed"
+        | "tracks_unsupported"
+        | "codec_unsupported"
+        | "source_blocked"
+        | "buffer_blocked"
+        | "native_init_unsupported"
+        | "init_unsupported"
+        | "init_changed"
+        | "container_unsupported"
+        | "append_unsupported"
+        | "observer_failed"
+        | "source_buffer_error"
+        | "codec_changed"
+        | "track_changed" => reason,
+        _ => "unsupported",
+    };
+    let sources: Vec<Value> = value["sources"].as_array().into_iter().flatten().take(8).map(|source| {
+        let tracks: Vec<Value> = source["tracks"].as_array().into_iter().flatten().take(2).map(|track| {
+            let mime = track["mimeType"].as_str().filter(|s|s.len()<=120).unwrap_or("").replace([' ', '"'], "").to_ascii_lowercase();
+            let valid_mime = mime.strip_prefix("video/mp4;codecs=").or_else(||mime.strip_prefix("audio/mp4;codecs=")).is_some_and(|codecs| {
+                let parts: Vec<_> = codecs.split(',').collect();
+                !parts.is_empty() && parts.len()<=2 && parts.iter().all(|codec| *codec=="mp4a.40.2" ||
+                    codec.strip_prefix("avc1.").or_else(||codec.strip_prefix("avc3.")).is_some_and(|p|p.len()==6 && p.bytes().all(|b|b.is_ascii_hexdigit())))
+            });
+            json!({"mimeType": if valid_mime {mime.as_str()} else {"unsupported"},
+                "initBytes":track["initBytes"].as_u64().unwrap_or(0).min(65536),
+                "timestampOffset":track["timestampOffset"].as_f64().filter(|v|v.is_finite() && v.abs()<=1e9),
+                "blocked":track["blocked"].as_bool().unwrap_or(false)})
+        }).collect();
+        json!({"selected":source["selected"].as_bool().unwrap_or(false), "tracks":tracks})
+    }).collect();
+    Some(
+        json!({"reason":reason, "installed":value["installed"].as_bool().unwrap_or(false),
+        "appendCount":value["appendCount"].as_u64().unwrap_or(0).min(1_000_000_000),
+        "appendBytes":value["appendBytes"].as_u64().unwrap_or(0).min(1_000_000_000_000_000), "sources":sources}),
+    )
 }
 
 pub fn live_channel(url: &tauri::Url) -> Option<String> {
@@ -428,7 +510,11 @@ fn bridge_reason(reason: &str) -> &'static str {
     match reason {
         "seek" => "타임머신 또는 재생 위치 이동으로 녹화를 중단했습니다.",
         "rate_change" => "재생 배속이 변경되어 녹화를 중단했습니다.",
-        "video_changed" | "channel_changed" => "방송 또는 영상 소스가 변경되어 녹화를 중단했습니다.",
+        "video_changed" | "channel_changed" | "source_changed" => "방송 또는 영상 소스가 변경되어 녹화를 중단했습니다.",
+        "codec_changed" | "track_changed" | "init_changed" => "영상·음성 형식이 변경되어 원본 녹화를 중단했습니다. 저장된 조각은 보존됩니다.",
+        "observer_changed" | "observer_failed" => "플레이어의 수신 경로가 변경되어 원본 녹화를 중단했습니다. 방송을 다시 연결해 주세요.",
+        "encrypted" => "암호화된 영상으로 변경되어 원본 녹화를 중단했습니다.",
+        "timeline_changed" | "container_unsupported" | "init_unsupported" | "append_unsupported" | "source_buffer_error" => "수신 영상의 형식 또는 시간축을 안전하게 저장할 수 없어 녹화를 중단했습니다. 저장된 조각은 보존됩니다.",
         "page_hidden" | "window_closed" => "시청 창이 닫히거나 새로고침되어 녹화가 중단됐습니다.",
         "queue_overflow" => "녹화 저장이 수신 속도를 따라가지 못해 중단했습니다. 확정된 파일은 보존됩니다.",
         "no_audio" => "영상의 오디오 트랙을 캡처할 수 없습니다. 공식 플레이어에서 재생을 시작한 뒤 다시 시도하세요.",
@@ -487,9 +573,10 @@ impl OfficialBrowser {
         }
         if state.pending_control.is_some()
             || state.confirming_control.is_some()
-            || state
-                .last_control_intent
-                .is_some_and(|at| at.elapsed() < Duration::from_secs(2))
+            || (action != ControlAction::RecordStop
+                && state
+                    .last_control_intent
+                    .is_some_and(|at| at.elapsed() < Duration::from_millis(200)))
         {
             return Err(error(
                 "BROWSER_CONTROL_BUSY",
@@ -540,6 +627,7 @@ impl OfficialBrowser {
         rights: bool,
     ) -> Result<Option<PendingControl>, StreamError> {
         let _gate = self.inner.contexts.gate.lock().map_err(|_| unavailable())?;
+        let profile_busy = self.primary_profile_busy();
         let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
         if !state.pending_control.as_ref().is_some_and(|p| p.id == id) {
             return Err(control_stale());
@@ -562,6 +650,7 @@ impl OfficialBrowser {
         }
         if self.inner.closing.load(Ordering::Acquire)
             || self.inner.detached.load(Ordering::Acquire)
+            || profile_busy
             || self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0
             || self.inner.reserved.load(Ordering::Acquire)
             || state.account_busy
@@ -605,6 +694,7 @@ impl OfficialBrowser {
                 result
             }
             ControlAction::RecordStop => {
+                self.remember_manual_stop(&pending.channel_id);
                 let view = app.get_webview(self.label()).ok_or_else(unavailable)?;
                 self.stop_matching(&view, Some(&pending))
             }
@@ -695,7 +785,7 @@ impl OfficialBrowser {
                 chunk_index,
                 data,
             } => {
-                if data.len() > ((screenshot::CHUNK + 2) / 3) * 4 {
+                if data.len() > screenshot::CHUNK.div_ceil(3) * 4 {
                     return Err(error("SCREENSHOT_INVALID", "스크린샷 조각이 너무 큽니다."));
                 }
                 let bytes = STANDARD.decode(data).map_err(|_| {
@@ -760,6 +850,7 @@ impl OfficialBrowser {
         }
         let host = Self {
             inner: Arc::new(Inner {
+                auto_record: Arc::new(auto_record::AutoRecorder::load(&data_dir)),
                 data_dir,
                 label: WINDOW_LABEL.into(),
                 detached: AtomicBool::new(false),
@@ -834,6 +925,7 @@ impl OfficialBrowser {
             );
         }
         Ok(BrowserSnapshot {
+            capture_chat_enabled: self.inner.auto_record.capture_chat(),
             window_open: state.open,
             channel_id: state.channel.clone(),
             ready: state.ready,
@@ -846,9 +938,14 @@ impl OfficialBrowser {
             chat_status: state.chat_status.clone(),
             chat_count: state.chat_count,
             login_status: state.login_status.clone(),
+            auth_status: state.auth_status,
+            auth_checking: state.auth_checking,
+            auth_error: state.auth_error.clone(),
+            account_busy: state.account_busy,
             video_width: state.video_width,
             video_height: state.video_height,
             video_paused: state.video_paused,
+            capture_diagnostics: state.capture_diagnostics.clone(),
             viewport_epoch: state.viewport_epoch,
             pending_control: state.pending_control.clone(),
             last_screenshot: state.last_screenshot.clone(),
@@ -884,6 +981,16 @@ impl OfficialBrowser {
         rights: bool,
         capture_chat: bool,
     ) -> Result<(), StreamError> {
+        self.arm_checked(app, root, rights, capture_chat, None)
+    }
+    pub(crate) fn arm_checked(
+        &self,
+        app: &AppHandle,
+        root: PathBuf,
+        rights: bool,
+        capture_chat: bool,
+        expected_channel: Option<&str>,
+    ) -> Result<(), StreamError> {
         if !rights {
             return Err(error(
                 "BROWSER_RIGHTS_REQUIRED",
@@ -904,7 +1011,11 @@ impl OfficialBrowser {
         if self.inner.detached.load(Ordering::Acquire)
             || self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0
             || self.primary_profile_busy()
-            || (self.active_ids().len() >= 4 && self.local_active_ids().is_empty())
+            || self
+                .active_ids()
+                .len()
+                .saturating_sub(usize::from(!self.local_active_ids().is_empty()))
+                >= 4
         {
             return Err(unavailable());
         }
@@ -919,8 +1030,29 @@ impl OfficialBrowser {
             ));
         }
         let nonce = uuid::Uuid::new_v4().to_string();
+        if expected_channel.is_some() && page_channel.as_deref() != expected_channel {
+            return Err(control_stale());
+        }
+        for other in self.inner.contexts.hosts() {
+            if other.label() == self.label() {
+                continue;
+            }
+            let state = other.inner.view.lock().map_err(|_| unavailable())?;
+            if page_channel.is_some()
+                && state.channel == page_channel
+                && (state.recording.is_some() || state.arm.is_some())
+            {
+                return Err(error(
+                    "BROWSER_CHANNEL_RECORDING",
+                    "이 방송은 이미 녹화 중입니다.",
+                ));
+            }
+        }
         let channel = {
             let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+            if expected_channel.is_some() && state.channel.as_deref() != expected_channel {
+                return Err(control_stale());
+            }
             if self.inner.closing.load(Ordering::Acquire)
                 || self.inner.reserved.load(Ordering::Acquire)
                 || state.account_busy
@@ -1020,6 +1152,11 @@ impl OfficialBrowser {
         let started = Instant::now();
         while started.elapsed() < timeout && !self.active_ids().is_empty() {
             thread::sleep(Duration::from_millis(100));
+        }
+    }
+    pub(super) fn remember_manual_stop(&self, channel: &str) {
+        if self.inner.auto_record.suppress(channel).is_err() {
+            self.inner.contexts.notice("녹화는 중지합니다. 자동 녹화 중지 이력을 저장하지 못했으므로 앱 재시작 전에 설정을 확인해 주세요.");
         }
     }
     pub fn shutdown_and_wait(&self, app: &AppHandle) {
@@ -1139,6 +1276,9 @@ impl OfficialBrowser {
             }
             state.status = "error".into();
             drop(state);
+            self.inner
+                .contexts
+                .notice("녹화가 중단되었습니다. 녹화 목록에서 확인해 주세요.");
             self.stop_chat();
         }
     }
@@ -1185,6 +1325,7 @@ impl OfficialBrowser {
             video_width,
             video_height,
             paused,
+            capture_diagnostics,
         } = message
         {
             if channel_id != channel {
@@ -1224,11 +1365,30 @@ impl OfficialBrowser {
             state.video_height = video_height.min(16384);
             state.video_paused = paused;
             state.page_recording = recording;
+            let diagnostics = sanitized_capture_diagnostics(capture_diagnostics);
+            if diagnostics.as_ref().map(|d| &d["reason"])
+                != state.capture_diagnostics.as_ref().map(|d| &d["reason"])
+            {
+                tracing::info!(
+                    channel_id = channel,
+                    webview = self.label(),
+                    diagnostics = ?diagnostics,
+                    "original recording source capability changed"
+                );
+            }
+            state.capture_diagnostics = diagnostics;
+            if state.recording.is_some()
+                && state.status != "stopping"
+                && matches!(detail.as_str(), "recording" | "waiting_source")
+            {
+                state.status = detail.clone();
+            }
             if !recording
                 && matches!(
                     detail.as_str(),
                     "no_audio"
                         | "unavailable"
+                        | "original_unavailable"
                         | "recorder_error"
                         | "native_rejected"
                         | "rights_required"
@@ -1239,20 +1399,30 @@ impl OfficialBrowser {
                 state.arm = None;
             }
             if state.recording.is_none() && state.arm.is_none() {
-                state.status = if ready { "ready" } else { "waiting" }.into();
+                state.status = if detail == "original_unavailable" {
+                    "error"
+                } else if ready {
+                    "ready"
+                } else {
+                    "waiting"
+                }
+                .into();
+                if detail == "original_unavailable" && state.error.is_none() {
+                    state.error = Some("현재 영상의 원본 저장 경로를 확인할 수 없습니다. 방송을 다시 연결해 주세요. 화면 재녹화로 전환하지 않았습니다.".into());
+                }
             }
             if !detail.is_empty()
                 && detail != "ready"
                 && detail != "recording"
                 && detail != "idle"
                 && detail != "waiting_video"
-            {
-                if matches!(
+                && matches!(
                     detail.as_str(),
                     "no_audio" | "recorder_error" | "native_rejected" | "queue_overflow"
-                ) {
-                    state.error = Some(bridge_reason(&detail).into());
-                }
+                )
+                && state.error.is_none()
+            {
+                state.error = Some(bridge_reason(&detail).into());
             }
             return Ok(Value::Null);
         }
@@ -1323,6 +1493,7 @@ impl OfficialBrowser {
                 .map_err(|_| unavailable())?
                 .begin(&arm.root, channel, &title, &mime_type)?;
             state.recording = Some(session.id.clone());
+            self.inner.contexts.notice("녹화를 시작했습니다.");
             state.accepted_arm = Some((request_id, session.id.clone(), state.page_generation));
             state.status = "recording".into();
             state.chat_count = 0;
@@ -1334,6 +1505,9 @@ impl OfficialBrowser {
             }
             .into();
             drop(state);
+            self.inner
+                .replay_assets
+                .submit_channel(Path::new(&session.output_dir), channel);
             if arm.capture_chat {
                 self.start_chat(&session);
             }
@@ -1393,13 +1567,31 @@ impl OfficialBrowser {
                         .filter(|chat| chat.id == recording_id)
                         .ok_or_else(unavailable)?;
                     for value in events {
+                        if value.get("atsumiViewerSample").and_then(Value::as_u64) == Some(1) {
+                            if let Some(clock) =
+                                chat.observe_clock(&value, now_ms(), encoded_source.as_deref())
+                            {
+                                if let Some(sample) = super::viewer_metrics::ViewerSample::from_page(
+                                    &value,
+                                    clock,
+                                    chat.started_at,
+                                    chat.broadcast_started_at,
+                                    channel,
+                                ) {
+                                    chat.log.append_viewer(&sample);
+                                }
+                            }
+                            continue;
+                        }
                         if let Some(ChatEvent::Message {
                             sender,
                             text,
                             server_time,
                             rich,
-                        }) = super::chat::parse_message(&value)
-                        {
+                        }) = super::chat::parse_message_with_chat_channel(
+                            &value,
+                            chat.chat_channel_id.as_deref(),
+                        ) {
                             let native_received = now_ms();
                             let replay_clock = chat.observe_clock(
                                 &value,
@@ -1429,7 +1621,9 @@ impl OfficialBrowser {
                                 rich,
                             };
                             chat.log.append(&message)?;
-                            self.inner.replay_assets.submit(message.rich.as_ref());
+                            self.inner
+                                .replay_assets
+                                .submit_recording(chat.log.recording_root(), message.rich.as_ref());
                             chat.sequence += 1;
                         }
                     }
@@ -1440,8 +1634,9 @@ impl OfficialBrowser {
                 let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
                 match result {
                     Ok(count) => {
+                        let received_messages = count > state.chat_count;
                         state.chat_count = count;
-                        if !chat_gap(&state.chat_status) {
+                        if received_messages && !chat_gap(&state.chat_status) {
                             state.chat_status = "page_connected".into();
                         }
                         Ok(json!({"saved":true,"count":count}))
@@ -1461,7 +1656,7 @@ impl OfficialBrowser {
                 if !state.capture_chat {
                     return Err(unavailable());
                 }
-                if chat_gap(&detail)
+                if (chat_gap(&detail)
                     || matches!(
                         detail.as_str(),
                         "observing"
@@ -1470,15 +1665,14 @@ impl OfficialBrowser {
                             | "connected"
                             | "disconnected"
                             | "stopped"
-                    )
+                    ))
+                    && (!chat_gap(&state.chat_status) || detail == "storage_failed")
                 {
-                    if !chat_gap(&state.chat_status) || detail == "storage_failed" {
-                        state.chat_status = if dropped_messages > 0 && !chat_gap(&detail) {
-                            "partial".into()
-                        } else {
-                            detail
-                        };
-                    }
+                    state.chat_status = if dropped_messages > 0 && !chat_gap(&detail) {
+                        "partial".into()
+                    } else {
+                        detail
+                    };
                 }
                 Ok(Value::Null)
             }
@@ -1566,6 +1760,11 @@ impl OfficialBrowser {
                     state.error = finished.last_error.clone();
                 }
                 self.stop_chat();
+                self.inner.contexts.notice(if interrupted {
+                    "녹화가 중단되었습니다. 녹화 목록에서 확인해 주세요."
+                } else {
+                    "녹화를 종료했습니다."
+                });
                 Ok(json!({"stopped":true,"interrupted":interrupted,"status":finished.status}))
             }
             _ => Err(unavailable()),
@@ -1583,6 +1782,7 @@ impl OfficialBrowser {
                     id: recording.id.clone(),
                     started_at: recording.started_at,
                     broadcast_started_at: None,
+                    chat_channel_id: None,
                     sequence: 0,
                     last_clock: None,
                     log,
@@ -1598,7 +1798,7 @@ impl OfficialBrowser {
             }
         }
         // The official page's existing socket supplies chat. This worker only
-        // reads optional public broadcast timing metadata, never cookies/tokens
+        // reads optional public broadcast timing/chat-color metadata, never cookies/tokens
         // or a second anonymous chat socket.
         let cancel = Arc::new(AtomicBool::new(false));
         let stop = cancel.clone();
@@ -1622,6 +1822,7 @@ impl OfficialBrowser {
                         .filter(|chat| chat.id == recording.id)
                     {
                         chat.broadcast_started_at = info.broadcast_started_at;
+                        chat.chat_channel_id = info.chat_channel_id;
                     }
                 }
             });
@@ -1712,7 +1913,7 @@ impl OfficialBrowser {
 
 fn send_command(window: &Webview, value: Value) -> Result<(), StreamError> {
     window
-        .eval(&format!(
+        .eval(format!(
             "window.dispatchEvent(new CustomEvent('atsumi-browser-command',{{detail:{value}}}));"
         ))
         .map_err(|_| unavailable())
@@ -1724,7 +1925,7 @@ fn reply(window: &Webview, id: &str, result: Result<Value, StreamError>) {
             json!({"id":id,"ok":false,"error":{"code":error.code,"message":error.message}})
         }
     };
-    let _=window.eval(&format!("if(location.origin==='https://chzzk.naver.com')window.dispatchEvent(new CustomEvent('atsumi-browser-reply',{{detail:{response}}}));"));
+    let _=window.eval(format!("if(location.origin==='https://chzzk.naver.com')window.dispatchEvent(new CustomEvent('atsumi-browser-reply',{{detail:{response}}}));"));
 }
 
 #[cfg(windows)]
@@ -1759,6 +1960,8 @@ fn bridge_worker(
                     .lock()
                     .is_ok_and(|state| state.page_generation == generation);
                 let toggle_audio=matches!(&envelope.message,BrowserMessage::ViewIntent {action,..} if action=="audio_toggle");
+                let immediate_record = matches!(&envelope.message, BrowserMessage::ControlIntent { action: ControlAction::RecordStart | ControlAction::RecordStop, .. });
+                let original = matches!(&envelope.message, BrowserMessage::EncodedBegin { .. } | BrowserMessage::EncodedAppend { .. } | BrowserMessage::EncodedFinish { .. });
                 let mut result = if current {
                     worker_host.process(&channel, envelope.message)
                 } else {
@@ -1767,10 +1970,32 @@ fn bridge_worker(
                 if result.is_ok() && toggle_audio {
                     result=worker_host.capture_context(None).and_then(|root|root.toggle_pane_audio(worker_window.app_handle(),worker_host.label())).map(|_|json!({"accepted":true}));
                 }
+                if result.is_ok() && immediate_record {
+                    // The native bridge has already checked the originating
+                    // channel/document. Consume its one-use intent immediately;
+                    // recording must not depend on a mounted React dialog.
+                    let pending = worker_host.inner.view.lock().ok()
+                        .and_then(|state| state.pending_control.clone());
+                    result = pending.ok_or_else(control_stale).and_then(|pending| {
+                        worker_host.confirm_control(worker_window.app_handle(), &pending.id, true, true,
+                            worker_host.inner.auto_record.capture_chat())
+                    }).map(|_| json!({"accepted":true}));
+                    if let Err(cause) = &result {
+                        worker_host.inner.contexts.notice(&cause.message);
+                    }
+                }
                 if !notification {
-                    if result.is_err() {
+                    if let Err(error) = &result {
                         if let Some(id) = recording_id {
                             worker_host.interrupt_matching("native_rejected", Some(&id));
+                        }
+                        if original {
+                            tracing::warn!(code = %error.code, reason = %error.message, "original recording request failed");
+                            if let Ok(mut state) = worker_host.inner.view.lock() {
+                                if !state.error.as_deref().is_some_and(|e| e.starts_with("원본 저장 오류:")) {
+                                    state.error = Some(format!("원본 저장 오류: {}", error.message));
+                                }
+                            }
                         }
                     }
                     reply(&worker_window, &envelope.id, result);
@@ -1912,11 +2137,18 @@ pub async fn chzzk_browser_open(
     result.into()
 }
 #[tauri::command]
-pub async fn chzzk_browser_snapshot(app: AppHandle, window: Webview) -> ApiResult<BrowserSnapshot> {
-    let result = (|| {
+pub async fn chzzk_browser_snapshot(
+    app: AppHandle,
+    window: Webview,
+    refresh_auth: Option<bool>,
+) -> ApiResult<BrowserSnapshot> {
+    let result = async {
         require_main(&window)?;
-        host(&app)?.snapshot()
-    })();
+        let host = host(&app)?;
+        host.refresh_login_status(&app, refresh_auth.unwrap_or(false))
+            .await
+    }
+    .await;
     result.into()
 }
 #[tauri::command]
@@ -2046,6 +2278,16 @@ pub async fn chzzk_browser_stop(app: AppHandle, window: Webview) -> ApiResult<Br
         require_main(&window)?;
         let host = host(&app)?;
         if let Some(view) = app.get_webview(WINDOW_LABEL) {
+            if let Some(channel) = host
+                .inner
+                .view
+                .lock()
+                .map_err(|_| unavailable())?
+                .channel
+                .clone()
+            {
+                host.remember_manual_stop(&channel);
+            }
             host.stop(&view)?;
         } else {
             host.interrupt("window_closed");
@@ -2103,6 +2345,57 @@ pub async fn chzzk_browser_open_merged(
     })()
     .into()
 }
+#[tauri::command]
+pub async fn chzzk_browser_delete_recordings(
+    app: AppHandle,
+    window: Webview,
+    recording_ids: Vec<String>,
+) -> ApiResult<super::browser_store::deletion::DeleteReport> {
+    use super::browser_store::deletion::{self, DeleteFailure, DeleteReport};
+    let prepared = (|| {
+        require_main(&window)?;
+        deletion::validate_ids(&recording_ids)?;
+        let browser = host(&app)?;
+        let replay = app
+            .try_state::<super::replay::ReplayService>()
+            .ok_or_else(unavailable)?
+            .inner()
+            .clone();
+        Ok::<_, StreamError>((browser, replay))
+    })();
+    let (browser, replay) = match prepared {
+        Ok(value) => value,
+        Err(cause) => return Err::<DeleteReport, _>(cause).into(),
+    };
+    match tauri::async_runtime::spawn_blocking(move || {
+        let mut report = DeleteReport::default();
+        for id in recording_ids {
+            let result = (|| {
+                let job = replay.prepare_recording_delete(&id)?;
+                // Long filesystem work must not stall another channel's capture.
+                let result =
+                    deletion::remove_files(&job).and_then(|()| replay.delete_recording_cache(&id));
+                browser
+                    .inner
+                    .store
+                    .lock()
+                    .map_err(|_| unavailable())?
+                    .finish_delete(&job, result)
+            })();
+            match result {
+                Ok(()) => report.deleted_ids.push(id),
+                Err(error) => report.failures.push(DeleteFailure { id, error }),
+            }
+        }
+        report
+    })
+    .await
+    {
+        Ok(report) => Ok::<_, StreamError>(report).into(),
+        Err(_) => Err::<DeleteReport, _>(unavailable()).into(),
+    }
+}
+
 #[tauri::command]
 pub async fn chzzk_browser_retry_merge(
     app: AppHandle,
@@ -2172,6 +2465,52 @@ fn open_local_record_file(path: PathBuf) -> Result<(), StreamError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn source_diagnostics_retain_only_bounded_nonsecret_facts() {
+        let value = json!({"reason":"ready", "installed":true, "cookie":"secret", "url":"https://example.invalid/secret",
+            "sources":[{"selected":true,"sourceId":"secret","tracks":[
+                {"mimeType":"video/mp4;codecs=mp4a.40.2,avc1.4D001F", "timestampOffset":-13745.920976833331,"initBytes":1225},
+                {"mimeType":"https://example.invalid/secret","timestampOffset":1e30,"init":"secret"}]}]});
+        let clean = sanitized_capture_diagnostics(Some(value)).unwrap();
+        assert!(!clean.to_string().contains("secret"));
+        assert_eq!(
+            clean["sources"][0]["tracks"][0]["timestampOffset"],
+            -13745.920976833331
+        );
+        assert_eq!(clean["sources"][0]["tracks"][1]["mimeType"], "unsupported");
+        assert!(clean["sources"][0]["tracks"][1]["timestampOffset"].is_null());
+        assert_eq!(
+            sanitized_capture_diagnostics(Some(json!({"reason":"secret"}))).unwrap()["reason"],
+            "unsupported"
+        );
+    }
+    #[test]
+    fn unsupported_original_start_releases_arm_and_preserves_parser_reason() {
+        let (_root, host, request) = armed_host();
+        host.inner.view.lock().unwrap().error =
+            Some("원본 저장 불가: 지원하지 않는 MP4 형식".into());
+        let message = serde_json::from_value(json!({"kind":"status","channelId":CHANNEL,"ready":false,"recording":false,"detail":"original_unavailable"})).unwrap();
+        host.process(CHANNEL, message).unwrap();
+        let snapshot = host.snapshot().unwrap();
+        assert_eq!(snapshot.status, "error");
+        assert!(snapshot.error.unwrap().contains("MP4 형식"));
+        assert!(begin(&host, &request).is_err());
+        assert!(snapshot.recordings.is_empty());
+    }
+    #[test]
+    fn input_waiting_is_an_active_session_not_an_interrupt() {
+        let (_root, host, request) = armed_host();
+        let id = begin(&host, &request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for detail in ["waiting_source", "recording"] {
+            let message = serde_json::from_value(json!({"kind":"status","channelId":CHANNEL,"ready":true,"recording":true,"detail":detail,"paused":true})).unwrap();
+            host.process(CHANNEL, message).unwrap();
+            assert_eq!(host.snapshot().unwrap().status, detail);
+            assert_eq!(host.active_ids(), vec![id.clone()]);
+        }
+    }
     const CHANNEL: &str = "b3e262a2795f17734c149afc738ad250";
     const WEBM: &[u8] = b"\x1a\x45\xdf\xa3\x9fwebm-fixture";
     fn armed_host() -> (tempfile::TempDir, OfficialBrowser, String) {
@@ -2391,6 +2730,7 @@ mod tests {
             id: "fixture".into(),
             started_at: 1_000_000,
             broadcast_started_at: None,
+            chat_channel_id: None,
             sequence: 0,
             last_clock: None,
             log: ChatStore::create(directory.path()).unwrap(),
@@ -2442,6 +2782,49 @@ mod tests {
     }
 
     #[test]
+    fn viewer_only_batches_do_not_claim_chat_connection_or_inflate_chat_count() {
+        let (_root, host, request) = armed_host();
+        let id = begin(&host, &request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let record = host.snapshot().unwrap().recordings.remove(0);
+        {
+            let mut view = host.inner.view.lock().unwrap();
+            view.capture_chat = true;
+            view.chat_status = "waiting_socket".into();
+        }
+        *host.inner.page_chat.lock().unwrap() = Some(PageChatLog {
+            id: id.clone(),
+            started_at: record.started_at,
+            broadcast_started_at: None,
+            chat_channel_id: None,
+            sequence: 0,
+            last_clock: None,
+            log: ChatStore::create(Path::new(&record.output_dir)).unwrap(),
+        });
+        let sample = json!({"atsumiViewerSample":1,"viewerCount":17,"replayClock":{"version":1,"receivedAtMs":record.started_at,"observedMonotonicMs":100.0,"sourceGeneration":1,"clock":"mse_presentation_v1","mediaTimeSeconds":4001.0,"sourceTimeSeconds":4001.0,"sourceId":"40000000-0000-4000-8000-000000000001","playbackRate":1.0}});
+        host.process(
+            CHANNEL,
+            BrowserMessage::ChatBatch {
+                recording_id: id,
+                events: vec![sample],
+            },
+        )
+        .unwrap();
+        let snapshot = host.snapshot().unwrap();
+        assert_eq!(snapshot.chat_count, 0);
+        assert_eq!(snapshot.chat_status, "waiting_socket");
+        let raw =
+            std::fs::read_to_string(Path::new(&record.output_dir).join("viewer-metrics.jsonl"))
+                .unwrap();
+        let row: Value = serde_json::from_str(raw.trim()).unwrap();
+        assert_eq!(row["viewerCount"], 17);
+        assert_eq!(row["replayClock"]["clock"], "player_observation");
+        assert!(row["replayClock"].get("sourceTimeSeconds").is_none());
+    }
+
+    #[test]
     fn page_chat_is_durable_beyond_200_and_does_not_store_private_profile_fields() {
         let (_root, host, request) = armed_host();
         let id = begin(&host, &request).unwrap()["id"]
@@ -2454,6 +2837,7 @@ mod tests {
             id: id.clone(),
             started_at: record.started_at,
             broadcast_started_at: Some(record.started_at - 10_000),
+            chat_channel_id: None,
             sequence: 0,
             last_clock: None,
             log: ChatStore::create(Path::new(&record.output_dir)).unwrap(),
@@ -2662,6 +3046,7 @@ mod tests {
                 video_width: 1920,
                 video_height: 1080,
                 paused: false,
+                capture_diagnostics: None,
             },
         )
         .unwrap();
@@ -2691,6 +3076,7 @@ mod tests {
                 video_width: 0,
                 video_height: 0,
                 paused: true,
+                capture_diagnostics: None,
             },
         )
         .unwrap();
@@ -2714,6 +3100,7 @@ mod tests {
                 video_width: 0,
                 video_height: 0,
                 paused: true,
+                capture_diagnostics: None,
             },
         )
         .unwrap();

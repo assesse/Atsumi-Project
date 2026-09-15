@@ -34,6 +34,7 @@ import { DOWNLOAD_OVERLAP_AUTO_HELP } from "../state/downloadOverlapAuto";
 import type { AppUpdateCheckResult } from "../update/useAppUpdater";
 import { FluentIcon } from "./FluentIcon";
 import { DropdownSelect } from "./DropdownSelect";
+import { AutostartSetting } from "./AutostartSetting";
 
 type SettingsDialogProps = {
   open: boolean;
@@ -432,7 +433,7 @@ export function SettingsDialog({
   };
 
   const runMaintenance = async (action: MaintenanceAction) => {
-    if (action.kind === "factoryReset" && !window.confirm("앱 데이터 전체를 초기화하고 앱을 다시 시작할까요? 외부 다운로드 원본 파일은 유지됩니다.")) return;
+    if (action.kind === "factoryReset" && !window.confirm("앱 데이터 전체를 초기화하고 앱을 다시 시작할까요? 외부 다운로드 원본 파일, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.")) return;
     setMaintenanceBusy(action.kind);
     const result = await onMaintenance(action);
     setMaintenanceBusy(null);
@@ -601,6 +602,7 @@ export function SettingsDialog({
               {activeTab === "general" ? <div className="settings-scope-intro"><span className="eyebrow">ATSUMI COMMON</span><h3>일반 설정</h3><p>두 소스가 함께 사용하는 저장 위치·화면 크기·개인정보 보호·프로그램 관리 설정입니다.</p></div> : null}
               {activeTab === "hitomi" ? <div className="settings-scope-intro"><span className="eyebrow">HITOMI LIBRARY</span><h3>Hitomi 설정</h3><p>앨범·Auto Find·판본 중복·Related galleries·Hitomi 태그 검색에만 적용됩니다.</p></div> : null}
               {activeTab !== "danbooru" ? <>
+                <AutostartSetting active={open && activeTab === "general"} />
                 <div className="setting-row" hidden={activeTab !== "general"}>
                   <div><strong>다운로드 폴더</strong><span>Hitomi 앨범과 Danbooru 원본을 저장할 공통 루트</span></div>
                   <input value={draft.downloadRoot} placeholder="폴더를 선택하세요" aria-label="다운로드 폴더" onChange={(event) => patch("downloadRoot", event.target.value)} />
@@ -853,7 +855,7 @@ export function SettingsDialog({
                     <article className="maintenance-item maintenance-item--factory-reset">
                       <div className="maintenance-copy">
                         <strong>앱 데이터 완전 초기화</strong>
-                        <p>앱을 첫 실행 상태로 되돌립니다. 외부 다운로드 원본 파일과 quarantine/recovery 파일은 유지됩니다.</p>
+                        <p>앱을 첫 실행 상태로 되돌립니다. 외부 다운로드 원본 파일과 quarantine/recovery 파일, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.</p>
                       </div>
                       <button type="button" className="text-button danger-button" disabled={maintenanceBusy !== null} onClick={() => void runMaintenance({ kind: "factoryReset", confirmation: "RESET_ALL_APP_DATA" })}>{maintenanceBusy === "factoryReset" ? "초기화 준비 중" : "앱 데이터 완전 초기화"}</button>
                     </article>

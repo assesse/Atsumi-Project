@@ -1,4 +1,6 @@
 pub mod application;
+mod autostart;
+mod community;
 pub mod domain;
 pub mod infrastructure;
 pub mod interface;
@@ -8,6 +10,12 @@ pub mod thumbnail;
 
 #[cfg(test)]
 mod tests;
+
+// Compile the vendored IME state machine against a test-only native result
+// stub, alongside regression checks for its message-pumping lock boundary.
+#[cfg(all(test, windows))]
+#[path = "native_input_regression_tests.rs"]
+mod platform_impl;
 
 use std::{
     sync::{
@@ -532,6 +540,9 @@ pub fn run() -> tauri::Result<()> {
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .register_uri_scheme_protocol("atsumi-player", |context, request| {
+            streaming::original_player::response(&request, context.webview_label())
+        })
         .register_asynchronous_uri_scheme_protocol("atsumi-replay", |context, request, responder| {
             // Webview identity comes from native dispatch, not a forgeable HTTP
             // Origin/Referer. Official remote pages must not read local replay.
@@ -1005,6 +1016,11 @@ pub fn run() -> tauri::Result<()> {
                 .with_thumbnail_disk_cache(thumbnail_disk_cache)
 
                 .with_official_browser(official_browser));
+            if let Ok(browser) = app.state::<AppState>().official_browser() {
+                if let Err(cause) = browser.start_auto_recording(app.handle()) {
+                    tracing::warn!(code = %cause.code, "automatic recording worker could not start");
+                }
+            }
             let tray_status = MenuItem::with_id(
                 app,
                 TRAY_WORK_STATUS_ID,
@@ -1049,6 +1065,10 @@ pub fn run() -> tauri::Result<()> {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            autostart::autostart_status_get,
+            autostart::autostart_enabled_set,
+            community::community_read,
+            community::community_write,
 
             streaming::browser::chzzk_browser_open,
             streaming::browser::chzzk_browser_snapshot,
@@ -1067,10 +1087,17 @@ pub fn run() -> tauri::Result<()> {
             streaming::browser::chzzk_browser_open_segment,
             streaming::browser::chzzk_browser_open_merged,
             streaming::browser::chzzk_browser_retry_merge,
+            streaming::browser::chzzk_browser_delete_recordings,
+            streaming::browser::auto_record::chzzk_auto_record_snapshot,
+            streaming::browser::auto_record::chzzk_auto_record_add,
+            streaming::browser::auto_record::chzzk_auto_record_update,
+            streaming::browser::auto_record::chzzk_browser_capture_chat,
             streaming::replay::replay_open,
+            streaming::replay::replay_open_profile,
             streaming::replay::replay_close,
             streaming::replay::replay_chat_at,
             streaming::replay::replay_chat_page,
+            streaming::replay::replay_chat_search,
             streaming::replay::replay_timeline,
             streaming::replay::replay_set_offset,
             streaming::browser::multiview_commands::chzzk_multiview_configure,

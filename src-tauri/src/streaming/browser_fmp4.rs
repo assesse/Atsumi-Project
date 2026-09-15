@@ -331,7 +331,21 @@ fn parse_track(input: u32, trak: Atom<'_>, trex: Atom<'_>) -> Result<Track> {
         return Err(bad("외부 MP4 데이터 참조를 지원하지 않습니다."));
     }
     let stbl = atoms(one(&minf, b"stbl")?.data())?;
-    allowed(&stbl, &[b"stsd", b"stts", b"stsc", b"stsz", b"stco"])?;
+    allowed(
+        &stbl,
+        &[b"stsd", b"stts", b"stsc", b"stsz", b"stco", b"stss"],
+    )?;
+    // CHZZK's muxed AVC/AAC init includes an empty sync-sample table.
+    // Fragment RAP flags remain authoritative; a populated/duplicate table
+    // belongs to a different layout and must not be silently ignored.
+    if stbl.iter().any(|a| a.kind == *b"stss") {
+        let sync = one(&stbl, b"stss")?;
+        if sync.data().len() != 8 || sync.data().iter().any(|b| *b != 0) {
+            return Err(bad(
+                "비어 있지 않은 MP4 sync sample 표는 지원하지 않습니다.",
+            ));
+        }
+    }
     for name in [b"stts", b"stsc", b"stco"] {
         let table = one(&stbl, name)?;
         if table.data().len() != 8 || u32_at(table.data(), 0)? != 0 || u32_at(table.data(), 4)? != 0
@@ -821,6 +835,12 @@ impl EncodedMuxer {
             };
             let track = &mut self.tracks[ti];
             if let Some(last) = track.last_end {
+                // Timestamp quantization differs between the standard (48 kHz
+                // AAC +/-1 tick) and Grid (6 kHz video +/-4 ticks) encoders.
+                // Bound correction by BOTH 1 ms and 1/16 of one sample; even
+                // an unusually short actual frame must never be discarded.
+                let rounding =
+                    u64::from(track.scale / 1000).min(u64::from(samples[0].duration / 16));
                 if start < last {
                     if track
                         .recent
@@ -829,10 +849,25 @@ impl EncodedMuxer {
                     {
                         continue;
                     }
-                    return Err(bad("과거·중복 sample을 안전하게 구분하지 못했습니다."));
+                    if last - start > rounding {
+                        return Err(StreamError::new("ENCODED_UNSUPPORTED", &format!("과거·중복 sample을 안전하게 구분하지 못했습니다. (트랙 {}, 시작 {}, 이전 끝 {}, 시간 단위 {})", track.id, start, last, track.scale), false));
+                    }
                 }
                 if start != last {
-                    return Err(bad("수신 영상 시간축에 누락 또는 불연속이 있습니다."));
+                    if start.abs_diff(last) > rounding {
+                        return Err(StreamError::new("ENCODED_UNSUPPORTED", &format!("수신 영상 시간축에 누락 또는 불연속이 있습니다. (트랙 {}, 시작 {}, 이전 끝 {}, 시간 단위 {})", track.id, start, last, track.scale), false));
+                    }
+                    // Adjust only the first container
+                    // duration/start, preserving its end, all following source
+                    // timestamps and every encoded byte. Never accumulate a
+                    // clock shift or accept an actual missing/duplicate frame.
+                    let first = samples.first_mut().ok_or_else(bound)?;
+                    let duration = i64::from(first.duration) + start as i64 - last as i64;
+                    first.duration = u32::try_from(duration)
+                        .ok()
+                        .filter(|d| *d > 0)
+                        .ok_or_else(bound)?;
+                    first.dts = last;
                 }
             }
             track.last_end = Some(dts);
@@ -886,10 +921,7 @@ impl EncodedMuxer {
             self.started = true;
         }
         let mut output = Vec::new();
-        loop {
-            let Some(first) = self.video.front() else {
-                break;
-            };
+        while let Some(first) = self.video.front() {
             let start = first.dts;
             let boundary = self
                 .video
@@ -913,9 +945,29 @@ impl EncodedMuxer {
                 .is_some_and(|s| !before(s.end(), aus, end, vs))
             {
                 if finishing {
-                    return Err(bad("마지막 영상 구간의 음성이 완전하지 않습니다."));
+                    // A/V packet boundaries need not end at the same instant.
+                    // At the final cut ONLY, retain complete received packets
+                    // when the audio tail is less than one packet/frame short
+                    // (and under 50 ms). Never synthesize audio or discard video.
+                    let gap = self
+                        .audio
+                        .back()
+                        .map(|s| end as f64 / vs as f64 - s.end() as f64 / aus as f64);
+                    let cadence = self.audio.back().zip(self.video.back()).map(|(a, v)| {
+                        (a.duration as f64 / aus as f64)
+                            .max(v.duration as f64 / vs as f64)
+                            .min(0.05)
+                    });
+                    let aligned_tail = boundary.is_none()
+                        && gap
+                            .zip(cadence)
+                            .is_some_and(|(gap, cadence)| gap > 0.0 && gap < cadence);
+                    if !aligned_tail {
+                        return Err(StreamError::new("ENCODED_UNSUPPORTED", &format!("마지막 영상 구간의 음성이 완전하지 않습니다. (음성 끝 차이 {:?}초)", gap), false));
+                    }
+                } else {
+                    break;
                 }
-                break;
             }
             let mut video = Vec::new();
             while self.video.front().is_some_and(|s| s.dts < end) {
@@ -1186,8 +1238,118 @@ pub(crate) mod fixtures {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn actual_chzzk_muxed_init_accepts_empty_sync_table_only() {
+        use base64::Engine;
+        // Codec/container headers only; no content samples, URLs or account data.
+        let init = base64::engine::general_purpose::STANDARD
+            .decode(include_str!("browser_fmp4_chzzk_init.b64").trim())
+            .unwrap();
+        let input = EncodedTrackInput {
+            track_index: 0,
+            mime_type: "video/mp4;codecs=mp4a.40.2,avc1.4D001F".into(),
+            init,
+        };
+        let muxer = EncodedMuxer::new(vec![input.clone()]).unwrap();
+        assert_eq!(muxer.tracks.len(), 2);
+        let mut invalid = input;
+        let table = invalid.init.windows(4).position(|b| b == b"stss").unwrap();
+        invalid.init[table + 11] = 1;
+        assert!(EncodedMuxer::new(vec![invalid]).is_err());
+    }
+    #[test]
+    fn actual_chzzk_grid_high_profile_header_is_accepted() {
+        use base64::Engine;
+        let init = base64::engine::general_purpose::STANDARD
+            .decode(include_str!("browser_fmp4_chzzk_grid_init.b64").trim())
+            .unwrap();
+        let muxer = EncodedMuxer::new(vec![EncodedTrackInput {
+            track_index: 0,
+            mime_type: "video/mp4;codecs=mp4a.40.2,avc1.64002A".into(),
+            init,
+        }])
+        .unwrap();
+        assert_eq!(
+            muxer.tracks.iter().map(|t| t.scale).collect::<Vec<_>>(),
+            vec![6000, 48000]
+        );
+    }
     fn mux() -> EncodedMuxer {
         EncodedMuxer::new(fixtures::inputs()).unwrap()
+    }
+    #[test]
+    fn tolerates_bounded_boundary_rounding_without_changing_payload_or_source_end() {
+        for delta in [-1i64, 1] {
+            let mut m = mux();
+            m.push(0, &fixtures::fragment(0, 0, 2, true)).unwrap();
+            m.push(1, &fixtures::fragment(1, 0, 2, true)).unwrap();
+            let start = (48_000i64 + delta) as u64;
+            m.push(1, &fixtures::fragment(1, start, 2, true)).unwrap();
+            let samples: Vec<_> = m.audio.iter().collect();
+            assert_eq!(samples[2].dts, 48_000);
+            assert_eq!(samples[2].duration, (24_000i64 + delta) as u32);
+            assert_eq!(samples[2].end(), start + 24_000);
+            assert_eq!(samples[2].data, vec![0x21, 0]);
+            assert_eq!(samples[3].dts, start + 24_000);
+            assert_eq!(m.tracks[1].last_end, Some(start + 48_000));
+        }
+        for delta in [-49i64, 49] {
+            let mut m = mux();
+            m.push(1, &fixtures::fragment(1, 0, 2, true)).unwrap();
+            assert!(m
+                .push(
+                    1,
+                    &fixtures::fragment(1, (48_000i64 + delta) as u64, 2, true)
+                )
+                .is_err());
+        }
+    }
+    #[test]
+    fn grid_video_submillisecond_rounding_does_not_accumulate_or_hide_a_frame() {
+        let mut inputs = fixtures::inputs();
+        let scale = inputs[0]
+            .init
+            .windows(4)
+            .position(|b| b == b"mdhd")
+            .unwrap()
+            + 16;
+        put32(&mut inputs[0].init, scale, 6000).unwrap();
+        let mut m = EncodedMuxer::new(inputs).unwrap();
+        let frame = |dts| Sample {
+            dts,
+            duration: 100,
+            flags: 0x02000000,
+            cts: 0,
+            data: vec![0, 0, 0, 2, 0x65, 1],
+        };
+        for start in [0, 96, 200, 299, 400] {
+            m.push(0, &make_fragment(7, &[frame(start)], 0, 1).unwrap())
+                .unwrap();
+        }
+        assert_eq!(m.tracks[0].last_end, Some(500));
+        assert_eq!(m.video.iter().map(|s| s.duration).sum::<u32>(), 500);
+        assert!(m.video.iter().all(|s| s.data == frame(0).data));
+        assert!(m
+            .push(0, &make_fragment(7, &[frame(600)], 0, 1).unwrap())
+            .is_err());
+    }
+    #[test]
+    fn final_av_packet_alignment_keeps_both_tracks_but_rejects_real_missing_audio() {
+        for (short, accepted) in [(480u32, true), (4800, false)] {
+            let mut m = mux();
+            m.push(0, &fixtures::fragment(0, 0, 2, true)).unwrap();
+            let mut audio = fixtures::fragment(1, 0, 2, true);
+            let run = audio.windows(4).position(|b| b == b"trun").unwrap() + 4;
+            put32(&mut audio, run + 12 + 16, 24000 - short).unwrap();
+            m.push(1, &audio).unwrap();
+            let result = m.finish();
+            assert_eq!(result.is_ok(), accepted);
+            if let Ok(segments) = result {
+                assert_eq!(segments.len(), 1);
+                assert_eq!(segments[0].duration_seconds, 1.0);
+                assert!(segments[0].bytes.windows(2).any(|b| b == [0x21, 1]));
+            }
+        }
     }
     #[test]
     fn merges_two_track_inits_with_unique_ids() {

@@ -8,6 +8,7 @@ import {
   type WorkspaceViewId,
 } from "../app/workspaceRegistry";
 import { FluentIcon } from "./FluentIcon";
+import { useCommonNavigation } from "../app/CommonNavigation";
 
 type SideRailProps<Source extends ContentSource> = {
   view: WorkspaceViewId<Source>;
@@ -33,6 +34,7 @@ export function SideRail<Source extends ContentSource>({
   onToggle,
 }: SideRailProps<Source>) {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const common = useCommonNavigation();
   const railRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!sourceMenuOpen) return;
@@ -94,8 +96,8 @@ export function SideRail<Source extends ContentSource>({
             <button
               key={item.view}
               type="button"
-              className={`nav-item${view === item.view ? " is-active" : ""}`}
-              aria-current={view === item.view ? "page" : undefined}
+              className={`nav-item${!common?.communityOpen && view === item.view ? " is-active" : ""}`}
+              aria-current={!common?.communityOpen && view === item.view ? "page" : undefined}
               aria-label={item.label}
               onClick={() => onNavigate(item.view)}
             >
@@ -107,6 +109,7 @@ export function SideRail<Source extends ContentSource>({
             </button>
           );
         })}
+        {common ? <button type="button" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
       </nav>
 
       <div className="sidebar-foot">

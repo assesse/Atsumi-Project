@@ -18,6 +18,23 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT",
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe("recorded file playback and merge status", () => {
+  it.each(["pending", "complete", "blocked"] as const)("keeps merged replay available during %s source cleanup and hides stale source actions", async (status) => {
+    await render(recording({ merge: merge({ sourceCleanup: { status, deletedSegments: status === "complete" ? 2 : 0, proofFile: `merged-${token}.cleanup.json`, proofSha256: "a".repeat(64), lastError: status === "blocked" ? "사용 중인 원본은 보존했습니다." : null } }) }));
+    expect(button("앱에서 다시보기")).toBeEnabled();
+    expect(button("외부 플레이어로 열기")).toBeEnabled();
+    expect(button("파일 열기")).toBeUndefined();
+    expect(container).toHaveTextContent("원본 조각 기록");
+    expect(container).toHaveTextContent("채팅 로그와 시간표는 보존됩니다");
+    expect(container).not.toHaveTextContent("원본 조각과 채팅 로그는 보존됩니다");
+    expect(button("병합 다시 시도")).toBeUndefined();
+    if (status === "blocked") {
+      expect(container).toHaveTextContent("사용 중인 원본은 보존했습니다");
+      await act(async () => button("원본 정리 다시 시도")!.click());
+      expect(callbacks.onRetryMerge).toHaveBeenCalledExactlyOnceWith("selected-recording");
+    } else expect(button("원본 정리 다시 시도")).toBeUndefined();
+    if (status === "complete") expect(container).toHaveTextContent("원본 조각 2개 정리 완료");
+  });
+
   it("opens only the selected native-verified derivative by recording ID and keeps originals folded", async () => {
     await render(recording({ merge: merge() }));
     expect(container).toHaveTextContent("병합 완료");

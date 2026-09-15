@@ -7,6 +7,118 @@ const CHANNEL: &str = "0123456789abcdef0123456789abcdef";
 const WEBM: &[u8] = &[
     0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 1, 0, 0, 0, 0, 0, 0, 0,
 ];
+#[test]
+#[cfg(windows)]
+fn deletion_rejects_active_replay_and_blocks_new_replay_after_reservation() {
+    let fixture = fixture(5, 16);
+    let opened = fixture.service.open(&fixture.id).unwrap();
+    assert_eq!(
+        fixture
+            .service
+            .prepare_recording_delete(&fixture.id)
+            .unwrap_err()
+            .code,
+        "BROWSER_DELETE_REPLAY_BUSY"
+    );
+    fixture.service.close(&opened.token).unwrap();
+    // Reap the synthetic index worker deterministically, including its source handles.
+    let workers = std::mem::take(&mut *fixture.service.inner.workers.lock().unwrap());
+    for worker in workers {
+        worker.handle.join().unwrap();
+    }
+    let job = fixture
+        .service
+        .prepare_recording_delete(&fixture.id)
+        .unwrap();
+    assert!(fixture.service.open(&fixture.id).is_err());
+    assert!(fixture
+        .store
+        .lock()
+        .unwrap()
+        .merged_file(&fixture.id)
+        .is_err());
+    super::super::browser_store::deletion::remove_files(&job).unwrap();
+    fixture.service.delete_recording_cache(&fixture.id).unwrap();
+    fixture
+        .store
+        .lock()
+        .unwrap()
+        .finish_delete(&job, Ok(()))
+        .unwrap();
+    assert!(!fixture.output.exists());
+    assert!(fixture.store.lock().unwrap().snapshot().unwrap().is_empty());
+}
+
+#[test]
+#[cfg(windows)]
+fn deletion_removes_saved_chat_index_and_offset_without_other_recordings() {
+    let fixture = fixture(2, 16);
+    let opened = fixture.service.open(&fixture.id).unwrap();
+    fixture.service.set_offset(&opened.token, 12.0).unwrap();
+    let workers = std::mem::take(&mut *fixture.service.inner.workers.lock().unwrap());
+    for worker in workers {
+        worker.handle.join().unwrap();
+    }
+    let index_path = fixture
+        .service
+        .session(&opened.token)
+        .unwrap()
+        .index_path
+        .clone();
+    assert!(index_path.exists());
+    fixture.service.close(&opened.token).unwrap();
+    let job = fixture
+        .service
+        .prepare_recording_delete(&fixture.id)
+        .unwrap();
+    super::super::browser_store::deletion::remove_files(&job).unwrap();
+    fixture.service.delete_recording_cache(&fixture.id).unwrap();
+    fixture
+        .store
+        .lock()
+        .unwrap()
+        .finish_delete(&job, Ok(()))
+        .unwrap();
+    assert!(!index_path.exists());
+    let root = fixture.service.cache_root().unwrap();
+    assert_eq!(
+        fixture.service.read_offset(&root, &fixture.id).unwrap(),
+        0.0
+    );
+}
+#[test]
+fn saved_channel_profile_reaches_replay_without_chat_index_or_network() {
+    use base64::Engine;
+    let fixture = fixture(0, 16);
+    let asset_id = "a".repeat(64);
+    let bytes = include_bytes!("../../../public/original-player/assets/default_profile_dark.png");
+    let body = base64::engine::general_purpose::STANDARD.encode(bytes);
+    fs::create_dir(fixture.output.join("replay-assets")).unwrap();
+    fs::write(fixture.output.join("replay-assets").join(format!("{asset_id}.json")), serde_json::to_vec(&serde_json::json!({
+        "version":1,"mime":"image/png","body":body,"sha256":format!("{:x}",Sha256::digest(bytes))
+    })).unwrap()).unwrap();
+    fs::write(
+        fixture.output.join("channel-profile.json"),
+        serde_json::to_vec(&serde_json::json!({
+            "version":1,"channelId":CHANNEL,"name":"저장 채널","imageAssetId":asset_id
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let opened = fixture.service.open(&fixture.id).unwrap();
+    assert_eq!(opened.channel_name.as_deref(), Some("저장 채널"));
+    assert_eq!(
+        opened.channel_profile_image,
+        Some(format!("data:image/png;base64,{body}"))
+    );
+    fixture.service.close(&opened.token).unwrap();
+    // A corrupted decoration is optional: it cannot make the video unplayable.
+    fs::write(fixture.output.join("channel-profile.json"), b"broken").unwrap();
+    let reopened = fixture.service.open(&fixture.id).unwrap();
+    assert!(reopened.channel_name.is_none());
+    assert!(reopened.channel_profile_image.is_none());
+}
+
 struct Fixture {
     service: ReplayService,
     id: String,
@@ -57,6 +169,7 @@ fn fixture(rows: u64, media_bytes: u64) -> Fixture {
                 timeline_file: timeline_name,
                 bytes: media_bytes.max(WEBM.len() as u64),
                 duration_seconds: 120.0,
+                cleanup: None,
             },
         )
         .unwrap();
@@ -99,6 +212,208 @@ fn request(token: &str, range: Option<&str>) -> Request<Vec<u8>> {
         builder = builder.header(header::RANGE, range);
     }
     builder.body(vec![]).unwrap()
+}
+
+#[test]
+fn replay_saved_metadata_and_literal_search_cover_all_messages_with_scoped_cursors() {
+    let fixture = fixture(450, 16);
+    let opened = open_ready(&fixture);
+    assert_eq!(opened.title, "합성 다시보기");
+    assert!(opened.recorded_at > 0);
+    let first = fixture
+        .service
+        .chat_search(&opened.token, "채팅", "body", None, 1, Some(200))
+        .unwrap();
+    assert_eq!(first.items.len(), 200);
+    assert_eq!(first.items[0].message.sequence, 251);
+    let cursor = first.previous_cursor.as_deref().unwrap();
+    let second = fixture
+        .service
+        .chat_search(&opened.token, "채팅", "body", Some(cursor), 2, Some(200))
+        .unwrap();
+    assert_eq!(second.items.len(), 200);
+    assert_eq!(second.items[0].message.sequence, 51);
+    let third = fixture
+        .service
+        .chat_search(
+            &opened.token,
+            "채팅",
+            "body",
+            second.previous_cursor.as_deref(),
+            3,
+            Some(200),
+        )
+        .unwrap();
+    assert_eq!(third.items.len(), 50);
+    assert!(third.previous_cursor.is_none());
+    assert!(fixture
+        .service
+        .chat_search(&opened.token, "다른 검색", "body", Some(cursor), 4, None)
+        .is_err());
+    assert!(fixture
+        .service
+        .chat_page(&opened.token, Some(cursor), 5, None)
+        .is_err());
+    let names = fixture
+        .service
+        .chat_search(&opened.token, "닉네임", "nickname", None, 6, Some(10))
+        .unwrap();
+    assert_eq!(names.items.len(), 10);
+    assert!(fixture
+        .service
+        .chat_search(&opened.token, "닉네임", "body", None, 7, None)
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(fixture
+        .service
+        .chat_search(&opened.token, "%_' OR 1=1 --", "all", None, 8, None)
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(index::normalize_search("  ＡＢＣ\t가  "), "abc 가");
+    assert!(fixture
+        .service
+        .chat_search(&opened.token, &"가".repeat(257), "all", None, 9, None)
+        .is_err());
+    assert!(fixture
+        .service
+        .chat_search(&opened.token, "", "unsupported", None, 9, None)
+        .is_err());
+    assert!(fixture
+        .service
+        .chat_search(&opened.token, "채팅", "body", None, 1, None)
+        .is_err());
+}
+
+#[test]
+fn public_viewer_api_cadence_covers_ten_seconds_and_bounds_stale_and_corrupt_cache() {
+    let fixture = fixture(0, 16);
+    let rows = [
+        (0.0, Some(10)),
+        (10.0, Some(0)),
+        (20.0, None),
+        (30.0, Some(40)),
+    ]
+    .into_iter()
+    .map(|(at, count)| {
+        serde_json::json!({
+            "version":1,"source":"chzzk_live_status_api_v1","receivedAt":1000+(at*1000.0) as u64,
+            "offsetSeconds":at,"viewerCount":count,
+            "replayClock":{"version":1,"receivedAtMs":1000+(at*1000.0) as u64,
+                "observedMonotonicMs":at*1000.0,"sourceGeneration":1,"clock":"player_observation",
+                "playbackRate":2.0}
+        })
+        .to_string()
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
+        + "\n";
+    fs::write(fixture.output.join("viewer-metrics.jsonl"), rows).unwrap();
+    let opened = open_ready(&fixture);
+    let timeline = fixture.service.timeline(&opened.token, Some(2.0)).unwrap();
+    assert_eq!(timeline.viewer_metric_status, "partial");
+    assert!(timeline.buckets[..5]
+        .iter()
+        .all(|bucket| bucket.viewer_count == Some(10) && bucket.viewer_coverage_seconds == 2.0));
+    assert!(timeline.buckets[5..10]
+        .iter()
+        .all(|bucket| bucket.viewer_count == Some(0) && bucket.viewer_coverage_seconds == 2.0));
+    assert!(timeline.buckets[10..15]
+        .iter()
+        .all(|bucket| bucket.viewer_count.is_none()));
+    assert_eq!(timeline.buckets[22].viewer_count, Some(40));
+    assert_eq!(timeline.buckets[22].viewer_coverage_seconds, 1.0); // 45s, not a fabricated 60s at 2x without a source mapping.
+    assert_eq!(timeline.buckets[23].viewer_count, None);
+    assert_eq!(
+        timeline
+            .buckets
+            .iter()
+            .map(|bucket| bucket.viewer_sample_count)
+            .sum::<u64>(),
+        3
+    );
+    let session = fixture.service.session(&opened.token).unwrap();
+    let connection = rusqlite::Connection::open(&session.index_path).unwrap();
+    connection
+        .execute("UPDATE viewer_samples SET hold_seconds=1e300", [])
+        .unwrap();
+    assert!(fixture.service.timeline(&opened.token, Some(2.0)).is_err());
+    drop(connection);
+    fixture.service.shutdown_and_wait();
+}
+
+#[test]
+fn viewer_samples_map_to_media_and_keep_unknown_gaps_and_saved_profiles() {
+    let fixture = fixture(1, 16);
+    let profile = format!("https://chzzk.naver.com/{CHANNEL}");
+    fs::write(fixture.output.join("chat.jsonl"),format!("{}\n",serde_json::json!({"sequence":1,"sender":"합성","text":"test","serverTime":null,"receivedAt":1000,"offsetSeconds":0.0,"rich":{"nicknameColor":"#123456","textColor":"#abcdef","profileUrl":profile,"badges":[],"emojis":[]}}))).unwrap();
+    let rows=[(0.0,Some(0)),(1.0,Some(100)),(2.0,None),(4.0,Some(60))].into_iter().map(|(at,count)|serde_json::json!({
+        "version":1,"source":"chzzk_video_info_dom_v1","receivedAt":1000+(at*1000.0) as u64,"offsetSeconds":at+50.0,"viewerCount":count,
+        "replayClock":{"version":1,"receivedAtMs":1000+(at*1000.0) as u64,"observedMonotonicMs":at*1000.0,"sourceGeneration":1,"clock":"mse_presentation_v1","mediaTimeSeconds":100.0+at,"sourceTimeSeconds":100.0+at,"sourceId":"40000000-0000-4000-8000-000000000001","playbackRate":1.0}
+    }).to_string()).collect::<Vec<_>>().join("\n")+"\n";
+    fs::write(fixture.output.join("viewer-metrics.jsonl"), rows).unwrap();
+    let session = open_ready(&fixture);
+    let timeline = fixture.service.timeline(&session.token, Some(2.0)).unwrap();
+    assert_eq!(timeline.viewer_metric_status, "partial");
+    assert_eq!(timeline.buckets[0].viewer_count, Some(50));
+    assert_eq!(timeline.buckets[0].viewer_sample_count, 2);
+    assert_eq!(timeline.buckets[0].viewer_coverage_seconds, 2.0);
+    assert_eq!(timeline.buckets[1].viewer_count, None);
+    assert_eq!(timeline.buckets[2].viewer_count, Some(60));
+    assert_eq!(timeline.buckets[5].viewer_count, None);
+    assert_eq!(
+        fixture.service.profile_url(&session.token, 1).unwrap(),
+        profile
+    );
+    assert!(fixture.service.profile_url(&session.token, 2).is_err());
+    assert!(fixture.service.profile_url("../bad", 1).is_err());
+    let page = fixture
+        .service
+        .chat_at(&session.token, 0.0, 1, None)
+        .unwrap();
+    assert_eq!(
+        page.items[0]
+            .message
+            .rich
+            .as_ref()
+            .unwrap()
+            .text_color
+            .as_deref(),
+        Some("#abcdef")
+    );
+    fs::write(fixture.output.join("viewer-metrics.jsonl"), "changed").unwrap();
+    assert!(fixture.service.timeline(&session.token, Some(2.0)).is_err());
+    fixture.service.shutdown_and_wait();
+}
+
+#[test]
+fn profile_links_are_optional_strict_and_do_not_require_legacy_backfill() {
+    use super::super::model::public_profile_url;
+    let good = format!("https://chzzk.naver.com/{CHANNEL}");
+    assert_eq!(public_profile_url(&good), Some(good));
+    for value in [
+        "javascript:alert(1)",
+        "https://chzzk.naver.com.evil.test/0123456789abcdef0123456789abcdef",
+        "https://chzzk.naver.com/0123456789abcdef0123456789abcdef?token=secret",
+        "https://chzzk.naver.com/live/0123456789abcdef0123456789abcdef",
+        "https://chzzk.naver.com/@name",
+        "https://user:pass@chzzk.naver.com/0123456789abcdef0123456789abcdef",
+    ] {
+        assert!(public_profile_url(value).is_none());
+    }
+    let fixture = fixture(1, 16);
+    let session = open_ready(&fixture);
+    assert!(fixture.service.profile_url(&session.token, 1).is_err());
+    assert_eq!(
+        fixture
+            .service
+            .timeline(&session.token, Some(2.0))
+            .unwrap()
+            .viewer_metric_status,
+        "not_recorded"
+    );
+    fixture.service.shutdown_and_wait();
 }
 
 #[test]
@@ -481,5 +796,78 @@ fn corrupt_cache_payload_cannot_create_an_unbounded_ipc_page() {
         .service
         .chat_at(&opened.token, 100.0, 0, None)
         .is_err());
+    fixture.service.shutdown_and_wait();
+}
+
+#[test]
+fn corrupt_large_profile_payload_is_rejected_by_bounded_lookup() {
+    let fixture = fixture(1, 16);
+    let opened = open_ready(&fixture);
+    let session = fixture.service.session(&opened.token).unwrap();
+    let connection = rusqlite::Connection::open(&session.index_path).unwrap();
+    connection
+        .execute("UPDATE messages SET payload=zeroblob(4000000)", [])
+        .unwrap();
+    drop(connection);
+    assert_eq!(
+        fixture
+            .service
+            .profile_url(&opened.token, 1)
+            .unwrap_err()
+            .code,
+        "REPLAY_STORAGE"
+    );
+    fixture.service.shutdown_and_wait();
+}
+
+#[test]
+fn oversized_cache_metadata_is_rebuilt_without_changing_recording() {
+    for update in [
+        "UPDATE metadata SET warnings='[\"' || hex(zeroblob(1000000)) || '\"]'",
+        "UPDATE metadata SET source=hex(zeroblob(1000000))",
+    ] {
+        let fixture = fixture(1, 16);
+        let original = fs::read(fixture.output.join("chat.jsonl")).unwrap();
+        let opened = open_ready(&fixture);
+        let session = fixture.service.session(&opened.token).unwrap();
+        let connection = rusqlite::Connection::open(&session.index_path).unwrap();
+        connection.execute(update, []).unwrap();
+        drop(connection);
+        fixture.service.close(&opened.token).unwrap();
+        let reopened = open_ready(&fixture);
+        assert_eq!(
+            fixture
+                .service
+                .chat_page(&reopened.token, None, 0, None)
+                .unwrap()
+                .items
+                .len(),
+            1
+        );
+        assert_eq!(
+            fs::read(fixture.output.join("chat.jsonl")).unwrap(),
+            original
+        );
+        fixture.service.shutdown_and_wait();
+    }
+}
+
+#[test]
+fn keyed_chat_empty_buckets_are_zero_but_missing_identities_remain_unknown() {
+    let fixture = fixture(0, 16);
+    let mut raw = String::new();
+    for (sequence, time, key) in [(1, 0.0, true), (2, 4.0, true), (3, 6.0, false)] {
+        raw.push_str(&format!("{}\n", serde_json::json!({"sequence":sequence,"sender":"fixture","text":"chat","receivedAt":1,"offsetSeconds":time,"senderKey":key.then(||format!("sha256:{}","a".repeat(64)))})));
+    }
+    fs::write(fixture.output.join("chat.jsonl"), raw).unwrap();
+    let opened = open_ready(&fixture);
+    let timeline = fixture.service.timeline(&opened.token, Some(2.0)).unwrap();
+    assert_eq!(timeline.buckets[0].unique_sender_count, Some(1));
+    assert_eq!(timeline.buckets[1].chat_count, 0);
+    assert_eq!(timeline.buckets[1].unique_sender_count, Some(0));
+    assert_eq!(timeline.buckets[2].unique_sender_count, Some(1));
+    assert_eq!(timeline.buckets[3].chat_count, 1);
+    assert_eq!(timeline.buckets[3].unique_sender_count, None);
+    assert_eq!(timeline.buckets[4].unique_sender_count, Some(0));
     fixture.service.shutdown_and_wait();
 }

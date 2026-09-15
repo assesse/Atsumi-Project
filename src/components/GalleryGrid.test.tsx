@@ -4,6 +4,112 @@ import { describe, expect, it, vi } from "vitest";
 import { GalleryGrid } from "./GalleryGrid";
 
 describe("GalleryGrid row coordinator", () => {
+  it("coalesces pixel resizing and ignores tag mutations and height-only feedback in a 60-card grid", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let gridWidth = 1200;
+    let coverWidth = 200;
+    let coverReads = 0;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) { resizeCallback = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: undefined });
+    let nextFrame = 0;
+    const frames = new Map<number, FrameRequestCallback>();
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      frames.set(++nextFrame, callback);
+      return nextFrame;
+    });
+    const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((frame) => { frames.delete(frame); });
+    const flushFrames = async () => act(async () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(0);
+    });
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(() => gridWidth);
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("cover")) coverReads += 1;
+      return { x: 0, y: 0, width: coverWidth, height: 0, top: 0, right: coverWidth, bottom: 0, left: 0, toJSON: () => ({}) };
+    });
+    const offsetTop = vi.spyOn(HTMLElement.prototype, "offsetTop", "get").mockImplementation(function (this: HTMLElement) {
+      return Math.floor(Number(this.dataset.index ?? 0) / 2) * 320;
+    });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(
+        <GalleryGrid columns={2} previewWidth={220} selectionContext={false} ariaLabel="resize grid">
+          {Array.from({ length: 60 }, (_, index) => (
+            <article key={index} className="gallery-card" data-index={index}>
+              <div className="cover" data-thumbnail-intrinsic-width="2" data-thumbnail-intrinsic-height="3" />
+              <div className="card-content"><div className="tag-list" /></div>
+            </article>
+          ))}
+        </GalleryGrid>,
+      ));
+      await flushFrames();
+      expect(coverReads).toBe(60);
+      expect(container.querySelector<HTMLElement>(".gallery-card")?.dataset.rowHeight).toBe("300px");
+      for (let step = 1; step <= 25; step += 1) {
+        gridWidth -= 2;
+        await act(async () => { resizeCallback?.([], {} as ResizeObserver); vi.advanceTimersByTime(16); });
+        await flushFrames();
+      }
+      expect(coverReads).toBe(60);
+      coverWidth = 180;
+      await act(async () => vi.advanceTimersByTime(100));
+      await flushFrames();
+      expect(coverReads).toBe(120);
+      expect(container.querySelector<HTMLElement>(".gallery-card")?.dataset.rowHeight).toBe("270px");
+
+      await act(async () => {
+        resizeCallback?.([], {} as ResizeObserver);
+        for (const tags of container.querySelectorAll(".tag-list")) tags.append(document.createElement("button"));
+        vi.advanceTimersByTime(100);
+      });
+      await flushFrames();
+      expect(coverReads).toBe(120);
+
+      // Intrinsic cover changes and direct slot/card insertions still measure.
+      await act(async () => { container.querySelector<HTMLElement>(".cover")!.dataset.thumbnailIntrinsicHeight = "4"; });
+      await flushFrames();
+      expect(coverReads).toBe(180);
+      expect(container.querySelector<HTMLElement>(".gallery-card")?.dataset.rowHeight).toBe("360px");
+      const grid = container.querySelector<HTMLElement>(".gallery-grid")!;
+      const slot = document.createElement("div");
+      slot.className = "progressive-gallery-slot is-placeholder";
+      await act(async () => grid.append(slot));
+      await flushFrames();
+      expect(coverReads).toBe(240);
+      await act(async () => slot.append(container.querySelector(".gallery-card")!.cloneNode(true)));
+      await flushFrames();
+      expect(coverReads).toBe(301);
+
+      gridWidth -= 2;
+      await act(async () => resizeCallback?.([], {} as ResizeObserver));
+      await act(async () => root.unmount());
+      await act(async () => vi.advanceTimersByTime(100));
+      expect(frames.size).toBe(0);
+      expect(coverReads).toBe(301);
+    } finally {
+      await act(async () => root.unmount());
+      rect.mockRestore();
+      offsetTop.mockRestore();
+      width.mockRestore();
+      raf.mockRestore();
+      cancel.mockRestore();
+      globalThis.ResizeObserver = originalResizeObserver;
+      if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+      else Reflect.deleteProperty(document, "fonts");
+      vi.useRealTimers();
+    }
+  });
+
   it("applies one shared natural thumbnail height to each card in a row", async () => {
     const originalResizeObserver = globalThis.ResizeObserver;
     globalThis.ResizeObserver = class {

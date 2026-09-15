@@ -1,30 +1,35 @@
 .mado-workspace{position:relative;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:520px;height:calc(100dvh - 105px);color:var(--text)}
-.mado-toolbar{display:flex;align-items:center;gap:8px;flex:0 0 38px;min-width:0}
+.mado-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;flex:0 0 auto;min-height:38px;min-width:0}
 .mado-toolbar strong{color:#a3edcd;margin-right:auto}.mado-toolbar label{display:flex;align-items:center;gap:6px;font-size:12px}
 .mado-toolbar select{background:var(--surface-soft);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px}
 .mado-toolbar button,.mado-settings button{padding:6px 10px;font-size:12px}
 .mado-settings{flex:none;display:grid;gap:8px;background:var(--surface);border:1px solid var(--line);padding:12px;border-radius:10px}
 .mado-layout-options{display:flex;gap:6px}.mado-layout-options [aria-pressed=true]{border-color:var(--primary);color:var(--primary)}
+.mado-broadcast-select{display:flex;align-items:center;gap:12px;min-width:0;margin-top:12px;color:var(--text-soft);font-size:12px}
+.mado-broadcast-select>span:first-child{flex:none}
+.mado-broadcast-select-control{position:relative;flex:1;min-width:0}
+.mado-broadcast-select select{display:block;appearance:none;width:100%;min-width:0;min-height:36px;padding:8px 36px 8px 12px;border:1px solid var(--line);border-radius:8px;background:var(--workspace);color:var(--text);font:inherit;line-height:18px;color-scheme:dark;cursor:pointer;transition:border-color 140ms ease,background-color 140ms ease}
+.mado-broadcast-select select:hover{border-color:var(--line-strong);background:var(--surface-soft)}
+.mado-broadcast-select select:focus-visible{border-color:var(--primary);outline:2px solid var(--primary-strong);outline-offset:2px}
+.mado-broadcast-select option{background:var(--surface);color:var(--text)}
+.mado-broadcast-select-control>.fluent{position:absolute;right:12px;top:50%;transform:translateY(-50%);font-size:12px;line-height:1;color:var(--muted);pointer-events:none}
+.mado-broadcast-select-control:hover>.fluent,.mado-broadcast-select-control:focus-within>.fluent{color:var(--primary)}
+@media(prefers-reduced-motion:reduce){.mado-broadcast-select select{transition:none}}
 .mado-channel-input{display:flex;gap:10px;align-items:center;font-size:12px}.mado-channel-input>input{min-width:0;flex:1;padding:7px 9px;background:var(--surface-soft);color:var(--text);border:1px solid var(--line);border-radius:5px}.mado-channel-input label{white-space:nowrap}
 .mado-apply{display:flex;align-items:center;gap:12px}.mado-apply small{color:var(--muted);font-size:11px}
 .mado-surfaces{flex:1;min-height:360px;min-width:0;display:grid;gap:8px;overflow:auto}
 .mado-surfaces.is-paired{grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-rows:minmax(300px,1fr)}
 .mado-surfaces.is-paired[data-channels="1"]{grid-template-columns:minmax(0,1fr)}
-.mado-pair{position:relative;display:grid;grid-template-columns:minmax(160px,1fr) minmax(240px,30%);gap:1px;min-width:0;min-height:300px;padding-top:28px;background:var(--line);border-radius:6px;overflow:hidden}
-.mado-pane-label{position:absolute;top:1px;left:8px;right:6px;height:25px;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:11px;line-height:20px;white-space:nowrap;overflow:hidden}
-.mado-pane-label>span:first-child{overflow:hidden;text-overflow:ellipsis}
-.streaming-workspace .mado-pane-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left;border:0;background:none;color:var(--text-soft);font-size:11px;padding:0}
-.streaming-workspace .mado-pane-name[aria-pressed=true]{color:#a3edcd}
-.streaming-workspace .mado-audio{flex:none;width:25px;height:22px;padding:0;border:0;background:none;color:var(--muted);font-size:15px}
-.streaming-workspace .mado-audio[aria-pressed=true]{color:#a3edcd}
-.mado-recording{flex:none;color:#ffb5bf;font-size:10px}.mado-pane-warning{flex:none;color:#f0c374;font-size:10px}
+.mado-pair{position:relative;display:grid;grid-template-columns:minmax(160px,1fr) minmax(240px,30%);gap:1px;min-width:0;min-height:300px;background:var(--line);border-radius:6px;overflow:hidden}
+.mado-notices{display:flex;flex-wrap:wrap;gap:8px;width:100%;min-width:0}
+.mado-chat-warning{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--warning);font-size:12px}
 .mado-native-slot{display:flex;align-items:center;justify-content:center;min-height:0;min-width:0;background:#080b0e;color:var(--muted);font-size:12px;overflow:hidden}
 .mado-native-slot.is-chat{background:#13151a}
 .mado-surfaces.is-chats{gap:0;grid-template-columns:minmax(160px,var(--mado-main-share,60fr)) 10px minmax(220px,var(--mado-chat-share,40fr));grid-template-rows:minmax(300px,1fr)}
 .mado-surfaces.is-chats.direction-vertical{grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(230px,var(--mado-main-share,50fr)) 10px minmax(260px,var(--mado-chat-share,50fr))}
-.mado-lead{min-width:0;min-height:0;display:flex}.mado-lead-inner{position:relative;display:flex;flex:1;min-width:0;min-height:0;padding-top:28px;background:var(--line);border-radius:6px;overflow:hidden}.mado-lead-inner>.mado-native-slot{flex:1}
+.mado-lead{min-width:0;min-height:0;display:flex}.mado-lead-inner{position:relative;display:flex;flex:1;min-width:0;min-height:0;background:var(--line);border-radius:6px;overflow:hidden}.mado-lead-inner>.mado-native-slot{flex:1}
 .mado-chat-wall{display:grid;grid-template-columns:repeat(auto-fit,minmax(max(220px,calc((100% - 6px)/2)),1fr));grid-auto-rows:minmax(260px,1fr);gap:6px;min-width:0;min-height:0;overflow:auto;scrollbar-gutter:stable}
-.mado-chat-cell{position:relative;min-height:260px;display:flex;padding-top:28px;background:var(--line);border-radius:6px;overflow:hidden}.mado-chat-cell>.mado-native-slot{flex:1}
+.mado-chat-cell{position:relative;min-height:260px;display:flex;background:var(--line);border-radius:6px;overflow:hidden}.mado-chat-cell>.mado-native-slot{flex:1}
 .mado-divider{position:relative;display:grid;place-items:center;cursor:col-resize;touch-action:none;user-select:none;outline-offset:-2px}
 .mado-divider::after{content:"";width:2px;height:48px;border-radius:3px;background:#617080}
 .direction-vertical>.mado-divider{cursor:row-resize}.direction-vertical>.mado-divider::after{width:48px;height:2px}

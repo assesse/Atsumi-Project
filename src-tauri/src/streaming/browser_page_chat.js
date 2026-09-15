@@ -11,6 +11,10 @@
   const MAX_BATCH = 128 * 1024;
   const MAX_QUEUE = 2 * 1024 * 1024;
   const MAX_BATCH_EVENTS = 32;
+  const VIEWER_INTERVAL = 10000;
+  const VIEWER_TIMEOUT = 8000;
+  const VIEWER_RESPONSE_LIMIT = 32 * 1024;
+  const VIEWER_SOURCE = "chzzk_live_status_api_v1";
   const encoder = new TextEncoder();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const sockets = new Set();
@@ -104,12 +108,26 @@
     const supplied = object(message.profile) ?? {};
     const property = object(supplied.streamingProperty) ?? {};
     const profile = { nickname: text(supplied.nickname, 128) ?? "알 수 없음" };
+    // Official public profile-card and ranking links use /${userIdHash}. Store
+    // only this canonical public destination, never the raw profile/token.
+    if (typeof supplied.userIdHash === "string" && /^[a-f0-9]{32}$/i.test(supplied.userIdHash))
+      profile.publicProfileUrl = `https://chzzk.naver.com/${supplied.userIdHash.toLowerCase()}`;
+    // Official defaults add UTF-16 character codes of userIdHash and the real
+    // chatChannelId, modulo the 40-color palette. Export only the 0..39 color
+    // seed; native combines it with already-fetched, memory-only metadata.
+    if (typeof supplied.userIdHash === "string" && /^[a-z0-9_-]{1,128}$/i.test(supplied.userIdHash))
+      profile.nicknameColorSeed = Array.from(supplied.userIdHash).reduce((sum, character) => sum + character.charCodeAt(0), 0) % 40;
     const title = { name: text(supplied.title?.name, 128), color: color(supplied.title?.color) };
     if (title.name || title.color) profile.title = title;
     const profileBadge = badge(supplied.badge);
     if (profileBadge) profile.badge = profileBadge;
     const display = {};
-    const nicknameColor = color(property.nicknameColor?.colorCode);
+    const palette = "#EEA05D.#EAA35F.#E98158.#E97F58.#E76D53.#E66D5F.#E16490.#E481AE.#E481AE.#D25FAC.#D263AE.#D66CB4.#D071B6.#AF71B5.#A96BB2.#905FAA.#B38BC2.#9D78B8.#8D7AB8.#7F68AE.#9F99C8.#717DC6.#7E8BC2.#5A90C0.#628DCC.#81A1CA.#ADD2DE.#83C5D6.#8BC8CB.#91CBC6.#83C3BB.#7DBFB2.#AAD6C2.#84C194.#92C896.#94C994.#9FCE8E.#A6D293.#ABD373.#BFDE73".split(".");
+    const code = property.nicknameColor?.colorCode;
+    // Public CD001..CD040 palette, dark replay presentation. Unknown symbolic
+    // colors are not guessed; native resolves defaults only with a chat ID.
+    const paletteIndex = typeof code === "string" && /^CD0[0-4][0-9]$/.test(code) ? Number(code.slice(2)) - 1 : -1;
+    const nicknameColor = color(code) ?? (paletteIndex >= 0 && paletteIndex < palette.length ? palette[paletteIndex] : undefined);
     if (nicknameColor) display.nicknameColor = { colorCode: nicknameColor };
     const subscription = badge(property.subscription?.badge);
     if (subscription) {
@@ -155,6 +173,7 @@
     if (current.failed) return;
     current.failed = true;
     current.accepting = false;
+    stopViewers(current);
     current.dropped += dropped + current.queue.length;
     current.queuedBytes -= current.queue.reduce((sum, entry) => sum + entry.bytes, 0);
     current.queue = [];
@@ -237,6 +256,101 @@
       finally { current.rawBytes -= length; }
     });
   };
+  const stopViewers = (current) => {
+    clearInterval(current.viewerTimer);
+    current.viewerRequest?.abort();
+  };
+  const queueViewer = (current, viewerCount, replayClock, broadcastStartedAt = null) => {
+    const event = { atsumiViewerSample: 1, viewerSource: VIEWER_SOURCE,
+      viewerChannelId: current.channelId, viewerBroadcastStartedAt: broadcastStartedAt,
+      viewerCount, replayClock };
+    // Timestamp on response/timeout, not request start. This preserves receipt
+    // order with chat while the optional HTTP request is in flight.
+    current.decodeQueue = current.decodeQueue.then(() => {
+      if (current.failed) return;
+      const size = bytes(event);
+      if (current.queuedBytes + current.rawBytes + size > MAX_QUEUE) return;
+      current.queue.push({ event, bytes: size }); current.queuedBytes += size;
+    });
+  };
+  const viewerDocument = async (response) => {
+    if (!response.ok || response.status !== 200 || response.redirected ||
+        !/^application\/json(?:;|$)/i.test(response.headers.get("content-type") ?? "") ||
+        Number(response.headers.get("content-length") ?? 0) > VIEWER_RESPONSE_LIMIT || !response.body?.getReader)
+      throw new Error("viewer_response");
+    const reader = response.body.getReader();
+    let size = 0; const chunks = [];
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > VIEWER_RESPONSE_LIMIT) throw new Error("viewer_response_limit");
+        chunks.push(value);
+      }
+      const data = new Uint8Array(size); let at = 0;
+      for (const chunk of chunks) { data.set(chunk, at); at += chunk.byteLength; }
+      return JSON.parse(decoder.decode(data));
+    } finally {
+      // Cancel also bounds an oversized/chunked body; nothing from the full
+      // response (including routing identifiers or tokens) is logged/exported.
+      try { await reader.cancel(); } catch { /* Already aborted. */ }
+      reader.releaseLock();
+    }
+  };
+  const sampleViewers = (current) => {
+    if (!current.accepting || current.failed || !current.viewerFetch) return;
+    if (current.channelId !== channel()) { stopViewers(current); return; }
+    if (current.viewerRequest) return;
+    const before = observeClock(current);
+    if (!before) return;
+    const controller = new AbortController();
+    current.viewerRequest = controller;
+    let timeout;
+    // Official np() / jo: /polling/v3.1/.../live-status. The page currently
+    // refreshes at 30s; re-reading DOM every 2s repeats that old snapshot.
+    // Request only this public metadata at 10s while recording, never media,
+    // recommendation/ad APIs, cookies, auth headers or another chat socket.
+    const task = Promise.resolve().then(() => {
+      if (controller.signal.aborted || !current.accepting || active !== current || current.channelId !== channel()) throw new Error("viewer_stopped");
+      return current.viewerFetch(`https://api.chzzk.naver.com/polling/v3.1/channels/${current.channelId}/live-status`, {
+        method: "GET", credentials: "omit", cache: "no-store", redirect: "error",
+        referrerPolicy: "no-referrer", signal: controller.signal,
+      });
+    }).then(viewerDocument);
+    const deadline = new Promise((_, reject) => {
+      timeout = setTimeout(() => { controller.abort(); reject(new Error("viewer_timeout")); }, VIEWER_TIMEOUT);
+      controller.signal.addEventListener("abort", () => reject(new Error("viewer_aborted")), { once: true });
+    });
+    Promise.race([task, deadline]).then((document) => {
+      if (!current.accepting || current.failed || active !== current || current.channelId !== channel()) return;
+      const clock = observeClock(current);
+      if (!clock) return;
+      const content = document?.code === 200 ? object(document.content) : null;
+      const date = content?.openDate;
+      const opened = typeof date === "string" && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(date) ?
+        Date.parse(date.replace(" ", "T") + "+09:00") : NaN;
+      let valid = clock.sourceGeneration === before.sourceGeneration &&
+        content?.channelId === current.channelId && content.status === "OPEN" &&
+        Number.isSafeInteger(opened) && opened > 0 && opened <= clock.receivedAtMs;
+      if (valid && current.viewerBroadcast === null) current.viewerBroadcast = opened;
+      if (valid && current.viewerBroadcast !== opened) {
+        valid = false;
+        // A new live on the same channel belongs to a new recording session.
+        stopViewers(current);
+      }
+      const count = content?.concurrentUserCount;
+      const fresh = valid && content.cvExposure === true && Number.isSafeInteger(count) && count >= 0 && count <= 100000000;
+      queueViewer(current, fresh ? count : null, clock, valid ? opened : null);
+    }).catch(() => {
+      if (!current.accepting || current.failed || active !== current || current.channelId !== channel()) return;
+      const clock = observeClock(current);
+      if (clock) queueViewer(current, null, clock);
+    }).finally(() => {
+      clearTimeout(timeout);
+      if (current.viewerRequest === controller) current.viewerRequest = null;
+    });
+  };
   try {
     const NativeSocket = window.WebSocket;
     if (typeof NativeSocket === "function") {
@@ -281,12 +395,16 @@
       const current = { generation: ++generation, channelId: options.channelId, recordingId: options.recordingId,
         salt, getVideo: typeof options.getVideo === "function" ? options.getVideo : null,
         sourceGeneration: 1, clockVideo: null, sourceIdentity: "", clockListeners: [],
+        viewerFetch: typeof window.fetch === "function" && typeof AbortController === "function" ? window.fetch.bind(window) : null,
+        viewerRequest: null, viewerBroadcast: null, viewerTimer: null,
         sendBatch: options.sendBatch, onStatus: options.onStatus, accepting: true, failed: false,
         gap: observerOverflow, dropped: 0, detail: "waiting_socket", queue: [], queuedBytes: 0,
         noticeKey: null,
         rawBytes: 0, decodeQueue: Promise.resolve(), inFlight: null, stopping: null, timer: null };
       active = current;
       current.timer = setInterval(() => pump(current), 250);
+      if (current.viewerFetch) current.viewerTimer = setInterval(() => sampleViewers(current), VIEWER_INTERVAL);
+      sampleViewers(current);
       const connected = [...sockets].some((socket) => socketChannels.get(socket) === current.channelId);
       notify(current, observerOverflow ? "observer_overflow" : connected ? "observing" : "waiting_socket");
       return true;
@@ -297,6 +415,7 @@
       if (current.stopping) return current.stopping;
       current.accepting = false;
       clearInterval(current.timer);
+      stopViewers(current);
       current.stopping = (async () => {
         await current.decodeQueue;
         while (current.inFlight || (!current.failed && current.queue.length)) {

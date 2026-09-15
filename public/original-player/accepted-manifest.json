@@ -1,0 +1,3143 @@
+{
+  "format": 1,
+  "source": {
+    "format": 2,
+    "playerVersion": "1.16.2",
+    "source": "Locally preserved CHZZK public PC distribution",
+    "runtimeNetwork": "Loopback files only; remote resources and API traffic denied by CSP before SDK import",
+    "originalFiles": [
+      {
+        "file": "assets/player-vendor-BYg0wCyN.js",
+        "sha256": "3add7ef97995bc4e7052e03c84c18e9fe34d5d6212e4672c6f5f76412c9147bc",
+        "unchanged": true
+      },
+      {
+        "file": "assets/common-vendor-pcHQV1G2.js",
+        "sha256": "2801491c851815a10c8f5afcbbbd448fbd861e6e3b690adcd3cb8f1cda1ccea0",
+        "unchanged": true
+      },
+      {
+        "file": "assets/rolldown-runtime-CJJwijRH.js",
+        "sha256": "0c0bf430afd3b71beff576c47908b01139baba43f826f93f587baaccb6e3a378",
+        "unchanged": true
+      },
+      {
+        "file": "assets/player-vendor-Ct4cRQDi.css",
+        "sha256": "949d15281ab5bf7daf8727043fae36bf5239826bbd5c179477232819102423f3",
+        "unchanged": true
+      },
+      {
+        "file": "assets/vendor-DVDNLy6N.css",
+        "sha256": "f1e7912437519b86ba1473246bc0e1dbeaea0715a5263e531bdd35f00c625ee9",
+        "unchanged": true
+      },
+      {
+        "file": "assets/index-2Gtwn4qD.css",
+        "sha256": "6b341bb079e0ffe182caaf5437783a1f2a05ffdd27e4224b1a6a6a43b1ec78f6",
+        "unchanged": true
+      }
+    ],
+    "resourceFiles": [
+      {
+        "file": "assets/date-vendor-DhkCJ9xZ.js",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/date-vendor-DhkCJ9xZ.js",
+        "sha256": "c6326ff4d567fb5425aa5890231224c5a882ec315b453676b50edc90eb076a81",
+        "bytes": 845136,
+        "unchanged": true
+      },
+      {
+        "file": "assets/default_profile_dark.png",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/glive/image/default_profile_dark.png",
+        "sha256": "e014ac6dce3ff3baac938dcaaff9c868ca615d8f89a76e7469b53e7442efc37a",
+        "bytes": 1748,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd.woff2",
+        "sha256": "c65b015e1e40e122e59b6fa4eab6ade82d56129bd4fae3fb0022da9570baee32",
+        "bytes": 848308,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd0.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd0.woff2",
+        "sha256": "c87e5a7cb834aa52ee635aa27926baa1ba1eb30a278cf46df4146472a80454fe",
+        "bytes": 7652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd1.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd1.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd10.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd10.woff2",
+        "sha256": "49cd920a0b95ede8494b2015ede908acc5c3887f7f70ba3ccc66df4a6ad079f7",
+        "bytes": 17008,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd100.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd100.woff2",
+        "sha256": "1248042dc88bf8c44b343e6a6e185d15fa9d22089daacfd1748b12ed6297a085",
+        "bytes": 6960,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd101.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd101.woff2",
+        "sha256": "e1ad44f2e5d78afef0cf0c957b5d9c2a50db5cba5ecd3e86d32c0b1f8fd1dec8",
+        "bytes": 6436,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd102.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd102.woff2",
+        "sha256": "dfb3a9e48c1f45d065716ef780c3eee1f4e530f21bc2ab2ec00c655c30c0819e",
+        "bytes": 7864,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd103.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd103.woff2",
+        "sha256": "84765c596e0b36e1a57fe61b3026c10fdea640d86eab93cfc1db34f416236742",
+        "bytes": 8600,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd104.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd104.woff2",
+        "sha256": "64895633e57ff20b688274a2f4a2abfddf508bdb61a6c52cf009499cc12dffc0",
+        "bytes": 8136,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd105.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd105.woff2",
+        "sha256": "2fab3c887766dc1e29a558292bfdc9bbaa12d5275bf2e95e42bf330316088427",
+        "bytes": 9048,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd106.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd106.woff2",
+        "sha256": "2eb4f1189c0fc4dd9ab81c9a90f0feba5cd4ad9b6fd2aa9d1a44e00ab86a6eae",
+        "bytes": 9212,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd107.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd107.woff2",
+        "sha256": "a824623d8712f9c38cf6f0f6781253b5ad3d70a7b9e646062527e7d758f283d3",
+        "bytes": 10960,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd108.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd108.woff2",
+        "sha256": "d7f2cc561015531fc0f579fbdca598a3ce8d82ea3ac8fed2f5bae8b321c36173",
+        "bytes": 10972,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd109.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd109.woff2",
+        "sha256": "199bc378d45a721c4c06a90907ee75707cf1247124d40d11e9d8429f58ddaa8e",
+        "bytes": 11620,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd11.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd11.woff2",
+        "sha256": "d1d9ced5fe50b7ecf5ca6a20798b632a48b25042dfbc8b94665941b4dbba5a7a",
+        "bytes": 18712,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd110.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd110.woff2",
+        "sha256": "8f478ae539964695d54519437b0e537d19a6ed585cb2effc0eea0360c966c64a",
+        "bytes": 11596,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd111.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd111.woff2",
+        "sha256": "9a5bfbe88c4166b5c3003f0ef865f4095d6a3d329d73824fef65f2178697b42f",
+        "bytes": 11264,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd112.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd112.woff2",
+        "sha256": "5fe3aaea50af59398007a17cbedabea3a4ad8d88164be82ab06f9429877324fd",
+        "bytes": 10408,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd113.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd113.woff2",
+        "sha256": "534d3090510f9a245d843971a40ae9f9293f3b06284179fd39ff5493a7e201ab",
+        "bytes": 11208,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd114.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd114.woff2",
+        "sha256": "521b2eb8d2e6d9cb6a64afb6d3b12f03eb74532627406b353dad4cc77b9eedd0",
+        "bytes": 10872,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd115.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd115.woff2",
+        "sha256": "ce5e3d1932c103057869cee02c8ffcaaddb93a2e322162537bbfcaace7b3efb0",
+        "bytes": 10948,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd116.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd116.woff2",
+        "sha256": "0981ea237a17fa51108d1fb51409e5c0fea84fa4d0895c1d5b251df2076caf6b",
+        "bytes": 10396,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd117.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd117.woff2",
+        "sha256": "e024fac36d7b6f1e26b426c78514584f4826858cf2afcccf30de71239c9ea6b8",
+        "bytes": 9928,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd118.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd118.woff2",
+        "sha256": "d5282e5da46014c1e0557be90b2e913f7d9ef1365516d2744367e7d99ba6a351",
+        "bytes": 9076,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd119.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd119.woff2",
+        "sha256": "c077efb06af040c6adf0970722af07eeb84a42f6786d9769a75a290d8fe0d0be",
+        "bytes": 10400,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd12.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd12.woff2",
+        "sha256": "96eab26edcc9e72bf6683e7923cf59c2ef98a1e96554ffe630dafbe7daa5967b",
+        "bytes": 18776,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd13.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd13.woff2",
+        "sha256": "31eda2a3dec1a15e60f3ab9fbceef7cf14c2d4df6e289d53b21cda6498631c6a",
+        "bytes": 17228,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd14.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd14.woff2",
+        "sha256": "7679ae78cad0384e4e8c6c496cc26e4ddcace7c512318e07552c859d074a066f",
+        "bytes": 17980,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd15.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd15.woff2",
+        "sha256": "8044e8a7ddb289c3816d50e7abbe0761566c38309b256c7aa83f1fca45e7e4b3",
+        "bytes": 18052,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd16.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd16.woff2",
+        "sha256": "8d2cf2f11d9b437546b2035600ac8231a324ce51fc1f38957889851f9c8056af",
+        "bytes": 17568,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd17.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd17.woff2",
+        "sha256": "62e365636332c4c5e7fee4a8dc86163cb93de0caf38ade0fb788879d853e9d9b",
+        "bytes": 19664,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd18.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd18.woff2",
+        "sha256": "e5def566cbccba209ecb68e76c5bd97b44e09bb2dc1a74f59d19123b0ff6bf9e",
+        "bytes": 21088,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd19.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd19.woff2",
+        "sha256": "f4b2ceeecd0a7a9473ce5419124cc2f983394df9c939eafbda99a3cf28acfc5e",
+        "bytes": 19664,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd2.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd2.woff2",
+        "sha256": "39cf3f462627133de4bbba1dcdae2e5bad03aec4e9fe1b3ea2ddc5920e3fc092",
+        "bytes": 13096,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd20.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd20.woff2",
+        "sha256": "91b314aaced838113565c22cab4e5b62d8e7e45f57bd2df4361309260d55db1e",
+        "bytes": 18924,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd21.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd21.woff2",
+        "sha256": "3286e30bbcb573cbe94d1b6ebd00b5d487fb64f0cd4a2acaa4e7a0dd0f03ce5e",
+        "bytes": 18440,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd22.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd22.woff2",
+        "sha256": "9a816cfc227e4a34597e8770123a7811825f767546aca40f4b8e0195ddaf2fb9",
+        "bytes": 20360,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd23.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd23.woff2",
+        "sha256": "3de8b9e1610b34c5a328c1e81f3bbb0cf2d3b225a0d1a87fbcea491f37258bde",
+        "bytes": 17396,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd24.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd24.woff2",
+        "sha256": "938f795502ebf45731a7dff5b9139dd4213c4658bda9ccf4bdce5fff3728748b",
+        "bytes": 19280,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd25.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd25.woff2",
+        "sha256": "f71e5301742cd26d443586118b19b8963ec790270ac26956db4e2e52067dc953",
+        "bytes": 17864,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd26.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd26.woff2",
+        "sha256": "11a714ea83321fcb70d370d64b38c9cb58342c19db0697481e4c6b546a9d2fce",
+        "bytes": 17928,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd27.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd27.woff2",
+        "sha256": "a02363d9540ea0b1c9b9daf17639c1086066554ba6c4ff4621f4d8f02de70b97",
+        "bytes": 18956,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd28.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd28.woff2",
+        "sha256": "9b661949aef6454bfb0770c372ea44cfb2b43515b992fa408cfead98616b96de",
+        "bytes": 17860,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd29.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd29.woff2",
+        "sha256": "d112a0bedf3ccdafba8af1d162c1f1830ef12f219800f2e2115c73c4b202fac1",
+        "bytes": 22240,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd3.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd3.woff2",
+        "sha256": "4e7050ae978354bb05cdfca31d7ae1056dbbefa5cd83aea8040eabb11f610b88",
+        "bytes": 17272,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd30.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd30.woff2",
+        "sha256": "f418d5b78d3336bcc5abe40e0f9a40e911d26466b8ba232808db584e6fc65c1e",
+        "bytes": 17796,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd31.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd31.woff2",
+        "sha256": "8fb867e4f18317933731d926c01223c31f83421e8c975e7f76606fb58540bf18",
+        "bytes": 16996,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd32.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd32.woff2",
+        "sha256": "2562b23a101b3b8cbed1783ad8589242a6c8bd30899c42cc6aea17ac28730bab",
+        "bytes": 19548,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd33.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd33.woff2",
+        "sha256": "814c99e521b8cef12fd60b2d604741c973c4592c49845d9661f8e3903c946748",
+        "bytes": 18316,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd34.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd34.woff2",
+        "sha256": "cce1591f6708f94d522bafb866c4debf2f1f709c8fc903da1f9bcaa1470e5039",
+        "bytes": 18464,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd35.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd35.woff2",
+        "sha256": "67791c712c71a54d8e48e254adac7dba8c699497461a6f8d64f5d7685ddaf195",
+        "bytes": 19136,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd36.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd36.woff2",
+        "sha256": "4b565f4c42a05bde30bfd2ee2db3deb465d60afe7e6829f7c823db1de61b6923",
+        "bytes": 17028,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd37.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd37.woff2",
+        "sha256": "80e567201333f40bd8271eb6a5bd99b5f46eb479e83cd895f7e34d4b849b40ad",
+        "bytes": 16968,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd38.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd38.woff2",
+        "sha256": "ddfaf5b5d1fbb9b07394e34c1b2cd6b05eca82ea97a75bef9af1968b1c8457fd",
+        "bytes": 14316,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd39.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd39.woff2",
+        "sha256": "faf15ee51700584c7c4ff292d1fbe7f686baa0a7cda02b2f22c84c3cfdb0b634",
+        "bytes": 17300,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd4.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd4.woff2",
+        "sha256": "4f1955736387e2cf98c96dcbe08db7249523af803a64a7a173b4f78ad74461dd",
+        "bytes": 17152,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd40.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd40.woff2",
+        "sha256": "35430545a79d38b060b42e844b6320ac3eaae23ce069b3155116226a563faad3",
+        "bytes": 16596,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd41.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd41.woff2",
+        "sha256": "6765f0a7ffc8014728874492590c184ab6ce6e619d3011287952bad8ec7f417c",
+        "bytes": 15260,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd42.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd42.woff2",
+        "sha256": "cae9025c03b1498fd97f6a2f2a8718832c2f09fa6e258a6a6c9cab017b693974",
+        "bytes": 17492,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd43.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd43.woff2",
+        "sha256": "5089992a62c96bb746e1abc49adf7c687af6c84504a103e87e5f43f505556258",
+        "bytes": 17468,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd44.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd44.woff2",
+        "sha256": "4ace28e0b1da7e23ea8d765c43c0f59205b6637dbea513ba6e3c4a44ca7947ec",
+        "bytes": 17232,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd45.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd45.woff2",
+        "sha256": "f72b94c6a14eec3ad030bf8d9afa3312f93955ebbc68c7b21dc94c1189e30915",
+        "bytes": 16696,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd46.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd46.woff2",
+        "sha256": "b85a4ce7079fd7497c60b6d4431a946138e3370ed90b423c15d4bb229dad1609",
+        "bytes": 14828,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd47.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd47.woff2",
+        "sha256": "3777e5913bf6e9c103a8940483e07b1db02b228fffb7a8939a9762ef84509d7e",
+        "bytes": 17212,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd48.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd48.woff2",
+        "sha256": "2b5a85f188db9d5f695a4f70a33a8b76d06c954c781f68cefbf9ef3aedbf0010",
+        "bytes": 13304,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd49.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd49.woff2",
+        "sha256": "938883ed734ede6908c80a093dd7fb341424b2d199f06290a74ca631b8f8506f",
+        "bytes": 16236,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd5.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd5.woff2",
+        "sha256": "897eed6df6129bc19284bc6fed9a38d0d54a6c463b53df55d6f89e8032315cf6",
+        "bytes": 15984,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd50.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd50.woff2",
+        "sha256": "df54a596aedf269f15be4ea3d846eb7515e7c9a3ca20a547a67991e64842f76d",
+        "bytes": 16680,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd51.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd51.woff2",
+        "sha256": "d3ba5c8a7931ba266559ddf0a9812c068db21e343075e87a658c75889d23e22d",
+        "bytes": 13628,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd52.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd52.woff2",
+        "sha256": "7cf9cf8089b08e381a834a3ec38ecf56c20012013747e12f26b82bec90085a99",
+        "bytes": 17044,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd53.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd53.woff2",
+        "sha256": "4773246127125887c27c7b7156f53eadc52272b270b363b94e523ceb910f8b6b",
+        "bytes": 15868,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd54.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd54.woff2",
+        "sha256": "7f697f993d7e3d65c4632bb9bf7969bfb3563b2186bed4ccca8d2874bb03cd2d",
+        "bytes": 16548,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd55.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd55.woff2",
+        "sha256": "12524ffcc0ce83b0bf856ca63d22ee6561a5d24ef7813ea68e7e7039ef308492",
+        "bytes": 17452,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd56.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd56.woff2",
+        "sha256": "74bd4218e346e01dbc48d03f7f813bf246e76079b3748d90f7db390b2934c368",
+        "bytes": 16192,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd57.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd57.woff2",
+        "sha256": "b64f14a316ff5fd1a8a61da8907570e276bb031f7b6a807f61234edb8a0427ed",
+        "bytes": 18276,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd58.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd58.woff2",
+        "sha256": "d6bed4737b7c0026f79d3b3a7616d3f94648a63875faaf0a51c80e300ac95026",
+        "bytes": 12820,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd59.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd59.woff2",
+        "sha256": "c9b624f1b76d9cd807085e684c048fe482e1272346defe9aaedd7f0d521a3465",
+        "bytes": 14820,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd6.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd6.woff2",
+        "sha256": "3f7bad5b10526e6adeafc79d744f6ceb87fe1a1bfec648f1c7e416954f802135",
+        "bytes": 16012,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd60.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd60.woff2",
+        "sha256": "a3affe33916ab92bbcc272ba5ee1b1de31a8c4068e992968825bb36fc3d06ea4",
+        "bytes": 15932,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd61.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd61.woff2",
+        "sha256": "a2cb584e0d40bfda628610daaee6b7da22511f4362ee07574231ffbcb2ec1fa0",
+        "bytes": 13516,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd62.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd62.woff2",
+        "sha256": "30f68a56882fd20a422cbe59b8a166f4cdcb14d371b1d46df11afb857967a342",
+        "bytes": 14360,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd63.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd63.woff2",
+        "sha256": "0379c965401d30f2cf150783ded917549a48eb25a266e34df7f84ba084c19a70",
+        "bytes": 12876,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd64.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd64.woff2",
+        "sha256": "2f65713be06d2b022ac166c699ef6aabfb1b1b1d7269076bc1bbc434bd023198",
+        "bytes": 12020,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd65.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd65.woff2",
+        "sha256": "bfa45aa0e81cbbc62dbee22d83f537afc78f866dbd9bb8db77ddb63ea6014bfd",
+        "bytes": 3132,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd66.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd66.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd67.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd67.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd68.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd68.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd69.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd69.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd7.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd7.woff2",
+        "sha256": "1e71d7789c4c53a93f69261865841ed6e4c43b88bb49cb023f3ec111db4ffcaf",
+        "bytes": 17660,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd70.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd70.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd71.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd71.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd72.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd72.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd73.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd73.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd74.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd74.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd75.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd75.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd76.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd76.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd77.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd77.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd78.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd78.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd79.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd79.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd8.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd8.woff2",
+        "sha256": "240227890c7b62b2999cf1f04d3daae9e690b207228e4158b85f569cad42e010",
+        "bytes": 18080,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd80.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd80.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd81.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd81.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd82.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd82.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd83.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd83.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd84.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd84.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd85.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd85.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd86.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd86.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd87.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd87.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd88.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd88.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd89.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd89.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd9.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd9.woff2",
+        "sha256": "22db00bf5d119d52509f0ab272a50eab55b20c3aecd58a4ff7d71a5208b83cc0",
+        "bytes": 16588,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd90.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd90.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd91.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd91.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd92.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd92.woff2",
+        "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+        "bytes": 652,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd93.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd93.woff2",
+        "sha256": "795529f55a0fcede08a74cd3b8496d660ecf1ad2eeb8521d33ee4bd215cbd96f",
+        "bytes": 976,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd94.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd94.woff2",
+        "sha256": "797b375bc979daef7b2252952fc52c4396bb060b10a23cd24535a0ba32a248e7",
+        "bytes": 6428,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd95.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd95.woff2",
+        "sha256": "693b5915ec8b88ba5d70cfdc2b5496332893337ac876dfa73a70888392cc7444",
+        "bytes": 1336,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd96.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd96.woff2",
+        "sha256": "4825e1f71308f8fc8f1fabfa0a3bb03a689b902d3ea89d2714f8a87cb5dc219c",
+        "bytes": 3760,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd97.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd97.woff2",
+        "sha256": "7e635790eb25d57eb65c6638437ef12c97dde8fe7304e49c9891e5568f6158c4",
+        "bytes": 7672,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd98.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd98.woff2",
+        "sha256": "725580c68066cb5d5bd91feb05f15caa76a1250f70766b57a81b469c3d936b44",
+        "bytes": 7728,
+        "unchanged": true
+      },
+      {
+        "file": "assets/SDNemony2dBasicBd99.woff2",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd99.woff2",
+        "sha256": "46686c0b262bf9d1580504ac1145f79429d5e49e7d0527647c4332c3b172278d",
+        "bytes": 8192,
+        "unchanged": true
+      },
+      {
+        "file": "assets/vendor-DQYi7KBW.js",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/glive/resource/p/static/js/vendor-DQYi7KBW.js",
+        "sha256": "26091b03855ec060b4584cafc8123f4fc9b6a16f3a42faf7bc22b0e9238a83de",
+        "bytes": 6297994,
+        "unchanged": true
+      },
+      {
+        "file": "assets/icon_official_mark.png",
+        "sourceUrl": "https://ssl.pstatic.net/static/nng/glive/image/icon_official_mark.png",
+        "sha256": "9e744d6406720d53a658f0e9923193f16c2e836095a443be9ada996274045af4",
+        "bytes": 60712,
+        "stagedUnchanged": false,
+        "unchanged": true
+      }
+    ],
+    "derivedFiles": [
+      {
+        "file": "original-surfaces.js",
+        "sha256": "0a81f840aa60fbc220111c1163abe117830f3d4385be3ebcb53a9cace6b95b63"
+      },
+      {
+        "file": "original-messages.js",
+        "sha256": "050bb3a1da123c4f94204091e0b23f66563b9928ced31e090dfe40a2b7e9d84c"
+      },
+      {
+        "file": "local-index.css",
+        "sha256": "d27aa0572006648341a634b3cc2bcfa6f67a60b768638f6fa710b53a00b6a80e"
+      }
+    ],
+    "surfaces": {
+      "sourceFile": "index-C4sif-4p.js",
+      "sourceSha256": "40a9c54387bb40ed0136147ba5626647f138777def7cecc574b7a41536d982fc",
+      "records": [
+        {
+          "name": "DJ.return",
+          "utf16Range": [
+            2599031,
+            2604025
+          ],
+          "sha256": "5a9f915ffc7ad723b9c24e11a0edeacd21a8ffb3a33fcca24890bd3644676d55",
+          "changes": [
+            "Replay binds saved metadata and omits live-only badges/counts; original elements and styling retained"
+          ]
+        },
+        {
+          "name": "DS.return",
+          "utf16Range": [
+            914909,
+            916977
+          ],
+          "sha256": "8dff960060b78e42d3485e07afdfc4135c68502afabb7b69c1140272e4ecdb8d",
+          "changes": [
+            "Optional local replay menu uses the original header menu slot"
+          ]
+        },
+        {
+          "name": "DS.menu",
+          "utf16Range": [
+            910474,
+            914901
+          ],
+          "sha256": "948a183c92fd1316b4aafb81234a87a4ff565299a9b01a087450ef5a0e2d5172",
+          "changes": []
+        },
+        {
+          "name": "Uv.return",
+          "utf16Range": [
+            500602,
+            509658
+          ],
+          "sha256": "1ae7e2381479fd884affbc15c8b34fe790dc7bafa37fff87bd3f5f78fe7595d3",
+          "changes": []
+        },
+        {
+          "name": "yx.return",
+          "utf16Range": [
+            617091,
+            618117
+          ],
+          "sha256": "bdb873f0c540740c73567246b70d1ab65b1f8a3c2ebaed4c1b677c9433e70ac9",
+          "changes": [
+            "Share-plugin loading effect is not executed; original menu return is retained"
+          ]
+        },
+        {
+          "name": "vD.textRow",
+          "utf16Range": [
+            1479549,
+            1479871
+          ],
+          "sha256": "ffeec14e830533beadddc98e51f19cf30ecdba4c6654cde022624a5b07d2d9f4",
+          "changes": []
+        },
+        {
+          "name": "vD.list",
+          "utf16Range": [
+            1477258,
+            1486160
+          ],
+          "sha256": "7bf235e798970a46786c8129189b7f83d6bfb186a241c790e7b7f2d80d12d2e2",
+          "changes": [
+            "Local rows slot only; original list, reverse ordering and row geometry"
+          ]
+        },
+        {
+          "name": "Nk.aside",
+          "utf16Range": [
+            1635767,
+            1648759
+          ],
+          "sha256": "4f6ebf0ccd1c64020a258fd95c16351d84b59c47b87218ed7728ad8cb66a7b6d",
+          "changes": [
+            "Local presentation slots"
+          ]
+        },
+        {
+          "name": "EJ",
+          "utf16Range": [
+            2598140,
+            2598639
+          ],
+          "sha256": "806d08e08598cb89c0fc09984c7728659ed36caae4f63862cc8f641c0baf82f7",
+          "changes": []
+        },
+        {
+          "name": "Vc",
+          "utf16Range": [
+            267266,
+            268094
+          ],
+          "sha256": "46577e96599609470ab0978ba6fa455d34d8fbeb286e7182393c814773bdcae5",
+          "changes": []
+        },
+        {
+          "name": "zc",
+          "utf16Range": [
+            266300,
+            266793
+          ],
+          "sha256": "77eb8965932a158ce8b00bc5be0853ecaee620b8ba83bf038ddac28bfad0bb05",
+          "changes": []
+        },
+        {
+          "name": "Rc",
+          "utf16Range": [
+            266040,
+            266296
+          ],
+          "sha256": "7e3e4967f0efd8a78724f9959d039960db91301d9750bebfbed3c7dbad198e7f",
+          "changes": []
+        },
+        {
+          "name": "Bc",
+          "utf16Range": [
+            266797,
+            267262
+          ],
+          "sha256": "1ad541492684d670acd57d775015443d633fbbd90526c12b4e72763d0606affb",
+          "changes": []
+        },
+        {
+          "name": "ES",
+          "utf16Range": [
+            906436,
+            906736
+          ],
+          "sha256": "7d602e47855f23bb5d20506cd8a048afe3b3ecc3de171509a804ce8eb53c228c",
+          "changes": []
+        },
+        {
+          "name": "TS",
+          "utf16Range": [
+            906267,
+            906432
+          ],
+          "sha256": "6659c3b31efdcc1005298ab3177151e6f2b58b17cfb09e8fbcf3f1855353af85",
+          "changes": []
+        },
+        {
+          "name": "pS",
+          "utf16Range": [
+            895463,
+            896046
+          ],
+          "sha256": "b15b1597e04ddca45b7b9cb3ccf85c17c0d05b81ed188049d9ac1f4be95b1c1b",
+          "changes": []
+        },
+        {
+          "name": "CS",
+          "utf16Range": [
+            905466,
+            905851
+          ],
+          "sha256": "d9a733045c86904f40646b7c040de55457c4495156fe0843eafb78c7f402fcb5",
+          "changes": []
+        },
+        {
+          "name": "wS",
+          "utf16Range": [
+            905855,
+            906263
+          ],
+          "sha256": "736560fbdc0e9deb7a998053c010cdb8d8994ec64e8c0d477ea2e3df832bd40b",
+          "changes": []
+        },
+        {
+          "name": "vS",
+          "utf16Range": [
+            899601,
+            900596
+          ],
+          "sha256": "dd8290434a0aced38950eb7d2f3f169fb37583cb083167d92d43cc0b9d3b79cb",
+          "changes": []
+        },
+        {
+          "name": "yS",
+          "utf16Range": [
+            900600,
+            901471
+          ],
+          "sha256": "d9b468e54840a888c16b597ddb5c4e68ec888f5c721694b77e03474160259dc3",
+          "changes": []
+        },
+        {
+          "name": "_S",
+          "utf16Range": [
+            898620,
+            899597
+          ],
+          "sha256": "291e256fe39ca5ddd464855ad3659d36d3d994ada17894ca9d651e2f119ba269",
+          "changes": []
+        },
+        {
+          "name": "Ct",
+          "utf16Range": [
+            3040,
+            4097
+          ],
+          "sha256": "7d860507dda54fbadfd9c324dc7dc577c29680c2a4ea66800836882d81a2c2f0",
+          "changes": []
+        },
+        {
+          "name": "kt",
+          "utf16Range": [
+            4844,
+            7227
+          ],
+          "sha256": "90274b271213763903d90f36f045b4858204154801e55fe0fbc2c7d08cfb038a",
+          "changes": []
+        },
+        {
+          "name": "Et",
+          "utf16Range": [
+            4455,
+            4670
+          ],
+          "sha256": "2ea0b88e90fa6e991d8341d8a018aea09f01c6035a0a3fe43682536334aa589d",
+          "changes": []
+        },
+        {
+          "name": "Ot",
+          "utf16Range": [
+            4781,
+            4840
+          ],
+          "sha256": "b8aa61c8b3c7b547381452e586d4eb5e968a847925eba1422a4c67d9adf02b78",
+          "changes": []
+        },
+        {
+          "name": "Dt",
+          "utf16Range": [
+            4674,
+            4777
+          ],
+          "sha256": "a29d94c3b984fd87baca3aac188c13f89ba06b0a0093637f2822e6df4c684cdd",
+          "changes": []
+        },
+        {
+          "name": "wt",
+          "utf16Range": [
+            4101,
+            4272
+          ],
+          "sha256": "556342bc8feb73667ef3f72df90d4716915986821d997a1346c3c11db5cc3214",
+          "changes": []
+        },
+        {
+          "name": "Tt",
+          "utf16Range": [
+            4276,
+            4451
+          ],
+          "sha256": "de8374558ef8551675332b44ee1fb9f84c8a2aa717f818bb503adfecbcfbe85a",
+          "changes": []
+        },
+        {
+          "name": "vx",
+          "utf16Range": [
+            616554,
+            616822
+          ],
+          "sha256": "9781266a77bab56f0728ab8739f9025a175e33e3b7834cb5c8af3c2ef93e1f5f",
+          "changes": []
+        },
+        {
+          "name": "bx",
+          "utf16Range": [
+            618122,
+            618578
+          ],
+          "sha256": "8f6e94b1a0bd3532fbc6ef7987657433287016d3d5b6413f30127c9eeafce3b9",
+          "changes": []
+        },
+        {
+          "name": "Oc",
+          "utf16Range": [
+            256587,
+            256925
+          ],
+          "sha256": "58376845a0caa0c830a686333ff1abfcbea9a64d10f6fb2bf349cf5e00816bdf",
+          "changes": []
+        },
+        {
+          "name": "Cv",
+          "utf16Range": [
+            490134,
+            490994
+          ],
+          "sha256": "9dd64f07f596200cfaf67644eaeb11f7e9cd5f982846dd746b7967b9a55b280d",
+          "changes": []
+        },
+        {
+          "name": "dv",
+          "utf16Range": [
+            465599,
+            467511
+          ],
+          "sha256": "ca0d0988a3b035e835786281baac47a50d5bf8a0eceac9c59d8edc06ea649c77",
+          "changes": []
+        },
+        {
+          "name": "uv",
+          "utf16Range": [
+            464588,
+            465595
+          ],
+          "sha256": "32dda64cf7cf73db20d6228029b5360d10ea98c0678ea1fefc60971011f5ffcd",
+          "changes": []
+        },
+        {
+          "name": "fv",
+          "utf16Range": [
+            467515,
+            469741
+          ],
+          "sha256": "4636deb7bfbdf27fa3a758e6c469f5c8f9ee9630c3da3845c2be8f55434b9de3",
+          "changes": []
+        },
+        {
+          "name": "pv",
+          "utf16Range": [
+            469745,
+            472156
+          ],
+          "sha256": "af67ce953bc20f64da6093073f4a35ffa4e85ed5fb2b92b95ef8a7180cece49f",
+          "changes": []
+        },
+        {
+          "name": "hv",
+          "utf16Range": [
+            473524,
+            476312
+          ],
+          "sha256": "0af2dbb029f2136b4bc99cd4f769121422ced50a1457102081f2fe5e69b44816",
+          "changes": []
+        },
+        {
+          "name": "mv",
+          "utf16Range": [
+            472160,
+            473520
+          ],
+          "sha256": "d097c28f4b957743709095bb21b9d2be0f0f4a3d071fdf90c28f3b377d389248",
+          "changes": []
+        },
+        {
+          "name": "JE",
+          "utf16Range": [
+            1461983,
+            1462472
+          ],
+          "sha256": "4d30cc0a988e68d334617ac016766539e8775e071f32d9037643d928ff1ba55d",
+          "changes": []
+        },
+        {
+          "name": "yD",
+          "utf16Range": [
+            1486167,
+            1486926
+          ],
+          "sha256": "10eaecea7d8dd34c5a34c9e43303af89cab055d0c9c8a0e91d9f27d61114081c",
+          "changes": []
+        },
+        {
+          "name": "TJ",
+          "utf16Range": [
+            2596379,
+            2598136
+          ],
+          "sha256": "850fb5bf26ee5352a855ff550af8ecda53ce7aeed72e057a45ea13c25bf48634",
+          "changes": []
+        }
+      ],
+      "substitutions": [
+        {
+          "utf16Range": [
+            2599288,
+            2599298
+          ],
+          "originalSha256": "29f548dfcce452806f8c7a1cf46a20d2270ed89a3a044e5157915d70e636c6c2",
+          "replacement": "(!replay&&EJ.is_live)",
+          "reason": "Do not label recorded profile as live"
+        },
+        {
+          "utf16Range": [
+            2599438,
+            2599499
+          ],
+          "originalSha256": "11d9358fad2eaade439229bdd566c0495c0272c1b5227a82c206d0386613ea73",
+          "replacement": "(replay?null:K.createElement(Vc,{liveStatus:`ON`,className:EJ.badge_live}))",
+          "reason": "A saved recording is not LIVE"
+        },
+        {
+          "utf16Range": [
+            2599605,
+            2599800
+          ],
+          "originalSha256": "5ce18ca8df0d9dfbe9aac93ee3c6d35d6c47756bec0254d7c5fba5b013223bfc",
+          "replacement": "((!replay||channelName)&&K.createElement(`p`,{className:EJ.channel},K.createElement(al,{verifiedMark:a.channel.verifiedMark,activatedChannelBadgeIds:a.channel.activatedChannelBadgeIds,isNemony:!0},a.channel.channelName)))",
+          "reason": "Do not invent an unavailable recording channel name"
+        },
+        {
+          "utf16Range": [
+            2600067,
+            2600171
+          ],
+          "originalSha256": "30629a3f93283a0da247730c17263dc6ccd7baf2c1e58b13497258a922e3653d",
+          "replacement": "(replay?recordedAtLabel:K.createElement(O,{i18nKey:`player.live_header.streaming`,components:{uptime:K.createElement(xK,null)}}))",
+          "reason": "Recorded date instead of a fictional live uptime"
+        },
+        {
+          "utf16Range": [
+            2600217,
+            2600290
+          ],
+          "originalSha256": "5301c223882dd340a6da24d457e68adb300aa545a09b81a84841c70ae1347197",
+          "replacement": "(replay?null:K.createElement(Vc,{liveStatus:e?`ON`:`OFF`,showLiveOff:!0,size:`large`}))",
+          "reason": "A saved recording is not LIVE"
+        },
+        {
+          "utf16Range": [
+            2602467,
+            2602540
+          ],
+          "originalSha256": "5301c223882dd340a6da24d457e68adb300aa545a09b81a84841c70ae1347197",
+          "replacement": "(replay?null:K.createElement(Vc,{liveStatus:e?`ON`:`OFF`,showLiveOff:!0,size:`large`}))",
+          "reason": "A saved recording is not LIVE"
+        },
+        {
+          "utf16Range": [
+            916682,
+            916974
+          ],
+          "originalSha256": "f3078106bcaca551a00e6679d072c9cf7fd82821874a33c5558c616bda11eee4",
+          "replacement": "controls??K.createElement(K.Fragment,null,K.createElement(`button`,{type:`button`,className:ES.button,onClick:ae,\"aria-haspopup\":`true`,\"aria-expanded\":_,\"aria-label\":$t(`live_chatting_header.more_menu`)},K.createElement(gS,null)),_&&K.createElement(bx,{buttonList:ge(),position:{top:`calc(100% - 2px)`,right:`8px`},minWidth:`284px`}))",
+          "reason": "Local replay menu slot, preserving original header geometry"
+        },
+        {
+          "utf16Range": [
+            1477358,
+            1486159
+          ],
+          "originalSha256": "54ff09d07ca22bc4e9160418b0ea3fdc2c82f787b016b3d00a62120cf9fdb0b8",
+          "replacement": "K.createElement(`div`,{...{className:JE.wrapper,ref:Ve},onScroll},K.createElement(`div`,{ref:He,className:JE.list_bottom}),children)",
+          "reason": "Local rows and optional scroll callback; no online list lifecycle"
+        },
+        {
+          "utf16Range": [
+            1635932,
+            1648758
+          ],
+          "originalSha256": "c942cb8d1e5fbf03a3551429c217ab1d7b96d8ea8c5d3b636c07044c91bee001",
+          "replacement": "header,list,floatingContent,K.createElement(`div`,{...{className:yD.area},'data-replay-search-area':replay?'':undefined},input)",
+          "reason": "Local header/list slots; original input in LIVE, user-requested local search replaces input/tools in replay"
+        }
+      ],
+      "messages": {
+        "version": 1,
+        "sourceFile": "index-C4sif-4p.js",
+        "sourceSha256": "40a9c54387bb40ed0136147ba5626647f138777def7cecc574b7a41536d982fc",
+        "offsets": "zero-based UTF-16 code units, end exclusive",
+        "components": [
+          {
+            "name": "JQ.shell",
+            "start": 3255112,
+            "end": 3260769,
+            "sha256": "6a5b1075bdf0cf8d5a7bd9b70e051c17f56d28f5442c33cf9ff97993baa69791",
+            "transformation": "recorded local slots"
+          },
+          {
+            "name": "JQ.textRow",
+            "start": 3255857,
+            "end": 3256113,
+            "sha256": "4194a7a1b642fc3f034aef9372cb9e001d240860396131288c4f38947952cd2c",
+            "transformation": "recorded scaling prop"
+          },
+          {
+            "name": "Nt",
+            "start": 9109,
+            "end": 9437,
+            "expressionStart": 9112,
+            "expressionEnd": 9437,
+            "sha256": "0ee93933e7ba6b300442f65d0755b69d59b8d25c595a0495222db903dedaf08f",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "TD",
+            "start": 1489337,
+            "end": 1489760,
+            "expressionStart": 1489340,
+            "expressionEnd": 1489760,
+            "sha256": "144cd56a4373625440c85c55241b8fa55cf82333671b382acf998e9d24b8fd4c",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "gS",
+            "start": 898052,
+            "end": 898616,
+            "expressionStart": 898055,
+            "expressionEnd": 898616,
+            "sha256": "f79d915fbb03dab4dfcd6515023f39dfa1a6757cd250dd7ba44eda910d1a8a99",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "Hc",
+            "start": 268095,
+            "end": 268637,
+            "expressionStart": 268098,
+            "expressionEnd": 268637,
+            "sha256": "84668fc5b7a576174f5b184615045a9cdf23dd68f856a4a948338ca911d52689",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "il",
+            "start": 270213,
+            "end": 270262,
+            "expressionStart": 270216,
+            "expressionEnd": 270262,
+            "sha256": "1d1cb9443c3c0571ff8600b5de1ffda002c300a7e53a17d7cdbcc699191885c8",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "rl",
+            "start": 270170,
+            "end": 270212,
+            "expressionStart": 270173,
+            "expressionEnd": 270212,
+            "sha256": "cc89ec503605fbdb0a9c1f63f279b5b894847a8b1e658fd4bd9de81f45fba397",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "tl",
+            "start": 269782,
+            "end": 269863,
+            "expressionStart": 269785,
+            "expressionEnd": 269863,
+            "sha256": "5d0569e044b9c852175240d7e433d70526b41b1a790322f6a34a1ab46d4540ba",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "al",
+            "start": 270263,
+            "end": 272748,
+            "expressionStart": 270266,
+            "expressionEnd": 272748,
+            "sha256": "9ae16ff87e933d1a1c948ab55eeb92beb797add29e0c6ed77150649c7af75ee0",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "l_",
+            "start": 407913,
+            "end": 408313,
+            "expressionStart": 407916,
+            "expressionEnd": 408313,
+            "sha256": "1412546b609a42ec03d8f542c5b8b7b4d7ce602b5ec18455b5ff3cc7958514ed",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "u_",
+            "start": 408314,
+            "end": 408582,
+            "expressionStart": 408317,
+            "expressionEnd": 408582,
+            "sha256": "e79b5058c2e460c79e90147c0f85683dccb418542e37dba2bf953947bf0c9c21",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "d_",
+            "start": 408583,
+            "end": 409603,
+            "expressionStart": 408586,
+            "expressionEnd": 409603,
+            "sha256": "c2fbc66e27f04c48b7aef4f4f7cbf937c1752cef307d9ce29943f7f56dbc893d",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "f_",
+            "start": 409604,
+            "end": 410365,
+            "expressionStart": 409607,
+            "expressionEnd": 410365,
+            "sha256": "9fe49f5f0616572b71dc12231ef292fc65736b5dd4c5ec8626320951ede71907",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "h_",
+            "start": 412434,
+            "end": 413427,
+            "expressionStart": 412437,
+            "expressionEnd": 413427,
+            "sha256": "ceab8af9e4bb5335fed7cb3a7a4b57dd7d7991e4f49056e70e4dbccfef1a5b4c",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "v_",
+            "start": 414387,
+            "end": 415068,
+            "expressionStart": 414390,
+            "expressionEnd": 415068,
+            "sha256": "e785006e0986583b3c014af38d954f2a78f6afe225a34dbb4c2172b4ea005473",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "Hu",
+            "start": 297366,
+            "end": 297440,
+            "expressionStart": 297369,
+            "expressionEnd": 297440,
+            "sha256": "33a80214eed87f97b3e18c30482f3723736e13ac3ddeadce8e4dfd4c27ab3115",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "nv",
+            "start": 453510,
+            "end": 453515,
+            "expressionStart": 453513,
+            "expressionEnd": 453515,
+            "sha256": "4a44dc15364204a80fe80e9039455cc1608281820fe2b24f1e5233ade6af1dd5",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "rv",
+            "start": 453516,
+            "end": 455192,
+            "expressionStart": 453519,
+            "expressionEnd": 455192,
+            "sha256": "44fdc2e96f22ec664c9628ce213c0cc1a5582a2299c3bf8406b3744ff864ca87",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "iv",
+            "start": 455193,
+            "end": 455416,
+            "expressionStart": 455196,
+            "expressionEnd": 455416,
+            "sha256": "2e31adfcb45dad7a5d0ff4e45dfc1cee8306f395c479b5a7c4e9d15787169ae1",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "av",
+            "start": 455417,
+            "end": 462538,
+            "expressionStart": 455420,
+            "expressionEnd": 462538,
+            "sha256": "367b1fb543bbe75d9d1e679ff4e16863d5d117a4fcd01be9d5713df86afc5e21",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "Ay",
+            "start": 514422,
+            "end": 514652,
+            "expressionStart": 514425,
+            "expressionEnd": 514652,
+            "sha256": "0dab063a31898c832690bf9dfba90efc7c831e870b0b3e695cc2d51b0dab7b02",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "jy",
+            "start": 514653,
+            "end": 514709,
+            "expressionStart": 514656,
+            "expressionEnd": 514709,
+            "sha256": "1ad87711dc65411853db53b6084e3190f22d8f7ba9d9c1aa7f3e888cd16b2820",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "Iy",
+            "start": 514989,
+            "end": 515058,
+            "expressionStart": 514992,
+            "expressionEnd": 515058,
+            "sha256": "7fde0e85e0aad6693b8c3fdf9418cd999d670164364f8f475c7184c5ee8dedc4",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "aC",
+            "start": 1049556,
+            "end": 1050019,
+            "expressionStart": 1049559,
+            "expressionEnd": 1050019,
+            "sha256": "fa3e0aa7f388105745d9e8473938b6778ffda85c8335a33331710c608315d70d",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "oC",
+            "start": 1050020,
+            "end": 1050157,
+            "expressionStart": 1050023,
+            "expressionEnd": 1050157,
+            "sha256": "ed4645a590cea0a3c3c595c62f9b476268d08b5dc232be31bfa7f86f6d98882a",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "sC",
+            "start": 1050158,
+            "end": 1056179,
+            "expressionStart": 1050161,
+            "expressionEnd": 1056179,
+            "sha256": "e82026f79719753f1d45b19d43883218ae896cb9574cf6bbd79ef59568c15a7e",
+            "transformation": "verbatim expression"
+          },
+          {
+            "name": "qQ",
+            "start": 3250807,
+            "end": 3251249,
+            "expressionStart": 3250810,
+            "expressionEnd": 3251249,
+            "sha256": "0e402148487f6111ada21720ce9840ff851948a5673fd587d757fe24b283473c",
+            "transformation": "verbatim expression"
+          }
+        ],
+        "substitutions": [
+          {
+            "start": 3255252,
+            "end": 3255290,
+            "originalSha256": "45e2488c9b26b43255d39fa5f3f687135d062e3863083ab5f6f5f8fd189532fd",
+            "replacement": "title",
+            "reason": "local replay title slot"
+          },
+          {
+            "start": 3255292,
+            "end": 3255395,
+            "originalSha256": "9968ee38af2020d82385130d03aecd3b681c57f1df20fa83f6c41795ee26e4e2",
+            "replacement": "headerControls,onClose?K.createElement(`button`,{type:`button`,className:qQ.close_button,onClick:re},K.createElement(TD,null)):null",
+            "reason": "local header controls and optional close action"
+          },
+          {
+            "start": 3255475,
+            "end": 3255501,
+            "originalSha256": "5d9f17379aa140ff0ee75f6731bb34e3ac4813cb56b54e05e37b192fada29bde",
+            "replacement": "{className:qQ.list,ref:te,onScroll,style}",
+            "reason": "local virtual-list ref, scrolling and layout"
+          },
+          {
+            "start": 3255559,
+            "end": 3260493,
+            "originalSha256": "3f8443bd947edc5138826f655de9851e112127e1715462924a2c6b395c1aa37d",
+            "replacement": "children",
+            "reason": "local replay rows replace online loading, timing and donation dispatcher"
+          },
+          {
+            "start": 3260541,
+            "end": 3260637,
+            "originalSha256": "a5a25c072ece5e0d6a19f233d50675de521891ef32c1730e01edb1efe2a77f1c",
+            "replacement": "floatingContent",
+            "reason": "local floating controls slot"
+          },
+          {
+            "start": 3260639,
+            "end": 3260705,
+            "originalSha256": "d8326c921f55392db2eff118b17c560ca1799965a9eafdeec6742b4d51191596",
+            "replacement": "footer",
+            "reason": "local status/footer slot outside list replaces online subscription gift popup"
+          },
+          {
+            "start": 3260706,
+            "end": 3260767,
+            "originalSha256": "57214de6e29a7a401edec314c7b61d0425994c7e28f98a603548e80894ef996e",
+            "replacement": "null",
+            "reason": "online donation toast omitted"
+          },
+          {
+            "start": 3255943,
+            "end": 3256111,
+            "originalSha256": "de4ff7e99156221ec65fcf8c65b0c115e4138c31f97d7438c35bad4d58938d9b",
+            "replacement": "{chatMessage:e,isCleanBotWorking:l,isReplayChat:!0,currentSelectedUserIdHashWithMessageTime:M,setCurrentSelectedUserIdHashWithMessageTime:N,listRef:te,closeAllMenus:ae,chatScale}",
+            "reason": "optional original popup-chat scaling prop"
+          }
+        ],
+        "translations": {
+          "badge.tooltip.donation_recent_suffix": "- 최근 후원 인증",
+          "common.name.blind.empty_badge_slot": "빈 배지 슬롯",
+          "common.name.blind.verified_mark": "인증 마크",
+          "live_chatting_message.cleanbot_detected": "클린봇이 부적절한 표현을 감지했습니다.",
+          "live_chatting_message.deleted_emoticon": "삭제된 이모티콘입니다.",
+          "live_chatting_message.donation_channel_subscription_gift": "{{giftTierName}}구독권 {{quantity}}개를 채널에 선물하였습니다.",
+          "live_chatting_message.donation_cheese": "치즈를 후원했습니다.",
+          "live_chatting_message.donation_cheese_with_amount": "{{payAmount}} 치즈를 후원했습니다.",
+          "live_chatting_message.donation_label_chat": "(채팅 후원)",
+          "live_chatting_message.donation_label_mission": "(미션 후원)",
+          "live_chatting_message.donation_label_mission_participation": "(미션 참여)",
+          "live_chatting_message.donation_label_party": "(파티 후원)",
+          "live_chatting_message.donation_label_subscription": "(구독)",
+          "live_chatting_message.donation_label_subscription_gift": "(구독 선물)",
+          "live_chatting_message.donation_label_video": "(영상 후원)",
+          "live_chatting_message.donation_subscription_months": "{{month}}개월 동안 구독 중이에요 🎉",
+          "live_chatting_message.donation_viewer_subscription_gift": "{{receiverNickname}}님에게 {{giftTierName}}구독권을 선물하였습니다!",
+          "live_chatting_message.message_blinded": "메시지가 블라인드 처리되었습니다.",
+          "live_chatting_username.chzzk_operator": "치지직 운영자",
+          "live_chatting_username.first_donation_badge_prompt": "첫 후원하고 특별한 배지를 획득하세요!",
+          "live_chatting_username.go_to_donate": "후원하러 가기",
+          "live_chatting_username.months_subscribed": "{{count}}개월 구독",
+          "live_chatting_username.subscriber": "구독자",
+          "live_chatting_username.tier_fan": "팬",
+          "live_chatting_username.tier_neon_fan": "형광팬",
+          "vod.chatting.loading": "열심히 불러오는 중..",
+          "vod.chatting.replay_header_title": "라이브 채팅 다시보기",
+          "vod.chatting.slow_mode_on": "<em>{{sec}}</em> 저속 모드 ON"
+        },
+        "boundaries": {
+          "original": "verbatim React message/nickname/badge/name/tooltip expressions; original VOD shell with recorded slots",
+          "local": "React, ReactDOM portal, classnames, locale interpolation, read-only atom/theme/router adapters and local nickname callback",
+          "disabled": [
+            "online chat connection",
+            "account access",
+            "badge editor",
+            "profile API popup",
+            "emoji purchase",
+            "donation and gift UI",
+            "online badge cache loader"
+          ],
+          "input": "Caller supplies sanitized original-shaped profile/content and locally owned image URLs; av recomputes display badges from profile via rv"
+        },
+        "cssFamilies": [
+          "189hq",
+          "w9pvh",
+          "1mc5x",
+          "1iatj",
+          "1nwpy"
+        ],
+        "moduleSha256": "9cfd5f9286472d1bb7993a2205c831f7a0be065e099e9bed8c91842f108bf04a"
+      },
+      "moduleSha256": "0a81f840aa60fbc220111c1163abe117830f3d4385be3ebcb53a9cace6b95b63",
+      "messagesSha256": "050bb3a1da123c4f94204091e0b23f66563b9928ced31e090dfe40a2b7e9d84c",
+      "states": "Synthetic local channel and text messages; original live header, controls, list and logged-out input. Replay only replaces input/tools with local body/nickname search; no online commerce, account, profile or message transport."
+    },
+    "cssMappings": [
+      {
+        "original": "@import \"https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css\";",
+        "replacement": "",
+        "reason": "Unused full-site font import; player/chat retain their original system and local Sandoll fonts"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd0.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd0.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd1.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd1.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd2.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd2.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd3.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd3.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd4.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd4.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd5.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd5.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd6.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd6.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd7.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd7.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd8.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd8.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd9.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd9.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd10.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd10.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd11.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd11.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd12.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd12.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd13.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd13.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd14.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd14.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd15.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd15.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd16.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd16.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd17.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd17.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd18.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd18.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd19.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd19.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd20.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd20.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd21.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd21.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd22.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd22.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd23.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd23.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd24.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd24.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd25.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd25.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd26.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd26.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd27.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd27.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd28.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd28.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd29.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd29.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd30.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd30.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd31.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd31.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd32.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd32.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd33.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd33.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd34.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd34.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd35.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd35.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd36.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd36.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd37.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd37.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd38.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd38.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd39.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd39.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd40.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd40.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd41.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd41.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd42.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd42.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd43.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd43.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd44.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd44.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd45.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd45.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd46.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd46.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd47.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd47.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd48.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd48.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd49.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd49.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd50.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd50.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd51.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd51.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd52.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd52.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd53.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd53.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd54.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd54.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd55.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd55.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd56.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd56.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd57.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd57.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd58.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd58.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd59.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd59.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd60.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd60.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd61.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd61.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd62.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd62.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd63.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd63.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd64.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd64.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd65.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd65.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd66.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd66.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd67.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd67.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd68.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd68.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd69.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd69.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd70.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd70.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd71.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd71.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd72.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd72.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd73.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd73.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd74.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd74.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd75.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd75.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd76.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd76.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd77.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd77.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd78.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd78.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd79.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd79.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd80.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd80.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd81.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd81.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd82.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd82.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd83.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd83.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd84.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd84.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd85.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd85.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd86.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd86.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd87.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd87.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd88.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd88.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd89.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd89.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd90.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd90.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd91.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd91.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd92.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd92.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd93.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd93.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd94.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd94.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd95.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd95.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd96.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd96.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd97.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd97.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd98.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd98.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd99.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd99.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd100.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd100.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd101.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd101.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd102.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd102.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd103.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd103.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd104.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd104.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd105.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd105.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd106.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd106.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd107.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd107.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd108.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd108.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd109.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd109.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd110.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd110.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd111.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd111.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd112.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd112.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd113.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd113.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd114.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd114.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd115.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd115.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd116.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd116.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd117.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd117.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd118.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd118.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/resource/font/SD/woff2/SDNemony2dBasicBd/SDNemony2dBasicBd119.woff2",
+        "replacement": "/assets/SDNemony2dBasicBd119.woff2",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/glive/image/icon_official_mark.png",
+        "replacement": "/assets/icon_official_mark.png",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/glive/image/icon_official_mark.png",
+        "replacement": "/assets/icon_official_mark.png",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/glive/image/icon_official_mark.png",
+        "replacement": "/assets/icon_official_mark.png",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      },
+      {
+        "original": "https://ssl.pstatic.net/static/nng/glive/image/icon_official_mark.png",
+        "replacement": "/assets/icon_official_mark.png",
+        "reason": "Local URL only; original asset bytes and all CSS presentation declarations unchanged"
+      }
+    ],
+    "expressions": {
+      "live": {
+        "file": "index-C4sif-4p.js",
+        "utf16Range": [
+          2678932,
+          2682880
+        ],
+        "sha256": "b27ae6d89897a00c1ccb46d6fcb30f6f2065f6a4ada877f15c8ba032e70baa87",
+        "htmlSha256": "f001bba9e849e30ac20a3009720e0251f09659b7426312be269be96d0bc7dffb"
+      },
+      "vod": {
+        "file": "index-C4sif-4p.js",
+        "utf16Range": [
+          3220530,
+          3224017
+        ],
+        "sha256": "813ab70aa24aca855c99b129341045d149910b254ba6419516433ed29fea8eac",
+        "htmlSha256": "5caddacc6aa699e4015f3d4d683f3a3cab6666b58018c2e1bb07b5008575b5e5"
+      },
+      "liveBadge": {
+        "file": "index-C4sif-4p.js",
+        "utf16Range": [
+          2676686,
+          2677356
+        ],
+        "sha256": "b1efc9a7a274f92f34b2cdd37db28fb3af5c2ae9cceaabf69cc57b3b4fe18d5a",
+        "htmlSha256": "7604a0ac8e358b6dfbe9807fde6f3282822c3b10d64c986fc68641c9241a9059"
+      }
+    },
+    "svgRanges": {
+      "kY": [
+        2654015,
+        2655346
+      ],
+      "AY": [
+        2655347,
+        2656005
+      ]
+    },
+    "scope": "LIVE/VOD controls; original broadcast-info portal and chat shell/header/menu/rows. LIVE retains logged-out input; VOD replaces the input/tool row with local body/nickname search. Synthetic fixture data only; no online account, commerce, chat transport or recording.",
+    "hostChanges": "Document/iframe geometry, local media/fixture binding, original LIVE no-ad/no-poster state and LIVE/header portals. Original CSS only has recorded local asset URL mappings and unused full-site font import omission. User-requested adaptations are separate: replay-only footer/search, detailed original live header in both widths, and hiding only the floating mute notice (not the volume controls or muted state).",
+    "missingOnlineDependencies": "121 original Sandoll WOFF2 files, original default profile and badge are local. Unused full-site resources remain blocked. Login, chat/profile transport and commerce actions are deliberately disconnected.",
+    "redistributionPermission": "not_assumed"
+  },
+  "files": [
+    {
+      "file": "assets/player-vendor-BYg0wCyN.js",
+      "sha256": "3add7ef97995bc4e7052e03c84c18e9fe34d5d6212e4672c6f5f76412c9147bc",
+      "bytes": 6634657
+    },
+    {
+      "file": "assets/common-vendor-pcHQV1G2.js",
+      "sha256": "2801491c851815a10c8f5afcbbbd448fbd861e6e3b690adcd3cb8f1cda1ccea0",
+      "bytes": 625188
+    },
+    {
+      "file": "assets/rolldown-runtime-CJJwijRH.js",
+      "sha256": "0c0bf430afd3b71beff576c47908b01139baba43f826f93f587baaccb6e3a378",
+      "bytes": 1273
+    },
+    {
+      "file": "assets/player-vendor-Ct4cRQDi.css",
+      "sha256": "949d15281ab5bf7daf8727043fae36bf5239826bbd5c179477232819102423f3",
+      "bytes": 244798
+    },
+    {
+      "file": "assets/vendor-DVDNLy6N.css",
+      "sha256": "f1e7912437519b86ba1473246bc0e1dbeaea0715a5263e531bdd35f00c625ee9",
+      "bytes": 430477
+    },
+    {
+      "file": "assets/index-2Gtwn4qD.css",
+      "sha256": "6b341bb079e0ffe182caaf5437783a1f2a05ffdd27e4224b1a6a6a43b1ec78f6",
+      "bytes": 1494632
+    },
+    {
+      "file": "assets/date-vendor-DhkCJ9xZ.js",
+      "sha256": "c6326ff4d567fb5425aa5890231224c5a882ec315b453676b50edc90eb076a81",
+      "bytes": 845136
+    },
+    {
+      "file": "assets/default_profile_dark.png",
+      "sha256": "e014ac6dce3ff3baac938dcaaff9c868ca615d8f89a76e7469b53e7442efc37a",
+      "bytes": 1748
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd.woff2",
+      "sha256": "c65b015e1e40e122e59b6fa4eab6ade82d56129bd4fae3fb0022da9570baee32",
+      "bytes": 848308
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd0.woff2",
+      "sha256": "c87e5a7cb834aa52ee635aa27926baa1ba1eb30a278cf46df4146472a80454fe",
+      "bytes": 7652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd1.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd10.woff2",
+      "sha256": "49cd920a0b95ede8494b2015ede908acc5c3887f7f70ba3ccc66df4a6ad079f7",
+      "bytes": 17008
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd100.woff2",
+      "sha256": "1248042dc88bf8c44b343e6a6e185d15fa9d22089daacfd1748b12ed6297a085",
+      "bytes": 6960
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd101.woff2",
+      "sha256": "e1ad44f2e5d78afef0cf0c957b5d9c2a50db5cba5ecd3e86d32c0b1f8fd1dec8",
+      "bytes": 6436
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd102.woff2",
+      "sha256": "dfb3a9e48c1f45d065716ef780c3eee1f4e530f21bc2ab2ec00c655c30c0819e",
+      "bytes": 7864
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd103.woff2",
+      "sha256": "84765c596e0b36e1a57fe61b3026c10fdea640d86eab93cfc1db34f416236742",
+      "bytes": 8600
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd104.woff2",
+      "sha256": "64895633e57ff20b688274a2f4a2abfddf508bdb61a6c52cf009499cc12dffc0",
+      "bytes": 8136
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd105.woff2",
+      "sha256": "2fab3c887766dc1e29a558292bfdc9bbaa12d5275bf2e95e42bf330316088427",
+      "bytes": 9048
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd106.woff2",
+      "sha256": "2eb4f1189c0fc4dd9ab81c9a90f0feba5cd4ad9b6fd2aa9d1a44e00ab86a6eae",
+      "bytes": 9212
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd107.woff2",
+      "sha256": "a824623d8712f9c38cf6f0f6781253b5ad3d70a7b9e646062527e7d758f283d3",
+      "bytes": 10960
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd108.woff2",
+      "sha256": "d7f2cc561015531fc0f579fbdca598a3ce8d82ea3ac8fed2f5bae8b321c36173",
+      "bytes": 10972
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd109.woff2",
+      "sha256": "199bc378d45a721c4c06a90907ee75707cf1247124d40d11e9d8429f58ddaa8e",
+      "bytes": 11620
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd11.woff2",
+      "sha256": "d1d9ced5fe50b7ecf5ca6a20798b632a48b25042dfbc8b94665941b4dbba5a7a",
+      "bytes": 18712
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd110.woff2",
+      "sha256": "8f478ae539964695d54519437b0e537d19a6ed585cb2effc0eea0360c966c64a",
+      "bytes": 11596
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd111.woff2",
+      "sha256": "9a5bfbe88c4166b5c3003f0ef865f4095d6a3d329d73824fef65f2178697b42f",
+      "bytes": 11264
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd112.woff2",
+      "sha256": "5fe3aaea50af59398007a17cbedabea3a4ad8d88164be82ab06f9429877324fd",
+      "bytes": 10408
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd113.woff2",
+      "sha256": "534d3090510f9a245d843971a40ae9f9293f3b06284179fd39ff5493a7e201ab",
+      "bytes": 11208
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd114.woff2",
+      "sha256": "521b2eb8d2e6d9cb6a64afb6d3b12f03eb74532627406b353dad4cc77b9eedd0",
+      "bytes": 10872
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd115.woff2",
+      "sha256": "ce5e3d1932c103057869cee02c8ffcaaddb93a2e322162537bbfcaace7b3efb0",
+      "bytes": 10948
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd116.woff2",
+      "sha256": "0981ea237a17fa51108d1fb51409e5c0fea84fa4d0895c1d5b251df2076caf6b",
+      "bytes": 10396
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd117.woff2",
+      "sha256": "e024fac36d7b6f1e26b426c78514584f4826858cf2afcccf30de71239c9ea6b8",
+      "bytes": 9928
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd118.woff2",
+      "sha256": "d5282e5da46014c1e0557be90b2e913f7d9ef1365516d2744367e7d99ba6a351",
+      "bytes": 9076
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd119.woff2",
+      "sha256": "c077efb06af040c6adf0970722af07eeb84a42f6786d9769a75a290d8fe0d0be",
+      "bytes": 10400
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd12.woff2",
+      "sha256": "96eab26edcc9e72bf6683e7923cf59c2ef98a1e96554ffe630dafbe7daa5967b",
+      "bytes": 18776
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd13.woff2",
+      "sha256": "31eda2a3dec1a15e60f3ab9fbceef7cf14c2d4df6e289d53b21cda6498631c6a",
+      "bytes": 17228
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd14.woff2",
+      "sha256": "7679ae78cad0384e4e8c6c496cc26e4ddcace7c512318e07552c859d074a066f",
+      "bytes": 17980
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd15.woff2",
+      "sha256": "8044e8a7ddb289c3816d50e7abbe0761566c38309b256c7aa83f1fca45e7e4b3",
+      "bytes": 18052
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd16.woff2",
+      "sha256": "8d2cf2f11d9b437546b2035600ac8231a324ce51fc1f38957889851f9c8056af",
+      "bytes": 17568
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd17.woff2",
+      "sha256": "62e365636332c4c5e7fee4a8dc86163cb93de0caf38ade0fb788879d853e9d9b",
+      "bytes": 19664
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd18.woff2",
+      "sha256": "e5def566cbccba209ecb68e76c5bd97b44e09bb2dc1a74f59d19123b0ff6bf9e",
+      "bytes": 21088
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd19.woff2",
+      "sha256": "f4b2ceeecd0a7a9473ce5419124cc2f983394df9c939eafbda99a3cf28acfc5e",
+      "bytes": 19664
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd2.woff2",
+      "sha256": "39cf3f462627133de4bbba1dcdae2e5bad03aec4e9fe1b3ea2ddc5920e3fc092",
+      "bytes": 13096
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd20.woff2",
+      "sha256": "91b314aaced838113565c22cab4e5b62d8e7e45f57bd2df4361309260d55db1e",
+      "bytes": 18924
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd21.woff2",
+      "sha256": "3286e30bbcb573cbe94d1b6ebd00b5d487fb64f0cd4a2acaa4e7a0dd0f03ce5e",
+      "bytes": 18440
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd22.woff2",
+      "sha256": "9a816cfc227e4a34597e8770123a7811825f767546aca40f4b8e0195ddaf2fb9",
+      "bytes": 20360
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd23.woff2",
+      "sha256": "3de8b9e1610b34c5a328c1e81f3bbb0cf2d3b225a0d1a87fbcea491f37258bde",
+      "bytes": 17396
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd24.woff2",
+      "sha256": "938f795502ebf45731a7dff5b9139dd4213c4658bda9ccf4bdce5fff3728748b",
+      "bytes": 19280
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd25.woff2",
+      "sha256": "f71e5301742cd26d443586118b19b8963ec790270ac26956db4e2e52067dc953",
+      "bytes": 17864
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd26.woff2",
+      "sha256": "11a714ea83321fcb70d370d64b38c9cb58342c19db0697481e4c6b546a9d2fce",
+      "bytes": 17928
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd27.woff2",
+      "sha256": "a02363d9540ea0b1c9b9daf17639c1086066554ba6c4ff4621f4d8f02de70b97",
+      "bytes": 18956
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd28.woff2",
+      "sha256": "9b661949aef6454bfb0770c372ea44cfb2b43515b992fa408cfead98616b96de",
+      "bytes": 17860
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd29.woff2",
+      "sha256": "d112a0bedf3ccdafba8af1d162c1f1830ef12f219800f2e2115c73c4b202fac1",
+      "bytes": 22240
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd3.woff2",
+      "sha256": "4e7050ae978354bb05cdfca31d7ae1056dbbefa5cd83aea8040eabb11f610b88",
+      "bytes": 17272
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd30.woff2",
+      "sha256": "f418d5b78d3336bcc5abe40e0f9a40e911d26466b8ba232808db584e6fc65c1e",
+      "bytes": 17796
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd31.woff2",
+      "sha256": "8fb867e4f18317933731d926c01223c31f83421e8c975e7f76606fb58540bf18",
+      "bytes": 16996
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd32.woff2",
+      "sha256": "2562b23a101b3b8cbed1783ad8589242a6c8bd30899c42cc6aea17ac28730bab",
+      "bytes": 19548
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd33.woff2",
+      "sha256": "814c99e521b8cef12fd60b2d604741c973c4592c49845d9661f8e3903c946748",
+      "bytes": 18316
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd34.woff2",
+      "sha256": "cce1591f6708f94d522bafb866c4debf2f1f709c8fc903da1f9bcaa1470e5039",
+      "bytes": 18464
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd35.woff2",
+      "sha256": "67791c712c71a54d8e48e254adac7dba8c699497461a6f8d64f5d7685ddaf195",
+      "bytes": 19136
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd36.woff2",
+      "sha256": "4b565f4c42a05bde30bfd2ee2db3deb465d60afe7e6829f7c823db1de61b6923",
+      "bytes": 17028
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd37.woff2",
+      "sha256": "80e567201333f40bd8271eb6a5bd99b5f46eb479e83cd895f7e34d4b849b40ad",
+      "bytes": 16968
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd38.woff2",
+      "sha256": "ddfaf5b5d1fbb9b07394e34c1b2cd6b05eca82ea97a75bef9af1968b1c8457fd",
+      "bytes": 14316
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd39.woff2",
+      "sha256": "faf15ee51700584c7c4ff292d1fbe7f686baa0a7cda02b2f22c84c3cfdb0b634",
+      "bytes": 17300
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd4.woff2",
+      "sha256": "4f1955736387e2cf98c96dcbe08db7249523af803a64a7a173b4f78ad74461dd",
+      "bytes": 17152
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd40.woff2",
+      "sha256": "35430545a79d38b060b42e844b6320ac3eaae23ce069b3155116226a563faad3",
+      "bytes": 16596
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd41.woff2",
+      "sha256": "6765f0a7ffc8014728874492590c184ab6ce6e619d3011287952bad8ec7f417c",
+      "bytes": 15260
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd42.woff2",
+      "sha256": "cae9025c03b1498fd97f6a2f2a8718832c2f09fa6e258a6a6c9cab017b693974",
+      "bytes": 17492
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd43.woff2",
+      "sha256": "5089992a62c96bb746e1abc49adf7c687af6c84504a103e87e5f43f505556258",
+      "bytes": 17468
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd44.woff2",
+      "sha256": "4ace28e0b1da7e23ea8d765c43c0f59205b6637dbea513ba6e3c4a44ca7947ec",
+      "bytes": 17232
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd45.woff2",
+      "sha256": "f72b94c6a14eec3ad030bf8d9afa3312f93955ebbc68c7b21dc94c1189e30915",
+      "bytes": 16696
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd46.woff2",
+      "sha256": "b85a4ce7079fd7497c60b6d4431a946138e3370ed90b423c15d4bb229dad1609",
+      "bytes": 14828
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd47.woff2",
+      "sha256": "3777e5913bf6e9c103a8940483e07b1db02b228fffb7a8939a9762ef84509d7e",
+      "bytes": 17212
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd48.woff2",
+      "sha256": "2b5a85f188db9d5f695a4f70a33a8b76d06c954c781f68cefbf9ef3aedbf0010",
+      "bytes": 13304
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd49.woff2",
+      "sha256": "938883ed734ede6908c80a093dd7fb341424b2d199f06290a74ca631b8f8506f",
+      "bytes": 16236
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd5.woff2",
+      "sha256": "897eed6df6129bc19284bc6fed9a38d0d54a6c463b53df55d6f89e8032315cf6",
+      "bytes": 15984
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd50.woff2",
+      "sha256": "df54a596aedf269f15be4ea3d846eb7515e7c9a3ca20a547a67991e64842f76d",
+      "bytes": 16680
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd51.woff2",
+      "sha256": "d3ba5c8a7931ba266559ddf0a9812c068db21e343075e87a658c75889d23e22d",
+      "bytes": 13628
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd52.woff2",
+      "sha256": "7cf9cf8089b08e381a834a3ec38ecf56c20012013747e12f26b82bec90085a99",
+      "bytes": 17044
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd53.woff2",
+      "sha256": "4773246127125887c27c7b7156f53eadc52272b270b363b94e523ceb910f8b6b",
+      "bytes": 15868
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd54.woff2",
+      "sha256": "7f697f993d7e3d65c4632bb9bf7969bfb3563b2186bed4ccca8d2874bb03cd2d",
+      "bytes": 16548
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd55.woff2",
+      "sha256": "12524ffcc0ce83b0bf856ca63d22ee6561a5d24ef7813ea68e7e7039ef308492",
+      "bytes": 17452
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd56.woff2",
+      "sha256": "74bd4218e346e01dbc48d03f7f813bf246e76079b3748d90f7db390b2934c368",
+      "bytes": 16192
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd57.woff2",
+      "sha256": "b64f14a316ff5fd1a8a61da8907570e276bb031f7b6a807f61234edb8a0427ed",
+      "bytes": 18276
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd58.woff2",
+      "sha256": "d6bed4737b7c0026f79d3b3a7616d3f94648a63875faaf0a51c80e300ac95026",
+      "bytes": 12820
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd59.woff2",
+      "sha256": "c9b624f1b76d9cd807085e684c048fe482e1272346defe9aaedd7f0d521a3465",
+      "bytes": 14820
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd6.woff2",
+      "sha256": "3f7bad5b10526e6adeafc79d744f6ceb87fe1a1bfec648f1c7e416954f802135",
+      "bytes": 16012
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd60.woff2",
+      "sha256": "a3affe33916ab92bbcc272ba5ee1b1de31a8c4068e992968825bb36fc3d06ea4",
+      "bytes": 15932
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd61.woff2",
+      "sha256": "a2cb584e0d40bfda628610daaee6b7da22511f4362ee07574231ffbcb2ec1fa0",
+      "bytes": 13516
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd62.woff2",
+      "sha256": "30f68a56882fd20a422cbe59b8a166f4cdcb14d371b1d46df11afb857967a342",
+      "bytes": 14360
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd63.woff2",
+      "sha256": "0379c965401d30f2cf150783ded917549a48eb25a266e34df7f84ba084c19a70",
+      "bytes": 12876
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd64.woff2",
+      "sha256": "2f65713be06d2b022ac166c699ef6aabfb1b1b1d7269076bc1bbc434bd023198",
+      "bytes": 12020
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd65.woff2",
+      "sha256": "bfa45aa0e81cbbc62dbee22d83f537afc78f866dbd9bb8db77ddb63ea6014bfd",
+      "bytes": 3132
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd66.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd67.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd68.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd69.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd7.woff2",
+      "sha256": "1e71d7789c4c53a93f69261865841ed6e4c43b88bb49cb023f3ec111db4ffcaf",
+      "bytes": 17660
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd70.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd71.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd72.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd73.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd74.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd75.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd76.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd77.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd78.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd79.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd8.woff2",
+      "sha256": "240227890c7b62b2999cf1f04d3daae9e690b207228e4158b85f569cad42e010",
+      "bytes": 18080
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd80.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd81.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd82.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd83.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd84.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd85.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd86.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd87.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd88.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd89.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd9.woff2",
+      "sha256": "22db00bf5d119d52509f0ab272a50eab55b20c3aecd58a4ff7d71a5208b83cc0",
+      "bytes": 16588
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd90.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd91.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd92.woff2",
+      "sha256": "89dfc0e87584b14ac2cb9301d28c026422e75dc3ed1a4cfb7b4af589c75f332c",
+      "bytes": 652
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd93.woff2",
+      "sha256": "795529f55a0fcede08a74cd3b8496d660ecf1ad2eeb8521d33ee4bd215cbd96f",
+      "bytes": 976
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd94.woff2",
+      "sha256": "797b375bc979daef7b2252952fc52c4396bb060b10a23cd24535a0ba32a248e7",
+      "bytes": 6428
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd95.woff2",
+      "sha256": "693b5915ec8b88ba5d70cfdc2b5496332893337ac876dfa73a70888392cc7444",
+      "bytes": 1336
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd96.woff2",
+      "sha256": "4825e1f71308f8fc8f1fabfa0a3bb03a689b902d3ea89d2714f8a87cb5dc219c",
+      "bytes": 3760
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd97.woff2",
+      "sha256": "7e635790eb25d57eb65c6638437ef12c97dde8fe7304e49c9891e5568f6158c4",
+      "bytes": 7672
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd98.woff2",
+      "sha256": "725580c68066cb5d5bd91feb05f15caa76a1250f70766b57a81b469c3d936b44",
+      "bytes": 7728
+    },
+    {
+      "file": "assets/SDNemony2dBasicBd99.woff2",
+      "sha256": "46686c0b262bf9d1580504ac1145f79429d5e49e7d0527647c4332c3b172278d",
+      "bytes": 8192
+    },
+    {
+      "file": "assets/vendor-DQYi7KBW.js",
+      "sha256": "26091b03855ec060b4584cafc8123f4fc9b6a16f3a42faf7bc22b0e9238a83de",
+      "bytes": 6297994
+    },
+    {
+      "file": "assets/icon_official_mark.png",
+      "sha256": "9e744d6406720d53a658f0e9923193f16c2e836095a443be9ada996274045af4",
+      "bytes": 60712
+    },
+    {
+      "file": "original-surfaces.js",
+      "sha256": "0a81f840aa60fbc220111c1163abe117830f3d4385be3ebcb53a9cace6b95b63",
+      "bytes": 387320
+    },
+    {
+      "file": "original-messages.js",
+      "sha256": "050bb3a1da123c4f94204091e0b23f66563b9928ced31e090dfe40a2b7e9d84c",
+      "bytes": 31521
+    },
+    {
+      "file": "replay-search.js",
+      "sha256": "2205ae8ec4d95c6f47127ca8f6ee80672ace7a167d28bbcc2f273da0c4dfcb9e",
+      "bytes": 2324
+    },
+    {
+      "file": "replay-search.css",
+      "sha256": "6c433602970dadc2cdf8be85bd4b649f657cd9225e64115a82c7af9d1ed0e5bc",
+      "bytes": 1204
+    },
+    {
+      "file": "player-adaptations.css",
+      "sha256": "780c1e824666b02a33826099027048182b66ceba39bcf23ab4cea191b5584c3e",
+      "bytes": 215
+    },
+    {
+      "file": "local-index.css",
+      "sha256": "9d230fae66a43b8ff6d8f1b14fa5ee442dad3d523c856516298d6e644afd2000",
+      "bytes": 1456290
+    },
+    {
+      "file": "recording-metadata.js",
+      "sha256": "a1eb4501280fd70094cf939581b0f5164b265bed27227a8982a376473e29966b",
+      "bytes": 1510
+    },
+    {
+      "file": "accepted-vod-template.js",
+      "sha256": "094379026d6080945c926b63d2a92f91a21fb956bb7fa0f2dece1a761fddb968",
+      "bytes": 4531
+    }
+  ],
+  "adaptations": "Saved recording metadata uses the original header; no live badge or invented viewers. Local replay adapter retains session isolation, clocks and privacy."
+}

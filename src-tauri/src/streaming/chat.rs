@@ -271,6 +271,13 @@ fn chat_messages(document: &Value) -> Option<&[Value]> {
 }
 
 pub(super) fn parse_message(message: &Value) -> Option<ChatEvent> {
+    parse_message_with_chat_channel(message, None)
+}
+
+pub(super) fn parse_message_with_chat_channel(
+    message: &Value,
+    chat_channel_id: Option<&str>,
+) -> Option<ChatEvent> {
     if message
         .get("msgStatusType")
         .or_else(|| message.get("messageStatusType"))
@@ -309,12 +316,40 @@ pub(super) fn parse_message(message: &Value) -> Option<ChatEvent> {
                 .as_u64()
                 .or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()))
         });
+    let mut rich = parse_rich(&profile, message.get("extras"), &text);
+    if rich
+        .as_ref()
+        .is_none_or(|rich| rich.nickname_color.is_none())
+    {
+        if let Some(color) = default_nickname_color(&profile, chat_channel_id) {
+            rich.get_or_insert_with(ChatRich::default).nickname_color = Some(color.into());
+        }
+    }
     Some(ChatEvent::Message {
         sender,
         server_time,
-        rich: parse_rich(&profile, message.get("extras"), &text),
+        rich,
         text,
     })
+}
+
+fn default_nickname_color(profile: &Value, chat_channel_id: Option<&str>) -> Option<&'static str> {
+    // CHZZK's public iv(profile, chatChannelId, v_.dark) algorithm. Never use
+    // the live channel ID, nickname, senderKey, or an unverified routing ID.
+    const COLORS: [&str; 40] = [
+        "#EEA05D", "#EAA35F", "#E98158", "#E97F58", "#E76D53", "#E66D5F", "#E16490", "#E481AE",
+        "#E481AE", "#D25FAC", "#D263AE", "#D66CB4", "#D071B6", "#AF71B5", "#A96BB2", "#905FAA",
+        "#B38BC2", "#9D78B8", "#8D7AB8", "#7F68AE", "#9F99C8", "#717DC6", "#7E8BC2", "#5A90C0",
+        "#628DCC", "#81A1CA", "#ADD2DE", "#83C5D6", "#8BC8CB", "#91CBC6", "#83C3BB", "#7DBFB2",
+        "#AAD6C2", "#84C194", "#92C896", "#94C994", "#9FCE8E", "#A6D293", "#ABD373", "#BFDE73",
+    ];
+    let channel = chat_channel_id.filter(|value| super::provider::valid_chat_channel_id(value))?;
+    let seed = profile
+        .get("nicknameColorSeed")?
+        .as_u64()
+        .filter(|seed| *seed < 40)?;
+    let sum = channel.encode_utf16().map(u64::from).sum::<u64>() + seed;
+    Some(COLORS[(sum % COLORS.len() as u64) as usize])
 }
 
 fn metadata_object(value: Option<&Value>) -> Option<Value> {
@@ -448,6 +483,8 @@ fn parse_rich(profile: &Value, extras: Option<&Value>, text: &str) -> Option<Cha
         .collect();
     ChatRich {
         nickname_color,
+        text_color: supplied_string(profile["title"].get("color")),
+        profile_url: supplied_string(profile.get("publicProfileUrl")),
         badges,
         emojis,
     }
@@ -523,6 +560,44 @@ impl Drop for ConnectionGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn default_nickname_color_uses_only_verified_chat_context_and_bounded_seed() {
+        let row = json!({"msgTypeCode":1,"msg":"ordinary","profile":{"nickname":"viewer","nicknameColorSeed":39}});
+        let rich =
+            |row: &Value, channel| match parse_message_with_chat_channel(row, channel).unwrap() {
+                ChatEvent::Message { rich, .. } => rich,
+                _ => panic!("expected message"),
+            };
+        assert!(rich(&row, None).is_none());
+        assert_eq!(
+            rich(&row, Some("A")).unwrap().nickname_color.as_deref(),
+            Some("#628DCC")
+        );
+        assert_eq!(
+            rich(&row, Some("B")).unwrap().nickname_color.as_deref(),
+            Some("#81A1CA")
+        );
+        for channel in ["", "../secret", "id?token=secret", "채팅"] {
+            assert!(rich(&row, Some(channel)).is_none());
+        }
+        for seed in [json!(-1), json!(40), json!(1.5), json!("2"), Value::Null] {
+            let mut bad = row.clone();
+            bad["profile"]["nicknameColorSeed"] = seed;
+            assert!(rich(&bad, Some("A")).is_none());
+        }
+        let mut explicit = row.clone();
+        explicit["profile"]["streamingProperty"] = json!({"nicknameColor":{"colorCode":"#123456"}});
+        assert_eq!(
+            rich(&explicit, Some("A"))
+                .unwrap()
+                .nickname_color
+                .as_deref(),
+            Some("#123456")
+        );
+        let serialized = serde_json::to_string(&rich(&row, Some("chat_A-123"))).unwrap();
+        assert!(!serialized.contains("chat_A-123"));
+        assert!(!serialized.contains("nicknameColorSeed"));
+    }
     #[test]
     fn parses_public_text_and_preserves_server_time() {
         let value = json!({"msgTypeCode":1,"msg":"hello","msgTime":1720000000123_u64,"profile":"{\"nickname\":\"viewer\"}"});

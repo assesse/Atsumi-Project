@@ -454,10 +454,38 @@ pub fn connect(
     window: &tauri::Webview,
     on_complete: impl FnOnce(Result<ExtensionLoadReport, StreamError>) + Send + 'static,
 ) -> Result<(), StreamError> {
-    use std::sync::{Arc, Mutex};
     if window.label() != super::browser::WINDOW_LABEL {
         return Err(load_error());
     }
+    connect_native(window, on_complete)
+}
+
+/// Only a native-created background receiver may restore a previously opted-in
+/// connection. This is never exposed as a remote-page installation command.
+#[cfg(windows)]
+pub(super) fn reconnect_background(
+    window: &tauri::Webview,
+    data_dir: &Path,
+    on_complete: impl FnOnce(Result<ExtensionLoadReport, StreamError>) + Send + 'static,
+) -> Result<(), StreamError> {
+    if !background_label(window.label()) || !reconnect_choice(data_dir)? {
+        return Err(load_error());
+    }
+    connect_native(window, on_complete)
+}
+
+fn background_label(label: &str) -> bool {
+    label
+        .strip_prefix("chzzk-auto-")
+        .is_some_and(|id| id.len() == 32 && uuid::Uuid::parse_str(id).is_ok())
+}
+
+#[cfg(windows)]
+fn connect_native(
+    window: &tauri::Webview,
+    on_complete: impl FnOnce(Result<ExtensionLoadReport, StreamError>) + Send + 'static,
+) -> Result<(), StreamError> {
+    use std::sync::{Arc, Mutex};
     let completion: Completion<ExtensionLoadReport> =
         Arc::new(Mutex::new(Some(Box::new(on_complete))));
     let window = window.clone();
@@ -536,7 +564,7 @@ fn align_and_complete(
     use windows::core::{Interface, HSTRING, PWSTR};
     static ORIGINALS: std::sync::OnceLock<std::sync::Mutex<NativeUserAgents>> =
         std::sync::OnceLock::new();
-    if view.label() != super::browser::WINDOW_LABEL {
+    if view.label() != super::browser::WINDOW_LABEL && !background_label(view.label()) {
         complete(&completion, Err(identity_error()));
         return;
     }

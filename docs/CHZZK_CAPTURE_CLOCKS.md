@@ -29,9 +29,9 @@
 
 ## 원본 압축 조각과 표시 시각의 대응
 
-`mse_presentation_v1`은 현재 녹화의 native 승인을 받은 정확한 영상/MediaSource에만 생성한다. `SourceBuffer.mode=segments`, `timestampOffset=0`, 원래 append window, 변경되지 않은 트랙·초기화·관측 훅을 요구한다. seek·일시정지·소스 교체·캡처 종료 상태에서는 매핑을 생성하지 않는다. Rust에서 `sourceId`를 활성 encoded 녹화의 소스 ID와 다시 대조하며 불일치는 `player_observation`으로 낮추고 source 매핑 필드를 제거한다.
+`mse_presentation_v1`은 현재 녹화의 native 승인을 받은 정확한 영상/MediaSource에만 생성한다. `SourceBuffer.mode=segments`, 유한한 `timestampOffset`, 원래 append window, 변경되지 않은 트랙·초기화·관측 훅을 요구한다. seek 중·소스 교체·캡처 종료 상태에서는 매핑을 생성하지 않는다. 단순 일시정지는 소스 매핑이나 녹화를 종료하지 않는다. Rust에서 `sourceId`를 활성 encoded 녹화의 소스 ID와 다시 대조하며 불일치는 `player_observation`으로 낮추고 source 매핑 필드를 제거한다.
 
-이 조건에서 관측한 `video.currentTime`은 원본 **표시 시각(PTS)**이다. 세그먼트 `sourceStartSeconds`는 원본 영상 DTS 원점으로 둘은 같은 종류의 값이 아니다. 현재 muxer는 DTS에서 원점을 빼고 각 샘플의 CTS(composition offset)는 그대로 보존한다. 따라서 다음 관계가 성립한다.
+2026-09-14 실제 CHZZK 관측에서 음수 offset이 확인됐다. 원본 **표시 시각(PTS)**은 `video.currentTime - 영상 SourceBuffer.timestampOffset`이다. encoded 시계는 변환된 값을 `sourceTimeSeconds`와 기존 시계 계약의 `mediaTimeSeconds`에 동일하게 저장한다. 이 모드의 `mediaTimeSeconds`를 DOM currentTime으로 역추론하지 않는다. 세그먼트 `sourceStartSeconds`는 원본 영상 DTS 원점으로 둘은 같은 종류의 값이 아니다. 현재 muxer는 DTS에서 원점을 빼고 각 샘플의 CTS(composition offset)는 그대로 보존한다. 따라서 다음 관계가 성립한다.
 
 `출력 PTS = 원본 표시 PTS − 세그먼트 DTS 원점`
 
@@ -39,7 +39,7 @@
 
 이 값은 수신 시점에 **이 사용자가 보던 영상 위치**의 관측이다. 메시지 작성자가 보던 프레임이나 송출 원본과의 인과관계, 화면 출력 장치의 지연까지 증명하지 않는다. 로컬 다시보기는 영상의 `currentTime`을 기준으로 채팅을 선택하므로 pause·seek·0.5~2배속에 동일하게 반응한다.
 
-MediaRecorder 대체 녹화의 `player_observation`에는 소켓 시각과 유효한 표시 위치는 남지만, 각 인코더 회전의 실제 출력 원점이 없다. 해당 녹화와 이전 기록의 동기화는 근사치다. 배속으로 녹화 자체가 변형되지 않도록 대체 녹화는 1배속 제한을 유지한다.
+과거 MediaRecorder 녹화의 `player_observation`에는 소켓 시각과 유효한 표시 위치는 남지만, 각 인코더 회전의 실제 출력 원점이 없다. 해당 녹화와 이전 기록의 동기화는 근사치다. 2026-09-14부터 새 녹화는 원본 저장 전용이며 MediaRecorder 자동 대체는 사용하지 않는다. 과거 녹화 파일은 수정하지 않는다.
 
 ## 라이브 배속
 
@@ -53,4 +53,4 @@ native가 승인한 encoded 녹화는 원본 압축 타임스탬프를 그대로
 
 이 선택 필드는 나중에 한 녹화 안의 특정 사용자 채팅 찾기, 닉네임 변경에도 같은 발신자의 메시지 모으기, 시간대별 채팅 수/구분 가능한 참여자 수를 계산하는 기초다. 녹화 사이의 동일 사용자 추적에는 사용할 수 없다. 일반 검색 결과에서 이 키를 불필요하게 화면에 노출하지 않는다.
 
-현재 수신 경로에는 의미가 확인된 시청자 수 관측값이 없다. 시청자 수, 전체 시청자 대비 채팅 참여율, 시청 유지율은 **unknown**이며 0이나 채팅 작성자 수로 대체하지 않는다. 향후 시청자 수를 추가하려면 이미 수신한 신뢰 가능한 데이터의 필드 의미, 관측 시각, 측정 간격, 누락 상태를 별도 버전형 관측으로 정의해야 한다. 이번 작업은 전체 분석 UI를 만들거나 새 통계 API를 호출하지 않는다.
+2026-09-13 후속 사용자 승인 구현에서 새 녹화의 시청자 수는 원본 페이지도 사용하는 공개 `polling/v3.1/channels/{channelId}/live-status` 메타데이터를 **10초마다** 쿠키·인증 헤더 없이 조회해 별도 버전형 `viewer-metrics.jsonl`에 저장한다. 기존 2초 DOM 관측은 공식 페이지의 30초 갱신 스냅샷을 반복할 수 있어 교체했으며 과거 행은 변경하지 않는다. 응답의 channelId/openDate로 같은 방송인지 확인하고, `cvExposure=false`, 실패·누락·세대 변경은 이전 값을 새 값처럼 쓰지 않고 **unknown**으로 남긴다. 조회 완료 시 같은 검증된 시계를 관측하며 실제 서버 집계 갱신이나 연속 관측을 보장하지 않는다. 녹화가 끝나면 조회도 중지하고 추가 미디어·소켓·계정/비공개 통계 API는 사용하지 않는다. 없던 과거 수치를 생성하거나 채팅 작성자 수로 대체하지 않는다. 공개 프로필 링크 보존도 후속 요청으로 추가되었으므로, senderKey 자체와 달리 선택적 profileUrl은 녹화 간 계정 연결이 가능한 식별 데이터다. 자세한 수집·보존·누락·개인정보 경계는 [채팅 표시·프로필·시청자 관측](CHZZK_CHAT_ENHANCEMENTS.md)을 따른다.

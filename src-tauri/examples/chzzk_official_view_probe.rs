@@ -1,11 +1,11 @@
-//! Explicitly requested public-channel viewing smoke test. Never starts recording.
+//! Public-channel viewing smoke test. Recording requires --record-30-seconds.
 //! Uses a temporary WebView profile and capture catalog, not Atsumi's DB/profile.
 //! cargo run --example chzzk_official_view_probe -- CHANNEL_URL [--standard-quality] [--connect-extension] [--remembered-reconnect] [--screenshot] [--chrome-identity] [--ack-network-notice]
 //! The optional flag clicks only the exact observed normal-quality choice once.
 use atsumi_lib::streaming::browser::{BrowserViewport, OfficialBrowser};
 use std::{
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
         Arc,
     },
     time::Duration,
@@ -137,6 +137,8 @@ fn observe_probe_messages(
     view: &tauri::Webview,
     standard: Arc<AtomicBool>,
     network: Arc<AtomicBool>,
+    recording_diagnostics: Option<std::path::PathBuf>,
+    confirmed_rates: Arc<AtomicU8>,
 ) -> tauri::Result<()> {
     view.with_webview(move |platform| unsafe {
         use webview2_com::{CoTaskMemPWSTR, WebMessageReceivedEventHandler};
@@ -153,6 +155,26 @@ fn observe_probe_messages(
                             .filter(|body| body.len() <= 65536)
                         {
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(json) {
+                                if value["kind"] == "view_probe" {
+                                    let bit = match value["probeRate"].as_f64() { Some(1.03)=>1, Some(2.0)=>2, Some(0.75)=>4, _=>0 };
+                                    confirmed_rates.fetch_or(bit, Ordering::Relaxed);
+                                }
+                                if value["kind"] == "encoded_begin" {
+                                    // Explicit short recording probe only: retain bounded
+                                    // codec headers for parser regression, never media URLs.
+                                    if let (Some(root), Some(tracks)) = (&recording_diagnostics, value["tracks"].as_array()) {
+                                        use base64::Engine;
+                                        for (index, track) in tracks.iter().take(2).enumerate() {
+                                            if let Some(init) = track["init"].as_str().filter(|s|s.len() <= 88000) {
+                                                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(init) {
+                                                    let path = root.join(format!("observed-init-{index}.mp4"));
+                                                    let _ = std::fs::write(&path, bytes);
+                                                    println!("{}", serde_json::json!({"kind":"observed_init", "path":path, "mime":track["mimeType"]}));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                                 if value["kind"] == "standard_quality_probe"
                                     && value["attempted"] == true
                                 {
@@ -164,6 +186,8 @@ fn observe_probe_messages(
                                     network.store(true, Ordering::Release);
                                 }
                                 if value["kind"] == "view_probe"
+                                    || value["kind"] == "original_capture_error"
+                                    || value["kind"] == "encoded_finish"
                                     || value["kind"] == "acl_probe"
                                     || value["kind"] == "standard_quality_probe"
                                     || value["kind"] == "network_notice_probe"
@@ -193,6 +217,7 @@ fn main() {
     ) = (false, false, false, false);
     let mut ack_network_notice = false;
     let mut remembered_reconnect = false;
+    let mut record_seconds = None;
     for flag in args {
         match flag.as_str() {
             "--standard-quality" if !standard_quality => standard_quality = true,
@@ -201,6 +226,7 @@ fn main() {
             "--chrome-identity" if !use_chrome_identity => use_chrome_identity = true,
             "--ack-network-notice" if !ack_network_notice => ack_network_notice = true,
             "--remembered-reconnect" if !remembered_reconnect => remembered_reconnect = true,
+            "--record-30-seconds" if record_seconds.is_none() => record_seconds = Some(30u64),
             _ => panic!("Only documented CHANNEL_URL probe flags are accepted"),
         }
     }
@@ -214,7 +240,13 @@ fn main() {
     let finished = Arc::new(AtomicBool::new(false));
     let deadline_finished = finished.clone();
     std::thread::spawn(move || {
-        let seconds = if remembered_reconnect { 90 } else { 60 };
+        let seconds = if record_seconds.is_some() {
+            150
+        } else if remembered_reconnect {
+            90
+        } else {
+            60
+        };
         std::thread::sleep(Duration::from_secs(seconds));
         if !deadline_finished.load(Ordering::Acquire) {
             eprintln!(
@@ -224,9 +256,28 @@ fn main() {
             std::process::exit(3);
         }
     });
-    let profile = tempfile::tempdir().unwrap();
-    let isolated_data_dir = profile.path().to_owned();
-    let host = Arc::new(OfficialBrowser::new(profile.path().to_owned()).unwrap());
+    let profile = tempfile::Builder::new()
+        .prefix("atsumi-original-receive-probe-")
+        .tempdir()
+        .unwrap()
+        .keep();
+    let isolated_data_dir = profile.clone();
+    let output_root = profile.join("capture");
+    std::fs::create_dir(&output_root).unwrap();
+    println!(
+        "{}",
+        serde_json::json!({"kind":"isolated_probe_directory", "path":profile, "recordRequested":record_seconds.is_some()})
+    );
+    let media_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../.runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/bin");
+    let media_tools = record_seconds.map(|_| atsumi_lib::streaming::browser_merge::MediaTools {
+        ffmpeg: media_bin.join("ffmpeg.exe"),
+        ffprobe: media_bin.join("ffprobe.exe"),
+    });
+    let host =
+        Arc::new(OfficialBrowser::new_with_media_tools(profile.clone(), media_tools).unwrap());
+    let test_result = Arc::new(AtomicBool::new(record_seconds.is_none()));
+    let completed_result = test_result.clone();
     let mut context = tauri::generate_context!();
     context.config_mut().app.windows.clear();
     context.config_mut().app.tray_icon = None;
@@ -238,6 +289,7 @@ fn main() {
             .title("Isolated CHZZK view probe").inner_size(1280.0, 800.0).visible(false).build()?;
         running.set_viewport(app.handle(), BrowserViewport {
             epoch: 0, request_sequence: None, x: 0.0, y: 0.0, width: 1280.0, height: 800.0, visible: true, clip: None,
+            ..Default::default()
         }).map_err(|error| std::io::Error::other(error.message))?;
         running.open(app.handle(), &input).map_err(|error| std::io::Error::other(error.message))?;
         let view=app.get_webview(atsumi_lib::streaming::browser::WINDOW_LABEL).unwrap();
@@ -257,13 +309,19 @@ fn main() {
         }
         let standard_attempted = Arc::new(AtomicBool::new(false));
         let network_notice_attempted = Arc::new(AtomicBool::new(false));
-        observe_probe_messages(&view, standard_attempted.clone(), network_notice_attempted.clone())?;
+        let confirmed_rates = Arc::new(AtomicU8::new(0));
+        observe_probe_messages(&view, standard_attempted.clone(), network_notice_attempted.clone(), record_seconds.map(|_| isolated_data_dir.clone()), confirmed_rates.clone())?;
         let app = app.handle().clone();
         let mut host = running.clone();
         std::thread::spawn(move || {
             let mut view = view;
-            for sample in 0..if remembered_reconnect { 20 } else { 10 } {
-                if sample == 10 {
+            let mut attempted_record = false;
+            let mut recording_began = None;
+            let mut stop_requested = false;
+            let mut checked_rates = 0;
+            let mut recording_verified = false;
+            for sample in 0..if record_seconds.is_some() { 45 } else if remembered_reconnect { 20 } else { 10 } {
+                if remembered_reconnect && sample == 10 {
                     let before = serde_json::to_value(host.snapshot().unwrap()).unwrap();
                     assert_eq!(before["extensionReconnectEnabled"], true, "explicit connection was not remembered");
                     host.shutdown_and_wait(&app);
@@ -281,7 +339,7 @@ fn main() {
                     view = app.get_webview(atsumi_lib::streaming::browser::WINDOW_LABEL).unwrap();
                     standard_attempted.store(false,Ordering::Release);
                     network_notice_attempted.store(false,Ordering::Release);
-                    observe_probe_messages(&view, standard_attempted.clone(), network_notice_attempted.clone()).unwrap();
+                    observe_probe_messages(&view, standard_attempted.clone(), network_notice_attempted.clone(), record_seconds.map(|_| isolated_data_dir.clone()), confirmed_rates.clone()).unwrap();
                     println!("{}",serde_json::json!({"kind":"remembered_reconnect","manualConnect":false,"freshHost":true,"freshChild":true}));
                 }
                 std::thread::sleep(Duration::from_secs(3));
@@ -332,10 +390,12 @@ fn main() {
                         publicNotices:document.querySelector('video')?[]:[...document.querySelectorAll('[class*="error" i],[class*="notice" i],[class*="install" i],[class*="modal" i],[class*="popup" i]')].filter(e=>!['HTML','BODY','MAIN'].includes(e.tagName)&&visible(e)).slice(0,6).map(e=>({classes:[...e.classList].slice(0,8),text:safeText(e,500),rect:rect(e)})),
                         emptyPlayerWrappers:document.querySelector('video')?[]:[...document.querySelectorAll('[class*="player" i],[id*="player" i]')].filter(visible).slice(0,16).map(e=>({tag:e.tagName,classes:[...e.classList].slice(0,8).map(c=>c.slice(0,100)),rect:rect(e)})),
                         presentation:window.__atsumiPresentation?.getState?.()??null,
+                        encoded:window.__atsumiEncodedCapture?.getDiagnostics?.()??null,
                         cleanGeometry:[...document.querySelectorAll('[data-atsumi-clean-player],[data-atsumi-clean-video],[data-atsumi-clean-media-path],#atsumi-presentation-toggle,#atsumi-browser-capture-status')].slice(0,24).map(e=>({tag:e.tagName,control:['atsumi-presentation-toggle','atsumi-browser-capture-status'].includes(e.id)?e.id:null,markers:[...e.attributes].map(a=>a.name).filter(n=>n.startsWith('data-atsumi-clean-')),rect:rect(e),objectFit:getComputedStyle(e).objectFit,transform:getComputedStyle(e).transform})),
                         video:[...document.querySelectorAll('video')].slice(0,4).map(v=>({width:v.videoWidth,height:v.videoHeight,ready:v.readyState,paused:v.paused,time:Math.round(v.currentTime),error:v.error?.code??null,capture:typeof v.captureStream,frames:v.getVideoPlaybackQuality?.().totalVideoFrames??null,ancestors:ancestors(v)})),
                         chatInputs:[...document.querySelectorAll('textarea,[contenteditable="true"],[role="textbox"]')].slice(0,8).map(e=>({placeholder:(e.getAttribute('placeholder')??'').slice(0,128),ariaLabel:(e.getAttribute('aria-label')??'').slice(0,128),ancestors:ancestors(e)})),
                         frameOrigins:[...document.querySelectorAll('iframe')].slice(0,8).map(f=>{try{return new URL(f.src).origin}catch{return ''}})});
+                    if(!window.__atsumiErrorProbe){window.__atsumiErrorProbe=true;window.addEventListener('atsumi-browser-reply',e=>{if(e.detail?.ok===false)send({kind:'original_capture_error',error:e.detail.error});});}
                     if(!window.__atsumiAclProbed && window.__TAURI_INTERNALS__?.invoke){
                         window.__atsumiAclProbed=true;
                         window.__TAURI_INTERNALS__.invoke('plugin:__TAURI_CHANNEL__|fetch',{}, {headers:{}})
@@ -346,6 +406,37 @@ fn main() {
                     .replace("__ACK_NETWORK_NOTICE__",if allow_network_notice{"true"}else{"false"});
                 let _=view.eval(&script);
                 let snapshot = serde_json::to_value(host.snapshot().unwrap()).unwrap();
+                if attempted_record && snapshot["recordingId"].is_null() && snapshot["error"].is_string() {
+                    println!("{}", serde_json::json!({"kind":"original_record_probe_failed", "error":snapshot["error"]}));
+                    break;
+                }
+                if record_seconds.is_some() && snapshot["ready"] == true && snapshot["videoPaused"] == false && !attempted_record {
+                    attempted_record = true;
+                    let result = host.arm(&app, output_root.clone(), true, true);
+                    println!("{}", serde_json::json!({"kind":"original_record_probe_start", "error":result.err().map(|e|e.message)}));
+                }
+                if let Some(record_seconds) = record_seconds.filter(|_| !snapshot["recordingId"].is_null()) {
+                    let began = recording_began.get_or_insert_with(std::time::Instant::now);
+                    checked_rates = confirmed_rates.load(Ordering::Relaxed).count_ones() as usize;
+                    if !stop_requested && checked_rates < 3 && began.elapsed().as_secs() >= 3 * (checked_rates as u64 + 1) {
+                        let rate = [1.03, 2.0, 0.75][checked_rates];
+                        let script = format!("(() => {{ const b=window.__atsumiEncodedCapture; const v=[...document.querySelectorAll('video')].find(v=>b?.canChangePlaybackRate(v)); if(v) {{v.playbackRate={rate};window.chrome.webview.postMessage('ATSUMI_BROWSER_CAPTURE:'+JSON.stringify({{kind:'view_probe',probeRate:{rate},encoded:b.getDiagnostics()}}));}} }})();");
+                        let _ = view.eval(&script);
+                    }
+                    if began.elapsed().as_secs() >= record_seconds && !stop_requested {
+                        stop_requested = true;
+                        let _ = view.eval("for(const v of document.querySelectorAll('video')) v.playbackRate=1;");
+                        let result = host.stop(&view);
+                        println!("{}",serde_json::json!({"kind":"original_record_probe_stop","error":result.err().map(|e|e.message)}));
+                    }
+                }
+                if record_seconds.is_some() && attempted_record && snapshot["recordingId"].is_null() && snapshot["recordings"].as_array().is_some_and(|v|!v.is_empty()) {
+                    let recordings = snapshot["recordings"].as_array().unwrap();
+                    if recordings.iter().any(|r|r["merge"]["status"]=="queued" || r["merge"]["status"]=="merging") { continue; }
+                    recording_verified = stop_requested && confirmed_rates.load(Ordering::Relaxed) == 7 && recordings.iter().all(|r|r["mimeType"]=="video/mp4" && r["status"]=="stopped" && r["segmentCount"].as_u64().unwrap_or(0)>0 && r["merge"]["status"]=="complete");
+                    println!("{}",serde_json::json!({"kind":"original_record_probe_result","success":recording_verified,"rateChanges":checked_rates,"recordings":recordings}));
+                    break;
+                }
                 println!("{}", serde_json::json!({
                     "sample":sample+1,
                     "phase":if sample < 10 {"explicit"} else {"remembered"},
@@ -364,12 +455,16 @@ fn main() {
                 }
             }
             host.shutdown_and_wait(&app);
-            app.exit(0);
+            completed_result.store(recording_verified || record_seconds.is_none(), Ordering::Relaxed);
+            app.exit(if record_seconds.is_some() && !recording_verified { 4 } else { 0 });
         });
         Ok(())
     }).run(context).expect("official view probe failed");
     finished.store(true, Ordering::Release);
     drop(host);
-    // WebView processes may hold profile files briefly; tempfile cleanup is best effort.
+    // Retain only this isolated diagnostic directory for independent decode checks.
     drop(profile);
+    if !test_result.load(Ordering::Relaxed) {
+        std::process::exit(4);
+    }
 }

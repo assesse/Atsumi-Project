@@ -43,6 +43,48 @@ impl ChzzkProvider {
         Ok(live_info(&channel_id, &detail))
     }
 
+    /// Scheduling metadata only. Access to restricted broadcasts is still
+    /// decided by the official page and its existing authenticated profile.
+    pub(crate) fn inspect_for_browser(&self, input: &str) -> Result<LiveInfo, StreamError> {
+        let channel = parse_channel(input)?;
+        let detail = self.detail(&channel)?;
+        let mut info = live_info(&channel, &detail);
+        info.status = if detail.get("status").and_then(Value::as_str) == Some("OPEN") {
+            LiveStatus::Live
+        } else {
+            LiveStatus::Offline
+        };
+        Ok(info)
+    }
+
+    /// Public channel identity, independent of live/adult video access. One
+    /// bounded anonymous request at recording start; never a playback request.
+    /// Protocol reference: kimcore/chzzk src/client.ts channel() and api/channel.ts.
+    pub fn channel_profile(&self, input: &str) -> Result<(String, Option<String>), StreamError> {
+        let channel_id = parse_channel(input)?;
+        let url = Url::parse(&format!(
+            "https://api.chzzk.naver.com/service/v1/channels/{channel_id}"
+        ))
+        .map_err(|_| invalid_url())?;
+        let content = self.json_content(&url, Duration::from_secs(4))?;
+        if content.get("channelId").and_then(Value::as_str) != Some(channel_id.as_str()) {
+            return Err(invalid_url());
+        }
+        let name = content
+            .get("channelName")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(160)
+            .collect::<String>();
+        let image = content
+            .get("channelImageUrl")
+            .and_then(Value::as_str)
+            .and_then(super::chat_assets::sanitize_chat_asset_url);
+        Ok((name, image))
+    }
+
     /// Read anonymous chat metadata independently of the selected video player.
     /// Only live-detail is requested; no playlist, playback fallback or DRM data
     /// is fetched. The chat token endpoint still enforces its own access rights.
@@ -317,6 +359,11 @@ fn live_info(channel_id: &str, detail: &Value) -> LiveInfo {
             .and_then(Value::as_str)
             .and_then(parse_broadcast_start),
         chat_available,
+        chat_channel_id: detail
+            .get("chatChannelId")
+            .and_then(Value::as_str)
+            .filter(|value| chat_available && valid_chat_channel_id(value))
+            .map(str::to_owned),
         notice: Some(NOTICE.into()),
     }
 }
@@ -367,7 +414,7 @@ fn chat_context_from_detail(
     Ok((info, chat_id.to_owned()))
 }
 
-fn valid_chat_channel_id(value: &str) -> bool {
+pub(super) fn valid_chat_channel_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 128
         && value
@@ -513,6 +560,13 @@ mod tests {
         assert_eq!(live_info(channel, &detail).status, LiveStatus::Live);
         let (info, chat_id) = chat_context_from_detail(channel, &detail).unwrap();
         assert_eq!(chat_id, "chat_A-123");
+        assert_eq!(info.chat_channel_id.as_deref(), Some("chat_A-123"));
+        assert!(!serde_json::to_string(&info).unwrap().contains("chat_A-123"));
+        assert!(!serde_json::to_value(&info)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("chatChannelId"));
         assert_eq!(info.status, LiveStatus::Live);
         assert!(info.chat_available);
         assert_eq!(info.channel_name, "Broadcaster");
@@ -592,6 +646,7 @@ mod tests {
         ] {
             let detail = serde_json::json!({"status":"OPEN", "chatChannelId":chat_id});
             let denied = chat_context_from_detail("channel", &detail).unwrap_err();
+            assert!(live_info("channel", &detail).chat_channel_id.is_none());
             assert_eq!(denied.code, "invalid_chat");
             assert!(!denied.message.contains("secret"));
         }

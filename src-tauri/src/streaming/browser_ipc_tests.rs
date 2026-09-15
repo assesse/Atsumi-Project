@@ -12,6 +12,39 @@ use tauri::{
 const FETCH_CHANNEL: &str = "plugin:__TAURI_CHANNEL__|fetch";
 const REMOTE_DENIED: &str = "Tauri IPC is disabled for remote content";
 const PING: &str = "browser_ipc_test_ping";
+
+#[test]
+fn registered_original_player_scheme_never_receives_app_or_channel_ipc() {
+    let app = mock_builder()
+        .register_uri_scheme_protocol("atsumi-player", |_, _| {
+            tauri::http::Response::new(Vec::<u8>::new())
+        })
+        .invoke_handler(|_| panic!("original-player frame reached the app dispatcher"))
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let main = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    for origin in [
+        "atsumi-player://localhost/frame.html",
+        "http://atsumi-player.localhost/frame.html",
+        "https://atsumi-player.localhost/frame.html",
+        "http://atsumi-player.localhost:80/frame.html",
+    ] {
+        for command in [PING, FETCH_CHANNEL, "plugin:window|close", "replay_open"] {
+            // Deliberately use the real invoke key: origin rejection must not
+            // depend on keeping a JavaScript capability secret.
+            assert_remote_denied(&app, &main, command, origin);
+        }
+    }
+}
+
+#[test]
+fn windows_main_frame_only_initializers_have_an_explicit_runtime_guard() {
+    let source = include_str!("../../vendor/tauri-2.11.5/src/manager/webview.rs");
+    assert!(source.contains("if initialization.for_main_frame_only"));
+    assert!(source.contains("if (window.self === window.top)"));
+}
 const CONFIRM_CONTROL: &str = "chzzk_browser_confirm_control";
 const MULTIVIEW_COMMANDS: [&str; 19] = [
     "replay_open",

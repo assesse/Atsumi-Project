@@ -33,16 +33,23 @@ class Socket {
 const message = (value = "hello"): EventValue => ({ msgTypeCode: 1, msg: value, msgTime: 1720000000123, profile: { nickname: "viewer" } });
 const envelope = (events: EventValue[], wrapped = false) => JSON.stringify({ cmd: 93101, bdy: wrapped ? { messageList: events } : events });
 const flush = async () => { for (let index = 0; index < 80; index++) await Promise.resolve(); };
+const viewerResponse = (count: number, overrides: Record<string, unknown> = {}) => new Response(JSON.stringify({
+  code: 200, content: { channelId: CHANNEL, openDate: "2024-07-03 09:00:00", status: "OPEN", cvExposure: true,
+    concurrentUserCount: count, ...overrides },
+}), { headers: { "content-type": "application/json;charset=UTF-8" } });
 function fixture(url = `https://chzzk.naver.com/live/${CHANNEL}`) {
   const window = { location: new URL(url), top: null as unknown, WebSocket: Socket } as {
     location: URL; top: unknown; WebSocket: typeof Socket; __atsumiPageChat?: ChatApi;
+    fetch?: typeof fetch;
     __atsumiEncodedCapture?: { getReplayClock(video: unknown): unknown };
+    __atsumiChatEnhancements?: { readViewerCount(): number | null };
   };
   window.top = window;
   const video = Object.assign(new EventTarget(), { readyState: 4, currentTime: 100, playbackRate: 1, seeking: false, ended: false, currentSrc: "blob:fixture" });
   const clock = { wall: 1720000000000, monotonic: 1000 };
   const context = { window, URL, TextEncoder, TextDecoder, ArrayBuffer, Blob, Uint8Array, crypto,
-    Date: { now: () => clock.wall }, performance: { now: () => clock.monotonic }, setInterval, clearInterval };
+    Date: { now: () => clock.wall, parse: Date.parse }, performance: { now: () => clock.monotonic },
+    AbortController, setTimeout, clearTimeout, setInterval, clearInterval };
   runInNewContext(source, context);
   const batches: EventValue[][] = [];
   const status: Array<{ detail: string; dropped: number }> = [];
@@ -61,6 +68,113 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe("official page chat receive bridge", () => {
+  it("exports only a bounded official default-color seed, never a raw opaque identifier", async () => {
+    const h = fixture(); const socket = h.socket(); h.begin();
+    socket.emit(envelope([
+      { ...message(), profile: { nickname: "viewer", userIdHash: "opaque_ABC-123" } },
+      { ...message(), profile: { nickname: "viewer", userIdHash: "a".repeat(129) } },
+      { ...message(), profile: { nickname: "viewer", userIdHash: "../private" } },
+    ]));
+    await h.api.stop(RECORDING);
+    const profiles = h.batches.flat().map((event) => event.profile as Record<string, unknown>);
+    expect(profiles[0]!.nicknameColorSeed).toBe(Array.from("opaque_ABC-123").reduce((sum, c) => sum + c.charCodeAt(0), 0) % 40);
+    expect(profiles[1]!.nicknameColorSeed).toBeUndefined();
+    expect(profiles[2]!.nicknameColorSeed).toBeUndefined();
+    expect(JSON.stringify(h.batches)).not.toMatch(/opaque_ABC-123|userIdHash|\.\.\/private/);
+    expect(socket.sent).toEqual([]);
+  });
+  it("stores public profile destinations and verified symbolic colors without raw credentials", async () => {
+    const h = fixture(); const socket = h.socket(); h.begin();
+    socket.emit(envelope([{ ...message(), profile: { nickname: "viewer", userIdHash: CHANNEL.toUpperCase(), accessToken: "PRIVATE_TOKEN", streamingProperty: { nicknameColor: { colorCode: "CD001" } }, title: { color: "#abcdef" } } }]));
+    await h.api.stop(RECORDING);
+    expect(h.batches.flat()[0]!.profile).toMatchObject({ publicProfileUrl: `https://chzzk.naver.com/${CHANNEL}`, title: { color: "#abcdef" }, streamingProperty: { nicknameColor: { colorCode: "#EEA05D" } } });
+    expect(JSON.stringify(h.batches)).not.toMatch(/PRIVATE_TOKEN|userIdHash|accessToken/);
+  });
+  it("requests fresh public viewers only after opt-in at 10s, shares the queue and stops", async () => {
+    const h = fixture(); const request = vi.fn<typeof fetch>().mockResolvedValue(viewerResponse(321));
+    h.window.fetch = request;
+    const readViewerCount = vi.fn(() => 999); h.window.__atsumiChatEnhancements = { readViewerCount };
+    vi.advanceTimersByTime(4000); expect(request).not.toHaveBeenCalled();
+    const socket = h.socket(); h.begin(); await flush();
+    h.clock.wall += 100; h.clock.monotonic += 100; socket.emit(envelope([message("ordered chat")])); await flush();
+    vi.advanceTimersByTime(9999); await flush(); expect(request).toHaveBeenCalledTimes(1);
+    h.clock.wall += 10000; h.clock.monotonic += 10000;
+    request.mockRejectedValue(new Error("network unavailable")); vi.advanceTimersByTime(1); await flush();
+    await h.api.stop(RECORDING); const events = h.batches.flat();
+    expect(events.map((event) => event.atsumiViewerSample ? event.viewerCount : event.msg)).toEqual([321,"ordered chat",null]);
+    expect(events[0]).toMatchObject({ viewerSource: "chzzk_live_status_api_v1", viewerChannelId: CHANNEL,
+      viewerBroadcastStartedAt: Date.parse("2024-07-03T09:00:00+09:00") });
+    expect(request.mock.calls[0]).toEqual([
+      `https://api.chzzk.naver.com/polling/v3.1/channels/${CHANNEL}/live-status`,
+      expect.objectContaining({ method: "GET", credentials: "omit", cache: "no-store", redirect: "error", referrerPolicy: "no-referrer", signal: expect.any(AbortSignal) }),
+    ]);
+    expect(request.mock.calls[0]![1]).not.toHaveProperty("headers");
+    expect(socket.sent).toEqual([]); expect(readViewerCount).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(20000); await flush(); expect(request).toHaveBeenCalledTimes(2);
+  });
+  it("bounds viewer request timeout, never overlaps, records unknown and retries next interval", async () => {
+    const h = fixture(); let resolve!: (response: Response) => void;
+    const request = vi.fn<typeof fetch>().mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done; }))
+      .mockResolvedValue(viewerResponse(0));
+    h.window.fetch = request; h.begin(); await flush();
+    vi.advanceTimersByTime(7999); await flush(); expect(request).toHaveBeenCalledTimes(1);
+    h.clock.wall += 8000; h.clock.monotonic += 8000; vi.advanceTimersByTime(1); await flush();
+    expect(request.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+    resolve(viewerResponse(999)); await flush();
+    h.clock.wall += 2000; h.clock.monotonic += 2000; vi.advanceTimersByTime(2000); await flush();
+    await h.api.stop(RECORDING);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(h.batches.flat().map(event => event.viewerCount)).toEqual([null, 0]);
+  });
+  it.each(["stop", "channel", "source", "seek"])("rejects viewer responses after %s invalidation", async (kind) => {
+    const h = fixture(); let resolve!: (response: Response) => void;
+    const request = vi.fn<typeof fetch>().mockImplementation(() => new Promise<Response>((done) => { resolve = done; }));
+    h.window.fetch = request; h.begin(); await flush();
+    if (kind === "stop") await h.api.stop(RECORDING);
+    if (kind === "channel") h.window.location = new URL(`https://chzzk.naver.com/live/${"a".repeat(32)}`);
+    if (kind === "source") h.video.currentSrc = "blob:next";
+    if (kind === "seek") h.video.dispatchEvent(new Event("seeking"));
+    resolve(viewerResponse(555)); await flush(); await h.api.stop(RECORDING);
+    expect(h.batches.flat().map(event => event.viewerCount)).toEqual(kind === "source" || kind === "seek" ? [null] : []);
+    vi.advanceTimersByTime(20000); await flush(); expect(request).toHaveBeenCalledTimes(1);
+  });
+  it("pins the public broadcast generation and stops polling when another live replaces it", async () => {
+    const h = fixture(); const request = vi.fn<typeof fetch>().mockResolvedValueOnce(viewerResponse(15))
+      .mockResolvedValue(viewerResponse(777, { openDate: "2024-07-03 10:00:00" }));
+    h.window.fetch = request; h.begin(); await flush();
+    h.clock.wall += 10000; h.clock.monotonic += 10000; vi.advanceTimersByTime(10000); await flush();
+    vi.advanceTimersByTime(30000); await flush(); await h.api.stop(RECORDING);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(h.batches.flat().map(event => event.viewerCount)).toEqual([15, null]);
+  });
+  it.each([
+    { cvExposure: false }, { channelId: "a".repeat(32) }, { status: "CLOSE" },
+    { concurrentUserCount: -1 }, { concurrentUserCount: 1.5 }, { concurrentUserCount: "500" },
+    { concurrentUserCount: 100000001 }, { openDate: null }, { openDate: "invalid" },
+  ])("keeps unavailable or unexposed public counts unknown: %j", async (content) => {
+    const h = fixture(); h.window.fetch = vi.fn<typeof fetch>().mockResolvedValue(viewerResponse(777, content));
+    h.begin(); await flush(); await h.api.stop(RECORDING);
+    expect(h.batches.flat().map(event => event.viewerCount)).toEqual([null]);
+  });
+  it("bounds chunked viewer responses and never exports full response routing or auth fields", async () => {
+    const h = fixture(); const response = viewerResponse(14, { liveTokenList: ["PRIVATE_TOKEN"], chatChannelId: "PRIVATE_ROUTE" });
+    h.window.fetch = vi.fn<typeof fetch>().mockResolvedValueOnce(response)
+      .mockResolvedValue(new Response("x".repeat(32769), { headers: { "content-type": "application/json" } }));
+    h.begin(); await flush();
+    h.clock.wall += 10000; h.clock.monotonic += 10000; vi.advanceTimersByTime(10000); await flush();
+    await h.api.stop(RECORDING);
+    expect(h.batches.flat().map(event => event.viewerCount)).toEqual([14, null]);
+    expect(JSON.stringify(h.batches)).not.toMatch(/PRIVATE|liveTokenList|chatChannelId|openDate/);
+  });
+  it.each([
+    () => new Response("{}", { status: 403, headers: { "content-type": "application/json" } }),
+    () => new Response("{}", { headers: { "content-type": "text/html" } }),
+    () => new Response("{bad", { headers: { "content-type": "application/json" } }),
+  ])("records unknown for rejected, invalid-type and malformed viewer responses", async (response) => {
+    const h = fixture(); h.window.fetch = vi.fn<typeof fetch>().mockResolvedValue(response());
+    h.begin(); await flush(); await h.api.stop(RECORDING);
+    expect(h.batches.flat().map(event => event.viewerCount)).toEqual([null]);
+  });
   it("does not install on another origin and preserves native construction, constants, send and page listeners", async () => {
     expect(fixture("https://example.com/live/" + CHANNEL).api).toBeUndefined();
     const harness = fixture();

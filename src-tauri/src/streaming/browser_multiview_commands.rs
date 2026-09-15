@@ -17,6 +17,10 @@ pub async fn chzzk_multiview_request_control(
     .into()
 }
 #[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Stable frontend IPC argument contract"
+)]
 pub async fn chzzk_multiview_confirm_control(
     app: AppHandle,
     window: Webview,

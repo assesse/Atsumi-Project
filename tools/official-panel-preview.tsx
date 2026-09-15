@@ -45,6 +45,7 @@ function Fixture() {
       },
       openInstaller: async () => ok(undefined), openFolder: async () => ok(undefined), openSegment: async () => ok(undefined),
       openMerged: async () => ok(undefined), retryMerge: async () => ok(state),
+      deleteRecordings: async (ids) => { state = { ...state, recordings: state.recordings.filter(item => !ids.includes(item.id)) }; return ok({ deletedIds: ids, failures: [] }); },
     };
   }, [scenario]);
   const clip = viewport?.clip;

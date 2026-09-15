@@ -14,6 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use super::model::{now_ms, StreamError};
 
+#[path = "browser_cleanup.rs"]
+pub(crate) mod cleanup;
+pub use cleanup::{BrowserSourceCleanup, BrowserSourceCleanupStatus};
+#[path = "browser_delete.rs"]
+pub(crate) mod deletion;
+
 const MAX_CHUNK: usize = 1024 * 1024;
 const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
 const MAX_CHUNKS: usize = 4096;
@@ -86,9 +92,12 @@ pub struct BrowserRecording {
     pub chat_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chat_count: Option<u64>,
-    /// A derivative only: source segments, recording status and chat stay intact.
+    /// Verified playback derivative. Source cleanup never changes chat or history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<BrowserMerge>,
+    /// A durable user-confirmed deletion, possibly interrupted and retryable.
+    #[serde(default)]
+    pub deletion_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -117,6 +126,8 @@ pub struct BrowserMerge {
     pub duration_seconds: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_cleanup: Option<BrowserSourceCleanup>,
 }
 impl BrowserMerge {
     fn pending(count: u64) -> Self {
@@ -129,6 +140,7 @@ impl BrowserMerge {
             bytes: None,
             duration_seconds: None,
             last_error: None,
+            source_cleanup: None,
         }
     }
 }
@@ -146,6 +158,8 @@ pub(crate) struct BrowserMergedOutput {
     pub timeline_file: String,
     pub bytes: u64,
     pub duration_seconds: f64,
+    /// Only the merge worker creates this after a successful full decode.
+    pub cleanup: Option<cleanup::CleanupProofReference>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
@@ -167,6 +181,8 @@ struct CatalogEntry {
     started_at: u64,
     mime_type: String,
     output_dir: String,
+    #[serde(default)]
+    deletion_pending: bool,
 }
 
 impl CatalogEntry {
@@ -190,6 +206,7 @@ impl CatalogEntry {
             chat_status: None,
             chat_count: None,
             merge: None,
+            deletion_pending: self.deletion_pending,
         }
     }
 }
@@ -224,6 +241,7 @@ struct State {
     active: HashMap<String, Active>,
     closing: bool,
     merge_job: Option<(String, String)>,
+    deleting: HashMap<String, String>,
 }
 
 pub struct BrowserCaptureStore {
@@ -255,6 +273,7 @@ impl BrowserCaptureStore {
                 active: HashMap::new(),
                 closing: false,
                 merge_job: None,
+                deleting: HashMap::new(),
             }),
         })
     }
@@ -301,6 +320,7 @@ impl BrowserCaptureStore {
             started_at: now_ms(),
             mime_type,
             output_dir: root.to_string_lossy().into_owned(),
+            deletion_pending: false,
         };
         let recording = entry.recording();
         let journal = OpenOptions::new()
@@ -379,6 +399,9 @@ impl BrowserCaptureStore {
             .iter()
             .position(|entry| entry.id == recording_id)
             .ok_or_else(inactive)?;
+        if state.recordings[index].deletion_pending {
+            return Err(inactive());
+        }
         let recording = &state.recordings[index];
         if segment_index < recording.segment_count {
             let previous = recording
@@ -465,6 +488,9 @@ impl BrowserCaptureStore {
             .iter()
             .position(|entry| entry.id == recording_id)
             .ok_or_else(inactive)?;
+        if state.recordings[index].deletion_pending {
+            return Err(inactive());
+        }
         if let Some((enabled, status, count)) = chat {
             let recording = &mut state.recordings[index];
             recording.capture_chat = Some(enabled);
@@ -532,6 +558,7 @@ impl BrowserCaptureStore {
         for _ in 0..MAX_RECORDINGS {
             let Some(index) = state.recordings.iter().position(|r| {
                 r.status != BrowserRecordingStatus::Recording
+                    && !r.deletion_pending
                     && r.segment_count > 0
                     && !state.active.contains_key(&r.id)
                     && r.merge
@@ -582,7 +609,7 @@ impl BrowserCaptureStore {
         Ok(None)
     }
 
-    /// Manual retry or once at startup. Never retries a successful or running job.
+    /// Retry failed merges or unfinished cleanup, never rebuild a successful merge.
     pub fn retry_merges(&self, id: Option<&str>) -> Result<usize, StreamError> {
         if let Some(id) = id {
             validate_id(id)?;
@@ -592,17 +619,45 @@ impl BrowserCaptureStore {
             return Err(inactive());
         }
         let mut count = 0;
+        let running = state.merge_job.as_ref().map(|(id, _)| id.clone());
         for recording in &mut state.recordings {
             if id.is_some_and(|id| id != recording.id)
+                || recording.deletion_pending
+                || running.as_deref() == Some(recording.id.as_str())
                 || recording.status == BrowserRecordingStatus::Recording
                 || recording.segment_count == 0
-                || recording.merge.as_ref().is_some_and(|m| {
-                    matches!(
-                        m.status,
-                        BrowserMergeStatus::Complete | BrowserMergeStatus::Merging
-                    )
-                })
+                || recording
+                    .merge
+                    .as_ref()
+                    .is_some_and(|m| m.status == BrowserMergeStatus::Merging)
             {
+                continue;
+            }
+            if let Some(merge) = recording
+                .merge
+                .as_mut()
+                .filter(|m| m.status == BrowserMergeStatus::Complete)
+            {
+                if let Some(cleanup) = merge
+                    .source_cleanup
+                    .as_mut()
+                    .filter(|c| c.status == BrowserSourceCleanupStatus::Blocked)
+                {
+                    cleanup.status = BrowserSourceCleanupStatus::Pending;
+                    cleanup.last_error = None;
+                    if save_metadata(recording).is_ok() {
+                        count += 1;
+                    } else {
+                        recording
+                            .merge
+                            .as_mut()
+                            .unwrap()
+                            .source_cleanup
+                            .as_mut()
+                            .unwrap()
+                            .status = BrowserSourceCleanupStatus::Blocked;
+                    }
+                }
                 continue;
             }
             recording.merge = Some(BrowserMerge::pending(recording.segment_count));
@@ -627,7 +682,7 @@ impl BrowserCaptureStore {
         let recording = state
             .recordings
             .iter()
-            .find(|r| r.id == id)
+            .find(|r| r.id == id && !r.deletion_pending)
             .ok_or_else(invalid)?;
         let merge = recording
             .merge
@@ -657,7 +712,7 @@ impl BrowserCaptureStore {
         let recording = state
             .recordings
             .iter()
-            .find(|r| r.id == id)
+            .find(|r| r.id == id && !r.deletion_pending)
             .ok_or_else(invalid)?;
         let merge = recording
             .merge
@@ -732,6 +787,10 @@ impl BrowserCaptureStore {
             return Err(storage());
         }
         open_regular(&root.join(&output.timeline_file), 128 * 1024 * 1024)?;
+        let source_cleanup = output
+            .cleanup
+            .map(|proof| cleanup::pending_proof(&root, &job.token, proof))
+            .transpose()?;
         let recording = &mut state.recordings[index];
         recording.merge = Some(BrowserMerge {
             status: BrowserMergeStatus::Complete,
@@ -742,9 +801,11 @@ impl BrowserCaptureStore {
             bytes: Some(output.bytes),
             duration_seconds: Some(output.duration_seconds),
             last_error: None,
+            source_cleanup,
         });
         if let Err(error) = save_metadata(recording) {
             recording.merge.as_mut().unwrap().status = BrowserMergeStatus::Failed;
+            recording.merge.as_mut().unwrap().source_cleanup = None;
             recording.merge.as_mut().unwrap().last_error =
                 Some("병합 결과 상태를 기록하지 못했습니다. 영상과 원본 조각은 보존됩니다.".into());
             state.merge_job = None;
@@ -925,7 +986,7 @@ fn valid_merge(merge: Option<&BrowserMerge>, count: u64, mime: &str) -> bool {
         return false;
     }
     if m.status != BrowserMergeStatus::Complete {
-        return true;
+        return m.source_cleanup.is_none();
     }
     let Some(token) = m
         .file
@@ -936,6 +997,7 @@ fn valid_merge(merge: Option<&BrowserMerge>, count: u64, mime: &str) -> bool {
         return false;
     };
     valid_id(token)
+        && cleanup::valid_summary(m.source_cleanup.as_ref(), token, count)
         && m.timeline_file.as_deref() == Some(format!("merged-{token}.timeline.jsonl").as_str())
         && m.bytes.is_some_and(|bytes| bytes > 0)
         && m.duration_seconds.is_some_and(|d| d.is_finite() && d > 0.0)
@@ -1187,6 +1249,13 @@ fn read_catalog(path: &Path) -> Result<Vec<CatalogEntry>, StreamError> {
 
 fn recover_recording(entry: &CatalogEntry) -> BrowserRecording {
     let mut recording = entry.recording();
+    if entry.deletion_pending {
+        // Never rebuild or automatically delete a half-removed recording.
+        recording.status = BrowserRecordingStatus::Failed;
+        recording.last_error =
+            Some("삭제가 완료되지 않았습니다. 선택 삭제로 다시 시도해 주세요.".into());
+        return recording;
+    }
     let result = recover_into(entry, &mut recording);
     if result.is_err() {
         recording.status = BrowserRecordingStatus::Failed;
@@ -1300,9 +1369,21 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
             recording.segments.remove(0);
         }
     }
+    // After durable verified publication, source files are no longer playback
+    // inputs. They may be absent or Windows delete-pending behind a live reader.
+    // Remaining sources are hash/no-follow checked by the cleanup worker itself.
+    let cleaned_sources = recording.merge.as_ref().is_some_and(|merge| {
+        merge.status == BrowserMergeStatus::Complete
+            && merge.source_cleanup.is_some()
+            && valid_merge(Some(merge), recording.segment_count, &recording.mime_type)
+            && cleanup::merged_files_exist(&root, merge)
+    });
     // Avoid reading or hashing historical media. Only bounded recent file metadata
     // and their first 16 bytes are checked; the durable journal contains all totals.
     for segment in &recording.segments {
+        if cleaned_sources {
+            break;
+        }
         let checked = (|| -> Result<bool, StreamError> {
             let mut file = open_regular(&root.join(&segment.file), MAX_SEGMENT)?;
             if file.metadata().map_err(|_| storage())?.len() != segment.bytes {
@@ -1425,7 +1506,7 @@ fn json_line(value: &impl Serialize) -> Result<Vec<u8>, StreamError> {
     Ok(bytes)
 }
 
-fn atomic_write(root: &Path, name: &str, bytes: &[u8]) -> Result<(), StreamError> {
+pub(super) fn atomic_write(root: &Path, name: &str, bytes: &[u8]) -> Result<(), StreamError> {
     let root = checked_directory(root)?;
     let temporary = root.join(format!(".{name}.{}.partial", uuid::Uuid::new_v4().simple()));
     let mut file = OpenOptions::new()
@@ -1731,6 +1812,7 @@ mod tests {
             timeline_file,
             bytes: WEBM.len() as u64,
             duration_seconds: 15.0,
+            cleanup: None,
         }
     }
 
@@ -2411,7 +2493,8 @@ mod tests {
         let (directory, store, recording) = fixture();
         store.append(&recording.id, 0, 0, WEBM).unwrap();
         let path = Path::new(&recording.output_dir).join("recording.json");
-        let mut permissions = fs::metadata(&path).unwrap().permissions();
+        let original_permissions = fs::metadata(&path).unwrap().permissions();
+        let mut permissions = original_permissions.clone();
         permissions.set_readonly(true);
         fs::set_permissions(&path, permissions.clone()).unwrap();
         assert!(store.finish_segment(&recording.id, 0, 15.0).is_err());
@@ -2421,8 +2504,7 @@ mod tests {
         assert!(Path::new(&recording.output_dir)
             .join(&snapshot.segments[0].file)
             .is_file());
-        permissions.set_readonly(false);
-        fs::set_permissions(path, permissions).unwrap();
+        fs::set_permissions(path, original_permissions).unwrap();
         drop(store);
         assert_ne!(
             BrowserCaptureStore::new(directory.path())

@@ -4,14 +4,26 @@ use super::*;
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
     fs::OpenOptions,
     io::{BufRead, BufReader, Seek, SeekFrom},
     sync::atomic::Ordering,
 };
+use unicode_normalization::UnicodeNormalization;
 
-const INDEX_VERSION: u32 = 1;
+#[path = "replay_viewer_index.rs"]
+mod viewers;
+const INDEX_VERSION: u32 = 4;
 const MAX_TIMELINE_ROWS: u64 = 262_144;
+
+pub(super) fn normalize_search(value: &str) -> String {
+    value
+        .nfkc()
+        .flat_map(char::to_lowercase)
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
 pub(super) fn build(session: &Session) -> Result<IndexStatus, StreamError> {
     session.valid()?;
@@ -57,7 +69,7 @@ fn cached_status(session: &Session) -> Result<IndexStatus, StreamError> {
     }
     let status = connection
         .query_row(
-            "SELECT observed_rows,approximate_rows,warnings FROM metadata",
+            "SELECT observed_rows,approximate_rows,substr(warnings,1,8193) FROM metadata",
             [],
             |row| {
                 Ok((
@@ -101,13 +113,15 @@ fn build_fresh(session: &Session) -> Result<IndexStatus, StreamError> {
         .map_err(|_| storage())?;
     let mut connection = Connection::open(&session.index_path).map_err(|_| storage())?;
     connection.execute_batch("PRAGMA trusted_schema=OFF; PRAGMA journal_mode=DELETE; PRAGMA synchronous=NORMAL; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE; PRAGMA max_page_count=262144;
-        CREATE TABLE metadata(version INTEGER NOT NULL, source TEXT NOT NULL, complete INTEGER NOT NULL, observed_rows INTEGER NOT NULL DEFAULT 0, approximate_rows INTEGER NOT NULL DEFAULT 0, warnings TEXT NOT NULL DEFAULT '[]');
+        CREATE TABLE metadata(version INTEGER NOT NULL, source TEXT NOT NULL, complete INTEGER NOT NULL, observed_rows INTEGER NOT NULL DEFAULT 0, approximate_rows INTEGER NOT NULL DEFAULT 0, warnings TEXT NOT NULL DEFAULT '[]', viewer_malformed INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE segments(ordinal INTEGER PRIMARY KEY, source_start REAL, source_end REAL, merged_start REAL NOT NULL, duration REAL NOT NULL);
         CREATE INDEX segments_source ON segments(source_start);
-        CREATE TABLE messages(ordinal INTEGER PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE, media_time REAL NOT NULL, quality TEXT NOT NULL, sender_key TEXT, sender TEXT NOT NULL, text TEXT NOT NULL, payload BLOB NOT NULL);
+        CREATE TABLE messages(ordinal INTEGER PRIMARY KEY, sequence INTEGER NOT NULL UNIQUE, media_time REAL NOT NULL, quality TEXT NOT NULL, sender_key TEXT, sender TEXT NOT NULL, text TEXT NOT NULL, payload BLOB NOT NULL, search_sender TEXT NOT NULL, search_text TEXT NOT NULL);
         CREATE INDEX messages_time ON messages(media_time DESC, ordinal DESC);
         CREATE INDEX messages_sender_time ON messages(sender_key,media_time);
-        CREATE TABLE assets(id TEXT PRIMARY KEY);").map_err(|_| storage())?;
+        CREATE TABLE assets(id TEXT PRIMARY KEY);
+        CREATE TABLE viewer_samples(ordinal INTEGER PRIMARY KEY, media_time REAL NOT NULL, viewer_count INTEGER, hold_seconds REAL NOT NULL);
+        CREATE INDEX viewer_samples_time ON viewer_samples(media_time,ordinal);").map_err(|_| storage())?;
     connection
         .execute(
             "INSERT INTO metadata(version,source,complete) VALUES (?1,?2,0)",
@@ -115,6 +129,7 @@ fn build_fresh(session: &Session) -> Result<IndexStatus, StreamError> {
         )
         .map_err(|_| storage())?;
     load_timeline(session, &mut connection)?;
+    viewers::load(session, &mut connection)?;
     let mut status = IndexStatus::default();
     let Some(chat) = &session.chat else {
         status.state = "ready".into();
@@ -182,7 +197,7 @@ fn build_fresh(session: &Session) -> Result<IndexStatus, StreamError> {
                 malformed += 1;
                 continue;
             }
-            let changed = transaction.execute("INSERT OR IGNORE INTO messages(ordinal,sequence,media_time,quality,sender_key,sender,text,payload) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)", params![ordinal, message.sequence, media_time, quality, sender_key, message.sender, message.text, payload]).map_err(|_| storage())?;
+            let changed = transaction.execute("INSERT OR IGNORE INTO messages(ordinal,sequence,media_time,quality,sender_key,sender,text,payload,search_sender,search_text) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)", params![ordinal, message.sequence, media_time, quality, sender_key, message.sender, message.text, payload, normalize_search(&message.sender), normalize_search(&message.text)]).map_err(|_| storage())?;
             if changed == 0 {
                 duplicate += 1;
                 continue;
@@ -268,7 +283,7 @@ fn valid_message(message: &ChatMessage) -> bool {
         && (0.0..=31_536_000.0).contains(&message.offset_seconds)
         && message
             .broadcast_offset_seconds
-            .is_none_or(|value| value.is_finite() && value >= 0.0 && value <= 31_536_000.0)
+            .is_none_or(|value| value.is_finite() && (0.0..=31_536_000.0).contains(&value))
 }
 fn valid_sender_key(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|hash| {
@@ -355,6 +370,31 @@ fn observed_media_time(connection: &Connection, raw: &Value) -> Option<f64> {
     connection.query_row("SELECT merged_start + (?1-source_start) FROM segments WHERE source_start <= ?1 AND ?1 < source_start+duration ORDER BY source_start DESC LIMIT 1", [source], |row| row.get::<_,f64>(0)).optional().ok().flatten()
 }
 
+pub(super) fn profile_url(session: &Session, sequence: u64) -> Result<String, StreamError> {
+    if sequence == 0 || sequence > 9_007_199_254_740_991 {
+        return Err(invalid());
+    }
+    let connection = read_connection(session)?;
+    let payload: Vec<u8> = connection
+        .query_row(
+            "SELECT substr(payload,1,65537) FROM messages WHERE sequence=?1",
+            [sequence],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| storage())?
+        .ok_or_else(invalid)?;
+    if payload.len() > MAX_LINE_BYTES {
+        return Err(storage());
+    }
+    let message: ChatMessage = serde_json::from_slice(&payload).map_err(|_| storage())?;
+    message
+        .rich
+        .and_then(|rich| rich.profile_url)
+        .and_then(|url| super::super::model::public_profile_url(&url))
+        .ok_or_else(invalid)
+}
+
 struct Line {
     bytes: Vec<u8>,
     oversized: bool,
@@ -413,13 +453,17 @@ fn read_connection(session: &Session) -> Result<Connection, StreamError> {
         )
         .map_err(|_| storage())?;
     let valid = connection
-        .query_row("SELECT version,source,complete FROM metadata", [], |row| {
-            Ok((
-                row.get::<_, u32>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, u32>(2)?,
-            ))
-        })
+        .query_row(
+            "SELECT version,substr(source,1,129),complete FROM metadata",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, u32>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                ))
+            },
+        )
         .map_err(|_| storage())?;
     if valid != (INDEX_VERSION, session.fingerprint.clone(), 1) {
         return Err(stale());
@@ -449,32 +493,60 @@ struct Entry {
     item: ReplayChatMessage,
 }
 pub(super) fn page(
-    session: &Session,
+    session: &Arc<Session>,
     media_time: Option<f64>,
     cursor: Option<&str>,
     generation: u64,
     limit: usize,
+    search: Option<(&str, &str)>,
 ) -> Result<ReplayChatPage, StreamError> {
     let mut page = session.empty_page(generation)?;
     if page.index_state != "ready" {
         return Ok(page);
     }
     let connection = read_connection(session)?;
+    let owner = Arc::clone(session);
+    connection.progress_handler(
+        4096,
+        Some(move || {
+            owner.cancel.load(Ordering::Acquire)
+                || owner.generation.load(Ordering::Acquire) != generation
+        }),
+    );
+    let (needle, field) = search.unwrap_or(("", "all"));
+    let scope = search.map(|_| {
+        format!(
+            "{:x}|",
+            Sha256::digest(format!("{field}\0{needle}").as_bytes())
+        )
+    });
+    // A search cursor cannot silently become a different query or log cursor.
+    let decoded_cursor = match (cursor, scope.as_deref()) {
+        (Some(cursor), Some(scope)) => Some(cursor.strip_prefix(scope).ok_or_else(stale)?),
+        (cursor, _) => cursor,
+    };
     let offset = *session.offset.lock().map_err(|_| storage())?;
-    let (direction, anchor) = if let Some(cursor) = cursor {
+    let (direction, anchor) = if let Some(cursor) = decoded_cursor {
         decode_cursor(&connection, session, cursor)?
     } else {
         ('b', i64::MAX as u64)
     };
     let (sql, bound) = if let Some(time) = media_time {
-        ("SELECT ordinal,sequence,media_time,substr(quality,1,32),substr(payload,1,65537) FROM messages WHERE media_time <= ?1 ORDER BY media_time DESC,ordinal DESC LIMIT ?2", time - offset)
+        (
+            "media_time <= ?1 ORDER BY media_time DESC,ordinal DESC",
+            time - offset,
+        )
     } else if direction == 'a' {
-        ("SELECT ordinal,sequence,media_time,substr(quality,1,32),substr(payload,1,65537) FROM messages WHERE ordinal > ?1 ORDER BY ordinal ASC LIMIT ?2", anchor as f64)
+        ("ordinal > ?1 ORDER BY ordinal ASC", anchor as f64)
     } else {
-        ("SELECT ordinal,sequence,media_time,substr(quality,1,32),substr(payload,1,65537) FROM messages WHERE ordinal < ?1 ORDER BY ordinal DESC LIMIT ?2", anchor as f64)
+        ("ordinal < ?1 ORDER BY ordinal DESC", anchor as f64)
     };
-    let mut query = connection.prepare(sql).map_err(|_| storage())?;
-    let mut rows = query.query(params![bound, limit]).map_err(|_| storage())?;
+    let predicate = "(?3='' OR (?4<>'nickname' AND instr(search_text,?3)>0) OR (?4<>'body' AND instr(search_sender,?3)>0))";
+    let sql = format!("SELECT ordinal,sequence,media_time,substr(quality,1,32),substr(payload,1,65537) FROM messages WHERE {predicate} AND {sql} LIMIT ?2");
+    let mut query = connection.prepare(&sql).map_err(|_| storage())?;
+    let mut rows = query
+        .query(params![bound, limit, needle, field])
+        .map_err(|_| storage())?;
     let mut entries = Vec::new();
     let mut bytes = serde_json::to_vec(&page).map_err(|_| storage())?.len() + 1024;
     while let Some(row) = rows.next().map_err(|_| storage())? {
@@ -510,7 +582,7 @@ pub(super) fn page(
                     })
                     .collect()
             })
-            .unwrap_or_else(BTreeMap::new);
+            .unwrap_or_default();
         let item = ReplayChatMessage {
             message,
             media_time_seconds: base_time + offset,
@@ -533,25 +605,37 @@ pub(super) fn page(
     if let Some(first) = entries.first() {
         if connection
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM messages WHERE ordinal < ?1)",
-                [first.ordinal],
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM messages WHERE ordinal < ?1 AND {predicate})"
+                ),
+                params![first.ordinal, 0, needle, field],
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|_| storage())?
         {
-            page.previous_cursor = Some(encode_cursor(session, 'b', first));
+            page.previous_cursor = Some(format!(
+                "{}{}",
+                scope.as_deref().unwrap_or(""),
+                encode_cursor(session, 'b', first)
+            ));
         }
     }
     if let Some(last) = entries.last() {
         if connection
             .query_row(
-                "SELECT EXISTS(SELECT 1 FROM messages WHERE ordinal > ?1)",
-                [last.ordinal],
+                &format!(
+                    "SELECT EXISTS(SELECT 1 FROM messages WHERE ordinal > ?1 AND {predicate})"
+                ),
+                params![last.ordinal, 0, needle, field],
                 |row| row.get::<_, bool>(0),
             )
             .map_err(|_| storage())?
         {
-            page.next_cursor = Some(encode_cursor(session, 'a', last));
+            page.next_cursor = Some(format!(
+                "{}{}",
+                scope.as_deref().unwrap_or(""),
+                encode_cursor(session, 'a', last)
+            ));
         }
     }
     page.items = entries.into_iter().map(|entry| entry.item).collect();
@@ -610,12 +694,23 @@ pub(super) fn buckets(session: &Session, seconds: f64) -> Result<ReplayTimeline,
     let connection = read_connection(session)?;
     let offset = *session.offset.lock().map_err(|_| storage())?;
     let count = ((session.duration / seconds).ceil() as usize).clamp(1, 2000);
+    let has_sender_keys: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE sender_key IS NOT NULL)",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|_| storage())?;
     result.buckets = (0..count)
         .map(|index| ReplayTimelineBucket {
             start_seconds: index as f64 * seconds,
             chat_count: 0,
-            unique_sender_count: None,
+            // A modern keyed log can distinguish an observed empty bucket from
+            // unknown legacy identities. Nonempty mixed buckets stay unknown.
+            unique_sender_count: has_sender_keys.then_some(0),
             viewer_count: None,
+            viewer_sample_count: 0,
+            viewer_coverage_seconds: 0.0,
         })
         .collect();
     let mut statement = connection.prepare("SELECT CAST((media_time+?1)/?2 AS INTEGER),COUNT(*),COUNT(DISTINCT sender_key),SUM(sender_key IS NULL) FROM messages WHERE media_time+?1 >= 0 AND media_time+?1 <= ?3 GROUP BY 1 ORDER BY 1 LIMIT 2001").map_err(|_| storage())?;
@@ -636,5 +731,6 @@ pub(super) fn buckets(session: &Session, seconds: f64) -> Result<ReplayTimeline,
             };
         }
     }
+    viewers::apply(session, &connection, offset, &mut result)?;
     Ok(result)
 }

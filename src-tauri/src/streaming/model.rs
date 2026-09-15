@@ -44,6 +44,9 @@ pub struct LiveInfo {
     pub broadcast_started_at: Option<u64>,
     pub status: LiveStatus,
     pub chat_available: bool,
+    /// Existing public metadata only; never serialize a chat routing identifier.
+    #[serde(skip)]
+    pub(crate) chat_channel_id: Option<String>,
     pub notice: Option<String>,
 }
 
@@ -97,12 +100,17 @@ pub struct ChatEmoji {
 }
 
 /// Only display metadata received with a message. Never persist the raw profile,
-/// sender account identifiers, or extras (which may include an extraToken).
+/// raw profiles or extras (which may include an extraToken). A canonical public
+/// profile link is optional and intentionally identifiable; it is not senderKey.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatRich {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nickname_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_url: Option<String>,
     #[serde(default)]
     pub badges: Vec<ChatBadge>,
     #[serde(default)]
@@ -118,6 +126,12 @@ impl ChatRich {
                 && color.starts_with('#')
                 && color.bytes().skip(1).all(|byte| byte.is_ascii_hexdigit())
         });
+        self.text_color = self.text_color.filter(|color| {
+            color.len() == 7
+                && color.starts_with('#')
+                && color.bytes().skip(1).all(|byte| byte.is_ascii_hexdigit())
+        });
+        self.profile_url = self.profile_url.and_then(|url| public_profile_url(&url));
         let mut seen_badges = std::collections::HashSet::new();
         self.badges = self
             .badges
@@ -155,12 +169,24 @@ impl ChatRich {
             })
             .take(16)
             .collect();
-        if self.nickname_color.is_none() && self.badges.is_empty() && self.emojis.is_empty() {
+        if self.nickname_color.is_none()
+            && self.text_color.is_none()
+            && self.profile_url.is_none()
+            && self.badges.is_empty()
+            && self.emojis.is_empty()
+        {
             None
         } else {
             Some(self)
         }
     }
+}
+
+/// Exact public channel/profile page only; never an API, login, query or redirect.
+pub(crate) fn public_profile_url(value: &str) -> Option<String> {
+    let id = value.strip_prefix("https://chzzk.naver.com/")?;
+    (id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+        .then(|| format!("https://chzzk.naver.com/{}", id.to_ascii_lowercase()))
 }
 
 fn deserialize_chat_rich<'de, D>(deserializer: D) -> Result<Option<ChatRich>, D::Error>

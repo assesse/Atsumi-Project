@@ -113,12 +113,21 @@ describe("DanbooruWorkspace", () => {
     }
   });
 
-  it("measures the post grid before requesting a complete final row", async () => {
+  it("measures complete rows initially and updates column boundaries without refetching for resize pixels", async () => {
+    let contentWidth = 620;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class implements ResizeObserver {
+      constructor(callback: ResizeObserverCallback) { resizeCallback = callback; }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    };
     const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "clientWidth");
     Object.defineProperty(HTMLElement.prototype, "clientWidth", {
       configurable: true,
       get() {
-        return this instanceof HTMLElement && this.classList.contains("danbooru-content") ? 620 : 0;
+        return this instanceof HTMLElement && this.classList.contains("danbooru-content") ? contentWidth : 0;
       },
     });
     const container = document.createElement("div");
@@ -140,11 +149,24 @@ describe("DanbooruWorkspace", () => {
         await settle();
       });
       expect(backend.danbooruSearch).toHaveBeenCalledWith({ tags: "", page: 1, pageSize: 51 });
+      for (let step = 0; step < 25; step += 1) {
+        contentWidth += 1;
+        await act(async () => resizeCallback?.([], {} as ResizeObserver));
+      }
+      expect(backend.danbooruSearch).toHaveBeenCalledTimes(1);
+      contentWidth = 1_250;
+      await act(async () => resizeCallback?.([], {} as ResizeObserver));
+      expect(backend.danbooruSearch).toHaveBeenCalledTimes(1);
+      // Crossing to six columns takes effect immediately for the next search;
+      // layout is not subject to the expensive tag-fit settling delay.
+      await act(async () => container.querySelector<HTMLButtonElement>('button[type="submit"]')?.click());
+      expect(backend.danbooruSearch).toHaveBeenLastCalledWith({ tags: "", page: 1, pageSize: 54 });
     } finally {
       await act(async () => root.unmount());
       container.remove();
       if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, "clientWidth", originalClientWidth);
       else delete (HTMLElement.prototype as unknown as { clientWidth?: number }).clientWidth;
+      globalThis.ResizeObserver = originalResizeObserver;
     }
   });
 

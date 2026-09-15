@@ -1,0 +1,63 @@
+.recording-library { min-width: 0; }
+.recording-library-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.recording-library-heading h2 { margin: 0; color: var(--text); font-size: 22px; letter-spacing: -.04em; }
+.recording-library-heading p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
+.recording-library-active { padding: 16px; margin-bottom: 22px; border: 1px solid color-mix(in srgb, var(--danger) 30%, var(--line)); border-radius: 12px; background: color-mix(in srgb, var(--danger) 4%, var(--surface)); }
+.recording-library-active h3 { font-size: 12px; margin: 0 0 12px; color: var(--text-soft); }
+.recording-library-active > div { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 10px; }
+.recording-library-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.recording-library-filters { display: flex; gap: 4px; }
+.streaming-workspace .recording-library-filters button { padding: 7px 12px; border-radius: 20px; font-size: 12px; border-color: transparent; background: transparent; color: var(--muted); }
+.streaming-workspace .recording-library-filters button[aria-pressed=true] { background: var(--primary-soft); border-color: var(--line-strong); color: var(--text); }
+.recording-library-toolbar input { min-width: 180px; width: min(100%, 240px); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; background: var(--workspace); color: var(--text); font-size: 12px; }
+.recording-library-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 400px); gap: 20px; align-items: start; }
+.recording-library-layout:not(:has(.recording-library-detail)) { grid-template-columns: 1fr; }
+.recording-library-browse { min-width: 0; }
+.recording-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; }
+.streaming-workspace .recording-library .recording-library-card { position: relative; display: flex; flex-direction: column; gap: 16px; width: 100%; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--workspace); text-align: left; transition: border-color .16s, background-color .16s; }
+.streaming-workspace .recording-library .recording-library-card:hover { border-color: var(--line-strong); background: var(--surface-hover); }
+.streaming-workspace .recording-library .recording-library-card[aria-pressed=true] { border-color: var(--primary); background: var(--primary-soft); box-shadow: inset 3px 0 var(--primary); }
+.recording-library .recording-library-card > strong { color: var(--text); font-size: 14px; font-weight: 650; line-height: 1.55; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 43px; }
+.recording-library .recording-library-card-top, .recording-library .recording-library-card-bottom { display: flex; justify-content: space-between; align-items: center; gap: 10px; color: var(--muted); font-size: 11px; }
+.recording-library .recording-library-card-bottom time { white-space: nowrap; }
+.recording-library .recording-library-length { font-variant-numeric: tabular-nums; color: var(--text-soft); }
+.recording-library .recording-library-state { display: inline-flex; align-items: center; gap: 6px; color: var(--text-soft); font-size: 11px; }
+.recording-library .recording-library-state i { display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+.recording-library .recording-library-state.needs-attention { color: var(--danger); }
+.recording-library .recording-library-state.needs-attention i, .recording-library .is-recording .recording-library-state i { background: var(--danger); }
+.recording-library .official-browser-saved-chat-warning { color: var(--danger); }
+.recording-library-detail.official-browser-files { padding: 20px; border-radius: 12px; background: var(--surface); }
+.recording-library-detail-heading > span { font-size: 10px; letter-spacing: .03em; color: var(--muted); }
+.recording-library-detail-heading h3 { font-size: 16px; line-height: 1.6; margin: 8px 0; overflow-wrap: anywhere; }
+.recording-library-detail-heading > p { font-size: 11px; color: var(--muted); margin: 0 0 18px; }
+.streaming-workspace .recording-library-detail .official-browser-playback > .official-browser-primary { display: block; width: 100%; padding: 11px 12px; font-size: 13px; margin-bottom: 8px; }
+.streaming-workspace .recording-library-detail .official-browser-playback > button:not(.official-browser-primary) { margin: 0 4px 8px 0; }
+.streaming-workspace .recording-library-detail .official-browser-playback > .official-browser-muted { font-size: 11px; }
+.recording-library-detail .official-browser-originals { padding-top: 12px; margin-top: 16px; border-top: 1px solid var(--line); }
+.recording-library-folder { margin-top: 14px; }
+.recording-library-empty { padding: 42px 18px; text-align: center; color: var(--text-soft); border: 1px dashed var(--line); border-radius: 12px; }
+.recording-library-empty strong { font-size: 14px; }
+.recording-library-empty p { font-size: 12px; color: var(--muted); line-height: 1.7; }
+.recording-library-more { display: block; margin: 18px auto 0; }
+.recording-library-heading-actions, .recording-library-selection { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.recording-library-selection { padding: 10px 12px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 12px; }
+.recording-library-selection > span { color: var(--text-soft); font-variant-numeric: tabular-nums; }
+.recording-library-selection > .recording-library-delete { margin-left: auto; }
+.recording-library-card-wrap { position: relative; min-width: 0; }
+.recording-library-card-wrap > .recording-library-card { height: 100%; }
+.recording-library-card-wrap.is-selecting .recording-library-card-top { padding-right: 25px; }
+.recording-library-check { position: absolute; top: 15px; right: 14px; width: 17px; height: 17px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.recording-library-check:disabled { cursor: not-allowed; }
+.streaming-workspace .recording-library-delete { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
+.streaming-workspace .recording-library-delete:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 20%, var(--surface)); }
+.recording-library-delete-notice { font-size: 12px; color: var(--text-soft); }
+.recording-library-delete-errors { padding: 14px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; color: var(--danger); font-size: 12px; line-height: 1.7; }
+.recording-library-delete-errors ul { max-height: 180px; overflow-y: auto; margin-bottom: 0; padding-left: 20px; }
+.recording-library-delete-dialog { width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 48px); overflow: auto; padding: 24px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: 0 18px 65px #0008; }
+.recording-library-delete-dialog::backdrop { background: #0009; }
+.recording-library-delete-dialog h3 { margin: 0 0 12px; font-size: 17px; }
+.recording-library-delete-dialog p { font-size: 13px; line-height: 1.7; color: var(--text-soft); }
+.recording-library-delete-dialog ul { padding-left: 20px; max-height: 160px; overflow: auto; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.recording-library-delete-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+@container (max-width: 860px) { .recording-library-layout { grid-template-columns: minmax(0, 1fr); } .recording-library-detail { order: -1; } }
+@media (prefers-reduced-motion: reduce) { .streaming-workspace .recording-library .recording-library-card { transition: none; } }

@@ -259,6 +259,7 @@ export type GalleryWorkspaceBridge = {
 
 type HitomiFeatureProps = {
   active: boolean;
+  navigationRequest?: import("../../app/CommonNavigation").NavigationRequest | null;
   children: (bridge: GalleryWorkspaceBridge) => ReactNode;
 };
 
@@ -267,7 +268,7 @@ type HitomiFeatureProps = {
  * The callback is the explicit legacy gallery activity/favorites integration seam;
  * this module does not import or create another platform's workspace.
  */
-export function HitomiFeature({ active, children }: HitomiFeatureProps) {
+export function HitomiFeature({ active, children, navigationRequest }: HitomiFeatureProps) {
   const shell = useAppShell();
   const {
     showToast, privacyModePending, togglePrivacyMode, saveSettingsPatch,
@@ -792,6 +793,15 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
     dispatch({ type: "navigate", view });
   }, [restoreExploreContext, snapshotActiveExploreContext]);
 
+  const appliedNavigation = useRef<unknown>(null);
+  useEffect(() => {
+    if (!navigationRequest || navigationRequest === appliedNavigation.current || navigationRequest.source !== "hitomi") return;
+    const { view } = navigationRequest;
+    if (view !== "explore" && view !== "downloads" && view !== "auto-find") return;
+    appliedNavigation.current = navigationRequest;
+    navigateView(view);
+  }, [navigationRequest, navigateView]);
+
   const loadExplorationExclusionsAndSync = useCallback(async () => {
     const token = ++explorationExclusionsHydrationToken.current;
     setExplorationExclusionsReady(false);
@@ -1168,11 +1178,15 @@ export function HitomiFeature({ active, children }: HitomiFeatureProps) {
   useLayoutEffect(() => {
     const viewport = galleryViewport.current;
     if (!viewport) return;
+    let lastColumns = "";
     const update = () => {
       const detailColumns = resolveGalleryColumns(viewport.clientWidth, maximumColumns, previewWidth);
       const next = currentGalleryDisplayMode === "compact"
         ? resolveCompactGalleryColumns(viewport.clientWidth, previewWidth)
         : detailColumns;
+      const columnsKey = `${next}:${detailColumns}`;
+      if (columnsKey === lastColumns) return;
+      lastColumns = columnsKey;
       setGalleryColumns((current) => current === next ? current : next);
       setArtistFolderColumns((current) => current === detailColumns ? current : detailColumns);
     };

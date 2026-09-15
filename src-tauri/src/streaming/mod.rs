@@ -4,14 +4,17 @@ pub mod browser_extension;
 mod browser_ipc_tests;
 pub mod browser_merge;
 pub mod browser_store;
+mod browser_video_ads;
 pub mod chat;
 pub mod chat_assets;
 pub mod chat_store;
 pub mod commands;
 pub mod model;
+pub mod original_player;
 pub mod provider;
 pub mod replay;
 pub mod replay_assets;
+mod viewer_metrics;
 
 impl From<model::StreamError> for crate::interface::ApiError {
     fn from(error: model::StreamError) -> Self {

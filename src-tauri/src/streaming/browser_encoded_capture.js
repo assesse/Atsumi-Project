@@ -23,6 +23,10 @@
   let installed = false;
   let active = null;
   let lastDetail = "encoded_unavailable";
+  let appendCount = 0;
+  let appendBytes = 0;
+  let lastAppendAt = null;
+  let lastStop = null;
 
   const safeNotify = (current, detail) => {
     lastDetail = detail;
@@ -39,23 +43,26 @@
       (match[1] !== "audio" || (codecs.length === 1 && codecs[0] === "mp4a.40.2"));
   };
   const configurationOK = (state) => {
-    try { return state.buffer.mode === "segments" && state.buffer.timestampOffset === 0 &&
+    try { return state.buffer.mode === "segments" && Number.isFinite(state.buffer.timestampOffset) && Math.abs(state.buffer.timestampOffset) <= 1e9 &&
       state.buffer.appendWindowStart === 0 && state.buffer.appendWindowEnd === Infinity; }
     catch { return false; }
   };
   const integrity = () => installed && hooks.every(({ target, name, wrapped }) => target[name] === wrapped);
   const sourceForVideo = (video) => {
     try {
-      if (!video || video.isConnected === false || video.readyState < 2 || video.ended || video.mediaKeys || video.srcObject) return null;
+      // Decoder readiness can drop during catch-up/rebuffering while the same
+      // compressed stream is still arriving. It is NOT source identity.
+      if (!video || video.isConnected === false || video.mediaKeys || video.srcObject) return null;
       const source = urls.get(video.currentSrc || video.src);
       return source && source.channelId === channel() ? source : null;
     } catch { return null; }
   };
   const candidate = (video) => {
+    if (!video || video.readyState < 2 || video.ended) return null;
     const source = sourceForVideo(video);
-    if (!integrity() || !source || source.blocked || video.paused || video.seeking || source.buffers.length < 1 || source.buffers.length > 2) return null;
+    if (!integrity() || !source || source.blocked || source.buffers.length < 1 || source.buffers.length > 2) return null;
     try { if (source.mediaSource.sourceBuffers.length !== source.buffers.length) return null; } catch { return null; }
-    if (source.buffers.some((state) => state.blocked || !state.init || state.initParts.length || !configurationOK(state))) return null;
+    if (source.buffers.some((state) => state.blocked || !state.init || state.awaitingInit || state.initParts.length || !configurationOK(state))) return null;
     // MIME is only an early eligibility check. Native init/sample validation,
     // including real A/V tracks and encryption rejection, remains authoritative.
     const declared = source.buffers.map((state) => state.mimeType.toLowerCase()).join(",");
@@ -64,22 +71,44 @@
   const selectedVideo = () => [...document.querySelectorAll("video")]
     .filter((video) => video.isConnected !== false && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0 && !video.ended)
     .sort((a, b) => { const x = a.getBoundingClientRect(), y = b.getBoundingClientRect(); return y.width * y.height - x.width * x.height; })[0] ?? null;
+  // Only bounded capability facts. Never expose blob/media URLs, credentials,
+  // page text or raw media in diagnostics.
+  const diagnostics = () => {
+    const video = active?.video ?? selectedVideo();
+    const source = video ? sourceForVideo(video) : null;
+    const sourcesList = [...observed].slice(0, 8);
+    const reason = !installed ? "mse_unavailable" : !integrity() ? "observer_changed" : !video ? "waiting_video" :
+      video.mediaKeys ? "encrypted" : video.srcObject ? "source_object_unsupported" : !source ? "source_not_observed" :
+      video.readyState < 2 ? "buffering" :
+      source.blocked ? source.reason ?? "source_blocked" : !source.buffers.length ? "waiting_tracks" :
+      source.buffers.some(state => state.blocked) ? source.buffers.find(state => state.blocked)?.reason ?? "buffer_blocked" :
+      source.buffers.some(state => !configurationOK(state)) ? "timeline_unsupported" :
+      source.buffers.some(state => !state.init || state.awaitingInit || state.initParts.length) ? "waiting_init" : candidate(video) ? "ready" : "tracks_unsupported";
+    return { version: 1, reason, installed, sourceCount: sourcesList.length, appendCount, appendBytes, lastStop,
+      lastAppendAgoMs: lastAppendAt === null ? null : Math.max(0, Date.now() - lastAppendAt),
+      sources: sourcesList.map(item => ({ selected: item === source, blocked: item.blocked, reason: item.reason ?? null,
+        tracks: item.buffers.slice(0, 2).map(state => ({ mimeType: state.mimeType.slice(0, 120), blocked: state.blocked,
+          reason: state.reason ?? null, initBytes: state.init?.byteLength ?? 0,
+          mode: state.buffer.mode === "segments" ? "segments" : "sequence", timestampOffset: Number.isFinite(state.buffer.timestampOffset) ? state.buffer.timestampOffset : null })) })) };
+  };
   const status = () => {
     const video = active?.video ?? selectedVideo();
     const ready = Boolean(candidate(video));
     return { active: Boolean(active), recording: Boolean(active), starting: Boolean(active && !active.recordingId),
       stopping: Boolean(active?.stopping), recordingId: active?.recordingId ?? null, channelId: active?.channelId ?? channel() ?? null,
-      detail: active ? active.stopping ? "encoded_saving" : active.recordingId ? "encoded_recording" : "encoded_starting" : ready ? "encoded_ready" : lastDetail,
+      detail: active ? active.stopping ? "encoded_saving" : active.recordingId ? active.source.lastAppendAt !== null && Date.now() - active.source.lastAppendAt > 15_000 ? "encoded_waiting" : "encoded_recording" : "encoded_starting" : ready ? "encoded_ready" : lastDetail,
       ready, captureChat: active?.captureChat === true, captureMode: "encoded", rateControlAllowed: canChangePlaybackRate(video) };
   };
   const canChangePlaybackRate = (video) => Boolean(active && active.video === video && active.nativeApproved && active.accepting && !active.transportFailed && !active.stopping &&
     active.recordingId && candidate(video) === active.source);
   const getReplayClock = (video) => {
-    if (!canChangePlaybackRate(video)) return null;
-    const sourceTimeSeconds = video.currentTime;
+    if (!canChangePlaybackRate(video) || video.seeking) return null;
+    const videoBuffer = active.source.buffers.find(state => /avc[13]\./i.test(state.mimeType));
+    if (!videoBuffer || !configurationOK(videoBuffer)) return null;
+    const sourceTimeSeconds = video.currentTime - videoBuffer.buffer.timestampOffset;
     if (!Number.isFinite(sourceTimeSeconds) || sourceTimeSeconds < 0 || sourceTimeSeconds > 1e9) return null;
-    // segments + untouched timestampOffset/append windows guarantee original
-    // presentation time. Native muxing subtracts segment DTS origin and keeps
+    // MSE adds timestampOffset to coded PTS. Undo that display-only offset;
+    // never modify the recorded samples. Native muxing subtracts DTS and keeps
     // CTS: output PTS = source PTS - origin (not PTS == DTS).
     return { clock: "mse_presentation_v1", sourceId: active.source.sourceId, sourceTimeSeconds };
   };
@@ -99,6 +128,8 @@
   };
   const failure = (current, reason) => {
     if (!current) return;
+    if (!current.interrupted) lastStop = { reason, readyState:current.video.readyState, paused:Boolean(current.video.paused),
+      ended:Boolean(current.video.ended), sourceAttached:sourceForVideo(current.video) === current.source, sourceClosed:current.source.blocked };
     current.interrupted = true;
     if (!current.reason || current.reason === "user_stop") current.reason = reason;
     current.accepting = false;
@@ -107,13 +138,14 @@
   };
   const block = (state, reason) => {
     state.blocked = true;
+    state.reason = reason;
     if (active?.source === state.source) failure(active, reason);
   };
   const makeSource = (mediaSource) => {
     let source = sources.get(mediaSource);
     if (source) return source;
     if (observed.size >= 8) return null;
-    source = { mediaSource, sourceId: crypto.randomUUID(), channelId: channel(), buffers: [], blocked: false };
+    source = { mediaSource, sourceId: crypto.randomUUID(), channelId: channel(), buffers: [], blocked: false, lastAppendAt: null };
     sources.set(mediaSource, source); observed.add(source);
     mediaSource.addEventListener("sourceclose", () => {
       source.blocked = true; observed.delete(source);
@@ -123,11 +155,11 @@
     return source;
   };
   const makeBuffer = (source, buffer, mimeType) => {
-    if (source.buffers.length >= 2 || !supportedMime(mimeType)) { source.blocked = true; return; }
+    if (source.buffers.length >= 2 || !supportedMime(mimeType)) { source.blocked = true; source.reason = "codec_unsupported"; return; }
     const state = { source, buffer, trackIndex: source.buffers.length, mimeType, blocked: false, header: new Uint8Array(8), headerBytes: 0,
-      kind: null, remaining: 0, initParts: [], initSize: 0, ftyp: null, init: null, forwarding: false };
+      kind: null, remaining: 0, initParts: [], initSize: 0, ftyp: null, init: null, awaitingInit: false, forwarding: false };
     source.buffers.push(state); buffers.set(buffer, state);
-    for (const event of ["error", "abort"]) buffer.addEventListener(event, () => block(state, "source_buffer_error"));
+    buffer.addEventListener("error", () => block(state, "source_buffer_error"));
     if (active?.source === source) failure(active, "track_changed");
   };
   const enqueue = (current, state, parts, byteLength) => {
@@ -151,6 +183,10 @@
       .finally(() => { current.queuedBytes -= byteLength; });
   };
   const observeAppend = (state, value) => {
+    appendCount += 1;
+    appendBytes += value?.byteLength ?? 0;
+    lastAppendAt = Date.now();
+    state.source.lastAppendAt = lastAppendAt;
     if (state.blocked) return;
     if (!configurationOK(state)) { block(state, "timeline_changed"); return; }
     const bytes = bytesOf(value);
@@ -167,10 +203,11 @@
         if (size < 8 || size > MAX_APPEND || !["ftyp", "moov", "moof", "mdat", "styp", "sidx", "emsg", "prft", "free"].includes(kind)) { block(state, "container_unsupported"); return; }
         state.kind = kind; state.remaining = size - 8; state.headerBytes = 0;
         if (kind === "ftyp" || kind === "moov") {
-          if (current) { block(state, "init_changed"); return; }
+          state.awaitingInit = true;
           if (size > MAX_INIT || (kind === "moov" && (!state.ftyp || state.ftyp.length + size > MAX_INIT))) { block(state, "init_unsupported"); return; }
           state.initParts = [state.header.slice()]; state.initSize = 8;
         } else {
+          if (state.awaitingInit) { block(state, "init_unsupported"); return; }
           if (kind === "moof") state.forwarding = Boolean(current);
           if (current && state.forwarding) { parts.push(state.header.slice()); forwarded += 8; }
         }
@@ -189,8 +226,13 @@
         const complete = new Uint8Array(state.initSize); let offset = 0;
         for (const part of state.initParts) { complete.set(part, offset); offset += part.length; }
         state.initParts = []; state.initSize = 0;
-        if (state.kind === "ftyp") { state.ftyp = complete; state.init = null; }
-        else { state.init = new Uint8Array(state.ftyp.length + complete.length); state.init.set(state.ftyp); state.init.set(complete, state.ftyp.length); }
+        if (state.kind === "ftyp") { state.ftyp = complete; }
+        else {
+          const next = new Uint8Array(state.ftyp.length + complete.length); next.set(state.ftyp); next.set(complete, state.ftyp.length);
+          if (current && state.init && (state.init.length !== next.length || state.init.some((value, index) => value !== next[index]))) { block(state, "init_changed"); return; }
+          state.init = next;
+          state.awaitingInit = false;
+        }
       }
     }
     if (current && forwarded) enqueue(current, state, parts, forwarded);
@@ -220,7 +262,7 @@
       try { const state = buffers.get(this); if (state) observeAppend(state, value); } catch { const state = buffers.get(this); if (state) block(state, "observer_failed"); }
       return result;
     });
-    for (const name of ["changeType", "abort"]) if (typeof NativeSourceBuffer.prototype[name] === "function") hook(NativeSourceBuffer.prototype, name, (original) => function () {
+    for (const name of ["changeType"]) if (typeof NativeSourceBuffer.prototype[name] === "function") hook(NativeSourceBuffer.prototype, name, (original) => function () {
       const result = Reflect.apply(original, this, arguments);
       const state = buffers.get(this); if (state) block(state, name === "changeType" ? "codec_changed" : "source_buffer_error"); return result;
     });
@@ -236,8 +278,6 @@
     if (channel() !== current.channelId) return "channel_changed";
     if (!integrity()) return "observer_changed";
     if (sourceForVideo(current.video) !== current.source || current.source.blocked) return "source_changed";
-    if (current.video.seeking) return "seek";
-    if (current.video.paused) return "paused";
     if (current.source.buffers.some((state) => state.blocked || !configurationOK(state))) return "timeline_changed";
     return null;
   };
@@ -277,7 +317,9 @@
     active = current;
     for (const state of source.buffers) state.forwarding = false;
     const listen = (name, reason) => { const callback = () => failure(current, reason); video.addEventListener(name, callback); current.listeners.push(() => video.removeEventListener(name, callback)); };
-    listen("seeking", "seek"); listen("pause", "paused"); listen("emptied", "source_changed"); listen("ended", "source_changed"); listen("encrypted", "encrypted");
+    // emptied can describe resetting just the decoder. The periodic identity
+    // check still stops an actually replaced URL/MediaSource.
+    listen("ended", "source_changed"); listen("encrypted", "encrypted");
     current.timer = setInterval(() => { const reason = safetyReason(current); if (reason && !current.stopping) failure(current, reason); }, 500);
     safeNotify(current, "encoded_starting");
     current.begin = Promise.resolve().then(() => options.request("encoded_begin", { requestId: command.requestId, channelId: current.channelId,
@@ -290,18 +332,18 @@
         safeNotify(current, current.stopping ? "encoded_saving" : "encoded_recording"); return response;
       }).catch((cause) => {
         current.transportFailed = true; current.accepting = false; cleanUp(current); safeNotify(current, "native_rejected");
-        const error = new Error(cause?.message ?? "native_rejected"); error.nativeAttempted = true;
+        const error = new Error(cause?.message ?? "native_rejected"); error.nativeAttempted = true; error.code = cause?.code;
         // This exact code is issued by native init validation BEFORE consuming
         // the arm or opening a recording. No lost ACK/append/finish failure may
         // fall back: those may already own files or an active native session.
-        if (cause?.code === "ENCODED_UNSUPPORTED") { source.blocked = true; error.allowLegacyFallback = true; }
+        if (cause?.code === "ENCODED_UNSUPPORTED") { source.blocked = true; source.reason = "native_init_unsupported"; error.allowLegacyFallback = true; }
         throw error;
       });
     return current.begin;
   };
   window.addEventListener("pagehide", () => { if (active) failure(active, "page_hidden"); });
   Object.defineProperty(window, "__atsumiEncodedCapture", { value: Object.freeze({
-    canStart: (video) => Boolean(candidate(video)), supports: (video) => Boolean(candidate(video)),
+    canStart: (video) => Boolean(candidate(video)), supports: (video) => Boolean(candidate(video)), getDiagnostics: diagnostics,
     canChangePlaybackRate, getReplayClock, getStatus: status, start,
     stop(reason = "user_stop", interrupted = false) {
       if (!active) return Promise.resolve({ stopped: true, interrupted: false });

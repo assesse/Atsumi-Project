@@ -15,6 +15,9 @@
   const QUEUE_BYTES = 16 * 1024 * 1024;
   const SEGMENT_MS = 15_000;
   const ACK_MS = 15_000;
+  // Legacy output capture is retained only for isolated codec regression tests.
+  // Production must never silently change the user's recording method.
+  const ALLOW_REENCODED_CAPTURE = false;
   // Wry's default WebMessage handler expects a string before custom handlers
   // run. The native host routes this reserved prefix outside Tauri IPC.
   const MESSAGE_PREFIX = "ATSUMI_BROWSER_CAPTURE:";
@@ -30,7 +33,7 @@
   let encodedChat = null;
   const encodedState = () => window.__atsumiEncodedCapture?.getStatus() ?? null;
   const encodedDetail = (detail) => ({ encoded_ready: "ready", encoded_starting: "starting",
-    encoded_recording: "recording", encoded_saving: "saving", encoded_saved: "saved",
+    encoded_recording: "recording", encoded_waiting: "waiting_source", encoded_saving: "saving", encoded_saved: "saved",
     encoded_interrupted: "native_rejected", encoded_unavailable: "unavailable" })[detail] ?? detail;
 
   // The native host must also validate the WebView label, current URL and its
@@ -113,6 +116,8 @@
     recorder_error: "인코더 오류로 녹화 중단",
     queue_overflow: "저장 지연으로 녹화 중단",
     native_rejected: "저장 오류 · 일부 녹화가 보존되지 않았습니다",
+    original_unavailable: "원본 영상을 저장할 수 없습니다 · 수신 상태를 확인하세요",
+    waiting_source: "원본 영상 수신 대기 · 녹화는 유지됩니다",
     empty_segment: "빈 녹화 조각 · 정상 저장되지 않았습니다",
   };
   const renderStatus = (detail) => {
@@ -125,9 +130,9 @@
       document.body.appendChild(toolbar);
     }
     const compact = { ready: "녹화 준비", unavailable: "영상 대기", starting: "녹화 준비 중",
-      recording: "녹화 중", saving: "저장 중", saved: "저장 완료" };
+      recording: "녹화 중", waiting_source: "수신 대기", original_unavailable: "원본 저장 불가", saving: "저장 중", saved: "저장 완료" };
     const text = compact[detail] ?? detailText[detail] ?? compact.unavailable;
-    const description = `${detailText[detail] ?? detailText.unavailable}${detail === "recording" ? " · 완료된 영상은 15초마다 저장합니다" : ""}`;
+    const description = `${detailText[detail] ?? detailText.unavailable}${detail === "recording" ? " · 수신한 원본을 순서대로 저장합니다" : ""}`;
     if (toolbar) {
       toolbar.setAttribute("aria-label", description);
       toolbar.setAttribute("title", description);
@@ -138,13 +143,15 @@
     const video = videoSource();
     const encoded = encodedState();
     const encodedActive = Boolean(encodedStarting || encoded?.active);
-    const ready = Boolean(channel() && video && !video.paused && !video.seeking &&
-      (window.__atsumiEncodedCapture?.canStart(video) || (video.playbackRate === 1 && video.captureStream && chooseMime())));
+    const ready = Boolean(channel() && video &&
+      (window.__atsumiEncodedCapture?.canStart(video) || (ALLOW_REENCODED_CAPTURE && !video.paused && !video.seeking && video.playbackRate === 1 && video.captureStream && chooseMime())));
     const detail = encodedActive ? (encodedStarting && !encoded?.active ? "starting" : encodedDetail(encoded?.detail ?? "starting")) : session ? (session.stopping ? "saving" : session.recordingId ? "recording" : "starting") :
       lastDetail === "ready" && !ready ? "unavailable" : lastDetail;
     renderStatus(detail);
     const fields = { channelId: session?.channelId ?? channel(), ready,
-      recording: Boolean(session || encodedActive), detail, captureMode: encodedActive ? "encoded" : "reencoded" };
+      recording: Boolean(session || encodedActive), detail, captureMode: ALLOW_REENCODED_CAPTURE && !encodedActive ? "reencoded" : "encoded" };
+    const sourceStatus = window.__atsumiEncodedCapture?.getDiagnostics?.();
+    if (sourceStatus) fields.captureDiagnostics = sourceStatus;
     if (video) {
       if (Number.isInteger(video.videoWidth) && video.videoWidth >= 0 && video.videoWidth <= 16384) fields.videoWidth = video.videoWidth;
       if (Number.isInteger(video.videoHeight) && video.videoHeight >= 0 && video.videoHeight <= 16384) fields.videoHeight = video.videoHeight;
@@ -345,7 +352,7 @@
     }
     const channelId = channel();
     const video = videoSource();
-    if (channelId && channelId === command.channelId && video && !video.paused &&
+    if (channelId && channelId === command.channelId && video &&
         window.__atsumiEncodedCapture?.canStart(video)) {
       encodedStarting = true; lastDetail = "starting"; status();
       let safeFallback = false;
@@ -379,13 +386,15 @@
         // An attempted encoded begin must never silently arm a second legacy
         // recorder after a lost ACK. Native ownership/recovery resolves it.
         encodedStarting = false; lastDetail = "native_rejected";
-        safeFallback = error?.allowLegacyFallback === true;
+        safeFallback = ALLOW_REENCODED_CAPTURE && error?.allowLegacyFallback === true;
+        if (!ALLOW_REENCODED_CAPTURE && error?.code === "ENCODED_UNSUPPORTED") lastDetail = "original_unavailable";
       }
       if (!safeFallback) { status(); return; }
       // Only the native parser's explicit BEFORE-arm rejection permits this.
       // The encoded observer disables that source, so subsequent retries use 1x.
       lastDetail = "ready";
     }
+    if (!ALLOW_REENCODED_CAPTURE) { lastDetail = "original_unavailable"; status(); return; }
     window.__atsumiPlayerUI?.stopCatchup();
     const mimeType = chooseMime();
     if (!channelId || channelId !== command.channelId || !video || video.paused || !video.captureStream || !mimeType) {

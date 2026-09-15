@@ -221,6 +221,19 @@ impl<R: Runtime> WebviewManager<R> {
 
     // Prepend `all_initialization_scripts` to `webview_attributes.initialization_scripts`
     all_initialization_scripts.extend(webview_attributes.initialization_scripts);
+    // Atsumi: Wry 0.55 on Windows ignores for_main_frame_only and injects
+    // through AddScriptToExecuteOnDocumentCreated into every frame. Enforce
+    // the requested boundary in the script too, before exposing the IPC key
+    // or globals to an opaque, untrusted original-player iframe.
+    #[cfg(windows)]
+    for initialization in &mut all_initialization_scripts {
+      if initialization.for_main_frame_only {
+        initialization.script = format!(
+          "if (window.self === window.top) {{\n{}\n}}",
+          initialization.script
+        );
+      }
+    }
     webview_attributes.initialization_scripts = all_initialization_scripts;
 
     pending.webview_attributes = webview_attributes;

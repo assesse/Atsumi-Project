@@ -31,6 +31,8 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
     }
     let frame = 0;
     let disposed = false;
+    let lastWidth = grid.clientWidth;
+    let resizeTimer: number | undefined;
 
     const measure = () => {
       frame = 0;
@@ -67,18 +69,35 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
         if (card.style.getPropertyValue("--gallery-card-height") !== value) {
           card.style.setProperty("--gallery-card-height", value);
         }
-        card.dataset.rowHeight = value;
+        if (card.dataset.rowHeight !== value) card.dataset.rowHeight = value;
         const host = hosts[index];
-        if (host && host !== card) host.style.setProperty("--gallery-card-height", value);
+        if (host && host !== card && host.style.getPropertyValue("--gallery-card-height") !== value) {
+          host.style.setProperty("--gallery-card-height", value);
+        }
       });
     };
     const schedule = () => {
-      if (!frame) frame = window.requestAnimationFrame(measure);
+      if (!disposed && !frame) frame = window.requestAnimationFrame(measure);
     };
     schedule();
-    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(schedule) : null;
+    const resize = typeof ResizeObserver === "function" ? new ResizeObserver(() => {
+      const nextWidth = grid.clientWidth;
+      // Our row-height writes also resize the grid; they must not schedule a
+      // second full-gallery readback. Column/preset changes measure immediately
+      // via this effect, but pixel-only resizing can use the settled geometry.
+      if (nextWidth === lastWidth) return;
+      lastWidth = nextWidth;
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(schedule, 100);
+    }) : null;
     resize?.observe(grid);
-    const mutation = typeof MutationObserver === "function" ? new MutationObserver(schedule) : null;
+    const mutation = typeof MutationObserver === "function" ? new MutationObserver((records) => {
+      if (records.some((record) => record.type === "attributes"
+        || record.target === grid
+        || (record.target instanceof HTMLElement
+          && record.target.parentElement === grid
+          && record.target.classList.contains("progressive-gallery-slot")))) schedule();
+    }) : null;
     mutation?.observe(grid, {
       childList: true,
       subtree: true,
@@ -88,6 +107,7 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
     document.fonts?.ready.then(schedule).catch(() => undefined);
     return () => {
       disposed = true;
+      window.clearTimeout(resizeTimer);
       if (frame) window.cancelAnimationFrame(frame);
       resize?.disconnect();
       mutation?.disconnect();

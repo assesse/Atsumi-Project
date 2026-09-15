@@ -1546,6 +1546,7 @@ describe("GalleryCard event projection", () => {
   });
 
   it("renders the measured maximum tags plus a non-interactive +N and recalculates on resize", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let availableWidth = 175;
     let resolveFonts: (() => void) | undefined;
     const fontReady = new Promise<void>((resolve) => { resolveFonts = resolve; });
@@ -1564,7 +1565,7 @@ describe("GalleryCard event projection", () => {
     }
     globalThis.ResizeObserver = ControlledResizeObserver;
     const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
-      return this.classList.contains("tag-list") ? availableWidth : 300;
+      return this.classList.contains("tag-list") || this.classList.contains("card-content") ? availableWidth : 300;
     });
     const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
       return this.classList.contains("tag-list") ? 24 : 220;
@@ -1616,6 +1617,8 @@ describe("GalleryCard event projection", () => {
       availableWidth = 100;
       const contentObserver = observed.find(({ target }) => target.classList.contains("card-content"));
       await act(async () => contentObserver?.callback([], {} as ResizeObserver));
+      expect(container.querySelectorAll(".tag")).toHaveLength(3);
+      await act(async () => vi.advanceTimersByTime(100));
       expect(container.querySelectorAll(".tag")).toHaveLength(1);
       expect(container.querySelector(".tag-overflow:not(.tag-overflow-measure)")).toHaveTextContent("+3");
 
@@ -1635,6 +1638,92 @@ describe("GalleryCard event projection", () => {
       globalThis.ResizeObserver = originalResizeObserver;
       if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
       else Reflect.deleteProperty(document, "fonts");
+      vi.useRealTimers();
+    }
+  });
+
+  it("refits a 60-card gallery once after a resize burst without resubscribing thumbnails", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    let availableWidth = 175;
+    let tagMeasurements = 0;
+    const observed: Array<{ target: Element; callback: ResizeObserverCallback; disconnected: boolean }> = [];
+    const originalResizeObserver = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class implements ResizeObserver {
+      private entry?: (typeof observed)[number];
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe(target: Element) {
+        this.entry = { target, callback: this.callback, disconnected: false };
+        observed.push(this.entry);
+      }
+      unobserve() {}
+      disconnect() { if (this.entry) this.entry.disconnected = true; }
+    };
+    const originalFonts = Object.getOwnPropertyDescriptor(document, "fonts");
+    Object.defineProperty(document, "fonts", { configurable: true, value: undefined });
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("tag-list") || this.classList.contains("card-content") ? availableWidth : 300;
+    });
+    const height = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.classList.contains("tag-list") ? 24 : 220;
+    });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("tag") || this.classList.contains("tag-overflow")) tagMeasurements += 1;
+      const chipWidth = this.classList.contains("tag") ? 45 : 25;
+      return { x: 0, y: 0, width: chipWidth, height: 24, top: 0, right: chipWidth, bottom: 24, left: 0, toJSON: () => ({}) };
+    });
+    const client = new ThumbnailClient(browserFixtureThumbnailAdapter);
+    const subscribe = vi.spyOn(client, "subscribe");
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const gallery: Gallery = { ...mockGalleries[0]!, tags: ["tag-1", "tag-2", "tag-3", "tag-4"] };
+    const favoriteMetadata = new Set<string>();
+    const notifyResize = () => {
+      for (const entry of observed) if (!entry.disconnected) entry.callback([], {} as ResizeObserver);
+    };
+
+    try {
+      await act(async () => root.render(Array.from({ length: 60 }, (_, index) => (
+        <GalleryCard key={index} gallery={gallery} view="explore" selected={false} selectionContext={false}
+          favoriteMetadata={favoriteMetadata} {...callbacks} thumbnailClient={client} />
+      ))));
+      // Initial layout is synchronous, not delayed until the first timer.
+      expect(container.querySelectorAll(".tag")).toHaveLength(60 * 3);
+      expect(tagMeasurements).toBe(60 * 5);
+      expect(subscribe).toHaveBeenCalledTimes(60);
+      const cardObservers = observed.filter(({ target }) => target.classList.contains("card-content"));
+      expect(cardObservers).toHaveLength(60);
+
+      for (let step = 1; step <= 25; step += 1) {
+        availableWidth = 175 - step * 3;
+        await act(async () => { notifyResize(); vi.advanceTimersByTime(16); });
+      }
+      expect(tagMeasurements).toBe(60 * 5);
+      expect(container.querySelectorAll(".tag")).toHaveLength(60 * 3);
+      await act(async () => vi.advanceTimersByTime(100));
+      expect(tagMeasurements).toBe(60 * 5 * 2);
+      expect(container.querySelectorAll(".tag")).toHaveLength(60);
+      expect(subscribe).toHaveBeenCalledTimes(60);
+
+      // Identical-size notifications and unmounting a pending resize do no work.
+      await act(async () => { notifyResize(); vi.advanceTimersByTime(100); });
+      expect(tagMeasurements).toBe(60 * 5 * 2);
+      availableWidth = 160;
+      await act(async () => notifyResize());
+      await act(async () => root.unmount());
+      expect(cardObservers.every(({ disconnected }) => disconnected)).toBe(true);
+      await act(async () => vi.advanceTimersByTime(100));
+      expect(tagMeasurements).toBe(60 * 5 * 2);
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose();
+      subscribe.mockRestore();
+      rect.mockRestore();
+      width.mockRestore();
+      height.mockRestore();
+      globalThis.ResizeObserver = originalResizeObserver;
+      if (originalFonts) Object.defineProperty(document, "fonts", originalFonts);
+      else Reflect.deleteProperty(document, "fonts");
+      vi.useRealTimers();
     }
   });
 

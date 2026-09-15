@@ -1696,6 +1696,16 @@ tauri::Builder::default()
   }
 
   fn is_local_url(&self, current_url: &Url) -> bool {
+    // Atsumi's original-player scheme contains public third-party UI code,
+    // not trusted application code. Registration as a custom scheme must
+    // never grant it IPC, even if a caller knows the invoke key or its parent
+    // native window/webview has the trusted "main" label.
+    if current_url.scheme() == "atsumi-player"
+      || matches!(current_url.scheme(), "http" | "https")
+        && current_url.host_str() == Some("atsumi-player.localhost")
+    {
+      return false;
+    }
     let uses_https = current_url.scheme() == "https";
 
     // if from `tauri://` custom protocol

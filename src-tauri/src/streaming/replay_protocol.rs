@@ -78,7 +78,12 @@ impl ReplayService {
             if !index::asset_allowed(&session, parts[2]) {
                 return response(StatusCode::NOT_FOUND, vec![], None, None, origin);
             }
-            return match super::super::replay_assets::read_cached(&self.inner.data_dir, parts[2]) {
+            let asset =
+                super::super::replay_assets::read_recording(&session.recording_root, parts[2])
+                    .or_else(|_| {
+                        super::super::replay_assets::read_cached(&self.inner.data_dir, parts[2])
+                    });
+            return match asset {
                 Ok(asset) if session.valid().is_ok() => {
                     let length = asset.bytes.len() as u64;
                     response(

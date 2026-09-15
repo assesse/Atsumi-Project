@@ -1,0 +1,32 @@
+.auto-record-panel {width:min(100%,1080px);margin:0 auto;padding:24px;color:var(--text-primary,#f0eef2);}
+.auto-record-panel header {display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;}
+.auto-record-panel h2 {font-size:20px;margin:0 0 6px;}
+.auto-record-panel p {margin:0;font-size:13px;color:var(--text-secondary,#aaa5b3);}
+.auto-record-help {display:grid;place-items:center;width:26px;height:26px;border:1px solid #4d4656;border-radius:50%;color:#aaa5b3;cursor:help;}
+.auto-record-panel form {display:flex;gap:8px;margin-bottom:24px;}
+.auto-record-panel input {min-width:0;flex:1;border:1px solid #49424f;background:#19171e;color:#f0eef2;border-radius:8px;padding:11px 12px;font:inherit;}
+.auto-record-panel button {border:1px solid #49424f;border-radius:8px;background:#29252f;color:#eeeaf2;padding:8px 14px;font:inherit;font-size:13px;cursor:pointer;white-space:nowrap;}
+.auto-record-panel button:hover:not(:disabled) {background:#37303f;border-color:#827184;}
+.auto-record-panel button:focus-visible,.auto-record-panel input:focus-visible,.auto-record-help:focus-visible {outline:2px solid #7bd7b5;outline-offset:3px;}
+.auto-record-panel button:disabled {opacity:.45;cursor:default;}
+.auto-record-panel form button {background:#17624d;border-color:#237b63;}
+.auto-record-panel button[aria-pressed=true] {color:#75e3b7;border-color:#32644f;}
+.auto-record-channels {display:grid;gap:10px;}
+.auto-record-channel {display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid #39343f;background:#222027;border-radius:12px;}
+.auto-record-channel.is-recording {border-color:#4f7466;}
+.auto-record-identity {display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;}
+.auto-record-identity strong {max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;}
+.auto-record-status {font-size:12px;color:#b7b1bf;}
+.is-recording .auto-record-status {color:#75e3b7;}
+.is-recording .auto-record-status::before {content:"";display:inline-block;width:6px;height:6px;margin-right:5px;border-radius:50%;background:currentColor;}
+.auto-record-problem {width:100%;color:#d7b98b;font-size:12px;display:flex;gap:6px;min-width:0;}
+.auto-record-problem span {overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:560px;}
+.auto-record-not-started {width:100%;font-size:12px;color:#b7b1bf;}
+.auto-record-last-failure {width:100%;padding-top:6px;}
+.auto-record-last-failure strong {display:block;font-size:12px;color:#e0bc87;white-space:normal;}
+.auto-record-last-failure p {margin-top:5px;font-size:12px;line-height:1.6;color:#c6bbc9;overflow-wrap:anywhere;}
+.auto-record-actions {display:flex;gap:6px;flex-shrink:0;}
+.auto-record-actions .auto-record-stop {color:#edb1b7;}
+.auto-record-panel .auto-record-error {color:#edb1b7;margin-bottom:16px;}
+.auto-record-empty {padding:64px 16px;text-align:center;color:#aaa5b3;border:1px dashed #49424f;border-radius:12px;}
+@media(max-width:780px) {.auto-record-panel{padding:16px;}.auto-record-channel{align-items:flex-start;flex-direction:column;}.auto-record-actions{align-self:flex-end;}.auto-record-identity strong{max-width:100%;}}

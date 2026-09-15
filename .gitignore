@@ -4,6 +4,8 @@ target/
 src-tauri/target/
 .pnpm-store/
 .runtime/
+# Explicit local checkpoints are preserved separately from runtime/build output.
+checkpoints/
 *.log
 __pycache__/
 *.py[cod]

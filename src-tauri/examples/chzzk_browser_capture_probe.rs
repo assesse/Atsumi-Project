@@ -481,7 +481,7 @@ mod windows_probe {
             .ok_or_else(|| format!("missing_{name}"))
     }
     fn command(window: &WebviewWindow, value: Value) -> Result<(), String> {
-        window.eval(&format!("window.dispatchEvent(new CustomEvent('atsumi-browser-command',{{detail:{value}}}));"))
+        window.eval(format!("window.dispatchEvent(new CustomEvent('atsumi-browser-command',{{detail:{value}}}));"))
             .map_err(|_| "command_dispatch_failed".into())
     }
     fn reply(window: &WebviewWindow, id: &str, result: &Result<Option<Value>, String>) {
@@ -490,7 +490,7 @@ mod windows_probe {
             Err(code) => json!({"id":id,"ok":false,"error":{"code":code}}),
             Ok(None) => return,
         };
-        let _ = window.eval(&format!(
+        let _ = window.eval(format!(
             "window.dispatchEvent(new CustomEvent('atsumi-browser-reply',{{detail:{response}}}));"
         ));
     }
@@ -625,7 +625,12 @@ mod windows_probe {
             json!({"kind":"probe_paths","root":base,"profile":profile,
             "appData":data_dir,"recordingRoot":output_root,"retainedForFfprobe":true})
         );
-        let source = include_str!("../src/streaming/browser_capture.js");
+        // This historical codec probe explicitly opts into retired output capture.
+        // The production source never enables it or falls back automatically.
+        let source = include_str!("../src/streaming/browser_capture.js").replace(
+            "const ALLOW_REENCODED_CAPTURE = false;",
+            "const ALLOW_REENCODED_CAPTURE = true;",
+        );
         if source.matches("https://chzzk.naver.com").count() != 1 {
             return Err(
                 "Production bridge origin literal changed; audit the probe substitution".into(),

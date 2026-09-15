@@ -2,9 +2,14 @@
 //! Existing chat.jsonl files remain readable; this module never migrates media.
 use super::model::{ChatMessage, StreamError};
 use serde::Serialize;
+#[cfg(test)]
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{Read, Seek, SeekFrom, Write},
+    fs,
+    io::{Read, Seek, SeekFrom},
+};
+use std::{
+    fs::{File, OpenOptions},
+    io::Write,
     path::Path,
     time::{Duration, Instant},
 };
@@ -34,6 +39,7 @@ fn append_json<T: Serialize>(file: &mut File, value: &T, sync: bool) -> Result<(
 
 /// Read one history page backwards. Work and memory are proportional to the
 /// displayed page, not the full (potentially hours-long) append-only chat log.
+#[cfg(test)] // Retained as an independent oracle for the indexed replay reader.
 pub(crate) fn read_chat_page(
     root: &Path,
     before: Option<u64>,
@@ -112,6 +118,7 @@ pub(crate) fn read_chat_page(
     })
 }
 
+#[cfg(test)]
 fn parse_chat_history_line(
     line: &mut Vec<u8>,
     items: &mut Vec<ChatMessage>,
@@ -139,6 +146,8 @@ fn parse_chat_history_line(
 
 pub(crate) struct ChatStore {
     file: File,
+    root: std::path::PathBuf,
+    viewers: Option<super::viewer_metrics::ViewerLog>,
     pending: usize,
     last_sync: Instant,
 }
@@ -152,6 +161,8 @@ impl ChatStore {
             .map_err(|_| storage_error())?;
         Ok(Self {
             file,
+            root: root.to_owned(),
+            viewers: super::viewer_metrics::ViewerLog::create(root).ok(),
             pending: 0,
             last_sync: Instant::now(),
         })
@@ -165,14 +176,32 @@ impl ChatStore {
         }
         Ok(())
     }
+    pub fn recording_root(&self) -> &Path {
+        &self.root
+    }
 
     pub fn sync(&mut self) -> Result<(), StreamError> {
         self.file.sync_all().map_err(|_| storage_error())?;
+        if self.viewers.as_ref().is_some_and(|log| log.sync().is_err()) {
+            self.viewers = None;
+        }
         self.pending = 0;
         self.last_sync = Instant::now();
         Ok(())
     }
 
+    pub fn append_viewer(&mut self, sample: &super::viewer_metrics::ViewerSample) {
+        // This optional metric must never stop video or otherwise valid chat.
+        if self
+            .viewers
+            .as_mut()
+            .is_some_and(|log| log.append(sample).is_err())
+        {
+            self.viewers = None;
+        }
+    }
+
+    #[cfg(test)]
     pub fn sync_if_due(&mut self) -> Result<(), StreamError> {
         if self.pending > 0 && self.last_sync.elapsed() >= Duration::from_secs(1) {
             self.sync()?;
@@ -275,7 +304,8 @@ mod tests {
         let original = fs::read(directory.path().join("chat.jsonl")).unwrap();
         let page = read_chat_page(directory.path(), None).unwrap();
         assert_eq!(page.items.len(), 3);
-        for messages in [&page.items[..]] {
+        {
+            let messages = &page.items[..];
             assert!(messages[0].rich.is_none());
             let rich = messages[1].rich.as_ref().unwrap();
             assert_eq!(rich.nickname_color.as_deref(), Some("#123ABC"));
@@ -302,6 +332,8 @@ mod tests {
         };
         let rich = ChatRich {
             nickname_color: Some("#FFFFFF".into()),
+            text_color: Some("#FFFFFF".into()),
+            profile_url: Some(format!("https://chzzk.naver.com/{}", "f".repeat(32))),
             badges: (0..12)
                 .map(|index| ChatBadge {
                     kind: ChatBadgeKind::Subscription,

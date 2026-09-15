@@ -70,7 +70,7 @@ const flush = async (turns = 80) => {
   for (let index = 0; index < turns; index += 1) await Promise.resolve();
 };
 
-function fixture(options: { url?: string; iframe?: boolean; audio?: boolean; mimes?: string[]; recordingId?: string; captureChat?: boolean } = {}) {
+function fixture(options: { url?: string; iframe?: boolean; audio?: boolean; mimes?: string[]; recordingId?: string; captureChat?: boolean; originalOnly?: boolean } = {}) {
   const window = new Target() as Target & Record<string, unknown>;
   window.location = new URL(options.url ?? `https://chzzk.naver.com/live/${CHANNEL}`);
   window.top = options.iframe ? {} : window;
@@ -138,14 +138,17 @@ function fixture(options: { url?: string; iframe?: boolean; audio?: boolean; mim
     performance: { now: () => Date.now() },
     setTimeout, clearTimeout, setInterval, clearInterval, btoa, Uint8Array,
   };
-  runInNewContext(bridgeSource, context);
+  // Older codec tests explicitly exercise the retired fallback in isolation.
+  // Production-policy regressions below use the unchanged source.
+  const script = options.originalOnly ? bridgeSource : bridgeSource.replace("const ALLOW_REENCODED_CAPTURE = false;", "const ALLOW_REENCODED_CAPTURE = true;");
+  runInNewContext(script, context);
   const command = (kind: string, fields: Record<string, unknown> = {}) => {
     window.dispatch("atsumi-browser-command", {
       kind, channelId: CHANNEL, requestId: REQUEST, rightsAcknowledged: true, ...fields,
     });
   };
   return { window, video, videos, elements, messages, rawMessages, hold, reject, recorders, reply, command,
-    injectAgain: () => runInNewContext(bridgeSource, context),
+    injectAgain: () => runInNewContext(script, context),
     ofKind: (kind: string) => messages.filter((message) => message.kind === kind) };
 }
 
@@ -154,7 +157,7 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe("encoded capture integration", () => {
   it("uses an approved encoded session without creating a second MediaRecorder and drains chat before finish", async () => {
-    const h = fixture(); const order: string[] = [];
+    const h = fixture({ originalOnly: true }); const order: string[] = [];
     const state = { active: false, starting: false, stopping: false, recordingId: RECORDING, channelId: CHANNEL, detail: "recording" };
     let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void } | undefined;
     const encoded = {
@@ -226,6 +229,35 @@ describe("encoded capture integration", () => {
   });
 });
 
+describe("original-only production policy", () => {
+  it("never captures rendered output when the original observer is unavailable", async () => {
+    const h = fixture({ originalOnly: true }); h.video.playbackRate = 1.03;
+    h.command("start"); await flush();
+    expect(h.video.captures).toBe(0); expect(h.recorders).toHaveLength(0); expect(h.ofKind("begin")).toHaveLength(0);
+    expect(h.video.playbackRate).toBe(1.03);
+    expect(h.ofKind("status").at(-1)).toMatchObject({ ready: false, recording: false, detail: "original_unavailable" });
+  });
+  it("rejects the old fallback hint without resetting speed or creating a recorder", async () => {
+    const h = fixture({ originalOnly: true }); h.video.playbackRate = 2;
+    const stopCatchup = vi.fn(); h.window.__atsumiPlayerUI = { update: () => {}, stopCatchup };
+    h.window.__atsumiEncodedCapture = { canStart: () => true, getStatus: () => ({ active: false }),
+      start: async () => { throw Object.assign(new Error("unsupported init"), { code: "ENCODED_UNSUPPORTED", allowLegacyFallback: true }); } };
+    h.command("start"); await flush();
+    expect(h.recorders).toHaveLength(0); expect(h.video.captures).toBe(0); expect(h.ofKind("begin")).toHaveLength(0);
+    expect(stopCatchup).not.toHaveBeenCalled(); expect(h.video.playbackRate).toBe(2);
+    expect(h.ofKind("status").at(-1)?.detail).toBe("original_unavailable");
+  });
+  it("reports waiting for input as an active recording, not a successful stop", async () => {
+    const h = fixture({ originalOnly: true }); const diagnostics = { reason: "ready", installed: true };
+    h.video.paused = true;
+    h.window.__atsumiEncodedCapture = { canStart: () => true, getDiagnostics: () => diagnostics,
+      getStatus: () => ({ active: true, recordingId: RECORDING, detail: "encoded_waiting" }) };
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(h.ofKind("status").at(-1)).toMatchObject({ recording: true, detail: "waiting_source", captureMode: "encoded", captureDiagnostics: diagnostics });
+    expect(h.elements[0]?.textContent).toBe("수신 대기"); expect(h.recorders).toHaveLength(0);
+  });
+});
+
 describe("official-page browser capture bridge", () => {
   it.each([
     "http://chzzk.naver.com/live/" + CHANNEL,
@@ -278,7 +310,7 @@ describe("official-page browser capture bridge", () => {
     expect(harness.recorders[0]?.timeslice).toBe(1000);
     expect(harness.recorders[0]?.stream).toBe(harness.video.stream);
     expect(harness.ofKind("status")[0]).toMatchObject({ ready: true, bufferSeconds: 4, videoWidth: 1920, videoHeight: 1080, paused: false });
-    expect(harness.elements[0]?.attributes.get("aria-label")).toContain("15초마다 저장");
+    expect(harness.elements[0]?.attributes.get("aria-label")).toContain("순서대로 저장");
     expect(harness.elements[0]?.textContent).toBe("녹화 중");
     expect(harness.elements[0]?.textContent).not.toMatch(/재인코딩|WebView|15초/);
     expect(harness.elements[0]?.textContent).not.toContain("\n");

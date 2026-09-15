@@ -10,6 +10,246 @@ pub(super) struct ContextGroup {
     pending: Mutex<Option<(String, String, Instant)>>,
     pub reconfiguring: AtomicU64,
     pub screenshot_decode: Mutex<()>,
+    notices: Mutex<std::collections::VecDeque<String>>,
+}
+
+impl ContextGroup {
+    pub fn notice(&self, message: &str) {
+        let mut notices = self.notices.lock().unwrap_or_else(|p| p.into_inner());
+        if notices.len() == 32 {
+            notices.pop_front();
+        }
+        notices.push_back(message.chars().take(240).collect());
+    }
+    pub fn take_notices(&self) -> Vec<String> {
+        self.notices
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .drain(..)
+            .collect()
+    }
+    pub(super) fn register(&self, inner: &Arc<Inner>) -> Result<(), StreamError> {
+        let mut members = self.members.lock().map_err(|_| unavailable())?;
+        members.retain(|entry| {
+            entry
+                .upgrade()
+                .is_some_and(|inner| !inner.detached.load(Ordering::Acquire))
+        });
+        if members.len() >= 9
+            || members
+                .iter()
+                .filter_map(Weak::upgrade)
+                .any(|entry| entry.label == inner.label)
+        {
+            return Err(unavailable());
+        }
+        members.push(Arc::downgrade(inner));
+        Ok(())
+    }
+    pub fn hosts(&self) -> Vec<OfficialBrowser> {
+        self.members
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter_map(Weak::upgrade)
+            .map(|inner| OfficialBrowser { inner })
+            .collect()
+    }
+    pub fn reserve_pending(&self, label: &str) -> Result<String, StreamError> {
+        let mut pending = self.pending.lock().map_err(|_| unavailable())?;
+        if pending
+            .as_ref()
+            .is_some_and(|(_, _, at)| at.elapsed() <= Duration::from_secs(20))
+        {
+            return Err(error(
+                "BROWSER_CONTROL_BUSY",
+                "이미 확인 중인 요청이 있습니다.",
+            ));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        *pending = Some((label.into(), id.clone(), Instant::now()));
+        Ok(id)
+    }
+    pub fn release_pending(&self, label: &str, id: &str) {
+        if let Ok(mut pending) = self.pending.lock() {
+            if pending
+                .as_ref()
+                .is_some_and(|(owner, nonce, _)| owner == label && nonce == id)
+            {
+                *pending = None;
+            }
+        }
+    }
+}
+
+impl OfficialBrowser {
+    pub(crate) fn label(&self) -> &str {
+        &self.inner.label
+    }
+    pub(crate) fn capture_context(&self, label: Option<&str>) -> Result<Self, StreamError> {
+        let label = label.unwrap_or(WINDOW_LABEL);
+        self.inner
+            .contexts
+            .hosts()
+            .into_iter()
+            .find(|host| host.label() == label && !host.inner.detached.load(Ordering::Acquire))
+            .ok_or_else(unavailable)
+    }
+    pub(super) fn pane_controller(&self, label: &str, channel: &str) -> Result<Self, StreamError> {
+        if label
+            .strip_prefix("chzzk-mado-")
+            .or_else(|| label.strip_prefix("chzzk-auto-"))
+            .is_none_or(|suffix| suffix.len() != 32 || uuid::Uuid::parse_str(suffix).is_err())
+        {
+            return Err(unavailable());
+        }
+        let state = ViewState {
+            channel: Some(channel.into()),
+            open: true,
+            ..ViewState::default()
+        };
+        let child = Self {
+            inner: Arc::new(Inner {
+                data_dir: self.inner.data_dir.clone(),
+                label: label.into(),
+                detached: AtomicBool::new(false),
+                contexts: self.inner.contexts.clone(),
+                auto_record: self.inner.auto_record.clone(),
+                store: self.inner.store.clone(),
+                merges: self.inner.merges.clone(),
+                replay_assets: self.inner.replay_assets.clone(),
+                view: Mutex::new(state),
+                viewport_writes: Mutex::new(()),
+                viewport_revision: Arc::new(AtomicU64::new(0)),
+                multiview: multiview::MultiViewHost::default(),
+                screenshots: Mutex::new(screenshot::ScreenshotCapture::default()),
+                encoded: Mutex::new(None),
+                closing: self.inner.closing.clone(),
+                reserved: self.inner.reserved.clone(),
+                chat: Mutex::new(None),
+                retired_chat: Mutex::new(Vec::new()),
+                page_chat: Mutex::new(None),
+                writes: Mutex::new(()),
+            }),
+        };
+        self.inner.contexts.register(&child.inner)?;
+        Ok(child)
+    }
+    pub(super) fn local_active_ids(&self) -> Vec<String> {
+        let state = self.inner.view.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(id) = &state.recording {
+            vec![id.clone()]
+        } else if let Some(arm) = &state.arm {
+            vec![format!("browser-pending-{}", arm.id)]
+        } else if let Some(control) = &state.confirming_control {
+            vec![format!("browser-confirming-{}", control.id)]
+        } else {
+            Vec::new()
+        }
+    }
+    /// Layout changes may close visible players, never independent automatic
+    /// receivers. Exit/update guards continue to use the global active_ids().
+    pub(super) fn ui_active_ids(&self) -> Vec<String> {
+        self.inner
+            .contexts
+            .hosts()
+            .iter()
+            .filter(|host| !host.label().starts_with("chzzk-auto-"))
+            .flat_map(Self::local_active_ids)
+            .collect()
+    }
+    pub(super) fn primary_profile_busy(&self) -> bool {
+        if self.label() == WINDOW_LABEL {
+            return false;
+        }
+        self.capture_context(None).ok().is_none_or(|root| {
+            root.inner
+                .view
+                .lock()
+                .map_or(true, |s| s.account_busy || s.extension_connecting)
+        })
+    }
+    pub(super) fn detach_controller(&self) {
+        self.inner.detached.store(true, Ordering::Release);
+        self.interrupt("window_closed");
+        self.inner
+            .screenshots
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .cancel();
+    }
+    pub fn request_control(&self, action: ControlAction) -> Result<BrowserSnapshot, StreamError> {
+        let channel = self
+            .inner
+            .view
+            .lock()
+            .map_err(|_| unavailable())?
+            .channel
+            .clone()
+            .ok_or_else(unavailable)?;
+        self.control_intent(&channel, &channel, action)?;
+        self.snapshot()
+    }
+    pub fn ack_ui_action(&self, id: &str) -> Result<BrowserSnapshot, StreamError> {
+        {
+            let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+            if state
+                .pending_ui_action
+                .as_ref()
+                .is_some_and(|action| action.id == id)
+            {
+                state.pending_ui_action = None;
+            }
+        }
+        self.snapshot()
+    }
+    pub(super) fn view_intent(
+        &self,
+        source: &str,
+        channel: &str,
+        action: &str,
+    ) -> Result<Value, StreamError> {
+        if self.inner.detached.load(Ordering::Acquire)
+            || !matches!(action, "exit_focus" | "open_settings" | "audio_toggle")
+            || (matches!(action, "open_settings") && self.label() != WINDOW_LABEL)
+        {
+            return Err(unavailable());
+        }
+        let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+        if source != channel
+            || state.channel.as_deref() != Some(source)
+            || state
+                .last_ui_intent
+                .is_some_and(|at| at.elapsed() < Duration::from_millis(250))
+        {
+            return Err(unavailable());
+        }
+        state.last_ui_intent = Some(Instant::now());
+        // These requests only open main-app UI. They cannot authorize recording,
+        // account access, extension installation or any other privileged action.
+        if matches!(action, "exit_focus" | "open_settings") {
+            state.pending_ui_action = Some(UiAction {
+                id: uuid::Uuid::new_v4().to_string(),
+                action: action.into(),
+                expires_at: now_ms().saturating_add(8_000),
+                channel: channel.into(),
+                viewport_epoch: state.viewport_epoch,
+                page_generation: state.page_generation,
+            });
+        } else if self.label() == WINDOW_LABEL {
+            return Err(unavailable());
+        }
+        Ok(json!({"accepted":true}))
+    }
+}
+
+// A cancelling close can overlap an in-flight configure. Each reservation owns
+// its count; completing one must not reopen capture while the other still runs.
+pub(super) struct Reconfigure<'a>(pub &'a AtomicU64);
+impl Drop for Reconfigure<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
 }
 
 #[cfg(test)]
@@ -22,6 +262,45 @@ mod tests {
             CHANNEL,
         )
         .unwrap()
+    }
+    #[test]
+    fn background_recordings_participate_in_exit_but_not_unrelated_view_layout_guards() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(dir.path().into()).unwrap();
+        let background = root
+            .pane_controller(
+                &format!("chzzk-auto-{}", uuid::Uuid::new_v4().simple()),
+                CHANNEL,
+            )
+            .unwrap();
+        background.inner.view.lock().unwrap().recording = Some("auto-record".into());
+        assert_eq!(root.active_ids(), vec!["auto-record"]);
+        assert!(root.ui_active_ids().is_empty());
+        assert!(root.reserve_update().is_err());
+        let visible = pane(&root);
+        visible.inner.view.lock().unwrap().recording = Some("visible".into());
+        assert_eq!(root.ui_active_ids(), vec!["visible"]);
+    }
+    #[test]
+    fn stop_is_not_delayed_by_the_previous_start_click_cooldown() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(dir.path().into()).unwrap();
+        let capture = pane(&root);
+        {
+            let mut state = capture.inner.view.lock().unwrap();
+            state.recording = Some("running".into());
+            state.last_control_intent = Some(Instant::now());
+        }
+        assert!(capture.request_control(ControlAction::RecordStop).is_ok());
+        let id = capture.snapshot().unwrap().pending_control.unwrap().id;
+        assert_eq!(
+            capture
+                .take_control(&id, true, true)
+                .unwrap()
+                .unwrap()
+                .action,
+            ControlAction::RecordStop
+        );
     }
     #[test]
     fn four_panes_share_store_and_exit_authority_but_not_approval_state() {
@@ -73,7 +352,8 @@ mod tests {
         let root = OfficialBrowser::new(dir.path().into()).unwrap();
         root.inner.view.lock().unwrap().channel = Some(CHANNEL.into());
         let child = pane(&root);
-        for action in ["open_settings"] {
+        {
+            let action = "open_settings";
             assert!(child.view_intent(CHANNEL, CHANNEL, action).is_err());
             assert!(root
                 .view_intent("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", CHANNEL, action)
@@ -139,7 +419,8 @@ mod tests {
                     detail: String::new(),
                     video_width: 1920,
                     video_height: 1080,
-                    paused: false
+                    paused: false,
+                    capture_diagnostics: None,
                 }
             )
             .is_err());
@@ -196,6 +477,7 @@ mod tests {
                 video_width: 1920,
                 video_height: 1080,
                 paused: false,
+                capture_diagnostics: None,
             };
             pane.process(CHANNEL, status(true)).unwrap();
             assert!(pane.inner.view.lock().unwrap().arm.is_some());
@@ -312,212 +594,5 @@ mod tests {
                 .unwrap();
             assert_eq!(bytes, [webm.as_slice(), &[index as u8]].concat());
         }
-    }
-}
-// A cancelling close can overlap an in-flight configure. Each reservation owns
-// its count; completing one must not reopen capture while the other still runs.
-pub(super) struct Reconfigure<'a>(pub &'a AtomicU64);
-impl Drop for Reconfigure<'_> {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-impl ContextGroup {
-    pub(super) fn register(&self, inner: &Arc<Inner>) -> Result<(), StreamError> {
-        let mut members = self.members.lock().map_err(|_| unavailable())?;
-        members.retain(|entry| {
-            entry
-                .upgrade()
-                .is_some_and(|inner| !inner.detached.load(Ordering::Acquire))
-        });
-        if members.len() >= 5
-            || members
-                .iter()
-                .filter_map(Weak::upgrade)
-                .any(|entry| entry.label == inner.label)
-        {
-            return Err(unavailable());
-        }
-        members.push(Arc::downgrade(inner));
-        Ok(())
-    }
-    pub fn hosts(&self) -> Vec<OfficialBrowser> {
-        self.members
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .iter()
-            .filter_map(Weak::upgrade)
-            .map(|inner| OfficialBrowser { inner })
-            .collect()
-    }
-    pub fn reserve_pending(&self, label: &str) -> Result<String, StreamError> {
-        let mut pending = self.pending.lock().map_err(|_| unavailable())?;
-        if pending
-            .as_ref()
-            .is_some_and(|(_, _, at)| at.elapsed() <= Duration::from_secs(20))
-        {
-            return Err(error(
-                "BROWSER_CONTROL_BUSY",
-                "이미 확인 중인 요청이 있습니다.",
-            ));
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        *pending = Some((label.into(), id.clone(), Instant::now()));
-        Ok(id)
-    }
-    pub fn release_pending(&self, label: &str, id: &str) {
-        if let Ok(mut pending) = self.pending.lock() {
-            if pending
-                .as_ref()
-                .is_some_and(|(owner, nonce, _)| owner == label && nonce == id)
-            {
-                *pending = None;
-            }
-        }
-    }
-}
-
-impl OfficialBrowser {
-    pub(crate) fn label(&self) -> &str {
-        &self.inner.label
-    }
-    pub(crate) fn capture_context(&self, label: Option<&str>) -> Result<Self, StreamError> {
-        let label = label.unwrap_or(WINDOW_LABEL);
-        self.inner
-            .contexts
-            .hosts()
-            .into_iter()
-            .find(|host| host.label() == label && !host.inner.detached.load(Ordering::Acquire))
-            .ok_or_else(unavailable)
-    }
-    pub(super) fn pane_controller(&self, label: &str, channel: &str) -> Result<Self, StreamError> {
-        if !label.starts_with("chzzk-mado-")
-            || uuid::Uuid::parse_str(label.trim_start_matches("chzzk-mado-")).is_err()
-        {
-            return Err(unavailable());
-        }
-        let mut state = ViewState::default();
-        state.channel = Some(channel.into());
-        state.open = true;
-        let child = Self {
-            inner: Arc::new(Inner {
-                data_dir: self.inner.data_dir.clone(),
-                label: label.into(),
-                detached: AtomicBool::new(false),
-                contexts: self.inner.contexts.clone(),
-                store: self.inner.store.clone(),
-                merges: self.inner.merges.clone(),
-                replay_assets: self.inner.replay_assets.clone(),
-                view: Mutex::new(state),
-                viewport_writes: Mutex::new(()),
-                viewport_revision: Arc::new(AtomicU64::new(0)),
-                multiview: multiview::MultiViewHost::default(),
-                screenshots: Mutex::new(screenshot::ScreenshotCapture::default()),
-                encoded: Mutex::new(None),
-                closing: self.inner.closing.clone(),
-                reserved: self.inner.reserved.clone(),
-                chat: Mutex::new(None),
-                retired_chat: Mutex::new(Vec::new()),
-                page_chat: Mutex::new(None),
-                writes: Mutex::new(()),
-            }),
-        };
-        self.inner.contexts.register(&child.inner)?;
-        Ok(child)
-    }
-    pub(super) fn local_active_ids(&self) -> Vec<String> {
-        let state = self.inner.view.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(id) = &state.recording {
-            vec![id.clone()]
-        } else if let Some(arm) = &state.arm {
-            vec![format!("browser-pending-{}", arm.id)]
-        } else if let Some(control) = &state.confirming_control {
-            vec![format!("browser-confirming-{}", control.id)]
-        } else {
-            Vec::new()
-        }
-    }
-    pub(super) fn primary_profile_busy(&self) -> bool {
-        if self.label() == WINDOW_LABEL {
-            return false;
-        }
-        self.capture_context(None).ok().is_none_or(|root| {
-            root.inner
-                .view
-                .lock()
-                .map_or(true, |s| s.account_busy || s.extension_connecting)
-        })
-    }
-    pub(super) fn detach_controller(&self) {
-        self.inner.detached.store(true, Ordering::Release);
-        self.interrupt("window_closed");
-        self.inner
-            .screenshots
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .cancel();
-    }
-    pub fn request_control(&self, action: ControlAction) -> Result<BrowserSnapshot, StreamError> {
-        let channel = self
-            .inner
-            .view
-            .lock()
-            .map_err(|_| unavailable())?
-            .channel
-            .clone()
-            .ok_or_else(unavailable)?;
-        self.control_intent(&channel, &channel, action)?;
-        self.snapshot()
-    }
-    pub fn ack_ui_action(&self, id: &str) -> Result<BrowserSnapshot, StreamError> {
-        {
-            let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
-            if state
-                .pending_ui_action
-                .as_ref()
-                .is_some_and(|action| action.id == id)
-            {
-                state.pending_ui_action = None;
-            }
-        }
-        self.snapshot()
-    }
-    pub(super) fn view_intent(
-        &self,
-        source: &str,
-        channel: &str,
-        action: &str,
-    ) -> Result<Value, StreamError> {
-        if self.inner.detached.load(Ordering::Acquire)
-            || !matches!(action, "exit_focus" | "open_settings" | "audio_toggle")
-            || (matches!(action, "open_settings") && self.label() != WINDOW_LABEL)
-        {
-            return Err(unavailable());
-        }
-        let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
-        if source != channel
-            || state.channel.as_deref() != Some(source)
-            || state
-                .last_ui_intent
-                .is_some_and(|at| at.elapsed() < Duration::from_millis(250))
-        {
-            return Err(unavailable());
-        }
-        state.last_ui_intent = Some(Instant::now());
-        // These requests only open main-app UI. They cannot authorize recording,
-        // account access, extension installation or any other privileged action.
-        if matches!(action, "exit_focus" | "open_settings") {
-            state.pending_ui_action = Some(UiAction {
-                id: uuid::Uuid::new_v4().to_string(),
-                action: action.into(),
-                expires_at: now_ms().saturating_add(8_000),
-                channel: channel.into(),
-                viewport_epoch: state.viewport_epoch,
-                page_generation: state.page_generation,
-            });
-        } else if self.label() == WINDOW_LABEL {
-            return Err(unavailable());
-        }
-        Ok(json!({"accepted":true}))
     }
 }

@@ -5,6 +5,7 @@ import { type Gallery } from "../core/types";
 import { mockGalleries } from "../data/mockGalleries";
 import { ThumbnailClient } from "../thumbnail";
 import { DetailWorkspace } from "./DetailWorkspace";
+import { CommonNavigationContext } from "../app/CommonNavigation";
 import { detailPreviewWindowSize } from "./detailPreviewWindow";
 
 afterEach(() => {
@@ -12,6 +13,62 @@ afterEach(() => {
 });
 
 describe("DetailWorkspace page previews", () => {
+  it("opens the active album's review from the download's left side and the page preview header", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+      configurable: true,
+      value: vi.fn(function (this: HTMLDialogElement) { this.setAttribute("open", ""); }),
+    });
+    const galleries = [mockGalleries[0]!, mockGalleries[1]!].map((gallery): Gallery => ({
+      ...gallery, download: undefined, relatedIds: [], pages: 2,
+      pageDimensions: [{ sourcePage: 1, width: 800, height: 1200 }, { sourcePage: 2, width: 800, height: 1200 }],
+    }));
+    const openCommunity = vi.fn();
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const render = (gallery: Gallery) => root.render(
+      <CommonNavigationContext.Provider value={{ communityOpen: false, openCommunity }}>
+        <DetailWorkspace tabs={galleries.map((item) => item.id)} activeId={gallery.id} minimized={false}
+          galleries={new Map(galleries.map((item) => [item.id, item.id === gallery.id ? gallery : item]))}
+          favoriteMetadata={new Set()} thumbnailClient={client}
+          onActivate={vi.fn()} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()}
+          onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />
+      </CommonNavigationContext.Provider>,
+    );
+    try {
+      await act(async () => render(galleries[0]!));
+      expect(openCommunity).not.toHaveBeenCalled();
+      const detailButton = container.querySelector<HTMLButtonElement>('.detail-title-actions [aria-label="후기 남기기"]')!;
+      expect(detailButton).toHaveAttribute("title", "후기 남기기");
+      expect(detailButton.nextElementSibling).toHaveAttribute("aria-label", "다운로드");
+      expect(detailButton.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
+      await act(async () => detailButton.click());
+      expect(openCommunity).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[0]!.id) });
+
+      await act(async () => render(galleries[1]!));
+      await act(async () => container.querySelector<HTMLButtonElement>('.detail-title-actions [aria-label="후기 남기기"]')!.click());
+      expect(openCommunity).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[1]!.id) });
+      await act(async () => container.querySelector<HTMLButtonElement>('.preview-thumb[title="2페이지 확대"]')!.click());
+      const previewButton = container.querySelector<HTMLButtonElement>('.page-preview-header-actions [aria-label="후기 남기기"]')!;
+      expect(previewButton).toHaveClass("small");
+      await act(async () => previewButton.click());
+      expect(openCommunity).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[1]!.id) });
+      expect(openCommunity).toHaveBeenCalledTimes(3);
+
+      await act(async () => render({ ...galleries[1]!, download: { entryId: "review-completed", state: "completed", progress: 100 } }));
+      expect(container.querySelector('.detail-title-actions [aria-label="후기 남기기"]')?.nextElementSibling).toHaveAttribute("aria-label", "다운로드 완료");
+      expect(container.querySelector('.page-preview-header-actions [aria-label="후기 남기기"]')).toBeEnabled();
+    } finally {
+      await act(async () => root.unmount());
+      client.dispose(); container.remove();
+      if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, "showModal");
+    }
+  });
+
   it("shows every participating artist in Floating Detail with independent normalized favorites", async () => {
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
     const artists = ["clearite", "danimaru", "gomu", "h3y", "henrybird", "indo curry", "jagayamatarawo", "mance", "mikozin", "momonosuke", "moricocco", "murasaki shingou", "siseki hirame", "yamoge"];
@@ -635,16 +692,16 @@ describe("DetailWorkspace page previews", () => {
     try {
       await act(async () => render(gallery));
       await act(async () => container.querySelector<HTMLButtonElement>('.preview-thumb[title="1페이지 확대"]')?.click());
-      expect(container.querySelector('[aria-label="대표 미리보기로 지정"]')).toBeNull();
+      expect(container.querySelector('[aria-label="앨범커버로 지정"]')).toBeNull();
       const completed: Gallery = { ...gallery, download: { ...gallery.download!, state: "completed", progress: 100 } };
       await act(async () => render(completed));
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="두쪽 보기"]')?.click());
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
       });
-      const setButton = container.querySelector<HTMLButtonElement>('[aria-label="대표 미리보기로 지정"]')!;
+      const setButton = container.querySelector<HTMLButtonElement>('[aria-label="앨범커버로 지정"]')!;
       expect(setButton.closest(".dialog-header")).not.toBeNull();
-      expect(setButton).toHaveAttribute("title", "3페이지를 대표 미리보기로 지정");
+      expect(setButton).toHaveAttribute("title", "3페이지를 앨범커버로 지정");
       await act(async () => { setButton.click(); setButton.click(); });
       expect(onSetRepresentativePreview).toHaveBeenCalledTimes(1);
       expect(onSetRepresentativePreview).toHaveBeenLastCalledWith(gallery.id, 3);
@@ -660,6 +717,7 @@ describe("DetailWorkspace page previews", () => {
         },
       }));
       expect(setButton).toHaveAttribute("aria-pressed", "true");
+      expect(setButton).toHaveAttribute("title", "3페이지가 앨범커버로 지정됨");
       expect(setButton).toBeDisabled();
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="자동 선택으로 되돌리기"]')?.click());
       expect(onSetRepresentativePreview).toHaveBeenLastCalledWith(gallery.id, null);

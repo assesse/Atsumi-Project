@@ -123,6 +123,10 @@ impl ScreenshotCapture {
             .filter(|job| job.id == id && job.channel == channel && job.generation == generation)
             .ok_or_else(stale)
     }
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Capture identity, page generation and dimensions must be checked together"
+    )]
     pub fn begin(
         &mut self,
         id: &str,

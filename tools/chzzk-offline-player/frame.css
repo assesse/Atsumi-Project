@@ -1,0 +1,5 @@
+/* Only the empty host document is sized. No selector overrides player UI. */
+html,body{margin:0;width:100%;height:100%;min-height:0;overflow:hidden;background:#000}
+#live_player_layout,#player_layout{width:100%;height:100%}
+#chat-root{width:100%;height:100%;display:flex;min-height:0}
+#chat-root>aside{height:100%}

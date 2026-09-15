@@ -62,6 +62,10 @@ impl OfficialBrowser {
             .request_control(action)?;
         self.multiview_snapshot()
     }
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Keep the existing explicit IPC approval and context fences together"
+    )]
     pub fn confirm_pane_control(
         &self,
         app: &AppHandle,
@@ -111,10 +115,10 @@ impl OfficialBrowser {
         if let Err(error) = native_mute(&view, pane.clone(), !enabled) {
             pane.audio.store(false, Ordering::Release);
             let _ = native_mute(&view, pane.clone(), true);
-            send_audio(&view, &pane);
+            send_audio(&view, &pane, true);
             return Err(error);
         }
-        send_audio(&view, &pane);
+        send_audio(&view, &pane, true);
         let mut state = self
             .inner
             .multiview
@@ -155,7 +159,7 @@ impl OfficialBrowser {
     /// Capture document epochs remain distinct from trusted-UI viewport epochs.
     pub fn suspend_multiview(&self, app: &AppHandle) -> Option<u64> {
         let _gate = self.inner.contexts.gate.lock().ok()?;
-        if self.active_ids().is_empty() {
+        if self.ui_active_ids().is_empty() {
             return self.detach_multiview(app);
         }
         let panes = self.inner.multiview.suspend_capture_views()?;
@@ -166,7 +170,7 @@ impl OfficialBrowser {
         }
         None
     }
-    pub(super) fn queue_channel_names(&self) {
+    pub(super) fn queue_channel_names(&self, app: &AppHandle) {
         let Ok(mut slot) = self.inner.multiview.metadata.lock() else {
             return;
         };
@@ -176,6 +180,7 @@ impl OfficialBrowser {
             let receiver = Arc::new(Mutex::new(receiver));
             for index in 0..2 {
                 let receiver = receiver.clone();
+                let app = app.clone();
                 let _ = thread::Builder::new()
                     .name(format!("chzzk-channel-name-{index}"))
                     .spawn(move || {
@@ -207,6 +212,11 @@ impl OfficialBrowser {
                                 {
                                     if let Ok(mut label) = pane.channel_name.lock() {
                                         *label = name.clone();
+                                    }
+                                    if pane.kind == PaneKind::Chat {
+                                        if let Some(view) = app.get_webview(&pane.id) {
+                                            let _ = view.eval(chat_header_script(&pane));
+                                        }
                                     }
                                 }
                             }
@@ -243,6 +253,7 @@ mod tests {
         Arc::new(Pane {
             id,
             channel: CHANNEL.into(),
+            number: 1,
             kind: PaneKind::Video,
             epoch: AtomicU64::new(7),
             viewport: Mutex::new(BrowserViewport {

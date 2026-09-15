@@ -16,7 +16,7 @@ fn main() {
 }
 
 #[cfg(windows)]
-mod probe {
+pub(crate) mod probe {
     use atsumi_lib::streaming::{
         browser_merge::{BrowserMergeWorker, MediaTools},
         browser_store::{BrowserCaptureStore, BrowserMergeStatus},
@@ -47,12 +47,12 @@ mod probe {
     static EXIT_CODE: AtomicI32 = AtomicI32::new(2);
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-    struct Fixture {
-        service: ReplayService,
-        merge: BrowserMergeWorker,
-        store: Arc<Mutex<BrowserCaptureStore>>,
+    pub(crate) struct Fixture {
+        pub(crate) service: ReplayService,
+        pub(crate) merge: BrowserMergeWorker,
+        pub(crate) store: Arc<Mutex<BrowserCaptureStore>>,
         // Drop temporary files only after services have released their handles.
-        root: tempfile::TempDir,
+        pub(crate) root: tempfile::TempDir,
     }
     impl Drop for Fixture {
         fn drop(&mut self) {
@@ -141,7 +141,7 @@ mod probe {
         Ok(output)
     }
 
-    fn prepare(start: Instant) -> Result<(Fixture, String, u64)> {
+    pub(crate) fn prepare(start: Instant) -> Result<(Fixture, String, u64)> {
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .ok_or("workspace")?
@@ -413,7 +413,7 @@ mod probe {
                     EXIT_CODE.store(code, Ordering::Release); app.exit(code);
                 });
                 Ok(())
-            }).run(context);
+            }).build(context).map(|app| app.run_return(|_, _| {}));
         finished.store(true, Ordering::Release);
         // The fixture's Drop always shuts down replay/index and merge workers,
         // then drops only this fresh temporary media/profile root.

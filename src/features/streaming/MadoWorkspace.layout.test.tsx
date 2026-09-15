@@ -80,6 +80,7 @@ describe.skipIf(!edge)("Mado real layout", () => {
         expect(slot.box.x).toBeGreaterThanOrEqual(slot.parent.x - 1);
         expect(slot.box.right).toBeLessThanOrEqual(slot.parent.right + 1);
         expect(slot.box.bottom).toBeLessThanOrEqual(slot.parent.bottom + 1);
+        expect(slot.box.y, `${result.mode} ${slot.kind} has no outside header gap`).toBeCloseTo(slot.parent.y, 0);
       }
       expect(result.lastAtEnd.bottom, `${result.mode} final chat input reachability`).toBeLessThanOrEqual(result.surface.bottom + 1);
       if (result.privacy) {

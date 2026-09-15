@@ -13,6 +13,7 @@ import { createShellState, shellReducer, type ShellState } from "./shellState";
 import { useAppExit, type AppExitApi } from "./useAppExit";
 import { usePreferenceQueue } from "./usePreferenceQueue";
 import type { ContentSource } from "./workspaceRegistry";
+import { useRecordingNotifications } from "./useRecordingNotifications";
 
 export type AppShellApi = SettingsApi & AppExitApi & Pick<BackendClient, "runtime">;
 
@@ -60,6 +61,7 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
     toastTimer.current = window.setTimeout(() => setToast(null), 2400);
   }, []);
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+  useRecordingNotifications(api.runtime, showToast);
 
   const exit = useAppExit(api, showToast);
   const preferenceQueue = usePreferenceQueue(api, showToast);

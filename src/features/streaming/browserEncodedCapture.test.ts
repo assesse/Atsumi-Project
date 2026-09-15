@@ -9,6 +9,7 @@ const RECORDING = "40000000-0000-4000-8000-000000000001";
 type Message = { kind: string; [key: string]: unknown };
 type Status = { active: boolean; starting: boolean; stopping: boolean; recordingId: string | null; ready: boolean; detail: string; rateControlAllowed: boolean };
 type Bridge = { canStart(video: unknown): boolean; canChangePlaybackRate(video: unknown): boolean; getStatus(): Status;
+  getDiagnostics(): { reason: string; appendCount: number; sources: unknown[] };
   getReplayClock(video: unknown): null | { clock: string; sourceId: string; sourceTimeSeconds: number };
   start(command: Record<string, unknown>, options: Record<string, unknown>): Promise<unknown>; stop(reason?: string, interrupted?: boolean): Promise<unknown> };
 class Target {
@@ -52,7 +53,7 @@ function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number;
   const document = { title: "Synthetic fixture", querySelectorAll: (name: string) => name === "video" ? videos : [], get cookie(): never { throw new Error("No cookie reads"); } };
   let counter = 0;
   const context = { window, document, crypto: { randomUUID: () => `10000000-0000-4000-8000-${String(++counter).padStart(12, "0")}` },
-    Uint8Array, ArrayBuffer, DataView, btoa, SharedArrayBuffer, setInterval, clearInterval };
+    Uint8Array, ArrayBuffer, DataView, btoa, SharedArrayBuffer, Date, setInterval, clearInterval };
   const script = options.queueBytes ? source.replace("const MAX_QUEUE = 64 * 1024 * 1024;", `const MAX_QUEUE = ${options.queueBytes};`) : source;
   runInNewContext(script, context);
   const ms = new MediaSource(); video.src = URLFactory.createObjectURL(ms); video.currentSrc = video.src;
@@ -122,8 +123,12 @@ describe("already-received encoded MSE capture", () => {
       expect(f.bridge().getReplayClock(f.video)?.sourceTimeSeconds).toBe(f.video.currentTime);
     }
     expect(f.ofKind("encoded_append")).toHaveLength(0);
-    f.v.timestampOffset = 1; expect(f.bridge().getReplayClock(f.video)).toBeNull();
-    expect(f.bridge().canChangePlaybackRate(f.video)).toBe(false); f.v.timestampOffset = 0;
+    for (const offset of [1, -13745.920976833331, 30]) {
+      f.v.timestampOffset = offset;
+      expect(f.bridge().getReplayClock(f.video)?.sourceTimeSeconds).toBeCloseTo(f.video.currentTime - offset, 8);
+      expect(f.bridge().canChangePlaybackRate(f.video)).toBe(true);
+    }
+    f.v.timestampOffset = 0;
     f.video.seeking = true; expect(f.bridge().getReplayClock(f.video)).toBeNull(); f.video.seeking = false;
     f.video.currentSrc = "blob:another-source"; expect(f.bridge().getReplayClock(f.video)).toBeNull();
     await f.bridge().stop(); expect(f.bridge().getReplayClock(f.video)).toBeNull();
@@ -164,14 +169,53 @@ describe("already-received encoded MSE capture", () => {
     expect(f.ofKind("encoded_finish")).toHaveLength(1); expect(f.bridge().canChangePlaybackRate(f.video)).toBe(false);
     expect(f.bridge().getStatus().active).toBe(false);
   });
-  it.each(["seeking", "pause", "encrypted", "emptied"])("fails closed on %s without changing playback", async (event) => {
+  it.each(["encrypted", "ended"])("fails closed on %s without changing playback", async (event) => {
     const f = fixture(); f.load(); await f.start(); f.video.dispatch(event); await flush();
     expect(f.ofKind("encoded_finish")[0]?.interrupted).toBe(true); expect(f.video.currentTime).toBe(100); expect(f.video.playbackRate).toBe(1);
   });
-  it("ignores visibility/minimize and normal MSE eviction, but stops on offset change", async () => {
+  it("does not confuse decoder buffering or emptied with a replaced compressed source", async () => {
+    const f=fixture(); f.load(); await f.start();
+    f.video.playbackRate=2; f.video.readyState=1; f.video.dispatch("emptied");
+    vi.advanceTimersByTime(1000); f.v.appendBuffer(media()); await flush();
+    expect(f.bridge().getStatus().active).toBe(true); expect(f.ofKind("encoded_finish")).toHaveLength(0);
+    f.video.readyState=4; expect(f.bridge().canChangePlaybackRate(f.video)).toBe(true);
+    f.video.currentSrc="blob:really-replaced"; vi.advanceTimersByTime(500); await flush();
+    expect(f.ofKind("encoded_finish")[0]).toMatchObject({interrupted:true,reason:"source_changed"});
+  });
+  it("ignores visibility/minimize and finite MSE offset changes, but rejects an unsupported append window", async () => {
     const f = fixture(); f.load(); await f.start(); f.window.dispatch("visibilitychange"); f.v.remove(0, 1); await flush();
     expect(f.bridge().getStatus().active).toBe(true);
-    f.v.timestampOffset = 5; f.v.appendBuffer(media()); await flush(); expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true, reason: "timeline_changed" });
+    f.v.timestampOffset = 5; f.v.appendBuffer(media()); await flush(); expect(f.bridge().getStatus().active).toBe(true);
+    f.v.appendWindowStart = 5; f.v.appendBuffer(media()); await flush(); expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true, reason: "timeline_changed" });
+  });
+  it("keeps original samples and clocks independent of speed, pause and seek events", async () => {
+    const f = fixture(); f.v.timestampOffset = -13745.920976833331; f.load(); await f.start();
+    for (const rate of [1.000001, 1.03, 1.2, 2, .75]) {
+      f.video.playbackRate = rate; f.video.dispatch("ratechange");
+      f.v.appendBuffer(media()); await flush();
+      expect(f.bridge().getStatus().active).toBe(true);
+    }
+    f.video.paused = true; f.video.dispatch("pause"); f.video.seeking = true; f.video.dispatch("seeking");
+    f.v.abort(); f.v.dispatch("abort"); vi.advanceTimersByTime(16000); await flush();
+    expect(f.bridge().getStatus()).toMatchObject({ active: true, detail: "encoded_waiting" });
+    expect(f.bridge().getReplayClock(f.video)).toBeNull();
+    f.video.seeking = false; f.v.appendBuffer(media()); await flush();
+    expect(f.bridge().getStatus().detail).toBe("encoded_recording");
+    expect(f.ofKind("encoded_append")).toHaveLength(6);
+    for (const message of f.ofKind("encoded_append")) expect(atob(message.data as string)).toBe(String.fromCharCode(...media()));
+    await f.bridge().stop(); expect(f.ofKind("encoded_finish")[0]?.interrupted).toBe(false);
+  });
+  it("accepts identical init repetitions but rejects changed codec headers", async () => {
+    const f = fixture(); f.load(); await f.start(); f.v.appendBuffer(init()); f.v.appendBuffer(media()); await flush();
+    expect(f.bridge().getStatus().active).toBe(true); expect(f.ofKind("encoded_append")).toHaveLength(1);
+    const changed = init(); changed[changed.length - 1] = 42; f.v.appendBuffer(changed); await flush();
+    expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true, reason: "init_changed" });
+  });
+  it("reports bounded source facts without URLs, cookies or source identifiers", () => {
+    const f = fixture(); f.v.timestampOffset = -13745.920976833331; f.load();
+    const report = f.bridge().getDiagnostics(); expect(report.reason).toBe("ready"); expect(report.appendCount).toBe(2);
+    expect(JSON.stringify(report)).not.toMatch(/blob:|https:|cookie|sourceId/);
+    f.video.srcObject = {}; expect(f.bridge().getDiagnostics().reason).toBe("source_object_unsupported");
   });
   it("native failure cannot produce a successful saved status or legacy fallback", async () => {
     const f = fixture(); f.load(); await f.start(); f.reject.add("encoded_append"); f.v.appendBuffer(media()); await flush();

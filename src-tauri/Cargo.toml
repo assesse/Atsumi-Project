@@ -1,6 +1,6 @@
 [package]
 name = "atsumi"
-version = "1.6.0"
+version = "1.7.0"
 description = "Atsumi desktop backend"
 authors = ["Atsumi contributors"]
 edition = "2021"
@@ -25,7 +25,7 @@ httpdate = "1"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 md-5 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
-rusqlite = { version = "0.32", features = ["backup", "bundled"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled", "hooks"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -43,8 +43,11 @@ uuid = { version = "1", features = ["v4"] }
 windows = { version = "0.61.3", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
+    "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
     "Win32_UI_Shell",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
@@ -61,6 +64,9 @@ webview2-com = "=0.38.2"
 # Keep this version pinned until the vendor policy patch is re-audited.
 [patch.crates-io]
 tauri = { path = "vendor/tauri-2.11.5" }
+# Backport upstream c704261c: never pump Windows messages while holding
+# keyboard/IME locks. Keep the runtime's 0.35 API and other behavior unchanged.
+tao = { path = "vendor/tao-0.35.3" }
 
 # The current-source launcher uses the dev profile. Image decode/encode and
 # SHA-256 live mostly in dependencies, so keep app iteration fast while making

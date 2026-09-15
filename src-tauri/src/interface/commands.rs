@@ -446,6 +446,16 @@ impl AppState {
         rights: bool,
         capture_chat: bool,
     ) -> Result<(), crate::streaming::model::StreamError> {
+        self.start_browser_managed_checked(app, context, rights, capture_chat, None)
+    }
+    pub(crate) fn start_browser_managed_checked(
+        &self,
+        app: &AppHandle,
+        context: Option<&str>,
+        rights: bool,
+        capture_chat: bool,
+        expected_channel: Option<&str>,
+    ) -> Result<(), crate::streaming::model::StreamError> {
         use crate::streaming::model::StreamError;
         let browser = self.official_browser()?;
         let settings = self.settings_snapshot().map_err(|_| {
@@ -465,11 +475,12 @@ impl AppState {
                 false,
             ));
         }
-        browser.capture_context(context)?.arm(
+        browser.capture_context(context)?.arm_checked(
             app,
             PathBuf::from(settings.download_root),
             rights,
             capture_chat,
+            expected_channel,
         )
     }
 

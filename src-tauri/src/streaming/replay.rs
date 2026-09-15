@@ -94,6 +94,9 @@ pub struct ReplaySession {
     pub token: String,
     pub recording_id: String,
     pub title: String,
+    pub recorded_at: u64,
+    pub channel_name: Option<String>,
+    pub channel_profile_image: Option<String>,
     pub duration_seconds: f64,
     pub mime_type: String,
     pub chat_status: String,
@@ -132,6 +135,8 @@ pub struct ReplayTimelineBucket {
     pub chat_count: u64,
     pub unique_sender_count: Option<u64>,
     pub viewer_count: Option<u64>,
+    pub viewer_sample_count: u64,
+    pub viewer_coverage_seconds: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -164,7 +169,11 @@ impl Default for IndexStatus {
 pub(super) struct Session {
     token: String,
     recording_id: String,
+    recording_root: PathBuf,
     title: String,
+    recorded_at: u64,
+    channel_name: Option<String>,
+    channel_profile_image: Option<String>,
     mime_type: String,
     duration: f64,
     chat_status: String,
@@ -172,6 +181,8 @@ pub(super) struct Session {
     media_stamp: FileStamp,
     chat: Option<File>,
     chat_stamp: Option<FileStamp>,
+    viewers: Option<File>,
+    viewer_stamp: Option<FileStamp>,
     timeline: File,
     timeline_stamp: FileStamp,
     fingerprint: String,
@@ -189,6 +200,9 @@ impl Session {
             token: self.token.clone(),
             recording_id: self.recording_id.clone(),
             title: self.title.clone(),
+            recorded_at: self.recorded_at,
+            channel_name: self.channel_name.clone(),
+            channel_profile_image: self.channel_profile_image.clone(),
             duration_seconds: self.duration,
             mime_type: self.mime_type.clone(),
             chat_status: self.chat_status.clone(),
@@ -214,6 +228,11 @@ impl Session {
                 .chat
                 .as_ref()
                 .zip(self.chat_stamp.as_ref())
+                .is_some_and(|(file, stamp)| !stamp.matches(file))
+            || self
+                .viewers
+                .as_ref()
+                .zip(self.viewer_stamp.as_ref())
                 .is_some_and(|(file, stamp)| !stamp.matches(file))
         {
             return Err(stale());
@@ -263,6 +282,7 @@ struct Worker {
 
 struct Inner {
     store: Arc<Mutex<BrowserCaptureStore>>,
+    lifecycle: Mutex<()>,
     data_dir: PathBuf,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     settings: Mutex<()>,
@@ -300,6 +320,7 @@ impl ReplayService {
         Self {
             inner: Arc::new(Inner {
                 store,
+                lifecycle: Mutex::new(()),
                 data_dir: data_dir.to_owned(),
                 sessions: Mutex::new(HashMap::new()),
                 settings: Mutex::new(()),
@@ -310,6 +331,7 @@ impl ReplayService {
         }
     }
     pub fn open(&self, recording_id: &str) -> Result<ReplaySession, StreamError> {
+        let _lifecycle = self.inner.lifecycle.lock().map_err(|_| storage())?;
         if self.inner.closing.load(Ordering::Acquire) {
             return Err(stale());
         }
@@ -397,6 +419,41 @@ impl ReplayService {
         sessions.insert(session.token.clone(), session);
         Ok(descriptor)
     }
+    pub(crate) fn prepare_recording_delete(
+        &self,
+        id: &str,
+    ) -> Result<super::browser_store::deletion::DeleteJob, StreamError> {
+        let _lifecycle = self.inner.lifecycle.lock().map_err(|_| storage())?;
+        let sessions = self.inner.sessions.lock().map_err(|_| storage())?;
+        let workers = self.inner.workers.lock().map_err(|_| storage())?;
+        if sessions.values().any(|s| s.recording_id == id)
+            || workers
+                .iter()
+                .any(|w| w.session.upgrade().is_some_and(|s| s.recording_id == id))
+        {
+            return Err(failure(
+                "BROWSER_DELETE_REPLAY_BUSY",
+                "다시보기 창을 닫고 잠시 후 삭제해 주세요.",
+            ));
+        }
+        self.inner
+            .store
+            .lock()
+            .map_err(|_| storage())?
+            .prepare_delete(id)
+    }
+
+    pub(crate) fn delete_recording_cache(&self, id: &str) -> Result<(), StreamError> {
+        // The store tombstone blocks new replay sessions throughout this I/O.
+        let root = self.cache_root()?;
+        super::browser_store::deletion::remove_replay_cache(&root, id)?;
+        let _settings = self.inner.settings.lock().map_err(|_| storage())?;
+        settings_connection(&root)?
+            .execute("DELETE FROM offsets WHERE recording_id=?1", [id])
+            .map_err(|_| storage())?;
+        Ok(())
+    }
+
     fn make_session(
         &self,
         source: BrowserReplaySource,
@@ -413,18 +470,25 @@ impl ReplayService {
         let media_stamp = FileStamp::read(&media)?;
         let chat_stamp = chat.as_ref().map(FileStamp::read).transpose()?;
         let timeline_stamp = FileStamp::read(&timeline)?;
+        let viewers = super::viewer_metrics::open_recording(Path::new(&recording.output_dir))?;
+        let viewer_stamp = viewers.as_ref().map(FileStamp::read).transpose()?;
         let fingerprint = format!(
             "{:x}",
             Sha256::digest(
                 format!(
-                    "v1|{}|{}|{:?}|{:?}|{:?}",
-                    recording.id, recording.updated_at, media_stamp, chat_stamp, timeline_stamp
+                    "v2|{}|{}|{:?}|{:?}|{:?}|{:?}",
+                    recording.id,
+                    recording.updated_at,
+                    media_stamp,
+                    chat_stamp,
+                    timeline_stamp,
+                    viewer_stamp
                 )
                 .as_bytes()
             )
         );
         let token = uuid::Uuid::new_v4().simple().to_string();
-        let index_path = root.join(format!("index-v1-{}-{fingerprint}.sqlite", recording.id));
+        let index_path = root.join(format!("index-v2-{}-{fingerprint}.sqlite", recording.id));
         let offset = self.read_offset(root, &recording.id)?;
         let chat_status = if recording.capture_chat == Some(false) {
             "disabled".into()
@@ -440,10 +504,18 @@ impl ReplayService {
                 .clone()
                 .unwrap_or_else(|| "unknown".into())
         };
+        let (channel_name, channel_profile_image) = super::replay_assets::channel_profile::read(
+            Path::new(&recording.output_dir),
+            &recording.channel_id,
+        );
         Ok(Session {
             token,
+            recording_root: PathBuf::from(&recording.output_dir),
             recording_id: recording.id,
             title: recording.title,
+            recorded_at: recording.started_at,
+            channel_name,
+            channel_profile_image,
             mime_type: recording
                 .mime_type
                 .split(';')
@@ -456,6 +528,8 @@ impl ReplayService {
             media_stamp,
             chat,
             chat_stamp,
+            viewers,
+            viewer_stamp,
             timeline,
             timeline_stamp,
             fingerprint,
@@ -534,6 +608,7 @@ impl ReplayService {
             None,
             generation,
             bounded_limit(limit),
+            None,
         )?;
         session.check_generation(generation)?;
         Ok(result)
@@ -547,7 +622,44 @@ impl ReplayService {
     ) -> Result<ReplayChatPage, StreamError> {
         let session = self.session(token)?;
         session.accept_generation(generation)?;
-        let result = index::page(&session, None, cursor, generation, bounded_limit(limit))?;
+        let result = index::page(
+            &session,
+            None,
+            cursor,
+            generation,
+            bounded_limit(limit),
+            None,
+        )?;
+        session.check_generation(generation)?;
+        Ok(result)
+    }
+    pub fn chat_search(
+        &self,
+        token: &str,
+        query: &str,
+        field: &str,
+        cursor: Option<&str>,
+        generation: u64,
+        limit: Option<usize>,
+    ) -> Result<ReplayChatPage, StreamError> {
+        if query.len() > 4096
+            || query.chars().count() > 256
+            || !matches!(field, "all" | "body" | "nickname")
+            || cursor.is_some_and(|value| value.len() > 256)
+        {
+            return Err(invalid());
+        }
+        let session = self.session(token)?;
+        session.accept_generation(generation)?;
+        let query = index::normalize_search(query);
+        let result = index::page(
+            &session,
+            None,
+            cursor,
+            generation,
+            bounded_limit(limit),
+            Some((&query, field)),
+        )?;
         session.check_generation(generation)?;
         Ok(result)
     }
@@ -558,7 +670,7 @@ impl ReplayService {
     ) -> Result<ReplayTimeline, StreamError> {
         let session = self.session(token)?;
         let requested = bucket_seconds.unwrap_or(60.0);
-        if !requested.is_finite() || requested < 1.0 || requested > 86400.0 {
+        if !requested.is_finite() || !(1.0..=86400.0).contains(&requested) {
             return Err(invalid());
         }
         let result = index::buckets(
@@ -567,6 +679,12 @@ impl ReplayService {
         )?;
         session.valid()?;
         Ok(result)
+    }
+    pub fn profile_url(&self, token: &str, sequence: u64) -> Result<String, StreamError> {
+        let session = self.session(token)?;
+        let url = index::profile_url(&session, sequence)?;
+        session.valid()?;
+        Ok(url)
     }
     pub fn set_offset(&self, token: &str, offset: f64) -> Result<f64, StreamError> {
         if !offset.is_finite() || offset.abs() > 3600.0 {
@@ -700,6 +818,58 @@ pub async fn replay_close(app: AppHandle, window: Webview, token: String) -> Api
         .into()
 }
 #[tauri::command]
+pub async fn replay_open_profile(
+    app: AppHandle,
+    window: Webview,
+    token: String,
+    sequence: u64,
+) -> ApiResult<()> {
+    let service = match service(&app, &window) {
+        Ok(service) => service,
+        Err(error) => return Err::<(), _>(error).into(),
+    };
+    blocking(move || {
+        // A saved row identity, not a caller-controlled URL. Indexing/rendering
+        // never visits it; this command is an explicit user action only.
+        let url = service.profile_url(&token, sequence)?;
+        #[cfg(windows)]
+        {
+            use windows::{
+                core::PCWSTR,
+                Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+            };
+            let wide = url.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+            let result = unsafe {
+                ShellExecuteW(
+                    None,
+                    windows::core::w!("open"),
+                    PCWSTR(wide.as_ptr()),
+                    None,
+                    None,
+                    SW_SHOWNORMAL,
+                )
+            };
+            if result.0 as isize <= 32 {
+                return Err(failure(
+                    "REPLAY_PROFILE_OPEN",
+                    "공개 프로필을 여는 브라우저를 찾지 못했습니다.",
+                ));
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = url;
+            return Err(failure(
+                "REPLAY_PROFILE_OPEN",
+                "이 환경에서는 공개 프로필 열기를 지원하지 않습니다.",
+            ));
+        }
+        #[cfg(windows)]
+        Ok(())
+    })
+    .await
+}
+#[tauri::command]
 pub async fn replay_chat_at(
     app: AppHandle,
     window: Webview,
@@ -728,6 +898,30 @@ pub async fn replay_chat_page(
         Err(error) => return Err::<ReplayChatPage, _>(error).into(),
     };
     blocking(move || service.chat_page(&token, cursor.as_deref(), generation, limit)).await
+}
+#[tauri::command]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Stable frontend IPC argument contract"
+)]
+pub async fn replay_chat_search(
+    app: AppHandle,
+    window: Webview,
+    token: String,
+    query: String,
+    field: String,
+    cursor: Option<String>,
+    generation: u64,
+    limit: Option<usize>,
+) -> ApiResult<ReplayChatPage> {
+    let service = match service(&app, &window) {
+        Ok(service) => service,
+        Err(error) => return Err::<ReplayChatPage, _>(error).into(),
+    };
+    blocking(move || {
+        service.chat_search(&token, &query, &field, cursor.as_deref(), generation, limit)
+    })
+    .await
 }
 #[tauri::command]
 pub async fn replay_timeline(

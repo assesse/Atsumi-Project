@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type CSSProperties,
@@ -123,9 +124,11 @@ function GalleryCardComponent({
     ? { label: "언어 확인 중", icon: null, fallback: "?" }
     : languagePresentation[gallery.language];
   const { primary: displayTitle, secondary: subtitle } = splitGalleryTitle(gallery.title, gallery.subtitle);
-  const thumbnailKey = galleryCoverThumbnailKey(gallery);
+  const thumbnailKey = useMemo(() => galleryCoverThumbnailKey(gallery), [gallery]);
   const thumbnailConsumer = thumbnailConsumerForView(view);
-  const sortedTags = displayMode === "detail" ? sortGalleryTags(gallery.tags, favoriteMetadata) : [];
+  const sortedTags = useMemo(() => displayMode === "detail"
+    ? sortGalleryTags(gallery.tags, favoriteMetadata)
+    : [], [displayMode, gallery.tags, favoriteMetadata]);
   const compactFavoriteTags = displayMode === "compact"
     ? compactFavoriteTagValues(gallery.tags, favoriteMetadata)
     : [];
@@ -145,7 +148,6 @@ function GalleryCardComponent({
   const tagListRef = useRef<HTMLDivElement>(null);
   const tagChipRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const overflowMeasureRefs = useRef<Array<HTMLSpanElement | null>>([]);
-  const lastContentSize = useRef({ width: 0, height: 0 });
   const hasDuplicateCandidates = duplicateCandidateCount > 0;
   const hasInternalDuplicateResult = view === "downloads"
     && download?.state === "completed"
@@ -232,23 +234,32 @@ function GalleryCardComponent({
 
   useLayoutEffect(() => {
     const content = contentRef.current;
-    if (!content || typeof ResizeObserver === "undefined") return;
+    if (!content || !sortedTags.length || typeof ResizeObserver === "undefined") return;
+    let lastContentSize = { width: content.clientWidth, height: content.clientHeight };
+    let resizeTimer: number | undefined;
     const observer = new ResizeObserver(() => {
       const next = { width: content.clientWidth, height: content.clientHeight };
-      if (next.width === lastContentSize.current.width && next.height === lastContentSize.current.height) return;
-      lastContentSize.current = next;
-      invalidateTagLayout();
+      if (next.width === lastContentSize.width && next.height === lastContentSize.height) return;
+      lastContentSize = next;
+      window.clearTimeout(resizeTimer);
+      // CSS and responsive columns still resize immediately. Mounting every
+      // hidden chip and reading its geometry can wait until the drag settles.
+      resizeTimer = window.setTimeout(invalidateTagLayout, 100);
     });
     observer.observe(content);
     let disposed = false;
     document.fonts?.ready.then(() => {
-      if (!disposed) invalidateTagLayout();
+      if (!disposed) {
+        window.clearTimeout(resizeTimer);
+        invalidateTagLayout();
+      }
     });
     return () => {
       disposed = true;
+      window.clearTimeout(resizeTimer);
       observer.disconnect();
     };
-  }, [invalidateTagLayout]);
+  }, [displayMode, invalidateTagLayout, sortedTags.length]);
 
   const selectsInsteadOfActivating = (event: Pick<MouseEvent<HTMLElement>, "ctrlKey" | "shiftKey">) =>
     selectionContext || event.ctrlKey || event.shiftKey;

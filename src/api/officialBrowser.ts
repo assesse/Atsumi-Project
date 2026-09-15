@@ -19,6 +19,13 @@ export type BrowserMerge = {
   bytes?: number | null;
   durationSeconds?: number | null;
   lastError?: string | null;
+  sourceCleanup?: {
+    status: "pending" | "complete" | "blocked";
+    deletedSegments: number;
+    proofFile: string;
+    proofSha256: string;
+    lastError?: string | null;
+  } | null;
 };
 
 export type BrowserRecording = {
@@ -40,9 +47,16 @@ export type BrowserRecording = {
   chatStatus?: string;
   chatCount?: number;
   merge?: BrowserMerge | null;
+  deletionPending?: boolean;
+};
+
+export type BrowserDeleteReport = {
+  deletedIds: string[];
+  failures: { id: string; error: { code: string; message: string; retryable: boolean } }[];
 };
 
 export type OfficialBrowserSnapshot = {
+  captureChatEnabled?: boolean;
   windowOpen: boolean;
   channelId: string | null;
   ready: boolean;
@@ -54,11 +68,16 @@ export type OfficialBrowserSnapshot = {
   chatStatus?: string;
   chatCount?: number;
   loginStatus?: string;
+  authStatus?: "signed_in" | "signed_out" | "unknown" | "checking";
+  authChecking?: boolean;
+  authError?: string | null;
+  accountBusy?: boolean;
   videoWidth?: number;
   videoHeight?: number;
   videoPaused?: boolean;
   viewportEpoch?: number;
   diagnostics?: unknown;
+  captureDiagnostics?: { reason: string; installed: boolean; appendCount: number; appendBytes: number } | null;
   pendingControl?: { id: string; action: "record_start" | "record_stop" | "screenshot"; channelId: string; expiresAt: number } | null;
   pendingUiAction?: { id: string; action: "exit_focus" | "toggle_focus" | "open_settings"; expiresAt: number } | null;
   lastScreenshot?: { id: string; channelId: string; fileName: string; createdAt: number } | null;
@@ -73,6 +92,10 @@ export type OfficialBrowserViewport = {
   visible: boolean;
   /** Mask remote pixels/input for trusted popups without suspending playback. */
   occluded?: boolean;
+  /** Retain background paint while disabling input throughout the native view. */
+  preserveBackground?: boolean;
+  /** At most eight stage-local popup rectangles subtracted from the scroll clip. */
+  occlusions?: { x: number; y: number; width: number; height: number }[];
   epoch?: number;
   /** Native transport assigns a monotonic sequence within this main document. */
   requestSequence?: number;
@@ -82,9 +105,10 @@ export type OfficialBrowserViewport = {
 export interface OfficialBrowserApi {
   readonly runtime: "tauri" | "browser-mock";
   open(input: string): Promise<ApiResult<OfficialBrowserSnapshot>>;
-  snapshot(): Promise<ApiResult<OfficialBrowserSnapshot>>;
+  snapshot(refreshAuth?: boolean): Promise<ApiResult<OfficialBrowserSnapshot>>;
   start(options: { rightsAcknowledged: boolean; captureChat: boolean }): Promise<ApiResult<OfficialBrowserSnapshot>>;
   stop(): Promise<ApiResult<OfficialBrowserSnapshot>>;
+  setCaptureChat?(enabled: boolean): Promise<ApiResult<OfficialBrowserSnapshot>>;
   connectExtension(): Promise<ApiResult<OfficialBrowserSnapshot>>;
   login(): Promise<ApiResult<OfficialBrowserSnapshot>>;
   logout(): Promise<ApiResult<OfficialBrowserSnapshot>>;
@@ -97,6 +121,7 @@ export interface OfficialBrowserApi {
   openSegment(recordingId: string, index: number): Promise<ApiResult<void>>;
   openMerged(recordingId: string): Promise<ApiResult<void>>;
   retryMerge(recordingId: string): Promise<ApiResult<OfficialBrowserSnapshot>>;
+  deleteRecordings(recordingIds: string[]): Promise<ApiResult<BrowserDeleteReport>>;
 }
 
 export const emptyOfficialBrowserSnapshot = (runtime: OfficialBrowserApi["runtime"]): OfficialBrowserSnapshot => ({
@@ -279,14 +304,16 @@ export function createOfficialBrowserApi(runtime: OfficialBrowserApi["runtime"])
     openSegment: async () => unavailable(),
     openMerged: async () => unavailable(),
     retryMerge: async () => unavailable(),
+    deleteRecordings: async () => unavailable(),
   };
   if (desktopApi) return desktopApi;
   desktopApi = {
     runtime,
     open: (input) => mutate("chzzk_browser_open", { input }),
-    snapshot: () => call("chzzk_browser_snapshot"),
+    snapshot: (refreshAuth = false) => call("chzzk_browser_snapshot", refreshAuth ? { refreshAuth: true } : {}),
     start: (options) => mutate("chzzk_browser_start", options),
     stop: () => mutate("chzzk_browser_stop"),
+    setCaptureChat: (enabled) => mutate("chzzk_browser_capture_chat", { enabled }),
     connectExtension: () => mutate("chzzk_browser_connect_extension"),
     login: () => mutate("chzzk_browser_login"),
     logout: () => mutate("chzzk_browser_logout"),
@@ -299,6 +326,7 @@ export function createOfficialBrowserApi(runtime: OfficialBrowserApi["runtime"])
     openSegment: (recordingId, index) => mutate("chzzk_browser_open_segment", { recordingId, index }),
     openMerged: (recordingId) => mutate("chzzk_browser_open_merged", { recordingId }),
     retryMerge: (recordingId) => mutate("chzzk_browser_retry_merge", { recordingId }),
+    deleteRecordings: (recordingIds) => mutate("chzzk_browser_delete_recordings", { recordingIds }),
   };
   return desktopApi;
 }

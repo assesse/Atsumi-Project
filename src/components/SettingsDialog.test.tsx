@@ -135,6 +135,10 @@ describe("SettingsDialog operational boundaries", () => {
       });
 
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+      const autostart = container.querySelector<HTMLInputElement>('[aria-label="Windows 로그인 시 자동 실행"]');
+      expect(autostart).toHaveAttribute("role", "switch");
+      expect(autostart).toBeDisabled(); // A browser preview cannot register a Windows startup entry.
+      expect(autostart).not.toBeChecked();
       expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru"]);
       expect(container.textContent).not.toContain("다음 단계");
       expect(container.querySelectorAll('[data-settings-scroll-root="true"]')).toHaveLength(1);
@@ -182,7 +186,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(rebuild?.querySelectorAll('input[type="checkbox"]')).toHaveLength(4);
       expect([...rebuild?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []].map((input) => input.checked)).toEqual([true, false, false, false]);
       expect(factoryReset).toHaveTextContent("앱 데이터 완전 초기화");
-      expect(factoryReset).toHaveTextContent("외부 다운로드 원본 파일과 quarantine/recovery 파일은 유지됩니다.");
+      expect(factoryReset).toHaveTextContent("외부 다운로드 원본 파일과 quarantine/recovery 파일, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.");
       expect(factoryReset).toHaveClass("maintenance-item--factory-reset");
       const maintenance = [...container.querySelectorAll<HTMLButtonElement>(".maintenance-item > button")];
       expect(maintenance.map((button) => button.textContent)).toEqual(["빠른 복구", "라이브러리 검사 및 재구축", "앱 데이터 완전 초기화"]);
@@ -199,7 +203,7 @@ describe("SettingsDialog operational boundaries", () => {
         rebuildAutoFindResults: false,
       });
       await act(async () => maintenance[2]?.click());
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("외부 다운로드 원본 파일은 유지"));
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("외부 다운로드 원본 파일, 커뮤니티 작성자 키와 서버 후기는 유지"));
 
       const template = container.querySelector<HTMLInputElement>('[aria-label="갤러리 폴더 이름 템플릿"]');
       expect(template?.value).toBe("[{artist}] {title} [{group}] {id}");

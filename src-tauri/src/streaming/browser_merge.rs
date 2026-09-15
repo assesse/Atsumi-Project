@@ -1,5 +1,5 @@
-//! Offline derivatives of completed official-browser recordings. No source is
-//! deleted, and no network, shell, credentials or remote-supplied paths are used.
+//! Offline derivatives of completed official-browser recordings. Source cleanup
+//! requires durable verified output; no network, shell or remote paths are used.
 //! FFmpeg concat requires equal stream parameters and correct per-file duration:
 //! https://ffmpeg.org/ffmpeg-formats.html#concat-1
 use super::{
@@ -94,7 +94,8 @@ impl BrowserMergeWorker {
         Ok(count)
     }
     /// Kill/wait the owned tool first, then join. Never hold a host/store mutex
-    /// while calling this method. Source files survive every cancellation point.
+    /// while calling this method. Unverified sources survive cancellation;
+    /// already-committed cleanup is not rolled back.
     pub fn shutdown_and_wait(&self) {
         self.shared.cancel.store(true, Ordering::Release);
         self.shared.changed.notify_all();
@@ -112,6 +113,13 @@ impl Drop for BrowserMergeWorker {
     }
 }
 fn worker(shared: Arc<Shared>) {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL,
+        };
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
     // Startup retry only touches the bounded catalog and small metadata files.
     if let Ok(store) = shared.store.lock() {
         let _ = store.retry_merges(None);
@@ -119,6 +127,20 @@ fn worker(shared: Arc<Shared>) {
     loop {
         if shared.cancel.load(Ordering::Acquire) {
             break;
+        }
+        let cleanup_job = shared
+            .store
+            .lock()
+            .ok()
+            .and_then(|store| store.take_cleanup_job().ok())
+            .flatten();
+        if let Some(job) = cleanup_job {
+            // Media hashing/deletion never holds either shared store mutex.
+            let result = browser_store::cleanup::remove_verified_sources(&job, &shared.cancel);
+            if let Ok(store) = shared.store.lock() {
+                let _ = store.finish_cleanup(&job, result);
+            }
+            continue;
         }
         let job = shared
             .store
@@ -183,6 +205,74 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), StreamError> {
     } else {
         Ok(())
     }
+}
+
+fn verify_full_decode(
+    tools: &MediaTools,
+    file: &Path,
+    duration: f64,
+    cancel: &AtomicBool,
+) -> Result<(), StreamError> {
+    let mut command = Command::new(&tools.ffmpeg);
+    command
+        .args([
+            "-nostdin",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-xerror",
+            "-err_detect",
+            "explode",
+            "-threads",
+            "1",
+            "-filter_threads",
+            "1",
+            "-max_alloc",
+            "67108864",
+            "-protocol_whitelist",
+            "file",
+            "-i",
+        ])
+        .arg(file)
+        .args([
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a:0",
+            "-progress",
+            "pipe:1",
+            "-stats_period",
+            "60",
+            "-f",
+            "null",
+            "-",
+        ]);
+    let timeout = Duration::from_secs(
+        (duration.ceil() as u64)
+            .saturating_mul(2)
+            .saturating_add(60)
+            .clamp(60, 7200),
+    );
+    let ToolOutput::Bytes(bytes) = run_tool(command, cancel, timeout, false, None)? else {
+        unreachable!()
+    };
+    let progress = std::str::from_utf8(&bytes)
+        .map_err(|_| failure("병합 영상의 전체 재생 검증 결과를 읽지 못했습니다."))?;
+    let decoded = progress
+        .lines()
+        .filter_map(|line| line.strip_prefix("out_time_us=")?.parse::<f64>().ok())
+        .next_back()
+        .unwrap_or(0.0)
+        / 1_000_000.0;
+    if !progress.lines().any(|line| line == "progress=end")
+        || !decoded.is_finite()
+        || (decoded - duration).abs() > 0.5
+    {
+        return Err(failure(
+            "병합 영상의 전체 재생 길이를 검증하지 못했습니다. 원본 조각은 보존됩니다.",
+        ));
+    }
+    Ok(())
 }
 fn regular(path: &Path, max: u64) -> Result<fs::Metadata, StreamError> {
     let metadata = fs::symlink_metadata(path)
@@ -282,7 +372,7 @@ fn run_tool(
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
+        command.creation_flags(0x08000000 | 0x00004000); // hidden, BELOW_NORMAL_PRIORITY_CLASS
     }
     let mut child = command
         .spawn()
@@ -639,6 +729,7 @@ fn merge_recording(
         .write_all(b"ffconcat version 1.0\n")
         .map_err(|_| failure("병합 목록을 저장하지 못했습니다."))?;
     let mut first_signature = None;
+    let mut source_hashes = Vec::with_capacity(segments.len());
     let mut offset = 0.0;
     for (index, segment) in segments.iter().enumerate() {
         check_cancel(cancel)?;
@@ -651,6 +742,11 @@ fn merge_recording(
         if regular(&path, MAX_SEGMENT)?.len() != segment.bytes {
             return Err(failure("원본 조각의 크기가 저장 기록과 다릅니다."));
         }
+        source_hashes.push(browser_store::cleanup::source_hash(
+            &path,
+            segment.bytes,
+            cancel,
+        )?);
         let info = probe(
             tools,
             &path,
@@ -787,6 +883,16 @@ fn merge_recording(
         .open(&partial)
         .and_then(|file| file.sync_all())
         .map_err(|_| failure("병합 영상을 디스크에 확정하지 못했습니다."))?;
+    let verification_guard = browser_store::cleanup::verification_guard(&partial)?;
+    verify_full_decode(tools, &partial, offset, cancel)?;
+    let cleanup = browser_store::cleanup::write_proof(
+        job,
+        &source_hashes,
+        &partial,
+        &timeline_partial,
+        cancel,
+    )?;
+    drop(verification_guard);
     check_cancel(cancel)?;
     browser_store::validate_merge_generation(job)?;
     rename_new(&timeline_partial, &root.join(&timeline_name))?;
@@ -796,6 +902,7 @@ fn merge_recording(
         timeline_file: timeline_name,
         bytes,
         duration_seconds: merged.duration,
+        cleanup: Some(cleanup),
     })
 }
 
@@ -1156,7 +1263,7 @@ mod tests {
 
     #[test]
     #[ignore = "explicit verified media tools; temporary encoded-clock AVC/AAC concat and decode"]
-    fn synthetic_ffmpeg_fragmented_mp4_uses_source_cut_points_and_preserves_both_originals() {
+    fn synthetic_ffmpeg_fragmented_mp4_uses_source_cut_points_then_cleans_verified_originals() {
         let tools = e2e_tools();
         let media = synthetic_mp4(&tools);
         let segments = native_encoded_fixture(&media);
@@ -1211,6 +1318,19 @@ mod tests {
             fs::read(output_root.join("segments.jsonl")).unwrap(),
             journal
         );
+        let replay = store.replay_source(&recording.id).unwrap();
+        let cleanup_job = store.take_cleanup_job().unwrap().unwrap();
+        let result =
+            browser_store::cleanup::remove_verified_sources(&cleanup_job, &AtomicBool::new(false));
+        assert!(result.complete);
+        assert_eq!(result.deleted, 2);
+        store.finish_cleanup(&cleanup_job, result).unwrap();
+        for index in 0..2 {
+            assert!(!output_root
+                .join(format!("segment-{index:012}.mp4"))
+                .exists());
+        }
+        assert!(replay.media.metadata().unwrap().len() > 0);
         let reopened = BrowserCaptureStore::new(dir.path())
             .unwrap()
             .snapshot()
@@ -1259,15 +1379,14 @@ mod tests {
             )
             .unwrap();
             let first = output_root.join("segment-000000000000.webm");
-            let mut readonly = fs::metadata(&first).unwrap().permissions();
+            let original_permissions = fs::metadata(&first).unwrap().permissions();
+            let mut readonly = original_permissions.clone();
             readonly.set_readonly(true);
             fs::set_permissions(&first, readonly).unwrap();
             let job = store.take_merge_job().unwrap().unwrap();
             let result = merge_recording(&job, Some(&tools), &AtomicBool::new(false));
             // Restore only this temporary fixture's flag so cleanup remains portable.
-            let mut writable = fs::metadata(&first).unwrap().permissions();
-            writable.set_readonly(false);
-            fs::set_permissions(&first, writable).unwrap();
+            fs::set_permissions(&first, original_permissions).unwrap();
             let merged = result.unwrap();
             assert!((merged.duration_seconds - count as f64).abs() < 0.15);
             assert_eq!(fs::read(&first).unwrap(), media);
@@ -1287,6 +1406,23 @@ mod tests {
             verify_decode(&tools, &merged_path);
             store.complete_merge(&job, merged).unwrap();
             assert_eq!(store.merged_file(&recording.id).unwrap(), merged_path);
+            let cleanup_job = store.take_cleanup_job().unwrap().unwrap();
+            let result = browser_store::cleanup::remove_verified_sources(
+                &cleanup_job,
+                &AtomicBool::new(false),
+            );
+            assert!(result.complete);
+            assert_eq!(result.deleted, count);
+            store.finish_cleanup(&cleanup_job, result).unwrap();
+            for index in 0..count {
+                assert!(!output_root
+                    .join(format!("segment-{index:012}.webm"))
+                    .exists());
+            }
+            assert_eq!(
+                fs::read(output_root.join("chat.jsonl")).unwrap(),
+                b"synthetic chat preserved\n"
+            );
             let reopened = BrowserCaptureStore::new(&root)
                 .unwrap()
                 .snapshot()
@@ -1295,6 +1431,30 @@ mod tests {
             assert_eq!(reopened.merge.unwrap().status, BrowserMergeStatus::Complete);
             assert_eq!(reopened.chat_status.as_deref(), Some("partial"));
         }
+    }
+
+    #[test]
+    #[ignore = "explicit verified media tools; corrupts only a middle sample of temporary synthetic media"]
+    fn synthetic_ffmpeg_full_decode_rejects_corrupt_middle_with_intact_container_metadata() {
+        let tools = e2e_tools();
+        let mut media = synthetic_mp4(&tools);
+        let mut offset = 0;
+        let mut regions = Vec::new();
+        for (kind, atom) in fixture_atoms(&media) {
+            if kind == b"mdat" {
+                regions.push((offset + 8, offset + atom.len()));
+            }
+            offset += atom.len();
+        }
+        let (start, end) = regions[regions.len() / 2];
+        media[start..end].fill(0xff);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("corrupt-middle-only.mp4");
+        fs::write(&path, media).unwrap();
+        let cancel = AtomicBool::new(false);
+        assert!(probe(&tools, &path, "video/mp4", &cancel, 20.0, false).is_ok());
+        assert!(verify_full_decode(&tools, &path, 15.0, &cancel).is_err());
+        assert!(path.is_file());
     }
 
     #[test]

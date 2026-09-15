@@ -371,7 +371,6 @@ impl OverlapMergeService {
             mark("database_commit");
             result
         })();
-        drop(mark);
         match outcome {
             Ok(result) => {
                 let diagnostic = serde_json::json!({"mergeId": journal.merge_id, "totalMs": started.elapsed().as_millis(), "targetFiles": journal.original_tree.len(), "replacedPages": journal.replacements.len(), "stages": timings});
@@ -633,7 +632,7 @@ fn validate_request<'a>(
     }
     if request.source_pages.is_empty()
         || request.source_pages.len() > 200
-        || request.source_pages.iter().any(|page| *page == 0)
+        || request.source_pages.contains(&0)
         || request.source_pages.iter().collect::<BTreeSet<_>>().len() != request.source_pages.len()
     {
         return Err(invalid("Select unique valid pages on exactly one side"));
@@ -1144,15 +1143,13 @@ mod tests {
             .unwrap(),
             3
         );
-        assert_eq!(
-            c.query_row(
+        assert!(c
+            .query_row(
                 "SELECT resolved FROM duplicate_candidates WHERE candidate_id='classic'",
                 [],
                 |r| r.get::<_, bool>(0)
             )
-            .unwrap(),
-            true
-        );
+            .unwrap());
     }
 
     #[test]

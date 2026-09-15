@@ -83,9 +83,9 @@ describe("CHZZK App composition", () => {
       expect(container.querySelector(".streaming-current")).toBeNull();
       expect(container.querySelector("video")).toBeNull();
       await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="녹화 목록"]')!.click());
-      expect(container.querySelector(".official-browser-recordings")).toHaveTextContent("유지되는 공식 녹화");
-      expect(container.querySelector(".official-browser-recordings")).toHaveTextContent("녹화 중");
-      expect(container.querySelector(".official-browser-recordings")).toHaveTextContent("segment-000000.webm");
+      expect(container.querySelector(".recording-library")).toHaveTextContent("유지되는 공식 녹화");
+      expect(container.querySelector(".recording-library")).toHaveTextContent("녹화 중");
+      expect(container.querySelector(".recording-library")).toHaveTextContent("segment-000000.webm");
       expect(container.querySelector(".official-browser-stage")).toBeNull();
       expect(container.querySelector("video,.streaming-chat")).toBeNull();
       await switchMode("Hitomi");

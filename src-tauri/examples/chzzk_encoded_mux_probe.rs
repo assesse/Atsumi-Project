@@ -227,7 +227,7 @@ mod probe {
                     worker_started.store(true,Ordering::Release);
                     let result = sink.accept(&value); let success = result.is_ok();
                     let reply = json!({"id":value["id"],"ok":success});
-                    let _ = target.eval(&format!("window.dispatchEvent(new CustomEvent('atsumi-encoded-probe-reply',{{detail:{reply}}}));"));
+                    let _ = target.eval(format!("window.dispatchEvent(new CustomEvent('atsumi-encoded-probe-reply',{{detail:{reply}}}));"));
                     match result {
                         Ok(true) => { worker_done.store(true,Ordering::Release); exit(&worker_app,0); return; },
                         Err(cause) => { eprintln!("ENCODED_SYNTHETIC_FAILURE: {cause}"); worker_done.store(true,Ordering::Release); exit(&worker_app,3); return; },

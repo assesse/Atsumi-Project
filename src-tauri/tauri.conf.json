@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Atsumi",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "identifier": "local.atsumi.next",
   "build": {
     "beforeDevCommand": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 dev",
@@ -33,7 +33,7 @@
         "base-uri": "'self'",
         "connect-src": "ipc: http://ipc.localhost",
         "font-src": "'self'",
-        "frame-src": "'none'",
+        "frame-src": "atsumi-player://localhost http://atsumi-player.localhost https://atsumi-player.localhost",
         "img-src": "'self' blob: data: detail-original://localhost http://detail-original.localhost danbooru-media://localhost http://danbooru-media.localhost atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost",
         "media-src": "'self' blob: data: https://cdn.donmai.us atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost",
         "worker-src": "'self' blob:",

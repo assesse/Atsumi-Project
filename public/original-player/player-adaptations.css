@@ -1,0 +1,3 @@
+/* Requested change: hide only the redundant floating mute notice.
+   Keep actual muted state, the volume controls and their accessible labels. */
+.chzzk_player .pzp-pc__mute-indicator { display: none !important; }

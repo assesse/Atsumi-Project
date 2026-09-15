@@ -1,42 +1,74 @@
-.recording-replay-backdrop { position: fixed; inset: 0; z-index: 1300; display: grid; place-items: center; padding: 18px; background: #05080dea; }
-.recording-replay { display: flex; flex-direction: column; width: min(1600px, 100%); height: min(920px, calc(100dvh - 36px)); min-width: 0; overflow: hidden; border: 1px solid #35434b; border-radius: 12px; color: #edf1f3; background: #12171e; box-shadow: 0 20px 80px #0008; font-family: inherit; }
-.recording-replay:fullscreen { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+.recording-replay-backdrop { position: fixed; inset: 0; z-index: 1300; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); place-items: center; padding: 18px; background: #05080dea; }
+.recording-replay { display: flex; flex-direction: column; box-sizing: border-box; max-width: 100%; max-height: 100%; min-width: 0; overflow: hidden; border: 1px solid #35434b; border-radius: 12px; color: #edf1f3; background: #12171e; box-shadow: 0 20px 80px #0008; font-family: inherit; }
+.recording-replay:fullscreen { width: 100vw !important; height: 100dvh !important; border: 0; border-radius: 0; }
 .recording-replay button, .recording-replay select, .recording-replay input { font: inherit; }
 .recording-replay button { color: #dfe8ec; border: 1px solid #3a4753; border-radius: 6px; padding: 6px 9px; background: #202b36; cursor: pointer; }
 .recording-replay button:hover:not(:disabled) { color: #9ff5d2; border-color: #5aa68d; background: #2a3b43; }
 .recording-replay button:disabled { opacity: .45; cursor: default; }
 .recording-replay :focus-visible { outline: 2px solid #78e4b8; outline-offset: 2px; }
 .recording-replay-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.recording-replay { position: relative; }
+.recording-replay .recording-replay-dismiss { position: absolute; z-index: 8; top: 12px; right: 12px; display: grid; place-items: center; width: 32px; height: 32px; padding: 4px; border: 0; border-radius: 50%; color: #fff; background: #14151799; box-shadow: 0 1px 4px #0005; }
+.recording-replay .recording-replay-dismiss:hover { color: #fff; background: #313235ed; }
+.recording-replay-dismiss svg { width: 24px; height: 24px; }
 .recording-replay select, .recording-replay input[type="number"] { color: #dfe8ec; padding: 5px 7px; border: 1px solid #3b4652; border-radius: 5px; background: #1d2732; }
-.recording-replay-heading { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 16px; border-bottom: 1px solid #303b46; }
+.recording-replay-heading { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 8px 12px; border-bottom: 1px solid #303b46; }
 .recording-replay-heading > div { display: flex; align-items: center; gap: 15px; min-width: 0; }
 .recording-replay-heading h2 { margin: 0; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recording-replay-mark { color: #6ce5b5; white-space: nowrap; font-size: 14px; font-weight: 800; letter-spacing: .04em; }
 .recording-replay-mark > span { margin-left: 7px; font-size: 11px; font-weight: 500; color: #94a4af; letter-spacing: 0; }
 .recording-replay-offline { flex-shrink: 0; color: #8eaba3; font-size: 10px; padding: 3px 6px; background: #24332f; border-radius: 4px; }
-.recording-replay-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) clamp(270px, 26vw, 360px); }
+.recording-replay-body { flex: none; align-self: center; margin: auto; width: var(--replay-width); height: var(--replay-height); max-width: 100%; max-height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) var(--replay-chat-size); }
+.recording-replay-body[data-layout="stacked"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) var(--replay-chat-size); }
+.recording-replay-body[data-layout="stacked"] > .recording-replay-chat { border-left: 0; border-top: 1px solid #303b46; }
 .recording-replay-body[hidden] { display: none; }
+.recording-replay { position: relative; }
+.recording-replay-heading-actions { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.recording-replay-original-player { display: block; border: 0; width: 100%; height: 100%; background: #000; }
 .recording-replay-player { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0b1016; }
-.recording-replay-stage { flex: 1; position: relative; min-height: 100px; background: #000; overflow: hidden; }
+.recording-replay-stage { flex: 1; position: relative; min-height: 0; background: #000; overflow: hidden; container-type: size; }
+.recording-replay-visual { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(100cqw, calc(100cqh * var(--video-aspect))); height: min(100cqh, calc(100cqw / var(--video-aspect))); }
 .recording-replay-stage video { position: absolute; inset: 0; display: block; width: 100%; height: 100%; object-fit: contain; }
-.recording-replay-stage .recording-replay-center-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 64px; height: 64px; padding-left: 13px; border-radius: 50%; border: 1px solid #88e6c36b; color: #aaffda; background: #182e27d9; font-size: 25px; }
+.recording-replay-stage .recording-replay-center-play { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; place-items: center; width: 80px; height: 80px; padding: 0; border: 0; border-radius: 50%; color: #fff; background: #3339; }
+.recording-replay-center-play svg { width: 56px; height: 56px; }
 .recording-replay-buffering { position: absolute; top: 18px; left: 50%; transform: translateX(-50%); color: #d4e3de; padding: 8px 12px; border-radius: 5px; background: #18282edb; font-size: 12px; }
-.recording-replay-controls { flex-shrink: 0; padding: 5px 13px 8px; background: #10171f; }
-.recording-replay-seek { display: block; width: 100%; height: 14px; margin: 0 0 4px; accent-color: #68e2b3; cursor: pointer; }
-.recording-replay-control-row { display: flex; align-items: center; gap: 7px; }
-.recording-replay-control-row button { width: 32px; height: 30px; padding: 0; border-color: transparent; background: transparent; font-size: 18px; }
-.recording-replay-volume { width: 68px; accent-color: #68e2b3; }
+.recording-replay-controls { position: absolute; z-index: 2; inset: auto 0 0; padding: 40px 20px 8px; background: linear-gradient(transparent, #000b); opacity: 0; transition: opacity .16s; pointer-events: none; }
+.recording-replay-stage[data-controls-visible="true"] .recording-replay-controls, .recording-replay-controls:focus-within { opacity: 1; pointer-events: auto; }
+.recording-replay-timeline { position: relative; height: 19px; margin: 0 0 1px; touch-action: none; }
+.recording-replay-seek { position: relative; display: block; width: 100%; height: 19px; margin: 0; padding: 0; appearance: none; background: transparent; cursor: pointer; }
+.recording-replay-seek::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: linear-gradient(to right, #00ffa3 var(--played), #ffffff45 var(--played)); }
+.recording-replay-seek::-moz-range-track { height: 3px; border-radius: 2px; background: #ffffff45; }
+.recording-replay-seek::-moz-range-progress { height: 3px; background: #00ffa3; }
+.recording-replay-seek::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; margin-top: -4px; border: 0; border-radius: 50%; background: #00ffa3; opacity: 0; transition: opacity .12s; }
+.recording-replay-seek::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: #00ffa3; }
+.recording-replay-timeline:hover .recording-replay-seek::-webkit-slider-thumb, .recording-replay-seek:focus-visible::-webkit-slider-thumb { opacity: 1; }
+.recording-replay-activity { position: absolute; left: 0; width: 100%; height: 32px; bottom: 10px; overflow: hidden; pointer-events: none; }
+.replay-chat-curve { fill: #00ffa338; stroke: #63e5bda8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.replay-viewer-curve { fill: #9da8ed29; stroke: #b5bff5b0; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.replay-viewer-partial { fill: #b5bff5b0; }
+.recording-replay-timeline-tooltip { position: absolute; z-index: 3; bottom: 49px; left: clamp(0px, calc(var(--preview-position) - 120px), calc(100% - 240px)); display: none; box-sizing: border-box; width: 240px; max-width: 100%; padding: 9px 12px; border: 1px solid #ffffff26; border-radius: 5px; background: #141517f5; color: #fff; box-shadow: 0 2px 12px #0007; pointer-events: none; font-size: 12px; line-height: 1.6; }
+.recording-replay-timeline:hover .recording-replay-timeline-tooltip, .recording-replay-timeline:focus-within .recording-replay-timeline-tooltip { display: grid; }
+.recording-replay-timeline-tooltip strong { font-variant-numeric: tabular-nums; margin-bottom: 3px; }
+.recording-replay-timeline-tooltip small { color: #aaa; margin-top: 4px; }
+.replay-chat-count { color: #63e5bd; }
+.replay-viewer-count { color: #b5bff5; }
+.recording-replay-control-row { display: flex; align-items: center; gap: 2px; height: 36px; }
+.recording-replay-control-row button { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 0; color: #fff; background: transparent; filter: drop-shadow(0 1px 2px #0008); }
+.recording-replay-control-row button:hover:not(:disabled) { background: #ffffff12; color: #fff; }
+.recording-replay-control-row svg { display: block; width: 36px; height: 36px; }
+.recording-replay-control-row [aria-pressed="true"] { color: #00ffa3; }
+.recording-replay-volume { width: 64px; height: 12px; margin-right: 10px; accent-color: #fff; }
 .recording-replay-clock { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .recording-replay-clock > span { color: #82909f; }
 .recording-replay-control-spacer { flex: 1; }
 .recording-replay-quality { color: #9ab3ae; font-size: 10px; white-space: nowrap; }
 .recording-replay-control-row select { font-size: 11px; }
 .recording-replay-info { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; padding: 9px 14px; border-top: 1px solid #27313c; color: #91a3b1; font-size: 10px; }
-.recording-replay-sync { padding: 12px 16px; color: #bdcbd4; font-size: 11px; border-top: 1px solid #2f3c47; max-height: 155px; overflow: auto; }
-.recording-replay-sync > div { display: flex; gap: 8px; margin-top: 8px; }
-.recording-replay-sync input { width: 100px; }
+.recording-replay-sync { position: absolute; z-index: 3; right: 20px; bottom: 92px; width: min(280px, calc(100% - 40px)); box-sizing: border-box; padding: 14px; color: #fff; font-size: 12px; border: 1px solid #ffffff26; border-radius: 6px; background: #141517f5; box-shadow: 0 4px 20px #0008; max-height: calc(100% - 100px); overflow: auto; }
+.recording-replay-sync label { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.recording-replay-sync input { width: 80px; }
 .recording-replay-sync p { color: #93a3b0; line-height: 1.7; margin-bottom: 0; }
-.recording-replay-chat { min-height: 0; min-width: 0; display: flex; flex-direction: column; position: relative; border-left: 1px solid #303b46; background: #171e27; }
+.recording-replay-chat { min-height: 0; min-width: 0; display: flex; flex-direction: column; position: relative; border-left: 1px solid #303b46; background: #141517; }
 .recording-replay-chat > header { display: flex; align-items: center; justify-content: space-between; padding: 14px; font-size: 13px; border-bottom: 1px solid #2c3641; }
 .recording-replay-chat-options { display: flex; align-items: center; gap: 5px; padding: 10px 10px 2px; }
 .recording-replay-chat-options select, .recording-replay-chat-options button { font-size: 10px; padding: 5px; }
@@ -45,6 +77,9 @@
 .recording-replay-chat-scroll { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; overflow-anchor: none; padding: 8px 10px; scrollbar-width: thin; scrollbar-color: #405264 transparent; }
 .recording-replay-message { position: relative; padding: 5px 16px 5px 0; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; color: #d5dde4; }
 .recording-replay-message > strong { color: #8ed7b9; font-weight: 650; }
+.recording-replay-message .recording-replay-profile { display: inline; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; font: inherit; font-weight: 650; line-height: inherit; color: #8ed7b9; text-align: left; vertical-align: baseline; }
+.recording-replay-message .recording-replay-profile:hover { background: transparent; text-decoration: underline; }
+.recording-replay-profile-error { display: block; color: #ffc1bf; font-size: 11px; }
 .recording-replay-chat-time { color: #8795a3; font-size: .75em; margin-right: 5px; font-variant-numeric: tabular-nums; }
 .recording-replay-badge { display: inline-block; vertical-align: baseline; margin-right: 4px; padding: 0 3px; color: #bfd4e6; background: #344654; font-size: .72em; border-radius: 3px; }
 .recording-replay-decoration { display: inline-block; max-width: 3em; height: 1.5em; object-fit: contain; vertical-align: middle; }
@@ -60,9 +95,8 @@
 .recording-replay-error { color: #ffb9c5; background: #3f2630; }
 .recording-replay-empty { color: #8b9aa8; text-align: center; padding: 25px 14px; font-size: 12px; line-height: 1.8; }
 .recording-replay-loading { display: grid; place-items: center; flex: 1; padding: 30px; color: #b6c4cf; font-size: 13px; }
-.recording-replay-heatstrip { display: flex; align-items: stretch; height: 20px; gap: 1px; }
-.recording-replay-heatstrip button { flex: 1; min-width: 1px; display: flex; align-items: flex-end; padding: 0; border: 0; border-radius: 0; background: transparent; }
-.recording-replay-heatstrip span { display: block; width: 100%; background: #53b79577; }
-.recording-replay-heatstrip button:hover span { background: #90f0c4; }
-@media (max-width: 780px) { .recording-replay-backdrop { padding: 5px; } .recording-replay { height: calc(100dvh - 10px); } .recording-replay-body { grid-template-columns: minmax(0, 1fr) 265px; } .recording-replay-mark { display: none; } .recording-replay-volume { display: none; } .recording-replay-control-row { gap: 2px; } .recording-replay-info { gap: 4px; } }
-@media (max-width: 590px) { .recording-replay-body { display: flex; flex-direction: column; } .recording-replay-player { flex: 1; min-height: 220px; } .recording-replay-chat { flex: 1; min-height: 160px; border-left: 0; border-top: 1px solid #303b46; } .recording-replay-chat > header { padding: 8px 12px; } .recording-replay-chat footer { padding: 6px 12px; } }
+.recording-replay.is-wide { border: 0; border-radius: 0; }
+/* Status changes must not resize the video or manufacture new letterboxing. */
+.recording-replay-notices { position: absolute; z-index: 6; top: 54px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 24px)); max-height: 30%; overflow: auto; border-radius: 6px; }
+.recording-replay-notices:empty { display: none; }
+@media (prefers-reduced-motion: reduce) { .recording-replay-controls, .recording-replay-seek::-webkit-slider-thumb { transition: none; } }

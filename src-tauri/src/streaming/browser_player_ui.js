@@ -9,9 +9,9 @@
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const pending = new Map();
   let state = { ready: false, recording: false, detail: "unavailable" };
-  let controls = null, record = null, screenshot = null, speed = null, audio = null, focus = null, player = null, style = null;
+  let controls = null, record = null, screenshot = null, speed = null, focus = null, player = null, style = null;
   let topControls = null, settings = null, rateButton = null, rateMenu = null;
-  const context = { multiview: false, audioEnabled: false };
+  const context = { multiview: false };
   let catchup = null;
   let selectedRate = null;
   const RATES = [.5, .75, 1, 1.25, 1.5, 2];
@@ -61,9 +61,8 @@
     const sourceChannel = channel();
     intentBusy = true; render();
     try {
-      const result = await request("view_intent", { channelId: sourceChannel, action });
+      await request("view_intent", { channelId: sourceChannel, action });
       if (channel() !== sourceChannel) throw new Error("시청 채널이 변경되었습니다");
-      if (typeof result?.audioEnabled === "boolean") context.audioEnabled = result.audioEnabled;
     } catch (error) { tell(error.message); }
     finally { intentBusy = false; render(); }
   };
@@ -122,10 +121,11 @@
     preservePitch(video); video.playbackRate = 1.2; render();
   };
   const intent = async (action, event) => {
-    // This filters accidental synthetic clicks only; native approval is the boundary.
+    // Synthetic clicks are ignored; native source, generation and nonce checks
+    // remain authoritative. Record start/stop no longer open a confirmation.
     if (!event.isTrusted || intentBusy || !channel()) return;
     intentBusy = true; render();
-    try { await request("control_intent", { channelId: channel(), action }); tell("Atsumi에서 확인해 주세요"); }
+    try { await request("control_intent", { channelId: channel(), action }); if (action === "screenshot") tell("Atsumi에서 확인해 주세요"); }
     catch (error) { tell(error.message); }
     finally { intentBusy = false; render(); }
   };
@@ -318,8 +318,6 @@
           choices[(index + delta + choices.length) % choices.length]?.focus();
         }
       });
-      audio = button("소리 켜기", '<path d="M3 9h4l5-4v14l-5-4H3zM16 8q6 4 0 8"/>');
-      audio.addEventListener("click", (event) => { event.stopPropagation(); void viewIntent("audio_toggle", event); });
       focus = button("기본 보기", '<path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5"/>');
       focus.addEventListener("click", (event) => { event.stopPropagation(); if (context.multiview) void viewIntent("exit_focus", event); });
     }
@@ -336,17 +334,13 @@
     if (rateButton.disabled) rateMenu.hidden = true;
     rateButton.textContent = `${Number.isFinite(video.playbackRate) ? video.playbackRate : 1}×`;
     rateButton.setAttribute("aria-expanded", String(!rateMenu.hidden));
-    rateButton.title = Date.now() < noticeUntil ? notice : state.recording && rateButton.disabled ? "현재 녹화 방식은 1배속으로 저장합니다" : "재생 배속 · 최신 지점에 가까워지면 1배속으로 복귀";
+    rateButton.title = Date.now() < noticeUntil ? notice : state.recording && rateButton.disabled ? "영상 재생과 원본 수신 상태를 확인하세요" : "시청 배속 · 원본 녹화 속도에는 영향을 주지 않습니다";
     for (const choice of rateMenu.querySelectorAll("button")) choice.setAttribute("aria-checked", String(Number(choice.getAttribute("data-rate")) === video.playbackRate));
     speed.disabled = !catchup && (!rateAllowed(video) || liveDistance(video) === null);
     speed.setAttribute("aria-pressed", String(Boolean(catchup)));
     const distance = liveDistance(video);
     const latencyText = distance === null ? "재생 가능 끝점 거리 확인 전" : `재생 가능 끝점까지 ${distance.toFixed(1)}초`;
     speed.title = `${catchup ? "1.2배로 따라잡는 중 · 다시 누르면 해제" : "최신 지점까지 1.2배로 따라잡기 · 영상 재다운로드 없음"} · ${latencyText}`;
-    audio.hidden = !context.multiview; audio.disabled = intentBusy;
-    audio.setAttribute("aria-pressed", String(context.audioEnabled));
-    audio.setAttribute("aria-label", context.audioEnabled ? "소리 끄기" : "소리 켜기");
-    audio.title = context.audioEnabled ? "이 방송 소리 끄기" : "이 방송 소리 켜기";
     focus.hidden = !context.multiview;
     focus.setAttribute("aria-label", "기본 보기");
     focus.title = "넓게 보기 종료 · Esc";
@@ -433,7 +427,6 @@
     update: (next) => { state = next; render(); },
     configure: (next) => {
       if (typeof next?.multiview === "boolean") context.multiview = next.multiview;
-      if (typeof next?.audioEnabled === "boolean") context.audioEnabled = next.audioEnabled;
       render();
     },
     stopCatchup,

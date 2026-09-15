@@ -34,6 +34,7 @@ import { SideRail } from "./SideRail";
 type DanbooruView = "explore" | "downloads";
 
 type DanbooruWorkspaceProps = {
+  navigationRequest?: import("../app/CommonNavigation").NavigationRequest | null;
   backend: DanbooruApi;
   railCollapsed: boolean;
   pageSize: number;
@@ -161,6 +162,7 @@ const replaceActiveToken = (value: string, replacement: string): string => {
 };
 
 export function DanbooruWorkspace({
+  navigationRequest,
   backend,
   railCollapsed,
   pageSize,
@@ -179,7 +181,7 @@ export function DanbooruWorkspace({
   onOpenSettings,
 }: DanbooruWorkspaceProps) {
   const persisted = useRef(loadState()).current;
-  const [view, setView] = useState<DanbooruView>(persisted.view);
+  const [view, setView] = useState<DanbooruView>(navigationRequest?.source === "danbooru" && (navigationRequest.view === "explore" || navigationRequest.view === "downloads") ? navigationRequest.view : persisted.view);
   const [exploreDraft, setExploreDraft] = useState(persisted.exploreDraft);
   const [exploreCommitted, setExploreCommitted] = useState(persisted.exploreCommitted);
   const [downloadsDraft, setDownloadsDraft] = useState(persisted.downloadsDraft);
@@ -249,9 +251,12 @@ export function DanbooruWorkspace({
   useLayoutEffect(() => {
     const host = content.current;
     if (!host) return;
+    let lastColumns = 0;
     const update = () => {
       const available = Math.max(0, host.clientWidth - 8);
       const columns = Math.max(1, Math.floor((available + 14) / (gridWidth + 14)));
+      if (columns === lastColumns) return;
+      lastColumns = columns;
       setGridColumns((current) => current === columns ? current : columns);
       setGridMeasured(true);
     };

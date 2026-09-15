@@ -61,6 +61,13 @@ pub struct BrowserViewport {
     /// Privacy, inactive workspaces and detached documents must use visible=false.
     #[serde(default)]
     pub occluded: bool,
+    /// Only trusted measured popups may retain a clipped background. Native
+    /// input remains disabled for the entire surface, not only the sheet.
+    #[serde(default)]
+    pub preserve_background: bool,
+    /// Stage-local trusted popup rectangles, subtracted from the scroll clip.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub occlusions: Vec<BrowserClip>,
     #[serde(default)]
     pub clip: Option<BrowserClip>,
 }
@@ -75,6 +82,8 @@ impl Default for BrowserViewport {
             height: 1.0,
             visible: false,
             occluded: false,
+            preserve_background: false,
+            occlusions: vec![],
             clip: None,
         }
     }
@@ -118,6 +127,29 @@ impl BrowserViewport {
             return Err(error(
                 "VIEWPORT_INVALID",
                 "가려진 시청 영역은 원래 화면 크기를 유지해야 합니다.",
+            ));
+        }
+        if self.preserve_background && (!self.occluded || self.clip.is_none()) {
+            return Err(error(
+                "VIEWPORT_INVALID",
+                "확인 창의 시청 범위를 확인하지 못했습니다.",
+            ));
+        }
+        if self.occlusions.len() > 8
+            || (!self.occlusions.is_empty() && !self.preserve_background)
+            || self.occlusions.iter().any(|c| {
+                [c.x, c.y, c.width, c.height]
+                    .iter()
+                    .any(|v| !v.is_finite() || *v < 0.0)
+                    || c.width <= 0.0
+                    || c.height <= 0.0
+                    || c.x + c.width > self.width
+                    || c.y + c.height > self.height
+            })
+        {
+            return Err(error(
+                "VIEWPORT_INVALID",
+                "팝업의 가림 범위가 올바르지 않습니다.",
             ));
         }
         Ok(())
@@ -177,7 +209,7 @@ fn clip_pixels(viewport: &BrowserViewport, scale: f64) -> Result<[i32; 4], Strea
             "시청 영역의 배율이 올바르지 않습니다.",
         ));
     }
-    if viewport.occluded {
+    if viewport.occluded && !viewport.preserve_background {
         return Ok([0; 4]);
     }
     let full = BrowserClip {
@@ -194,6 +226,103 @@ fn clip_pixels(viewport: &BrowserViewport, scale: f64) -> Result<[i32; 4], Strea
     let right = (((clip.x + clip.width) * scale).floor() as i32).clamp(left, width);
     let bottom = (((clip.y + clip.height) * scale).floor() as i32).clamp(top, height);
     Ok([left, top, right, bottom])
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PixelOcclusions {
+    rectangles: [[i32; 4]; 8],
+    length: usize,
+}
+impl PixelOcclusions {
+    fn rectangles(&self) -> &[[i32; 4]] {
+        &self.rectangles[..self.length]
+    }
+    fn is_empty(&self) -> bool {
+        self.length == 0
+    }
+}
+fn occlusion_pixels(
+    viewport: &BrowserViewport,
+    scale: f64,
+) -> Result<PixelOcclusions, StreamError> {
+    // Validates scale as well as shape before any float-to-integer conversion.
+    let _ = clip_pixels(viewport, scale)?;
+    let mut result = PixelOcclusions::default();
+    if !viewport.occluded || !viewport.preserve_background {
+        return Ok(result);
+    }
+    let width = (viewport.width * scale).round() as i32;
+    let height = (viewport.height * scale).round() as i32;
+    for (index, rect) in viewport.occlusions.iter().enumerate() {
+        // Removed pixels round outward, the opposite of the visible scroll clip.
+        result.rectangles[index] = [
+            ((rect.x * scale).floor() as i32).clamp(0, width),
+            ((rect.y * scale).floor() as i32).clamp(0, height),
+            (((rect.x + rect.width) * scale).ceil() as i32).clamp(0, width),
+            (((rect.y + rect.height) * scale).ceil() as i32).clamp(0, height),
+        ];
+        result.length += 1;
+    }
+    Ok(result)
+}
+
+#[cfg(windows)]
+mod native_region {
+    use super::{viewport_failed, PixelOcclusions, StreamError};
+    use windows::Win32::{
+        Foundation::HWND,
+        Graphics::Gdi::{
+            CombineRgn, CreateRectRgn, DeleteObject, EqualRgn, GetWindowRgn, SetWindowRgn, HGDIOBJ,
+            HRGN, RGN_DIFF,
+        },
+    };
+
+    /// Owns temporary GDI regions until SetWindowRgn explicitly takes ownership.
+    pub(super) struct Region(pub(super) HRGN);
+    impl Region {
+        pub(super) fn new(
+            rect: [i32; 4],
+            occlusions: PixelOcclusions,
+        ) -> Result<Self, StreamError> {
+            let region = unsafe { CreateRectRgn(rect[0], rect[1], rect[2], rect[3]) };
+            if region.0.is_null() {
+                return Err(viewport_failed());
+            }
+            let result = Self(region);
+            for hole in occlusions.rectangles() {
+                let mask = Self::new(*hole, PixelOcclusions::default())?;
+                if unsafe { CombineRgn(Some(result.0), Some(result.0), Some(mask.0), RGN_DIFF) }.0
+                    == 0
+                {
+                    return Err(viewport_failed());
+                }
+            }
+            Ok(result)
+        }
+        pub(super) fn apply(self, hwnd: HWND) -> Result<(), StreamError> {
+            if unsafe { SetWindowRgn(hwnd, Some(self.0), true) } == 0 {
+                return Err(viewport_failed());
+            }
+            // Windows owns and releases the successful replacement region.
+            std::mem::forget(self);
+            Ok(())
+        }
+        pub(super) fn matches_window(&self, hwnd: HWND) -> Result<bool, StreamError> {
+            let actual = Self::new([0; 4], PixelOcclusions::default())?;
+            if unsafe { GetWindowRgn(hwnd, actual.0) }.0 == 0 {
+                return Ok(false);
+            }
+            // Bounding boxes cannot detect missing or misplaced popup holes.
+            Ok(unsafe { EqualRgn(self.0, actual.0) }.as_bool())
+        }
+    }
+    impl Drop for Region {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DeleteObject(HGDIOBJ(self.0 .0));
+            }
+        }
+    }
 }
 
 fn installation_browser(url: &tauri::Url) -> Option<InstallerBrowser> {
@@ -287,126 +416,138 @@ impl OfficialBrowser {
         let popup_host = self.clone();
         let popup_app = app.clone();
         let page_host = self.clone();
-        let builder = WebviewBuilder::new(WINDOW_LABEL, WebviewUrl::External(url))
-            .data_directory(profile)
-            .browser_extensions_enabled(true)
-            .initialization_script(include_str!("browser_page_chat.js"))
-            .initialization_script(include_str!("browser_encoded_capture.js"))
-            .initialization_script(include_str!("browser_capture.js"))
-            .initialization_script(include_str!("browser_player_ui.js"))
-            .on_navigation(move |url| {
-                if let Some(browser) = installation_browser(url) {
-                    nav_host.install_from_page(browser);
-                    return false;
-                }
-                if url.as_str() == "about:blank"
-                    && nav_host
+        let startup_blank = Arc::new(AtomicBool::new(true));
+        let nav_startup_blank = startup_blank.clone();
+        // Install native request policy before the first live-page request.
+        let builder = WebviewBuilder::new(
+            WINDOW_LABEL,
+            WebviewUrl::External("about:blank".parse().map_err(|_| unavailable())?),
+        )
+        .data_directory(profile)
+        .browser_extensions_enabled(true)
+        .initialization_script(include_str!("browser_chat_enhancements.js"))
+        .initialization_script(include_str!("browser_page_chat.js"))
+        .initialization_script(include_str!("browser_encoded_capture.js"))
+        .initialization_script(include_str!("browser_capture.js"))
+        .initialization_script(include_str!("browser_player_ui.js"))
+        .on_navigation(move |url| {
+            if let Some(browser) = installation_browser(url) {
+                nav_host.install_from_page(browser);
+                return false;
+            }
+            if url.as_str() == "about:blank"
+                && (nav_startup_blank.load(Ordering::Acquire)
+                    || nav_host
                         .inner
                         .view
                         .lock()
                         .map(|s| s.account_busy)
-                        .unwrap_or(false)
-                {
-                    return true;
-                }
-                if !allowed_navigation(url) {
-                    return false;
-                }
-                let state = nav_host
-                    .inner
-                    .view
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner());
-                if state.recording.is_some() || state.arm.is_some() {
-                    return live_channel(url).as_ref() == state.channel.as_ref();
-                }
-                drop(state);
-                if url.host_str() == Some("nid.naver.com") {
-                    let host = nav_host.clone();
-                    let app = nav_app.clone();
-                    // Queue after this WebView2 navigation callback unwinds.
-                    thread::spawn(move || {
-                        let dispatch = app.clone();
-                        let _ = dispatch.run_on_main_thread(move || {
-                            let _ = host.login(&app);
-                        });
+                        .unwrap_or(false))
+            {
+                return true;
+            }
+            if !allowed_navigation(url) {
+                return false;
+            }
+            let state = nav_host
+                .inner
+                .view
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if state.recording.is_some() || state.arm.is_some() {
+                return live_channel(url).as_ref() == state.channel.as_ref();
+            }
+            drop(state);
+            if url.host_str() == Some("nid.naver.com") {
+                let host = nav_host.clone();
+                let app = nav_app.clone();
+                // Queue after this WebView2 navigation callback unwinds.
+                thread::spawn(move || {
+                    let dispatch = app.clone();
+                    let _ = dispatch.run_on_main_thread(move || {
+                        let _ = host.login(&app);
                     });
-                    return false;
-                }
-                true
-            })
-            .on_new_window(move |url, features| {
-                if let Some(browser) = installation_browser(&url) {
-                    popup_host.install_from_page(browser);
-                    return tauri::webview::NewWindowResponse::Deny;
-                }
-                if !allowed_navigation(&url) {
-                    return tauri::webview::NewWindowResponse::Deny;
-                }
-                if popup_host.account_window_open(&popup_app)
-                    || popup_host.reserve_account_window().is_err()
-                {
-                    return tauri::webview::NewWindowResponse::Deny;
-                }
-                let label = format!("{LOGIN_LABEL}-{}", uuid::Uuid::new_v4().simple());
-                let host = popup_host.clone();
-                let app = popup_app.clone();
-                let result =
-                    WebviewWindowBuilder::new(&popup_app, &label, WebviewUrl::External(url))
-                        .data_directory(popup_host.inner.data_dir.join("chzzk-browser-profile"))
-                        .browser_extensions_enabled(true)
-                        .window_features(features)
-                        .title("CHZZK 로그인·계정 관리")
-                        .inner_size(700.0, 820.0)
-                        .on_navigation(allowed_navigation)
-                        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                        .build();
-                popup_host.account_window_created(result.is_ok());
-                match result {
-                    Ok(window) => {
-                        window.on_window_event(move |event| {
-                            if matches!(event, tauri::WindowEvent::Destroyed) {
-                                host.account_window_closed(&app, &label);
-                            }
-                        });
-                        tauri::webview::NewWindowResponse::Create { window }
-                    }
-                    Err(_) => tauri::webview::NewWindowResponse::Deny,
-                }
-            })
-            .on_page_load(move |view, payload| {
-                if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
-                    let generation = {
-                        let mut s = page_host
-                            .inner
-                            .view
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner());
-                        s.page_generation = s.page_generation.wrapping_add(1);
-                        s.ready = false;
-                        s.status = "loading".into();
-                        s.page_generation
-                    };
-                    let host = page_host.clone();
-                    thread::spawn(move || {
-                        if host
-                            .inner
-                            .view
-                            .lock()
-                            .map(|s| s.page_generation == generation)
-                            .unwrap_or(false)
-                        {
-                            host.interrupt("page_hidden");
+                });
+                return false;
+            }
+            true
+        })
+        .on_new_window(move |url, features| {
+            if let Some(browser) = installation_browser(&url) {
+                popup_host.install_from_page(browser);
+                return tauri::webview::NewWindowResponse::Deny;
+            }
+            if !allowed_navigation(&url) {
+                return tauri::webview::NewWindowResponse::Deny;
+            }
+            if popup_host.account_window_open(&popup_app)
+                || popup_host.reserve_account_window().is_err()
+            {
+                return tauri::webview::NewWindowResponse::Deny;
+            }
+            let label = format!("{LOGIN_LABEL}-{}", uuid::Uuid::new_v4().simple());
+            let host = popup_host.clone();
+            let app = popup_app.clone();
+            let result = WebviewWindowBuilder::new(&popup_app, &label, WebviewUrl::External(url))
+                .data_directory(popup_host.inner.data_dir.join("chzzk-browser-profile"))
+                .browser_extensions_enabled(true)
+                .window_features(features)
+                .title("CHZZK 로그인·계정 관리")
+                .inner_size(700.0, 820.0)
+                .on_navigation(allowed_navigation)
+                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+                .build();
+            popup_host.account_window_created(result.is_ok());
+            match result {
+                Ok(window) => {
+                    window.on_window_event(move |event| {
+                        if matches!(event, tauri::WindowEvent::Destroyed) {
+                            host.account_window_closed(&app, &label);
                         }
                     });
-                } else if live_channel(payload.url()).is_some() {
-                    let _ = view.eval(include_str!("browser_page_chat.js"));
-                    let _ = view.eval(include_str!("browser_encoded_capture.js"));
-                    let _ = view.eval(include_str!("browser_capture.js"));
-                    let _ = view.eval(include_str!("browser_player_ui.js"));
-                    page_host.probe_extensions(&view);
+                    tauri::webview::NewWindowResponse::Create { window }
                 }
-            });
+                Err(_) => tauri::webview::NewWindowResponse::Deny,
+            }
+        })
+        .on_page_load(move |view, payload| {
+            // The initial empty document has no player lifecycle to stop.
+            if payload.url().as_str() == "about:blank" {
+                return;
+            }
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                let generation = {
+                    let mut s = page_host
+                        .inner
+                        .view
+                        .lock()
+                        .unwrap_or_else(|p| p.into_inner());
+                    s.page_generation = s.page_generation.wrapping_add(1);
+                    s.ready = false;
+                    s.status = "loading".into();
+                    s.page_generation
+                };
+                let host = page_host.clone();
+                thread::spawn(move || {
+                    if host
+                        .inner
+                        .view
+                        .lock()
+                        .map(|s| s.page_generation == generation)
+                        .unwrap_or(false)
+                    {
+                        host.interrupt("page_hidden");
+                    }
+                });
+            } else if live_channel(payload.url()).is_some() {
+                let _ = view.eval(include_str!("browser_page_chat.js"));
+                let _ = view.eval(include_str!("browser_encoded_capture.js"));
+                let _ = view.eval(include_str!("browser_capture.js"));
+                let _ = view.eval(include_str!("browser_player_ui.js"));
+                page_host.probe_extensions(&view);
+                page_host.refresh_auth_state(view.app_handle(), false);
+            }
+        });
         let view = parent
             .add_child(
                 builder,
@@ -415,7 +556,12 @@ impl OfficialBrowser {
             )
             .map_err(|_| unavailable())?;
         view.hide().map_err(|_| unavailable())?;
+        if super::super::browser_video_ads::install(&view).is_err() {
+            tracing::warn!("CHZZK video ad filter unavailable; requests remain unchanged");
+        }
         attach_native(&view, self.clone())?;
+        startup_blank.store(false, Ordering::Release);
+        view.navigate(url).map_err(|_| unavailable())?;
         let viewport = {
             let mut s = self.inner.view.lock().map_err(|_| unavailable())?;
             s.open = true;
@@ -585,6 +731,8 @@ impl OfficialBrowser {
             if validation.is_err() {
                 state.viewport.visible = false;
                 state.viewport.occluded = false;
+                state.viewport.preserve_background = false;
+                state.viewport.occlusions.clear();
                 state.viewport.request_sequence = viewport.request_sequence;
             } else {
                 viewport.visible = viewport.visible
@@ -639,6 +787,8 @@ impl OfficialBrowser {
                 self.inner.viewport_revision.fetch_add(1, Ordering::AcqRel);
                 state.viewport.visible = false;
                 state.viewport.occluded = false;
+                state.viewport.preserve_background = false;
+                state.viewport.occlusions.clear();
                 let _ = view.hide();
             }
         }
@@ -656,6 +806,8 @@ impl OfficialBrowser {
         };
         viewport.visible = false;
         viewport.occluded = false;
+        viewport.preserve_background = false;
+        viewport.occlusions.clear();
         let _ = self.set_viewport(app, viewport);
     }
     pub fn probe_extensions(&self, view: &Webview) {
@@ -706,14 +858,81 @@ impl OfficialBrowser {
             .keys()
             .any(|label| account_label(label))
     }
+    pub(super) fn refresh_auth_state(&self, app: &AppHandle, force: bool) -> Option<u64> {
+        if self.label() != WINDOW_LABEL
+            || self.inner.closing.load(Ordering::Acquire)
+            || self.account_window_open(app)
+        {
+            return None;
+        }
+        let generation = {
+            let mut state = self.inner.view.lock().ok()?;
+            state.begin_auth_probe(force, Instant::now())?
+        };
+        auth::probe_profile(self, app, generation);
+        Some(generation)
+    }
+    /// Manual checks bypass the cache and await an actual result. Ordinary
+    /// snapshot polling stays nonblocking and shares any in-flight request.
+    pub async fn refresh_login_status(
+        &self,
+        app: &AppHandle,
+        force: bool,
+    ) -> Result<BrowserSnapshot, StreamError> {
+        let started = self.refresh_auth_state(app, force);
+        if force {
+            let generation = started.or_else(|| {
+                self.inner
+                    .view
+                    .lock()
+                    .ok()
+                    .and_then(|s| s.auth_checking.then_some(s.auth_generation))
+            });
+            if let Some(generation) = generation {
+                let deadline = Instant::now() + auth::DEADLINE + Duration::from_secs(1);
+                loop {
+                    let (checking, current) = {
+                        let state = self.inner.view.lock().map_err(|_| unavailable())?;
+                        (state.auth_checking, state.auth_generation)
+                    };
+                    if !checking || current != generation {
+                        break;
+                    }
+                    if Instant::now() >= deadline {
+                        self.inner
+                            .view
+                            .lock()
+                            .map_err(|_| unavailable())?
+                            .finish_auth_probe(generation, auth::AuthStatus::Unknown);
+                        auth::cancel(app);
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
+        self.snapshot()
+    }
     fn reserve_account_window(&self) -> Result<(), StreamError> {
+        // All videos share this browser profile. Serialize against starting a
+        // recording in ANY pane, not merely the single-view controller.
+        let _gate = self.inner.contexts.gate.lock().map_err(|_| unavailable())?;
+        if self.label() != WINDOW_LABEL
+            || self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0
+            || !self.active_ids().is_empty()
+        {
+            return Err(error(
+                "BROWSER_ACCOUNT_BUSY",
+                "모든 녹화의 저장과 화면 변경이 끝난 뒤 계정을 변경해 주세요.",
+            ));
+        }
         let mut s = self.inner.view.lock().map_err(|_| unavailable())?;
         if s.account_busy
             || s.recording.is_some()
             || s.arm.is_some()
             || self.inner.closing.load(Ordering::Acquire)
             || self.inner.reserved.load(Ordering::Acquire)
-            || self.multiview_active()
+            || s.extension_connecting
         {
             return Err(error(
                 "BROWSER_ACCOUNT_BUSY",
@@ -721,17 +940,21 @@ impl OfficialBrowser {
             ));
         }
         s.account_busy = true;
+        s.invalidate_auth();
         Ok(())
     }
     fn account_window_created(&self, opened: bool) {
         let mut s = self.inner.view.lock().unwrap_or_else(|p| p.into_inner());
         s.account_busy = false;
         if opened {
+            s.invalidate_auth();
+            s.auth_status = auth::AuthStatus::Checking;
             s.login_status = "로그인 창 열림 · 비밀번호·쿠키는 앱에서 추출하지 않습니다".into();
         }
     }
     pub fn login(&self, app: &AppHandle) -> Result<(), StreamError> {
         self.reserve_account_window()?;
+        auth::cancel(app);
         if let Some((_, window)) = app
             .webview_windows()
             .into_iter()
@@ -789,6 +1012,12 @@ impl OfficialBrowser {
         Ok(())
     }
     fn account_window_closed(&self, app: &AppHandle, closed_label: &str) {
+        let Ok(_gate) = self.inner.contexts.gate.lock() else {
+            return;
+        };
+        if !self.active_ids().is_empty() {
+            return;
+        }
         let mut s = self.inner.view.lock().unwrap_or_else(|p| p.into_inner());
         if s.account_busy || self.inner.closing.load(Ordering::Acquire) {
             return;
@@ -803,30 +1032,25 @@ impl OfficialBrowser {
             return;
         }
         s.login_status = "저장된 브라우저 세션 반영 · 로그인 여부는 공식 화면에서 확인".into();
-        let idle = s.recording.is_none() && s.arm.is_none();
+        s.invalidate_auth();
+        s.account_busy = true;
         drop(s);
-        if idle {
-            if let Some(view) = app.get_webview(WINDOW_LABEL) {
-                if let Ok(url) = view.url() {
-                    if live_channel(&url).is_some() {
-                        let _ = view.navigate(url);
-                    }
-                }
-            }
-        }
+        drop(_gate);
+        self.refresh_account_playback(app);
+        self.inner
+            .view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .account_busy = false;
     }
     pub fn logout(&self, app: &AppHandle) -> Result<(), StreamError> {
+        self.reserve_account_window()?;
+        auth::cancel(app);
         {
             let mut s = self.inner.view.lock().map_err(|_| unavailable())?;
-            if s.account_busy || s.recording.is_some() || s.arm.is_some() || self.multiview_active()
-            {
-                return Err(error(
-                    "RECORDING_ACTIVE",
-                    "녹화와 로그인 처리가 끝난 뒤 로그인 정보를 지워 주세요.",
-                ));
-            }
-            s.account_busy = true;
             s.ready = false;
+            s.auth_generation = s.auth_generation.wrapping_add(1);
+            s.auth_status = auth::AuthStatus::Checking;
             s.login_status = "이 앱의 CHZZK 로그인 정보 삭제 중".into();
         }
         for (label, w) in app.webview_windows() {
@@ -834,30 +1058,49 @@ impl OfficialBrowser {
                 let _ = w.destroy();
             }
         }
+        let mut cleanup_label = None;
         let view = (|| {
-            let view = if let Some(view) = app.get_webview(WINDOW_LABEL) {
-                view
-            } else {
-                return Err(error(
-                    "BROWSER_NOT_OPEN",
-                    "먼저 CHZZK 시청 영역을 열어 주세요.",
-                ));
-            };
-            view.navigate("about:blank".parse().unwrap())
-                .map_err(|_| unavailable())?;
+            self.pause_multiview_for_account(app, true)?;
+            if let Some(view) = app.get_webview(WINDOW_LABEL) {
+                view.navigate("about:blank".parse().unwrap())
+                    .map_err(|_| unavailable())?;
+                return Ok(view);
+            }
+            // Login/logout must work before a channel is connected, and Mado
+            // has no single-view window. Use a hidden blank profile owner,
+            // never a fifth stream or the user's Chrome/Edge profile.
+            let label = format!("{LOGIN_LABEL}-{}", uuid::Uuid::new_v4().simple());
+            let profile = self.inner.data_dir.join("chzzk-browser-profile");
+            std::fs::create_dir_all(&profile).map_err(|_| unavailable())?;
+            let window = WebviewWindowBuilder::new(
+                app,
+                &label,
+                WebviewUrl::External("about:blank".parse().unwrap()),
+            )
+            .data_directory(profile)
+            .browser_extensions_enabled(true)
+            .visible(false)
+            .focused(false)
+            .skip_taskbar(true)
+            .on_navigation(|url| url.as_str() == "about:blank")
+            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .build()
+            .map_err(|_| unavailable())?;
+            cleanup_label = Some(label);
+            let view: Webview = window.as_ref().clone();
             Ok(view)
         })();
         let view = match view {
             Ok(view) => view,
             Err(e) => {
-                self.profile_clear_completed(app, false);
+                self.profile_clear_completed(app, false, cleanup_label.as_deref());
                 return Err(e);
             }
         };
         let host = self.clone();
         let handle = app.clone();
         let result = clear_profile(&view, move |success| {
-            host.profile_clear_completed(&handle, success)
+            host.profile_clear_completed(&handle, success, cleanup_label.as_deref())
         });
         if result
             .as_ref()
@@ -872,23 +1115,63 @@ impl OfficialBrowser {
         }
         result
     }
-    fn profile_clear_completed(&self, app: &AppHandle, success: bool) {
+    fn refresh_account_playback(&self, app: &AppHandle) {
+        if self.inner.closing.load(Ordering::Acquire) {
+            return;
+        }
+        if let Err(cause) = self.pause_multiview_for_account(app, false) {
+            self.inner
+                .view
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .error = Some(cause.message);
+        }
+        if self.multiview_active() {
+            return;
+        }
+        let channel = self
+            .inner
+            .view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .channel
+            .clone();
+        if let (Some(view), Some(channel)) = (app.get_webview(WINDOW_LABEL), channel) {
+            self.inner
+                .view
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .ready = false;
+            if let Ok(url) = format!("https://chzzk.naver.com/live/{channel}").parse() {
+                let _ = view.navigate(url);
+            }
+        }
+    }
+    fn profile_clear_completed(&self, app: &AppHandle, success: bool, cleanup_label: Option<&str>) {
+        if let Some(window) = cleanup_label.and_then(|label| app.get_webview_window(label)) {
+            let _ = window.destroy();
+        }
+        // Keep every recording entry point reserved until old authenticated
+        // pages have been replaced, including when clearing fails or is late.
+        self.refresh_account_playback(app);
         let mut s = self.inner.view.lock().unwrap_or_else(|p| p.into_inner());
         s.account_busy = false;
         s.ready = false;
+        s.auth_generation = s.auth_generation.wrapping_add(1);
+        s.auth_checking = false;
+        s.auth_error = None;
+        s.auth_status = if success {
+            auth::AuthStatus::SignedOut
+        } else {
+            auth::AuthStatus::Unknown
+        };
+        s.auth_last_probe = if success { Some(Instant::now()) } else { None };
         s.login_status = if success {
             "이 앱의 CHZZK 로그인 정보를 삭제했습니다"
         } else {
             "로그인 정보 삭제에 실패했습니다. 공식 화면에서 계정 상태를 확인해 주세요."
         }
         .into();
-        let channel = s.channel.clone();
-        drop(s);
-        if success && !self.inner.closing.load(Ordering::Acquire) {
-            if let Some(channel) = channel {
-                let _ = self.open(app, &channel);
-            }
-        }
     }
     pub fn open_installer(&self, browser: InstallerBrowser) -> Result<(), StreamError> {
         open_installer(browser)
@@ -922,6 +1205,7 @@ struct PixelViewport {
     bounds: [i32; 4], // parent-client x, y, width, height
     clip: [i32; 4],   // child-local left, top, right, bottom
     occluded: bool,
+    occlusions: PixelOcclusions,
 }
 #[derive(Clone, Copy)]
 struct SurfaceState {
@@ -933,6 +1217,19 @@ struct SurfaceState {
 trait ViewportSurface {
     fn inspect(&mut self) -> Result<SurfaceState, StreamError>;
     fn clip(&mut self, rect: [i32; 4]) -> Result<(), StreamError>;
+    fn clip_occlusions(
+        &mut self,
+        rect: [i32; 4],
+        occlusions: PixelOcclusions,
+    ) -> Result<(), StreamError> {
+        if !occlusions.is_empty() {
+            return Err(viewport_failed());
+        }
+        self.clip(rect)
+    }
+    fn occlusions_match(&mut self, _: [i32; 4], _: PixelOcclusions) -> Result<bool, StreamError> {
+        Ok(false)
+    }
     fn bounds(&mut self, rect: [i32; 4]) -> Result<(), StreamError>;
     fn visible(&mut self, visible: bool) -> Result<(), StreamError>;
     fn input(&mut self, enabled: bool) -> Result<(), StreamError>;
@@ -991,12 +1288,17 @@ fn paint_viewport(
         if surface.inspect()?.bounds != desired.bounds {
             return Err(viewport_failed());
         }
-        if restricted != desired.clip {
-            surface.clip(desired.clip)?;
+        if restricted != desired.clip || !desired.occlusions.is_empty() {
+            surface.clip_occlusions(desired.clip, desired.occlusions)?;
         }
         check()?;
         let applied = surface.inspect()?;
-        if applied.clip != Some(desired.clip) || (desired.occluded && applied.enabled) {
+        let clip_matches = if desired.occlusions.is_empty() {
+            applied.clip == Some(desired.clip)
+        } else {
+            surface.occlusions_match(desired.clip, desired.occlusions)?
+        };
+        if !clip_matches || (desired.occluded && applied.enabled) {
             return Err(viewport_failed());
         }
         if !desired.occluded && !applied.enabled {
@@ -1039,8 +1341,7 @@ pub(super) fn apply_pane_viewport(
         Win32::{
             Foundation::{HWND, POINT, RECT},
             Graphics::Gdi::{
-                CreateRectRgn, DeleteObject, GetWindowRgnBox, ScreenToClient, SetWindowRgn,
-                HGDIOBJ, NULLREGION, SIMPLEREGION,
+                GetWindowRgnBox, ScreenToClient, COMPLEXREGION, NULLREGION, SIMPLEREGION,
             },
             UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus, IsWindowEnabled, SetFocus},
             UI::WindowsAndMessaging::{
@@ -1080,7 +1381,10 @@ pub(super) fn apply_pane_viewport(
                     Some([region.left, region.top, region.right, region.bottom])
                 } else if kind == NULLREGION {
                     Some([0; 4])
-                } else if kind.0 == 0 {
+                } else if kind.0 == 0 || kind == COMPLEXREGION {
+                    // A complex popup region has no single safe visible rect.
+                    // Transitions first restrict it; final holes are verified
+                    // with EqualRgn rather than accepting the bounding box.
                     None
                 } else {
                     return Err(viewport_failed());
@@ -1099,18 +1403,21 @@ pub(super) fn apply_pane_viewport(
             }
         }
         fn clip(&mut self, rect: [i32; 4]) -> Result<(), StreamError> {
-            unsafe {
-                let region = CreateRectRgn(rect[0], rect[1], rect[2], rect[3]);
-                if region.0.is_null() {
-                    return Err(viewport_failed());
-                }
-                if SetWindowRgn(self.hwnd, Some(region), true) == 0 {
-                    let _ = DeleteObject(HGDIOBJ(region.0));
-                    return Err(viewport_failed());
-                }
-                // On success Windows owns region; it releases any previous one.
-                Ok(())
-            }
+            native_region::Region::new(rect, PixelOcclusions::default())?.apply(self.hwnd)
+        }
+        fn clip_occlusions(
+            &mut self,
+            rect: [i32; 4],
+            occlusions: PixelOcclusions,
+        ) -> Result<(), StreamError> {
+            native_region::Region::new(rect, occlusions)?.apply(self.hwnd)
+        }
+        fn occlusions_match(
+            &mut self,
+            rect: [i32; 4],
+            occlusions: PixelOcclusions,
+        ) -> Result<bool, StreamError> {
+            native_region::Region::new(rect, occlusions)?.matches_window(self.hwnd)
         }
         fn bounds(&mut self, rect: [i32; 4]) -> Result<(), StreamError> {
             let old = self.inspect()?.bounds;
@@ -1205,6 +1512,7 @@ pub(super) fn apply_pane_viewport(
             .map(|v| (v * scale).round() as i32),
         clip: clip_pixels(viewport, scale)?,
         occluded: viewport.occluded,
+        occlusions: occlusion_pixels(viewport, scale)?,
     };
     // HWND is not Send; pass its address, never call Tauri from with_webview.
     let parent = view.window().hwnd().map_err(|_| unavailable())?.0 as usize;
@@ -1398,7 +1706,7 @@ fn open_installer(browser: InstallerBrowser) -> Result<(), StreamError> {
                     "선택한 브라우저에서 공식 네이버 확장 설치 페이지를 열지 못했습니다.",
                 )
             })?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(windows))]
     Err(browser.missing())
@@ -1409,6 +1717,7 @@ mod tests {
     use super::*;
     struct FakeSurface {
         state: SurfaceState,
+        occlusions: PixelOcclusions,
         operations: Vec<&'static str>,
         revision: Arc<AtomicU64>,
         cancel_after: Option<&'static str>,
@@ -1416,6 +1725,7 @@ mod tests {
         ignore_bounds: bool,
         ignore_clip: bool,
         ignore_input: bool,
+        ignore_occlusions: bool,
     }
     impl FakeSurface {
         fn new(visible: bool) -> Self {
@@ -1427,12 +1737,14 @@ mod tests {
                     enabled: true,
                 },
                 operations: vec![],
+                occlusions: PixelOcclusions::default(),
                 revision: Arc::new(AtomicU64::new(1)),
                 cancel_after: None,
                 fail_at: None,
                 ignore_bounds: false,
                 ignore_clip: false,
                 ignore_input: false,
+                ignore_occlusions: false,
             }
         }
         fn operation(&mut self, name: &'static str) -> Result<(), StreamError> {
@@ -1462,8 +1774,27 @@ mod tests {
             })?;
             if !self.ignore_clip {
                 self.state.clip = Some(rect);
+                self.occlusions = PixelOcclusions::default();
             }
             Ok(())
+        }
+        fn clip_occlusions(
+            &mut self,
+            rect: [i32; 4],
+            occlusions: PixelOcclusions,
+        ) -> Result<(), StreamError> {
+            self.clip(rect)?;
+            if !self.ignore_clip && !self.ignore_occlusions {
+                self.occlusions = occlusions;
+            }
+            Ok(())
+        }
+        fn occlusions_match(
+            &mut self,
+            rect: [i32; 4],
+            occlusions: PixelOcclusions,
+        ) -> Result<bool, StreamError> {
+            Ok(self.state.clip == Some(rect) && self.occlusions == occlusions)
         }
         fn bounds(&mut self, bounds: [i32; 4]) -> Result<(), StreamError> {
             self.operation("bounds")?;
@@ -1493,6 +1824,7 @@ mod tests {
             bounds: [0, -10, 100, 100],
             clip: [0, 10, 100, 100],
             occluded: false,
+            occlusions: PixelOcclusions::default(),
         }
     }
     #[test]
@@ -1572,6 +1904,7 @@ mod tests {
             bounds: [0, 0, 100, 100],
             clip: [0; 4],
             occluded: true,
+            occlusions: PixelOcclusions::default(),
         }
     }
     #[test]
@@ -1603,6 +1936,176 @@ mod tests {
                     .position(|op| *op == "enable")
                     .unwrap()
         );
+    }
+    #[test]
+    fn trusted_sheet_retains_paint_above_it_but_disables_all_native_input() {
+        let mut surface = FakeSurface::new(true);
+        let desired = PixelViewport {
+            clip: [0, 0, 100, 70],
+            ..masked()
+        };
+        let original_bounds = surface.state.bounds;
+        paint_viewport(&mut surface, desired, || true).unwrap();
+        assert!(surface.state.visible);
+        assert!(!surface.state.enabled);
+        assert_eq!(surface.state.bounds, original_bounds);
+        assert_eq!(surface.state.clip, Some(desired.clip));
+        assert!(!surface.operations.contains(&"hide"));
+        assert!(!surface.operations.contains(&"bounds"));
+        let disable = surface
+            .operations
+            .iter()
+            .position(|op| *op == "disable")
+            .unwrap();
+        let reveal = surface
+            .operations
+            .iter()
+            .rposition(|op| *op == "final")
+            .unwrap();
+        assert!(disable < reveal);
+    }
+    fn popup_occlusions() -> PixelOcclusions {
+        let mut value = PixelOcclusions::default();
+        value.rectangles[0] = [30, 20, 70, 50];
+        value.length = 1;
+        value
+    }
+    #[test]
+    fn popup_holes_preserve_bounds_and_background_but_reject_unapplied_holes() {
+        let desired = PixelViewport {
+            clip: [0, 0, 100, 100],
+            occlusions: popup_occlusions(),
+            ..masked()
+        };
+        let mut surface = FakeSurface::new(true);
+        paint_viewport(&mut surface, desired, || true).unwrap();
+        assert!(surface.state.visible && !surface.state.enabled);
+        assert_eq!(surface.state.bounds, [0, 0, 100, 100]);
+        assert_eq!(surface.state.clip, Some(desired.clip));
+        assert_eq!(surface.occlusions, desired.occlusions);
+        assert!(!surface
+            .operations
+            .iter()
+            .any(|name| matches!(*name, "bounds" | "hide" | "show")));
+        let mut incorrect = FakeSurface::new(true);
+        incorrect.ignore_occlusions = true;
+        assert_eq!(
+            paint_viewport(&mut incorrect, desired, || true)
+                .unwrap_err()
+                .code,
+            "VIEWPORT_CLIP_FAILED"
+        );
+        assert!(!incorrect.state.visible && !incorrect.state.enabled);
+        // Dismissal removes the holes and enables input only after repaint.
+        paint_viewport(&mut surface, scrolled(), || true).unwrap();
+        assert!(surface.occlusions.is_empty());
+        assert!(surface.state.visible && surface.state.enabled);
+    }
+    #[test]
+    fn popup_rectangles_are_bounded_and_round_outward_at_fractional_dpi() {
+        let mut viewport = BrowserViewport {
+            visible: true,
+            occluded: true,
+            preserve_background: true,
+            width: 800.0,
+            height: 600.0,
+            clip: Some(BrowserClip {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            }),
+            occlusions: vec![BrowserClip {
+                x: 10.25,
+                y: 20.25,
+                width: 30.25,
+                height: 40.25,
+            }],
+            ..BrowserViewport::default()
+        };
+        assert_eq!(
+            occlusion_pixels(&viewport, 1.25).unwrap().rectangles(),
+            &[[12, 25, 51, 76]]
+        );
+        assert_eq!(clip_pixels(&viewport, 1.25).unwrap(), [0, 0, 1000, 750]);
+        viewport.occlusions = vec![viewport.occlusions[0].clone(); 9];
+        assert!(viewport.validate().is_err());
+        viewport.occlusions.truncate(1);
+        for invalid in [f64::NAN, f64::INFINITY, -1.0, 1000.0] {
+            viewport.occlusions[0].x = invalid;
+            assert!(viewport.validate().is_err());
+        }
+        viewport.occlusions[0].x = 10.0;
+        viewport.preserve_background = false;
+        assert!(viewport.validate().is_err());
+        viewport.occlusions.clear();
+        assert!(occlusion_pixels(&viewport, 1.25).unwrap().is_empty());
+        assert_eq!(clip_pixels(&viewport, 1.25).unwrap(), [0; 4]);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn native_popup_region_preserves_sides_and_bottom_not_just_the_bounding_box() {
+        use windows::Win32::Graphics::Gdi::{EqualRgn, PtInRegion};
+        let mut holes = popup_occlusions();
+        holes.rectangles[1] = [60, 40, 80, 70];
+        holes.length = 2;
+        let region = native_region::Region::new([0, 0, 100, 100], holes).unwrap();
+        for point in [[10, 30], [90, 30], [50, 90], [50, 10]] {
+            assert!(unsafe { PtInRegion(region.0, point[0], point[1]) }.as_bool());
+        }
+        for point in [[50, 30], [70, 60], [65, 45]] {
+            assert!(!unsafe { PtInRegion(region.0, point[0], point[1]) }.as_bool());
+        }
+        let full =
+            native_region::Region::new([0, 0, 100, 100], PixelOcclusions::default()).unwrap();
+        assert!(!unsafe { EqualRgn(region.0, full.0) }.as_bool());
+        let same = native_region::Region::new([0, 0, 100, 100], holes).unwrap();
+        assert!(unsafe { EqualRgn(region.0, same.0) }.as_bool());
+    }
+    #[test]
+    fn trusted_sheet_clip_requires_explicit_occlusion_and_fails_closed_at_reveal() {
+        let mut viewport = BrowserViewport {
+            visible: true,
+            occluded: true,
+            preserve_background: true,
+            width: 800.0,
+            height: 600.0,
+            clip: Some(BrowserClip {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 450.0,
+            }),
+            ..BrowserViewport::default()
+        };
+        assert_eq!(clip_pixels(&viewport, 1.25).unwrap(), [0, 0, 1000, 562]);
+        viewport.preserve_background = false;
+        assert_eq!(clip_pixels(&viewport, 1.25).unwrap(), [0; 4]);
+        viewport.preserve_background = true;
+        viewport.occluded = false;
+        assert!(viewport.validate().is_err());
+        viewport.occluded = true;
+        viewport.clip = None;
+        assert!(viewport.validate().is_err());
+        for cancel in [false, true] {
+            let mut surface = FakeSurface::new(true);
+            if cancel {
+                surface.cancel_after = Some("final");
+            } else {
+                surface.fail_at = Some("final");
+            }
+            let revision = surface.revision.clone();
+            assert!(paint_viewport(
+                &mut surface,
+                PixelViewport {
+                    clip: [0, 0, 100, 70],
+                    ..masked()
+                },
+                || revision.load(Ordering::Acquire) == 1
+            )
+            .is_err());
+            assert!(!surface.state.visible && !surface.state.enabled);
+        }
     }
     #[test]
     fn modal_failures_and_cancellation_never_leave_an_interactive_surface() {
@@ -1848,6 +2351,8 @@ mod tests {
             height: 700.0,
             visible: true,
             occluded: false,
+            preserve_background: false,
+            occlusions: vec![],
             clip: Some(BrowserClip {
                 x: 0.0,
                 y: 100.0,
@@ -1978,5 +2483,62 @@ mod tests {
         complete_profile_clear(&late_callback, false);
         assert!(!busy.load(Ordering::Acquire));
         assert_eq!(calls.load(Ordering::Acquire), 1);
+    }
+
+    #[test]
+    fn account_actions_work_before_playback_and_during_idle_multiview() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(dir.path().into()).unwrap();
+        assert!(!root.snapshot().unwrap().window_open);
+        root.reserve_account_window().unwrap();
+        assert!(root.snapshot().unwrap().account_busy);
+        assert!(root.reserve_account_window().is_err());
+        root.account_window_created(false);
+        root.set_multiview_active_for_test();
+        root.reserve_account_window().unwrap();
+        root.account_window_created(false);
+        root.inner
+            .contexts
+            .reconfiguring
+            .store(1, Ordering::Release);
+        assert!(root.reserve_account_window().is_err());
+    }
+
+    #[test]
+    fn account_actions_preserve_a_recording_in_any_pane_and_block_pending_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(dir.path().into()).unwrap();
+        let child = root
+            .pane_controller(
+                &format!("chzzk-mado-{}", uuid::Uuid::new_v4().simple()),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap();
+        root.set_multiview_active_for_test();
+        child.inner.view.lock().unwrap().recording = Some("synthetic-recording".into());
+        assert!(root.reserve_account_window().is_err());
+        assert!(!root.snapshot().unwrap().account_busy);
+        assert_eq!(
+            child.inner.view.lock().unwrap().recording.as_deref(),
+            Some("synthetic-recording")
+        );
+        {
+            let mut state = child.inner.view.lock().unwrap();
+            state.recording = None;
+            state.ready = true;
+        }
+        child.request_control(ControlAction::RecordStart).unwrap();
+        let pending = child.snapshot().unwrap().pending_control.unwrap();
+        root.reserve_account_window().unwrap();
+        assert!(child.primary_profile_busy());
+        assert!(child.take_control(&pending.id, true, true).is_err());
+        assert!(child
+            .inner
+            .view
+            .lock()
+            .unwrap()
+            .confirming_control
+            .is_none());
+        assert!(root.active_ids().is_empty());
     }
 }

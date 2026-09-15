@@ -223,7 +223,7 @@ describe("official player controls", () => {
     expect(h.key({ key: "Escape", code: "Escape" }).preventDefault).not.toHaveBeenCalled();
     expect(h.messages).toEqual([]);
   });
-  it("only requests a native confirmation, never starts recording or captures pixels on a click", async () => {
+  it("sends a trusted one-use native intent without capturing pixels in the control UI", async () => {
     const h = fixture(); h.ready();
     h.page.querySelector<HTMLButtonElement>('[aria-label="녹화"]')!.click();
     expect(h.messages).toEqual([]);
@@ -309,16 +309,26 @@ describe("official player controls", () => {
     }
     expect(h.messages).toEqual([]);
   });
-  it("preserves only multiview exit and independent audio controls", async () => {
+  it("keeps multiview exit without adding a duplicate audio control or replacing the original volume UI", async () => {
     const h = fixture();
-    expect(h.page.querySelector<HTMLButtonElement>('[aria-label="소리 켜기"]')!.hidden).toBe(true);
-    h.window.__atsumiPlayerUI!.configure({ multiview: true, audioEnabled: true });
+    const original = h.page.createElement("button"); original.className = "pzp-pc__volume-button"; original.setAttribute("aria-label", "음소거");
+    original.addEventListener("click", () => { h.video.muted = !h.video.muted; });
+    const slider = h.page.createElement("input"); slider.type = "range"; slider.setAttribute("aria-label", "음량");
+    slider.addEventListener("input", () => { h.video.volume = Number(slider.value) / 100; });
+    h.player.append(original, slider);
+    h.window.__atsumiPlayerUI!.configure({ multiview: true });
+    h.ready(); h.again();
+    expect(h.page.querySelector('[aria-label="소리 켜기"],[aria-label="소리 끄기"]')).toBeNull();
+    expect(h.page.querySelector(".pzp-pc__volume-button")).toBe(original);
+    original.click(); slider.value = "35"; slider.dispatchEvent(new Event("input"));
+    expect(h.video.muted).toBe(true); expect(h.video.volume).toBe(.35);
+    expect(h.messages).toEqual([]); expect(h.writes()).toBe(0);
     expect(h.page.querySelector("#atsumi-player-top-controls")).toBeNull();
     h.trustedClick("기본 보기"); await flush();
     expect(h.messages[0]).toMatchObject({ kind: "view_intent", action: "exit_focus" });
-    expect(h.page.querySelector<HTMLButtonElement>('[aria-label="소리 끄기"]')!.hidden).toBe(false);
-    h.trustedClick("소리 끄기"); await flush();
-    expect(h.messages[1]).toMatchObject({ kind: "view_intent", action: "audio_toggle" });
+    expect(h.messages).toHaveLength(1);
+    expect(source).not.toContain("audio_toggle");
+    expect(source).not.toContain("이 방송 소리");
   });
   it("catches up at 1.2x and returns to 1x near the live edge without seeking or network requests", async () => {
     const h = fixture(); h.ready(); h.trustedClick("따라잡기");

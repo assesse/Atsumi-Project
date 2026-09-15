@@ -1,0 +1,9 @@
+/* Host geometry and recorded-chat analytics only. Player controls use official CSS. */
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000}
+#player_layout{position:absolute;inset:0;width:100%;height:100%}
+.atsumi-replay-metrics{position:absolute;bottom:10px;left:0;width:100%;height:32px;pointer-events:none;overflow:hidden}
+.atsumi-replay-metrics .chat{fill:#00ffa338;stroke:#63e5bda8;stroke-width:1;vector-effect:non-scaling-stroke}
+.atsumi-replay-metrics .viewers{fill:#9da8ed29;stroke:#b5bff5b0;stroke-width:1;vector-effect:non-scaling-stroke}
+.atsumi-replay-metrics .viewer-partial{fill:#b5bff5;stroke:none}
+.atsumi-replay-metric-tip{position:absolute;bottom:48px;z-index:10;pointer-events:none;white-space:pre-line;max-width:220px;padding:8px 10px;border-radius:4px;background:#141517f2;color:#fff;font:12px/1.6 Arial,sans-serif}
+.atsumi-replay-metric-tip[hidden]{display:none}

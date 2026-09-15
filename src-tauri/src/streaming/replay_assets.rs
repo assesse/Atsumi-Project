@@ -8,7 +8,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -25,6 +25,15 @@ const MAX_ASSET: u64 = 1_500_000;
 const MAX_DISK: u64 = 128 * 1024 * 1024;
 const MAX_FILES: usize = 4096;
 const QUEUE: usize = 128;
+
+#[path = "replay_channel_profile.rs"]
+pub mod channel_profile;
+type ProfileFetcher =
+    Arc<dyn Fn(&str) -> Result<(String, Option<String>), StreamError> + Send + Sync>;
+enum AssetJob {
+    Image(String, String, Option<PathBuf>),
+    Channel(String, PathBuf),
+}
 
 #[derive(Serialize, Deserialize)]
 struct StoredAsset {
@@ -85,6 +94,9 @@ fn plain_path(path: &Path) -> Result<(), StreamError> {
 pub fn read_cached(data_dir: &Path, id: &str) -> Result<CachedAsset, StreamError> {
     read_from(&directory(data_dir), id)
 }
+pub fn read_recording(root: &Path, id: &str) -> Result<CachedAsset, StreamError> {
+    read_from(&root.join("replay-assets"), id)
+}
 fn read_from(root: &Path, id: &str) -> Result<CachedAsset, StreamError> {
     if !valid_id(id) {
         return Err(unavailable());
@@ -124,14 +136,16 @@ fn read_from(root: &Path, id: &str) -> Result<CachedAsset, StreamError> {
 struct State {
     root: PathBuf,
     cancel: AtomicBool,
-    seen: Mutex<HashSet<String>>,
+    seen: Mutex<HashSet<(String, Option<PathBuf>)>>,
 }
 #[derive(Clone)]
 pub struct ReplayAssetCache {
-    sender: Option<SyncSender<(String, String)>>,
+    sender: Option<SyncSender<AssetJob>>,
     state: Arc<State>,
     handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
+type AssetFetcher = Arc<dyn Fn(&str) -> Result<String, StreamError> + Send + Sync>;
+
 impl ReplayAssetCache {
     pub fn disabled() -> Self {
         Self {
@@ -154,7 +168,20 @@ impl ReplayAssetCache {
     fn with_fetch(
         data_dir: &Path,
         enabled: bool,
-        fetch: Arc<dyn Fn(&str) -> Result<String, StreamError> + Send + Sync>,
+        fetch: AssetFetcher,
+    ) -> Result<Self, StreamError> {
+        Self::with_fetchers(
+            data_dir,
+            enabled,
+            fetch,
+            Arc::new(|channel| super::provider::ChzzkProvider::new()?.channel_profile(channel)),
+        )
+    }
+    fn with_fetchers(
+        data_dir: &Path,
+        enabled: bool,
+        fetch: AssetFetcher,
+        profile: ProfileFetcher,
     ) -> Result<Self, StreamError> {
         if !enabled {
             return Ok(Self::disabled());
@@ -186,32 +213,70 @@ impl ReplayAssetCache {
             cancel: AtomicBool::new(false),
             seen: Mutex::new(HashSet::new()),
         });
-        let (sender, receiver) = mpsc::sync_channel::<(String, String)>(QUEUE);
+        let (sender, receiver) = mpsc::sync_channel::<AssetJob>(QUEUE);
         let run = state.clone();
         let handle = thread::Builder::new()
             .name("replay-assets".into())
             .spawn(move || {
+                let mut recording_budgets = HashMap::new();
                 while !run.cancel.load(Ordering::Acquire) {
-                    let (id, url) = match receiver.recv_timeout(Duration::from_millis(100)) {
+                    let job = match receiver.recv_timeout(Duration::from_millis(100)) {
                         Ok(job) => job,
                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
                         Err(_) => break,
                     };
-                    if run.root.join(format!("{id}.json")).exists()
-                        || count >= MAX_FILES
-                        || used.saturating_add(MAX_ASSET) > MAX_DISK
-                    {
-                        continue;
-                    }
-                    let Ok(data) = fetch(&url) else {
-                        continue;
+                    let (id, url, recording) = match job {
+                        AssetJob::Image(id, url, root) => (id, url, root),
+                        AssetJob::Channel(channel, root) => {
+                            // A single bounded worker, not one thread/request per UI
+                            // update. Capture works even when chat saving is disabled.
+                            if root.join("channel-profile.json").exists() {
+                                continue;
+                            }
+                            let Ok((name, image)) = profile(&channel) else {
+                                continue;
+                            };
+                            if run.cancel.load(Ordering::Acquire) {
+                                break;
+                            }
+                            let id = image.as_deref().and_then(asset_id);
+                            if channel_profile::save(&root, &channel, &name, id.as_deref()).is_err()
+                            {
+                                continue;
+                            }
+                            let (Some(id), Some(url)) = (id, image) else {
+                                continue;
+                            };
+                            (id, url, Some(root))
+                        }
+                    };
+                    let data = if run.root.join(format!("{id}.json")).exists() {
+                        let Ok(asset) = read_from(&run.root, &id) else {
+                            continue;
+                        };
+                        format!(
+                            "data:{};base64,{}",
+                            asset.mime,
+                            STANDARD.encode(asset.bytes)
+                        )
+                    } else {
+                        if count >= MAX_FILES || used.saturating_add(MAX_ASSET) > MAX_DISK {
+                            continue;
+                        }
+                        let Ok(data) = fetch(&url) else {
+                            continue;
+                        };
+                        if let Ok(size) = store_data(&run.root, &id, &data) {
+                            used = used.saturating_add(size);
+                            count += 1;
+                        }
+                        data
                     };
                     if run.cancel.load(Ordering::Acquire) {
                         break;
                     }
-                    if let Ok(size) = store_data(&run.root, &id, &data) {
-                        used = used.saturating_add(size);
-                        count += 1;
+                    if let Some(root) = recording {
+                        let _ = mirror_recording(&root, &id, &data, &mut recording_budgets);
                     }
                 }
             })
@@ -223,8 +288,42 @@ impl ReplayAssetCache {
         })
     }
     /// Nonblocking: one bounded public image job per distinct URL. No account
-    /// cookies, raw profiles, or recording paths enter this queue.
+    /// cookies or raw profiles enter this queue. Recording roots come only from
+    /// the native ChatStore, never from page-supplied decoration metadata.
     pub fn submit(&self, rich: Option<&ChatRich>) {
+        self.submit_target(None, rich);
+    }
+    pub fn submit_recording(&self, root: &Path, rich: Option<&ChatRich>) {
+        self.submit_target(Some(root.to_owned()), rich);
+    }
+    /// Native-owned recording root and validated channel only. No browser URL,
+    /// cookie or account data enters the queue. Never called while opening replay.
+    pub fn submit_channel(&self, root: &Path, channel: &str) {
+        let Some(sender) = &self.sender else {
+            return;
+        };
+        if self.state.cancel.load(Ordering::Acquire)
+            || !root.is_absolute()
+            || channel.len() != 32
+            || !channel.bytes().all(|c| c.is_ascii_hexdigit())
+        {
+            return;
+        }
+        let Ok(mut seen) = self.state.seen.try_lock() else {
+            return;
+        };
+        let key = (format!("channel:{channel}"), Some(root.to_owned()));
+        if seen.len() >= MAX_FILES || seen.contains(&key) {
+            return;
+        }
+        if sender
+            .try_send(AssetJob::Channel(channel.into(), root.to_owned()))
+            .is_ok()
+        {
+            seen.insert(key);
+        }
+    }
+    fn submit_target(&self, root: Option<PathBuf>, rich: Option<&ChatRich>) {
         let (Some(sender), Some(rich)) = (&self.sender, rich) else {
             return;
         };
@@ -247,11 +346,15 @@ impl ReplayAssetCache {
             let Some(id) = asset_id(url) else {
                 continue;
             };
-            if seen.contains(&id) {
+            let key = (id.clone(), root.clone());
+            if seen.contains(&key) {
                 continue;
             }
-            if sender.try_send((id.clone(), url.clone())).is_ok() {
-                seen.insert(id);
+            if sender
+                .try_send(AssetJob::Image(id, url.clone(), root.clone()))
+                .is_ok()
+            {
+                seen.insert(key);
             }
         }
     }
@@ -261,6 +364,59 @@ impl ReplayAssetCache {
             let _ = handle.join();
         }
     }
+}
+fn mirror_recording(
+    root: &Path,
+    id: &str,
+    data: &str,
+    budgets: &mut HashMap<PathBuf, (u64, usize)>,
+) -> Result<(), StreamError> {
+    // Root comes only from ChatStore, not a remote message. No overwrite,
+    // symlink/reparse traversal, unbounded per-recording files or directories.
+    plain_path(root)?;
+    if !root.is_dir() || fs::canonicalize(root).map_err(|_| unavailable())? != root {
+        return Err(unavailable());
+    }
+    let directory = root.join("replay-assets");
+    plain_path(&directory)?;
+    if !budgets.contains_key(root) {
+        if budgets.len() >= 64 {
+            return Err(unavailable());
+        }
+        if !directory.exists() {
+            fs::create_dir(&directory).map_err(|_| unavailable())?;
+        }
+        let mut bytes = 0u64;
+        let mut files = 0usize;
+        for entry in fs::read_dir(&directory)
+            .map_err(|_| unavailable())?
+            .take(MAX_FILES + 1)
+        {
+            let entry = entry.map_err(|_| unavailable())?;
+            plain_path(&entry.path())?;
+            let meta = entry.metadata().map_err(|_| unavailable())?;
+            if !meta.is_file() {
+                return Err(unavailable());
+            }
+            bytes = bytes.saturating_add(meta.len());
+            files += 1;
+        }
+        if files > MAX_FILES || bytes > MAX_DISK {
+            return Err(unavailable());
+        }
+        budgets.insert(root.to_owned(), (bytes, files));
+    }
+    if directory.join(format!("{id}.json")).exists() {
+        return Ok(());
+    }
+    let (bytes, files) = budgets.get_mut(root).ok_or_else(unavailable)?;
+    if *files >= MAX_FILES || bytes.saturating_add(MAX_ASSET) > MAX_DISK {
+        return Err(unavailable());
+    }
+    let added = store_data(&directory, id, data)?;
+    *bytes = bytes.saturating_add(added);
+    *files += 1;
+    Ok(())
 }
 impl Drop for ReplayAssetCache {
     fn drop(&mut self) {
@@ -325,6 +481,24 @@ mod tests {
             "data:image/png;base64,{}",
             STANDARD.encode(out.into_inner())
         )
+    }
+    #[test]
+    fn recording_copy_is_portable_bounded_and_never_overwrites() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("archive");
+        fs::create_dir(&archive).unwrap();
+        let archive = fs::canonicalize(archive).unwrap();
+        let id = asset_id("https://ssl.pstatic.net/portable.png").unwrap();
+        let mut budgets = HashMap::new();
+        mirror_recording(&archive, &id, &data(), &mut budgets).unwrap();
+        let stored = archive.join("replay-assets").join(format!("{id}.json"));
+        let before = fs::read(&stored).unwrap();
+        assert_eq!(read_recording(&archive, &id).unwrap().mime, "image/png");
+        mirror_recording(&archive, &id, "data:bad;base64,AA==", &mut budgets).unwrap();
+        assert_eq!(fs::read(&stored).unwrap(), before);
+        budgets.insert(archive.clone(), (MAX_DISK, MAX_FILES));
+        assert!(mirror_recording(&archive, &"b".repeat(64), &data(), &mut budgets).is_err());
+        assert!(mirror_recording(Path::new("relative"), &id, &data(), &mut budgets).is_err());
     }
     #[test]
     fn only_known_public_urls_have_opaque_ids() {
@@ -406,5 +580,97 @@ mod tests {
         let disabled = ReplayAssetCache::new(dir.path(), false).unwrap();
         disabled.submit(Some(&rich));
         disabled.shutdown_and_wait();
+    }
+
+    #[test]
+    fn channel_profile_is_saved_once_per_recording_without_chat_or_replay_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("first");
+        let second = dir.path().join("second");
+        fs::create_dir(&first).unwrap();
+        fs::create_dir(&second).unwrap();
+        let first = fs::canonicalize(first).unwrap();
+        let second = fs::canonicalize(second).unwrap();
+        let channel = "a".repeat(32);
+        let expected_channel = channel.clone();
+        let image_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let profile_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted_images = image_calls.clone();
+        let counted_profiles = profile_calls.clone();
+        let cache = ReplayAssetCache::with_fetchers(
+            dir.path(),
+            true,
+            Arc::new(move |_| {
+                counted_images.fetch_add(1, Ordering::SeqCst);
+                Ok(data())
+            }),
+            Arc::new(move |id| {
+                assert_eq!(id, expected_channel);
+                counted_profiles.fetch_add(1, Ordering::SeqCst);
+                Ok((
+                    "합성 채널".into(),
+                    Some("https://ssl.pstatic.net/channel-profile.png".into()),
+                ))
+            }),
+        )
+        .unwrap();
+        for _ in 0..100 {
+            cache.submit_channel(&first, &channel);
+            cache.submit_channel(&second, &channel);
+        }
+        cache.submit_channel(&first, "../bad");
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while channel_profile::read(&second, &channel).1.is_none()
+            && std::time::Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+        cache.shutdown_and_wait();
+        assert_eq!(profile_calls.load(Ordering::SeqCst), 2);
+        assert_eq!(image_calls.load(Ordering::SeqCst), 1);
+        for root in [&first, &second] {
+            let (name, image) = channel_profile::read(root, &channel);
+            assert_eq!(name.as_deref(), Some("합성 채널"));
+            assert_eq!(image, Some(data()));
+            let metadata = fs::read_to_string(root.join("channel-profile.json")).unwrap();
+            assert!(!metadata.contains("https:") && !metadata.contains("Cookie"));
+            assert!(!root.join("chat.jsonl").exists());
+        }
+        // The archive remains portable without the shared cache and after restart.
+        let portable = dir.path().join("portable");
+        fs::rename(&second, &portable).unwrap();
+        let calls_before = image_calls.load(Ordering::SeqCst);
+        assert_eq!(channel_profile::read(&portable, &channel).1, Some(data()));
+        assert_eq!(image_calls.load(Ordering::SeqCst), calls_before);
+    }
+
+    #[test]
+    fn unavailable_channel_profile_is_best_effort_and_does_not_stop_asset_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let cache = ReplayAssetCache::with_fetchers(
+            dir.path(),
+            true,
+            Arc::new(|_| Ok(data())),
+            Arc::new(|_| Err(unavailable())),
+        )
+        .unwrap();
+        cache.submit_channel(&root, &"a".repeat(32));
+        let rich = ChatRich {
+            emojis: vec![super::super::model::ChatEmoji {
+                id: "ok".into(),
+                image_url: "https://ssl.pstatic.net/ok.png".into(),
+            }],
+            ..Default::default()
+        };
+        cache.submit_recording(&root, Some(&rich));
+        let id = asset_id(&rich.emojis[0].image_url).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while read_recording(&root, &id).is_err() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        cache.shutdown_and_wait();
+        assert!(read_recording(&root, &id).is_ok());
+        assert_eq!(channel_profile::read(&root, &"a".repeat(32)), (None, None));
     }
 }

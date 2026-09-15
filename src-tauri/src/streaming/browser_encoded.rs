@@ -206,7 +206,14 @@ impl OfficialBrowser {
                 let inputs = decode_tracks(&tracks)?;
                 let next = inputs.iter().map(|track| (track.track_index, 0)).collect();
                 let digest = fingerprint(&tracks)?;
-                let muxer = EncodedMuxer::new(inputs)?;
+                let muxer = EncodedMuxer::new(inputs).inspect_err(|error| {
+                    // Parser messages are fixed local descriptions, never media URLs
+                    // or credential-bearing response text. Keep the real reason.
+                    tracing::warn!(code = %error.code, reason = %error.message, "original recording init rejected");
+                    if let Ok(mut state) = self.inner.view.lock() {
+                        state.error = Some(format!("원본 저장 불가: {}", error.message));
+                    }
+                })?;
                 // Reuse the existing arm consumption, output-root policy and chat
                 // lifecycle. process() has not acquired writes for encoded input.
                 let result = self.process(

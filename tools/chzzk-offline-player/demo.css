@@ -1,0 +1,9 @@
+:root{color-scheme:dark;font:14px/1.5 'Segoe UI','Malgun Gothic',sans-serif;color:#e5e7eb;background:#0e0f10}h1{line-height:32px}
+*{box-sizing:border-box}body{margin:0;padding:24px;max-width:1728px;margin-inline:auto}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:18px}h1{font-size:21px;margin:0;font-weight:650}p{margin:5px 0;color:#999da5}.local-state{font-size:11px;letter-spacing:1px;color:#00ffa3;border:1px solid #23694f;border-radius:5px;padding:6px 10px;white-space:nowrap}nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}nav button{font:inherit;border:1px solid #33363a;background:#202224;color:#dee0e5;border-radius:6px;padding:6px 12px;cursor:pointer}nav button:hover{background:#2c2e32}nav button[aria-pressed=true]{color:#00ffa3;border-color:#168f5c;background:#093a25}#status{margin-left:auto;font-size:12px;color:#9ba3aa}#stage{margin-inline:auto;width:min(100%,1280px);aspect-ratio:16/9;background:#000}#player{display:block;width:100%;height:100%;border:0}body.wide #stage{width:100%}footer{margin-top:16px;font-size:12px}details{margin-top:12px}summary{cursor:pointer;color:#b5bbc3}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:#a1abb7;font:12px/1.6 Consolas,monospace}button:focus-visible,summary:focus-visible{outline:2px solid #00ffa3;outline-offset:3px}@media(max-width:700px){body{padding:12px}header{align-items:flex-start}.local-state{font-size:9px}#status{width:100%;margin-left:0}}
+#stage{aspect-ratio:auto;display:grid;grid-template-columns:minmax(0,1fr) 353px;align-items:stretch}
+#video-host{width:100%;aspect-ratio:16/9;min-width:0;min-height:0;position:relative}
+#player{position:absolute;inset:0}
+#chat{width:100%;height:100%;min-height:0;border:0;display:block}
+#chat[hidden]{display:none}
+body.chat-hidden #stage{grid-template-columns:minmax(0,1fr)}
+@media(max-width:900px){#stage{grid-template-columns:minmax(0,1fr)}#chat{height:480px}}

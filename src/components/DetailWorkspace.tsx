@@ -15,6 +15,7 @@ import {
   type ThumbnailClient,
 } from "../thumbnail";
 import { FluentIcon } from "./FluentIcon";
+import { CommunityReviewButton } from "../features/community/CommunityReviewButton";
 import { GalleryStatusIcon } from "./GalleryStatusIcon";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 import { orderGalleryArtists } from "./GalleryArtists";
@@ -812,6 +813,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                     <p>#{gallery.id} · {gallery.pages} pages</p>
                   </div>
                   <div className="detail-title-actions">
+                    <CommunityReviewButton work={{ source: "hitomi", workId: String(gallery.id) }} />
                     {gallery.download?.state === "completed" ? (
                       <span className="icon-button detail-download-complete" title="다운로드 완료" role="img" aria-label="다운로드 완료">
                         <FluentIcon glyph="\uE73E" />
@@ -988,6 +990,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                 </h2>
               </div>
               <div className="page-preview-header-actions">
+                <CommunityReviewButton work={{ source: "hitomi", workId: String(gallery.id) }} small />
                 {previewResizable && onSetRepresentativePreview ? (
                   <>
                     {representativeBusy ? <span className="page-preview-save-status" role="status">저장 중</span> : null}
@@ -995,11 +998,11 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                     <button
                       type="button"
                       className="icon-button small page-preview-representative"
-                      aria-label="대표 미리보기로 지정"
+                      aria-label="앨범커버로 지정"
                       aria-pressed={currentManualRepresentative}
                       title={currentManualRepresentative
-                        ? `${previewPage}페이지가 대표 미리보기로 지정됨`
-                        : isTwoPagePreview ? `${previewPage}페이지를 대표 미리보기로 지정` : "대표 미리보기로 지정"}
+                        ? `${previewPage}페이지가 앨범커버로 지정됨`
+                        : isTwoPagePreview ? `${previewPage}페이지를 앨범커버로 지정` : "앨범커버로 지정"}
                       disabled={representativeBusy || currentManualRepresentative}
                       onClick={() => { void setRepresentativePreview(previewPage); }}
                     >

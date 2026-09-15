@@ -3,6 +3,8 @@
 use super::*;
 use std::collections::HashSet;
 use tauri::{LogicalPosition, LogicalSize, WebviewBuilder, WebviewUrl};
+#[path = "browser_auto_surface.rs"]
+mod auto_surface;
 #[path = "browser_multiview_controls.rs"]
 mod controls;
 
@@ -64,13 +66,15 @@ pub struct MultiViewSnapshot {
     pending_ui_action: Option<PaneUiAction>,
 }
 
+type MetadataRequest = (String, Vec<std::sync::Weak<Pane>>);
+
 #[derive(Default)]
 pub(super) struct MultiViewHost {
     active: AtomicBool,
     lifecycle: AtomicU64,
     mutations: Mutex<()>,
     state: Mutex<MultiState>,
-    metadata: Mutex<Option<std::sync::mpsc::SyncSender<(String, Vec<std::sync::Weak<Pane>>)>>>,
+    metadata: Mutex<Option<std::sync::mpsc::SyncSender<MetadataRequest>>>,
 }
 
 #[derive(Default)]
@@ -84,6 +88,7 @@ struct MultiState {
 struct Pane {
     id: String,
     channel: String,
+    number: usize,
     kind: PaneKind,
     epoch: AtomicU64,
     viewport: Mutex<BrowserViewport>,
@@ -192,16 +197,84 @@ fn set_status(pane: &Pane, status: &str) {
         *current = status.into();
     }
 }
-fn send_audio(view: &Webview, pane: &Pane) {
+fn send_audio(view: &Webview, pane: &Pane, apply_to_media: bool) {
     let enabled = pane.kind == PaneKind::Video
         && pane.audio.load(Ordering::Acquire)
         && !pane.dead.load(Ordering::Acquire);
-    let _ = view.eval(&format!("window.dispatchEvent(new CustomEvent('atsumi-multiview-audio',{{detail:{{enabled:{enabled}}}}}));window.__atsumiPlayerUI?.configure({{multiview:true,audioEnabled:{enabled}}});"));
+    let _ = view.eval(format!("window.dispatchEvent(new CustomEvent('atsumi-multiview-audio',{{detail:{{enabled:{enabled},applyToMedia:{apply_to_media}}}}}));window.__atsumiPlayerUI?.configure({{multiview:true}});"));
+}
+
+fn chat_header_script(pane: &Pane) -> String {
+    if pane.kind != PaneKind::Chat || pane.dead.load(Ordering::Acquire) {
+        return String::new();
+    }
+    let name = pane
+        .channel_name
+        .lock()
+        .map(|name| name.clone())
+        .unwrap_or_default();
+    let data = serde_json::json!({ "channelId": pane.channel, "number": pane.number, "channelName": name });
+    format!("window.__atsumiMultiView?.configureChat({data});")
 }
 
 impl OfficialBrowser {
     pub fn multiview_active(&self) -> bool {
         self.inner.multiview.active.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_multiview_active_for_test(&self) {
+        self.inner.multiview.active.store(true, Ordering::Release);
+    }
+
+    /// Only the trusted profile operation may temporarily navigate a live
+    /// pane to blank. Pane IDs, layout and independent audio choices survive.
+    pub(super) fn pause_multiview_for_account(
+        &self,
+        app: &AppHandle,
+        pause: bool,
+    ) -> Result<(), StreamError> {
+        let panes = self
+            .inner
+            .multiview
+            .state
+            .lock()
+            .map_err(|_| unavailable())?
+            .panes
+            .clone();
+        let mut failed = false;
+        for pane in panes {
+            if pane.dead.load(Ordering::Acquire) {
+                continue;
+            }
+            pane.initial_blank.store(pause, Ordering::Release);
+            if let Some(capture) = &pane.capture {
+                capture
+                    .inner
+                    .view
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .ready = false;
+            }
+            if let Some(view) = app.get_webview(&pane.id) {
+                let destination = if pause {
+                    "about:blank".to_owned()
+                } else {
+                    pane_url(&pane.channel, pane.kind)
+                };
+                if view
+                    .navigate(destination.parse().map_err(|_| unavailable())?)
+                    .is_err()
+                {
+                    failed = true;
+                }
+            }
+        }
+        if failed {
+            Err(error("BROWSER_ACCOUNT_REFRESH_FAILED", "계정 변경 후 일부 화면을 새로 고치지 못했습니다. 연결 설정에서 다시 연결해 주세요."))
+        } else {
+            Ok(())
+        }
     }
 
     pub fn multiview_snapshot(&self) -> Result<MultiViewSnapshot, StreamError> {
@@ -290,7 +363,7 @@ impl OfficialBrowser {
         let lifecycle = self.inner.multiview.lifecycle.load(Ordering::Acquire);
         let _configuration = {
             let _gate = self.inner.contexts.gate.lock().map_err(|_| busy())?;
-            if !self.active_ids().is_empty() {
+            if !self.ui_active_ids().is_empty() {
                 return Err(error(
                     "RECORDING_ACTIVE",
                     "모든 방송의 녹화를 종료한 뒤 배치를 변경해 주세요.",
@@ -345,9 +418,7 @@ impl OfficialBrowser {
             self.inner.multiview.active.store(true, Ordering::Release);
             state.loaded_extensions.clone()
         };
-        if let Err(cause) = self.close_multiview_panes(app) {
-            return Err(cause);
-        }
+        self.close_multiview_panes(app)?;
         // No hidden fifth stream: close the existing single player BEFORE any
         // new official URL is navigated. Never stop/delete a recording here.
         self.detach_viewport(app);
@@ -374,7 +445,7 @@ impl OfficialBrowser {
             state.epoch = state.epoch.wrapping_add(1).max(1);
             state.epoch
         };
-        for entry in &entries {
+        for (index, entry) in entries.iter().enumerate() {
             for kind in [PaneKind::Video, PaneKind::Chat] {
                 if !(if kind == PaneKind::Video {
                     entry.video
@@ -392,6 +463,7 @@ impl OfficialBrowser {
                 let pane = Arc::new(Pane {
                     id,
                     channel: entry.channel_id.clone(),
+                    number: index + 1,
                     kind,
                     epoch: AtomicU64::new(epoch),
                     viewport: Mutex::new(BrowserViewport {
@@ -400,7 +472,9 @@ impl OfficialBrowser {
                     }),
                     revision: Arc::new(AtomicU64::new(0)),
                     writes: Mutex::new(()),
-                    audio: AtomicBool::new(false),
+                    // Native permission, not the official player's mute value.
+                    // Chat stays silent; each video uses its own original UI.
+                    audio: AtomicBool::new(kind == PaneKind::Video),
                     dead: AtomicBool::new(false),
                     initial_blank: AtomicBool::new(true),
                     status: Mutex::new("loading".into()),
@@ -432,8 +506,106 @@ impl OfficialBrowser {
             .lock()
             .map_err(|_| unavailable())?
             .entries = entries;
-        self.queue_channel_names();
+        self.queue_channel_names(app);
         self.multiview_snapshot()
+    }
+
+    // Non-modal notifications live inside the native surface, never in an HTML
+    // hole punched through it. No hide/pause, focus change or input suppression.
+    pub(super) fn show_recording_notice(&self, app: &AppHandle, message: &str) -> bool {
+        let primary = self.inner.view.lock().ok().and_then(|s| {
+            s.viewport
+                .visible
+                .then(|| (self.label().to_string(), s.viewport.clone()))
+        });
+        let target = if self.multiview_active() {
+            self.inner.multiview.state.lock().ok().and_then(|s| {
+                s.panes
+                    .iter()
+                    .filter_map(|p| {
+                        let viewport = p.viewport.lock().ok()?.clone();
+                        (viewport.visible && !p.dead.load(Ordering::Acquire))
+                            .then(|| (p.id.clone(), viewport))
+                    })
+                    .max_by(|(_, a), (_, b)| {
+                        (a.y + a.height)
+                            .total_cmp(&(b.y + b.height))
+                            .then_with(|| (a.x + a.width).total_cmp(&(b.x + b.width)))
+                    })
+            })
+        } else {
+            primary
+        };
+        let Some((label, viewport)) = target else {
+            return false;
+        };
+        let Some(view) = app.get_webview(&label) else {
+            return false;
+        };
+        let clip = viewport.clip.unwrap_or(BrowserClip {
+            x: 0.0,
+            y: 0.0,
+            width: viewport.width,
+            height: viewport.height,
+        });
+        let right = (viewport.width - clip.x - clip.width).max(0.0) + 18.0;
+        let bottom = (viewport.height - clip.y - clip.height).max(0.0) + 18.0;
+        let script = format!(
+            "({})({},{},{});",
+            include_str!("browser_recording_notice.js"),
+            json!(message),
+            right,
+            bottom
+        );
+        view.eval(&script).is_ok()
+    }
+
+    /// Uses the same official ingress/capture bridge as visible panes. This
+    /// controller is deliberately not registered in the UI's multiview layout.
+    pub(super) fn open_auto_view(
+        &self,
+        app: &AppHandle,
+        channel: &str,
+    ) -> Result<Self, StreamError> {
+        let id = format!("chzzk-auto-{}", uuid::Uuid::new_v4().simple());
+        let capture = self.pane_controller(&id, channel)?;
+        let pane = Arc::new(Pane {
+            id,
+            channel: channel.into(),
+            number: 0,
+            kind: PaneKind::Video,
+            epoch: AtomicU64::new(0),
+            viewport: Mutex::new(BrowserViewport::default()),
+            revision: Arc::new(AtomicU64::new(0)),
+            writes: Mutex::new(()),
+            audio: AtomicBool::new(false),
+            dead: AtomicBool::new(false),
+            initial_blank: AtomicBool::new(true),
+            status: Mutex::new("loading".into()),
+            channel_name: Mutex::new(String::new()),
+            capture: Some(capture.clone()),
+        });
+        let ids = self
+            .inner
+            .view
+            .lock()
+            .map_err(|_| unavailable())?
+            .loaded_extensions
+            .clone();
+        if let Err(cause) = capture.create_multiview_pane(app, pane, ids, 0) {
+            capture.close_auto_view(app);
+            return Err(cause);
+        }
+        Ok(capture)
+    }
+    pub(super) fn close_auto_view(&self, app: &AppHandle) {
+        if !self.label().starts_with("chzzk-auto-") {
+            return;
+        }
+        self.detach_controller();
+        if let Some(view) = app.get_webview(self.label()) {
+            let _ = view.close();
+        }
     }
 
     fn create_multiview_pane(
@@ -457,7 +629,14 @@ impl OfficialBrowser {
         )
         .data_directory(profile)
         .browser_extensions_enabled(true)
+        .initialization_script(if pane.id.starts_with("chzzk-auto-") {
+            include_str!("browser_auto_view.js")
+        } else {
+            ""
+        })
+        .initialization_script(include_str!("browser_chat_enhancements.js"))
         .initialization_script(include_str!("browser_multiview.js"))
+        .initialization_script(chat_header_script(&pane))
         .initialization_script(if pane.kind == PaneKind::Video {
             include_str!("browser_page_chat.js")
         } else {
@@ -496,13 +675,14 @@ impl OfficialBrowser {
             }
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
                 let _ = view.eval(include_str!("browser_multiview.js"));
+                let _ = view.eval(chat_header_script(&page));
                 if page.capture.is_some() {
                     let _ = view.eval(include_str!("browser_page_chat.js"));
                     let _ = view.eval(include_str!("browser_encoded_capture.js"));
                     let _ = view.eval(include_str!("browser_capture.js"));
                     let _ = view.eval(include_str!("browser_player_ui.js"));
                 }
-                send_audio(&view, &page);
+                send_audio(&view, &page, false);
                 set_status(&page, "page_loaded");
             } else {
                 if let Some(capture) = &page.capture {
@@ -526,12 +706,27 @@ impl OfficialBrowser {
         let view = parent
             .add_child(
                 builder,
-                LogicalPosition::new(0.0, 0.0),
+                LogicalPosition::new(
+                    if pane.id.starts_with("chzzk-auto-") {
+                        auto_surface::LEFT
+                    } else {
+                        0.0
+                    },
+                    0.0,
+                ),
                 LogicalSize::new(1.0, 1.0),
             )
             .map_err(|_| unavailable())?;
         view.hide().map_err(|_| unavailable())?;
         initialize_native_pane(&view, pane.clone(), loaded_ids)?;
+        #[cfg(windows)]
+        if pane.id.starts_with("chzzk-auto-") {
+            self.restore_auto_extensions(&view)?;
+        }
+        if pane.kind == PaneKind::Video && super::super::browser_video_ads::install(&view).is_err()
+        {
+            tracing::warn!("CHZZK video ad filter unavailable; requests remain unchanged");
+        }
         if let Some(capture) = &pane.capture {
             attach_native(&view, capture.clone())?;
         }
@@ -539,6 +734,12 @@ impl OfficialBrowser {
             || self.inner.multiview.lifecycle.load(Ordering::Acquire) != lifecycle
         {
             return Err(busy());
+        }
+        if pane.id.starts_with("chzzk-auto-") {
+            // A hidden WebView never delivers the ResizeObserver/rAF callbacks
+            // used to initialize the official player. Keep rendering active
+            // strictly outside the parent client area; visible panes are unchanged.
+            auto_surface::prepare(&view).map_err(|_| unavailable())?;
         }
         pane.initial_blank.store(false, Ordering::Release);
         view.navigate(
@@ -616,7 +817,7 @@ impl OfficialBrowser {
     ) -> Result<(), StreamError> {
         let _configuration = {
             let _gate = self.inner.contexts.gate.lock().map_err(|_| busy())?;
-            if !self.active_ids().is_empty() {
+            if !self.ui_active_ids().is_empty() {
                 return Err(error(
                     "RECORDING_ACTIVE",
                     "모든 방송의 녹화를 먼저 종료해 주세요.",
@@ -790,7 +991,7 @@ impl OfficialBrowser {
                 if native_mute(&view, pane.clone(), true).is_err() {
                     failed = true;
                 }
-                send_audio(&view, pane);
+                send_audio(&view, pane, true);
             } else {
                 failed = true;
             }
@@ -810,7 +1011,7 @@ impl OfficialBrowser {
                 let _ = native_mute(&view, pane.clone(), true);
                 return Err(cause);
             }
-            send_audio(&view, pane);
+            send_audio(&view, pane, true);
         }
         self.inner
             .multiview
@@ -923,10 +1124,31 @@ fn initialize_native_pane(
                 .CoreWebView2()
                 .map_err(|_| unavailable())?;
             let audio = core.cast::<ICoreWebView2_8>().map_err(|_| unavailable())?;
-            audio.SetIsMuted(true).map_err(|_| unavailable())?;
+            let initially_muted = must_mute(
+                pane.kind,
+                pane.audio.load(Ordering::Acquire),
+                pane.dead.load(Ordering::Acquire),
+                false,
+                false,
+            );
+            audio
+                .SetIsMuted(initially_muted)
+                .map_err(|_| unavailable())?;
             let mut actual = BOOL::default();
             audio.IsMuted(&mut actual).map_err(|_| unavailable())?;
-            if !actual.as_bool() {
+            if actual.as_bool() != initially_muted {
+                return Err(unavailable());
+            }
+            if !initially_muted
+                && must_mute(
+                    pane.kind,
+                    pane.audio.load(Ordering::Acquire),
+                    pane.dead.load(Ordering::Acquire),
+                    false,
+                    false,
+                )
+            {
+                let _ = audio.SetIsMuted(true);
                 return Err(unavailable());
             }
             if !loaded_ids.is_empty() {
@@ -1030,6 +1252,7 @@ mod tests {
         Arc::new(Pane {
             id: "synthetic-pane".into(),
             channel: A.into(),
+            number: 1,
             kind: PaneKind::Video,
             epoch: AtomicU64::new(9),
             viewport: Mutex::new(BrowserViewport::default()),
@@ -1042,6 +1265,27 @@ mod tests {
             channel_name: Mutex::new(String::new()),
             capture: None,
         })
+    }
+    #[test]
+    fn chat_header_uses_configured_order_and_json_encoded_metadata() {
+        let mut pane = fake_pane();
+        assert!(chat_header_script(&pane).is_empty());
+        let pane = Arc::get_mut(&mut pane).unwrap();
+        pane.kind = PaneKind::Chat;
+        pane.number = 2;
+        *pane.channel_name.lock().unwrap() = "로션욤\";alert(1)//".into();
+        let script = chat_header_script(pane);
+        let json = script
+            .strip_prefix("window.__atsumiMultiView?.configureChat(")
+            .unwrap()
+            .strip_suffix(");")
+            .unwrap();
+        let data: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(data["channelId"], A);
+        assert_eq!(data["number"], 2);
+        assert_eq!(data["channelName"], "로션욤\";alert(1)//");
+        pane.dead.store(true, Ordering::Release);
+        assert!(chat_header_script(pane).is_empty());
     }
     #[test]
     fn stale_close_cannot_invalidate_new_panes() {
