@@ -59,9 +59,14 @@
     try {
       const input = encoder.encode(id), bytes = new Uint8Array(current.salt.length + input.length);
       bytes.set(current.salt); bytes.set(input, current.salt.length);
-      const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+      let deadline;
+      const result = await Promise.race([crypto.subtle.digest("SHA-256", bytes), new Promise(resolve => { deadline = setTimeout(() => resolve(null), 1500); })]).finally(() => clearTimeout(deadline));
+      // Disable the optional digest for this recording after one failure, rather
+      // than waiting another 1.5s for EVERY subsequent sender in a busy chat.
+      if (!result) { current.salt = null; return undefined; }
+      const digest = new Uint8Array(result);
       return "sha256:" + Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
-    } catch { return undefined; }
+    } catch { current.salt = null; return undefined; }
   };
   const observeClock = (current) => {
     try {
@@ -162,10 +167,10 @@
     if (Number.isSafeInteger(time) && time >= 0) normalized.msgTime = time;
     return { event: normalized, truncated: msg !== rawText };
   };
-  const notify = (current, detail) => {
+  const notify = (current, detail, force = false) => {
     current.detail = detail;
     const key = `${detail}:${current.dropped}`;
-    if (current.noticeKey === key) return;
+    if (current.noticeKey === key && !force) return;
     current.noticeKey = key;
     try { current.onStatus(detail, current.dropped); } catch { /* Status cannot affect the official socket. */ }
   };
@@ -191,12 +196,18 @@
       batchBytes += item.bytes + (batch.length > 1 ? 1 : 0);
     }
     const reserved = batch.reduce((sum, item) => sum + item.bytes, 0);
+    const batchId = ++current.batchId;
     current.inFlight = (async () => {
       try {
         const events = batch.map((item) => item.event);
         // Final UTF-8 check, including serialized decoration fields and commas.
         if (bytes(events) > MAX_BATCH) throw new Error("batch_limit");
-        await current.sendBatch(events);
+        // Native deduplicates the same batch after a lost acknowledgement.
+        for (let attempt = 0; ; attempt++) {
+          try { await current.sendBatch(events, batchId); break; }
+          catch (error) { if (attempt >= 2) throw error; }
+        }
+        current.lastSavedAt = Date.now();
       } catch {
         current.dropped += batch.length;
         fail(current, "storage_failed");
@@ -224,7 +235,8 @@
     current.decodeQueue = current.decodeQueue.then(async () => {
       try {
         if (current.failed) return;
-        const raw = typeof data === "string" ? data : data instanceof Blob ? await data.text() : decoder.decode(data);
+        let deadline;
+        const raw = typeof data === "string" ? data : data instanceof Blob ? await Promise.race([data.text(), new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("decode_timeout")), 2000); })]).finally(() => clearTimeout(deadline)) : decoder.decode(data);
         if (encoder.encode(raw).byteLength > MAX_FRAME) { fail(current, "frame_too_large", 1); return; }
         let document;
         try { document = JSON.parse(raw); } catch { current.gap = true; notify(current, "invalid_frame"); return; }
@@ -252,7 +264,7 @@
         }
         if (!current.failed && !current.gap && current.detail !== "receiving") notify(current, "receiving");
         if (current.queue.length >= MAX_BATCH_EVENTS) pump(current);
-      } catch { fail(current, "decode_failed", 1); }
+      } catch { current.gap = true; current.dropped++; notify(current, "decode_failed"); }
       finally { current.rawBytes -= length; }
     });
   };
@@ -398,6 +410,7 @@
         viewerFetch: typeof window.fetch === "function" && typeof AbortController === "function" ? window.fetch.bind(window) : null,
         viewerRequest: null, viewerBroadcast: null, viewerTimer: null,
         sendBatch: options.sendBatch, onStatus: options.onStatus, accepting: true, failed: false,
+        batchId: 0, lastSavedAt: Date.now(), lastPulseAt: Date.now(), lastViewerAt: Date.now(),
         gap: observerOverflow, dropped: 0, detail: "waiting_socket", queue: [], queuedBytes: 0,
         noticeKey: null,
         rawBytes: 0, decodeQueue: Promise.resolve(), inFlight: null, stopping: null, timer: null };
@@ -409,6 +422,21 @@
       notify(current, observerOverflow ? "observer_overflow" : connected ? "observing" : "waiting_socket");
       return true;
     },
+    pulse() {
+      const current = active;
+      if (!current?.accepting) return;
+      pump(current);
+      // Also driven by received video/status events, so presentation/background
+      // timer throttling cannot silently stop the statistics pump.
+      const now = Date.now();
+      if (now - current.lastViewerAt >= VIEWER_INTERVAL) { current.lastViewerAt = now; sampleViewers(current); }
+      if (now - current.lastPulseAt >= 15000) {
+        current.lastPulseAt = now;
+        if (now - current.lastSavedAt > 45000 && current.queuedBytes > 0) { current.gap = true; notify(current, "partial", true); }
+        else notify(current, current.detail, true);
+      }
+    },
+    summary() { return active ? { recordingId: active.recordingId, detail: active.failed || active.gap ? "partial" : "stopped" } : null; },
     stop(recordingId) {
       const current = active;
       if (!current || current.recordingId !== recordingId) return Promise.resolve();

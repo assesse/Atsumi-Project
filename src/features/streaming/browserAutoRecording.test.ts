@@ -7,6 +7,50 @@ const { runInNewContext } = await import(vmName) as { runInNewContext(source: st
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
 describe("background receiver and recording notices", () => {
+  it("retains playback and user mute in a hidden tab or PiP while its watch remains attached", async () => {
+    const page = document.implementation.createHTMLDocument(); page.body.innerHTML = '<video></video>';
+    const video = page.querySelector("video")!;
+    const play = vi.spyOn(video, "play").mockResolvedValue();
+    Object.defineProperties(page, { hidden: { value: true }, pictureInPictureElement: { value: video } });
+    const pageWindow = Object.assign(new EventTarget(), { __atsumiAutoReceiver: undefined as undefined | { configure(value: { revision: number; viewing: boolean }): void } });
+    runInNewContext(receiver, { document: page, window: pageWindow, location: new URL("https://chzzk.naver.com/live/" + "a".repeat(32)), setInterval, clearInterval });
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 1, viewing: true });
+    video.volume = 0.4; video.muted = false;
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(video.muted).toBe(false); expect(video.volume).toBe(0.4);
+    video.muted = true;
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 2, viewing: true });
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(video.muted).toBe(true); expect(play).not.toHaveBeenCalled();
+    expect(page.pictureInPictureElement).toBe(video);
+  });
+  it("does not repeatedly remute a borrowed player and rejects late presentation commands", async () => {
+    const page = document.implementation.createHTMLDocument(); page.body.innerHTML = '<video></video>';
+    const video = page.querySelector("video")!; const play = vi.spyOn(video, "play").mockResolvedValue();
+    const configure = vi.fn(), layout = vi.fn();
+    const pageWindow = Object.assign(new EventTarget(), { __atsumiPlayerUI: { configure }, __atsumiMultiView: { setVideoOnly: layout }, __atsumiAutoReceiver: undefined as undefined | { configure(value: { revision: number; viewing: boolean }): void } });
+    runInNewContext(receiver, { document: page, window: pageWindow, location: new URL("https://chzzk.naver.com/live/" + "a".repeat(32)), setInterval, clearInterval });
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 2, viewing: true });
+    video.muted = false; await vi.advanceTimersByTimeAsync(6000); expect(video.muted).toBe(false);
+    expect(play).not.toHaveBeenCalled();
+    expect(configure).toHaveBeenLastCalledWith({ automaticWatch: false, multiview: false });
+    expect(layout).toHaveBeenLastCalledWith(false);
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 1, viewing: false });
+    await vi.advanceTimersByTimeAsync(3000); expect(video.muted).toBe(false);
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 3, viewing: false });
+    await vi.advanceTimersByTimeAsync(3000); expect(video.muted).toBe(true);
+    expect(play).toHaveBeenCalledOnce();
+    expect(configure).toHaveBeenLastCalledWith({ automaticWatch: true, multiview: false });
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 4, viewing: true });
+    expect(video.muted).toBe(false);
+    video.muted = true;
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 5, viewing: true });
+    expect(video.muted).toBe(true); // Geometry never overrides the official mute button.
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 6, viewing: false });
+    pageWindow.__atsumiAutoReceiver!.configure({ revision: 7, viewing: true });
+    expect(video.muted).toBe(true);
+    expect(page.querySelector("video")).toBe(video);
+  });
   it("only mutes and resumes the existing official video; never clicks access gates", async () => {
     const page = document.implementation.createHTMLDocument();
     page.body.innerHTML = '<video></video><button>로그인</button><button>확장 설치</button>';

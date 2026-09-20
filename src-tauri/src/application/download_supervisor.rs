@@ -12,6 +12,10 @@ use std::{
 use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
+#[path = "download_workers.rs"]
+mod workers;
+use workers::{FinalizationTask, PageTask, WorkQueue};
+
 use crate::{
     domain::{
         plan_artifact_relative_directory, ArtifactManifest, ArtifactRelativePath,
@@ -57,6 +61,9 @@ struct SupervisorInner {
     store: Arc<dyn ArtifactStore>,
     events: Sender<DownloadJobProjection>,
     workers: Mutex<Vec<JoinHandle<()>>>,
+    pages: WorkQueue<PageTask>,
+    page_workers: usize,
+    finalizing: WorkQueue<FinalizationTask>,
     finalization_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     overlap_decisions: Mutex<()>,
     completion_handler: Mutex<Option<DownloadCompletionHandler>>,
@@ -76,6 +83,8 @@ struct ActiveCancellation {
 }
 
 const MAX_GALLERY_DOWNLOAD_WORKERS: usize = 8;
+const FINALIZATION_WORKERS: usize = 2;
+const MAX_PENDING_FINALIZATIONS: usize = 8;
 
 impl DownloadSupervisor {
     pub fn worker_count_for_http_limit(limit: usize) -> usize {
@@ -111,6 +120,9 @@ impl DownloadSupervisor {
             store,
             events,
             workers: Mutex::new(Vec::new()),
+            pages: WorkQueue::new(MAX_GALLERY_DOWNLOAD_WORKERS * gallery_worker_count),
+            page_workers: gallery_worker_count,
+            finalizing: WorkQueue::new(MAX_PENDING_FINALIZATIONS),
             finalization_locks: Mutex::new(HashMap::new()),
             overlap_decisions: Mutex::new(()),
             completion_handler: Mutex::new(None),
@@ -121,19 +133,51 @@ impl DownloadSupervisor {
             inner: Arc::clone(&inner),
         };
         let mut workers = unpoison(inner.workers.lock());
+        for index in 0..gallery_worker_count + FINALIZATION_WORKERS {
+            let worker_inner = Arc::clone(&inner);
+            let is_page = index < gallery_worker_count;
+            let handle = thread::Builder::new()
+                .name(format!(
+                    "atsumi-{}-{index}",
+                    if is_page { "page" } else { "finalize" }
+                ))
+                .spawn(move || {
+                    if is_page {
+                        workers::page_worker(worker_inner)
+                    } else {
+                        workers::finalization_worker(worker_inner)
+                    }
+                });
+            match handle {
+                Ok(handle) => workers.push(handle),
+                Err(_) => {
+                    drop(workers);
+                    supervisor.shutdown_and_wait();
+                    return Err(DownloadPipelineError::new(
+                        DownloadPipelineErrorCode::WorkerUnavailable,
+                        "A download processing worker could not be started",
+                        true,
+                    ));
+                }
+            }
+        }
         for index in 0..Self::worker_count_for_http_limit(gallery_worker_count) {
             let worker_inner = Arc::clone(&inner);
             let handle = thread::Builder::new()
                 .name(format!("atsumi-download-{index}"))
-                .spawn(move || worker_loop(worker_inner))
-                .map_err(|_| {
-                    DownloadPipelineError::new(
+                .spawn(move || worker_loop(worker_inner));
+            match handle {
+                Ok(handle) => workers.push(handle),
+                Err(_) => {
+                    drop(workers);
+                    supervisor.shutdown_and_wait();
+                    return Err(DownloadPipelineError::new(
                         DownloadPipelineErrorCode::WorkerUnavailable,
                         "A download worker thread could not be started",
                         true,
-                    )
-                })?;
-            workers.push(handle);
+                    ));
+                }
+            }
         }
         drop(workers);
         Ok(supervisor)
@@ -1001,7 +1045,7 @@ impl DownloadSupervisor {
         }
         let incoming_layout = overlap_existing_layout_inner(&self.inner, &incoming)
             .map_err(|_| ApplicationError::DownloadPipeline(overlap_check_failed()))?;
-        verify_bundle_files(&self.inner, &incoming_layout, &incoming)
+        verify_bundle_files(&self.inner, &incoming_layout, &incoming, None)
             .map_err(|_| ApplicationError::DownloadPipeline(overlap_check_failed()))?;
         let incoming_fingerprint = overlap_artifact_fingerprint(&incoming, profile.profile_version)
             .ok_or_else(|| {
@@ -1055,7 +1099,7 @@ impl DownloadSupervisor {
                 })?;
             let layout = overlap_existing_layout_inner(&self.inner, &bundle)
                 .map_err(|_| ApplicationError::DownloadPipeline(overlap_check_failed()))?;
-            verify_bundle_files(&self.inner, &layout, &bundle)
+            verify_bundle_files(&self.inner, &layout, &bundle, None)
                 .map_err(|_| ApplicationError::DownloadPipeline(overlap_check_failed()))?;
             let fingerprint = overlap_artifact_fingerprint(&bundle, profile.profile_version)
                 .ok_or_else(|| {
@@ -1084,6 +1128,8 @@ impl DownloadSupervisor {
             }
         }
         self.inner.wake.notify_all();
+        self.inner.pages.close();
+        self.inner.finalizing.close();
         let workers = {
             let mut workers = unpoison(self.inner.workers.lock());
             std::mem::take(&mut *workers)
@@ -1288,20 +1334,36 @@ fn worker_loop(inner: Arc<SupervisorInner>) {
         let Some(descriptor) = descriptor else {
             break;
         };
-        let key = descriptor_key(&descriptor);
         let cancellation = CancellationToken::new();
-        unpoison(inner.cancellations.lock()).insert(
-            key.clone(),
-            ActiveCancellation {
-                entry_id: descriptor.entry_id.clone(),
-                token: cancellation.clone(),
-            },
-        );
-        if let Err(error) = run_download(&inner, &descriptor, &cancellation) {
-            handle_download_error(&inner, &descriptor, &cancellation, error);
+        if !workers::claim_job(&inner, &descriptor, &cancellation) {
+            workers::finish_job(&inner, &descriptor);
+            continue;
         }
-        unpoison(inner.cancellations.lock()).remove(&key);
-        unpoison(inner.queue.lock()).known.remove(&key);
+        if inner.shutting_down.load(Ordering::Acquire) {
+            cancellation.cancel();
+        }
+        let receiving_started = std::time::Instant::now();
+        let result = run_download(&inner, &descriptor, &cancellation).and_then(|layout| {
+            tracing::info!(
+                gallery_id = descriptor.gallery_id.get(),
+                worker_attempt = descriptor.worker_attempt,
+                elapsed_ms = receiving_started.elapsed().as_millis() as u64,
+                "download pages persisted; handing off final verification"
+            );
+            inner.finalizing.push(
+                FinalizationTask {
+                    descriptor: descriptor.clone(),
+                    layout,
+                    cancellation: cancellation.clone(),
+                    enqueued_at: std::time::Instant::now(),
+                },
+                &cancellation,
+            )
+        });
+        if let Err(error) = result {
+            handle_download_error(&inner, &descriptor, &cancellation, error);
+            workers::finish_job(&inner, &descriptor);
+        }
     }
 }
 
@@ -1309,7 +1371,7 @@ fn run_download(
     inner: &SupervisorInner,
     descriptor: &DownloadJobDescriptor,
     cancellation: &CancellationToken,
-) -> Result<(), RunError> {
+) -> Result<ArtifactLayout, RunError> {
     emit(inner, inner.repository.pipeline_begin(descriptor)?);
     check_cancelled(cancellation)?;
     let settings = inner.settings.settings_get()?;
@@ -1374,122 +1436,150 @@ fn run_download(
         .map(|checkpoint| (checkpoint.page.source_page_number, checkpoint))
         .collect::<BTreeMap<_, _>>();
 
-    for source_page in &snapshot.pages {
-        check_cancelled(cancellation)?;
-        let checkpoint = checkpoints.get(&source_page.source_page_number);
-        let existing = inner.store.verify_existing_page(
-            &layout,
-            source_page.source_page_number,
-            &source_page.source_revision,
-            checkpoint.map(|checkpoint| &checkpoint.page),
-        )?;
-        match existing {
-            ExistingPageVerification::Verified(page) => {
-                if checkpoint.is_none() {
-                    emit(
-                        inner,
-                        inner.repository.pipeline_page_verified(descriptor, &page)?,
-                    );
-                }
-                continue;
-            }
-            ExistingPageVerification::Invalid { .. } => {
-                if let Some(projection) = inner.repository.pipeline_mark_artifact_issue(
-                    &DownloadEntryId::new(descriptor.entry_id.clone()).map_err(|_| {
-                        DownloadPipelineError::new(
-                            DownloadPipelineErrorCode::ManifestInvalid,
-                            "The download entry identity is invalid",
-                            false,
-                        )
-                    })?,
-                    None,
-                    "RECOVERY_CONFLICT",
-                    "Ambiguous page files were moved aside for review",
-                )? {
-                    emit(inner, projection);
-                }
-                return Err(DownloadPipelineError::new(
-                    DownloadPipelineErrorCode::HashMismatch,
-                    "A stored page does not match its verified checkpoint",
-                    false,
-                )
-                .into());
-            }
-            ExistingPageVerification::Missing => {}
-        }
-
-        let payload = match inner.source.download_page(
-            descriptor.gallery_id,
-            source_page.source_page_number,
-            cancellation,
-        ) {
-            Ok(payload) => payload,
-            Err(error) => {
-                let diagnostics = if error.candidate_diagnostics.is_empty() {
-                    vec![SourceCandidateDiagnostic {
-                        candidate_index: 0,
-                        format: "unknown".into(),
-                        http_status: error.http_status,
-                        content_type: None,
-                        bytes_received: None,
-                        error_code: Some(error.code),
-                        retryable: error.retryable,
-                    }]
-                } else {
-                    error.candidate_diagnostics.clone()
-                };
-                persist_candidate_diagnostics(
-                    inner,
-                    descriptor,
-                    source_page.source_page_number,
-                    &diagnostics,
-                )?;
-                return Err(error.into());
-            }
-        };
-        let diagnostics = if payload.candidate_diagnostics.is_empty() {
-            vec![SourceCandidateDiagnostic {
-                candidate_index: payload.candidate_index,
-                format: payload.source_format.as_str().to_owned(),
-                http_status: None,
-                content_type: None,
-                bytes_received: u64::try_from(payload.bytes.len()).ok(),
-                error_code: None,
-                retryable: false,
-            }]
-        } else {
-            payload.candidate_diagnostics.clone()
-        };
-        persist_candidate_diagnostics(
-            inner,
+    workers::download_pages(
+        inner,
+        descriptor,
+        &layout,
+        &snapshot.pages,
+        &checkpoints,
+        cancellation,
+    )?;
+    // Pages and checkpoints are durable before handoff. Startup recovery
+    // resumes Hashing jobs using the same verified page checkpoints.
+    emit(
+        inner,
+        inner.repository.pipeline_stage(
             descriptor,
-            source_page.source_page_number,
-            &diagnostics,
-        )?;
-        if payload.source_page_number != source_page.source_page_number
-            || payload.source_revision != source_page.source_revision
-        {
+            JobState::Hashing,
+            "Waiting for verification and overlap review",
+        )?,
+    );
+    Ok(layout)
+}
+
+fn download_one_page(
+    inner: &SupervisorInner,
+    descriptor: &DownloadJobDescriptor,
+    layout: &ArtifactLayout,
+    source_page: &super::DownloadSourcePage,
+    checkpoint: Option<&super::DownloadCheckpoint>,
+    cancellation: &CancellationToken,
+) -> Result<Option<(StoredPage, usize)>, RunError> {
+    check_cancelled(cancellation)?;
+    let existing = inner.store.verify_existing_page(
+        layout,
+        source_page.source_page_number,
+        &source_page.source_revision,
+        checkpoint.map(|checkpoint| &checkpoint.page),
+    )?;
+    match existing {
+        ExistingPageVerification::Verified(page) => {
+            return Ok(checkpoint.is_none().then_some((page, 0)));
+        }
+        ExistingPageVerification::Invalid { .. } => {
+            if let Some(projection) = inner.repository.pipeline_mark_artifact_issue(
+                &DownloadEntryId::new(descriptor.entry_id.clone()).map_err(|_| {
+                    DownloadPipelineError::new(
+                        DownloadPipelineErrorCode::ManifestInvalid,
+                        "The download entry identity is invalid",
+                        false,
+                    )
+                })?,
+                None,
+                "RECOVERY_CONFLICT",
+                "Ambiguous page files were moved aside for review",
+            )? {
+                emit(inner, projection);
+            }
             return Err(DownloadPipelineError::new(
-                DownloadPipelineErrorCode::ManifestInvalid,
-                "The downloaded page identity does not match the immutable source mapping",
+                DownloadPipelineErrorCode::HashMismatch,
+                "A stored page does not match its verified checkpoint",
                 false,
             )
             .into());
         }
-        let stored = inner.store.store_page(&layout, &payload, cancellation)?;
-        let projection = inner
-            .repository
-            .pipeline_page_verified(descriptor, &stored)?;
-        super::image_work_budget::record_stored_page(payload.bytes.len());
-        emit(inner, projection);
+        ExistingPageVerification::Missing => {}
     }
 
-    emit(
+    let receiving_started = std::time::Instant::now();
+    let payload = match inner.source.download_page(
+        descriptor.gallery_id,
+        source_page.source_page_number,
+        cancellation,
+    ) {
+        Ok(payload) => payload,
+        Err(error) => {
+            let diagnostics = if error.candidate_diagnostics.is_empty() {
+                vec![SourceCandidateDiagnostic {
+                    candidate_index: 0,
+                    format: "unknown".into(),
+                    http_status: error.http_status,
+                    content_type: None,
+                    bytes_received: None,
+                    error_code: Some(error.code),
+                    retryable: error.retryable,
+                }]
+            } else {
+                error.candidate_diagnostics.clone()
+            };
+            persist_candidate_diagnostics(
+                inner,
+                descriptor,
+                source_page.source_page_number,
+                &diagnostics,
+            )?;
+            return Err(error.into());
+        }
+    };
+    let diagnostics = if payload.candidate_diagnostics.is_empty() {
+        vec![SourceCandidateDiagnostic {
+            candidate_index: payload.candidate_index,
+            format: payload.source_format.as_str().to_owned(),
+            http_status: None,
+            content_type: None,
+            bytes_received: u64::try_from(payload.bytes.len()).ok(),
+            error_code: None,
+            retryable: false,
+        }]
+    } else {
+        payload.candidate_diagnostics.clone()
+    };
+    persist_candidate_diagnostics(
         inner,
-        inner
-            .repository
-            .pipeline_stage(descriptor, JobState::Hashing, "Rechecking page hashes")?,
+        descriptor,
+        source_page.source_page_number,
+        &diagnostics,
+    )?;
+    if payload.source_page_number != source_page.source_page_number
+        || payload.source_revision != source_page.source_revision
+    {
+        return Err(DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ManifestInvalid,
+            "The downloaded page identity does not match the immutable source mapping",
+            false,
+        )
+        .into());
+    }
+    let receiving_ms = receiving_started.elapsed().as_millis() as u64;
+    let storing_started = std::time::Instant::now();
+    let stored = inner.store.store_page(layout, &payload, cancellation)?;
+    tracing::debug!(
+        gallery_id = descriptor.gallery_id.get(),
+        page = source_page.source_page_number.get(),
+        source_and_validation_ms = receiving_ms,
+        store_ms = storing_started.elapsed().as_millis() as u64,
+        bytes = payload.bytes.len(),
+        "download page stage timings"
     );
+    Ok(Some((stored, payload.bytes.len())))
+}
+
+fn finalize_download(
+    inner: &SupervisorInner,
+    descriptor: &DownloadJobDescriptor,
+    layout: &ArtifactLayout,
+    cancellation: &CancellationToken,
+) -> Result<(), RunError> {
     check_cancelled(cancellation)?;
     let mut bundle = inner
         .repository
@@ -1498,8 +1588,6 @@ fn run_download(
                 .map_err(|error| RepositoryError::Other(error.to_string()))?,
         )?
         .ok_or_else(|| RepositoryError::Corrupt("prepared artifact is missing".into()))?;
-    verify_bundle_files(inner, &layout, &bundle)?;
-
     let artist_keys = normalized_artist_keys(&bundle.gallery.metadata.artists);
     let finalization_locks = {
         let mut locks = unpoison(inner.finalization_locks.lock());
@@ -1514,14 +1602,35 @@ fn run_download(
             })
             .collect::<Vec<_>>()
     };
-    let _finalization_guards = finalization_locks
-        .iter()
-        .map(|lock| unpoison(lock.lock()))
-        .collect::<Vec<_>>();
+    let waiting_started = std::time::Instant::now();
+    let mut _finalization_guards = Vec::new();
+    for lock in &finalization_locks {
+        loop {
+            check_cancelled(cancellation)?;
+            match lock.try_lock() {
+                Ok(guard) => {
+                    _finalization_guards.push(guard);
+                    break;
+                }
+                Err(std::sync::TryLockError::Poisoned(error)) => {
+                    _finalization_guards.push(error.into_inner());
+                    break;
+                }
+                Err(std::sync::TryLockError::WouldBlock) => {
+                    thread::sleep(std::time::Duration::from_millis(25))
+                }
+            }
+        }
+    }
+    tracing::debug!(
+        gallery_id = descriptor.gallery_id.get(),
+        artist_wait_ms = waiting_started.elapsed().as_millis() as u64,
+        "download artist finalization locks acquired"
+    );
+    // Check once after the artist wait, including galleries without artists.
+    verify_bundle_files(inner, layout, &bundle, Some(cancellation))?;
     check_cancelled(cancellation)?;
-    if let Some(projection) =
-        run_overlap_review_gate(inner, descriptor, &layout, &bundle, cancellation)?
-    {
+    if let Some(projection) = run_overlap_review_gate(inner, descriptor, &bundle, cancellation)? {
         emit(inner, projection);
         return Ok(());
     }
@@ -1549,8 +1658,8 @@ fn run_download(
         .map_err(|error| RepositoryError::Other(error.to_string()))?;
     let manifest = ArtifactManifest::from_bundle(&bundle)
         .map_err(|error| RepositoryError::Other(error.to_string()))?;
-    inner.store.write_manifest(&layout, &manifest)?;
-    let persisted = inner.store.read_manifest(&layout)?.ok_or_else(|| {
+    inner.store.write_manifest(layout, &manifest)?;
+    let persisted = inner.store.read_manifest(layout)?.ok_or_else(|| {
         DownloadPipelineError::new(
             DownloadPipelineErrorCode::ManifestInvalid,
             "The artifact manifest disappeared before completion",
@@ -1583,7 +1692,6 @@ fn run_download(
 fn run_overlap_review_gate(
     inner: &SupervisorInner,
     descriptor: &DownloadJobDescriptor,
-    incoming_layout: &ArtifactLayout,
     incoming_bundle: &crate::domain::ArtifactBundle,
     cancellation: &CancellationToken,
 ) -> Result<Option<DownloadJobProjection>, DownloadPipelineError> {
@@ -1596,9 +1704,6 @@ fn run_overlap_review_gate(
         );
         return Ok(None);
     }
-    verify_bundle_files(inner, incoming_layout, incoming_bundle).map_err(|error| {
-        overlap_gate_failure(descriptor, "verify_incoming_files", None, None, error)
-    })?;
     let profile = HashProfile::current();
     let incoming_fingerprint =
         overlap_artifact_fingerprint(incoming_bundle, profile.profile_version).ok_or_else(
@@ -1694,7 +1799,12 @@ fn run_overlap_review_gate(
                 continue;
             }
         };
-        if let Err(error) = verify_bundle_files(inner, &existing_layout, &existing_bundle) {
+        if let Err(error) = verify_bundle_files(
+            inner,
+            &existing_layout,
+            &existing_bundle,
+            Some(cancellation),
+        ) {
             handle_overlap_candidate_stage_failure(
                 inner,
                 descriptor,
@@ -1925,11 +2035,11 @@ fn prepare_overlap_hashes(
             continue;
         }
         let hash = {
-            // Reading a verified page also decodes it. Cover that validation
-            // and perceptual hashing with one slot, then release before DB work.
+            // Check path/length/SHA here; perceptual hashing performs the full
+            // decode once under this slot. Release it before database work.
             let _image_work = super::image_work_budget::acquire(Some(cancellation))
                 .ok_or_else(DownloadPipelineError::cancelled)?;
-            let bytes = inner.store.read_verified_page_bytes(&root, page)?;
+            let bytes = inner.store.read_integrity_checked_page_bytes(&root, page)?;
             compute_page_hash(
                 bundle.artifact.entry_id.as_str(),
                 bundle.gallery.id,
@@ -2437,6 +2547,7 @@ fn verify_bundle_files(
     inner: &SupervisorInner,
     layout: &ArtifactLayout,
     bundle: &crate::domain::ArtifactBundle,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<(), RunError> {
     if bundle.pages.len() != bundle.artifact.expected_page_count as usize {
         return Err(DownloadPipelineError::new(
@@ -2447,6 +2558,9 @@ fn verify_bundle_files(
         .into());
     }
     for page in &bundle.pages {
+        if let Some(cancellation) = cancellation {
+            check_cancelled(cancellation)?;
+        }
         if page.state != PageArtifactState::Present || page.excluded {
             return Err(DownloadPipelineError::new(
                 DownloadPipelineErrorCode::ArtifactMissing,
@@ -3145,6 +3259,7 @@ mod tests {
     struct FakeDownloadSource {
         pages: u32,
         block_page: Option<u32>,
+        fail_page: Option<u32>,
         gallery_revision: u64,
         calls: Mutex<Vec<u32>>,
     }
@@ -3154,6 +3269,7 @@ mod tests {
             Self {
                 pages,
                 block_page,
+                fail_page: None,
                 gallery_revision: 1,
                 calls: Mutex::new(Vec::new()),
             }
@@ -3202,6 +3318,11 @@ mod tests {
             cancellation: &CancellationToken,
         ) -> Result<DownloadPagePayload, SourceContractError> {
             unpoison(self.calls.lock()).push(source_page_number.get());
+            if self.fail_page == Some(source_page_number.get()) {
+                return Err(SourceContractError::image_decode_failed(
+                    "synthetic page failure",
+                ));
+            }
             if self.block_page == Some(source_page_number.get()) {
                 while !cancellation.is_cancelled() {
                     thread::sleep(Duration::from_millis(5));
@@ -3222,6 +3343,7 @@ mod tests {
                 height: 2,
                 candidate_index: 0,
                 candidate_diagnostics: Vec::new(),
+                decoded_sha256: None,
             })
         }
     }
@@ -3341,7 +3463,10 @@ mod tests {
             8,
         )
         .unwrap();
-        assert_eq!(unpoison(supervisor.inner.workers.lock()).len(), 8);
+        assert_eq!(
+            unpoison(supervisor.inner.workers.lock()).len(),
+            8 + 8 + FINALIZATION_WORKERS
+        );
         let queued = service
             .download_queue_add(
                 vec![101, 102, 103, 104, 105, 106, 107, 108, 109],
@@ -3359,6 +3484,174 @@ mod tests {
         supervisor.shutdown_and_wait();
         assert_eq!(active_source_calls, 8);
         assert_eq!(source.calls().len(), 8);
+    }
+
+    #[test]
+    fn one_gallery_downloads_later_pages_while_its_first_page_is_waiting() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let source = Arc::new(FakeDownloadSource::new(3, Some(1)));
+        let (events, _receiver) = mpsc::channel();
+        let supervisor = DownloadSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            source.clone(),
+            Arc::new(FilesystemArtifactStore::new()),
+            events,
+            2,
+        )
+        .unwrap();
+        let queued = service
+            .download_queue_add(vec![101], "parallel-pages".into())
+            .unwrap();
+        let entry = queued.jobs[0].entry_id.clone();
+        supervisor.enqueue_all(queued.jobs).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while source.calls().len() < 3 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let calls = source.calls();
+        supervisor.shutdown_and_wait();
+        assert!(calls.contains(&1) && calls.contains(&2) && calls.contains(&3));
+        let bundle = repository
+            .pipeline_artifact_bundle(&DownloadEntryId::new(entry).unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(bundle
+            .pages
+            .iter()
+            .any(|p| p.page_id.source_page_number.get() == 2
+                && p.state == PageArtifactState::Present));
+    }
+
+    #[test]
+    fn artist_finalization_wait_does_not_occupy_the_network_worker_and_cancels_cleanly() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let source = Arc::new(FakeDownloadSource::new(1, None));
+        let (supervisor, _events) = launch(&repository, source.clone());
+        let artist_lock = Arc::new(Mutex::new(()));
+        unpoison(supervisor.inner.finalization_locks.lock())
+            .insert("fixture artist".into(), artist_lock.clone());
+        let guard = artist_lock.lock().unwrap();
+        let queued = service
+            .download_queue_add(vec![101, 102], "separate-finalization".into())
+            .unwrap();
+        let entries = queued
+            .jobs
+            .iter()
+            .map(|job| job.entry_id.clone())
+            .collect::<Vec<_>>();
+        supervisor.enqueue_all(queued.jobs).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while source.calls().len() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let calls = source.calls().len();
+        // Shutdown must not wait for the unrelated artist lock to be released.
+        supervisor.shutdown_and_wait();
+        drop(guard);
+        assert_eq!(calls, 2);
+        for entry in entries {
+            let bundle = repository
+                .pipeline_artifact_bundle(&DownloadEntryId::new(entry).unwrap())
+                .unwrap()
+                .unwrap();
+            assert_ne!(bundle.artifact.state, DownloadArtifactState::Complete);
+        }
+        assert_eq!(service.download_recover_interrupted().unwrap(), 2);
+        let (resumed, _events) = launch(&repository, Arc::new(FakeDownloadSource::new(1, None)));
+        assert_eq!(resumed.resume_interrupted().unwrap(), 2);
+        resumed.shutdown_and_wait();
+    }
+
+    #[test]
+    fn parallel_page_failure_drains_siblings_and_preserves_the_original_failure() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let mut fixture = FakeDownloadSource::new(2, Some(1));
+        fixture.fail_page = Some(2);
+        let source = Arc::new(fixture);
+        let (events, _receiver) = mpsc::channel();
+        let supervisor = DownloadSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            source.clone(),
+            Arc::new(FilesystemArtifactStore::new()),
+            events,
+            2,
+        )
+        .unwrap();
+        let queued = service
+            .download_queue_add(vec![101], "parallel-failure".into())
+            .unwrap();
+        let entry = queued.jobs[0].entry_id.clone();
+        supervisor.enqueue_all(queued.jobs).unwrap();
+        let failed = wait_for_state(&service, &entry, JobState::Failed, 0.0);
+        supervisor.shutdown_and_wait();
+        assert_eq!(failed.error_code.as_deref(), Some("IMAGE_DECODE_FAILED"));
+        assert!(unpoison(supervisor.inner.cancellations.lock()).is_empty());
+        assert!(unpoison(supervisor.inner.queue.lock()).known.is_empty());
+        // The blocked sibling has returned before the job becomes retryable.
+        let bundle = repository
+            .pipeline_artifact_bundle(&DownloadEntryId::new(entry).unwrap())
+            .unwrap()
+            .unwrap();
+        assert!(bundle
+            .pages
+            .iter()
+            .all(|p| p.state != PageArtifactState::Present));
+    }
+
+    #[test]
+    fn next_attempt_waits_for_cancelled_artifact_owner_to_finish() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let source = Arc::new(FakeDownloadSource::new(1, None));
+        let (supervisor, _events) = launch(&repository, source.clone());
+        let queued = service
+            .download_queue_add(vec![101], "retry-owner-fence".into())
+            .unwrap();
+        let descriptor = queued.jobs[0].clone();
+        let mut previous = descriptor.clone();
+        previous.worker_attempt = 0;
+        let cancellation = CancellationToken::new();
+        assert!(workers::claim_job(
+            &supervisor.inner,
+            &previous,
+            &cancellation
+        ));
+        cancellation.cancel();
+        supervisor.enqueue_all(queued.jobs).unwrap();
+        thread::sleep(Duration::from_millis(75));
+        let premature_calls = source.calls();
+        workers::finish_job(&supervisor.inner, &previous);
+        wait_for_state(&service, &descriptor.entry_id, JobState::Completed, 100.0);
+        supervisor.shutdown_and_wait();
+        assert!(premature_calls.is_empty());
+        assert_eq!(source.calls(), vec![1]);
+    }
+
+    #[test]
+    fn shutdown_releases_a_coordinator_waiting_for_the_previous_attempt() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let source = Arc::new(FakeDownloadSource::new(1, None));
+        let (supervisor, _events) = launch(&repository, source.clone());
+        let queued = service
+            .download_queue_add(vec![101], "retry-owner-shutdown".into())
+            .unwrap();
+        let mut previous = queued.jobs[0].clone();
+        previous.worker_attempt = 0;
+        assert!(workers::claim_job(
+            &supervisor.inner,
+            &previous,
+            &CancellationToken::new()
+        ));
+        supervisor.enqueue_all(queued.jobs).unwrap();
+        supervisor.shutdown_and_wait();
+        assert!(source.calls().is_empty());
+        workers::finish_job(&supervisor.inner, &previous);
     }
 
     #[test]

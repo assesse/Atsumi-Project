@@ -27,6 +27,9 @@
 .auto-record-last-failure p {margin-top:5px;font-size:12px;line-height:1.6;color:#c6bbc9;overflow-wrap:anywhere;}
 .auto-record-actions {display:flex;gap:6px;flex-shrink:0;}
 .auto-record-actions .auto-record-stop {color:#edb1b7;}
+.auto-record-actions .auto-record-watch {color:#8be7c6;border-color:#367962;background:#183c32;}
+.auto-record-actions .auto-record-watch:hover:not(:disabled) {background:#23533f;border-color:#6fcba3;}
+.auto-record-actions {flex-wrap:wrap;justify-content:flex-end;}
 .auto-record-panel .auto-record-error {color:#edb1b7;margin-bottom:16px;}
 .auto-record-empty {padding:64px 16px;text-align:center;color:#aaa5b3;border:1px dashed #49424f;border-radius:12px;}
 @media(max-width:780px) {.auto-record-panel{padding:16px;}.auto-record-channel{align-items:flex-start;flex-direction:column;}.auto-record-actions{align-self:flex-end;}.auto-record-identity strong{max-width:100%;}}

@@ -595,66 +595,84 @@ impl ArtifactStore for FilesystemArtifactStore {
         root: &Path,
         page: &PageArtifact,
     ) -> Result<Vec<u8>, DownloadPipelineError> {
-        if page.state != PageArtifactState::Present
-            || page.excluded
-            || page.storage_format != Some(ArtifactStorageFormat::Webp)
-            || page.source_revision.is_none()
-            || page.verified_at.is_none()
-        {
-            return Err(DownloadPipelineError::new(
-                DownloadPipelineErrorCode::ArtifactMissing,
-                "Only a present verified non-excluded page can be scanned",
-                false,
-            ));
-        }
-        let expected_length = page.byte_length.ok_or_else(|| {
-            DownloadPipelineError::new(
-                DownloadPipelineErrorCode::ManifestInvalid,
-                "The verified page is missing its byte length",
-                false,
-            )
-        })?;
-        let expected_sha = page.sha256.as_ref().ok_or_else(|| {
-            DownloadPipelineError::new(
-                DownloadPipelineErrorCode::ManifestInvalid,
-                "The verified page is missing its SHA-256 digest",
-                false,
-            )
-        })?;
-        if expected_length == 0 || expected_length > MAX_MANAGED_PAGE_BYTES {
-            return Err(DownloadPipelineError::new(
-                DownloadPipelineErrorCode::ImageDecodeFailed,
-                "The verified page exceeds the safe scan byte limit",
-                false,
-            ));
-        }
-        // Duplicate scans and local previews are read-only.  Do not run the
-        // write-probe used by download preparation once per page; the scan
-        // supervisor validates the configured root once before dispatching.
-        let root = resolve_existing_download_root(root)?;
-        let path = resolve_managed_path(&root, &page.relative_path, true)?;
-        let metadata = fs::metadata(&path)
-            .map_err(|_| filesystem_error("The verified page metadata could not be read"))?;
-        if metadata.len() != expected_length {
-            return Err(DownloadPipelineError::new(
-                DownloadPipelineErrorCode::HashMismatch,
-                "The verified page byte length changed before duplicate scanning",
-                false,
-            ));
-        }
-        let bytes = fs::read(&path)
-            .map_err(|_| filesystem_error("The verified page could not be read for scanning"))?;
-        let actual_sha = format!("{:x}", Sha256::digest(&bytes));
-        if actual_sha != expected_sha.as_str() {
-            return Err(DownloadPipelineError::new(
-                DownloadPipelineErrorCode::HashMismatch,
-                "The verified page SHA-256 changed before duplicate scanning",
-                false,
-            ));
-        }
-        decode_image(&bytes, ImageFormat::WebP)?;
-        Ok(bytes)
+        read_checked_page_bytes(root, page, true)
     }
+
+    fn read_integrity_checked_page_bytes(
+        &self,
+        root: &Path,
+        page: &PageArtifact,
+    ) -> Result<Vec<u8>, DownloadPipelineError> {
+        read_checked_page_bytes(root, page, false)
+    }
+}
+
+fn read_checked_page_bytes(
+    root: &Path,
+    page: &PageArtifact,
+    decode: bool,
+) -> Result<Vec<u8>, DownloadPipelineError> {
+    if page.state != PageArtifactState::Present
+        || page.excluded
+        || page.storage_format != Some(ArtifactStorageFormat::Webp)
+        || page.source_revision.is_none()
+        || page.verified_at.is_none()
+    {
+        return Err(DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ArtifactMissing,
+            "Only a present verified non-excluded page can be scanned",
+            false,
+        ));
+    }
+    let expected_length = page.byte_length.ok_or_else(|| {
+        DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ManifestInvalid,
+            "The verified page is missing its byte length",
+            false,
+        )
+    })?;
+    let expected_sha = page.sha256.as_ref().ok_or_else(|| {
+        DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ManifestInvalid,
+            "The verified page is missing its SHA-256 digest",
+            false,
+        )
+    })?;
+    if expected_length == 0 || expected_length > MAX_MANAGED_PAGE_BYTES {
+        return Err(DownloadPipelineError::new(
+            DownloadPipelineErrorCode::ImageDecodeFailed,
+            "The verified page exceeds the safe scan byte limit",
+            false,
+        ));
+    }
+    // Duplicate scans and local previews are read-only.  Do not run the
+    // write-probe used by download preparation once per page; the scan
+    // supervisor validates the configured root once before dispatching.
+    let root = resolve_existing_download_root(root)?;
+    let path = resolve_managed_path(&root, &page.relative_path, true)?;
+    let metadata = fs::metadata(&path)
+        .map_err(|_| filesystem_error("The verified page metadata could not be read"))?;
+    if metadata.len() != expected_length {
+        return Err(DownloadPipelineError::new(
+            DownloadPipelineErrorCode::HashMismatch,
+            "The verified page byte length changed before duplicate scanning",
+            false,
+        ));
+    }
+    let bytes = fs::read(&path)
+        .map_err(|_| filesystem_error("The verified page could not be read for scanning"))?;
+    let actual_sha = format!("{:x}", Sha256::digest(&bytes));
+    if actual_sha != expected_sha.as_str() {
+        return Err(DownloadPipelineError::new(
+            DownloadPipelineErrorCode::HashMismatch,
+            "The verified page SHA-256 changed before duplicate scanning",
+            false,
+        ));
+    }
+    if decode {
+        decode_image(&bytes, ImageFormat::WebP)?;
+    }
+    Ok(bytes)
 }
 
 trait OsStrUtf16Units {
@@ -747,6 +765,14 @@ fn normalized_webp_bytes_with_cancellation<'a>(
     page: &'a DownloadPagePayload,
     cancellation: Option<&CancellationToken>,
 ) -> Result<Cow<'a, [u8]>, DownloadPipelineError> {
+    if let Some(cancellation) = cancellation {
+        ensure_not_cancelled(cancellation)?;
+    }
+    // A digest-bound source decoder proof avoids repeating the full WebP
+    // decode. Mutated buffers and all other input formats still get decoded.
+    if page.has_unchanged_decoded_webp() {
+        return Ok(Cow::Borrowed(&page.bytes));
+    }
     // Hold one slot through decoding, conversion and output validation. The
     // lower-level decode helpers must not acquire the same budget recursively.
     let _image_work = crate::application::image_work_budget::acquire(cancellation)
@@ -1122,6 +1148,7 @@ mod tests {
             height: 1,
             candidate_index: 0,
             candidate_diagnostics: Vec::new(),
+            decoded_sha256: None,
         }
     }
 
@@ -1134,6 +1161,38 @@ mod tests {
         let error =
             normalized_webp_bytes_with_cancellation(&page, Some(&cancellation)).unwrap_err();
         assert_eq!(error.code, DownloadPipelineErrorCode::Cancelled);
+    }
+
+    #[test]
+    fn decoded_webp_proof_is_bound_to_the_exact_bytes_and_cancellation() {
+        let source = png_page();
+        let bytes = normalized_webp_bytes_with_cancellation(&source, None)
+            .unwrap()
+            .into_owned();
+        let mut page = DownloadPagePayload {
+            bytes,
+            source_format: DownloadSourceImageFormat::Webp,
+            ..source
+        };
+        assert!(!page.has_unchanged_decoded_webp());
+        decode_image(&page.bytes, ImageFormat::WebP).unwrap();
+        page.mark_decoded();
+        assert!(page.has_unchanged_decoded_webp());
+        assert!(matches!(
+            normalized_webp_bytes_with_cancellation(&page, None).unwrap(),
+            Cow::Borrowed(_)
+        ));
+        let cancelled = CancellationToken::new();
+        cancelled.cancel();
+        assert_eq!(
+            normalized_webp_bytes_with_cancellation(&page, Some(&cancelled))
+                .unwrap_err()
+                .code,
+            DownloadPipelineErrorCode::Cancelled
+        );
+        page.bytes[0] ^= 1;
+        assert!(!page.has_unchanged_decoded_webp());
+        assert!(normalized_webp_bytes_with_cancellation(&page, None).is_err());
     }
 
     #[test]

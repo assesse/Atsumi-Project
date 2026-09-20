@@ -239,5 +239,12 @@
   Object.defineProperty(window, "__atsumiMultiView", { value: Object.freeze({
     getState: () => ({ kind: chat ? "chat" : "video", active, reason, audioEnabled }),
     configureChat,
+    // Presentation only: preserve the video, chat connection and capture session.
+    setVideoOnly: (enabled) => {
+      if (chat || typeof enabled !== "boolean") return;
+      if (requested && !enabled) restoreOfficialView();
+      requested = enabled;
+      update();
+    },
   }) });
 })();

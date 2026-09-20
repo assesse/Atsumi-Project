@@ -42,11 +42,14 @@ export type BrowserRecording = {
   durationSeconds: number;
   lastError: string | null;
   segments: BrowserRecordingSegment[];
+  broadcastKey?: string | null;
+  ending?: { reason: string; trigger: string; stoppedAt: number; confirmedAt: number | null } | null;
   partial?: Pick<BrowserRecordingSegment, "index" | "file" | "bytes"> | null;
   captureChat?: boolean;
   chatStatus?: string;
   chatCount?: number;
   merge?: BrowserMerge | null;
+  progressive?: { partCount: number; segmentCount: number; durationSeconds: number; lastError: string | null } | null;
   deletionPending?: boolean;
 };
 
@@ -79,7 +82,7 @@ export type OfficialBrowserSnapshot = {
   diagnostics?: unknown;
   captureDiagnostics?: { reason: string; installed: boolean; appendCount: number; appendBytes: number } | null;
   pendingControl?: { id: string; action: "record_start" | "record_stop" | "screenshot"; channelId: string; expiresAt: number } | null;
-  pendingUiAction?: { id: string; action: "exit_focus" | "toggle_focus" | "open_settings"; expiresAt: number } | null;
+  pendingUiAction?: { id: string; action: "exit_focus" | "toggle_focus" | "open_settings" | "record_only"; expiresAt: number } | null;
   lastScreenshot?: { id: string; channelId: string; fileName: string; createdAt: number } | null;
 };
 
@@ -90,6 +93,8 @@ export type OfficialBrowserViewport = {
   width: number;
   height: number;
   visible: boolean;
+  /** Privacy silences attached playback without changing the user's mute choice. */
+  suspendAudio?: boolean;
   /** Mask remote pixels/input for trusted popups without suspending playback. */
   occluded?: boolean;
   /** Retain background paint while disabling input throughout the native view. */
@@ -277,8 +282,9 @@ export function claimOfficialBrowserViewport(api: OfficialBrowserApi, report?: (
       released = true;
       if (state.owner !== owner || api.runtime !== "tauri") return;
       const epoch = state.target?.viewport.epoch;
+      const audio = state.target?.viewport.suspendAudio ? { suspendAudio: true } : {};
       state.owner += 1; // Invalidate callbacks belonging to the departing component.
-      submit(epoch === undefined ? hiddenOfficialBrowserViewport : { ...hiddenOfficialBrowserViewport, epoch }, state.owner);
+      submit({ ...hiddenOfficialBrowserViewport, ...audio, ...(epoch === undefined ? {} : { epoch }) }, state.owner);
     },
   };
 }

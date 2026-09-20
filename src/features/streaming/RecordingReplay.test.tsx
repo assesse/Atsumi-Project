@@ -8,7 +8,7 @@ import { RecordingReplayChat } from "./RecordingReplayChat";
 import { PLAYER_CHANNEL, type OriginalPlayerState } from "./OriginalChzzkPlayer";
 import { boundedReplayMessages, replayFocusableControls, replayMessageTime, replayVirtualRange, safeNicknameColor } from "./RecordingReplayModel";
 
-vi.mock("@tauri-apps/api/core", () => ({ convertFileSrc: (file: string, protocol: string) => `http://${protocol}.localhost/${file}` }));
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false, convertFileSrc: (file: string, protocol: string) => `http://${protocol}.localhost/${file}` }));
 
 const ok = <T,>(data: T): ApiResult<T> => ({ ok: true, data });
 const session: ReplaySession = { token: "a".repeat(64), recordingId: "synthetic-recording", title: "합성 다시보기", recordedAt: 1789272000000, durationSeconds: 120, mimeType: "video/mp4", chatStatus: "partial", indexState: "ready", syncQuality: "receive_time_approximate", manualOffsetSeconds: 0, warnings: [] };
@@ -60,6 +60,62 @@ async function openOffset() {
 }
 
 describe("offline recording replay", () => {
+  const rangeSession = (token: string, count = 2): ReplaySession => ({ ...session, token, durationSeconds: count * 60, recordingActive: true,
+    parts: Array.from({ length: count }, (_, index) => ({ index, startSeconds: index * 60, durationSeconds: 60 })) });
+  const mockRangeVideo = () => {
+    vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+  };
+  it("keeps the current prefix open when there is no new range and releases only the extra lease", async () => {
+    mockRangeVideo(); const api = mockApi();
+    api.open.mockResolvedValueOnce(ok(rangeSession("first"))).mockResolvedValueOnce(ok(rangeSession("unchanged")));
+    await render(api);
+    await act(async () => button("새 저장 구간 불러오기").click());
+    expect(api.close).toHaveBeenCalledExactlyOnceWith("unchanged");
+    expect(document.querySelector("video")).toBeNull();
+    expect(messages("init").at(-1)).toMatchObject({ url: "http://atsumi-replay.localhost/first", parts: rangeSession("first").parts });
+    expect(document.body).toHaveTextContent("아직 새로 확정된 구간이 없습니다");
+  });
+  it("preserves the latest global position across a new saved-range snapshot and releases each lease once", async () => {
+    mockRangeVideo(); const api = mockApi(); const next = deferred<ApiResult<ReplaySession>>();
+    api.open.mockResolvedValueOnce(ok(rangeSession("first"))).mockReturnValueOnce(next.promise);
+    await render(api);
+    const frame = playerFrame();
+    await moveVideo(35);
+    await act(async () => button("새 저장 구간 불러오기").click());
+    await moveVideo(40);
+    await act(async () => next.resolve(ok(rangeSession("extended", 3))));
+    expect(api.close).not.toHaveBeenCalled();
+    await act(async () => dispatchPlayer("source", "http://atsumi-replay.localhost/extended"));
+    expect(playerFrame()).toBe(frame);
+    expect(messages("init").at(-1)).toMatchObject({ duration: 180, parts: rangeSession("extended", 3).parts });
+    expect(api.close).toHaveBeenCalledExactlyOnceWith("first");
+    await act(async () => root.render(<div />));
+    expect(api.close.mock.calls.map(([token]) => token)).toEqual(["first", "extended"]);
+  });
+  it("closes a refresh result arriving after the player unmounts without closing it twice", async () => {
+    mockRangeVideo(); const api = mockApi(); const next = deferred<ApiResult<ReplaySession>>();
+    api.open.mockResolvedValueOnce(ok(rangeSession("first"))).mockReturnValueOnce(next.promise);
+    await render(api); await act(async () => button("새 저장 구간 불러오기").click());
+    await act(async () => root.render(<div />)); await act(async () => next.resolve(ok(rangeSession("late", 3))));
+    expect(api.close.mock.calls.map(([token]) => token)).toEqual(["first", "late"]);
+  });
+  it("checks for another saved range when playback reaches the current tail", async () => {
+    mockRangeVideo(); const api = mockApi();
+    api.open.mockResolvedValueOnce(ok(rangeSession("first", 1))).mockResolvedValueOnce(ok(rangeSession("extended", 2)));
+    await render(api); await act(async () => dispatchPlayer("tail"));
+    await act(async () => dispatchPlayer("source", "http://atsumi-replay.localhost/extended"));
+    expect(api.open).toHaveBeenCalledTimes(2); expect(api.close).toHaveBeenCalledExactlyOnceWith("first");
+  });
+  it("checks a still-recording tail periodically but never polls while watching older saved footage or in privacy mode", async () => {
+    vi.useFakeTimers(); const api = mockApi(); api.open.mockResolvedValue(ok(rangeSession("first")));
+    await render(api); await moveVideo(20);
+    await act(async () => vi.advanceTimersByTimeAsync(15000)); expect(api.open).toHaveBeenCalledTimes(1);
+    await moveVideo(120);
+    await act(async () => vi.advanceTimersByTimeAsync(15000)); expect(api.open).toHaveBeenCalledTimes(2);
+    await render(api, true);
+    await act(async () => vi.advanceTimersByTimeAsync(30000)); expect(api.open).toHaveBeenCalledTimes(2);
+  });
   it("forwards privacy to the opaque player without reloading its media or inspecting a foreign video", async () => {
     const api = mockApi(); await render(api);
     const frame = playerFrame();

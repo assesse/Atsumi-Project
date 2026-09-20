@@ -11,7 +11,8 @@
   let state = { ready: false, recording: false, detail: "unavailable" };
   let controls = null, record = null, screenshot = null, speed = null, focus = null, player = null, style = null;
   let topControls = null, settings = null, rateButton = null, rateMenu = null;
-  const context = { multiview: false };
+  let recordOnly = null;
+  const context = { multiview: false, automaticWatch: false };
   let catchup = null;
   let selectedRate = null;
   const RATES = [.5, .75, 1, 1.25, 1.5, 2];
@@ -63,6 +64,10 @@
     try {
       await request("view_intent", { channelId: sourceChannel, action });
       if (channel() !== sourceChannel) throw new Error("시청 채널이 변경되었습니다");
+      if (action === "record_only") {
+        const video = videoSource();
+        if (video) { video.muted = true; if (video.paused) video.play().catch(() => {}); }
+      }
     } catch (error) { tell(error.message); }
     finally { intentBusy = false; render(); }
   };
@@ -274,7 +279,7 @@
     }
     settings.disabled = intentBusy;
     settings.title = Date.now() < noticeUntil ? notice : "시청 설정 · 로그인 · 고화질 연결";
-    topControls.hidden = context.multiview;
+    topControls.hidden = context.multiview || context.automaticWatch;
     if (context.multiview) topControls.remove();
     else layoutTopControls(nextPlayer);
     if (!nextPlayer || !video) { controls?.remove(); return; }
@@ -290,6 +295,9 @@
       };
       record = button("녹화", '<circle cx="12" cy="12" r="8" stroke-width="1.4"/><circle class="atsumi-record-idle" cx="12" cy="12" r="4.5"/><rect class="atsumi-record-stop" x="8" y="8" width="8" height="8" rx="1" fill="currentColor" stroke="none"/>');
       record.addEventListener("click", (event) => { event.stopPropagation(); void intent(state.recording ? "record_stop" : "record_start", event); });
+      recordOnly = button("녹화만 계속", '<path d="M3 8h4l5-4v16l-5-4H3zM16 9l6 6m0-6-6 6"/>');
+      recordOnly.title = "음소거하고 시청 화면만 닫기 · 영상과 채팅 녹화는 계속됩니다";
+      recordOnly.addEventListener("click", (event) => { event.stopPropagation(); void viewIntent("record_only", event); });
       screenshot = button("스크린샷", '<path d="M4 6h4l2-2h4l2 2h4v14H4z"/><circle cx="12" cy="13" r="4"/>');
       screenshot.setAttribute("aria-keyshortcuts", "S");
       screenshot.addEventListener("click", (event) => { event.stopPropagation(); void intent("screenshot", event); });
@@ -330,6 +338,12 @@
     controls.toggleAttribute("data-floating", !strip);
     record.disabled = intentBusy || (!state.recording && !state.ready) || state.detail === "saving";
     screenshot.disabled = intentBusy || snapshotBusy || !video;
+    // A foreground automatic session uses these exact controls/approval paths.
+    // Only off-canvas receivers suppress them.
+    record.hidden = context.automaticWatch;
+    screenshot.hidden = context.automaticWatch;
+    recordOnly.hidden = !state.recording || context.multiview || context.automaticWatch;
+    recordOnly.disabled = intentBusy;
     rateButton.disabled = !rateAllowed(video);
     if (rateButton.disabled) rateMenu.hidden = true;
     rateButton.textContent = `${Number.isFinite(video.playbackRate) ? video.playbackRate : 1}×`;
@@ -403,7 +417,7 @@
       return box.width > 0 && box.height > 0 && css.display !== "none" && css.visibility !== "hidden";
     })) return;
     const isScreenshot = event.code === "KeyS" || event.key?.toLowerCase() === "s";
-    if (isScreenshot && videoSource() && !snapshotBusy && !intentBusy) {
+    if (isScreenshot && !context.automaticWatch && videoSource() && !snapshotBusy && !intentBusy) {
       event.preventDefault(); event.stopPropagation(); void intent("screenshot", event);
     } else if (event.key === "Escape" && context.multiview && !document.fullscreenElement && !intentBusy) {
       event.preventDefault(); event.stopPropagation(); void viewIntent("exit_focus", event);
@@ -427,6 +441,7 @@
     update: (next) => { state = next; render(); },
     configure: (next) => {
       if (typeof next?.multiview === "boolean") context.multiview = next.multiview;
+      if (typeof next?.automaticWatch === "boolean") context.automaticWatch = next.automaticWatch;
       render();
     },
     stopCatchup,

@@ -18,7 +18,15 @@ export function hasCompletedMerge(recording: BrowserRecording): boolean {
     typeof merge.durationSeconds === "number" && Number.isFinite(merge.durationSeconds) && merge.durationSeconds > 0;
 }
 
+export function hasReplayableRanges(recording: BrowserRecording): boolean {
+  const ranges = recording.progressive;
+  return !!ranges && Number.isSafeInteger(ranges.partCount) && ranges.partCount > 0 &&
+    Number.isSafeInteger(ranges.segmentCount) && ranges.segmentCount >= ranges.partCount && ranges.segmentCount <= recording.segmentCount &&
+    Number.isFinite(ranges.durationSeconds) && ranges.durationSeconds > 0;
+}
+
 export function recordingMergeLabel(recording: BrowserRecording): string {
+  if (recording.progressive && !hasCompletedMerge(recording) && (recording.status === "recording" || !recording.merge || recording.merge.status === "queued")) return recording.progressive.lastError ? "구간 병합 확인 필요" : `구간 병합 ${recording.progressive.partCount}개 완료`;
   if (recording.status === "recording") return "녹화 종료 후 병합";
   if (hasCompletedMerge(recording)) return "병합 완료";
   if (recording.segmentCount === 0) return "확정 조각 없음";
@@ -55,12 +63,18 @@ export function RecordingPlayback({ recording, disabled, privacyMode, retrying, 
   return <div className="official-browser-playback">
     <p className={failed ? "official-browser-warning" : "official-browser-note"} role="status">
       <strong>{recordingMergeLabel(recording)}</strong>
-      {active ? " · 녹화를 끝낸 뒤 확정된 조각을 하나의 파일로 병합합니다." : null}
+      {active ? recording.progressive ? " · 약 3분 또는 48 MiB마다 확정된 구간을 병합합니다. 완료 구간부터 재생할 수 있습니다." : " · 녹화를 끝낸 뒤 확정된 조각을 하나의 파일로 병합합니다." : null}
       {!active && (merge?.status === "queued" || merge?.status === "merging") ? " · 병합·전체 재생 검증 중에는 원본 조각을 보존합니다. 긴 영상은 시간이 더 걸릴 수 있습니다." : null}
       {completed ? ` · ${duration(merge!.durationSeconds!)} · ${bytes(merge!.bytes!)}` : null}
     </p>
     {failed && merge?.lastError ? <p className="official-browser-error" role="alert">{merge.lastError}</p> : null}
     {!completed && !active && merge?.status === "complete" ? <p className="official-browser-error" role="alert">병합 결과 정보를 확인하지 못했습니다. 원본 조각을 이용해 주세요.</p> : null}
+    {!completed && hasReplayableRanges(recording) ? <>
+      <button type="button" className="official-browser-primary" disabled={disabled || privacyMode} onClick={() => onReplay(recording.id)}>앱에서 다시보기</button>
+      <p className="official-browser-muted">{duration(recording.progressive!.durationSeconds)}까지 준비됐습니다. {active ? "구간은 자동으로 이어서 재생하며 영상·채팅 녹화는 계속됩니다." : "전체 파일 병합을 기다리지 않고 완료 구간부터 볼 수 있습니다."}</p>
+    </> : null}
+    {recording.progressive?.lastError ? <p className="official-browser-error" role="alert">{recording.progressive.lastError}</p> : null}
+    {recording.progressive?.lastError && !retryable ? <button type="button" disabled={disabled || retrying} onClick={() => onRetryMerge(recording.id)}>{retrying ? "요청 중…" : "구간 병합 다시 시도"}</button> : null}
     {completed ? <>
       <button type="button" className="official-browser-primary" disabled={disabled || privacyMode} onClick={() => onReplay(recording.id)}>앱에서 다시보기</button>{" "}
       <button type="button" disabled={disabled} onClick={() => onOpenMerged(recording.id)}>{opening ? "여는 중…" : "외부 플레이어로 열기"}</button>

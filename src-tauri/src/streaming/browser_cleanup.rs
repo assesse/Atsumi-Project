@@ -41,6 +41,16 @@ struct Proof {
     timeline_sha256: String,
     journal_sha256: String,
     segments: Vec<SourceProof>,
+    #[serde(default)]
+    derivatives: Vec<DerivativeProof>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DerivativeProof {
+    file: String,
+    bytes: u64,
+    sha256: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -51,7 +61,7 @@ struct SourceProof {
     sha256: String,
 }
 
-fn valid_hash(hash: &str) -> bool {
+pub(super) fn valid_hash(hash: &str) -> bool {
     hash.len() == 64
         && hash
             .bytes()
@@ -141,6 +151,63 @@ pub(crate) fn source_hash(
     hash_file(&mut file, cancel)
 }
 
+/// Bind a final export to the exact ranges and raw inputs verified earlier.
+/// Changed ranges or changed originals never authorize source cleanup.
+pub(crate) fn verified_range_inputs(
+    job: &BrowserMergeJob,
+    cancel: &AtomicBool,
+) -> Result<(Vec<String>, Vec<DerivativeProof>), StreamError> {
+    if job.part.is_some() || job.recording.progressive.is_none() {
+        return Ok((vec![], vec![]));
+    }
+    let root = validate_merge_generation(job)?;
+    let mut hashes = Vec::new();
+    let mut derivatives = Vec::new();
+    for part in parts::load(&job.recording)? {
+        let mut file = pinned_file(&root.join(&part.proof_file), MAX_PROOF)?;
+        if hash_file(&mut file, cancel)? != part.proof_sha256 {
+            return Err(invalid());
+        }
+        file.seek(SeekFrom::Start(0)).map_err(|_| storage())?;
+        let proof: Proof = serde_json::from_reader(file).map_err(|_| invalid())?;
+        if proof.version != 1
+            || proof.recording_id != job.recording.id
+            || !proof.derivatives.is_empty()
+            || proof.segments.len() as u64 != part.end - part.first
+            || hashes.len() as u64 != part.first
+        {
+            return Err(invalid());
+        }
+        for (offset, source) in proof.segments.iter().enumerate() {
+            if source.index != part.first + offset as u64 || !valid_hash(&source.sha256) {
+                return Err(invalid());
+            }
+            hashes.push(source.sha256.clone());
+        }
+        for (name, expected) in [
+            (&part.file, &proof.media_sha256),
+            (&part.timeline_file, &proof.timeline_sha256),
+        ] {
+            let mut file = pinned_file(&root.join(name), 256 * 1024 * 1024)?;
+            let bytes = file.metadata().map_err(|_| storage())?.len();
+            if name == &part.file && bytes != part.bytes
+                || hash_file(&mut file, cancel)? != *expected
+            {
+                return Err(invalid());
+            }
+            derivatives.push(DerivativeProof {
+                file: name.clone(),
+                bytes,
+                sha256: expected.clone(),
+            });
+        }
+    }
+    if hashes.len() as u64 != job.recording.segment_count {
+        return Err(invalid());
+    }
+    Ok((hashes, derivatives))
+}
+
 /// Called only after full A/V decoding and duration/codec verification succeed.
 /// Re-read each source so a changed input cannot authorize later deletion.
 pub(crate) fn write_proof(
@@ -166,16 +233,24 @@ pub(crate) fn write_proof(
             sha256: expected.clone(),
         });
     }
+    let (_, derivatives) = verified_range_inputs(job, cancel)?;
+    let journal_sha256 = if let Some(plan) = &job.part {
+        validate_merge_generation(job)?;
+        plan.prefix_sha256.clone()
+    } else {
+        hash_file(
+            &mut pinned_file(&root.join("segments.jsonl"), MAX_JOURNAL)?,
+            cancel,
+        )?
+    };
     let proof = Proof {
         version: 1,
         recording_id: job.recording.id.clone(),
         media_sha256: hash_file(&mut pinned_file(media, u64::MAX)?, cancel)?,
         timeline_sha256: hash_file(&mut pinned_file(timeline, 128 * 1024 * 1024)?, cancel)?,
-        journal_sha256: hash_file(
-            &mut pinned_file(&root.join("segments.jsonl"), MAX_JOURNAL)?,
-            cancel,
-        )?,
+        journal_sha256,
         segments: sources,
+        derivatives,
     };
     let bytes = serde_json::to_vec(&proof).map_err(|_| storage())?;
     if bytes.len() as u64 > MAX_PROOF {
@@ -246,6 +321,7 @@ impl BrowserCaptureStore {
                 token,
                 journal_len: metadata.len(),
                 journal_modified: metadata.modified().map_err(|_| storage())?,
+                part: None,
             })
         })();
         let job = match prepared {
@@ -368,6 +444,22 @@ pub(crate) fn remove_verified_sources(
                 return Err(invalid());
             }
         }
+        let range_files: Vec<String> = if job.recording.progressive.is_some() {
+            parts::load(&job.recording)?
+                .into_iter()
+                .flat_map(|p| [p.file, p.timeline_file])
+                .collect()
+        } else {
+            vec![]
+        };
+        if range_files.len() != proof.derivatives.len()
+            || range_files
+                .iter()
+                .zip(&proof.derivatives)
+                .any(|(name, p)| name != &p.file || p.bytes == 0 || !valid_hash(&p.sha256))
+        {
+            return Err(invalid());
+        }
         for (segment, source) in segments.iter().zip(&proof.segments) {
             if cancel.load(Ordering::Acquire) {
                 return Err(inactive());
@@ -388,8 +480,35 @@ pub(crate) fn remove_verified_sources(
             remove_one(&path, source, cancel)?;
             deleted += 1;
         }
+        // Finished-prefix readers retain their already-open handles. Only the
+        // exact proven derivatives are retired after the final file is durable.
+        for derivative in &proof.derivatives {
+            if cancel.load(Ordering::Acquire) {
+                return Err(inactive());
+            }
+            let path = root.join(&derivative.file);
+            if !path.try_exists().map_err(|_| storage())? {
+                continue;
+            }
+            remove_one(
+                &path,
+                &SourceProof {
+                    index: 0,
+                    bytes: derivative.bytes,
+                    sha256: derivative.sha256.clone(),
+                },
+                cancel,
+            )?;
+        }
         Ok(())
     })();
+    #[cfg(test)]
+    if let Err(error) = &result {
+        eprintln!(
+            "source cleanup blocked after {deleted} source files: {}",
+            error.code
+        );
+    }
     CleanupOutcome {
         deleted,
         complete: result.is_ok(),

@@ -49,10 +49,16 @@ impl ChzzkProvider {
         let channel = parse_channel(input)?;
         let detail = self.detail(&channel)?;
         let mut info = live_info(&channel, &detail);
-        info.status = if detail.get("status").and_then(Value::as_str) == Some("OPEN") {
-            LiveStatus::Live
-        } else {
-            LiveStatus::Offline
+        info.status = match detail.get("status").and_then(Value::as_str) {
+            Some("OPEN") => LiveStatus::Live,
+            Some("CLOSE") => LiveStatus::Offline,
+            _ => {
+                return Err(StreamError::new(
+                    "invalid_live_status",
+                    "방송 상태 응답을 확인할 수 없습니다.",
+                    true,
+                ))
+            }
         };
         Ok(info)
     }
@@ -82,6 +88,15 @@ impl ChzzkProvider {
             .get("channelImageUrl")
             .and_then(Value::as_str)
             .and_then(super::chat_assets::sanitize_chat_asset_url);
+        // Channel avatars can be multi-megabyte originals. Capture the CDN's
+        // bounded avatar rendition, not the full-resolution upload.
+        let image = image.map(|image| {
+            let mut url = Url::parse(&image).expect("validated asset URL");
+            if url.host_str() == Some("nng-phinf.pstatic.net") {
+                url.set_query(Some("type=f160_160"));
+            }
+            url.into()
+        });
         Ok((name, image))
     }
 

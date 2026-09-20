@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import source from "../../../public/original-player/runtime.js?raw";
 import metadataSource from "../../../public/original-player/recording-metadata.js?raw";
+import recordingSource from "../../../public/original-player/recording-source.js?raw";
 
 it("accepts only bounded inline saved profile rasters, never remote URLs or active markup", () => {
   const fallback = "/assets/default_profile_dark.png";
@@ -14,12 +15,31 @@ it("accepts only bounded inline saved profile rasters, never remote URLs or acti
 });
 
 const nonce = "a".repeat(32);
+
+it("opens only the saved profile on click/keyboard and releases its handlers", async () => {
+  const declaration = metadataSource.slice(metadataSource.indexOf("export function bindRecordedProfile")).replace("export function", "function");
+  const bind = new Function(declaration + ";return bindRecordedProfile;")();
+  const slot = document.createElement("div"), onChannel = vi.fn();
+  const release = bind(slot, onChannel);
+  slot.innerHTML = '<img width="60" height="60"><p>방송 제목</p>';
+  await Promise.resolve();
+  const image = slot.querySelector("img")!;
+  expect(image).toHaveAttribute("role", "button"); expect(image.tabIndex).toBe(0);
+  image.click();
+  image.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  image.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+  image.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true }));
+  slot.querySelector("p")!.click();
+  expect(onChannel).toHaveBeenCalledTimes(3);
+  release(); image.click(); expect(onChannel).toHaveBeenCalledTimes(3);
+});
 const mediaUrl = `http://atsumi-replay.localhost/${"b".repeat(32)}`;
 const template = '<div id="player_layout"><pzp-pc-layout></pzp-pc-layout><div class="pzp-pc__progress-slider"></div></div>';
 const transformed = source
   .replace("import originalVodTemplate from './accepted-vod-template.js';", `const originalVodTemplate=${JSON.stringify(template)};`)
   .replace("const sdk=await import('./player-vendor-BYg0wCyN.js');", "const sdk=providedSdk;")
-  .replace("const metadata=await import('./recording-metadata.js');", "const metadata=providedMetadata;");
+  .replace("const metadata=await import('./recording-metadata.js');", "const metadata=providedMetadata;")
+  .replace("const localSource=await import('./recording-source.js');", "const localSource=providedSource;");
 
 async function fixture(options: { top?: boolean; origin?: string; hash?: string } = {}) {
   const document = window.document.implementation.createHTMLDocument("isolated-runtime-test");
@@ -61,22 +81,36 @@ async function fixture(options: { top?: boolean; origin?: string; hash?: string 
   const interval = vi.fn(() => 1), clear = vi.fn();
   const recordingHeader = { update: vi.fn(), dispose: vi.fn() };
   const metadata = { mountRecordingMetadata: vi.fn(() => recordingHeader) };
-  const execute = new Function("window", "document", "location", "parent", "providedSdk", "providedMetadata", "setInterval", "clearInterval", `return (async()=>{${transformed}\n})();`);
-  const boot = execute(frame, document, { hash: options.hash ?? `#${nonce}` }, parent, sdk, metadata, interval, clear) as Promise<void>;
+  const sourceAdapter = { update: vi.fn(), dispose: vi.fn() };
+  const localSource = { recordingSource: new Function(recordingSource.replaceAll("export function", "function") + ";return recordingSource;")(), attachRecordingSource: vi.fn(() => sourceAdapter) };
+  const execute = new Function("window", "document", "location", "parent", "providedSdk", "providedMetadata", "providedSource", "setInterval", "clearInterval", `return (async()=>{${transformed}\n})();`);
+  const boot = execute(frame, document, { hash: options.hash ?? `#${nonce}` }, parent, sdk, metadata, localSource, interval, clear) as Promise<void>;
   const send = (type: string, data?: unknown, patch: Record<string, unknown> = {}) => listeners.get("message")?.({
     source: parent, origin: "http://tauri.localhost", data: { channel: "atsumi-replay-player-v1", nonce, type, data }, ...patch,
   } as unknown as Event);
-  return { boot, send, frame, parent, player, playerListeners, components, provider, upgrade, sdk, clear, document, metadata, recordingHeader };
+  return { boot, send, frame, parent, player, playerListeners, components, provider, upgrade, sdk, clear, document, metadata, recordingHeader, localSource, sourceAdapter };
 }
 
 afterEach(() => vi.restoreAllMocks());
 
 describe("original player runtime isolation and lifecycle", () => {
+  it("uses the same original SDK for local parts, refreshes without a new player and acknowledges source ownership", async () => {
+    const f = await fixture(); await f.boot;
+    const parts = [{ index: 0, startSeconds: 0, durationSeconds: 4 }, { index: 1, startSeconds: 4, durationSeconds: 4 }];
+    f.send("init", { url: mediaUrl, duration: 8, parts });
+    expect(f.provider.mock.calls[0]![0].videoTracks[0]).toMatchObject({ src: mediaUrl + "/part/0", duration: 8 });
+    const replacement = `http://atsumi-replay.localhost/${"c".repeat(32)}`;
+    f.send("init", { url: replacement, duration: 8 });
+    expect(f.sourceAdapter.update).toHaveBeenCalledWith(expect.objectContaining({ url: replacement }));
+    expect(f.upgrade).toHaveBeenCalledOnce(); expect(f.provider).toHaveBeenCalledOnce();
+    expect(f.parent.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "source", data: replacement }), "*");
+    f.send("dispose"); expect(f.sourceAdapter.dispose).toHaveBeenCalledOnce();
+  });
   it("updates saved broadcast metadata without reloading or pausing the video", async () => {
     const f = await fixture(); await f.boot;
     const recording = { title: "저장된 방송 제목", recordedAt: 1789272000000 };
     f.send("init", { url: mediaUrl, duration: 8, recording });
-    expect(f.metadata.mountRecordingMetadata).toHaveBeenCalledWith(f.player, recording);
+    expect(f.metadata.mountRecordingMetadata).toHaveBeenCalledWith(f.player, recording, expect.any(Function));
     f.send("metadata", { ...recording, title: "수정된 제목" });
     expect(f.recordingHeader.update).toHaveBeenCalledWith({ ...recording, title: "수정된 제목" });
     expect(f.upgrade).toHaveBeenCalledTimes(1);

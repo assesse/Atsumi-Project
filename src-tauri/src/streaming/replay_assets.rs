@@ -225,15 +225,26 @@ impl ReplayAssetCache {
                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
                         Err(_) => break,
                     };
-                    let (id, url, recording) = match job {
-                        AssetJob::Image(id, url, root) => (id, url, root),
+                    let (id, url, recording, profile_capture) = match job {
+                        AssetJob::Image(id, url, root) => (id, url, root, false),
                         AssetJob::Channel(channel, root) => {
                             // A single bounded worker, not one thread/request per UI
                             // update. Capture works even when chat saving is disabled.
                             if root.join("channel-profile.json").exists() {
                                 continue;
                             }
-                            let Ok((name, image)) = profile(&channel) else {
+                            let mut fetched = profile(&channel);
+                            for _ in 0..2 {
+                                if fetched.is_ok() || run.cancel.load(Ordering::Acquire) {
+                                    break;
+                                }
+                                fetched = profile(&channel);
+                            }
+                            let Ok((name, image)) = fetched else {
+                                tracing::warn!(
+                                    channel_id = channel,
+                                    "recording channel profile unavailable after bounded retries"
+                                );
                                 continue;
                             };
                             if run.cancel.load(Ordering::Acquire) {
@@ -247,7 +258,7 @@ impl ReplayAssetCache {
                             let (Some(id), Some(url)) = (id, image) else {
                                 continue;
                             };
-                            (id, url, Some(root))
+                            (id, url, Some(root), true)
                         }
                     };
                     let data = if run.root.join(format!("{id}.json")).exists() {
@@ -263,7 +274,21 @@ impl ReplayAssetCache {
                         if count >= MAX_FILES || used.saturating_add(MAX_ASSET) > MAX_DISK {
                             continue;
                         }
-                        let Ok(data) = fetch(&url) else {
+                        let mut fetched = fetch(&url);
+                        if profile_capture {
+                            for _ in 0..2 {
+                                if fetched.is_ok() || run.cancel.load(Ordering::Acquire) {
+                                    break;
+                                }
+                                fetched = fetch(&url);
+                            }
+                        }
+                        let Ok(data) = fetched else {
+                            if profile_capture {
+                                tracing::warn!(
+                                    "recording channel image unavailable after bounded retries"
+                                );
+                            }
                             continue;
                         };
                         if let Ok(size) = store_data(&run.root, &id, &data) {
@@ -276,7 +301,9 @@ impl ReplayAssetCache {
                         break;
                     }
                     if let Some(root) = recording {
-                        let _ = mirror_recording(&root, &id, &data, &mut recording_budgets);
+                        if mirror_recording(&root, &id, &data, &mut recording_budgets).is_err() && profile_capture {
+                            tracing::warn!(asset_id = %id, "recording channel image could not be preserved locally");
+                        }
                     }
                 }
             })
@@ -672,5 +699,44 @@ mod tests {
         cache.shutdown_and_wait();
         assert!(read_recording(&root, &id).is_ok());
         assert_eq!(channel_profile::read(&root, &"a".repeat(32)), (None, None));
+    }
+
+    #[test]
+    fn channel_avatar_retries_transient_fetch_failure_without_losing_saved_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = calls.clone();
+        let cache = ReplayAssetCache::with_fetchers(
+            dir.path(),
+            true,
+            Arc::new(move |_| {
+                if count.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Err(unavailable())
+                } else {
+                    Ok(data())
+                }
+            }),
+            Arc::new(|_| {
+                Ok((
+                    "당시 이름".into(),
+                    Some("https://ssl.pstatic.net/profile.png".into()),
+                ))
+            }),
+        )
+        .unwrap();
+        cache.submit_channel(&root, &"a".repeat(32));
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while channel_profile::read(&root, &"a".repeat(32)).1.is_none()
+            && std::time::Instant::now() < deadline
+        {
+            thread::sleep(Duration::from_millis(10));
+        }
+        cache.shutdown_and_wait();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(
+            channel_profile::read(&root, &"a".repeat(32)),
+            (Some("당시 이름".into()), Some(data()))
+        );
     }
 }

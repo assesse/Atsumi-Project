@@ -43,11 +43,12 @@
 .recording-library-selection { padding: 10px 12px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 12px; }
 .recording-library-selection > span { color: var(--text-soft); font-variant-numeric: tabular-nums; }
 .recording-library-selection > .recording-library-delete { margin-left: auto; }
-.recording-library-card-wrap { position: relative; min-width: 0; }
-.recording-library-card-wrap > .recording-library-card { height: 100%; }
+.recording-library-card-wrap { position: relative; min-width: 0; display: flex; flex-direction: column; }
+.recording-library-card-wrap > .recording-library-card { flex: 1; height: auto; }
 .recording-library-card-wrap.is-selecting .recording-library-card-top { padding-right: 25px; }
 .recording-library-check { position: absolute; top: 15px; right: 14px; width: 17px; height: 17px; margin: 0; accent-color: var(--primary); cursor: pointer; }
 .recording-library-check:disabled { cursor: not-allowed; }
+.recording-library-card-wrap:has(.recorded-channel) > .recording-library-check { top: 67px; }
 .streaming-workspace .recording-library-delete { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); background: color-mix(in srgb, var(--danger) 10%, var(--surface)); }
 .streaming-workspace .recording-library-delete:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 20%, var(--surface)); }
 .recording-library-delete-notice { font-size: 12px; color: var(--text-soft); }
@@ -61,3 +62,6 @@
 .recording-library-delete-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 @container (max-width: 860px) { .recording-library-layout { grid-template-columns: minmax(0, 1fr); } .recording-library-detail { order: -1; } }
 @media (prefers-reduced-motion: reduce) { .streaming-workspace .recording-library .recording-library-card { transition: none; } }
+.recording-library-end-reason { color: var(--text-soft); font-size: 11px; }
+.recording-library-attempts { margin-top: 18px; color: var(--text-soft); font-size: 12px; }
+.recording-library-attempts > summary { cursor: pointer; padding: 10px 0; }

@@ -6,6 +6,7 @@ import {
 } from "../../api/officialBrowser";
 import "./OfficialBrowserPanel.css";
 import { RecordingLibrary } from "./RecordingLibrary";
+import { emptyRecordingAttempt, recordingStatus } from "./recordingStatus";
 import { hasNativeOverlay, nativeModalOcclusion, observeNativeOverlayGeometry } from "./nativeOverlayGeometry";
 export { hasNativeOverlay, nativeModalOcclusion } from "./nativeOverlayGeometry";
 // The full, locally preserved player/chat skin is only needed when opening a recording.
@@ -14,7 +15,7 @@ import type { ReplayApi } from "../../api/replay";
 import { createMultiviewApi, multiviewEntries, type MultiviewApi } from "../../api/multiview";
 import { ConnectionSetup, accountStatus, type ConnectionMode } from "./ConnectionSetup";
 
-type PendingAction = "open" | "mado" | "start" | "stop" | "extension" | "folder" | "segment" | "login" | "logout" | "auth-refresh" | "installer" | "merge" | "merged" | "control" | "request-control" | "delete";
+type PendingAction = "open" | "mado" | "start" | "stop" | "extension" | "folder" | "segment" | "login" | "logout" | "auth-refresh" | "installer" | "merge" | "merged" | "control" | "request-control" | "delete" | "record-only";
 
 /** Focus/touch accessible help. Native child paint must yield to its popup. */
 function Help({ label, text }: { label: string; text: string }) {
@@ -63,6 +64,9 @@ export type OfficialBrowserPanelProps = {
   replayApi?: ReplayApi;
   onMadoMode?: () => void;
   multiviewApi?: MultiviewApi;
+  /** An attached receiver cannot be navigated/reconnected underneath capture. */
+  connectionLocked?: boolean;
+  onRecordOnly?: () => void | Promise<void>;
 };
 
 
@@ -93,9 +97,6 @@ export function measureOfficialBrowserViewport(stage: HTMLElement): OfficialBrow
   };
 }
 
-const recordingLabels: Record<BrowserRecording["status"], string> = {
-  recording: "녹화 중", stopped: "저장 완료", interrupted: "중단됨", failed: "실패",
-};
 const chatLabels: Record<string, string> = {
   disabled: "저장 안 함", connecting: "연결 중", connected: "연결됨",
   reconnecting: "재연결 중", stopped: "종료됨", failed: "연결 실패",
@@ -128,7 +129,7 @@ function connectionLabel(snapshot: OfficialBrowserSnapshot): string {
   return "시청 창 닫힘";
 }
 
-export function OfficialBrowserPanel({ runtime, active, view, privacyMode = false, api: suppliedApi, replayApi, onMadoMode, multiviewApi }: OfficialBrowserPanelProps) {
+export function OfficialBrowserPanel({ runtime, active, view, privacyMode = false, api: suppliedApi, replayApi, onMadoMode, multiviewApi, connectionLocked = false, onRecordOnly }: OfficialBrowserPanelProps) {
   const api = useMemo(() => suppliedApi ?? createOfficialBrowserApi(runtime), [suppliedApi, runtime]);
   const madoApi = useMemo(() => multiviewApi ?? createMultiviewApi(runtime), [multiviewApi, runtime]);
   const desktop = runtime === "tauri" && api.runtime === "tauri";
@@ -196,7 +197,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     // once, without observing the entire document for an invisible player.
     if (!active || view !== "live" || !snapshot.windowOpen || privacyMode) {
       setNativeVisible(false);
-      owner.update({ ...hiddenOfficialBrowserViewport, epoch: snapshot.viewportEpoch ?? 0 });
+      owner.update({ ...hiddenOfficialBrowserViewport, ...(privacyMode ? { suspendAudio: true } : {}), epoch: snapshot.viewportEpoch ?? 0 });
       return () => owner.release();
     }
     let frame: number | undefined;
@@ -332,11 +333,13 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
   useEffect(() => {
     const intent = snapshot.pendingUiAction;
     if (!active || !desktop || view !== "live" || privacyMode || control || pending !== null || !intent
-      || intent.action !== "open_settings" || seenUiAction.current === intent.id) return;
+      || !["open_settings", "record_only"].includes(intent.action) || seenUiAction.current === intent.id) return;
     seenUiAction.current = intent.id;
     if (Number.isFinite(intent.expiresAt) && intent.expiresAt > Date.now()) {
       if (intent.action === "open_settings") { setConnectionMode("general"); setSettingsOpen(true); }
-
+      if (intent.action === "record_only" && onRecordOnly) {
+        void runAction("record-only", async () => { await onRecordOnly(); return { ok: true, data: undefined }; });
+      }
     }
     // ACKs consume UI-only intents; never replay their possibly stale snapshot.
     void api.ackUiAction(intent.id).catch(() => {});
@@ -355,7 +358,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     return () => window.removeEventListener("keydown", shortcut);
   }, [api, active, desktop, view, pending, control?.id, privacyMode, snapshot.ready, snapshot.windowOpen]);
   const open = () => {
-    if (hasRecording || extensionBusy) return;
+    if (connectionLocked || hasRecording || extensionBusy) return;
     if (connectionMode === "mado") {
       if (!onMadoMode) return;
       const entries = multiviewEntries(madoInputs, madoLayout, madoLead);
@@ -446,7 +449,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
   const chatProblem = hasRecording && ["failed", "unavailable", "storage_failed", "disconnected", "observer_unavailable", "queue_overflow", "unsupported_frame", "frame_too_large", "invalid_frame", "message_too_large", "message_truncated", "decode_failed", "observer_overflow", "connection_gap", "partial"].includes(snapshot.chatStatus ?? "");
   const recordingDetails = recording
     ? `${privacyMode ? "CHZZK 녹화" : (recording.title || recording.channelId).slice(0, 160)} · ${duration(recording.durationSeconds)} · ${bytes(recording.bytesWritten)} · 완료 파일 ${recording.segmentCount}개.${snapshot.chatStatus ? ` 채팅 ${chatLabels[snapshot.chatStatus] ?? snapshot.chatStatus}${snapshot.chatCount === undefined ? "" : ` · ${snapshot.chatCount}개`}.` : ""}`
-    : `녹화 보관함 · ${recordings.length}개${selected ? ` · ${recordingLabels[selected.status]}` : ""}.`;
+    : `녹화 보관함 · ${recordings.filter(item => !emptyRecordingAttempt(item)).length}개${selected ? ` · ${recordingStatus(selected)}` : ""}.`;
   const screenshotDetails = snapshot.lastScreenshot ? privacyMode ? " 최근 화면이 저장되었습니다." : ` 최근 화면 저장: ${snapshot.lastScreenshot.fileName.slice(0, 160)}.` : "";
   const screenshotJustSaved = snapshot.lastScreenshot && Date.now() - snapshot.lastScreenshot.createdAt >= 0 && Date.now() - snapshot.lastScreenshot.createdAt < 5000;
   const statusErrors = [pollError, viewportError, snapshot.error, actionError].filter((value): value is string => !!value);
@@ -472,11 +475,11 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
       {(!snapshot.windowOpen || settingsOpen) && !privacyMode ? <div className={`official-browser-setup${settingsOpen ? " is-modal" : ""}`} role={settingsOpen ? "dialog" : undefined} aria-modal={settingsOpen ? "true" : undefined} aria-label={settingsOpen ? "시청 설정" : "채널 연결"} data-native-overlay={settingsOpen} data-native-preserve-video={settingsOpen} hidden={!!control} onKeyDown={settingsKeys}>
         <ConnectionSetup mode={connectionMode} onMode={(mode) => { setConnectionMode(mode); if (mode === "mado" && !madoInputs.some(Boolean)) setMadoInputs([input || snapshot.channelId || "", "", "", ""]); }} modeDisabled={pending !== null || hasRecording || extensionBusy || !onMadoMode}
           inputs={connectionMode === "mado" ? madoInputs : [input]} onInput={(index, value) => connectionMode === "mado" ? setMadoInputs((rows) => rows.map((row, i) => i === index ? value : row)) : setInput(value)}
-          disabled={!desktop || pending !== null || hasRecording || extensionBusy} pending={pending === "open" || pending === "mado"} onConnect={open} onClose={settingsOpen ? () => setSettingsOpen(false) : undefined} closeRef={settingsClose}
+          disabled={!desktop || pending !== null || hasRecording || extensionBusy || connectionLocked} pending={pending === "open" || pending === "mado"} onConnect={open} onClose={settingsOpen ? () => setSettingsOpen(false) : undefined} closeRef={settingsClose}
           auth={pollError ? "unknown" : accountStatus(snapshot)} accountDisabled={!desktop || pending !== null || hasRecording || snapshot.accountBusy === true} accountReason={hasRecording ? "녹화를 중지한 뒤 방송·모드·계정을 변경할 수 있습니다." : undefined}
           authChecking={pending === "auth-refresh" || snapshot.authChecking} authError={snapshot.authError} refreshDisabled={!desktop || pending !== null || snapshot.accountBusy === true}
           onLogin={() => void runAction("login", () => api.login(), acceptSnapshot)} onLogout={logout} onRefresh={() => void runAction("auth-refresh", () => api.snapshot(true), acceptSnapshot)}
-          onGrid={() => void runAction("extension", () => api.connectExtension(), acceptSnapshot)} gridDisabled={!desktop || pending !== null || hasRecording || extensionBusy || !snapshot.windowOpen} gridStatus={extensionSummary}
+          onGrid={() => void runAction("extension", () => api.connectExtension(), acceptSnapshot)} gridDisabled={!desktop || pending !== null || hasRecording || extensionBusy || !snapshot.windowOpen || connectionLocked} gridStatus={extensionSummary}
           onInstaller={(browser) => void runAction("installer", () => api.openInstaller(browser))} installerDisabled={!desktop || pending !== null || hasRecording}
           helpDetails={`${recordingDetails}${screenshotDetails} 버튼을 눌러야 녹화가 시작됩니다. 다른 메뉴로 이동하거나 창을 최소화해도 녹화는 계속됩니다.`}
           options={<><div className="mado-layout-options"><button type="button" aria-pressed={madoLayout === "paired"} onClick={() => setMadoLayout("paired")}>4화면4챗</button><button type="button" aria-pressed={madoLayout === "chats"} onClick={() => setMadoLayout("chats")}>1화면4챗</button></div>{madoLayout === "chats" ? <label>영상 방송 <select value={madoLead} onChange={(event) => setMadoLead(Number(event.target.value))}>{madoInputs.map((_, index) => <option key={index} value={index}>방송 {index + 1}</option>)}</select></label> : null}</>}
@@ -488,6 +491,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
               : <button type="button" className="official-browser-stop" disabled={!desktop || pending !== null || snapshot.status === "stopping"} onClick={stop}>{pending === "stop" || snapshot.status === "stopping" ? "저장 중…" : "녹화 중지"}</button>}
           </div>
           {startHint ? <span className="official-browser-sr-only">{startHint}</span> : null}
+          {connectionLocked ? <p className="official-browser-muted">기존 수신 세션을 함께 사용하고 있습니다. 방송·연결 변경은 시청을 닫은 뒤 일반 라이브에서 할 수 있습니다.</p> : null}
         </ConnectionSetup>
       </div> : <div className="official-browser-stage-placeholder"><span aria-hidden="true">◉</span><strong>{privacyMode ? "프라이버시 모드" : "시청 화면을 잠시 가렸습니다"}</strong><p>진행 중인 녹화는 유지됩니다.</p></div>}
     </div> : null}

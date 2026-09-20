@@ -393,6 +393,11 @@ impl ReqwestTransport {
             if request.priority == HttpPriority::Download
                 && request.expected == ExpectedContent::Image
             {
+                tracing::debug!(
+                    bytes = payload.bytes.len(),
+                    elapsed_ms = service_started.elapsed().as_millis() as u64,
+                    "download HTTP response received"
+                );
                 self.save_tuning(self.gate.observe_download(
                     DownloadSample {
                         bytes: payload.bytes.len(),

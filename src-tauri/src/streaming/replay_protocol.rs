@@ -66,7 +66,7 @@ impl ReplayService {
             Ok(session) => session,
             Err(_) => return response(StatusCode::NOT_FOUND, vec![], None, None, origin),
         };
-        if parts.len() == 3 {
+        if parts.len() == 3 && parts[1] == "asset" {
             if parts[1] != "asset"
                 || parts[2].len() != 64
                 || !parts[2]
@@ -101,14 +101,29 @@ impl ReplayService {
                 _ => response(StatusCode::NOT_FOUND, vec![], None, None, origin),
             };
         }
-        let mut media = match session.media.lock() {
+        let (media_file, stamp) = if parts.len() == 3 {
+            let Some(index) = (parts[1] == "part")
+                .then(|| decimal(parts[2]))
+                .flatten()
+                .and_then(|n| usize::try_from(n).ok())
+            else {
+                return response(StatusCode::BAD_REQUEST, vec![], None, None, origin);
+            };
+            let Some(part) = session.media_parts.get(index) else {
+                return response(StatusCode::NOT_FOUND, vec![], None, None, origin);
+            };
+            (&part.file, &part.stamp)
+        } else {
+            (&session.media, &session.media_stamp)
+        };
+        let mut media = match media_file.lock() {
             Ok(media) => media,
             Err(_) => return response(StatusCode::NOT_FOUND, vec![], None, None, origin),
         };
-        if session.cancel.load(Ordering::Acquire) || !session.media_stamp.matches(&media) {
+        if session.cancel.load(Ordering::Acquire) || !stamp.matches(&media) {
             return response(StatusCode::NOT_FOUND, vec![], None, None, origin);
         }
-        let total = session.media_stamp.len;
+        let total = stamp.len;
         if request.method() == Method::HEAD {
             return response(
                 StatusCode::OK,
@@ -163,7 +178,7 @@ impl ReplayService {
             .seek(SeekFrom::Start(start))
             .and_then(|_| media.read_exact(&mut bytes))
             .is_err()
-            || !session.media_stamp.matches(&media)
+            || !stamp.matches(&media)
             || session.cancel.load(Ordering::Acquire)
         {
             return response(StatusCode::NOT_FOUND, vec![], None, None, origin);

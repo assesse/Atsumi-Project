@@ -7,8 +7,9 @@ const CHANNEL = "b3e262a2795f17734c149afc738ad250";
 const RECORDING = "10000000000040008000000000000001";
 type EventValue = Record<string, unknown>;
 type ChatApi = {
-  start(options: { recordingId: string; channelId: string; getVideo?: () => unknown; sendBatch(events: EventValue[]): Promise<unknown>; onStatus(detail: string, dropped: number): void }): boolean;
+  start(options: { recordingId: string; channelId: string; getVideo?: () => unknown; sendBatch(events: EventValue[], batchId?: number): Promise<unknown>; onStatus(detail: string, dropped: number): void }): boolean;
   stop(recordingId: string): Promise<void>;
+  pulse(): void;
 };
 class Socket {
   static OPEN = 1;
@@ -53,21 +54,45 @@ function fixture(url = `https://chzzk.naver.com/live/${CHANNEL}`) {
   runInNewContext(source, context);
   const batches: EventValue[][] = [];
   const status: Array<{ detail: string; dropped: number }> = [];
-  let transport = async (events: EventValue[]) => { batches.push(events); };
+  let transport = async (events: EventValue[], _batchId?: number) => { batches.push(events); };
   const begin = () => window.__atsumiPageChat!.start({ recordingId: RECORDING, channelId: CHANNEL,
     getVideo: () => video,
-    sendBatch: (events) => transport(events), onStatus: (detail, dropped) => status.push({ detail, dropped }) });
+    sendBatch: (events, batchId) => transport(events, batchId), onStatus: (detail, dropped) => status.push({ detail, dropped }) });
   return { window, batches, status, begin, video, clock,
     api: window.__atsumiPageChat!,
-    setTransport: (next: (events: EventValue[]) => Promise<void>) => { transport = next; },
+    setTransport: (next: (events: EventValue[], batchId?: number) => Promise<void>) => { transport = next; },
     again: () => runInNewContext(source, context),
     socket: (url = "wss://kr-ss1.chat.naver.com/chat") => new window.WebSocket(url, ["fixture"]),
   };
 }
 beforeEach(() => vi.useFakeTimers());
-afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
+afterEach(() => { vi.restoreAllMocks(); vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe("official page chat receive bridge", () => {
+  it("continues chat and viewer persistence from receive pulses after presentation timer suspension", async () => {
+    const h = fixture(); h.window.fetch = vi.fn().mockResolvedValue(viewerResponse(17));
+    const socket = h.socket(); h.begin(); await flush(); vi.clearAllTimers();
+    h.clock.wall += 16000; h.clock.monotonic += 16000;
+    socket.emit(envelope([message("after switching to live")])); await flush();
+    h.api.pulse(); await flush(); h.api.pulse(); await flush();
+    await h.api.stop(RECORDING);
+    expect(h.batches.flat().some(event => event.msg === "after switching to live")).toBe(true);
+    expect(h.window.fetch).toHaveBeenCalledTimes(2);
+  });
+  it("bounds an optional sender hash so a stalled digest cannot block subsequent chat or statistics", async () => {
+    const digest = vi.spyOn(crypto.subtle, "digest").mockImplementation(() => new Promise(() => {}));
+    const h = fixture(); const socket = h.socket(); h.begin();
+    socket.emit(envelope([{ ...message("no hash"), profile: { nickname: "viewer", userIdHash: "opaque-id" } }, { ...message("following message"), profile: { nickname: "viewer2", userIdHash: "another-id" } }]));
+    await flush(); await vi.advanceTimersByTimeAsync(1501); await flush(); await h.api.stop(RECORDING);
+    expect(h.batches.flat().map(event => event.msg)).toEqual(["no hash", "following message"]);
+    expect(digest).toHaveBeenCalledTimes(1);
+  });
+  it("reuses the same batch identity after a lost ACK and does not recreate the socket", async () => {
+    const h = fixture(); const socket = h.socket(); const identities: (number | undefined)[] = [];
+    h.setTransport(async (events, id) => { identities.push(id); if (identities.length === 1) throw new Error("lost ACK"); h.batches.push(events); });
+    h.begin(); socket.emit(envelope([message()])); await h.api.stop(RECORDING);
+    expect(identities).toEqual([1, 1]); expect(h.batches.flat()).toHaveLength(1); expect(socket.sent).toEqual([]);
+  });
   it("exports only a bounded official default-color seed, never a raw opaque identifier", async () => {
     const h = fixture(); const socket = h.socket(); h.begin();
     socket.emit(envelope([

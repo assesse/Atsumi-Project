@@ -7,10 +7,13 @@ use crate::application::DownloadTuningProfile;
 pub(super) const PROFILE_HOST: &str = "download-profile.hitomi.la";
 const ALGORITHM_VERSION: u32 = 1;
 const PROFILE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
-const WINDOW: Duration = Duration::from_secs(120);
-const MIN_SUCCESSES: u64 = 60;
-const MIN_BYTES: u64 = 16 * 1024 * 1024;
-const RETEST_DELAY: Duration = Duration::from_secs(15 * 60);
+const WINDOW: Duration = Duration::from_secs(30);
+const MAX_SAMPLE_WINDOW: Duration = Duration::from_secs(10 * 60);
+// A slow connection must be able to recover without first sustaining 30 pages
+// per minute. Accumulate sparse samples instead of discarding them every window.
+const MIN_SUCCESSES: u64 = 8;
+const MIN_BYTES: u64 = 2 * 1024 * 1024;
+const RETEST_DELAY: Duration = Duration::from_secs(2 * 60);
 const IDLE_RESET: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
@@ -151,9 +154,10 @@ impl DownloadTuner {
             return None;
         }
         self.consecutive_failures = 0;
-        let idle = self
-            .last_sample
-            .is_some_and(|last| now.saturating_duration_since(last) > IDLE_RESET);
+        let idle = self.last_sample.is_some_and(|last| {
+            now.saturating_duration_since(last)
+                > IDLE_RESET.max(sample.service_time.saturating_add(Duration::from_secs(5)))
+        });
         self.last_sample = Some(now);
         if idle {
             self.window = None;
@@ -180,15 +184,17 @@ impl DownloadTuner {
         window.demand += u64::from(sample.had_demand);
         window.pressure += u64::from(sample.processing_backlogged);
         let elapsed = now.saturating_duration_since(window.started);
-        if elapsed < WINDOW {
+        if elapsed < WINDOW
+            || (elapsed < MAX_SAMPLE_WINDOW
+                && (window.requests < MIN_SUCCESSES || window.bytes < MIN_BYTES))
+        {
             return None;
         }
         let window = self.window.take().expect("observation window exists");
         let healthy = !window.failed
             && window.requests >= MIN_SUCCESSES
             && window.bytes >= MIN_BYTES
-            && window.demand * 100 >= window.requests * 60
-            && window.pressure * 100 <= window.requests * 20;
+            && window.demand * 100 >= window.requests * 60;
         let metrics = Metrics {
             rate: window.bytes as f64 / elapsed.as_secs_f64(),
             latency: window.latency / window.requests as f64,
@@ -204,7 +210,8 @@ impl DownloadTuner {
                 && metrics.rate >= baseline.rate * 1.08
                 && metrics.latency <= baseline.latency * 1.25
                 && baseline.stored_rate > 0.0
-                && metrics.stored_rate >= baseline.stored_rate * 0.95;
+                && (window.pressure * 100 > window.requests * 20
+                    || metrics.stored_rate >= baseline.stored_rate * 0.95);
             if improved {
                 self.stable = self.current;
                 self.baseline_rate = metrics.rate;
@@ -222,12 +229,11 @@ impl DownloadTuner {
             && window.bytes >= MIN_BYTES
             && window.demand * 100 >= window.requests * 60;
         let regressed = enough_demand
-            && (window.pressure * 100 > window.requests * 50
-                || self.reference_metrics.is_some_and(|reference| {
-                    (0.5..=2.0).contains(&(metrics.average_bytes / reference.average_bytes))
-                        && metrics.rate < reference.rate * 0.75
-                        && metrics.latency > reference.latency * 1.25
-                }));
+            && self.reference_metrics.is_some_and(|reference| {
+                (0.5..=2.0).contains(&(metrics.average_bytes / reference.average_bytes))
+                    && metrics.rate < reference.rate * 0.75
+                    && metrics.latency > reference.latency * 1.25
+            });
         self.regression_windows = if regressed {
             self.regression_windows.saturating_add(1)
         } else {
@@ -386,7 +392,7 @@ mod tests {
     ) -> Option<DownloadTuningProfile> {
         let generation = tuner.generation();
         let mut profile = None;
-        for i in 0..=60 {
+        for i in 0..=15 {
             profile = tuner
                 .observe(
                     DownloadSample {
@@ -414,8 +420,8 @@ mod tests {
         assert_eq!(baseline.stable_limit, 5);
         let confirmed = window(
             &mut tuner,
-            now + Duration::from_secs(122),
-            1_122_000,
+            now + Duration::from_secs(32),
+            1_032_000,
             640 * 1024,
             false,
             true,
@@ -432,8 +438,8 @@ mod tests {
         window(&mut tuner, now, 1_000_000, 512 * 1024, false, true);
         let reverted = window(
             &mut tuner,
-            now + Duration::from_secs(122),
-            1_122_000,
+            now + Duration::from_secs(32),
+            1_032_000,
             512 * 1024,
             false,
             true,
@@ -441,11 +447,11 @@ mod tests {
         .unwrap();
         assert_eq!(tuner.current, 5);
         assert_eq!(reverted.stable_limit, 5);
-        assert!(reverted.blocked_until_unix_ms > 1_244_000);
+        assert!(reverted.blocked_until_unix_ms > 1_064_000);
         window(
             &mut tuner,
-            now + Duration::from_secs(244),
-            1_244_000,
+            now + Duration::from_secs(64),
+            1_064_000,
             512 * 1024,
             false,
             true,
@@ -454,12 +460,8 @@ mod tests {
     }
 
     #[test]
-    fn sparse_demand_processing_pressure_and_tiny_samples_never_raise_limit() {
-        for (bytes, pressure, demand) in [
-            (512 * 1024, true, true),
-            (512 * 1024, false, false),
-            (1024, false, true),
-        ] {
+    fn sparse_demand_and_tiny_samples_never_raise_limit() {
+        for (bytes, pressure, demand) in [(512 * 1024, false, false), (1024, false, true)] {
             let now = Instant::now();
             let mut tuner = DownloadTuner::new(5, 8, None, now, 1_000_000);
             assert!(window(&mut tuner, now, 1_000_000, bytes, pressure, demand).is_none());
@@ -548,8 +550,8 @@ mod tests {
                 stored_bytes: 0,
             },
             generation,
-            now + Duration::from_secs(122),
-            1_122_000,
+            now + Duration::from_secs(32),
+            1_032_000,
         );
         tuner.observe(
             DownloadSample {
@@ -560,29 +562,54 @@ mod tests {
                 stored_bytes: 0,
             },
             generation,
-            now + Duration::from_secs(160),
-            1_160_000,
+            now + Duration::from_secs(70),
+            1_070_000,
         );
         assert_eq!(tuner.current, 5);
     }
 
     #[test]
-    fn sustained_processing_pressure_reduces_a_previously_stable_limit() {
+    fn local_processing_pressure_does_not_reduce_the_network_limit() {
         let now = Instant::now();
-        let mut tuner = DownloadTuner::new(5, 8, None, now, 1_000_000);
+        let mut tuner = DownloadTuner::new(5, 5, None, now, 1_000_000);
         window(&mut tuner, now, 1_000_000, 512 * 1024, true, true);
         assert_eq!(tuner.current, 5);
         let saved = window(
             &mut tuner,
-            now + Duration::from_secs(122),
-            1_122_000,
+            now + Duration::from_secs(32),
+            1_032_000,
             512 * 1024,
             true,
             true,
         )
         .unwrap();
-        assert_eq!(saved.stable_limit, 4);
-        assert_eq!(tuner.current, 4);
+        assert_eq!(saved.stable_limit, 5);
+        assert_eq!(tuner.current, 5);
+    }
+
+    #[test]
+    fn low_rate_downloads_can_recover_one_step_after_the_server_wait() {
+        let now = Instant::now();
+        let mut tuner = DownloadTuner::new(1, 8, None, now, 1_000_000);
+        tuner.server_backpressure(Duration::from_secs(60), now, 1_000_000);
+        let generation = tuner.generation();
+        // 13 successes / two minutes, with local comparison work in progress.
+        for i in 0..=12 {
+            tuner.observe(
+                DownloadSample {
+                    bytes: 256 * 1024,
+                    service_time: Duration::from_secs(1),
+                    had_demand: true,
+                    processing_backlogged: true,
+                    stored_bytes: i * 256 * 1024,
+                },
+                generation,
+                now + Duration::from_secs(120 + i * 10),
+                1_120_000 + i * 10_000,
+            );
+        }
+        assert_eq!(tuner.current, 2);
+        assert_eq!(tuner.stable, 1); // Persist only after the trial is confirmed.
     }
 
     #[test]
@@ -604,7 +631,7 @@ mod tests {
         window(&mut tuner, now, 1_000_000, 1024 * 1024, false, true);
         for round in 1..=2 {
             let generation = tuner.generation();
-            for i in 0..=60 {
+            for i in 0..=15 {
                 tuner.observe(
                     DownloadSample {
                         bytes: 512 * 1024,
@@ -614,8 +641,8 @@ mod tests {
                         stored_bytes: i * 512 * 1024,
                     },
                     generation,
-                    now + Duration::from_secs(round * 122 + i * 2),
-                    1_000_000 + (round * 122 + i * 2) * 1000,
+                    now + Duration::from_secs(round * 32 + i * 2),
+                    1_000_000 + (round * 32 + i * 2) * 1000,
                 );
             }
             assert_eq!(tuner.current, if round == 1 { 8 } else { 7 });

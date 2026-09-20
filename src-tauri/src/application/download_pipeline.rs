@@ -61,6 +61,26 @@ pub struct DownloadPagePayload {
     pub height: u32,
     pub candidate_index: u32,
     pub candidate_diagnostics: Vec<SourceCandidateDiagnostic>,
+    /// Process-local decoder proof, never deserialized or persisted. A changed
+    /// byte buffer invalidates this proof at the storage boundary.
+    pub(crate) decoded_sha256: Option<[u8; 32]>,
+}
+
+impl DownloadPagePayload {
+    pub(crate) fn mark_decoded(&mut self) {
+        use sha2::{Digest, Sha256};
+        if self.source_format == DownloadSourceImageFormat::Webp {
+            self.decoded_sha256 = Some(Sha256::digest(&self.bytes).into());
+        }
+    }
+
+    pub(crate) fn has_unchanged_decoded_webp(&self) -> bool {
+        use sha2::{Digest, Sha256};
+        self.source_format == DownloadSourceImageFormat::Webp
+            && self
+                .decoded_sha256
+                .is_some_and(|digest| digest == <[u8; 32]>::from(Sha256::digest(&self.bytes)))
+    }
 }
 
 pub trait DownloadSourcePort: Send + Sync {
@@ -189,6 +209,16 @@ pub trait ArtifactStore: Send + Sync {
         root: &Path,
         page: &PageArtifact,
     ) -> Result<Vec<u8>, DownloadPipelineError>;
+
+    /// For consumers immediately performing a bounded full decode themselves.
+    /// Path, byte length and SHA still have to be checked on every read.
+    fn read_integrity_checked_page_bytes(
+        &self,
+        root: &Path,
+        page: &PageArtifact,
+    ) -> Result<Vec<u8>, DownloadPipelineError> {
+        self.read_verified_page_bytes(root, page)
+    }
 }
 
 pub trait DownloadRootPicker: Send + Sync {

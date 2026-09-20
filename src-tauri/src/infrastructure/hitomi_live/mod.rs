@@ -1038,7 +1038,7 @@ fn decode_download_payload(
             "decoded download dimensions must be positive",
         ));
     }
-    Ok(DownloadPagePayload {
+    let mut page = DownloadPagePayload {
         source_page_number,
         bytes,
         source_revision,
@@ -1047,7 +1047,10 @@ fn decode_download_payload(
         height,
         candidate_index,
         candidate_diagnostics: Vec::new(),
-    })
+        decoded_sha256: None,
+    };
+    page.mark_decoded();
+    Ok(page)
 }
 
 fn candidate_magic_matches(expected: HitomiImageFormat, actual: ImageFormat) -> bool {

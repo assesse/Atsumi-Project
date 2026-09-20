@@ -183,6 +183,7 @@
       .finally(() => { current.queuedBytes -= byteLength; });
   };
   const observeAppend = (state, value) => {
+    window.__atsumiPageChat?.pulse?.();
     appendCount += 1;
     appendBytes += value?.byteLength ?? 0;
     lastAppendAt = Date.now();
@@ -319,7 +320,7 @@
     const listen = (name, reason) => { const callback = () => failure(current, reason); video.addEventListener(name, callback); current.listeners.push(() => video.removeEventListener(name, callback)); };
     // emptied can describe resetting just the decoder. The periodic identity
     // check still stops an actually replaced URL/MediaSource.
-    listen("ended", "source_changed"); listen("encrypted", "encrypted");
+    listen("ended", "video_ended"); listen("encrypted", "encrypted");
     current.timer = setInterval(() => { const reason = safetyReason(current); if (reason && !current.stopping) failure(current, reason); }, 500);
     safeNotify(current, "encoded_starting");
     current.begin = Promise.resolve().then(() => options.request("encoded_begin", { requestId: command.requestId, channelId: current.channelId,
@@ -347,7 +348,8 @@
     canChangePlaybackRate, getReplayClock, getStatus: status, start,
     stop(reason = "user_stop", interrupted = false) {
       if (!active) return Promise.resolve({ stopped: true, interrupted: false });
-      active.reason = reason; active.interrupted ||= interrupted; return finish(active);
+      if (!active.interrupted) active.reason = reason;
+      active.interrupted ||= interrupted; return finish(active);
     },
   }) });
 })();

@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { ReplayTimeline } from "../../api/replay";
+import type { ReplaySession, ReplayTimeline } from "../../api/replay";
 import { replayMetricPaths } from "./RecordingReplayTimeline";
 
 export const PLAYER_CHANNEL = "atsumi-replay-player-v1";
@@ -9,7 +9,11 @@ export type OriginalPlayerHandle = { seek(time: number): void; toggle(): void; m
 type Props = {
   runtime: "tauri" | "browser-mock"; mediaUrl: string; duration: number; privacy: boolean; timeline: ReplayTimeline | null; wide?: boolean; fullscreen?: boolean;
   recording?: { title: string; channelName?: string | null; recordedAt?: number; profileImage?: string | null };
+  parts?: ReplaySession["parts"];
+  onTail?(): void;
+  onSourceReady?(url: string): void;
   onState(state: OriginalPlayerState): void; onError(message: string): void; onFullscreen(): void; onWide(): void; onClose(): void;
+  onChannel?(): void;
 };
 export function validPlayerState(value: unknown): value is OriginalPlayerState {
   if (!value || typeof value !== "object") return false;
@@ -40,12 +44,15 @@ export const OriginalChzzkPlayer = forwardRef<OriginalPlayerHandle, Props>(funct
         case "fullscreen": current.current.onFullscreen(); break;
         case "wide": current.current.onWide(); break;
         case "close": current.current.onClose(); break;
+        case "channel": if (!current.current.privacy) current.current.onChannel?.(); break;
+        case "tail": if (!current.current.privacy) current.current.onTail?.(); break;
+        case "source": if (message.data === current.current.mediaUrl) current.current.onSourceReady?.(message.data); break;
       }
     };
     window.addEventListener("message", receive);
     return () => { ownedWindow?.postMessage({ channel: PLAYER_CHANNEL, nonce, type: "dispose" }, "*"); clearTimeout(timeout); window.removeEventListener("message", receive); };
   }, [nonce, send]);
-  useEffect(() => { if (ready) send("init", { url: props.mediaUrl, duration: props.duration, privacy: current.current.privacy, recording: current.current.recording }); }, [ready, props.mediaUrl, props.duration, send]); // Metadata and privacy changes never reload the source.
+  useEffect(() => { if (ready) send("init", { url: props.mediaUrl, duration: props.duration, privacy: current.current.privacy, recording: current.current.recording, ...(props.parts?.length ? { parts: props.parts } : {}) }); }, [ready, props.mediaUrl, props.duration, props.parts, send]); // Metadata and privacy changes never reload the source.
   useEffect(() => { if (ready) send("metadata", props.recording); }, [ready, props.recording?.title, props.recording?.channelName, props.recording?.recordedAt, props.recording?.profileImage, send]);
   useEffect(() => { if (ready) send("privacy", props.privacy); }, [ready, props.privacy, send]);
   useEffect(() => { if (ready) send("presentation", { wide: !!props.wide, fullscreen: !!props.fullscreen }); }, [ready, props.wide, props.fullscreen, send]);

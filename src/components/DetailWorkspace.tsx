@@ -534,7 +534,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
       || event.altKey
       || event.shiftKey
       || (event.target instanceof Element
-        && event.target.closest('input, textarea, select, [contenteditable="true"]'))
+        && event.target.closest('input, textarea, select, [contenteditable="true"], [data-gallery-shortcuts-suspended]'))
     ) return;
     const key = event.key.toLocaleLowerCase();
     const code = event.code;
@@ -569,7 +569,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
         : document.activeElement instanceof Element
           ? document.activeElement
           : null;
-      if (target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      if (target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [data-gallery-shortcuts-suspended]')) return;
       const key = event.key.toLocaleLowerCase();
       const previousWindow = event.key === "ArrowLeft" || event.code === "KeyA" || key === "a";
       const nextWindow = event.key === "ArrowRight" || event.code === "KeyD" || key === "d";
@@ -609,6 +609,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     if (previewPage === null || !gallery) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [data-gallery-shortcuts-suspended]')) return;
       const key = event.key.toLocaleLowerCase();
       const previous = event.key === "ArrowLeft" || event.code === "KeyA" || key === "a";
       const nextPage = event.key === "ArrowRight" || event.code === "KeyD" || key === "d";

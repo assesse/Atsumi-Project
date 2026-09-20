@@ -13,7 +13,7 @@ vi.mock("@tauri-apps/api/core", () => ({
 type Props = ComponentProps<typeof OriginalChzzkPlayer>;
 type Envelope = { channel: string; nonce: string; type: string; data?: unknown };
 const state = (patch: Partial<OriginalPlayerState> = {}): OriginalPlayerState => ({ time: 12, duration: 120, paused: false, seeking: false, aspect: 16 / 9, ...patch });
-const callbacks = { onState: vi.fn(), onError: vi.fn(), onFullscreen: vi.fn(), onWide: vi.fn(), onClose: vi.fn() };
+const callbacks = { onState: vi.fn(), onError: vi.fn(), onFullscreen: vi.fn(), onWide: vi.fn(), onClose: vi.fn(), onChannel: vi.fn() };
 let root: Root;
 let container: HTMLDivElement;
 let props: Props;
@@ -55,6 +55,19 @@ afterEach(async () => {
 });
 
 describe("original CHZZK opaque frame bridge", () => {
+  it("shares the same frame for saved ranges and final files, accepting only the current source acknowledgement", async () => {
+    const onTail = vi.fn(), onSourceReady = vi.fn();
+    const parts = [{ index: 0, startSeconds: 0, durationSeconds: 120 }];
+    await render({ parts, onTail, onSourceReady }); const owned = frame(), post = outgoing(); await receive("ready");
+    expect(post).toHaveBeenCalledWith(expect.objectContaining({ type: "init", data: expect.objectContaining({ parts }) }), "*");
+    await receive("tail"); expect(onTail).toHaveBeenCalledOnce();
+    await receive("source", "old-url"); expect(onSourceReady).not.toHaveBeenCalled();
+    await receive("source", props.mediaUrl); expect(onSourceReady).toHaveBeenCalledExactlyOnceWith(props.mediaUrl);
+    await render({ parts: undefined, mediaUrl: "http://atsumi-replay.localhost/replacement" });
+    expect(frame()).toBe(owned);
+    await receive("source", "http://atsumi-replay.localhost/synthetic-token"); expect(onSourceReady).toHaveBeenCalledOnce();
+    await render({ privacy: true }); await receive("tail"); expect(onTail).toHaveBeenCalledOnce();
+  });
   it("isolates the SDK and keeps the recording URL out of the frame location", async () => {
     await render();
     expect(frame()).toHaveAttribute("sandbox", "allow-scripts");
@@ -86,8 +99,16 @@ describe("original CHZZK opaque frame bridge", () => {
     await receive("fullscreen", undefined, envelope, event);
     await receive("wide", undefined, envelope, event);
     await receive("close", undefined, envelope, event);
+    await receive("channel", undefined, envelope, event);
     expect(post).not.toHaveBeenCalled();
     Object.values(callbacks).forEach(callback => expect(callback).not.toHaveBeenCalled());
+  });
+
+  it("delegates channel opening only from the scoped frame outside privacy mode", async () => {
+    await render(); await receive("channel", "https://untrusted.invalid");
+    expect(callbacks.onChannel).toHaveBeenCalledExactlyOnceWith();
+    await render({ privacy: true }); await receive("channel");
+    expect(callbacks.onChannel).toHaveBeenCalledTimes(1);
   });
 
   it("initializes only the authenticated frame and does not reload on repeated ready", async () => {

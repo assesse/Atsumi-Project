@@ -6,14 +6,19 @@ import { mockGalleries } from "../data/mockGalleries";
 import { ThumbnailClient } from "../thumbnail";
 import { DetailWorkspace } from "./DetailWorkspace";
 import { CommonNavigationContext } from "../app/CommonNavigation";
+import { communityApi } from "../features/community/api";
 import { detailPreviewWindowSize } from "./detailPreviewWindow";
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("DetailWorkspace page previews", () => {
-  it("opens the active album's review from the download's left side and the page preview header", async () => {
+  it("opens in-place comments from both headers and suspends preview shortcuts while composing", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const read = vi.spyOn(communityApi, "work").mockResolvedValue({ items: [], nextCursor: null });
+    const write = vi.spyOn(communityApi, "beginWriting").mockResolvedValue({ profile: { id: "fixture", nickname: "독자" }, mine: null });
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
     const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
     Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -41,26 +46,46 @@ describe("DetailWorkspace page previews", () => {
     try {
       await act(async () => render(galleries[0]!));
       expect(openCommunity).not.toHaveBeenCalled();
-      const detailButton = container.querySelector<HTMLButtonElement>('.detail-title-actions [aria-label="후기 남기기"]')!;
-      expect(detailButton).toHaveAttribute("title", "후기 남기기");
+      const detailButton = container.querySelector<HTMLButtonElement>('.detail-title-actions [aria-label="코멘트 남기기"]')!;
+      expect(detailButton).toHaveAttribute("title", "코멘트 남기기");
       expect(detailButton.nextElementSibling).toHaveAttribute("aria-label", "다운로드");
       expect(detailButton.querySelector('svg[aria-hidden="true"]')).not.toBeNull();
       await act(async () => detailButton.click());
-      expect(openCommunity).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[0]!.id) });
+      expect(read).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[0]!.id) }, null);
+      expect(document.querySelector('[aria-label="앨범 코멘트"]')).toBeInTheDocument();
+      expect(write).not.toHaveBeenCalled();
 
       await act(async () => render(galleries[1]!));
-      await act(async () => container.querySelector<HTMLButtonElement>('.detail-title-actions [aria-label="후기 남기기"]')!.click());
-      expect(openCommunity).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[1]!.id) });
+      expect(document.querySelector('[aria-label="앨범 코멘트"]')).toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('.detail-title-actions [aria-label="코멘트 남기기"]')!.click());
+      expect(read).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[1]!.id) }, null);
+      await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="코멘트 닫기"]')!.click());
       await act(async () => container.querySelector<HTMLButtonElement>('.preview-thumb[title="2페이지 확대"]')!.click());
-      const previewButton = container.querySelector<HTMLButtonElement>('.page-preview-header-actions [aria-label="후기 남기기"]')!;
+      const previewButton = container.querySelector<HTMLButtonElement>('.page-preview-header-actions [aria-label="코멘트 남기기"]')!;
       expect(previewButton).toHaveClass("small");
       await act(async () => previewButton.click());
-      expect(openCommunity).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[1]!.id) });
-      expect(openCommunity).toHaveBeenCalledTimes(3);
+      expect(read).toHaveBeenLastCalledWith({ source: "hitomi", workId: String(galleries[1]!.id) }, null);
+      expect(openCommunity).not.toHaveBeenCalled();
+      expect(read).toHaveBeenCalledTimes(3);
+      const title = container.querySelector('#page-preview-title')!.textContent;
+      const panel = container.querySelector<HTMLElement>('.page-preview-dialog [aria-label="앨범 코멘트"]')!;
+      const input = panel.querySelector<HTMLTextAreaElement>('textarea')!;
+      await act(async () => input.focus());
+      for (const target of [input, panel.querySelector('[aria-label="4점"]')!]) {
+        for (const key of ["a", "d", "ArrowLeft", "ArrowRight", "q", "e"]) {
+          await act(async () => { target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
+          expect(container.querySelector('#page-preview-title')).toHaveTextContent(title!);
+        }
+      }
+      await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+      expect(document.querySelector('[aria-label="앨범 코멘트"]')).toBeNull();
+      expect(container.querySelector('.page-preview-dialog')).toHaveAttribute("open");
+      await act(async () => { previewButton.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true, cancelable: true })); });
+      expect(container.querySelector('#page-preview-title')).toHaveTextContent("1페이지");
 
       await act(async () => render({ ...galleries[1]!, download: { entryId: "review-completed", state: "completed", progress: 100 } }));
-      expect(container.querySelector('.detail-title-actions [aria-label="후기 남기기"]')?.nextElementSibling).toHaveAttribute("aria-label", "다운로드 완료");
-      expect(container.querySelector('.page-preview-header-actions [aria-label="후기 남기기"]')).toBeEnabled();
+      expect(container.querySelector('.detail-title-actions [aria-label="코멘트 남기기"]')?.nextElementSibling).toHaveAttribute("aria-label", "다운로드 완료");
+      expect(container.querySelector('.page-preview-header-actions [aria-label="코멘트 남기기"]')).toBeEnabled();
     } finally {
       await act(async () => root.unmount());
       client.dispose(); container.remove();

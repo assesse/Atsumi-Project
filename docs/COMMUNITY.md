@@ -4,7 +4,9 @@
 
 - 좌측 **커뮤니티**에서 최신 후기 또는 사이트·작품번호로 후기를 찾는다. 읽기만 할 때는 개인 계정·키를 만들거나 요구하지 않는다.
 - **후기 작성 / 수정**을 처음 누를 때 Supabase 익명 작성자를 발급한다. 이메일, 비밀번호, 기기 지문은 필요 없다.
-- Hitomi **FLOATING DETAIL**의 다운로드 왼쪽과 **PAGE PREVIEW** 우측 상단의 말풍선 **후기 남기기**를 누르면 해당 작품번호의 작성 화면으로 바로 이동한다. 내 기존 후기가 있으면 수정 상태로 불러온다. 이 버튼도 명시적인 첫 작성 시도로 취급하며, 버튼을 표시하는 것만으로 키를 발급하지 않는다. 커뮤니티에서 Explore 등으로 돌아오면 기존 탐색 결과와 상세 탭을 유지한다.
+- Hitomi **FLOATING DETAIL**의 다운로드 왼쪽과 **PAGE PREVIEW** 우측 상단의 말풍선에 마우스를 올리면 **코멘트 남기기**가 표시된다. 누르면 화면 이동 없이 작은 드롭다운 패널에서 최근 코멘트 3개와 별점·한마디 입력란을 보여준다. 더 보기는 3개씩 펼치며, 서버의 다음 페이지는 필요할 때만 읽는다.
+- 패널 열람만으로는 작성자 키를 발급하지 않는다. 별점을 누르거나 입력란에서 작성을 시작할 때 기존 익명 키를 재사용하거나 최초 발급한다. 내 기존 코멘트는 그때 불러오며, 응답을 기다리는 동안 입력한 내용을 덮어쓰지 않는다. 간편 입력에서는 기존 추천 여부와 닉네임을 유지한다. 닉네임·추천·삭제·신고 등 전체 기능은 좌측 커뮤니티에서 제공한다.
+- 저장은 **남기기 / 수정** 버튼을 눌렀을 때만 수행한다. 입력 중에는 앨범 이동 단축키를 막고, `Esc`는 코멘트 패널만 닫는다. 패널을 닫았다 다시 열면 같은 버튼에 작성하던 내용은 유지된다. 앱 종료 또는 다른 작품으로 이동한 뒤까지 초안을 저장하지는 않는다.
 - Hitomi / Danbooru의 작품마다 작성자별 후기 한 개. 별점 1~5, 추천 여부, 500자 이하 후기, 2~24자 닉네임을 지원한다. 별점만 등록해도 된다.
 - 수정·삭제 대상은 서버가 인증된 작성자로 결정한다. 다른 사람의 후기 카드에서도 버튼은 **내 후기 작성 / 수정**으로 표시한다.
 - 이미 발급한 키가 있으면 신고할 수 있다. 신고는 운영자의 비공개 검토 대상으로 저장하며, 신고만으로 자동 삭제하지 않는다.
@@ -42,7 +44,7 @@ Supabase 기본 익명 가입 IP 제한(공식 문서 기준 30회/시간)을 �
 
 ## 확장 경계
 
-- UI: `src/features/community/CommunityWorkspace.tsx`
+- UI: `src/features/community/CommunityWorkspace.tsx` (전체 화면), `CommunityReviewButton.tsx` / `AlbumCommentsPopover.tsx` / `useAlbumComments.ts` (현재 작품의 간편 코멘트)
 - 기능 계약: `src/features/community/api.ts`의 CommunityApi / WorkKey. UI는 Supabase SDK를 직접 사용하지 않는다.
 - Windows 네트워크/익명 인증: `src-tauri/src/community/mod.rs`
 - 키 보관: `src-tauri/src/community/vault.rs`
@@ -70,3 +72,10 @@ Supabase 기본 익명 가입 IP 제한(공식 문서 기준 30회/시간)을 �
 - 바탕화면 `Atsumi.lnk`는 이 워크스페이스의 `tools/start_debug_app_hidden.ps1`에 연결된 것을 읽기 전용으로 확인했다. 앱을 자동 실행하거나 사용자 라이브러리 DB를 초기화하지 않았다.
 
 참고: [익명 인증](https://supabase.com/docs/guides/auth/auth-anonymous), [API 키](https://supabase.com/docs/guides/getting-started/api-keys), [Windows DPAPI](https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata).
+
+### 2026-09-17: 현재 화면의 간편 코멘트
+
+- 관련 4파일 35개, 전체 프런트엔드 115파일 1,146개 테스트 통과. 전체 검사의 Edge 임시 프로필 실행은 샌드박스 제한 때문에 일반 권한으로 재실행했다.
+- TypeScript 검사와 프런트엔드 빌드 통과. 서버 스키마·인증 보관·앱 초기화·Rust 백엔드는 변경하지 않았다.
+- 개인 프로필과 분리된 헤드리스 Chromium에서 실제 DetailWorkspace와 PAGE PREVIEW를 사용해 1366×850 / 800×600 배치, 네이티브 모달 밖으로 나오는 패널의 클릭 가능 여부, 입력 중 A/D·방향키·Q/E 무시, 저장 후 화면 유지, Esc 동작을 검증했다.
+- 읽기·쓰기 응답은 합성 데이터로 대체했다. 실제 서버에 코멘트를 게시하거나 작성자 키를 발급하지 않았다.

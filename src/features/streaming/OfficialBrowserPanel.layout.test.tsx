@@ -15,7 +15,9 @@ const path = await import(pathName) as { join(...parts: string[]): string; relat
 const { tmpdir } = await import(osName) as { tmpdir(): string };
 const { pathToFileURL } = await import(urlName) as { pathToFileURL(path: string): { href: string } };
 const { execFile } = await import(childName) as { execFile(file: string, args: string[], options: { timeout: number; maxBuffer: number; encoding: "utf8"; windowsHide: boolean }, callback: (error: Error | null, stdout: string) => void): void };
-const edge = ["C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"].find((candidate) => fs.existsSync(candidate));
+const processName = "node:process";
+const { env } = await import(processName) as { env: Record<string, string | undefined> };
+const edge = [env.ATSUMI_TEST_BROWSER ?? "", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"].find((candidate) => fs.existsSync(candidate));
 type Frame = { name: string; html: string };
 type Box = { x: number; y: number; width: number; height: number; bottom: number };
 type Measurement = { name: string; stage: Box; action: Box | null; viewportHeight: number; overflow: string; footer: boolean; chromeOutsideStage: boolean; setup: Box | null; setupPosition: string | null };

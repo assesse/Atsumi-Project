@@ -18,6 +18,21 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT",
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe("recorded file playback and merge status", () => {
+  it("opens verified ranges during recording without starting another capture or final export", async () => {
+    await render(recording({ status: "recording", progressive: { partCount: 1, segmentCount: 1, durationSeconds: 15, lastError: null } }));
+    expect(container).toHaveTextContent("약 3분 또는 48 MiB");
+    await act(async () => button("앱에서 다시보기")!.click());
+    expect(callbacks.onReplay).toHaveBeenCalledExactlyOnceWith("selected-recording");
+    expect(callbacks.onOpenMerged).not.toHaveBeenCalled(); expect(callbacks.onRetryMerge).not.toHaveBeenCalled();
+    await render(recording({ progressive: { partCount: 1, segmentCount: 1, durationSeconds: 15, lastError: null } }));
+    expect(container).not.toHaveTextContent("녹화는 계속됩니다");
+  });
+  it("rejects invalid range summaries and permits retrying a blocked active range", async () => {
+    await render(recording({ status: "recording", progressive: { partCount: 1, segmentCount: 3, durationSeconds: 15, lastError: "디스크 확인 필요" } }));
+    expect(button("앱에서 다시보기")).toBeUndefined();
+    await act(async () => button("구간 병합 다시 시도")!.click());
+    expect(callbacks.onRetryMerge).toHaveBeenCalledExactlyOnceWith("selected-recording");
+  });
   it.each(["pending", "complete", "blocked"] as const)("keeps merged replay available during %s source cleanup and hides stale source actions", async (status) => {
     await render(recording({ merge: merge({ sourceCleanup: { status, deletedSegments: status === "complete" ? 2 : 0, proofFile: `merged-${token}.cleanup.json`, proofSha256: "a".repeat(64), lastError: status === "blocked" ? "사용 중인 원본은 보존했습니다." : null } }) }));
     expect(button("앱에서 다시보기")).toBeEnabled();

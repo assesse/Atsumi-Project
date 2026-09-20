@@ -33,7 +33,7 @@ const chatWarning = (pane: MultiviewPane | undefined) => {
   return message + (typeof count === "number" && Number.isSafeInteger(count) && count >= 0 ? ` 현재 ${count.toLocaleString("ko-KR")}개 기록.` : "");
 };
 
-function Pane({ pane, epoch, api, privacy, onError }: { pane: MultiviewPane; epoch: number; api: MultiviewApi; privacy: boolean; onError(message: string): void }) {
+export function NativeStreamingPane({ pane, epoch, api, privacy, suspended = false, placeholder, onError }: { pane: MultiviewPane; epoch: number; api: Pick<MultiviewApi, "runtime" | "setViewport">; privacy: boolean; suspended?: boolean; placeholder?: string; onError(message: string): void }) {
   const container = useRef<HTMLDivElement>(null);
   const report = useRef(onError); report.current = onError;
   useEffect(() => {
@@ -42,7 +42,7 @@ function Pane({ pane, epoch, api, privacy, onError }: { pane: MultiviewPane; epo
     let disposed = false, frame = 0, latest: { viewport: OfficialBrowserViewport; revision: number } | null = null, lastKey = "", revision = 0;
     let visibleFlights = 0;
     let retry: ReturnType<typeof setTimeout> | undefined;
-    const hidden = { ...hiddenOfficialBrowserViewport, epoch };
+    const hidden = { ...hiddenOfficialBrowserViewport, ...(privacy ? { suspendAudio: true } : {}), epoch };
     const send = async (viewport: OfficialBrowserViewport, current: number, attempt = 0) => {
       if (disposed) return;
       clearTimeout(retry);
@@ -51,6 +51,7 @@ function Pane({ pane, epoch, api, privacy, onError }: { pane: MultiviewPane; epo
       if (serialVisible) visibleFlights++;
       try {
         const result = await api.setViewport(pane.paneId, viewport);
+        if (!disposed && current === revision && result.ok && viewport.visible && !viewport.occluded) report.current("");
         if (!disposed && current === revision && !result.ok) {
           lastKey = "";
           if (viewport.occluded) void api.setViewport(pane.paneId, hidden).catch(() => {});
@@ -81,7 +82,7 @@ function Pane({ pane, epoch, api, privacy, onError }: { pane: MultiviewPane; epo
       if (disposed) return;
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
-      const measured = privacy || document.hidden || document.fullscreenElement ? hidden : { ...measureOfficialBrowserViewport(element), epoch };
+      const measured = privacy || suspended || document.hidden || document.fullscreenElement ? hidden : { ...measureOfficialBrowserViewport(element), epoch };
       const viewport = { ...measured, ...(measured.visible ? nativeModalOcclusion(element, measured) : { occluded: false }) };
       const key = JSON.stringify(viewport);
       if (key === lastKey) return;
@@ -105,9 +106,9 @@ function Pane({ pane, epoch, api, privacy, onError }: { pane: MultiviewPane; epo
       window.removeEventListener("resize", schedule); document.removeEventListener("scroll", schedule, true); document.removeEventListener("visibilitychange", update); document.removeEventListener("fullscreenchange", update);
       void api.setViewport(pane.paneId, hidden).catch(() => {});
     };
-  }, [api, epoch, pane.paneId, privacy]);
+  }, [api, epoch, pane.paneId, privacy, suspended]);
   return <div className={`mado-native-slot is-${pane.kind}`} ref={container} aria-label={pane.kind === "video" ? "방송 화면" : "채팅 화면"}>
-    <span>{privacy ? "프라이버시 모드" : pane.kind === "video" ? "방송 연결 중" : "채팅 연결 중"}</span>
+    <span>{privacy ? "프라이버시 모드" : suspended ? placeholder || "연결 상태 확인 중" : pane.kind === "video" ? "방송 연결 중" : "채팅 연결 중"}</span>
   </div>;
 }
 
@@ -330,7 +331,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, api: suppliedApi, off
   const channels = [...new Set(snapshot.panes.map((pane) => pane.channelId))];
   const number = (channelId: string) => channels.indexOf(channelId) + 1;
   const label = (channelId: string) => `${number(channelId)}. ${privacy ? "방송" : channelName(snapshot.panes.find((pane) => pane.channelId === channelId))}`;
-  const renderPane = (pane: MultiviewPane) => <Pane key={pane.paneId} pane={pane} epoch={snapshot.epoch} api={api} privacy={privacy || resizing} onError={setError} />;
+  const renderPane = (pane: MultiviewPane) => <NativeStreamingPane key={pane.paneId} pane={pane} epoch={snapshot.epoch} api={api} privacy={privacy || resizing} onError={setError} />;
   const warnings = snapshot.panes.filter(pane => pane.kind === "video").flatMap(pane => {
     const message = [pane.error, chatWarning(pane)].filter(Boolean).join(" · ");
     return message ? [{ paneId: pane.paneId, label: label(pane.channelId), message }] : [];

@@ -210,8 +210,13 @@ impl OfficialBrowser {
         action: &str,
     ) -> Result<Value, StreamError> {
         if self.inner.detached.load(Ordering::Acquire)
-            || !matches!(action, "exit_focus" | "open_settings" | "audio_toggle")
-            || (matches!(action, "open_settings") && self.label() != WINDOW_LABEL)
+            || !matches!(
+                action,
+                "exit_focus" | "open_settings" | "audio_toggle" | "record_only"
+            )
+            || (matches!(action, "open_settings" | "record_only")
+                && self.label() != WINDOW_LABEL
+                && !self.label().starts_with("chzzk-auto-"))
         {
             return Err(unavailable());
         }
@@ -227,7 +232,7 @@ impl OfficialBrowser {
         state.last_ui_intent = Some(Instant::now());
         // These requests only open main-app UI. They cannot authorize recording,
         // account access, extension installation or any other privileged action.
-        if matches!(action, "exit_focus" | "open_settings") {
+        if matches!(action, "exit_focus" | "open_settings" | "record_only") {
             state.pending_ui_action = Some(UiAction {
                 id: uuid::Uuid::new_v4().to_string(),
                 action: action.into(),

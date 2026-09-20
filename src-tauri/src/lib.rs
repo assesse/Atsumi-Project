@@ -676,6 +676,7 @@ pub fn run() -> tauri::Result<()> {
                 if let Some(state) = view.app_handle().try_state::<AppState>() {
                     if let Ok(browser) = state.official_browser() {
                         browser.detach_viewport(view.app_handle());
+                        browser.detach_auto_watch(view.app_handle());
                         let app = view.app_handle().clone();
                         // Hide old native paint immediately. A recording layout
                         // survives main-document reload and is adopted by the new UI.
@@ -1084,6 +1085,8 @@ pub fn run() -> tauri::Result<()> {
             streaming::browser::chzzk_browser_stop,
             streaming::browser::chzzk_browser_connect_extension,
             streaming::browser::chzzk_browser_open_folder,
+            streaming::browser::recording_profile::chzzk_recording_profile,
+            streaming::browser::recording_profile::chzzk_recording_open_channel,
             streaming::browser::chzzk_browser_open_segment,
             streaming::browser::chzzk_browser_open_merged,
             streaming::browser::chzzk_browser_retry_merge,
@@ -1091,6 +1094,12 @@ pub fn run() -> tauri::Result<()> {
             streaming::browser::auto_record::chzzk_auto_record_snapshot,
             streaming::browser::auto_record::chzzk_auto_record_add,
             streaming::browser::auto_record::chzzk_auto_record_update,
+            streaming::browser::multiview::auto_watch::chzzk_auto_watch_open,
+            streaming::browser::multiview::auto_watch::chzzk_auto_watch_snapshot,
+            streaming::browser::multiview::auto_watch::chzzk_auto_watch_viewport,
+            streaming::browser::multiview::auto_watch::chzzk_auto_watch_audio,
+            streaming::browser::multiview::auto_watch::chzzk_auto_watch_close,
+            streaming::browser::multiview::auto_watch::chzzk_auto_watch_browser,
             streaming::browser::auto_record::chzzk_browser_capture_chat,
             streaming::replay::replay_open,
             streaming::replay::replay_open_profile,

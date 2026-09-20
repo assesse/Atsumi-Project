@@ -19,6 +19,9 @@ pub(crate) mod cleanup;
 pub use cleanup::{BrowserSourceCleanup, BrowserSourceCleanupStatus};
 #[path = "browser_delete.rs"]
 pub(crate) mod deletion;
+#[path = "browser_parts.rs"]
+pub(crate) mod parts;
+pub use parts::ProgressiveSummary;
 
 const MAX_CHUNK: usize = 1024 * 1024;
 const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
@@ -41,6 +44,15 @@ pub enum BrowserRecordingStatus {
     Stopped,
     Interrupted,
     Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingEnd {
+    pub reason: String,
+    pub trigger: String,
+    pub stopped_at: u64,
+    pub confirmed_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -81,6 +93,10 @@ pub struct BrowserRecording {
     pub bytes_written: u64,
     pub duration_seconds: f64,
     pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broadcast_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ending: Option<RecordingEnd>,
     /// The latest 128 segments. The full index is `segments.jsonl` on disk.
     pub segments: Vec<BrowserSegment>,
     #[serde(default)]
@@ -95,6 +111,8 @@ pub struct BrowserRecording {
     /// Verified playback derivative. Source cleanup never changes chat or history.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub merge: Option<BrowserMerge>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progressive: Option<ProgressiveSummary>,
     /// A durable user-confirmed deletion, possibly interrupted and retryable.
     #[serde(default)]
     pub deletion_pending: bool,
@@ -151,6 +169,7 @@ pub(crate) struct BrowserMergeJob {
     pub token: String,
     journal_len: u64,
     journal_modified: std::time::SystemTime,
+    pub(crate) part: Option<parts::PartPlan>,
 }
 
 pub(crate) struct BrowserMergedOutput {
@@ -200,12 +219,15 @@ impl CatalogEntry {
             bytes_written: 0,
             duration_seconds: 0.0,
             last_error: None,
+            broadcast_key: None,
+            ending: None,
             segments: Vec::new(),
             partial: None,
             capture_chat: None,
             chat_status: None,
             chat_count: None,
             merge: None,
+            progressive: None,
             deletion_pending: self.deletion_pending,
         }
     }
@@ -256,6 +278,9 @@ pub(crate) struct BrowserReplaySource {
     pub media: File,
     pub chat: Option<File>,
     pub timeline: File,
+    pub duration: f64,
+    pub parts: Vec<(File, parts::Part)>,
+    pub combined_timeline: Option<Vec<u8>>,
 }
 
 impl BrowserCaptureStore {
@@ -284,6 +309,17 @@ impl BrowserCaptureStore {
         channel_id: &str,
         title: &str,
         mime_type: &str,
+    ) -> Result<BrowserRecording, StreamError> {
+        self.begin_with_progressive(download_root, channel_id, title, mime_type, false)
+    }
+
+    fn begin_with_progressive(
+        &self,
+        download_root: &Path,
+        channel_id: &str,
+        title: &str,
+        mime_type: &str,
+        progressive: bool,
     ) -> Result<BrowserRecording, StreamError> {
         if !valid_channel(channel_id) {
             return Err(invalid());
@@ -322,7 +358,8 @@ impl BrowserCaptureStore {
             output_dir: root.to_string_lossy().into_owned(),
             deletion_pending: false,
         };
-        let recording = entry.recording();
+        let mut recording = entry.recording();
+        recording.progressive = progressive.then(ProgressiveSummary::default);
         let journal = OpenOptions::new()
             .read(true)
             .write(true)
@@ -542,10 +579,116 @@ impl BrowserCaptureStore {
         Ok(self.lock()?.recordings.iter().rev().cloned().collect())
     }
 
+    pub(crate) fn set_broadcast_key(&self, id: &str, key: &str) -> Result<(), StreamError> {
+        if key.len() > 160 || key.is_empty() || key.chars().any(char::is_control) {
+            return Err(invalid());
+        }
+        let mut state = self.lock()?;
+        let recording = state
+            .recordings
+            .iter_mut()
+            .find(|r| r.id == id && !r.deletion_pending)
+            .ok_or_else(inactive)?;
+        if recording.broadcast_key.is_none() {
+            recording.broadcast_key = Some(key.into());
+            save_metadata(recording)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn record_end(
+        &self,
+        id: &str,
+        reason: &str,
+        trigger: &str,
+    ) -> Result<(), StreamError> {
+        let mut state = self.lock()?;
+        let recording = state
+            .recordings
+            .iter_mut()
+            .find(|r| r.id == id && !r.deletion_pending)
+            .ok_or_else(inactive)?;
+        recording.ending = Some(RecordingEnd {
+            reason: reason.into(),
+            trigger: trigger.chars().take(80).collect(),
+            stopped_at: now_ms(),
+            confirmed_at: None,
+        });
+        save_metadata(recording)
+    }
+
+    /// Only a pending source-end classification may be upgraded. Storage failures,
+    /// partial files, explicit stops and older recordings are never rewritten.
+    pub(crate) fn confirm_end(&self, id: &str, reason: &str) -> Result<(), StreamError> {
+        let mut state = self.lock()?;
+        let recording = state
+            .recordings
+            .iter_mut()
+            .find(|r| r.id == id && !r.deletion_pending)
+            .ok_or_else(inactive)?;
+        if recording
+            .ending
+            .as_ref()
+            .is_none_or(|end| end.reason != "checking")
+        {
+            return Ok(());
+        }
+        let end = recording.ending.as_mut().unwrap();
+        end.reason = reason.into();
+        end.confirmed_at = Some(now_ms());
+        if matches!(reason, "broadcast_ended" | "broadcast_changed")
+            && recording.status == BrowserRecordingStatus::Interrupted
+            && recording.partial.is_none()
+            && recording.segment_count > 0
+        {
+            recording.status = BrowserRecordingStatus::Stopped;
+            recording.last_error = None;
+        }
+        save_metadata(recording)
+    }
+
+    pub(crate) fn note_capture_error(
+        &self,
+        id: &str,
+        code: &str,
+        message: &str,
+    ) -> Result<(), StreamError> {
+        let mut state = self.lock()?;
+        let recording = state
+            .recordings
+            .iter_mut()
+            .find(|r| {
+                r.id == id
+                    && !r.deletion_pending
+                    && matches!(
+                        r.status,
+                        BrowserRecordingStatus::Failed | BrowserRecordingStatus::Interrupted
+                    )
+            })
+            .ok_or_else(inactive)?;
+        recording.last_error = Some(bounded_text(message, 512));
+        if let Some(end) = &mut recording.ending {
+            end.trigger = bounded_text(code, 80);
+        }
+        save_metadata(recording)
+    }
+
     pub fn has_active(&self) -> bool {
         self.state
             .lock()
             .map_or(true, |state| !state.active.is_empty())
+    }
+
+    pub(crate) fn checking_end(&self, channel: &str, key: Option<&str>, now: u64) -> bool {
+        self.state.lock().is_ok_and(|state| {
+            state.recordings.iter().any(|r| {
+                r.channel_id == channel
+                    && r.broadcast_key.as_deref() == key
+                    && r.ending.as_ref().is_some_and(|end| {
+                        end.reason == "checking" && now.saturating_sub(end.stopped_at) < 130_000
+                    })
+            })
+        })
     }
 
     /// Called only by the one merge worker. This reserves metadata, not media I/O.
@@ -558,6 +701,9 @@ impl BrowserCaptureStore {
         for _ in 0..MAX_RECORDINGS {
             let Some(index) = state.recordings.iter().position(|r| {
                 r.status != BrowserRecordingStatus::Recording
+                    && r.progressive
+                        .as_ref()
+                        .is_none_or(|p| p.segment_count == r.segment_count)
                     && !r.deletion_pending
                     && r.segment_count > 0
                     && !state.active.contains_key(&r.id)
@@ -601,6 +747,7 @@ impl BrowserCaptureStore {
                 token: token.clone(),
                 journal_len,
                 journal_modified,
+                part: None,
             };
             let id = recording.id.clone();
             state.merge_job = Some((id, token));
@@ -621,6 +768,17 @@ impl BrowserCaptureStore {
         let mut count = 0;
         let running = state.merge_job.as_ref().map(|(id, _)| id.clone());
         for recording in &mut state.recordings {
+            if id.is_none_or(|id| id == recording.id)
+                && !recording.deletion_pending
+                && running.as_deref() != Some(recording.id.as_str())
+            {
+                if let Some(progress) = &mut recording.progressive {
+                    if progress.last_error.take().is_some() {
+                        save_metadata(recording)?;
+                        count += 1;
+                    }
+                }
+            }
             if id.is_some_and(|id| id != recording.id)
                 || recording.deletion_pending
                 || running.as_deref() == Some(recording.id.as_str())
@@ -714,6 +872,17 @@ impl BrowserCaptureStore {
             .iter()
             .find(|r| r.id == id && !r.deletion_pending)
             .ok_or_else(invalid)?;
+        if recording
+            .progressive
+            .as_ref()
+            .is_some_and(|p| p.part_count > 0)
+            && recording
+                .merge
+                .as_ref()
+                .is_none_or(|m| m.status != BrowserMergeStatus::Complete)
+        {
+            return parts::replay_source(recording);
+        }
         let merge = recording
             .merge
             .as_ref()
@@ -754,6 +923,9 @@ impl BrowserCaptureStore {
             media,
             chat,
             timeline,
+            duration: merge.duration_seconds.ok_or_else(invalid)?,
+            parts: Vec::new(),
+            combined_timeline: None,
         })
     }
 
@@ -879,6 +1051,9 @@ fn merge_job_index(state: &State, job: &BrowserMergeJob) -> Result<usize, Stream
 }
 
 pub(crate) fn validate_merge_generation(job: &BrowserMergeJob) -> Result<PathBuf, StreamError> {
+    if let Some(plan) = &job.part {
+        return parts::validate_prefix(&job.recording, plan);
+    }
     let root = owned_root(&job.recording.output_dir, &job.recording.id)?;
     let metadata = open_regular(&root.join("segments.jsonl"), MAX_JOURNAL)?
         .metadata()
@@ -895,6 +1070,9 @@ pub(crate) fn validate_merge_generation(job: &BrowserMergeJob) -> Result<PathBuf
 pub(crate) fn read_merge_segments(
     job: &BrowserMergeJob,
 ) -> Result<Vec<BrowserSegment>, StreamError> {
+    if let Some(plan) = &job.part {
+        return parts::read_part_segments(&job.recording, plan);
+    }
     let root = validate_merge_generation(job)?;
     let mut reader = BufReader::new(open_regular(&root.join("segments.jsonl"), MAX_JOURNAL)?);
     let mut segments = Vec::new();
@@ -1267,6 +1445,7 @@ fn recover_recording(entry: &CatalogEntry) -> BrowserRecording {
         recording.status = BrowserRecordingStatus::Interrupted;
         recording.last_error = Some("이전 녹화가 정상적으로 마무리되지 않았습니다. 확정된 세그먼트와 미완성 파일을 보존했습니다.".into());
     }
+    parts::recover_summary(&mut recording);
     recording
 }
 
@@ -1301,10 +1480,22 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
         recording.status = metadata.status;
         recording.updated_at = metadata.updated_at;
         recording.last_error = metadata.last_error.clone();
+        recording.broadcast_key = metadata
+            .broadcast_key
+            .clone()
+            .filter(|k| k.len() <= 160 && !k.chars().any(char::is_control));
+        recording.ending = metadata
+            .ending
+            .clone()
+            .filter(|e| e.reason.len() <= 80 && e.trigger.len() <= 80);
+        if let Some(end) = recording.ending.as_mut().filter(|e| e.reason == "checking") {
+            end.reason = "end_unconfirmed".into();
+        }
         recording.capture_chat = metadata.capture_chat;
         recording.chat_status = metadata.chat_status.clone();
         recording.chat_count = metadata.chat_count;
         recording.merge = metadata.merge.clone();
+        recording.progressive = metadata.progressive.clone();
         if !valid_merge(
             recording.merge.as_ref(),
             metadata.segment_count,
@@ -1846,6 +2037,86 @@ mod tests {
             fs::read(Path::new(&recording.output_dir).join("segment-000000000000.webm")).unwrap(),
             WEBM
         );
+    }
+
+    #[test]
+    fn unfinished_end_confirmation_becomes_unknown_on_restart_without_rewriting_media() {
+        let (directory, store, recording) = fixture();
+        store.append(&recording.id, 0, 0, WEBM).unwrap();
+        store.finish_segment(&recording.id, 0, 15.0).unwrap();
+        store
+            .finish(&recording.id, true, Some("source ended"))
+            .unwrap();
+        store
+            .record_end(&recording.id, "checking", "source_changed")
+            .unwrap();
+        drop(store);
+        let reopened = BrowserCaptureStore::new(directory.path())
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .remove(0);
+        assert_eq!(reopened.status, BrowserRecordingStatus::Interrupted);
+        assert_eq!(reopened.ending.unwrap().reason, "end_unconfirmed");
+        assert_eq!(
+            fs::read(Path::new(&recording.output_dir).join("segment-000000000000.webm")).unwrap(),
+            WEBM
+        );
+    }
+
+    #[test]
+    fn broadcast_end_confirmation_preserves_storage_and_manual_stop_boundaries() {
+        let (directory, store, recording) = fixture();
+        store.set_broadcast_key(&recording.id, "id:42").unwrap();
+        store.append(&recording.id, 0, 0, WEBM).unwrap();
+        store.finish_segment(&recording.id, 0, 15.0).unwrap();
+        store
+            .finish(&recording.id, true, Some("source ended"))
+            .unwrap();
+        store
+            .record_end(&recording.id, "checking", "video_ended")
+            .unwrap();
+        assert!(store.checking_end(CHANNEL, Some("id:42"), now_ms()));
+        store.confirm_end(&recording.id, "broadcast_ended").unwrap();
+        let saved = store.snapshot().unwrap().remove(0);
+        assert_eq!(saved.status, BrowserRecordingStatus::Stopped);
+        assert!(saved.last_error.is_none());
+        assert!(store
+            .note_capture_error(&recording.id, "stale_packet", "late packet")
+            .is_err());
+        assert!(store.snapshot().unwrap()[0].last_error.is_none());
+        assert_eq!(saved.segment_count, 1);
+        let reopened = BrowserCaptureStore::new(directory.path())
+            .unwrap()
+            .snapshot()
+            .unwrap()
+            .remove(0);
+        assert_eq!(reopened.broadcast_key.as_deref(), Some("id:42"));
+        assert_eq!(reopened.ending.unwrap().reason, "broadcast_ended");
+        store
+            .record_end(&recording.id, "user_stopped", "user_stop")
+            .unwrap();
+        store.confirm_end(&recording.id, "broadcast_ended").unwrap();
+        assert_eq!(
+            store.snapshot().unwrap()[0].ending.as_ref().unwrap().reason,
+            "user_stopped"
+        );
+        let (_directory, partial_store, partial) = fixture();
+        partial_store.append(&partial.id, 0, 0, WEBM).unwrap();
+        partial_store
+            .finish(&partial.id, true, Some("incomplete"))
+            .unwrap();
+        partial_store
+            .record_end(&partial.id, "checking", "video_ended")
+            .unwrap();
+        partial_store
+            .confirm_end(&partial.id, "broadcast_ended")
+            .unwrap();
+        assert_eq!(
+            partial_store.snapshot().unwrap()[0].status,
+            BrowserRecordingStatus::Interrupted
+        );
+        assert!(partial_store.snapshot().unwrap()[0].last_error.is_some());
     }
 
     #[test]

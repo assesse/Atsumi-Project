@@ -10,7 +10,7 @@ type State = { kind: string; active: boolean; reason: string; audioEnabled: bool
 type PageWindow = EventTarget & {
   location: URL; top: unknown; innerWidth: number; innerHeight: number;
   getComputedStyle: typeof window.getComputedStyle;
-  __atsumiMultiView?: { getState(): State; configureChat(value: { channelId: string; number: number; channelName: string }): void };
+  __atsumiMultiView?: { getState(): State; setVideoOnly(enabled: boolean): void; configureChat(value: { channelId: string; number: number; channelName: string }): void };
 };
 const observers: MutationObserver[] = [];
 const rect = (node: Element, width = 900, height = 600) => vi.spyOn(node, "getBoundingClientRect").mockReturnValue({
@@ -46,6 +46,21 @@ afterEach(() => {
 });
 
 describe("watch-only official multiview bridge", () => {
+  it("restores the original live chat and controls without recreating video or chat input", () => {
+    const f = fixture(); f.advance();
+    const input = f.page.querySelector("textarea")!, video = f.video, parent = video.parentElement;
+    input.value = "작성 중인 채팅";
+    f.pageWindow.__atsumiMultiView!.setVideoOnly(false);
+    expect(f.state()).toMatchObject({ active: false, reason: "original" });
+    expect(f.page.body.hasAttribute("data-atsumi-mado")).toBe(false);
+    expect(f.page.querySelectorAll("[data-atsumi-mado-path],[data-atsumi-mado-media]")).toHaveLength(0);
+    f.pageWindow.dispatchEvent(new Event("resize")); f.advance();
+    expect(f.state()?.active).toBe(false);
+    f.pageWindow.__atsumiMultiView!.setVideoOnly(true);
+    expect(f.state()?.active).toBe(true);
+    expect(f.page.querySelector("video")).toBe(video); expect(video.parentElement).toBe(parent);
+    expect(f.page.querySelector("textarea")).toBe(input); expect(input.value).toBe("작성 중인 채팅");
+  });
   it.each([
     "https://evil.example/live/" + ID,
     `https://chzzk.naver.com/live/${ID}?anything=1`,

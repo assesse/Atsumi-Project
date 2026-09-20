@@ -13,6 +13,7 @@ use super::{ResolvedThumbnail, ThumbnailFailureCode, ThumbnailKey, ThumbnailPrio
 #[derive(Debug, Clone, Default)]
 pub struct CancellationToken {
     cancelled: Arc<AtomicBool>,
+    parent: Option<Box<CancellationToken>>,
 }
 
 impl CancellationToken {
@@ -24,8 +25,20 @@ impl CancellationToken {
         self.cancelled.store(true, Ordering::Release);
     }
 
+    /// Cancels siblings in a pipeline without cancelling its owning user job.
+    pub fn child(&self) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            parent: Some(Box::new(self.clone())),
+        }
+    }
+
     pub fn is_cancelled(&self) -> bool {
         self.cancelled.load(Ordering::Acquire)
+            || self
+                .parent
+                .as_ref()
+                .is_some_and(|parent| parent.is_cancelled())
     }
 }
 

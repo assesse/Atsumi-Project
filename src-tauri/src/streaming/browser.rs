@@ -20,16 +20,22 @@ pub mod auto_record;
 
 #[path = "browser_auth.rs"]
 mod auth;
+#[path = "browser_chat_popup.rs"]
+mod chat_popup;
 #[path = "browser_contexts.rs"]
 mod contexts;
 #[path = "browser_encoded.rs"]
 pub(crate) mod encoded;
+#[path = "browser_ending.rs"]
+mod ending;
 #[path = "browser_host.rs"]
 mod host_view;
 #[path = "browser_multiview.rs"]
 pub mod multiview;
 #[path = "browser_multiview_commands.rs"]
 pub mod multiview_commands;
+#[path = "browser_recording_profile.rs"]
+pub mod recording_profile;
 #[path = "browser_screenshot.rs"]
 mod screenshot;
 pub use host_view::{BrowserClip, BrowserViewport, InstallerBrowser};
@@ -95,6 +101,8 @@ struct PageChatLog {
     chat_channel_id: Option<String>,
     sequence: u64,
     last_clock: Option<(f64, u64)>,
+    last_batch: Option<(u64, Vec<u8>, u64)>,
+    failed_batch: bool,
     log: ChatStore,
 }
 impl PageChatLog {
@@ -200,6 +208,7 @@ struct ViewState {
     chat_status: String,
     chat_count: u64,
     capture_chat: bool,
+    chat_heartbeat: Option<Instant>,
     viewport: BrowserViewport,
     login_status: String,
     auth_status: auth::AuthStatus,
@@ -241,6 +250,7 @@ impl Default for ViewState {
             chat_status: "disabled".into(),
             chat_count: 0,
             capture_chat: false,
+            chat_heartbeat: None,
             viewport: BrowserViewport::default(),
             login_status: "브라우저 세션 유지 · 로그인 여부는 공식 화면에서 확인".into(),
             auth_status: auth::AuthStatus::Unknown,
@@ -402,6 +412,8 @@ enum BrowserMessage {
     ChatBatch {
         recording_id: String,
         events: Vec<Value>,
+        #[serde(default)]
+        batch_id: Option<u64>,
     },
     ChatStatus {
         recording_id: String,
@@ -470,10 +482,15 @@ fn sanitized_capture_diagnostics(value: Option<Value>) -> Option<Value> {
         }).collect();
         json!({"selected":source["selected"].as_bool().unwrap_or(false), "tracks":tracks})
     }).collect();
+    let last_stop = value.get("lastStop").filter(|v| v.is_object()).map(|v| json!({
+        "reason": match v["reason"].as_str() { Some("video_ended") => "video_ended", Some("source_changed") => "source_changed", _ => "other" },
+        "ended": v["ended"].as_bool().unwrap_or(false), "sourceAttached":v["sourceAttached"].as_bool().unwrap_or(false),
+        "sourceClosed":v["sourceClosed"].as_bool().unwrap_or(false), "readyState":v["readyState"].as_u64().unwrap_or(0).min(4)
+    }));
     Some(
         json!({"reason":reason, "installed":value["installed"].as_bool().unwrap_or(false),
         "appendCount":value["appendCount"].as_u64().unwrap_or(0).min(1_000_000_000),
-        "appendBytes":value["appendBytes"].as_u64().unwrap_or(0).min(1_000_000_000_000_000), "sources":sources}),
+        "appendBytes":value["appendBytes"].as_u64().unwrap_or(0).min(1_000_000_000_000_000), "sources":sources, "lastStop":last_stop}),
     )
 }
 
@@ -924,6 +941,15 @@ impl OfficialBrowser {
                 "녹화 시작 응답이 없습니다. 공식 플레이어의 재생 상태를 확인해 주세요.".into(),
             );
         }
+        if state.capture_chat
+            && state.recording.is_some()
+            && state
+                .chat_heartbeat
+                .is_some_and(|at| at.elapsed() > Duration::from_secs(45))
+            && !chat_gap(&state.chat_status)
+        {
+            state.chat_status = "partial".into();
+        }
         Ok(BrowserSnapshot {
             capture_chat_enabled: self.inner.auto_record.capture_chat(),
             window_open: state.open,
@@ -1146,7 +1172,15 @@ impl OfficialBrowser {
             .into();
             state.channel.clone()
         };
-        send_command(window, json!({"kind":"stop","channelId":channel}))
+        let reason = if self.inner.closing.load(Ordering::Acquire) {
+            "app_shutdown"
+        } else {
+            "user_stop"
+        };
+        send_command(
+            window,
+            json!({"kind":"stop","channelId":channel,"reason":reason}),
+        )
     }
     fn wait_stopped(&self, timeout: Duration) {
         let started = Instant::now();
@@ -1276,6 +1310,9 @@ impl OfficialBrowser {
             }
             state.status = "error".into();
             drop(state);
+            if let Ok(saved) = &metadata {
+                self.finish_reason(saved, reason);
+            }
             self.inner
                 .contexts
                 .notice("녹화가 중단되었습니다. 녹화 목록에서 확인해 주세요.");
@@ -1491,13 +1528,14 @@ impl OfficialBrowser {
                 .store
                 .lock()
                 .map_err(|_| unavailable())?
-                .begin(&arm.root, channel, &title, &mime_type)?;
+                .begin_progressive(&arm.root, channel, &title, &mime_type)?;
             state.recording = Some(session.id.clone());
             self.inner.contexts.notice("녹화를 시작했습니다.");
             state.accepted_arm = Some((request_id, session.id.clone(), state.page_generation));
             state.status = "recording".into();
             state.chat_count = 0;
             state.capture_chat = arm.capture_chat;
+            state.chat_heartbeat = arm.capture_chat.then(Instant::now);
             state.chat_status = if arm.capture_chat {
                 "connecting"
             } else {
@@ -1505,6 +1543,13 @@ impl OfficialBrowser {
             }
             .into();
             drop(state);
+            if let Some(key) = self.inner.auto_record.observed_live_key(channel) {
+                let _ = self
+                    .inner
+                    .store
+                    .lock()
+                    .map(|store| store.set_broadcast_key(&session.id, &key));
+            }
             self.inner
                 .replay_assets
                 .submit_channel(Path::new(&session.output_dir), channel);
@@ -1536,6 +1581,7 @@ impl OfficialBrowser {
             BrowserMessage::ChatBatch {
                 recording_id,
                 events,
+                batch_id,
             } => {
                 let enabled = self
                     .inner
@@ -1566,6 +1612,23 @@ impl OfficialBrowser {
                         .as_mut()
                         .filter(|chat| chat.id == recording_id)
                         .ok_or_else(unavailable)?;
+                    let batch_bytes = serde_json::to_vec(&events).map_err(|_| unavailable())?;
+                    if let Some(batch_id) = batch_id {
+                        if let Some((previous, bytes, count)) = &chat.last_batch {
+                            if batch_id == *previous && &batch_bytes == bytes {
+                                return Ok(*count);
+                            }
+                            if batch_id != previous + 1 {
+                                return Err(unavailable());
+                            }
+                        } else if batch_id != 1 {
+                            return Err(unavailable());
+                        }
+                    }
+                    if chat.failed_batch {
+                        return Err(unavailable());
+                    }
+                    chat.failed_batch = true; // Partial writes must never be blindly retried.
                     for value in events {
                         if value.get("atsumiViewerSample").and_then(Value::as_u64) == Some(1) {
                             if let Some(clock) =
@@ -1629,11 +1692,16 @@ impl OfficialBrowser {
                     }
                     // ACK means the batch is durable, not merely queued in JavaScript.
                     chat.log.sync()?;
+                    chat.failed_batch = false;
+                    if let Some(batch_id) = batch_id {
+                        chat.last_batch = Some((batch_id, batch_bytes, chat.sequence));
+                    }
                     Ok::<u64, StreamError>(chat.sequence)
                 })();
                 let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
                 match result {
                     Ok(count) => {
+                        state.chat_heartbeat = Some(Instant::now());
                         let received_messages = count > state.chat_count;
                         state.chat_count = count;
                         if received_messages && !chat_gap(&state.chat_status) {
@@ -1655,6 +1723,10 @@ impl OfficialBrowser {
                 let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
                 if !state.capture_chat {
                     return Err(unavailable());
+                }
+                state.chat_heartbeat = Some(Instant::now());
+                if chat_gap(&detail) && state.chat_status != detail {
+                    tracing::warn!(channel_id = channel, reason = %detail, dropped_messages, "recording chat continuity warning");
                 }
                 if (chat_gap(&detail)
                     || matches!(
@@ -1752,6 +1824,7 @@ impl OfficialBrowser {
                     )?;
                 self.inner.merges.wake();
                 let interrupted = finished.status != BrowserRecordingStatus::Stopped;
+                let ending = self.finish_reason(&finished, reason.as_deref().unwrap_or("unknown"));
                 {
                     let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
                     state.recording = None;
@@ -1760,7 +1833,11 @@ impl OfficialBrowser {
                     state.error = finished.last_error.clone();
                 }
                 self.stop_chat();
-                self.inner.contexts.notice(if interrupted {
+                self.inner.contexts.notice(if ending == "checking" {
+                    "영상 수신이 끝나 방송 종료 여부를 확인합니다. 녹화 파일은 보존됩니다."
+                } else if ending == "broadcast_ended" {
+                    "방송이 종료되어 녹화를 저장했습니다."
+                } else if interrupted {
                     "녹화가 중단되었습니다. 녹화 목록에서 확인해 주세요."
                 } else {
                     "녹화를 종료했습니다."
@@ -1785,6 +1862,8 @@ impl OfficialBrowser {
                     chat_channel_id: None,
                     sequence: 0,
                     last_clock: None,
+                    last_batch: None,
+                    failed_batch: false,
                     log,
                 });
             }
@@ -1813,6 +1892,13 @@ impl OfficialBrowser {
                     return;
                 }
                 if let Ok(info) = info {
+                    if let Some(key) = ending::live_key(&info) {
+                        let _ = host
+                            .inner
+                            .store
+                            .lock()
+                            .map(|store| store.set_broadcast_key(&recording.id, &key));
+                    }
                     if let Some(chat) = host
                         .inner
                         .page_chat
@@ -1840,6 +1926,17 @@ impl OfficialBrowser {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .take();
+        {
+            let mut state = self.inner.view.lock().unwrap_or_else(|p| p.into_inner());
+            if state.capture_chat
+                && state
+                    .chat_heartbeat
+                    .is_some_and(|at| at.elapsed() > Duration::from_secs(45))
+                && !chat_gap(&state.chat_status)
+            {
+                state.chat_status = "partial".into();
+            }
+        }
         if let Some(mut chat) = chat {
             if chat.log.sync().is_err() {
                 self.inner
@@ -1944,7 +2041,7 @@ fn bridge_worker(
             while let Ok((channel, generation, envelope)) = receiver.recv() {
                 let notification = matches!(
                     &envelope.message,
-                    BrowserMessage::Status { .. } | BrowserMessage::ChatStatus { .. }
+                    BrowserMessage::Status { .. }
                 );
                 let recording_id = match &envelope.message {
                     BrowserMessage::Chunk { recording_id, .. }
@@ -1954,6 +2051,10 @@ fn bridge_worker(
                     | BrowserMessage::EncodedFinish { recording_id, .. } => Some(recording_id.clone()),
                     _ => None,
                 };
+                // Late packets from a finished recording are rejected, but must
+                // not overwrite that recording's persisted completion reason.
+                let recording_id = recording_id.filter(|id| worker_host.inner.view.lock()
+                    .is_ok_and(|state| state.recording.as_ref() == Some(id)));
                 let current = worker_host
                     .inner
                     .view
@@ -1988,6 +2089,7 @@ fn bridge_worker(
                     if let Err(error) = &result {
                         if let Some(id) = recording_id {
                             worker_host.interrupt_matching("native_rejected", Some(&id));
+                            let _ = worker_host.inner.store.lock().map(|store| store.note_capture_error(&id, &error.code, &error.message));
                         }
                         if original {
                             tracing::warn!(code = %error.code, reason = %error.message, "original recording request failed");
@@ -2734,6 +2836,8 @@ mod tests {
             sequence: 0,
             last_clock: None,
             log: ChatStore::create(directory.path()).unwrap(),
+            last_batch: None,
+            failed_batch: false,
         };
         let source = "40000000-0000-4000-8000-000000000001";
         let clock = json!({"replayClock": {
@@ -2802,6 +2906,8 @@ mod tests {
             sequence: 0,
             last_clock: None,
             log: ChatStore::create(Path::new(&record.output_dir)).unwrap(),
+            last_batch: None,
+            failed_batch: false,
         });
         let sample = json!({"atsumiViewerSample":1,"viewerCount":17,"replayClock":{"version":1,"receivedAtMs":record.started_at,"observedMonotonicMs":100.0,"sourceGeneration":1,"clock":"mse_presentation_v1","mediaTimeSeconds":4001.0,"sourceTimeSeconds":4001.0,"sourceId":"40000000-0000-4000-8000-000000000001","playbackRate":1.0}});
         host.process(
@@ -2809,6 +2915,7 @@ mod tests {
             BrowserMessage::ChatBatch {
                 recording_id: id,
                 events: vec![sample],
+                batch_id: None,
             },
         )
         .unwrap();
@@ -2841,6 +2948,8 @@ mod tests {
             sequence: 0,
             last_clock: None,
             log: ChatStore::create(Path::new(&record.output_dir)).unwrap(),
+            last_batch: None,
+            failed_batch: false,
         });
         let event = json!({"msgTypeCode":1,"msg":"test message","msgTime":record.started_at,"profile":{"nickname":"viewer","userIdHash":"PRIVATE_MARKER","token":"PRIVATE_MARKER"}});
         for _ in 0..8 {
@@ -2849,6 +2958,7 @@ mod tests {
                 BrowserMessage::ChatBatch {
                     recording_id: id.clone(),
                     events: vec![event.clone(); 32],
+                    batch_id: None,
                 },
             )
             .unwrap();
@@ -2872,6 +2982,7 @@ mod tests {
             BrowserMessage::ChatBatch {
                 recording_id: id.clone(),
                 events: vec![observed],
+                batch_id: None,
             },
         )
         .unwrap();
@@ -2901,6 +3012,7 @@ mod tests {
             BrowserMessage::ChatBatch {
                 recording_id: id.clone(),
                 events: vec![event.clone()],
+                batch_id: None,
             },
         )
         .unwrap();
@@ -2910,7 +3022,8 @@ mod tests {
                 CHANNEL,
                 BrowserMessage::ChatBatch {
                     recording_id: id.clone(),
-                    events: vec![event.clone(); 33]
+                    events: vec![event.clone(); 33],
+                    batch_id: None,
                 }
             )
             .is_err());
@@ -2921,7 +3034,8 @@ mod tests {
                 CHANNEL,
                 BrowserMessage::ChatBatch {
                     recording_id: id,
-                    events: vec![event]
+                    events: vec![event],
+                    batch_id: None,
                 }
             )
             .is_err());
@@ -2937,7 +3051,8 @@ mod tests {
                 CHANNEL,
                 BrowserMessage::ChatBatch {
                     recording_id: id.clone(),
-                    events: vec![]
+                    events: vec![],
+                    batch_id: None,
                 }
             )
             .is_err());
@@ -2953,6 +3068,80 @@ mod tests {
             .is_err());
         assert_eq!(host.active_ids(), vec![id]);
         host.interrupt("window_closed");
+    }
+
+    #[test]
+    fn lost_chat_ack_retries_exact_batch_without_duplicating_messages_or_viewers() {
+        let (_root, host, request) = armed_host();
+        let id = begin(&host, &request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let record = host.snapshot().unwrap().recordings.remove(0);
+        host.inner.view.lock().unwrap().capture_chat = true;
+        *host.inner.page_chat.lock().unwrap() = Some(PageChatLog {
+            id: id.clone(),
+            started_at: record.started_at,
+            broadcast_started_at: None,
+            chat_channel_id: None,
+            sequence: 0,
+            last_clock: None,
+            last_batch: None,
+            failed_batch: false,
+            log: ChatStore::create(Path::new(&record.output_dir)).unwrap(),
+        });
+        let events = vec![json!({"msgTypeCode":1,"msg":"once","profile":{"nickname":"test"}})];
+        for _ in 0..3 {
+            let response = host
+                .process(
+                    CHANNEL,
+                    BrowserMessage::ChatBatch {
+                        recording_id: id.clone(),
+                        events: events.clone(),
+                        batch_id: Some(1),
+                    },
+                )
+                .unwrap();
+            assert_eq!(response["count"], 1);
+        }
+        assert_eq!(
+            std::fs::read_to_string(Path::new(&record.output_dir).join("chat.jsonl"))
+                .unwrap()
+                .lines()
+                .count(),
+            1
+        );
+        assert!(host
+            .process(
+                CHANNEL,
+                BrowserMessage::ChatBatch {
+                    recording_id: id.clone(),
+                    events: vec![],
+                    batch_id: Some(1)
+                }
+            )
+            .is_err());
+        assert!(host
+            .process(
+                CHANNEL,
+                BrowserMessage::ChatBatch {
+                    recording_id: id.clone(),
+                    events: events.clone(),
+                    batch_id: Some(3)
+                }
+            )
+            .is_err());
+        assert!(host
+            .process(
+                CHANNEL,
+                BrowserMessage::ChatBatch {
+                    recording_id: id,
+                    events,
+                    batch_id: Some(2)
+                }
+            )
+            .is_ok());
+        assert_eq!(host.snapshot().unwrap().chat_count, 2);
     }
     #[test]
     fn update_reservation_blocks_an_armed_begin() {

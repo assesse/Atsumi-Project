@@ -23,6 +23,8 @@ use crate::interface::ApiResult;
 
 #[path = "replay_index.rs"]
 mod index;
+#[path = "replay_parts.rs"]
+mod parts;
 #[path = "replay_protocol.rs"]
 mod protocol;
 
@@ -104,6 +106,8 @@ pub struct ReplaySession {
     pub sync_quality: String,
     pub manual_offset_seconds: f64,
     pub warnings: Vec<String>,
+    pub parts: Vec<parts::ReplayPart>,
+    pub recording_active: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +183,9 @@ pub(super) struct Session {
     chat_status: String,
     media: Mutex<File>,
     media_stamp: FileStamp,
+    media_parts: Vec<parts::PartMedia>,
+    recording_active: bool,
+    _temporary_files: parts::TemporaryFiles,
     chat: Option<File>,
     chat_stamp: Option<FileStamp>,
     viewers: Option<File>,
@@ -215,6 +222,12 @@ impl Session {
             .into(),
             manual_offset_seconds: *self.offset.lock().map_err(|_| storage())?,
             warnings: status.warnings,
+            parts: self
+                .media_parts
+                .iter()
+                .map(|p| p.descriptor.clone())
+                .collect(),
+            recording_active: self.recording_active,
         })
     }
     fn valid(&self) -> Result<(), StreamError> {
@@ -462,15 +475,52 @@ impl ReplayService {
         let BrowserReplaySource {
             recording,
             media,
-            chat,
-            timeline,
+            mut chat,
+            mut timeline,
+            duration,
+            parts: media_parts,
+            combined_timeline,
         } = source;
-        let merge = recording.merge.as_ref().ok_or_else(invalid)?;
-        let duration = merge.duration_seconds.ok_or_else(invalid)?;
+        let mut temporary_files = parts::TemporaryFiles::default();
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let progressive = !media_parts.is_empty();
+        if let Some(bytes) = combined_timeline {
+            timeline =
+                parts::snapshot_bytes(root, &token, "timeline", &bytes, &mut temporary_files.0)?;
+        }
+        if progressive {
+            chat = chat
+                .map(|file| {
+                    parts::snapshot_file(root, &token, "chat", file, &mut temporary_files.0)
+                })
+                .transpose()?;
+        }
+        let media_parts = media_parts
+            .into_iter()
+            .enumerate()
+            .map(|(index, (file, part))| {
+                Ok(parts::PartMedia {
+                    stamp: FileStamp::read(&file)?,
+                    file: Mutex::new(file),
+                    descriptor: parts::ReplayPart {
+                        index,
+                        start_seconds: part.offset,
+                        duration_seconds: part.duration,
+                    },
+                })
+            })
+            .collect::<Result<Vec<_>, StreamError>>()?;
         let media_stamp = FileStamp::read(&media)?;
         let chat_stamp = chat.as_ref().map(FileStamp::read).transpose()?;
         let timeline_stamp = FileStamp::read(&timeline)?;
-        let viewers = super::viewer_metrics::open_recording(Path::new(&recording.output_dir))?;
+        let mut viewers = super::viewer_metrics::open_recording(Path::new(&recording.output_dir))?;
+        if progressive {
+            viewers = viewers
+                .map(|file| {
+                    parts::snapshot_file(root, &token, "viewers", file, &mut temporary_files.0)
+                })
+                .transpose()?;
+        }
         let viewer_stamp = viewers.as_ref().map(FileStamp::read).transpose()?;
         let fingerprint = format!(
             "{:x}",
@@ -487,8 +537,15 @@ impl ReplayService {
                 .as_bytes()
             )
         );
-        let token = uuid::Uuid::new_v4().simple().to_string();
         let index_path = root.join(format!("index-v2-{}-{fingerprint}.sqlite", recording.id));
+        if progressive {
+            // A prefix snapshot is per-lease; never accumulate a full chat index
+            // for every refresh. The stable final recording keeps its cache.
+            temporary_files.0.push(index_path.clone());
+            temporary_files
+                .0
+                .push(index_path.with_extension("sqlite-journal"));
+        }
         let offset = self.read_offset(root, &recording.id)?;
         let chat_status = if recording.capture_chat == Some(false) {
             "disabled".into()
@@ -526,6 +583,10 @@ impl ReplayService {
             chat_status,
             media: Mutex::new(media),
             media_stamp,
+            media_parts,
+            recording_active: recording.status
+                == super::browser_store::BrowserRecordingStatus::Recording,
+            _temporary_files: temporary_files,
             chat,
             chat_stamp,
             viewers,

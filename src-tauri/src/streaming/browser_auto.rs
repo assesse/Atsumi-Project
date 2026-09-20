@@ -225,6 +225,17 @@ impl AutoRecorder {
     pub fn capture_chat(&self) -> bool {
         self.core.lock().map_or(true, |c| c.config.capture_chat)
     }
+    pub(super) fn watch_channel_name(&self, id: &str, recording_id: &str) -> Option<String> {
+        let core = self.core.lock().ok()?;
+        let channel = core
+            .config
+            .channels
+            .iter()
+            .find(|channel| channel.channel_id == id)?;
+        let progress = core.progress.get(id)?;
+        (progress.status == "recording" && progress.recording_id.as_deref() == Some(recording_id))
+            .then(|| channel.channel_name.clone())
+    }
     pub fn set_capture_chat(&self, enabled: bool) -> Result<(), StreamError> {
         self.edit(|config, _| config.capture_chat = enabled)
     }
@@ -349,18 +360,32 @@ impl AutoRecorder {
         recording_id: Option<String>,
         message: Option<String>,
     ) {
-        self.core
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .progress
-            .insert(
-                id.into(),
-                Progress {
-                    status: status.into(),
-                    recording_id,
-                    message,
-                },
-            );
+        let mut core = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        // Preparation/retries are not a successful start. Only an accepted
+        // recording (including an existing receiver) retires the old failure.
+        if status == "recording" && recording_id.as_ref().is_some_and(|id| !id.is_empty()) {
+            if let Some(channel) = core.config.channels.iter_mut().find(|c| c.channel_id == id) {
+                if channel.last_failure.take().is_some() {
+                    let saved = core.fault.is_none()
+                        && validate(&core.config).is_ok()
+                        && serde_json::to_vec(&core.config).ok().is_some_and(|bytes| {
+                            super::super::browser_store::atomic_write(&self.directory, FILE, &bytes)
+                                .is_ok()
+                        });
+                    // Do not show an obsolete start failure as a current error,
+                    // or stop recording if persisting its removal fails.
+                    core.history_error = (!saved).then(|| "이전 녹화 시작 실패 기록의 정리를 저장하지 못했습니다. 현재 녹화는 계속됩니다.".into());
+                }
+            }
+        }
+        core.progress.insert(
+            id.into(),
+            Progress {
+                status: status.into(),
+                recording_id,
+                message,
+            },
+        );
     }
     fn allowed(&self, id: &str, key: &str) -> bool {
         self.core.lock().is_ok_and(|c| {
@@ -372,7 +397,11 @@ impl AutoRecorder {
         })
     }
 
-    /// Retain the first failure of a broadcast even after stop/offline/restart.
+    pub(super) fn observed_live_key(&self, channel: &str) -> Option<String> {
+        self.core.lock().ok()?.observations.get(channel)?.live_key()
+    }
+
+    /// Retain the first failure through stop/offline/restart until recording starts.
     /// Retries must not write the same message or show a toast every 90 seconds.
     fn remember_failure(&self, id: &str, live_key: &str, stage: &str, message: &str) -> bool {
         let mut core = self.core.lock().unwrap_or_else(|p| p.into_inner());
@@ -567,7 +596,11 @@ impl OfficialBrowser {
             {
                 let active = state.recording.is_some() || state.arm.is_some();
                 drop(state);
-                return Ok((host, false, !active));
+                let automatic = host.label().starts_with("chzzk-auto-");
+                if automatic {
+                    self.claim_auto_receiver(host.label());
+                }
+                return Ok((host, automatic, !active));
             }
         }
         if self.active_ids().len() >= 4
@@ -639,24 +672,42 @@ impl OfficialBrowser {
         let auto = &self.inner.auto_record;
         let mut sessions: HashMap<String, Session> = HashMap::new();
         let mut retry: HashMap<String, u64> = HashMap::new();
+        let mut attempts: HashMap<(String, String), u8> = HashMap::new();
+        let mut configuration = 0;
         while !self.inner.closing.load(Ordering::Acquire) {
             for notice in self.inner.contexts.take_notices() {
                 if !self.show_recording_notice(app, &notice) {
                     let _ = app.emit_to("main", "chzzk-recording:notice", notice);
                 }
             }
-            let (channels, observations) = {
+            let (channels, observations, revision) = {
                 let core = auto.core.lock().unwrap_or_else(|p| p.into_inner());
-                (core.config.channels.clone(), core.observations.clone())
+                (
+                    core.config.channels.clone(),
+                    core.observations.clone(),
+                    core.revision,
+                )
             };
+            if configuration != revision {
+                configuration = revision;
+                attempts.clear();
+            }
+            attempts.retain(|(id, key), _| {
+                observations
+                    .get(id)
+                    .and_then(Observation::live_key)
+                    .as_ref()
+                    == Some(key)
+            });
             retry.retain(|id, _| channels.iter().any(|c| &c.channel_id == id));
             let mut completed = Vec::new();
             for (id, session) in &mut sessions {
                 let observed = observations.get(id).cloned().unwrap_or_default();
                 let ended = observed.offline_count >= 2
-                    || observed
-                        .live_key()
-                        .is_some_and(|key| key != session.live_key);
+                    || observed.live_key().is_some_and(|key| {
+                        key.split(':').next() == session.live_key.split(':').next()
+                            && key != session.live_key
+                    });
                 let should_stop = !auto.allowed(id, &session.live_key) || ended;
                 let (ready, active, current_id, status, problem, request_id, accepted_id) = {
                     let mut s = session
@@ -717,7 +768,19 @@ impl OfficialBrowser {
                 if should_stop || session.stop_at.is_some() {
                     if session.owns_recording && active && session.stop_at.is_none() {
                         if let Some(view) = app.get_webview(session.host.label()) {
-                            let _ = session.host.stop(&view);
+                            let reason = if ended {
+                                if observed.offline_count >= 2 {
+                                    "broadcast_ended"
+                                } else {
+                                    "broadcast_changed"
+                                }
+                            } else {
+                                "user_stop"
+                            };
+                            let _ = send_command(
+                                &view,
+                                json!({"kind":"stop","channelId":id,"reason":reason}),
+                            );
                         }
                         session.stop_at = Some(Instant::now());
                     }
@@ -753,6 +816,10 @@ impl OfficialBrowser {
                     continue;
                 }
                 if active {
+                    if current_id.is_some() && session.started.elapsed() > Duration::from_secs(120)
+                    {
+                        attempts.remove(&(id.clone(), session.live_key.clone()));
+                    }
                     auto.publish(
                         id,
                         if status == "stopping" {
@@ -840,10 +907,11 @@ impl OfficialBrowser {
             for id in completed {
                 if let Some(session) = sessions.remove(&id) {
                     if session.owns_view {
-                        session.host.close_auto_view(app);
+                        self.retire_auto_receiver(session.host.label());
                     }
                 }
             }
+            self.reap_retired_auto_receivers(app);
             for channel in channels {
                 let id = &channel.channel_id;
                 if sessions.contains_key(id) {
@@ -851,23 +919,16 @@ impl OfficialBrowser {
                 }
                 let observed = observations.get(id).cloned().unwrap_or_default();
                 let key = observed.live_key();
-                if !channel.enabled {
-                    auto.publish(id, "disabled", None, None);
-                    continue;
-                }
-                if key.as_deref().is_some_and(|key| suppressed(&channel, key))
-                    || channel.hold_until_offline
-                {
-                    auto.publish(id, "skipped", None, None);
-                    continue;
-                }
-                if retry.get(id).is_some_and(|at| *at > now_ms()) {
-                    continue;
-                }
+                // A user may explicitly start another recording in the shared
+                // live player after suppressing automatic restart. Keep that
+                // existing capture discoverable/watchable without re-enabling
+                // the rule or taking ownership of the manual recording.
                 let already_recording = self.inner.contexts.hosts().into_iter().find_map(|host| {
                     let s = host.inner.view.lock().ok()?;
-                    (s.channel.as_deref() == Some(id) && (s.recording.is_some() || s.arm.is_some()))
-                        .then(|| (s.recording.clone(), s.status.clone()))
+                    (!host.inner.detached.load(Ordering::Acquire)
+                        && s.channel.as_deref() == Some(id)
+                        && (s.recording.is_some() || s.arm.is_some()))
+                    .then(|| (s.recording.clone(), s.status.clone()))
                 });
                 if let Some((recording_id, status)) = already_recording {
                     auto.publish(
@@ -882,6 +943,19 @@ impl OfficialBrowser {
                         recording_id,
                         None,
                     );
+                    continue;
+                }
+                if !channel.enabled {
+                    auto.publish(id, "disabled", None, None);
+                    continue;
+                }
+                if key.as_deref().is_some_and(|key| suppressed(&channel, key))
+                    || channel.hold_until_offline
+                {
+                    auto.publish(id, "skipped", None, None);
+                    continue;
+                }
+                if retry.get(id).is_some_and(|at| *at > now_ms()) {
                     continue;
                 }
                 if !observed.can_start(now_ms()) {
@@ -906,6 +980,21 @@ impl OfficialBrowser {
                     auto.publish(id, "queued", None, None);
                     continue;
                 }
+                let attempt_key = (id.clone(), key.clone().unwrap());
+                if attempts.get(&attempt_key).copied().unwrap_or(0) >= 5 {
+                    auto.publish(id, "attention", None, Some("같은 방송의 시작이 5회 연속 실패해 자동 재시도를 멈췄습니다. 라이브에서 상태를 확인하거나 자동 녹화를 껐다 켜 주세요.".into()));
+                    continue;
+                }
+                let checking_end = self
+                    .inner
+                    .store
+                    .lock()
+                    .is_ok_and(|store| store.checking_end(id, key.as_deref(), now_ms()));
+                if checking_end {
+                    auto.publish(id, "ending", None, None);
+                    continue;
+                }
+                *attempts.entry(attempt_key).or_default() += 1;
                 match self.auto_target(app, id) {
                     Ok((host, owns_view, owns_recording)) => {
                         sessions.insert(
@@ -924,7 +1013,7 @@ impl OfficialBrowser {
                         );
                     }
                     Err(cause) => {
-                        self.report_auto_start_failure(id, key.as_deref().unwrap_or("unknown"), "receiver_create", "자동 녹화용 재생 창을 준비하지 못해 저장을 시작하지 못했습니다. 라이브에서 연결 상태를 확인해 주세요.");
+                        self.report_auto_start_failure(id, key.as_deref().unwrap_or("unknown"), "receiver_create", "자동 녹화용 재생 창을 만들지 못해 저장을 시작하지 못했습니다. 자동 재시도 후에도 계속 실패하면 앱 오류 정보를 확인해 주세요.");
                         auto.publish(id, "retry", None, Some(cause.message));
                         retry.insert(id.clone(), now_ms() + 30_000);
                     }
@@ -1087,6 +1176,27 @@ mod tests {
         assert_eq!(loaded.snapshot().channels.len(), 1);
     }
     #[test]
+    fn watch_lookup_requires_the_exact_registered_recording_without_changing_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let auto = AutoRecorder::load(dir.path());
+        auto.add(CHANNEL.into(), "방송".into()).unwrap();
+        let before = std::fs::read(dir.path().join(FILE)).unwrap();
+        for status in ["waiting", "starting", "stopping", "retry"] {
+            auto.publish(CHANNEL, status, Some("recording".into()), None);
+            assert!(auto.watch_channel_name(CHANNEL, "recording").is_none());
+        }
+        auto.publish(CHANNEL, "recording", Some("recording".into()), None);
+        assert_eq!(
+            auto.watch_channel_name(CHANNEL, "recording").as_deref(),
+            Some("방송")
+        );
+        assert!(auto.watch_channel_name(CHANNEL, "old-recording").is_none());
+        assert!(auto
+            .watch_channel_name("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "recording")
+            .is_none());
+        assert_eq!(std::fs::read(dir.path().join(FILE)).unwrap(), before);
+    }
+    #[test]
     fn preparation_failure_survives_stop_offline_and_restart_without_rearming() {
         let dir = tempfile::tempdir().unwrap();
         let auto = AutoRecorder::load(dir.path());
@@ -1137,6 +1247,50 @@ mod tests {
         let failure = snapshot.channels[0].last_failure.as_ref().unwrap();
         assert_eq!(failure.live_key, "id:43");
         assert_eq!(failure.message, "new cause");
+    }
+
+    #[test]
+    fn successful_recording_clears_failure_durably_without_changing_registration() {
+        let dir = tempfile::tempdir().unwrap();
+        let auto = AutoRecorder::load(dir.path());
+        auto.add(CHANNEL.into(), "test".into()).unwrap();
+        auto.set_capture_chat(false).unwrap();
+        assert!(auto.remember_failure(CHANNEL, "id:42", "receiver_create", "old failure"));
+        let before = std::fs::read(dir.path().join(FILE)).unwrap();
+        for (status, recording) in [("starting", None), ("retry", None), ("recording", None)] {
+            auto.publish(CHANNEL, status, recording, None);
+            assert!(auto.snapshot().channels[0].last_failure.is_some());
+            assert_eq!(std::fs::read(dir.path().join(FILE)).unwrap(), before);
+        }
+        auto.publish(
+            CHANNEL,
+            "recording",
+            Some("accepted-recording".into()),
+            None,
+        );
+        assert!(auto.snapshot().channels[0].last_failure.is_none());
+        let loaded = AutoRecorder::load(dir.path());
+        assert!(loaded.snapshot().channels[0].last_failure.is_none());
+        assert!(loaded.snapshot().channels[0].enabled);
+        assert!(!loaded.capture_chat());
+        // A subsequent failure, even in the same broadcast, is a new attempt.
+        assert!(auto.remember_failure(CHANNEL, "id:42", "receiver_create", "new failure"));
+    }
+
+    #[test]
+    fn successful_start_keeps_recording_when_history_cleanup_cannot_be_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let auto = AutoRecorder::load(dir.path());
+        auto.add(CHANNEL.into(), "test".into()).unwrap();
+        auto.remember_failure(CHANNEL, "id:42", "receiver_create", "old failure");
+        // A corrupt-config fence must not be overwritten by a status update.
+        auto.core.lock().unwrap().fault = Some("configuration unavailable".into());
+        let before = std::fs::read(dir.path().join(FILE)).unwrap();
+        auto.publish(CHANNEL, "recording", Some("accepted".into()), None);
+        assert!(auto.snapshot().channels[0].last_failure.is_none());
+        assert_eq!(auto.snapshot().channels[0].progress.status, "recording");
+        assert!(auto.snapshot().error.is_some());
+        assert_eq!(std::fs::read(dir.path().join(FILE)).unwrap(), before);
     }
     #[test]
     fn legacy_registration_loads_without_failure_and_unknown_channels_cannot_create_history() {

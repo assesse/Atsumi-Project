@@ -557,6 +557,7 @@ mod tests {
                     height: 3,
                     candidate_index: 0,
                     candidate_diagnostics: Vec::new(),
+                    decoded_sha256: None,
                 }),
             }
         }

@@ -57,6 +57,9 @@ pub struct BrowserViewport {
     pub width: f64,
     pub height: f64,
     pub visible: bool,
+    /// Privacy is independent of presentation visibility and user mute state.
+    #[serde(default)]
+    pub suspend_audio: bool,
     /// A trusted modal masks pixels/input without hiding the media controller.
     /// Privacy, inactive workspaces and detached documents must use visible=false.
     #[serde(default)]
@@ -81,6 +84,7 @@ impl Default for BrowserViewport {
             width: 1.0,
             height: 1.0,
             visible: false,
+            suspend_audio: false,
             occluded: false,
             preserve_background: false,
             occlusions: vec![],
@@ -473,6 +477,19 @@ impl OfficialBrowser {
             true
         })
         .on_new_window(move |url, features| {
+            if chat_popup::is_chat(&url) {
+                let channel = popup_host.inner.view.lock().ok().and_then(|state| {
+                    (!state.viewport.suspend_audio)
+                        .then(|| state.channel.clone())
+                        .flatten()
+                });
+                return match channel {
+                    Some(channel) => {
+                        chat_popup::open(&popup_host, &popup_app, url, features, &channel)
+                    }
+                    None => tauri::webview::NewWindowResponse::Deny,
+                };
+            }
             if let Some(browser) = installation_browser(&url) {
                 popup_host.install_from_page(browser);
                 return tauri::webview::NewWindowResponse::Deny;
@@ -753,6 +770,23 @@ impl OfficialBrowser {
                 validation,
             )
         };
+        if validation.is_ok() {
+            if let Some(channel) = self
+                .inner
+                .view
+                .lock()
+                .ok()
+                .and_then(|state| state.channel.clone())
+            {
+                chat_popup::sync_privacy(
+                    app,
+                    &channel,
+                    viewport.suspend_audio,
+                    self.inner.viewport_revision.clone(),
+                    revision,
+                );
+            }
+        }
         if validation.is_err() || !viewport.visible {
             // Privacy/detach and invalid requests preempt native work;
             // they never wait for its gate or a previous dispatch timeout.
@@ -1045,6 +1079,7 @@ impl OfficialBrowser {
     }
     pub fn logout(&self, app: &AppHandle) -> Result<(), StreamError> {
         self.reserve_account_window()?;
+        chat_popup::close_all(app);
         auth::cancel(app);
         {
             let mut s = self.inner.view.lock().map_err(|_| unavailable())?;
@@ -2350,6 +2385,7 @@ mod tests {
             width: 1000.0,
             height: 700.0,
             visible: true,
+            suspend_audio: false,
             occluded: false,
             preserve_background: false,
             occlusions: vec![],

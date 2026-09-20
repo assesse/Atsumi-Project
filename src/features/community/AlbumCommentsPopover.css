@@ -1,0 +1,48 @@
+.album-comments-panel { position: fixed; inset: auto; margin: 0; box-sizing: border-box; padding: 16px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); color: var(--text); box-shadow: 0 16px 48px #0006, 0 3px 12px #0003; z-index: 1800; font-family: inherit; font-size: 13px; line-height: 1.5; outline: none; display: none; transform-origin: top right; animation: album-comments-drop .17s cubic-bezier(.2,.75,.3,1); }
+.album-comments-panel:popover-open, .album-comments-panel.is-fallback { display: flex; flex-direction: column; gap: 12px; }
+.album-comments-panel[data-placement="above"] { transform-origin: bottom right; }
+.album-comments-panel button, .album-comments-panel textarea { font: inherit; }
+.album-comments-panel button { cursor: pointer; }
+.album-comments-panel button:disabled { cursor: default; opacity: .5; }
+.album-comments-panel button:focus-visible, .album-comments-panel textarea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.album-comments-heading { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.album-comments-heading h3 { margin: 0; font-size: 15px; font-weight: 650; }
+.album-comments-heading h3 span { color: var(--muted); font-weight: 400; font-size: 12px; }
+.album-comments-average { color: var(--favorite); font-size: 12px; }
+.album-comments-close { margin-left: auto; border: 0; background: transparent; color: var(--muted); width: 28px; height: 28px; padding: 0; border-radius: 6px; font-size: 23px !important; line-height: 1 !important; }
+.album-comments-close:hover { color: var(--text); background: var(--surface-hover); }
+.album-comments-list { min-height: 44px; max-height: 194px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; flex: 1 1 auto; }
+.album-comment { padding: 9px 0; border-bottom: 1px solid var(--line); }
+.album-comment:first-child { padding-top: 0; }
+.album-comment:last-child { border-bottom: 0; }
+.album-comment > div { display: flex; align-items: center; gap: 10px; }
+.album-comment-nickname { color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.album-comment-stars { margin-left: auto; color: var(--favorite); font-size: 11px; white-space: nowrap; letter-spacing: 1px; }
+.album-comment-stars > span { color: var(--muted); opacity: .55; }
+.album-comment p { margin: 4px 0 0; color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; }
+.album-comments-muted, .album-comments-empty { color: var(--muted); margin: 6px 0; }
+.album-comments-empty { text-align: center; padding: 10px 0; }
+.album-comments-empty span { font-size: 12px; }
+.album-comments-more { width: 100%; border: 0; background: transparent; color: var(--primary-strong); padding: 6px; font-size: 12px !important; }
+.album-comments-more:hover { background: var(--surface-hover); border-radius: 6px; }
+.album-comments-compose { flex-shrink: 0; border-top: 1px solid var(--line); padding-top: 10px; }
+.album-comments-rating { margin: 0 0 8px; padding: 0; border: 0; display: flex; align-items: center; gap: 2px; }
+.album-comments-rating legend { float: left; margin-right: 10px; padding: 0; align-self: center; font-size: 12px; color: var(--text-soft); }
+.album-comments-rating button { background: transparent; border: 0; border-radius: 5px; color: var(--muted); padding: 0 2px; font-size: 26px; line-height: 32px; transition: color .12s, transform .12s; }
+.album-comments-rating button.is-filled { color: var(--favorite); }
+.album-comments-rating button:hover:not(:disabled) { color: var(--favorite); transform: scale(1.12); }
+.album-comments-rating > span { margin-left: auto; color: var(--muted); font-size: 11px; }
+.album-comments-compose textarea { display: block; width: 100%; box-sizing: border-box; min-height: 68px; max-height: 120px; resize: vertical; border: 1px solid var(--line-strong); border-radius: 8px; padding: 9px 10px; color: var(--text); background: var(--surface-soft); line-height: 1.65; }
+.album-comments-compose textarea::placeholder { color: var(--muted); }
+.album-comments-compose-footer { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
+.album-comments-compose-footer > span { color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.album-comments-submit { margin-left: auto; flex-shrink: 0; border: 1px solid var(--primary); border-radius: 7px; padding: 5px 14px; color: var(--primary-strong); background: var(--primary-soft); }
+.album-comments-submit:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 20%, var(--surface)); }
+.album-comments-disclosure { margin: 8px 0 0; color: var(--muted); font-size: 10px; }
+.album-comments-error, .album-comments-notice { font-size: 12px; margin: 8px 0 0; overflow-wrap: anywhere; }
+.album-comments-error { color: var(--danger); }
+.album-comments-notice { color: var(--success); }
+.album-comments-error button { border: 0; color: inherit; background: transparent; text-decoration: underline; margin-left: 5px; padding: 0; }
+.community-review-button[aria-expanded="true"] { color: var(--primary-strong); border-color: var(--primary); background: var(--primary-soft); }
+@keyframes album-comments-drop { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) { .album-comments-panel { animation: none; } .album-comments-rating button { transition: none; } }

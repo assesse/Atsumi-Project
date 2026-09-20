@@ -93,6 +93,31 @@ beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("official player controls", () => {
+  it("hides controls only for the off-canvas automatic receiver without replacing the player", () => {
+    const h = fixture(); h.ready();
+    h.window.__atsumiPlayerUI!.configure({ automaticWatch: true, multiview: false });
+    expect(h.page.querySelector('[aria-label="녹화"]')?.hasAttribute("hidden")).toBe(true);
+    expect(h.page.querySelector('[aria-label="스크린샷"]')?.hasAttribute("hidden")).toBe(true);
+    expect(h.page.querySelector('#atsumi-player-top-controls')?.hasAttribute("hidden")).toBe(true);
+    expect(h.key().preventDefault).not.toHaveBeenCalled(); expect(h.messages).toEqual([]);
+    expect(h.page.querySelector("video")).toBe(h.video);
+    h.window.__atsumiPlayerUI!.configure({ automaticWatch: false });
+    expect(h.page.querySelector('[aria-label="녹화"]')?.hasAttribute("hidden")).toBe(false);
+  });
+  it("uses the same foreground controls and record-only action without stopping or restarting capture", async () => {
+    const h = fixture(); h.ready();
+    h.window.__atsumiPlayerUI!.configure({ automaticWatch: false, multiview: false });
+    h.window.__atsumiPlayerUI!.update({ ready: true, recording: true, detail: "recording" });
+    expect(h.page.querySelector('[aria-label="녹화 중지"]')?.hasAttribute("hidden")).toBe(false);
+    expect(h.page.querySelector('[aria-label="스크린샷"]')?.hasAttribute("hidden")).toBe(false);
+    expect(h.page.querySelector('[aria-label="시청 설정"]')?.parentElement?.hasAttribute("hidden")).toBe(false);
+    expect(h.page.querySelector('[aria-label="녹화만 계속"]')?.hasAttribute("hidden")).toBe(false);
+    h.video.muted = false;
+    h.trustedClick("녹화만 계속"); await flush();
+    expect(h.messages).toHaveLength(1);
+    expect(h.messages[0]).toMatchObject({ kind: "view_intent", action: "record_only" });
+    expect(h.video.muted).toBe(true); expect(h.page.querySelector("video")).toBe(h.video);
+  });
   it("does not install on foreign origins, non-live paths or child frames", () => {
     for (const options of [{ url: "https://evil.test/live/" + CHANNEL }, { url: "https://chzzk.naver.com:444/live/" + CHANNEL }, { url: "https://chzzk.naver.com/live/" + CHANNEL + "/chat" }, { frame: true }]) {
       const h = fixture(options); expect(h.window.__atsumiPlayerUI).toBeUndefined(); expect(h.messages).toEqual([]);

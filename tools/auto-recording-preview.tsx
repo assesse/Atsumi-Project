@@ -1,7 +1,12 @@
 import { createRoot } from "react-dom/client";
+import { useState } from "react";
 import { AutoRecordingPanel } from "../src/features/streaming/AutoRecordingPanel";
+import { AutoRecordingLiveView } from "../src/features/streaming/AutoRecordingLiveView";
+import type { AutoWatchApi, AutoWatchTarget } from "../src/api/autoWatch";
 import type { AutoRecordingApi, AutoRecordingSnapshot } from "../src/api/autoRecording";
+import { createOfficialBrowserApi, emptyOfficialBrowserSnapshot, type OfficialBrowserApi } from "../src/api/officialBrowser";
 import "../src/styles.css";
+import "../src/features/streaming/StreamingWorkspace.css";
 
 // Isolated in-memory UI fixture: no real channel requests, files or recordings.
 let state: AutoRecordingSnapshot = { captureChat: true, error: null, channels: [
@@ -21,4 +26,28 @@ const api: AutoRecordingApi = {
     return result();
   },
 };
-createRoot(document.getElementById("root")!).render(<main style={{ minHeight: "100vh", background: "#17151c" }}><AutoRecordingPanel runtime="tauri" api={api} /></main>);
+let audioEnabled = true;
+const watchSnapshot = () => ({ ok: true as const, data: { recording: true, status: "recording", error: null, audioEnabled, chatCount: 456 } });
+const watchApi: AutoWatchApi = {
+  runtime: "tauri",
+  open: async (channelId, recordingId) => ({ ok: true, data: { kind: "automatic", watchId: "fixture-watch", channelId, recordingId, channelName: "도서관 라이브", epoch: 1 } }),
+  snapshot: async () => watchSnapshot(),
+  setViewport: async () => ({ ok: true, data: undefined }),
+  setAudio: async (_, enabled) => { audioEnabled = enabled; return watchSnapshot(); },
+  close: async () => ({ ok: true, data: undefined }),
+};
+// This page exercises the shared trusted UI only; native player/chat rendering
+// is verified separately with the offline WebView and presentation tests.
+const liveApi: OfficialBrowserApi = { ...createOfficialBrowserApi("browser-mock"), runtime: "tauri",
+  snapshot: async () => ({ ok: true, data: { ...emptyOfficialBrowserSnapshot("tauri"), windowOpen: true,
+    ready: true, channelId: "a".repeat(32), recordingId: "fixture-recording", status: "recording", viewportEpoch: 1 } }),
+  setViewport: async () => ({ ok: true, data: undefined }),
+};
+function Preview() {
+  const [target, setTarget] = useState<AutoWatchTarget | null>(null);
+  return <main className="streaming-workspace" style={{ minHeight: "100vh", background: "#17151c" }}>
+    {target ? <AutoRecordingLiveView target={target} runtime="tauri" privacy={false} api={watchApi} liveApi={liveApi} onLeave={() => setTarget(null)} />
+      : <AutoRecordingPanel runtime="tauri" api={api} watchApi={watchApi} onWatch={setTarget} />}
+  </main>;
+}
+createRoot(document.getElementById("root")!).render(<Preview />);

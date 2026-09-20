@@ -1,0 +1,7 @@
+.recorded-channel { padding: 8px 10px; color: var(--text-primary, #e7e4eb); }
+.recorded-channel > button, .streaming-workspace .recorded-channel > button, .recording-replay .recorded-channel > button { display: flex; align-items: center; gap: 9px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.recorded-channel img, .recorded-channel-placeholder { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; flex: none; background: #34313a; }
+.recorded-channel-placeholder { display: grid; place-items: center; }
+.recorded-channel small { display: block; color: #aaa5b0; font-size: 10px; margin-top: 2px; }
+.recorded-channel > button:hover, .streaming-workspace .recorded-channel > button:hover, .recording-replay .recorded-channel > button:hover { color: #a0ead9; background: transparent; }
+.recorded-channel > button:focus-visible { outline: 2px solid #a0ead9; outline-offset: 3px; border-radius: 6px; }

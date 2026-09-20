@@ -19,6 +19,34 @@ beforeEach(() => { vi.clearAllMocks(); callbacks.onDelete.mockResolvedValue({ de
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe("recording library", () => {
+  it("separates empty startup failures from saved broadcasts without deleting their diagnostics", async () => {
+    await render([item("retry", { segmentCount: 0, bytesWritten: 0, durationSeconds: 0, status: "interrupted" }), merged("success")]);
+    expect(container).toHaveTextContent("저장 영상 1개");
+    const attempts = container.querySelector<HTMLDetailsElement>(".recording-library-attempts")!;
+    expect(attempts.open).toBe(false);
+    expect(attempts).toHaveTextContent("시작 실패 · 영상 저장 없음");
+    expect(callbacks.onDelete).not.toHaveBeenCalled();
+  });
+  it("shows confirmed broadcast completion separately from manual stopping", async () => {
+    await render([item("ended", { ending: { reason: "broadcast_ended", trigger: "video_ended", stoppedAt: 1, confirmedAt: 2 } }), item("manual", { ending: { reason: "user_stopped", trigger: "user_stop", stoppedAt: 1, confirmedAt: null } })]);
+    expect(container).toHaveTextContent("방송 종료 · 저장 완료");
+    expect(container).toHaveTextContent("직접 중지 · 저장 완료");
+  });
+  it("allows explicit selection of an empty attempt without including hidden attempts in select-all", async () => {
+    await render([item("empty", { segmentCount: 0, bytesWritten: 0, durationSeconds: 0, status: "interrupted" })]);
+    expect(button("선택")).toBeEnabled();
+    await act(async () => button("선택").click());
+    expect(button("전체 선택")).toBeDisabled();
+    await act(async () => cards()[0]!.click());
+    expect(container).toHaveTextContent("1개 선택");
+    expect(callbacks.onDelete).not.toHaveBeenCalled();
+  });
+  it("includes unfinished but replayable ranges in the ready filter", async () => {
+    await render([item("ranges", { progressive: { partCount: 1, segmentCount: 1, durationSeconds: 15, lastError: null } }), item("waiting")]);
+    await act(async () => button("재생 가능").click());
+    expect(cards()).toHaveLength(1); expect(cards()[0]).toHaveTextContent("방송 ranges");
+    expect(button("앱에서 다시보기")).toBeEnabled();
+  });
   it("selects multiple saved recordings, confirms exact IDs, and never deletes on cancel", async () => {
     await render([item("live", { status: "recording" }), merged("a"), merged("b")]);
     await act(async () => button("선택").click());

@@ -12,13 +12,15 @@ function memoryStorage(){const entries=new Map();return {get length(){return ent
 for(const name of ['localStorage','sessionStorage'])Object.defineProperty(window,name,{value:memoryStorage(),configurable:false});
 const sdk=await import('./player-vendor-BYg0wCyN.js');
 const metadata=await import('./recording-metadata.js');
+const localSource=await import('./recording-source.js');
+let recordingSource=null,sourceUrl='';
 const emit=(type,data)=>{if(!disposed)parent.postMessage({channel:CHANNEL,nonce,type,data},'*');};
 const finite=(n,min,max)=>typeof n==='number'&&Number.isFinite(n)&&n>=min&&n<=max;
 function mediaAllowed(value,parentOrigin){try{
  const url=new URL(value);
  if(url.username||url.password||url.search||url.hash)return false;
  if((['http:','https:'].includes(url.protocol)&&url.hostname==='atsumi-replay.localhost'&&!url.port||url.protocol==='atsumi-replay:'&&url.hostname==='localhost')&&/^\/[a-f0-9]{32}$/.test(url.pathname))return true;
- return parentOrigin==='http://127.0.0.1:1420'&&url.origin===parentOrigin&&url.pathname==='/.runtime/chzzk-original-player/synthetic.mp4';
+ return parentOrigin==='http://127.0.0.1:1420'&&url.origin===parentOrigin&&['/.runtime/chzzk-original-player/synthetic.mp4','/.runtime/progressive-preview'].includes(url.pathname);
 }catch{return false;}}
 function state(){
  if(!player||disposed)return;const v=document.querySelector('video');
@@ -27,7 +29,7 @@ function state(){
 }
 async function leavePip(){try{if(document.pictureInPictureElement)await document.exitPictureInPicture();}catch{}}
 function privacy(value){privateMode=value;if(value){player?.pause();void leavePip();}state();}
-function stop(){if(disposed)return;disposed=true;privateMode=true;clearInterval(clock);clock=0;metrics=null;recordingHeader?.dispose();recordingHeader=null;try{player?.pause();}catch{}void leavePip();try{if(player)player.srcObject=null;}catch{}}
+function stop(){if(disposed)return;disposed=true;privateMode=true;clearInterval(clock);clock=0;metrics=null;recordingSource?.dispose();recordingHeader?.dispose();recordingHeader=null;try{player?.pause();}catch{}void leavePip();try{if(player)player.srcObject=null;}catch{}}
 function applyPresentation(){
  if(!player||disposed)return;
  // These are the SDK's reflected visual properties, not its native fullscreen
@@ -36,7 +38,8 @@ function applyPresentation(){
  const fullscreen=player.querySelector('pzp-fullscreen-button');if(fullscreen&&fullscreen.fullscreen!==presentation.fullscreen)fullscreen.fullscreen=presentation.fullscreen;
 }
 function mount(data,parentOrigin){
- if(player||!data||!mediaAllowed(data.url,parentOrigin)||!finite(data.duration,0,604800))return;
+ const source=localSource.recordingSource(data,url=>mediaAllowed(url,parentOrigin));if(!source)return;
+ if(player){if(source.url!==sourceUrl){recordingSource.update(source);sourceUrl=source.url;emit('source',sourceUrl);state();}return;}
  privateMode=!!data.privacy;
  document.documentElement.className='theme_dark';
  // Static, hash-pinned markup mechanically extracted from CHZZK's actual VOD component.
@@ -44,12 +47,15 @@ function mount(data,parentOrigin){
  const P=sdk.S();player=P.default.upgrade(document.querySelector('pzp-pc-layout'));
  player.language='ko';player.querySelector('pzp-pc-layout').sizeType='large';
  player.querySelector('pzp-pc-setting-playbackrate-pane').playbackRates=[.25,.5,.75,1,1.25,1.5,1.75,2];
- recordingHeader=metadata.mountRecordingMetadata(player,data.recording);
+ recordingHeader=metadata.mountRecordingMetadata(player,data.recording,()=>{if(!privateMode&&!disposed)emit('channel');});
+ recordingSource=localSource.attachRecordingSource(document.querySelector('video'),source,()=>emit('tail'));
+ sourceUrl=source.url;
  for(const name of ['loadedmetadata','playing','pause','seeking','seeked','timeupdate','durationchange','ended','ratechange'])player.addEventListener(name,state);
  player.addEventListener('play',()=>{if(privateMode||disposed)player.pause();});player.addEventListener('error',()=>emit('error'));
  // The decoded file supplies dimensions through loadedmetadata. Do not label
  // portrait/ultrawide recordings with the synthetic fixture's 1280x720 size.
- player.srcObject=new P.DataProvider({videoTracks:[{src:data.url,id:'local',label:'원본',duration:data.duration||undefined,selected:true}],textTracks:[]});
+ player.srcObject=new P.DataProvider({videoTracks:[{src:source.parts[0].url,id:'local',label:'원본',duration:source.duration,selected:true}],textTracks:[]});
+ emit('source',sourceUrl);
  applyPresentation();
  player.shadowRoot.addEventListener('click',event=>{const button=event.target.closest('.pzp-pc__fullscreen-button,.pzp-pc__viewmode-button');if(button){event.preventDefault();event.stopImmediatePropagation();emit(button.classList.contains('pzp-pc__viewmode-button')?'wide':'fullscreen');}},true);
  document.addEventListener('enterpictureinpicture',()=>{if(privateMode||disposed)void leavePip();},true);

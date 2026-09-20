@@ -99,4 +99,8 @@
 /* Status changes must not resize the video or manufacture new letterboxing. */
 .recording-replay-notices { position: absolute; z-index: 6; top: 54px; left: 50%; transform: translateX(-50%); width: min(680px, calc(100% - 24px)); max-height: 30%; overflow: auto; border-radius: 6px; }
 .recording-replay-notices:empty { display: none; }
+.recording-replay-saved-range { position: absolute; z-index: 3; top: 100px; left: 18px; right: 50px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; width: fit-content; max-width: calc(100% - 68px); padding: 5px 9px; border-radius: 5px; color: #d1d7d5; background: #101315c9; font-size: 11px; opacity: .8; transition: opacity .15s; }
+.recording-replay-saved-range:hover, .recording-replay-saved-range:focus-within { opacity: 1; }
+.recording-replay .recording-replay-saved-range button { padding: 2px 5px; color: #8fe8c8; background: transparent; border: 0; font: inherit; }
+.recording-replay-saved-range small { flex-basis: 100%; }
 @media (prefers-reduced-motion: reduce) { .recording-replay-controls, .recording-replay-seek::-webkit-slider-thumb { transition: none; } }

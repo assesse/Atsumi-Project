@@ -15,7 +15,9 @@ const path = await import(pathName) as { join(...parts: string[]): string; relat
 const { tmpdir } = await import(osName) as { tmpdir(): string };
 const { pathToFileURL } = await import(urlName) as { pathToFileURL(path: string): { href: string } };
 const { execFile } = await import(childName) as { execFile(file: string, args: string[], options: { timeout: number; maxBuffer: number; encoding: "utf8"; windowsHide: boolean }, callback: (error: Error | null, stdout: string) => void): void };
-const edge = ["C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"].find((candidate) => fs.existsSync(candidate));
+const processName = "node:process";
+const { env } = await import(processName) as { env: Record<string, string | undefined> };
+const edge = [env.ATSUMI_TEST_BROWSER ?? "", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"].find((candidate) => fs.existsSync(candidate));
 type Frame = { mode: string; privacy: boolean; html: string; videos: number; chats: number };
 type Box = { x: number; y: number; width: number; height: number; right: number; bottom: number };
 type Measurement = { mode: string; privacy: boolean; videos: number; chats: number; surface: Box; scrollWidth: number; clientWidth: number; scrollHeight: number; overflow: string; slots: { box: Box; parent: Box; kind: string }[]; lastAtEnd: Box };

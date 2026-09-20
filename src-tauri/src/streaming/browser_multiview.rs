@@ -5,6 +5,8 @@ use std::collections::HashSet;
 use tauri::{LogicalPosition, LogicalSize, WebviewBuilder, WebviewUrl};
 #[path = "browser_auto_surface.rs"]
 mod auto_surface;
+#[path = "browser_auto_watch.rs"]
+pub mod auto_watch;
 #[path = "browser_multiview_controls.rs"]
 mod controls;
 
@@ -75,6 +77,9 @@ pub(super) struct MultiViewHost {
     mutations: Mutex<()>,
     state: Mutex<MultiState>,
     metadata: Mutex<Option<std::sync::mpsc::SyncSender<MetadataRequest>>>,
+    auto_panes: Mutex<std::collections::HashMap<String, Arc<Pane>>>,
+    retired_auto_panes: Mutex<HashSet<String>>,
+    auto_watch: auto_watch::WatchState,
 }
 
 #[derive(Default)]
@@ -201,7 +206,13 @@ fn send_audio(view: &Webview, pane: &Pane, apply_to_media: bool) {
     let enabled = pane.kind == PaneKind::Video
         && pane.audio.load(Ordering::Acquire)
         && !pane.dead.load(Ordering::Acquire);
-    let _ = view.eval(format!("window.dispatchEvent(new CustomEvent('atsumi-multiview-audio',{{detail:{{enabled:{enabled},applyToMedia:{apply_to_media}}}}}));window.__atsumiPlayerUI?.configure({{multiview:true}});"));
+    let automatic = pane.id.starts_with("chzzk-auto-");
+    let presentation = if automatic {
+        "window.__atsumiAutoReceiver?.refresh();"
+    } else {
+        "window.__atsumiPlayerUI?.configure({multiview:true,automaticWatch:false});"
+    };
+    let _ = view.eval(format!("window.dispatchEvent(new CustomEvent('atsumi-multiview-audio',{{detail:{{enabled:{enabled},applyToMedia:{apply_to_media}}}}}));{presentation}"));
 }
 
 fn chat_header_script(pane: &Pane) -> String {
@@ -592,15 +603,24 @@ impl OfficialBrowser {
             .map_err(|_| unavailable())?
             .loaded_extensions
             .clone();
-        if let Err(cause) = capture.create_multiview_pane(app, pane, ids, 0) {
+        if let Err(cause) = capture.create_multiview_pane(app, pane.clone(), ids, 0) {
             capture.close_auto_view(app);
             return Err(cause);
         }
+        self.inner
+            .multiview
+            .auto_panes
+            .lock()
+            .map_err(|_| unavailable())?
+            .insert(capture.label().into(), pane);
         Ok(capture)
     }
     pub(super) fn close_auto_view(&self, app: &AppHandle) {
         if !self.label().starts_with("chzzk-auto-") {
             return;
+        }
+        if let Ok(root) = self.capture_context(None) {
+            root.forget_auto_watch_pane(self.label());
         }
         self.detach_controller();
         if let Some(view) = app.get_webview(self.label()) {
@@ -623,6 +643,9 @@ impl OfficialBrowser {
         std::fs::create_dir_all(&profile).map_err(|_| unavailable())?;
         let nav = pane.clone();
         let page = pane.clone();
+        let popup = pane.clone();
+        let popup_host = self.clone();
+        let popup_app = app.clone();
         let builder = WebviewBuilder::new(
             &pane.id,
             WebviewUrl::External("about:blank".parse().map_err(|_| unavailable())?),
@@ -666,7 +689,14 @@ impl OfficialBrowser {
             }
             allowed
         })
-        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .on_new_window(move |url, features| {
+            if popup.dead.load(Ordering::Acquire)
+                || popup.viewport.lock().map_or(true, |v| v.suspend_audio)
+            {
+                return tauri::webview::NewWindowResponse::Deny;
+            }
+            chat_popup::open(&popup_host, &popup_app, url, features, &popup.channel)
+        })
         .on_page_load(move |view, payload| {
             if !exact_navigation(payload.url(), &page.channel, page.kind)
                 || page.dead.load(Ordering::Acquire)
@@ -905,6 +935,15 @@ impl OfficialBrowser {
             let _ = view.hide();
             return Err(error("VIEWPORT_STALE", "종료된 마도 영역 요청입니다."));
         }
+        if validation.is_ok() {
+            chat_popup::sync_privacy(
+                app,
+                &pane.channel,
+                viewport.suspend_audio,
+                pane.revision.clone(),
+                revision,
+            );
+        }
         // Privacy hides bypass the visible transaction gate and invalidate an
         // already queued/moving native callback before it can show the child.
         if validation.is_err() || !viewport.visible {
@@ -1025,6 +1064,16 @@ impl OfficialBrowser {
 
 #[cfg(windows)]
 fn native_mute(view: &Webview, pane: Arc<Pane>, muted: bool) -> Result<(), StreamError> {
+    native_mute_guarded(view, pane, muted, None)
+}
+
+#[cfg(windows)]
+fn native_mute_guarded(
+    view: &Webview,
+    pane: Arc<Pane>,
+    muted: bool,
+    expected: Option<u64>,
+) -> Result<(), StreamError> {
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_8;
     use windows::core::{Interface, BOOL};
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
@@ -1032,6 +1081,9 @@ fn native_mute(view: &Webview, pane: Arc<Pane>, muted: bool) -> Result<(), Strea
     let current = cancelled.clone();
     view.with_webview(move |platform| unsafe {
         let result = (|| {
+            if expected.is_some_and(|revision| pane.revision.load(Ordering::Acquire) != revision) {
+                return Err(error("VIEWPORT_STALE", "이전 음성 요청입니다."));
+            }
             let core = platform
                 .controller()
                 .CoreWebView2()
@@ -1057,7 +1109,10 @@ fn native_mute(view: &Webview, pane: Arc<Pane>, muted: bool) -> Result<(), Strea
                     pane.kind,
                     pane.audio.load(Ordering::Acquire),
                     pane.dead.load(Ordering::Acquire),
-                    current.load(Ordering::Acquire),
+                    current.load(Ordering::Acquire)
+                        || expected.is_some_and(|revision| {
+                            pane.revision.load(Ordering::Acquire) != revision
+                        }),
                     muted,
                 )
             {
@@ -1230,6 +1285,15 @@ fn initialize_native_pane(
 fn queue_mute(_: &Webview) {}
 #[cfg(not(windows))]
 fn native_mute(_: &Webview, _: Arc<Pane>, _: bool) -> Result<(), StreamError> {
+    Err(unavailable())
+}
+#[cfg(not(windows))]
+fn native_mute_guarded(
+    _: &Webview,
+    _: Arc<Pane>,
+    _: bool,
+    _: Option<u64>,
+) -> Result<(), StreamError> {
     Err(unavailable())
 }
 #[cfg(not(windows))]

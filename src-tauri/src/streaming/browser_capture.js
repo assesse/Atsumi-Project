@@ -221,10 +221,12 @@
   const drainChat = async (recordingId) => {
     let deadline;
     try {
+      const summary = window.__atsumiPageChat?.summary?.();
       // Leave time within native exit's eight-second drain for the video tail.
       // A stuck chat ACK must not prevent either recording path from finishing.
       await Promise.race([
-        Promise.resolve().then(() => window.__atsumiPageChat?.stop(recordingId)),
+        Promise.resolve().then(() => window.__atsumiPageChat?.stop(recordingId)).then(() =>
+          request("chat_status", { recordingId, detail: summary?.recordingId === recordingId ? summary.detail : "stopped", droppedMessages: 0 })),
         new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("chat_drain_timeout")), 2000); }),
       ]);
     } catch {
@@ -377,7 +379,7 @@
           try {
             const started = window.__atsumiPageChat?.start({ recordingId: response.id, channelId,
               getVideo: () => video,
-              sendBatch: (events) => request("chat_batch", { recordingId: response.id, events }), onStatus: reportChat }) === true;
+              sendBatch: (events, batchId) => request("chat_batch", { recordingId: response.id, events, batchId }), onStatus: reportChat }) === true;
             if (started) encodedChat = { recordingId: response.id, drain: null };
             else reportChat("observer_unavailable", 0);
           } catch { reportChat("observer_unavailable", 0); }
@@ -473,7 +475,8 @@
     if (!command || typeof command !== "object") return;
     if (command.kind === "start") void start(command);
     else if (command.kind === "stop" && encodedState()?.active && command.channelId === encodedState()?.channelId) {
-      void window.__atsumiEncodedCapture.stop("user_stop", false).catch(() => { lastDetail = "native_rejected"; status(); });
+      const reason = ["broadcast_ended", "broadcast_changed", "app_shutdown"].includes(command.reason) ? command.reason : "user_stop";
+      void window.__atsumiEncodedCapture.stop(reason, false).catch(() => { lastDetail = "native_rejected"; status(); });
     }
     else if (command.kind === "stop" && session && command.channelId === session.channelId) {
       stop(session, "user_stop", false);
@@ -485,6 +488,7 @@
     if (session) stop(session, "page_hidden", true);
   });
   setInterval(() => {
+    window.__atsumiPageChat?.pulse?.();
     if (session && !session.stopping) {
       const reason = safetyReason(session);
       if (reason) fail(session, reason);

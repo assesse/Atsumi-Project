@@ -42,6 +42,10 @@ fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
             include_bytes!("../../../public/original-player/runtime.js"),
             "text/javascript; charset=utf-8",
         ),
+        "/recording-source.js" => (
+            include_bytes!("../../../public/original-player/recording-source.js"),
+            "text/javascript; charset=utf-8",
+        ),
         "/player-vendor-BYg0wCyN.js" => (
             include_bytes!("../../../public/original-player/player-vendor-BYg0wCyN.js"),
             "text/javascript; charset=utf-8",
@@ -158,6 +162,7 @@ mod tests {
         for (path, expected_type) in [
             ("/frame.html", "text/html"),
             ("/runtime.js", "text/javascript"),
+            ("/recording-source.js", "text/javascript"),
             ("/player-vendor-BYg0wCyN.js", "text/javascript"),
             ("/common-vendor-pcHQV1G2.js", "text/javascript"),
             ("/rolldown-runtime-CJJwijRH.js", "text/javascript"),

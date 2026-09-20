@@ -7,6 +7,8 @@ export type ReplaySession = {
   token: string; recordingId: string; title: string; recordedAt?: number; channelName?: string | null; channelProfileImage?: string | null; durationSeconds: number; mimeType: string;
   chatStatus: string; indexState: ReplayIndexState; syncQuality: ReplaySyncQuality;
   manualOffsetSeconds: number; warnings: string[];
+  parts?: { index: number; startSeconds: number; durationSeconds: number }[];
+  recordingActive?: boolean;
 };
 export type ReplayMessage = {
   sequence: number; sender: string; text: string; serverTime: number | null; receivedAt: number;

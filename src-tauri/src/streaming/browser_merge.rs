@@ -128,6 +128,19 @@ fn worker(shared: Arc<Shared>) {
         if shared.cancel.load(Ordering::Acquire) {
             break;
         }
+        let part = shared
+            .store
+            .lock()
+            .ok()
+            .and_then(|store| store.take_part_job().ok())
+            .flatten();
+        if let Some(job) = part {
+            let result = merge_recording(&job, shared.tools.as_ref(), &shared.cancel);
+            if let Ok(store) = shared.store.lock() {
+                let _ = store.finish_part_job(&job, result);
+            }
+            continue;
+        }
         let cleanup_job = shared
             .store
             .lock()
@@ -696,7 +709,12 @@ fn merge_recording(
     check_cancel(cancel)?;
     let tools = tools_available(tools)?;
     let root = browser_store::validate_merge_generation(job)?;
-    let segments = browser_store::read_merge_segments(job)?;
+    let sources = browser_store::read_merge_segments(job)?;
+    let segments = if job.part.is_none() {
+        browser_store::parts::export_segments(&job.recording)?.unwrap_or_else(|| sources.clone())
+    } else {
+        sources.clone()
+    };
     if segments.is_empty() {
         return Err(failure("확정된 녹화 조각이 없습니다."));
     }
@@ -706,10 +724,9 @@ fn merge_recording(
     }) {
         return Err(failure("원본 시간축이 서로 다른 조각은 병합하지 않습니다."));
     }
-    let extra = job.recording.bytes_written / 20 + 64 * 1024 * 1024;
-    let max_output = job
-        .recording
-        .bytes_written
+    let input_bytes: u64 = segments.iter().map(|s| s.bytes).sum();
+    let extra = input_bytes / 20 + 64 * 1024 * 1024;
+    let max_output = input_bytes
         .checked_add(extra)
         .ok_or_else(|| failure("병합 크기 한도를 초과했습니다."))?;
     space(&root, max_output)?;
@@ -729,8 +746,34 @@ fn merge_recording(
         .write_all(b"ffconcat version 1.0\n")
         .map_err(|_| failure("병합 목록을 저장하지 못했습니다."))?;
     let mut first_signature = None;
-    let mut source_hashes = Vec::with_capacity(segments.len());
+    let mut source_hashes = Vec::with_capacity(sources.len());
+    // Keep final-export inputs immutable while the external muxer reads them.
+    let _range_guards = if job.part.is_none() && job.recording.progressive.is_some() {
+        segments
+            .iter()
+            .map(|s| browser_store::cleanup::verification_guard(&root.join(&s.file)))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
+    let (range_hashes, _) = browser_store::cleanup::verified_range_inputs(job, cancel)?;
+    for (index, source) in sources.iter().enumerate() {
+        check_cancel(cancel)?;
+        let hash =
+            browser_store::cleanup::source_hash(&root.join(&source.file), source.bytes, cancel)?;
+        if !range_hashes.is_empty() && range_hashes.get(index) != Some(&hash) {
+            return Err(failure(
+                "구간 병합 후 원본 조각이 변경되었습니다. 원본을 보존합니다.",
+            ));
+        }
+        source_hashes.push(hash);
+    }
     let mut offset = 0.0;
+    let range_parts = if job.part.is_none() && job.recording.progressive.is_some() {
+        Some(browser_store::parts::load(&job.recording)?)
+    } else {
+        None
+    };
     for (index, segment) in segments.iter().enumerate() {
         check_cancel(cancel)?;
         if started.elapsed() > Duration::from_secs(7200) {
@@ -739,20 +782,25 @@ fn merge_recording(
             ));
         }
         let path = root.join(&segment.file);
-        if regular(&path, MAX_SEGMENT)?.len() != segment.bytes {
+        if regular(
+            &path,
+            if job.part.is_none() && job.recording.progressive.is_some() {
+                256 * 1024 * 1024
+            } else {
+                MAX_SEGMENT
+            },
+        )?
+        .len()
+            != segment.bytes
+        {
             return Err(failure("원본 조각의 크기가 저장 기록과 다릅니다."));
         }
-        source_hashes.push(browser_store::cleanup::source_hash(
-            &path,
-            segment.bytes,
-            cancel,
-        )?);
         let info = probe(
             tools,
             &path,
             &job.recording.mime_type,
             cancel,
-            122.0,
+            segment.duration_seconds + 2.0,
             job.recording.mime_type.starts_with("video/webm"),
         )?;
         if first_signature
@@ -777,11 +825,18 @@ fn merge_recording(
             "sourceStartSeconds":segment.source_start_seconds,"sourceEndSeconds":segment.source_end_seconds,
             "clock":if segment.source_start_seconds.is_some(){"encoded_source"}else{"media_duration"},
             "chatClock":"original_recording_receive_time","chatRewritten":false});
-        serde_json::to_writer(&mut timeline, &row)
-            .map_err(|_| failure("병합 시간표를 저장하지 못했습니다."))?;
-        timeline
-            .write_all(b"\n")
-            .map_err(|_| failure("병합 시간표를 저장하지 못했습니다."))?;
+        if let Some(parts) = &range_parts {
+            let rows = browser_store::parts::timeline_rows(&root, &parts[index], offset, duration)?;
+            timeline
+                .write_all(&rows)
+                .map_err(|_| failure("병합 시간표를 저장하지 못했습니다."))?;
+        } else {
+            serde_json::to_writer(&mut timeline, &row)
+                .map_err(|_| failure("병합 시간표를 저장하지 못했습니다."))?;
+            timeline
+                .write_all(b"\n")
+                .map_err(|_| failure("병합 시간표를 저장하지 못했습니다."))?;
+        }
         if timeline
             .metadata()
             .map_err(|_| failure("병합 시간표를 확인하지 못했습니다."))?
@@ -885,13 +940,13 @@ fn merge_recording(
         .map_err(|_| failure("병합 영상을 디스크에 확정하지 못했습니다."))?;
     let verification_guard = browser_store::cleanup::verification_guard(&partial)?;
     verify_full_decode(tools, &partial, offset, cancel)?;
-    let cleanup = browser_store::cleanup::write_proof(
+    let cleanup = Some(browser_store::cleanup::write_proof(
         job,
         &source_hashes,
         &partial,
         &timeline_partial,
         cancel,
-    )?;
+    )?);
     drop(verification_guard);
     check_cancel(cancel)?;
     browser_store::validate_merge_generation(job)?;
@@ -901,8 +956,12 @@ fn merge_recording(
         file: name,
         timeline_file: timeline_name,
         bytes,
-        duration_seconds: merged.duration,
-        cleanup: Some(cleanup),
+        duration_seconds: if job.part.is_some() {
+            offset
+        } else {
+            merged.duration
+        },
+        cleanup,
     })
 }
 
@@ -1159,6 +1218,13 @@ mod tests {
     }
 
     fn synthetic_mp4(tools: &MediaTools) -> Vec<u8> {
+        synthetic_mp4_seconds(tools, 15)
+    }
+    fn synthetic_mp4_seconds(tools: &MediaTools, seconds: u32) -> Vec<u8> {
+        let video = format!("color=c=blue:s=160x90:r=25:duration={seconds}");
+        let audio = format!("sine=frequency=440:sample_rate=48000:duration={seconds}.1");
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("synthetic.mp4");
         let mut cmd = Command::new(&tools.ffmpeg);
         cmd.args([
             "-nostdin",
@@ -1168,13 +1234,13 @@ mod tests {
             "-f",
             "lavfi",
             "-i",
-            "color=c=blue:s=160x90:r=25:duration=15",
+            &video,
             "-f",
             "lavfi",
             "-i",
             // Supply complete audio coverage beyond the last video frame. A
             // shared output cutoff can truncate AAC before the video's end.
-            "sine=frequency=440:sample_rate=48000:duration=15.1",
+            &audio,
             "-c:v",
             "libopenh264",
             "-threads",
@@ -1191,18 +1257,18 @@ mod tests {
             "+frag_keyframe+empty_moov+default_base_moof",
             "-f",
             "mp4",
-            "pipe:1",
-        ]);
-        let ToolOutput::Bytes(bytes) = run_tool(
+        ])
+        .arg(&output);
+        run_tool(
             cmd,
             &AtomicBool::new(false),
             Duration::from_secs(20),
             false,
             None,
         )
-        .unwrap() else {
-            unreachable!()
-        };
+        .unwrap();
+        assert!(fs::metadata(&output).unwrap().len() < 16 * 1024 * 1024);
+        let bytes = fs::read(output).unwrap();
         assert_eq!(&bytes[4..8], b"ftyp");
         assert!(bytes.windows(4).any(|window| window == b"moof"));
         bytes
@@ -1221,6 +1287,7 @@ mod tests {
     }
     fn native_encoded_fixture(
         media: &[u8],
+        expected_segments: usize,
     ) -> Vec<super::super::browser::encoded::fmp4::EncodedSegment> {
         use super::super::browser::encoded::fmp4::{EncodedMuxer, EncodedTrackInput};
         let mut init = Vec::new();
@@ -1257,7 +1324,7 @@ mod tests {
             segments.extend(muxer.push(0, fragment).unwrap());
         }
         segments.extend(muxer.finish().unwrap());
-        assert_eq!(segments.len(), 2);
+        assert_eq!(segments.len(), expected_segments);
         segments
     }
 
@@ -1266,7 +1333,7 @@ mod tests {
     fn synthetic_ffmpeg_fragmented_mp4_uses_source_cut_points_then_cleans_verified_originals() {
         let tools = e2e_tools();
         let media = synthetic_mp4(&tools);
-        let segments = native_encoded_fixture(&media);
+        let segments = native_encoded_fixture(&media, 2);
         let dir = tempfile::tempdir().unwrap();
         let store = BrowserCaptureStore::new(dir.path()).unwrap();
         let recording = store
@@ -1337,6 +1404,256 @@ mod tests {
             .unwrap()
             .remove(0);
         assert_eq!(reopened.merge.unwrap().status, BrowserMergeStatus::Complete);
+    }
+
+    #[test]
+    #[ignore = "explicit verified tools; offline live-range publish, replay and final export"]
+    fn synthetic_ffmpeg_progressive_ranges_replay_while_recording_and_export_once() {
+        use tauri::http::{header, Request, StatusCode};
+        let tools = e2e_tools();
+        let media = synthetic_mp4(&tools);
+        let segments = native_encoded_fixture(&media, 2);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(BrowserCaptureStore::new(dir.path()).unwrap()));
+        let recording = store
+            .lock()
+            .unwrap()
+            .begin_progressive(
+                dir.path(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "progressive fixture",
+                "video/mp4",
+            )
+            .unwrap();
+        let root = Path::new(&recording.output_dir);
+        fs::write(root.join("chat.jsonl"), b"").unwrap();
+        for (index, segment) in segments.iter().enumerate() {
+            let store = store.lock().unwrap();
+            store
+                .append(&recording.id, index as u64, 0, &segment.bytes)
+                .unwrap();
+            store
+                .finish_segment_source(
+                    &recording.id,
+                    index as u64,
+                    segment.duration_seconds,
+                    Some(segment.source_start_seconds),
+                    Some(segment.source_end_seconds),
+                )
+                .unwrap();
+            let job = store.take_short_part_job().unwrap().unwrap();
+            let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
+            assert!(
+                output.cleanup.is_some(),
+                "range evidence is saved but does not authorize source deletion yet"
+            );
+            store.finish_part_job(&job, Ok(output)).unwrap();
+            assert!(store.has_active());
+            assert!(store.take_short_part_job().unwrap().is_none());
+        }
+        let replay = super::super::replay::ReplayService::new(dir.path(), store.clone());
+        let session = replay.open(&recording.id).unwrap();
+        assert!(session.recording_active);
+        assert_eq!(session.parts.len(), 2);
+        assert!((session.parts[1].start_seconds - segments[0].duration_seconds).abs() < 0.1);
+        for part in 0..2 {
+            let request = Request::builder()
+                .uri(format!(
+                    "http://atsumi-replay.localhost/{}/part/{part}",
+                    session.token
+                ))
+                .header(header::ORIGIN, "http://tauri.localhost")
+                .header(header::RANGE, "bytes=0-127")
+                .body(vec![])
+                .unwrap();
+            let response = replay.media_response(&request, "main");
+            assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(&response.body()[4..8], b"ftyp");
+        }
+        // Continued chat capture must not invalidate the immutable replay prefix.
+        fs::OpenOptions::new()
+            .append(true)
+            .open(root.join("chat.jsonl"))
+            .unwrap()
+            .write_all(b"{\"future\":true}\n")
+            .unwrap();
+        let request = Request::builder()
+            .uri(format!(
+                "http://atsumi-replay.localhost/{}/part/0",
+                session.token
+            ))
+            .header(header::RANGE, "bytes=0-127")
+            .body(vec![])
+            .unwrap();
+        assert_eq!(
+            replay.media_response(&request, "main").status(),
+            StatusCode::PARTIAL_CONTENT
+        );
+        for route in ["part/2", "part/-1", "part/%2e%2e", "part/0/extra"] {
+            let request = Request::builder()
+                .uri(format!(
+                    "http://atsumi-replay.localhost/{}/{route}",
+                    session.token
+                ))
+                .body(vec![])
+                .unwrap();
+            assert!(!replay
+                .media_response(&request, "main")
+                .status()
+                .is_success());
+        }
+        store
+            .lock()
+            .unwrap()
+            .finish(&recording.id, false, None)
+            .unwrap();
+        let job = store.lock().unwrap().take_merge_job().unwrap().unwrap();
+        let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
+        verify_decode(&tools, &root.join(&output.file));
+        store.lock().unwrap().complete_merge(&job, output).unwrap();
+        assert!(store.lock().unwrap().take_merge_job().unwrap().is_none());
+        assert!(store.lock().unwrap().take_part_job().unwrap().is_none());
+        // A live-prefix reader remains valid through publication of the full MP4.
+        assert_eq!(
+            replay.media_response(&request, "main").status(),
+            StatusCode::PARTIAL_CONTENT
+        );
+        let cleanup = store.lock().unwrap().take_cleanup_job().unwrap().unwrap();
+        let outcome =
+            browser_store::cleanup::remove_verified_sources(&cleanup, &AtomicBool::new(false));
+        assert!(outcome.complete, "verified raw segments and range derivatives retire after final publication (sources: {})", outcome.deleted);
+        store
+            .lock()
+            .unwrap()
+            .finish_cleanup(&cleanup, outcome)
+            .unwrap();
+        assert!(!root.join("segment-000000000000.mp4").exists());
+        assert_eq!(
+            replay.media_response(&request, "main").status(),
+            StatusCode::PARTIAL_CONTENT
+        );
+        replay.close(&session.token).unwrap();
+        replay.shutdown_and_wait();
+        drop(replay);
+        drop(store);
+        let recovered = BrowserCaptureStore::new(dir.path()).unwrap();
+        assert_eq!(
+            recovered.snapshot().unwrap()[0]
+                .progressive
+                .as_ref()
+                .unwrap()
+                .part_count,
+            2
+        );
+        assert_eq!(
+            recovered.snapshot().unwrap()[0]
+                .merge
+                .as_ref()
+                .unwrap()
+                .status,
+            BrowserMergeStatus::Complete
+        );
+    }
+
+    #[test]
+    #[ignore = "explicit verified media tools; generates and merges temporary synthetic media only"]
+    fn synthetic_ffmpeg_long_ranges_keep_original_chat_timeline_and_discard_prefix_cache() {
+        let tools = e2e_tools();
+        let segments = native_encoded_fixture(&synthetic_mp4_seconds(&tools, 190), 16);
+        let dir = tempfile::tempdir().unwrap();
+        let store = Arc::new(Mutex::new(BrowserCaptureStore::new(dir.path()).unwrap()));
+        let recording = store
+            .lock()
+            .unwrap()
+            .begin_progressive(
+                dir.path(),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "long range fixture",
+                "video/mp4",
+            )
+            .unwrap();
+        let root = Path::new(&recording.output_dir);
+        for (index, segment) in segments.iter().enumerate() {
+            let store = store.lock().unwrap();
+            store
+                .append(&recording.id, index as u64, 0, &segment.bytes)
+                .unwrap();
+            store
+                .finish_segment_source(
+                    &recording.id,
+                    index as u64,
+                    segment.duration_seconds,
+                    Some(segment.source_start_seconds),
+                    Some(segment.source_end_seconds),
+                )
+                .unwrap();
+        }
+        fs::write(root.join("chat.jsonl"), b"{\"sequence\":1,\"sender\":\"fixture\",\"text\":\"saved chat\",\"serverTime\":null,\"receivedAt\":1,\"offsetSeconds\":5,\"broadcastOffsetSeconds\":null}\n").unwrap();
+        let job = store.lock().unwrap().take_part_job().unwrap().unwrap();
+        let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
+        assert!(output.duration_seconds >= 180.0);
+        store
+            .lock()
+            .unwrap()
+            .finish_part_job(&job, Ok(output))
+            .unwrap();
+        let replay = super::super::replay::ReplayService::new(dir.path(), store.clone());
+        let ready = |token: &str| {
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                let page = replay.chat_at(token, 10.0, 1, None).unwrap();
+                assert_ne!(page.index_state, "failed", "{:?}", page.warnings);
+                if page.index_state == "ready" {
+                    assert_eq!(page.items.len(), 1);
+                    break;
+                }
+                assert!(Instant::now() < deadline);
+                thread::sleep(Duration::from_millis(5));
+            }
+        };
+        let prefix = replay.open(&recording.id).unwrap();
+        ready(&prefix.token);
+        store
+            .lock()
+            .unwrap()
+            .finish(&recording.id, false, None)
+            .unwrap();
+        let tail = store.lock().unwrap().take_part_job().unwrap().unwrap();
+        let output = merge_recording(&tail, Some(&tools), &AtomicBool::new(false)).unwrap();
+        store
+            .lock()
+            .unwrap()
+            .finish_part_job(&tail, Ok(output))
+            .unwrap();
+        let job = store.lock().unwrap().take_merge_job().unwrap().unwrap();
+        let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
+        let timeline = fs::read_to_string(root.join(&output.timeline_file)).unwrap();
+        assert_eq!(
+            timeline.lines().count(),
+            segments.len(),
+            "final timeline must keep original tiny-segment rows"
+        );
+        store.lock().unwrap().complete_merge(&job, output).unwrap();
+        let final_session = replay.open(&recording.id).unwrap();
+        ready(&final_session.token);
+        assert!(final_session.parts.is_empty());
+        replay.close(&prefix.token).unwrap();
+        replay.close(&final_session.token).unwrap();
+        replay.shutdown_and_wait();
+        drop(replay);
+        let files: Vec<_> = fs::read_dir(dir.path().join("streaming/replay"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            !files.iter().any(|n| n.starts_with("prefix-")),
+            "temporary prefix snapshots retire when closed"
+        );
+        assert_eq!(
+            files.iter().filter(|n| n.starts_with("index-v2-")).count(),
+            1,
+            "only the stable final index persists"
+        );
     }
 
     #[test]

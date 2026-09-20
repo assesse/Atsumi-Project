@@ -12,7 +12,7 @@ import { measureOfficialBrowserViewport, OfficialBrowserPanel } from "./Official
 import { createMultiviewApi, emptyMultiview } from "../../api/multiview";
 import { MadoWorkspace } from "./MadoWorkspace";
 
-vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(), convertFileSrc: (path: string, protocol = "asset") => `http://${protocol}.localhost/${path}` }));
+vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => false, invoke: vi.fn(), convertFileSrc: (path: string, protocol = "asset") => `http://${protocol}.localhost/${path}` }));
 
 const success = <T,>(data: T): ApiResult<T> => ({ ok: true, data });
 const ready = (patch: Partial<OfficialBrowserSnapshot> = {}): OfficialBrowserSnapshot => ({
@@ -1080,6 +1080,19 @@ describe("OfficialBrowserPanel", () => {
 
 describe("official browser viewport coordinator", () => {
   const viewport: OfficialBrowserViewport = { x: 10, y: 20, width: 800, height: 450, visible: true };
+  it("keeps a privacy audio gate during ownership cleanup until the next explicit update", async () => {
+    const api = fakeApi();
+    const owner = claimOfficialBrowserViewport(api);
+    owner.update({ ...hiddenOfficialBrowserViewport, epoch: 7, suspendAudio: true });
+    owner.release();
+    await act(async () => {});
+    expect(api.setViewport).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false, epoch: 7, suspendAudio: true }));
+    const next = claimOfficialBrowserViewport(api);
+    next.update({ ...hiddenOfficialBrowserViewport, epoch: 7 });
+    await act(async () => {});
+    expect(api.setViewport.mock.lastCall?.[0].suspendAudio).not.toBe(true);
+    next.release();
+  });
   it.each(["VIEWPORT_BUSY", "VIEWPORT_CLIP_FAILED"])("retries %s at most twice, without an unbounded failure loop", async (code) => {
     const api = fakeApi();
     api.setViewport.mockResolvedValue({ ok: false, error: { code, message: "잠시 후 다시 배치", retryable: true } });
