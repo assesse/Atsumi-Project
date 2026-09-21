@@ -477,9 +477,10 @@ impl OfficialBrowser {
             true
         })
         .on_new_window(move |url, features| {
-            if chat_popup::is_chat(&url) {
+            if chat_popup::is_chat(&url) || clip_popup::is_editor(&url) {
                 let channel = popup_host.inner.view.lock().ok().and_then(|state| {
-                    (!state.viewport.suspend_audio)
+                    (!state.viewport.suspend_audio
+                        && (!clip_popup::is_editor(&url) || state.viewport.visible))
                         .then(|| state.channel.clone())
                         .flatten()
                 });
@@ -613,14 +614,36 @@ impl OfficialBrowser {
         app: &AppHandle,
         remember: bool,
     ) -> Result<(), StreamError> {
-        let view = app
-            .get_webview(WINDOW_LABEL)
-            .ok_or_else(|| error("BROWSER_NOT_OPEN", "먼저 공식 시청 창을 열어 주세요."))?;
+        // The profile belongs to the app, not to the old single-player window.
+        // Align every live receiver's UA without creating a duplicate stream.
+        let views: Vec<_> = self
+            .inner
+            .contexts
+            .hosts()
+            .iter()
+            .filter(|host| !host.inner.detached.load(Ordering::Acquire))
+            .filter_map(|host| app.get_webview(host.label()))
+            .collect();
+        if views.is_empty() {
+            return Err(error(
+                "BROWSER_NOT_OPEN",
+                "먼저 라이브에서 방송을 연결해 주세요.",
+            ));
+        }
         let generation = {
+            let _gate = self.inner.contexts.gate.lock().map_err(|_| unavailable())?;
+            if !self.active_ids().is_empty() {
+                return Err(error(
+                    "RECORDING_ACTIVE",
+                    "그리드 연결 전에 녹화를 중지해 주세요.",
+                ));
+            }
+            if self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0 {
+                return Err(unavailable());
+            }
             let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
             if self.inner.closing.load(Ordering::Acquire)
                 || self.inner.reserved.load(Ordering::Acquire)
-                || self.multiview_active()
             {
                 return Err(unavailable());
             }
@@ -644,86 +667,105 @@ impl OfficialBrowser {
             state.extension = "연결 중".into();
             state.extension_generation
         };
-        let host = self.clone();
-        let handle = app.clone();
-        let callback_view = view.clone();
-        let callback = move |result: Result<
-            super::super::browser_extension::ExtensionLoadReport,
-            StreamError,
-        >| {
-            let mut state = host.inner.view.lock().unwrap_or_else(|p| p.into_inner());
-            if state.extension_generation != generation
-                || host.inner.closing.load(Ordering::Acquire)
-            {
-                return;
-            }
-            match result {
-                Ok(report) => {
-                    // Keep the connecting reservation through the small setting
-                    // commit; recording cannot overtake UA alignment/reload.
-                    if remember {
-                        match super::super::browser_extension::remember_connection(
-                            &host.inner.data_dir,
-                        ) {
-                            Ok(()) => state.extension_reconnect_enabled = true,
-                            Err(cause) => state.error = Some(cause.message),
+        let remaining = Arc::new(std::sync::atomic::AtomicUsize::new(views.len()));
+        let failed = Arc::new(AtomicBool::new(false));
+        for view in views {
+            let host = self.clone();
+            let handle = app.clone();
+            let remaining = remaining.clone();
+            let failed = failed.clone();
+            let callback_view = view.clone();
+            let pending = remaining.clone();
+            let had_failure = failed.clone();
+            let callback = move |result: Result<
+                super::super::browser_extension::ExtensionLoadReport,
+                StreamError,
+            >| {
+                let mut state = host.inner.view.lock().unwrap_or_else(|p| p.into_inner());
+                if state.extension_generation != generation
+                    || host.inner.closing.load(Ordering::Acquire)
+                {
+                    return;
+                }
+                match result {
+                    Ok(report) => {
+                        // Keep the connecting reservation through the small setting
+                        // commit; recording cannot overtake UA alignment/reload.
+                        if remember {
+                            match super::super::browser_extension::remember_connection(
+                                &host.inner.data_dir,
+                            ) {
+                                Ok(()) => state.extension_reconnect_enabled = true,
+                                Err(cause) => state.error = Some(cause.message),
+                            }
                         }
-                    }
-                    state.loaded_extensions = report.loaded_ids;
-                    state.extension = "확장 로드 완료 · 공식 페이지 감지 확인 중".into();
-                    let reload = report.reload_required
-                        && state.recording.is_none()
-                        && state.arm.is_none()
-                        && !state.account_busy
-                        && !host.account_window_open(&handle)
-                        && !host.inner.closing.load(Ordering::Acquire);
-                    // Loading callbacks are deliberately delivered outside
-                    // with_webview's dispatcher lock before any navigation.
-                    if reload {
-                        state.ready = false;
-                    }
-                    drop(state);
-                    let mut navigation_failed = false;
-                    if reload {
-                        navigation_failed = callback_view
-                            .url()
-                            .ok()
-                            .filter(|url| live_channel(url).is_some())
-                            .is_none_or(|url| callback_view.navigate(url).is_err());
-                    }
-                    // Keep the reservation until navigation has been queued,
-                    // without holding ViewState across a WebView callback.
-                    let mut state = host.inner.view.lock().unwrap_or_else(|p| p.into_inner());
-                    if state.extension_generation != generation {
-                        return;
-                    }
-                    state.extension_connecting = false;
-                    if reload {
-                        state.ready = false;
-                    }
-                    if navigation_failed {
-                        state.extension =
+                        for id in report.loaded_ids {
+                            if !state.loaded_extensions.contains(&id) {
+                                state.loaded_extensions.push(id);
+                            }
+                        }
+                        state.extension = "확장 로드 완료 · 공식 페이지 감지 확인 중".into();
+                        let reload = report.reload_required
+                            && state.recording.is_none()
+                            && state.arm.is_none()
+                            && !state.account_busy
+                            && !host.account_window_open(&handle)
+                            && !host.inner.closing.load(Ordering::Acquire);
+                        // Loading callbacks are deliberately delivered outside
+                        // with_webview's dispatcher lock before any navigation.
+                        if reload {
+                            state.ready = false;
+                        }
+                        drop(state);
+                        let mut navigation_failed = false;
+                        if reload {
+                            navigation_failed = callback_view
+                                .url()
+                                .ok()
+                                .filter(|url| live_channel(url).is_some())
+                                .is_none_or(|url| callback_view.navigate(url).is_err());
+                        }
+                        // Keep the reservation until navigation has been queued,
+                        // without holding ViewState across a WebView callback.
+                        let mut state = host.inner.view.lock().unwrap_or_else(|p| p.into_inner());
+                        if state.extension_generation != generation {
+                            return;
+                        }
+                        let finished = remaining.fetch_sub(1, Ordering::AcqRel) == 1;
+                        state.extension_connecting = !finished;
+                        if reload {
+                            state.ready = false;
+                        }
+                        if navigation_failed {
+                            failed.store(true, Ordering::Release);
+                            state.extension =
                             "확장 연결 후 새로고침하지 못했습니다 · 시청 영역을 다시 열어 주세요"
                                 .into();
+                        }
+                        if finished && failed.load(Ordering::Acquire) {
+                            state.extension = "일부 그리드 연결을 완료하지 못했습니다. 연결을 다시 시도해 주세요.".into();
+                        }
+                        drop(state);
+                        if finished && !reload && !failed.load(Ordering::Acquire) {
+                            host.probe_extensions(&callback_view);
+                        }
                     }
-                    drop(state);
-                    if !reload {
-                        host.probe_extensions(&callback_view);
+                    Err(cause) => {
+                        failed.store(true, Ordering::Release);
+                        state.extension_connecting = remaining.fetch_sub(1, Ordering::AcqRel) != 1;
+                        state.extension = cause.message;
                     }
                 }
-                Err(cause) => {
-                    state.extension_connecting = false;
-                    state.extension = cause.message;
+            };
+            // A synchronous dispatch error has no callback; account for it too.
+            if let Err(cause) = super::super::browser_extension::connect(&view, callback) {
+                let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+                if state.extension_generation == generation {
+                    had_failure.store(true, Ordering::Release);
+                    state.extension_connecting = pending.fetch_sub(1, Ordering::AcqRel) != 1;
+                    state.extension = cause.message.clone();
                 }
             }
-        };
-        if let Err(cause) = super::super::browser_extension::connect(&view, callback) {
-            let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
-            if state.extension_generation == generation {
-                state.extension_connecting = false;
-                state.extension = cause.message.clone();
-            }
-            return Err(cause);
         }
         Ok(())
     }

@@ -59,6 +59,56 @@ fn valid_id(id: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
+
+fn same_profile_image(saved_id: &str, current_url: &str) -> bool {
+    if asset_id(current_url).as_deref() == Some(saved_id) {
+        return true;
+    }
+    let Ok(mut url) = reqwest::Url::parse(current_url) else {
+        return false;
+    };
+    if url.host_str() != Some("nng-phinf.pstatic.net") {
+        return false;
+    }
+    for query in [Some("type=f160_160"), None] {
+        url.set_query(query);
+        if asset_id(url.as_str()).as_deref() == Some(saved_id) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Explicit offline-maintenance operation, never called by playback/UI reads.
+/// Repair only a missing local image, from the exact archived cache identity or
+/// a supported rendition of the very same URL. Original profile/recording/chat
+/// descriptors are immutable. Network safety/size/raster checks remain shared.
+pub fn repair_channel_image(
+    data_dir: &Path,
+    root: &Path,
+    channel: &str,
+    current_url: Option<&str>,
+) -> Result<bool, StreamError> {
+    if channel_profile::read(root, channel).1.is_some() {
+        return Ok(false);
+    }
+    let id = channel_profile::saved_image_id(root, channel)?.ok_or_else(unavailable)?;
+    let data = if let Ok(asset) = read_cached(data_dir, &id) {
+        format!(
+            "data:{};base64,{}",
+            asset.mime,
+            STANDARD.encode(asset.bytes)
+        )
+    } else {
+        let url = current_url
+            .filter(|url| same_profile_image(&id, url))
+            .ok_or_else(unavailable)?;
+        chat_assets::fetch_chat_asset(url)?.data_url
+    };
+    mirror_recording(root, &id, &data, &mut HashMap::new())?;
+    read_recording(root, &id)?;
+    Ok(true)
+}
 fn unavailable() -> StreamError {
     StreamError::new(
         "REPLAY_ASSET_UNAVAILABLE",
@@ -230,9 +280,18 @@ impl ReplayAssetCache {
                         AssetJob::Channel(channel, root) => {
                             // A single bounded worker, not one thread/request per UI
                             // update. Capture works even when chat saving is disabled.
-                            if root.join("channel-profile.json").exists() {
-                                continue;
+                            // A descriptor alone does not mean the image was saved.
+                            // Release the pending-job key for a bounded later retry.
+                            if let Ok(mut seen) = run.seen.lock() {
+                                seen.remove(&(format!("channel:{channel}"), Some(root.clone())));
                             }
+                            let saved_id = if root.join("channel-profile.json").exists() {
+                                if channel_profile::read(&root, &channel).1.is_some() { continue; }
+                                match channel_profile::saved_image_id(&root, &channel) {
+                                    Ok(Some(id)) => Some(id),
+                                    _ => continue,
+                                }
+                            } else { None };
                             let mut fetched = profile(&channel);
                             for _ in 0..2 {
                                 if fetched.is_ok() || run.cancel.load(Ordering::Acquire) {
@@ -250,11 +309,17 @@ impl ReplayAssetCache {
                             if run.cancel.load(Ordering::Acquire) {
                                 break;
                             }
-                            let id = image.as_deref().and_then(asset_id);
-                            if channel_profile::save(&root, &channel, &name, id.as_deref()).is_err()
-                            {
-                                continue;
-                            }
+                            let mut id = image.as_deref().and_then(asset_id);
+                            if let Some(saved_id) = saved_id {
+                                if id.as_ref() != Some(&saved_id) {
+                                    // Repair the old unsupported rendition only if
+                                    // the very same public image URL was captured.
+                                    // Never relabel today's different avatar as old.
+                                    let same_image = image.as_deref().is_some_and(|url| same_profile_image(&saved_id, url));
+                                    if !same_image { continue; }
+                                }
+                                id = Some(saved_id);
+                            } else if channel_profile::save(&root, &channel, &name, id.as_deref()).is_err() { continue; }
                             let (Some(id), Some(url)) = (id, image) else {
                                 continue;
                             };
@@ -408,7 +473,13 @@ fn mirror_recording(
     plain_path(&directory)?;
     if !budgets.contains_key(root) {
         if budgets.len() >= 64 {
-            return Err(unavailable());
+            // This is an inventory cache, not a lifetime recording limit. The
+            // old hard stop silently lost every image after the 64th recording.
+            // Evicted roots are re-counted before their next write, so their
+            // actual per-recording byte/file limits remain enforced.
+            if let Some(old) = budgets.keys().next().cloned() {
+                budgets.remove(&old);
+            }
         }
         if !directory.exists() {
             fs::create_dir(&directory).map_err(|_| unavailable())?;
@@ -738,5 +809,96 @@ mod tests {
             channel_profile::read(&root, &"a".repeat(32)),
             (Some("당시 이름".into()), Some(data()))
         );
+    }
+
+    #[test]
+    fn incomplete_channel_descriptor_can_be_repaired_without_rewriting_old_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let channel = "a".repeat(32);
+        let url = "https://nng-phinf.pstatic.net/old.png?type=f160_160";
+        let id = asset_id(url).unwrap();
+        channel_profile::save(&root, &channel, "original name", Some(&id)).unwrap();
+        let before = fs::read(root.join("channel-profile.json")).unwrap();
+        let cache = ReplayAssetCache::with_fetchers(
+            dir.path(),
+            true,
+            Arc::new(|_| Ok(data())),
+            Arc::new(|_| {
+                Ok((
+                    "new name".into(),
+                    Some("https://nng-phinf.pstatic.net/old.png?type=f120_120".into()),
+                ))
+            }),
+        )
+        .unwrap();
+        cache.submit_channel(&root, &channel);
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while read_recording(&root, &id).is_err() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        cache.shutdown_and_wait();
+        assert_eq!(
+            channel_profile::read(&root, &channel),
+            (Some("original name".into()), Some(data()))
+        );
+        assert_eq!(fs::read(root.join("channel-profile.json")).unwrap(), before);
+    }
+
+    #[test]
+    fn profile_repair_matches_original_or_legacy_rendition_but_never_a_different_image() {
+        let current = "https://nng-phinf.pstatic.net/original.png?type=f120_120";
+        for archived in [
+            current,
+            "https://nng-phinf.pstatic.net/original.png",
+            "https://nng-phinf.pstatic.net/original.png?type=f160_160",
+        ] {
+            assert!(same_profile_image(&asset_id(archived).unwrap(), current));
+        }
+        assert!(!same_profile_image(
+            &asset_id("https://nng-phinf.pstatic.net/different.png").unwrap(),
+            current
+        ));
+        assert!(!same_profile_image(
+            &asset_id(current).unwrap(),
+            "http://localhost/private"
+        ));
+    }
+
+    #[test]
+    fn maintenance_repairs_from_exact_cache_without_network_or_metadata_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("record");
+        fs::create_dir(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let cache = directory(dir.path());
+        fs::create_dir_all(&cache).unwrap();
+        let channel = "a".repeat(32);
+        let id = asset_id("https://ssl.pstatic.net/old.png").unwrap();
+        store_data(&cache, &id, &data()).unwrap();
+        channel_profile::save(&root, &channel, "old name", Some(&id)).unwrap();
+        let before = fs::read(root.join("channel-profile.json")).unwrap();
+        assert!(repair_channel_image(dir.path(), &root, &channel, None).unwrap());
+        assert!(!repair_channel_image(dir.path(), &root, &channel, None).unwrap());
+        assert_eq!(fs::read(root.join("channel-profile.json")).unwrap(), before);
+        assert_eq!(
+            channel_profile::read(&root, &channel),
+            (Some("old name".into()), Some(data()))
+        );
+    }
+
+    #[test]
+    fn image_budget_cache_does_not_stop_saving_after_64_recordings() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "a".repeat(64);
+        let mut budgets = HashMap::new();
+        for index in 0..66 {
+            let root = dir.path().join(index.to_string());
+            fs::create_dir(&root).unwrap();
+            let root = fs::canonicalize(root).unwrap();
+            mirror_recording(&root, &id, &data(), &mut budgets).unwrap();
+            assert!(read_recording(&root, &id).is_ok());
+            assert!(budgets.len() <= 64);
+        }
     }
 }

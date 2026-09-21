@@ -31,6 +31,7 @@
   let toolbar = null;
   let encodedStarting = false;
   let encodedChat = null;
+  let lastCaptureRequestId = null;
   const encodedState = () => window.__atsumiEncodedCapture?.getStatus() ?? null;
   const encodedDetail = (detail) => ({ encoded_ready: "ready", encoded_starting: "starting",
     encoded_recording: "recording", encoded_waiting: "waiting_source", encoded_saving: "saving", encoded_saved: "saved",
@@ -47,7 +48,7 @@
     const id = crypto.randomUUID();
     const timer = setTimeout(() => {
       pending.delete(id);
-      reject(new Error("native_rejected"));
+      reject(Object.assign(new Error("native_rejected"), { code: "BROWSER_ACK_TIMEOUT" }));
     }, ACK_MS);
     pending.set(id, { resolve, reject, timer });
     try {
@@ -55,7 +56,7 @@
     } catch {
       clearTimeout(timer);
       pending.delete(id);
-      reject(new Error("native_rejected"));
+      reject(Object.assign(new Error("native_rejected"), { code: "BRIDGE_POST_FAILED" }));
     }
   });
   window.addEventListener("atsumi-browser-reply", (event) => {
@@ -148,7 +149,7 @@
     const detail = encodedActive ? (encodedStarting && !encoded?.active ? "starting" : encodedDetail(encoded?.detail ?? "starting")) : session ? (session.stopping ? "saving" : session.recordingId ? "recording" : "starting") :
       lastDetail === "ready" && !ready ? "unavailable" : lastDetail;
     renderStatus(detail);
-    const fields = { channelId: session?.channelId ?? channel(), ready,
+    const fields = { channelId: session?.channelId ?? channel(), requestId: lastCaptureRequestId, ready,
       recording: Boolean(session || encodedActive), detail, captureMode: ALLOW_REENCODED_CAPTURE && !encodedActive ? "reencoded" : "encoded" };
     const sourceStatus = window.__atsumiEncodedCapture?.getDiagnostics?.();
     if (sourceStatus) fields.captureDiagnostics = sourceStatus;
@@ -352,6 +353,7 @@
       status();
       return;
     }
+    lastCaptureRequestId = command.requestId;
     const channelId = channel();
     const video = videoSource();
     if (channelId && channelId === command.channelId && video &&

@@ -116,6 +116,7 @@ pub(crate) struct ViewerLog {
     file: File,
     bytes: u64,
     last: Option<u64>,
+    dirty: bool,
 }
 impl ViewerLog {
     pub fn create(root: &Path) -> Result<Self, StreamError> {
@@ -128,6 +129,7 @@ impl ViewerLog {
             file,
             bytes: 0,
             last: None,
+            dirty: true,
         })
     }
     pub fn append(&mut self, sample: &ViewerSample) -> Result<(), StreamError> {
@@ -143,13 +145,18 @@ impl ViewerLog {
             return Err(storage());
         }
         data.push(b'\n');
+        self.dirty = true;
         self.file.write_all(&data).map_err(|_| storage())?;
         self.bytes += data.len() as u64;
         self.last = Some(sample.received_at);
         Ok(())
     }
-    pub fn sync(&self) -> Result<(), StreamError> {
-        self.file.sync_all().map_err(|_| storage())
+    pub fn sync(&mut self) -> Result<(), StreamError> {
+        if self.dirty {
+            self.file.sync_all().map_err(|_| storage())?;
+            self.dirty = false;
+        }
+        Ok(())
     }
 }
 

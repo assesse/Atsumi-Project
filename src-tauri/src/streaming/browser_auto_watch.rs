@@ -132,13 +132,19 @@ impl OfficialBrowser {
     fn auto_receiver_in_use(&self, pane: &Pane) -> bool {
         self.inner
             .multiview
-            .auto_watch
-            .lease
+            .state
             .lock()
-            .is_ok_and(|slot| {
-                slot.as_ref()
-                    .is_some_and(|lease| lease.pane.id == pane.id && lease.connected())
-            })
+            .is_ok_and(|state| state.panes.iter().any(|p| p.id == pane.id))
+            || self
+                .inner
+                .multiview
+                .auto_watch
+                .lease
+                .lock()
+                .is_ok_and(|slot| {
+                    slot.as_ref()
+                        .is_some_and(|lease| lease.pane.id == pane.id && lease.connected())
+                })
             || pane.capture.as_ref().is_some_and(|capture| {
                 let recording_or_request = capture.inner.view.lock().is_ok_and(|s| {
                     s.recording.is_some()
@@ -155,6 +161,10 @@ impl OfficialBrowser {
             })
     }
     pub(crate) fn reap_retired_auto_receivers(&self, app: &AppHandle) {
+        // A new live layout may be claiming an existing receiver right now.
+        let Ok(_layout) = self.inner.multiview.mutations.try_lock() else {
+            return;
+        };
         let Ok(_mutation) = self.inner.multiview.auto_watch.mutations.try_lock() else {
             return;
         };
@@ -251,7 +261,7 @@ impl OfficialBrowser {
                 capture.confirm_control(app, &pending.id, true, true, true)?;
             }
             WatchOperation::RequestControl { action } => {
-                capture.request_control(action)?;
+                capture.request_control_from_ui(app, action)?;
             }
             WatchOperation::ConfirmControl {
                 request_id,
@@ -356,7 +366,7 @@ fn queue_hide_audio(view: &Webview, revision: Arc<AtomicU64>, expected: u64, sil
 }
 #[cfg(not(windows))]
 fn queue_hide_audio(_: &Webview, _: Arc<AtomicU64>, _: u64, _: bool) {}
-fn queue_hide(view: &Webview, revision: Arc<AtomicU64>, expected: u64) {
+pub(super) fn queue_hide(view: &Webview, revision: Arc<AtomicU64>, expected: u64) {
     queue_hide_audio(view, revision, expected, true);
 }
 

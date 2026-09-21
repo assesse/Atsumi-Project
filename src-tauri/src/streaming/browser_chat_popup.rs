@@ -1,5 +1,6 @@
-//! Official chat-only windows. No capture bridge, account reservation, video
-//! receiver or trusted-main permissions are installed in these remote pages.
+//! Official chat windows and shared auxiliary-popup routing/lifecycle. The
+//! separate clip editor module owns its narrow URL policy and video preview.
+//! Neither popup receives capture bridges, account reservations or main IPC.
 use super::*;
 use tauri::{
     webview::NewWindowFeatures, webview::NewWindowResponse, WebviewUrl, WebviewWindowBuilder,
@@ -37,6 +38,9 @@ pub(super) fn open(
     features: NewWindowFeatures,
     channel: &str,
 ) -> NewWindowResponse<tauri::Wry> {
+    if clip_popup::is_editor(&url) {
+        return clip_popup::open(host, app, url, features, channel);
+    }
     if !same_chat(&url, channel) {
         return NewWindowResponse::Deny;
     }
@@ -84,6 +88,7 @@ pub(super) fn sync_privacy(
     revision: Arc<AtomicU64>,
     expected: u64,
 ) {
+    clip_popup::sync_privacy(app, channel, private, revision.clone(), expected);
     let Some(window) = app.get_webview_window(&format!("chzzk-chat-{channel}")) else {
         return;
     };
@@ -101,7 +106,7 @@ pub(super) fn sync_privacy(
 
 pub(super) fn close_all(app: &AppHandle) {
     for (label, window) in app.webview_windows() {
-        if label.starts_with("chzzk-chat-") {
+        if label.starts_with("chzzk-chat-") || label.starts_with("chzzk-clip-") {
             let _ = window.destroy();
         }
     }

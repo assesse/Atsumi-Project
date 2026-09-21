@@ -169,7 +169,7 @@ pub(crate) fn verified_range_inputs(
             return Err(invalid());
         }
         file.seek(SeekFrom::Start(0)).map_err(|_| storage())?;
-        let proof: Proof = serde_json::from_reader(file).map_err(|_| invalid())?;
+        let proof: Proof = serde_json::from_reader(BufReader::new(file)).map_err(|_| invalid())?;
         if proof.version != 1
             || proof.recording_id != job.recording.id
             || !proof.derivatives.is_empty()
@@ -294,7 +294,9 @@ impl BrowserCaptureStore {
         }
         let Some(index) = state.recordings.iter().position(|r| {
             r.status != BrowserRecordingStatus::Recording
+                && !state.unverified.contains(&r.id)
                 && !r.deletion_pending
+                && r.media_removed_at.is_none()
                 && !state.active.contains_key(&r.id)
                 && r.merge.as_ref().is_some_and(|m| {
                     m.status == BrowserMergeStatus::Complete
@@ -414,7 +416,8 @@ pub(crate) fn remove_verified_sources(
             return Err(invalid());
         }
         proof_file.seek(SeekFrom::Start(0)).map_err(|_| storage())?;
-        let proof: Proof = serde_json::from_reader(&proof_file).map_err(|_| invalid())?;
+        let proof: Proof =
+            serde_json::from_reader(BufReader::new(&proof_file)).map_err(|_| invalid())?;
         let segments = read_merge_segments(job)?;
         if proof.version != 1
             || proof.recording_id != job.recording.id

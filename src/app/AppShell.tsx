@@ -14,6 +14,7 @@ import { useAppExit, type AppExitApi } from "./useAppExit";
 import { usePreferenceQueue } from "./usePreferenceQueue";
 import type { ContentSource } from "./workspaceRegistry";
 import { useRecordingNotifications } from "./useRecordingNotifications";
+import { useStartup } from "./useStartup";
 
 export type AppShellApi = SettingsApi & AppExitApi & Pick<BackendClient, "runtime">;
 
@@ -31,6 +32,7 @@ type AppShellServices = ShellState & {
   checkForUpdates: ReturnType<typeof useAppUpdater>["checkForUpdates"];
   exitConfirmOpen: boolean;
   openExitConfirm: () => void;
+  backgroundReady: boolean;
 };
 
 const AppShellContext = createContext<AppShellServices | null>(null);
@@ -46,6 +48,7 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   const [state, dispatch] = useReducer(shellReducer, undefined, () => createShellState(loadContentSource()));
   const settingsStore = useSettings(api);
   const { settings, save: saveSettings } = settingsStore;
+  const startup = useStartup(api.runtime, settingsStore.hasSnapshot);
   const updater = useAppUpdater(api.runtime, updateGuard);
   const [tutorialOpen, setTutorialOpen] = useState(() => !isTutorialDismissed());
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
@@ -107,12 +110,19 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
     settingsStore, preferenceQueue, saveSettingsPatch, privacyModePending, togglePrivacyMode,
     checkForUpdates: updater.checkForUpdates,
     exitConfirmOpen: exit.open, openExitConfirm: exit.openExitConfirm,
+    backgroundReady: startup.backgroundReady,
   }), [state, selectSource, toggleRail, setSettingsOpen, setActivityOpen, showToast, settingsStore, preferenceQueue,
-    saveSettingsPatch, privacyModePending, togglePrivacyMode, updater.checkForUpdates, exit.open, exit.openExitConfirm]);
+    saveSettingsPatch, privacyModePending, togglePrivacyMode, updater.checkForUpdates, exit.open, exit.openExitConfirm, startup.backgroundReady]);
 
   return (
     <AppShellContext.Provider value={value}>
       {children}
+      {startup.phase !== "ready" ? <aside className="startup-status" role="status">
+        <span>{startup.phase === "failed" ? "앱 데이터를 준비하지 못했습니다. 기존 데이터는 보존되어 있습니다."
+          : startup.phase === "cancelling" ? "시작을 취소하고 작업을 안전하게 정리하는 중입니다."
+          : "저장된 설정과 작업을 준비하는 중입니다. 화면 조작은 계속할 수 있습니다."}</span>
+        {startup.phase !== "cancelling" ? <button type="button" onClick={() => void startup.cancel()}>시작 취소 및 종료</button> : null}
+      </aside> : null}
       <UpdateDialog
         open={!tutorialOpen && updater.state.info !== null && ["available", "downloading", "installing", "error"].includes(updater.state.phase)}
         state={updater.state}

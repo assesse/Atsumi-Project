@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Presentation controls only. Remote intent is NOT permission to write a file.
+// Native code owns the save location and issues one-use, channel-bound permits.
 (() => {
   "use strict";
   const channel = () => window.location.origin === "https://chzzk.naver.com" &&
@@ -18,6 +18,7 @@
   const RATES = [.5, .75, 1, 1.25, 1.5, 2];
   let pageActive = true, renderFrame = null;
   let snapshotBusy = false, intentBusy = false, notice = "", noticeUntil = 0;
+  let pageRevision = 0, screenshotNotice = null, screenshotNoticeTimer = null;
   const request = (kind, fields) => new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => { pending.delete(id); reject(new Error("응답을 받지 못했습니다")); }, 8000);
@@ -116,21 +117,22 @@
   };
   const toggleCatchup = (event) => {
     if (!event.isTrusted) return;
-    if (catchup) { stopCatchup(); render(); return; }
-    const video = videoSource(), distance = liveDistance(video);
+    if (catchup) { stopCatchup(); rateMenu.hidden = true; render(); return; }
+    const video = videoSource(), distance = liveDistance(video), ahead = bufferedAhead(video);
     if (!rateAllowed(video)) { tell("현재 녹화 방식에서는 배속을 사용할 수 없습니다"); return; }
-    if (distance === null || distance < 2 || video.playbackRate !== 1) {
-      tell("이미 최신 지점에 가깝거나 다른 배속이 설정되어 있습니다"); return;
+    if (distance === null || distance < 2 || ahead === null || ahead < 2) {
+      tell("이미 최신 지점에 가깝거나 영상 버퍼가 부족합니다"); return;
     }
-    catchup = { video, originalRate: video.playbackRate, source: video.currentSrc || video.src || "" };
-    preservePitch(video); video.playbackRate = 1.2; render();
+    stopSelectedRate();
+    catchup = { video, originalRate: 1, source: video.currentSrc || video.src || "" };
+    preservePitch(video); video.playbackRate = 1.2; rateMenu.hidden = true; render();
   };
   const intent = async (action, event) => {
     // Synthetic clicks are ignored; native source, generation and nonce checks
     // remain authoritative. Record start/stop no longer open a confirmation.
     if (!event.isTrusted || intentBusy || !channel()) return;
     intentBusy = true; render();
-    try { await request("control_intent", { channelId: channel(), action }); if (action === "screenshot") tell("Atsumi에서 확인해 주세요"); }
+    try { await request("control_intent", { channelId: channel(), action }); }
     catch (error) { tell(error.message); }
     finally { intentBusy = false; render(); }
   };
@@ -246,9 +248,10 @@
         #atsumi-player-controls button[aria-pressed=true]{color:#00ffa3}
         #atsumi-player-controls button[hidden]{display:none!important}
         #atsumi-player-controls [data-playback-rate]{width:44px;padding:4px;font:12px/1.2 system-ui,sans-serif}
-        #atsumi-player-controls [role=menu]{position:absolute;bottom:42px;right:0;display:flex;gap:2px;padding:5px;background:#18201ff5;border:1px solid #ffffff40;border-radius:7px;box-shadow:0 4px 16px #0008}
+        #atsumi-player-controls [role=menu]{position:absolute;bottom:42px;right:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px;width:168px;padding:6px;background:#252528;border:1px solid #ffffff26;border-radius:7px;box-shadow:0 4px 16px #0008}
         #atsumi-player-controls [role=menu][hidden]{display:none!important}
-        #atsumi-player-controls [role=menu] button{width:42px;padding:4px;font:12px/1.2 system-ui,sans-serif}
+        #atsumi-player-controls [role=menu] button{width:100%;height:28px;padding:4px;font:12px/1.2 system-ui,sans-serif}
+        #atsumi-player-controls [role=menu] [data-catchup]{grid-column:1/-1;height:32px;margin-bottom:3px;border-bottom:1px solid #ffffff20;border-radius:4px 4px 0 0}
         #atsumi-player-controls [aria-checked=true]{color:#00ffa3;background:#ffffff16}
         #atsumi-player-controls svg{width:22px;height:22px;pointer-events:none}
         #atsumi-player-top-controls{position:fixed;display:flex;align-items:center;gap:6px;max-width:calc(100% - 16px);box-sizing:border-box;pointer-events:auto;z-index:2147483646;padding:3px;border-radius:6px;background:#111b;color:#fff;opacity:0;transition:opacity .15s}
@@ -295,18 +298,20 @@
       };
       record = button("녹화", '<circle cx="12" cy="12" r="8" stroke-width="1.4"/><circle class="atsumi-record-idle" cx="12" cy="12" r="4.5"/><rect class="atsumi-record-stop" x="8" y="8" width="8" height="8" rx="1" fill="currentColor" stroke="none"/>');
       record.addEventListener("click", (event) => { event.stopPropagation(); void intent(state.recording ? "record_stop" : "record_start", event); });
-      recordOnly = button("녹화만 계속", '<path d="M3 8h4l5-4v16l-5-4H3zM16 9l6 6m0-6-6 6"/>');
-      recordOnly.title = "음소거하고 시청 화면만 닫기 · 영상과 채팅 녹화는 계속됩니다";
+      recordOnly = button("실시간 보기 종료", '<path d="M12 4H3v13h9M7 17v3m-3 0h8M12 10h10m-4-4 4 4-4 4"/>');
+      recordOnly.setAttribute("data-exit-live-view", "");
+      recordOnly.title = "실시간 보기 종료 · 시청 화면과 소리만 닫고 녹화는 계속합니다";
       recordOnly.addEventListener("click", (event) => { event.stopPropagation(); void viewIntent("record_only", event); });
       screenshot = button("스크린샷", '<path d="M4 6h4l2-2h4l2 2h4v14H4z"/><circle cx="12" cy="13" r="4"/>');
       screenshot.setAttribute("aria-keyshortcuts", "S");
-      screenshot.addEventListener("click", (event) => { event.stopPropagation(); void intent("screenshot", event); });
-      speed = button("따라잡기", '<path d="m4 5 8 7-8 7zm9 0 8 7-8 7z"/>');
-      speed.addEventListener("click", (event) => { event.stopPropagation(); toggleCatchup(event); });
+      screenshot.addEventListener("click", (event) => { event.stopPropagation(); if (event.isTrusted) void saveScreenshot(); });
       rateButton = button("재생 배속", ""); rateButton.setAttribute("data-playback-rate", "");
       rateButton.setAttribute("aria-haspopup", "menu"); rateButton.setAttribute("aria-controls", "atsumi-rate-menu");
       rateMenu = document.createElement("div"); rateMenu.id = "atsumi-rate-menu"; rateMenu.hidden = true;
       rateMenu.setAttribute("role", "menu"); rateMenu.setAttribute("aria-label", "배속 선택");
+      speed = document.createElement("button"); speed.type = "button"; speed.textContent = "최신 지점 따라잡기";
+      speed.setAttribute("aria-label", "따라잡기"); speed.setAttribute("role", "menuitemradio"); speed.setAttribute("data-catchup", "");
+      speed.addEventListener("click", (event) => { event.stopPropagation(); toggleCatchup(event); }); rateMenu.appendChild(speed);
       for (const rate of RATES) {
         const choice = document.createElement("button"); choice.type = "button"; choice.textContent = `${rate}×`;
         choice.setAttribute("role", "menuitemradio"); choice.setAttribute("aria-label", `${rate}배속`); choice.setAttribute("data-rate", String(rate));
@@ -320,9 +325,9 @@
       });
       rateMenu.addEventListener("keydown", (event) => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); rateMenu.hidden = true; rateButton.focus(); render(); }
-        if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+        if (["ArrowRight", "ArrowLeft", "ArrowDown", "ArrowUp"].includes(event.key)) {
           event.preventDefault(); const choices = [...rateMenu.querySelectorAll("button")];
-          const index = choices.indexOf(document.activeElement), delta = event.key === "ArrowRight" ? 1 : -1;
+          const index = choices.indexOf(document.activeElement), delta = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1;
           choices[(index + delta + choices.length) % choices.length]?.focus();
         }
       });
@@ -338,6 +343,7 @@
     controls.toggleAttribute("data-floating", !strip);
     record.disabled = intentBusy || (!state.recording && !state.ready) || state.detail === "saving";
     screenshot.disabled = intentBusy || snapshotBusy || !video;
+    screenshot.setAttribute("aria-busy", String(snapshotBusy));
     // A foreground automatic session uses these exact controls/approval paths.
     // Only off-canvas receivers suppress them.
     record.hidden = context.automaticWatch;
@@ -346,12 +352,12 @@
     recordOnly.disabled = intentBusy;
     rateButton.disabled = !rateAllowed(video);
     if (rateButton.disabled) rateMenu.hidden = true;
-    rateButton.textContent = `${Number.isFinite(video.playbackRate) ? video.playbackRate : 1}×`;
+    rateButton.textContent = catchup ? "자동" : `${Number.isFinite(video.playbackRate) ? video.playbackRate : 1}×`;
     rateButton.setAttribute("aria-expanded", String(!rateMenu.hidden));
-    rateButton.title = Date.now() < noticeUntil ? notice : state.recording && rateButton.disabled ? "영상 재생과 원본 수신 상태를 확인하세요" : "시청 배속 · 원본 녹화 속도에는 영향을 주지 않습니다";
-    for (const choice of rateMenu.querySelectorAll("button")) choice.setAttribute("aria-checked", String(Number(choice.getAttribute("data-rate")) === video.playbackRate));
+    rateButton.title = Date.now() < noticeUntil ? notice : state.recording && rateButton.disabled ? "영상 재생과 원본 수신 상태를 확인하세요" : catchup ? "최신 지점까지 따라잡는 중 · 도착하면 1배속" : "배속 · 최신 지점 따라잡기";
+    for (const choice of rateMenu.querySelectorAll("[data-rate]")) choice.setAttribute("aria-checked", String(!catchup && Number(choice.getAttribute("data-rate")) === video.playbackRate));
     speed.disabled = !catchup && (!rateAllowed(video) || liveDistance(video) === null);
-    speed.setAttribute("aria-pressed", String(Boolean(catchup)));
+    speed.setAttribute("aria-checked", String(Boolean(catchup)));
     const distance = liveDistance(video);
     const latencyText = distance === null ? "재생 가능 끝점 거리 확인 전" : `재생 가능 끝점까지 ${distance.toFixed(1)}초`;
     speed.title = `${catchup ? "1.2배로 따라잡는 중 · 다시 누르면 해제" : "최신 지점까지 1.2배로 따라잡기 · 영상 재다운로드 없음"} · ${latencyText}`;
@@ -361,16 +367,27 @@
     record.setAttribute("data-recording", String(state.recording));
     const text = state.recording ? "녹화 중지" : "녹화";
     const resolution = video.videoWidth > 0 && video.videoHeight > 0 ? ` · ${video.videoWidth}×${video.videoHeight}` : "";
-    record.setAttribute("aria-label", text); record.title = Date.now() < noticeUntil ? notice : `${text}${resolution} · 저장 전에 Atsumi에서 확인합니다`;
-    screenshot.title = Date.now() < noticeUntil ? notice : "스크린샷 · S · 저장 전에 Atsumi에서 확인합니다";
+    record.setAttribute("aria-label", text); record.title = Date.now() < noticeUntil ? notice : `${text}${resolution}`;
+    screenshot.title = snapshotBusy ? "스크린샷 저장 중…" : "스크린샷 · S";
 
   };
+  const showScreenshotNotice = (text, saving = false) => {
+    clearTimeout(screenshotNoticeTimer); screenshotNotice?.remove();
+    if (!pageActive || !player?.isConnected) return;
+    screenshotNotice = document.createElement("div"); screenshotNotice.id = "atsumi-screenshot-notice";
+    screenshotNotice.setAttribute("role", "status"); screenshotNotice.textContent = text;
+    screenshotNotice.style.cssText = "position:absolute;right:14px;bottom:56px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 28px);padding:9px 12px;border:1px solid #ffffff26;border-radius:7px;background:#252528f5;color:#fff;font:13px/1.5 system-ui,sans-serif;box-shadow:0 4px 16px #0005";
+    player.appendChild(screenshotNotice);
+    if (!saving) screenshotNoticeTimer = setTimeout(() => screenshotNotice?.remove(), 2600);
+  };
   const saveScreenshot = async (command) => {
-    if (snapshotBusy || !UUID.test(command.requestId ?? "") || command.channelId !== channel()) return;
-    const requestId = command.requestId;
-    snapshotBusy = true; render();
+    if (!pageActive || snapshotBusy || intentBusy || context.automaticWatch || !channel()) return;
+    if (command && (!UUID.test(command.requestId ?? "") || command.channelId !== channel())) return;
+    const sourceChannel = channel(), revision = pageRevision;
+    let requestId = command?.requestId;
+    snapshotBusy = true;
     const deadline = Date.now() + 19000;
-    const check = () => { if (Date.now() > deadline || command.channelId !== channel()) throw new Error("스크린샷 요청이 만료됐습니다"); };
+    const check = () => { if (!pageActive || revision !== pageRevision || Date.now() > deadline || sourceChannel !== channel()) throw new Error("스크린샷 요청이 만료됐습니다"); };
     let canvas;
     try {
       const video = videoSource();
@@ -378,24 +395,40 @@
       canvas = document.createElement("canvas"); canvas.width = video.videoWidth; canvas.height = video.videoHeight;
       const context = canvas.getContext("2d");
       if (!context) throw new Error("스크린샷을 만들 수 없습니다");
+      // Freeze the requested frame synchronously, before IPC, PNG encoding or
+      // disk work. Never sample a later frame after a delayed acknowledgement.
       context.drawImage(video, 0, 0);
+      render(); showScreenshotNotice("스크린샷 저장 중…", true);
+      if (!command) {
+        const permit = await request("control_intent", { channelId: sourceChannel, action: "screenshot" });
+        if (!UUID.test(permit?.requestId ?? "") || permit.channelId !== sourceChannel) throw new Error("스크린샷 저장 요청이 거부됐습니다");
+        requestId = permit.requestId;
+      }
+      check();
       const blob = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error("스크린샷 생성 시간이 초과됐습니다")), 5000);
         canvas.toBlob((value) => { clearTimeout(timeout); if (value) resolve(value); else reject(new Error("영상이 스크린샷을 허용하지 않습니다")); }, "image/png");
       });
       check();
       if (!blob.size || blob.size > 16 * 1024 * 1024) throw new Error("스크린샷 파일이 너무 큽니다");
-      await request("screenshot_begin", { requestId, channelId: channel(), mimeType: "image/png", size: blob.size, width: canvas.width, height: canvas.height });
+      await request("screenshot_begin", { requestId, channelId: sourceChannel, mimeType: "image/png", size: blob.size, width: canvas.width, height: canvas.height });
       const bytes = new Uint8Array(await blob.arrayBuffer());
-      for (let offset = 0, chunkIndex = 0; offset < bytes.length; offset += 128 * 1024, chunkIndex++) {
-        check(); const part = bytes.subarray(offset, offset + 128 * 1024); let binary = "";
-        for (let i = 0; i < part.length; i += 8192) binary += String.fromCharCode(...part.subarray(i, i + 8192));
-        await request("screenshot_chunk", { requestId, chunkIndex, data: btoa(binary) });
+      // Two bounded chunks per acknowledgement round; keep native FIFO order
+      // and never flood its separate two-slot screenshot writer queue.
+      for (let offset = 0, chunkIndex = 0; offset < bytes.length;) {
+        check(); const batch = [];
+        for (let count = 0; count < 2 && offset < bytes.length; count++, offset += 128 * 1024, chunkIndex++) {
+          const part = bytes.subarray(offset, offset + 128 * 1024); let binary = "";
+          for (let i = 0; i < part.length; i += 8192) binary += String.fromCharCode(...part.subarray(i, i + 8192));
+          batch.push(request("screenshot_chunk", { requestId, chunkIndex, data: btoa(binary) }));
+        }
+        await Promise.all(batch);
       }
-      check(); await request("screenshot_finish", { requestId }); tell("스크린샷 저장 완료");
+      check(); await request("screenshot_finish", { requestId });
+      if (pageActive && revision === pageRevision && sourceChannel === channel()) showScreenshotNotice("스크린샷 저장 완료");
     } catch {
-      void request("screenshot_abort", { requestId }).catch(() => {});
-      tell("스크린샷을 저장하지 못했습니다. Atsumi에서 확인해 주세요");
+      if (UUID.test(requestId ?? "")) void request("screenshot_abort", { requestId }).catch(() => {});
+      if (pageActive && revision === pageRevision && sourceChannel === channel()) showScreenshotNotice("스크린샷 저장 실패 · 다시 시도해 주세요");
     } finally {
       if (canvas) { canvas.width = 0; canvas.height = 0; }
       snapshotBusy = false; render();
@@ -418,13 +451,14 @@
     })) return;
     const isScreenshot = event.code === "KeyS" || event.key?.toLowerCase() === "s";
     if (isScreenshot && !context.automaticWatch && videoSource() && !snapshotBusy && !intentBusy) {
-      event.preventDefault(); event.stopPropagation(); void intent("screenshot", event);
+      event.preventDefault(); event.stopPropagation(); void saveScreenshot();
     } else if (event.key === "Escape" && context.multiview && !document.fullscreenElement && !intentBusy) {
       event.preventDefault(); event.stopPropagation(); void viewIntent("exit_focus", event);
     }
   }, true);
   window.addEventListener("pagehide", () => {
     pageActive = false;
+    pageRevision++; clearTimeout(screenshotNoticeTimer); screenshotNotice?.remove();
     if (renderFrame !== null) { window.cancelAnimationFrame(renderFrame); renderFrame = null; }
     stopCatchup(); stopSelectedRate(); removeControls();
   });
@@ -437,6 +471,9 @@
     if (event.target === catchup?.video) stopCatchup();
   }, true);
   document.addEventListener("visibilitychange", () => { if (document.hidden) { stopCatchup(); stopSelectedRate(); } });
+  document.addEventListener("pointerdown", (event) => {
+    if (rateMenu && !rateMenu.hidden && !rateMenu.contains(event.target) && !rateButton.contains(event.target)) { rateMenu.hidden = true; render(); }
+  }, true);
   Object.defineProperty(window, "__atsumiPlayerUI", { value: Object.freeze({
     update: (next) => { state = next; render(); },
     configure: (next) => {

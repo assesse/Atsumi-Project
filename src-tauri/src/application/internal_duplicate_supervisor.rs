@@ -135,8 +135,14 @@ impl InternalDuplicateSupervisor {
 
     pub fn reconcile_pending_page_moves(&self) -> Result<usize, ApplicationError> {
         let _control = self.control_lock()?;
-        let root = self.download_root()?;
         let pending = self.inner.repository.internal_pending_page_sagas()?;
+        // A clean journal needs no filesystem access. Root validation includes a
+        // durable write probe and can wake a sleeping/offline download drive.
+        // Never weaken that validation for actual unfinished file moves.
+        if pending.is_empty() {
+            return Ok(0);
+        }
+        let root = self.download_root()?;
         let mut quarantine_plans = BTreeMap::<String, Vec<PageQuarantineSaga>>::new();
         let mut restore_records = BTreeMap::<String, Vec<PageQuarantineSaga>>::new();
         for saga in pending {
@@ -1400,6 +1406,37 @@ mod tests {
                 InternalArtifactScanStage::Finalizing
             ),
             99
+        );
+    }
+
+    #[test]
+    fn empty_recovery_journal_does_not_prepare_the_download_drive() {
+        let temporary = tempdir().unwrap();
+        let absent_root = temporary.path().join("not-mounted-or-created");
+        let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+        let mut settings = StateRepository::settings_get(repository.as_ref()).unwrap();
+        let revision = settings.revision;
+        settings.revision += 1;
+        settings.download_root = absent_root.to_string_lossy().into_owned();
+        assert!(StateRepository::settings_compare_and_set(
+            repository.as_ref(),
+            &settings,
+            revision
+        )
+        .unwrap());
+        let (events, _receiver) = mpsc::channel();
+        let supervisor = InternalDuplicateSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            repository.clone(),
+            repository,
+            Arc::new(FilesystemArtifactStore::new()),
+            events,
+        );
+        assert_eq!(supervisor.reconcile_pending_page_moves().unwrap(), 0);
+        assert!(
+            !absent_root.exists(),
+            "clean startup touched the download drive"
         );
     }
 

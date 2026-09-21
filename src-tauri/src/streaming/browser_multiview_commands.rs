@@ -10,10 +10,12 @@ pub async fn chzzk_multiview_request_control(
     action: ControlAction,
     epoch: u64,
 ) -> ApiResult<MultiViewSnapshot> {
-    (|| {
+    tauri::async_runtime::spawn_blocking(move || {
         require_main(&window)?;
-        host(&app)?.request_pane_control(&pane_id, action, epoch)
-    })()
+        host(&app)?.request_pane_control_from_ui(&app, &pane_id, action, epoch)
+    })
+    .await
+    .unwrap_or_else(|_| Err(unavailable()))
     .into()
 }
 #[tauri::command]

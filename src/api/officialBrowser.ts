@@ -51,6 +51,9 @@ export type BrowserRecording = {
   merge?: BrowserMerge | null;
   progressive?: { partCount: number; segmentCount: number; durationSeconds: number; lastError: string | null } | null;
   deletionPending?: boolean;
+  mediaRemovedAt?: number | null;
+  storageCheckPending?: boolean;
+  summaryPending?: boolean;
 };
 
 export type BrowserDeleteReport = {

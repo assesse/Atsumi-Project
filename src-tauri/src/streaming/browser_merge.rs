@@ -28,6 +28,10 @@ const MAX_INFO: usize = 256 * 1024;
 const MAX_TIMELINE: u64 = 128 * 1024 * 1024;
 const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
 const POLL: Duration = Duration::from_millis(40);
+// Historical disk recovery is not part of launching a viewer. Keep it outside
+// Windows' initial launch prediction window; newly recorded segments and explicit
+// user operations never wait for this archive-only startup grace period.
+const HISTORY_RECOVERY_GRACE: Duration = Duration::from_secs(20);
 
 /// The host supplies verified, application-managed executables. Never resolve
 /// executables through PATH or the media directory. Missing tools are retryable.
@@ -120,13 +124,30 @@ fn worker(shared: Arc<Shared>) {
         };
         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     }
-    // Startup retry only touches the bounded catalog and small metadata files.
+    let history_ready_at = Instant::now() + HISTORY_RECOVERY_GRACE;
+    // Do not hydrate the whole display-only history through the manual retry API.
     if let Ok(store) = shared.store.lock() {
-        let _ = store.retry_merges(None);
+        let _ = store.retry_loaded_merges(None);
     }
     loop {
         if shared.cancel.load(Ordering::Acquire) {
             break;
+        }
+        let mut recovered_history = false;
+        if Instant::now() >= history_ready_at {
+            let store = shared.store.lock().ok().map(|store| store.clone());
+            if let Some(store) = store {
+                match store.recover_next_pending() {
+                    Ok(Some(id)) if !shared.cancel.load(Ordering::Acquire) => {
+                        recovered_history = true;
+                        let _ = store.retry_loaded_merges(Some(&id));
+                    }
+                    Err(error) => {
+                        tracing::warn!(code = %error.code, "historical recording recovery deferred")
+                    }
+                    _ => {}
+                }
+            }
         }
         let part = shared
             .store
@@ -192,9 +213,17 @@ fn worker(shared: Arc<Shared>) {
             continue;
         }
         let state = shared.state.lock().unwrap_or_else(|p| p.into_inner());
+        let until_history = history_ready_at.saturating_duration_since(Instant::now());
+        let wait = if !until_history.is_zero() {
+            until_history.min(Duration::from_secs(30))
+        } else if recovered_history {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(30)
+        };
         let mut state = shared
             .changed
-            .wait_timeout_while(state, Duration::from_secs(30), |s| {
+            .wait_timeout_while(state, wait, |s| {
                 !s.wake && !shared.cancel.load(Ordering::Acquire)
             })
             .unwrap_or_else(|p| p.into_inner())

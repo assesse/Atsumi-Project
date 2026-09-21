@@ -74,8 +74,8 @@ pub(crate) fn load(record: &BrowserRecording) -> Result<Vec<Part>, StreamError> 
             Ok(vec![])
         };
     }
-    let index: Index =
-        serde_json::from_reader(open_regular(&path, INDEX_LIMIT)?).map_err(|_| invalid())?;
+    let index: Index = serde_json::from_reader(BufReader::new(open_regular(&path, INDEX_LIMIT)?))
+        .map_err(|_| invalid())?;
     if index.version != 1 || index.recording_id != record.id || index.parts.len() > MAX_PARTS {
         return Err(invalid());
     }
@@ -231,6 +231,8 @@ impl BrowserCaptureStore {
         for index in 0..state.recordings.len() {
             let r = &state.recordings[index];
             if r.deletion_pending
+                || r.media_removed_at.is_some()
+                || state.unverified.contains(&r.id)
                 || r.progressive
                     .as_ref()
                     .is_none_or(|p| p.segment_count >= r.segment_count || p.last_error.is_some())

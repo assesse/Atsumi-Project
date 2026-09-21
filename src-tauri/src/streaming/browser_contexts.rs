@@ -115,6 +115,7 @@ impl OfficialBrowser {
                 detached: AtomicBool::new(false),
                 contexts: self.inner.contexts.clone(),
                 auto_record: self.inner.auto_record.clone(),
+                favorites: self.inner.favorites.clone(),
                 store: self.inner.store.clone(),
                 merges: self.inner.merges.clone(),
                 replay_assets: self.inner.replay_assets.clone(),
@@ -419,6 +420,7 @@ mod tests {
                 other,
                 BrowserMessage::Status {
                     channel_id: other.into(),
+                    request_id: None,
                     ready: true,
                     recording: false,
                     detail: String::new(),
@@ -474,8 +476,19 @@ mod tests {
                 created: Instant::now(),
                 generation: 0,
             });
+            let request = pane
+                .inner
+                .view
+                .lock()
+                .unwrap()
+                .arm
+                .as_ref()
+                .unwrap()
+                .id
+                .clone();
             let status = |recording| BrowserMessage::Status {
                 channel_id: CHANNEL.into(),
+                request_id: Some(request.clone()),
                 ready: false,
                 recording,
                 detail: detail.into(),

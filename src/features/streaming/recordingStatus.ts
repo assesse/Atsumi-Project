@@ -1,6 +1,9 @@
 import type { BrowserRecording } from "../../api/officialBrowser";
 
 export function recordingStatus(recording: BrowserRecording): string {
+  if (recording.mediaRemovedAt != null) return "영상 정리됨 · 진단 기록 보존";
+  if (recording.summaryPending) return "녹화 기록 확인 대기 중";
+  if (recording.storageCheckPending) return `마지막 저장 상태 · ${recordingStatus({ ...recording, storageCheckPending: false })}`;
   if (recording.status === "recording") return "녹화 중";
   if (recording.status === "failed" || recording.partial) return "저장 오류 · 확인 필요";
   const reasons: Record<string, string> = {
@@ -12,4 +15,4 @@ export function recordingStatus(recording: BrowserRecording): string {
   };
   return reasons[recording.ending?.reason ?? ""] ?? ({ stopped: "저장 완료", interrupted: "중단됨 · 종료 원인 미확인", failed: "실패" }[recording.status]);
 }
-export const emptyRecordingAttempt = (r: BrowserRecording) => r.status !== "recording" && r.segmentCount === 0 && r.bytesWritten === 0 && !r.partial && !r.progressive?.partCount && !r.merge?.bytes;
+export const emptyRecordingAttempt = (r: BrowserRecording) => r.mediaRemovedAt == null && !r.summaryPending && r.status !== "recording" && r.segmentCount === 0 && r.bytesWritten === 0 && !r.partial && !r.progressive?.partCount && !r.merge?.bytes;

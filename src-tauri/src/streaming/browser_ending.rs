@@ -25,7 +25,8 @@ fn classify(trigger: &str, saved: &BrowserRecording) -> &'static str {
         "video_ended" | "source_changed" | "video_changed" => "checking",
         "timeline_changed" => "timeline_discontinuity",
         "page_hidden" | "window_closed" | "renderer_failed" => "app_interrupted",
-        "native_rejected" | "queue_overflow" => "storage_error",
+        "native_rejected" | "queue_overflow" | "bridge_ack_timeout" | "bridge_busy"
+        | "bridge_post_failed" => "storage_error",
         _ => "source_error",
     }
 }

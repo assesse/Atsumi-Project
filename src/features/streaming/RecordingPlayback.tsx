@@ -8,6 +8,7 @@ const bytes = (value: number) => value >= 1024 ** 3 ? `${(value / 1024 ** 3).toF
 
 /** Display gate only. The native open command revalidates the owned file. */
 export function hasCompletedMerge(recording: BrowserRecording): boolean {
+  if (recording.mediaRemovedAt != null) return false;
   const merge = recording.merge;
   if (recording.status === "recording" || merge?.status !== "complete" ||
       !Number.isSafeInteger(recording.segmentCount) || recording.segmentCount <= 0 || merge.segmentCount !== recording.segmentCount) return false;
@@ -19,6 +20,7 @@ export function hasCompletedMerge(recording: BrowserRecording): boolean {
 }
 
 export function hasReplayableRanges(recording: BrowserRecording): boolean {
+  if (recording.mediaRemovedAt != null) return false;
   const ranges = recording.progressive;
   return !!ranges && Number.isSafeInteger(ranges.partCount) && ranges.partCount > 0 &&
     Number.isSafeInteger(ranges.segmentCount) && ranges.segmentCount >= ranges.partCount && ranges.segmentCount <= recording.segmentCount &&
@@ -26,6 +28,7 @@ export function hasReplayableRanges(recording: BrowserRecording): boolean {
 }
 
 export function recordingMergeLabel(recording: BrowserRecording): string {
+  if (recording.mediaRemovedAt != null) return "영상 정리됨";
   if (recording.progressive && !hasCompletedMerge(recording) && (recording.status === "recording" || !recording.merge || recording.merge.status === "queued")) return recording.progressive.lastError ? "구간 병합 확인 필요" : `구간 병합 ${recording.progressive.partCount}개 완료`;
   if (recording.status === "recording") return "녹화 종료 후 병합";
   if (hasCompletedMerge(recording)) return "병합 완료";
@@ -53,6 +56,7 @@ type RecordingPlaybackProps = {
 
 /** The replay service separately validates the completed local derivative. */
 export function RecordingPlayback({ recording, disabled, privacyMode, retrying, opening, onOpenMerged, onReplay, onRetryMerge, onOpenSegment }: RecordingPlaybackProps) {
+  if (recording.mediaRemovedAt != null) return <p className="official-browser-note">영상 파일만 정리했습니다. 채팅·오류·시간표·프로필 기록은 녹화 폴더에 남아 있습니다.</p>;
   const completed = hasCompletedMerge(recording);
   const active = recording.status === "recording";
   const merge = recording.merge;

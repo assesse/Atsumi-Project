@@ -57,32 +57,41 @@ pub(super) fn save(
     fs::rename(temp, path).map_err(|_| unavailable())
 }
 
+fn load(root: &Path, channel: &str) -> Result<SavedProfile, StreamError> {
+    let path = root.join("channel-profile.json");
+    plain_path(&path)?;
+    let metadata = fs::symlink_metadata(&path).map_err(|_| unavailable())?;
+    if !metadata.is_file() || metadata.len() > LIMIT {
+        return Err(unavailable());
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .map_err(|_| unavailable())?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unavailable())?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(unavailable());
+    }
+    let value: SavedProfile = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+    if value.version != 1 || value.channel_id != channel {
+        return Err(unavailable());
+    }
+    Ok(value)
+}
+
+pub(super) fn saved_image_id(root: &Path, channel: &str) -> Result<Option<String>, StreamError> {
+    let id = load(root, channel)?.image_asset_id;
+    if id.as_deref().is_some_and(|id| !valid_id(id)) {
+        return Err(unavailable());
+    }
+    Ok(id)
+}
+
 /// Once per replay open. A small verified raster travels as inline data through
 /// the existing trusted bridge. The opaque player needs no new network access.
 pub fn read(root: &Path, channel: &str) -> (Option<String>, Option<String>) {
-    let read = || -> Result<SavedProfile, StreamError> {
-        let path = root.join("channel-profile.json");
-        plain_path(&path)?;
-        let metadata = fs::symlink_metadata(&path).map_err(|_| unavailable())?;
-        if !metadata.is_file() || metadata.len() > LIMIT {
-            return Err(unavailable());
-        }
-        let mut bytes = Vec::new();
-        fs::File::open(path)
-            .map_err(|_| unavailable())?
-            .take(LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| unavailable())?;
-        if bytes.len() as u64 > LIMIT {
-            return Err(unavailable());
-        }
-        let value: SavedProfile = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
-        if value.version != 1 || value.channel_id != channel {
-            return Err(unavailable());
-        }
-        Ok(value)
-    };
-    let Ok(value) = read() else {
+    let Ok(value) = load(root, channel) else {
         return (None, None);
     };
     let name: String = value

@@ -11,6 +11,7 @@ use std::{
 const STARTUP_FAILURE_EXIT_CODE: i32 = 1;
 
 fn main() {
+    atsumi_lib::initialize_startup_metrics();
     if let Err(error) = atsumi_lib::run() {
         let diagnostic = redact_startup_diagnostic(&error.to_string());
         eprintln!("Atsumi could not be started: {diagnostic}");

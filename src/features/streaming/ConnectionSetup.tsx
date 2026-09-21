@@ -20,6 +20,8 @@ type Props = {
   authChecking?: boolean; authError?: string | null; refreshDisabled?: boolean;
   onInstaller(browser: "chrome" | "edge"): void; installerDisabled: boolean;
   logoutRef?: Ref<HTMLButtonElement>; options?: ReactNode; children?: ReactNode; helpDetails?: string;
+  channelPicker?: ReactNode;
+  receiverBacked?: boolean;
 };
 
 /** Shared form; changing the draft tab never changes a native playback context. */
@@ -41,11 +43,12 @@ export function ConnectionSetup(props: Props) {
       <p>주소를 입력하고 시청을 시작하세요. 마도는 최대 네 방송을 배치합니다.</p>
       <p>그리드 연결은 설치된 네이버 확장을 연결합니다. 설치만으로 연결되지는 않습니다. 실제 화질은 플레이어에서 확인하세요.</p>
       <p>공식 설치 안내에서는 ‘설치없이 일반 화질 시청’도 선택할 수 있습니다.</p>
-      <p>로그인은 Atsumi 전용 CHZZK 프로필을 사용합니다. 녹화 중에는 방송·계정·모드를 변경할 수 없습니다.</p>
+      <p>{props.receiverBacked ? "내 채널을 선택하거나 주소를 입력하세요. 기존 수신을 재사용하며, 시청 종료·배치 변경은 녹화를 중지하지 않습니다. 녹화 중에는 계정을 변경할 수 없습니다." : "로그인은 Atsumi 전용 CHZZK 프로필을 사용합니다. 녹화 중에는 방송·계정·모드를 변경할 수 없습니다."}</p>
       <p>다음 실행에도 유지하려면 네이버 로그인 화면에서 ‘로그인 상태 유지’를 선택하세요. QR 로그인도 같은 프로필을 사용하지만 유지 기간은 네이버가 발급한 세션 설정을 따릅니다.</p>
       {props.helpDetails ? <p>{props.helpDetails}</p> : null}
       <div className="official-browser-installer-actions"><span>확장 설치</span>{(["chrome", "edge"] as const).map((browser) => <button key={browser} type="button" disabled={props.installerDisabled || !help} onClick={() => props.onInstaller(browser)}>{browser === "chrome" ? "Chrome" : "Edge"}</button>)}</div>
     </div></div></div>
+    {props.channelPicker}
     <form onSubmit={(event) => { event.preventDefault(); props.onConnect(); }}>
       <div className="connection-channel-inputs">
         {props.inputs.slice(0, props.mode === "mado" ? 4 : 1).map((value, index) => <label key={index} htmlFor={props.mode === "general" ? "official-browser-channel" : `mado-channel-${index}`}>

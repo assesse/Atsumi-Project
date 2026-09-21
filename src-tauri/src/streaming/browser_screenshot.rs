@@ -356,6 +356,42 @@ fn child_directory(root: &Path, name: &str) -> Result<PathBuf, StreamError> {
 mod tests {
     use super::*;
     const CHANNEL: &str = "0123456789abcdef0123456789abcdef";
+    #[test]
+    #[ignore = "Explicit local screenshot timing probe; synthetic image and temporary storage only"]
+    fn screenshot_storage_timing_probe() {
+        let root = tempfile::tempdir().unwrap();
+        let mut random = 0x12345678u32;
+        let image = image::RgbaImage::from_fn(1920, 1080, |_, _| {
+            random ^= random << 13;
+            random ^= random >> 17;
+            random ^= random << 5;
+            image::Rgba([random as u8, (random >> 8) as u8, (random >> 16) as u8, 255])
+        });
+        let mut png = Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let bytes = png.into_inner();
+        let mut capture = ScreenshotCapture::default();
+        let id = capture.arm(root.path(), CHANNEL, 1).unwrap();
+        let before = Instant::now();
+        capture
+            .begin(&id, CHANNEL, 1, "image/png", bytes.len(), 1920, 1080)
+            .unwrap();
+        for (index, chunk) in bytes.chunks(CHUNK).enumerate() {
+            capture
+                .append(&id, CHANNEL, 1, index as u64, chunk)
+                .unwrap();
+        }
+        let copy_ms = before.elapsed().as_millis();
+        let before = Instant::now();
+        capture.finish(&id, CHANNEL, 1).unwrap();
+        println!(
+            "SCREENSHOT_STORAGE_OK bytes={} chunks={} copyMs={} validateAndSaveMs={}",
+            bytes.len(),
+            bytes.len().div_ceil(CHUNK),
+            copy_ms,
+            before.elapsed().as_millis()
+        );
+    }
     fn png() -> Vec<u8> {
         let mut out = Cursor::new(vec![]);
         image::DynamicImage::new_rgba8(2, 2)

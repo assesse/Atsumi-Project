@@ -43,6 +43,7 @@ fn blocked() -> StreamError {
 impl BrowserCaptureStore {
     pub(crate) fn prepare_delete(&self, id: &str) -> Result<DeleteJob, StreamError> {
         validate_id(id)?;
+        self.ensure_recovered(id)?;
         let mut state = self.lock()?;
         let index = state
             .recordings

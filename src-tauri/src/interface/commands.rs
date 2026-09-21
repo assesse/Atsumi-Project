@@ -10,7 +10,7 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, Manager, State, Window};
+use tauri::{AppHandle, Emitter, State, Window};
 
 use crate::{
     application::{
@@ -275,7 +275,7 @@ pub struct AppState {
     excluded_artifacts: Option<Arc<ExcludedArtifactService>>,
     overlap_merges: Option<Arc<OverlapMergeService>>,
 
-    browser: Option<crate::streaming::browser::OfficialBrowser>,
+    browser: crate::streaming::startup::DeferredBrowser,
     download_root_picker: Arc<dyn DownloadRootPicker>,
     artifact_store: Arc<dyn ArtifactStore>,
     live_source: Arc<HitomiLiveAdapter>,
@@ -384,7 +384,7 @@ impl AppState {
             excluded_artifacts: None,
             overlap_merges: None,
 
-            browser: None,
+            browser: crate::streaming::startup::DeferredBrowser::default(),
             download_root_picker,
             artifact_store,
             live_source,
@@ -419,16 +419,19 @@ impl AppState {
         mut self,
         browser: Option<crate::streaming::browser::OfficialBrowser>,
     ) -> Self {
-        self.browser = browser;
+        self.browser = crate::streaming::startup::DeferredBrowser::ready(browser);
         self
+    }
+
+    pub(crate) fn deferred_browser(&self) -> crate::streaming::startup::DeferredBrowser {
+        self.browser.clone()
     }
 
     pub(crate) fn official_browser(
         &self,
     ) -> Result<crate::streaming::browser::OfficialBrowser, crate::streaming::model::StreamError>
     {
-        self.browser.clone().ok_or_else(|| crate::streaming::model::StreamError::new(
-            "BROWSER_UNAVAILABLE", "공식 시청 녹화 저장소를 초기화하지 못했습니다. 저장 공간과 앱 로그를 확인해 주세요.", true))
+        self.browser.get()
     }
 
     pub(crate) fn start_browser_managed(
@@ -513,8 +516,8 @@ impl AppState {
         let internal_duplicate_scan = self.internal_duplicates.active_run_snapshot()?;
         let recording_ids = self
             .browser
-            .as_ref()
-            .map_or_else(Vec::new, |browser| browser.active_ids());
+            .get()
+            .map_or_else(|_| Vec::new(), |browser| browser.active_ids());
         let work_set_fingerprint = active_work_fingerprint(
             active_download_ids.iter().map(|entry_id| entry_id.as_str()),
             auto_find.as_ref().map(|run| run.run_id.as_str()),
@@ -621,12 +624,7 @@ impl AppState {
         let internal_duplicates = self.internal_duplicates.clone();
         tauri::async_runtime::spawn(async move {
             if let Err(error) = tauri::async_runtime::spawn_blocking(move || {
-                if let Some(replay) = app.try_state::<crate::streaming::replay::ReplayService>() {
-                    replay.shutdown_and_wait();
-                }
-                if let Some(browser) = browser {
-                    browser.shutdown_and_wait(&app);
-                }
+                browser.shutdown_and_wait(&app);
 
                 crate::shutdown_all_then_exit(
                     || internal_duplicates.shutdown_and_wait(),
@@ -641,6 +639,19 @@ impl AppState {
                 tracing::warn!(error = %error, "background workers did not finish shutdown cleanly");
             }
         });
+    }
+
+    pub(crate) fn is_quitting(&self) -> bool {
+        self.managed_work.inner.quitting.load(Ordering::Acquire)
+    }
+
+    /// Only used when bootstrap was cancelled before any queued work resumed.
+    pub(crate) fn cancel_startup(&self, app: AppHandle) {
+        self.managed_work
+            .inner
+            .quitting
+            .store(true, Ordering::Release);
+        self.spawn_graceful_shutdown(app);
     }
 
     fn managed_work(&self) -> ManagedWorkGate {
@@ -1861,7 +1872,7 @@ pub async fn maintenance_execute(
                 Ok(MaintenanceResult { action: execute_action.clone(), completed_steps, warnings, restart_required: false })
             }
             MaintenanceAction::FactoryReset { .. } => {
-                if let Some(browser) = &browser { browser.shutdown_and_wait(&shutdown_app); }
+                browser.shutdown_and_wait(&shutdown_app);
 
                 internal_duplicates.shutdown_and_wait();
                 duplicates.shutdown_and_wait();

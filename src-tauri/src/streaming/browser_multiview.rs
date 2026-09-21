@@ -36,6 +36,7 @@ pub struct MultiViewPaneSnapshot {
     audio_enabled: bool,
     ready: bool,
     recording_id: Option<String>,
+    receiver_backed: bool,
     recording_status: String,
     chat_status: String,
     chat_count: u64,
@@ -75,6 +76,7 @@ pub(super) struct MultiViewHost {
     active: AtomicBool,
     lifecycle: AtomicU64,
     mutations: Mutex<()>,
+    receivers: Mutex<()>,
     state: Mutex<MultiState>,
     metadata: Mutex<Option<std::sync::mpsc::SyncSender<MetadataRequest>>>,
     auto_panes: Mutex<std::collections::HashMap<String, Arc<Pane>>>,
@@ -107,6 +109,27 @@ struct Pane {
     capture: Option<OfficialBrowser>,
 }
 
+impl Pane {
+    fn release_presentation(&self) -> u64 {
+        let mut viewport = self.viewport.lock().unwrap_or_else(|p| p.into_inner());
+        self.epoch.store(0, Ordering::Release);
+        self.audio.store(false, Ordering::Release);
+        *viewport = BrowserViewport::default();
+        self.revision.fetch_add(1, Ordering::AcqRel) + 1
+    }
+
+    fn attach_presentation(&self, epoch: u64) {
+        let mut viewport = self.viewport.lock().unwrap_or_else(|p| p.into_inner());
+        self.epoch.store(epoch, Ordering::Release);
+        self.revision.fetch_add(1, Ordering::AcqRel);
+        *viewport = BrowserViewport {
+            epoch,
+            ..Default::default()
+        };
+        self.audio.store(true, Ordering::Release);
+    }
+}
+
 impl MultiViewHost {
     fn invalidate(&self, expected_epoch: Option<u64>) -> Option<(u64, Vec<Arc<Pane>>)> {
         let state = self.state.lock().ok()?;
@@ -115,6 +138,11 @@ impl MultiViewHost {
         }
         self.lifecycle.fetch_add(1, Ordering::AcqRel);
         for pane in &state.panes {
+            if pane.id.starts_with("chzzk-auto-") {
+                // Presentation ends, not the shared receiver/recording.
+                pane.release_presentation();
+                continue;
+            }
             if let Some(capture) = &pane.capture {
                 capture.inner.detached.store(true, Ordering::Release);
             }
@@ -213,6 +241,36 @@ fn send_audio(view: &Webview, pane: &Pane, apply_to_media: bool) {
         "window.__atsumiPlayerUI?.configure({multiview:true,automaticWatch:false});"
     };
     let _ = view.eval(format!("window.dispatchEvent(new CustomEvent('atsumi-multiview-audio',{{detail:{{enabled:{enabled},applyToMedia:{apply_to_media}}}}}));{presentation}"));
+}
+
+fn receiver_presentation_script(pane: &Pane, revision: u64, viewing: bool) -> String {
+    // One revision-fenced JS transaction updates the audio gate and restores
+    // the viewer's mute choice. Never use applyToMedia=true for layout changes.
+    let audio_enabled = viewing
+        && pane.kind == PaneKind::Video
+        && pane.audio.load(Ordering::Acquire)
+        && !pane.dead.load(Ordering::Acquire);
+    let data = serde_json::json!({
+        "revision": revision, "viewing": viewing, "multiview": true,
+        "audioEnabled": audio_enabled,
+    });
+    format!("window.__atsumiAutoReceiver?.configure({data});")
+}
+
+fn loaded_receiver_presentation(host: &MultiViewHost, pane: &Pane) -> Option<String> {
+    if !pane.id.starts_with("chzzk-auto-") || pane.dead.load(Ordering::Acquire) {
+        return None;
+    }
+    let state = host.state.lock().ok()?;
+    if !state.panes.iter().any(|current| current.id == pane.id) {
+        return None; // Do not change a background-only or legacy watch receiver.
+    }
+    let viewport = pane.viewport.lock().ok()?;
+    let revision = pane.revision.load(Ordering::Acquire);
+    let viewing = pane.epoch.load(Ordering::Acquire) == state.epoch
+        && viewport.epoch == state.epoch
+        && viewport.visible;
+    Some(receiver_presentation_script(pane, revision, viewing))
 }
 
 fn chat_header_script(pane: &Pane) -> String {
@@ -320,6 +378,7 @@ impl OfficialBrowser {
             }
             panes.push(MultiViewPaneSnapshot {
                 pane_id: pane.id.clone(),
+                receiver_backed: pane.id.starts_with("chzzk-auto-"),
                 channel_id: pane.channel.clone(),
                 kind: pane.kind,
                 status: pane
@@ -429,7 +488,21 @@ impl OfficialBrowser {
             self.inner.multiview.active.store(true, Ordering::Release);
             state.loaded_extensions.clone()
         };
+        // The former single automatic-watch entry must not retain a second
+        // presentation owner for a receiver now attached to the live layout.
+        self.detach_auto_watch(app);
         self.close_multiview_panes(app)?;
+        // Reclaim unused manual receivers before allocating their replacement
+        // set (four background recordings + four new visible videos fit the
+        // registry, but keeping four retired videos as well would not). The
+        // context reconfiguration reservation remains held across this gap.
+        drop(_mutation);
+        self.reap_retired_auto_receivers(app);
+        let _mutation = self.inner.multiview.mutations.lock().map_err(|_| busy())?;
+        if self.inner.multiview.lifecycle.load(Ordering::Acquire) != lifecycle {
+            self.inner.multiview.active.store(false, Ordering::Release);
+            return Err(busy());
+        }
         // No hidden fifth stream: close the existing single player BEFORE any
         // new official URL is navigated. Never stop/delete a recording here.
         self.detach_viewport(app);
@@ -456,60 +529,92 @@ impl OfficialBrowser {
             state.epoch = state.epoch.wrapping_add(1).max(1);
             state.epoch
         };
-        for (index, entry) in entries.iter().enumerate() {
-            for kind in [PaneKind::Video, PaneKind::Chat] {
-                if !(if kind == PaneKind::Video {
-                    entry.video
-                } else {
-                    entry.chat
-                }) {
-                    continue;
+        let configured = (|| -> Result<(), StreamError> {
+            for (index, entry) in entries.iter().enumerate() {
+                if self.inner.multiview.lifecycle.load(Ordering::Acquire) != lifecycle {
+                    return Err(busy());
                 }
-                let id = format!("chzzk-mado-{}", uuid::Uuid::new_v4().simple());
-                let capture = if kind == PaneKind::Video {
-                    Some(self.pane_controller(&id, &entry.channel_id)?)
-                } else {
-                    None
-                };
-                let pane = Arc::new(Pane {
-                    id,
-                    channel: entry.channel_id.clone(),
-                    number: index + 1,
-                    kind,
-                    epoch: AtomicU64::new(epoch),
-                    viewport: Mutex::new(BrowserViewport {
-                        epoch,
-                        ..Default::default()
-                    }),
-                    revision: Arc::new(AtomicU64::new(0)),
-                    writes: Mutex::new(()),
-                    // Native permission, not the official player's mute value.
-                    // Chat stays silent; each video uses its own original UI.
-                    audio: AtomicBool::new(kind == PaneKind::Video),
-                    dead: AtomicBool::new(false),
-                    initial_blank: AtomicBool::new(true),
-                    status: Mutex::new("loading".into()),
-                    channel_name: Mutex::new(String::new()),
-                    capture,
-                });
-                self.inner
-                    .multiview
-                    .state
-                    .lock()
-                    .map_err(|_| unavailable())?
-                    .panes
-                    .push(pane.clone());
-                if let Err(cause) =
-                    self.create_multiview_pane(app, pane, loaded_ids.clone(), lifecycle)
-                {
-                    let closed = self.close_multiview_panes(app).is_ok();
+                for kind in [PaneKind::Video, PaneKind::Chat] {
+                    if !(if kind == PaneKind::Video {
+                        entry.video
+                    } else {
+                        entry.chat
+                    }) {
+                        continue;
+                    }
+                    if kind == PaneKind::Video {
+                        // URL entry, saved channels and automatic recording all
+                        // resolve to the same native receiver. No navigation or
+                        // capture restart when an existing receiver is selected.
+                        let receiver = self.open_receiver(app, &entry.channel_id, true)?;
+                        let pane = self
+                            .inner
+                            .multiview
+                            .auto_panes
+                            .lock()
+                            .map_err(|_| unavailable())?
+                            .get(receiver.label())
+                            .cloned()
+                            .ok_or_else(unavailable)?;
+                        pane.attach_presentation(epoch);
+                        self.inner
+                            .multiview
+                            .state
+                            .lock()
+                            .map_err(|_| unavailable())?
+                            .panes
+                            .push(pane);
+                        continue;
+                    }
+                    let id = format!("chzzk-mado-{}", uuid::Uuid::new_v4().simple());
+                    let capture = if kind == PaneKind::Video {
+                        Some(self.pane_controller(&id, &entry.channel_id)?)
+                    } else {
+                        None
+                    };
+                    let pane = Arc::new(Pane {
+                        id,
+                        channel: entry.channel_id.clone(),
+                        number: index + 1,
+                        kind,
+                        epoch: AtomicU64::new(epoch),
+                        viewport: Mutex::new(BrowserViewport {
+                            epoch,
+                            ..Default::default()
+                        }),
+                        revision: Arc::new(AtomicU64::new(0)),
+                        writes: Mutex::new(()),
+                        // Native permission, not the official player's mute value.
+                        // Chat stays silent; each video uses its own original UI.
+                        audio: AtomicBool::new(kind == PaneKind::Video),
+                        dead: AtomicBool::new(false),
+                        initial_blank: AtomicBool::new(true),
+                        status: Mutex::new("loading".into()),
+                        channel_name: Mutex::new(String::new()),
+                        capture,
+                    });
                     self.inner
                         .multiview
-                        .active
-                        .store(!closed, Ordering::Release);
-                    return Err(cause);
+                        .state
+                        .lock()
+                        .map_err(|_| unavailable())?
+                        .panes
+                        .push(pane.clone());
+                    self.create_multiview_pane(app, pane, loaded_ids.clone(), lifecycle)?;
                 }
             }
+            if self.inner.multiview.lifecycle.load(Ordering::Acquire) != lifecycle {
+                return Err(busy());
+            }
+            Ok(())
+        })();
+        if let Err(cause) = configured {
+            let closed = self.close_multiview_panes(app).is_ok();
+            self.inner
+                .multiview
+                .active
+                .store(!closed, Ordering::Release);
+            return Err(cause);
         }
         self.inner
             .multiview
@@ -578,6 +683,22 @@ impl OfficialBrowser {
         app: &AppHandle,
         channel: &str,
     ) -> Result<Self, StreamError> {
+        let receiver = self.open_receiver(app, channel, false)?;
+        self.claim_auto_receiver(receiver.label());
+        Ok(receiver)
+    }
+
+    fn open_receiver(
+        &self,
+        app: &AppHandle,
+        channel: &str,
+        presentation_owned: bool,
+    ) -> Result<Self, StreamError> {
+        // Serialize lookup + creation across scheduler and live layout opens.
+        let _creation = self.inner.multiview.receivers.lock().map_err(|_| busy())?;
+        if let Some(capture) = self.shared_receiver(channel) {
+            return Ok(capture);
+        }
         let id = format!("chzzk-auto-{}", uuid::Uuid::new_v4().simple());
         let capture = self.pane_controller(&id, channel)?;
         let pane = Arc::new(Pane {
@@ -613,7 +734,34 @@ impl OfficialBrowser {
             .lock()
             .map_err(|_| unavailable())?
             .insert(capture.label().into(), pane);
+        if presentation_owned {
+            // Collect only after both presentation and capture are finished.
+            // A scheduler claiming this receiver removes the retired marker.
+            self.retire_auto_receiver(capture.label());
+        }
         Ok(capture)
+    }
+    fn shared_receiver(&self, channel: &str) -> Option<Self> {
+        self.inner
+            .multiview
+            .auto_panes
+            .lock()
+            .ok()?
+            .values()
+            .find_map(|pane| {
+                if pane.channel != channel || pane.dead.load(Ordering::Acquire) {
+                    return None;
+                }
+                pane.capture
+                    .as_ref()
+                    .filter(|capture| {
+                        !capture.inner.detached.load(Ordering::Acquire)
+                            && capture.inner.view.lock().is_ok_and(|state| {
+                                state.open && state.channel.as_deref() == Some(channel)
+                            })
+                    })
+                    .cloned()
+            })
     }
     pub(super) fn close_auto_view(&self, app: &AppHandle) {
         if !self.label().starts_with("chzzk-auto-") {
@@ -643,6 +791,7 @@ impl OfficialBrowser {
         std::fs::create_dir_all(&profile).map_err(|_| unavailable())?;
         let nav = pane.clone();
         let page = pane.clone();
+        let page_host = self.clone();
         let popup = pane.clone();
         let popup_host = self.clone();
         let popup_app = app.clone();
@@ -651,6 +800,9 @@ impl OfficialBrowser {
             WebviewUrl::External("about:blank".parse().map_err(|_| unavailable())?),
         )
         .data_directory(profile)
+        // Background recording must not MoveFocus on a minimized/hidden parent.
+        // WebView2 rejects that focus operation with E_INVALIDARG at creation.
+        .focused(!pane.id.starts_with("chzzk-auto-"))
         .browser_extensions_enabled(true)
         .initialization_script(if pane.id.starts_with("chzzk-auto-") {
             include_str!("browser_auto_view.js")
@@ -691,7 +843,9 @@ impl OfficialBrowser {
         })
         .on_new_window(move |url, features| {
             if popup.dead.load(Ordering::Acquire)
-                || popup.viewport.lock().map_or(true, |v| v.suspend_audio)
+                || popup.viewport.lock().map_or(true, |v| {
+                    v.suspend_audio || (clip_popup::is_editor(&url) && !v.visible)
+                })
             {
                 return tauri::webview::NewWindowResponse::Deny;
             }
@@ -713,6 +867,13 @@ impl OfficialBrowser {
                     let _ = view.eval(include_str!("browser_player_ui.js"));
                 }
                 send_audio(&view, &page, false);
+                // A first viewport can arrive before navigation completes. The
+                // new document must regain its presentation/audio state too.
+                if let Some(script) =
+                    loaded_receiver_presentation(&page_host.inner.multiview, &page)
+                {
+                    let _ = view.eval(script);
+                }
                 set_status(&page, "page_loaded");
             } else {
                 if let Some(capture) = &page.capture {
@@ -791,6 +952,24 @@ impl OfficialBrowser {
             .clone();
         let mut failed = false;
         for pane in &panes {
+            if pane.id.starts_with("chzzk-auto-") {
+                let revision = pane.release_presentation();
+                if let Some(view) = app.get_webview(&pane.id) {
+                    let _ = native_mute(&view, pane.clone(), true);
+                    let _ = view.eval(format!("window.__atsumiAutoReceiver?.configure({{revision:{revision},viewing:false,multiview:false}});"));
+                    let parked = BrowserViewport {
+                        epoch: pane.epoch.load(Ordering::Acquire),
+                        ..Default::default()
+                    };
+                    let _ = auto_watch::apply_auto_receiver_viewport(
+                        &view,
+                        &parked,
+                        pane.revision.clone(),
+                        revision,
+                    );
+                }
+                continue;
+            }
             if let Some(capture) = &pane.capture {
                 capture.detach_controller();
             }
@@ -833,8 +1012,29 @@ impl OfficialBrowser {
         // Its owner will observe lifecycle/dead and close partially made panes.
         for pane in panes.1 {
             if let Some(view) = app.get_webview(&pane.id) {
-                queue_mute(&view);
-                let _ = view.hide();
+                if pane.id.starts_with("chzzk-auto-") {
+                    let expected = pane.revision.load(Ordering::Acquire);
+                    auto_watch::queue_hide(&view, pane.revision.clone(), expected);
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if pane.revision.load(Ordering::Acquire) != expected {
+                            return;
+                        }
+                        let _ = view.eval(format!("window.__atsumiAutoReceiver?.configure({{revision:{expected},viewing:false,multiview:false}});"));
+                        let parked = BrowserViewport {
+                            epoch: pane.epoch.load(Ordering::Acquire),
+                            ..Default::default()
+                        };
+                        let _ = auto_watch::apply_auto_receiver_viewport(
+                            &view,
+                            &parked,
+                            pane.revision.clone(),
+                            expected,
+                        );
+                    });
+                } else {
+                    queue_mute(&view);
+                    let _ = view.hide();
+                }
             }
         }
         Some(panes.0)
@@ -911,7 +1111,9 @@ impl OfficialBrowser {
         let view = app.get_webview(&pane.id).ok_or_else(unavailable)?;
         let revision = {
             let mut previous = pane.viewport.lock().map_err(|_| unavailable())?;
-            if pane.dead.load(Ordering::Acquire) {
+            if pane.dead.load(Ordering::Acquire)
+                || viewport.epoch != pane.epoch.load(Ordering::Acquire)
+            {
                 return Err(error("VIEWPORT_STALE", "종료된 마도 영역 요청입니다."));
             }
             host_view::viewport_sequence(&viewport, &previous, pane.epoch.load(Ordering::Acquire))?;
@@ -930,9 +1132,8 @@ impl OfficialBrowser {
         };
         // Detach can land between the first dead check and revision increment.
         // Never let this late request replace detach's fence with a showable one.
-        if pane.dead.load(Ordering::Acquire) {
-            pane.revision.fetch_add(1, Ordering::AcqRel);
-            let _ = view.hide();
+        if pane.dead.load(Ordering::Acquire) || viewport.epoch != pane.epoch.load(Ordering::Acquire)
+        {
             return Err(error("VIEWPORT_STALE", "종료된 마도 영역 요청입니다."));
         }
         if validation.is_ok() {
@@ -943,6 +1144,85 @@ impl OfficialBrowser {
                 pane.revision.clone(),
                 revision,
             );
+        }
+        if pane.id.starts_with("chzzk-auto-") {
+            // Hidden live tabs still feed active recordings. IsVisible=false
+            // alone would suspend the official receiver's rendering callbacks.
+            let mut displayed = if validation.is_ok() {
+                viewport.clone()
+            } else {
+                BrowserViewport::default()
+            };
+            if validation.is_err() || !fits(pane.kind, &displayed) {
+                displayed.visible = false;
+            }
+            if !displayed.visible {
+                displayed.occluded = false;
+                displayed.occlusions.clear();
+                displayed.preserve_background = false;
+            }
+            let result = (|| {
+                auto_watch::apply_auto_receiver_viewport(
+                    &view,
+                    &displayed,
+                    pane.revision.clone(),
+                    revision,
+                )?;
+                if pane.epoch.load(Ordering::Acquire) != viewport.epoch
+                    || pane.revision.load(Ordering::Acquire) != revision
+                {
+                    return Err(error("VIEWPORT_STALE", "이전 라이브 영역 요청입니다."));
+                }
+                view.eval(receiver_presentation_script(
+                    &pane,
+                    revision,
+                    displayed.visible,
+                ))
+                .map_err(|_| unavailable())?;
+                native_mute_guarded(
+                    &view,
+                    pane.clone(),
+                    !displayed.visible
+                        || displayed.suspend_audio
+                        || !pane.audio.load(Ordering::Acquire),
+                    Some(revision),
+                )?;
+                validation
+            })();
+            if result.is_err() {
+                // A timeout is not cancellation. Fence queued native work and
+                // park only this failed revision, never a newer presentation.
+                let parked = {
+                    let mut current = pane.viewport.lock().map_err(|_| unavailable())?;
+                    if pane
+                        .revision
+                        .compare_exchange(
+                            revision,
+                            revision + 1,
+                            Ordering::AcqRel,
+                            Ordering::Acquire,
+                        )
+                        .is_ok()
+                    {
+                        current.visible = false;
+                        current.occluded = false;
+                        Some(revision + 1)
+                    } else {
+                        None
+                    }
+                };
+                if let Some(expected) = parked {
+                    auto_watch::queue_hide(&view, pane.revision.clone(), expected);
+                    let _ = view.eval(format!("window.__atsumiAutoReceiver?.configure({{revision:{expected},viewing:false,multiview:false}});"));
+                    let _ = auto_watch::apply_auto_receiver_viewport(
+                        &view,
+                        &BrowserViewport::default(),
+                        pane.revision.clone(),
+                        expected,
+                    );
+                }
+            }
+            return result;
         }
         // Privacy hides bypass the visible transaction gate and invalidate an
         // already queued/moving native callback before it can show the child.
@@ -1329,6 +1609,150 @@ mod tests {
             channel_name: Mutex::new(String::new()),
             capture: None,
         })
+    }
+    fn presentation_data(script: &str) -> serde_json::Value {
+        serde_json::from_str(
+            script
+                .strip_prefix("window.__atsumiAutoReceiver?.configure(")
+                .unwrap()
+                .strip_suffix(");")
+                .unwrap(),
+        )
+        .unwrap()
+    }
+    #[test]
+    fn receiver_presentation_restores_each_audio_gate_without_forcing_user_volume() {
+        let first = fake_pane();
+        let second = fake_pane();
+        let visible = presentation_data(&receiver_presentation_script(&first, 11, true));
+        assert_eq!(visible["audioEnabled"], true);
+        assert_eq!(visible["revision"], 11);
+        assert_eq!(visible["multiview"], true);
+        assert!(visible.get("volume").is_none());
+        assert!(visible.get("applyToMedia").is_none());
+        first.audio.store(false, Ordering::Release);
+        assert_eq!(
+            presentation_data(&receiver_presentation_script(&first, 12, true))["audioEnabled"],
+            false
+        );
+        assert_eq!(
+            presentation_data(&receiver_presentation_script(&second, 12, true))["audioEnabled"],
+            true
+        );
+        assert_eq!(
+            presentation_data(&receiver_presentation_script(&second, 13, false))["audioEnabled"],
+            false
+        );
+        second.dead.store(true, Ordering::Release);
+        assert_eq!(
+            presentation_data(&receiver_presentation_script(&second, 14, true))["audioEnabled"],
+            false
+        );
+        let mut chat = fake_pane();
+        Arc::get_mut(&mut chat).unwrap().kind = PaneKind::Chat;
+        assert_eq!(
+            presentation_data(&receiver_presentation_script(&chat, 11, true))["audioEnabled"],
+            false
+        );
+    }
+    #[test]
+    fn page_load_reapplies_only_the_current_shared_receiver_presentation() {
+        let host = MultiViewHost::default();
+        let mut pane = fake_pane();
+        Arc::get_mut(&mut pane).unwrap().id = "chzzk-auto-test".into();
+        assert!(loaded_receiver_presentation(&host, &pane).is_none());
+        {
+            let mut state = host.state.lock().unwrap();
+            state.epoch = 9;
+            state.panes.push(pane.clone());
+        }
+        {
+            let mut viewport = pane.viewport.lock().unwrap();
+            viewport.epoch = 9;
+            viewport.visible = true;
+        }
+        let loaded = presentation_data(&loaded_receiver_presentation(&host, &pane).unwrap());
+        assert_eq!(loaded["viewing"], true);
+        assert_eq!(loaded["audioEnabled"], true);
+        assert_eq!(loaded["revision"], 10);
+        pane.viewport.lock().unwrap().visible = false;
+        let hidden = presentation_data(&loaded_receiver_presentation(&host, &pane).unwrap());
+        assert_eq!(hidden["viewing"], false);
+        assert_eq!(hidden["audioEnabled"], false);
+        pane.viewport.lock().unwrap().visible = true;
+        pane.release_presentation();
+        let released = presentation_data(&loaded_receiver_presentation(&host, &pane).unwrap());
+        assert_eq!(released["viewing"], false);
+        assert_eq!(released["audioEnabled"], false);
+        assert_eq!(released["revision"], 11);
+        pane.dead.store(true, Ordering::Release);
+        assert!(loaded_receiver_presentation(&host, &pane).is_none());
+    }
+    #[test]
+    fn shared_receivers_survive_layout_release_and_are_resolved_by_channel() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(directory.path().into()).unwrap();
+        let mut receivers = Vec::new();
+        for (index, channel) in [
+            A,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "cccccccccccccccccccccccccccccccc",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let id = format!("chzzk-auto-{}", uuid::Uuid::new_v4().simple());
+            let capture = root.pane_controller(&id, channel).unwrap();
+            {
+                let mut state = capture.inner.view.lock().unwrap();
+                state.page_generation = 42;
+                if index < 2 {
+                    state.recording = Some(format!("record-{index}"));
+                    state.status = "recording".into();
+                }
+            }
+            let mut pane = fake_pane();
+            let entry = Arc::get_mut(&mut pane).unwrap();
+            entry.id = id.clone();
+            entry.channel = channel.to_string();
+            entry.capture = Some(capture.clone());
+            root.inner
+                .multiview
+                .auto_panes
+                .lock()
+                .unwrap()
+                .insert(id, pane.clone());
+            assert!(Arc::ptr_eq(
+                &root.shared_receiver(channel).unwrap().inner,
+                &capture.inner
+            ));
+            receivers.push(pane);
+        }
+        {
+            let mut state = root.inner.multiview.state.lock().unwrap();
+            state.epoch = 9;
+            state.panes = receivers.clone();
+        }
+        root.inner.multiview.active.store(true, Ordering::Release);
+        root.inner.multiview.invalidate(Some(9)).unwrap();
+        assert_eq!(root.active_ids().len(), 2);
+        assert!(root.ui_active_ids().is_empty());
+        for pane in receivers {
+            let capture = pane.capture.as_ref().unwrap();
+            assert!(!pane.dead.load(Ordering::Acquire));
+            assert!(!capture.inner.detached.load(Ordering::Acquire));
+            assert_eq!(capture.inner.view.lock().unwrap().page_generation, 42);
+            assert_eq!(pane.epoch.load(Ordering::Acquire), 0);
+            assert!(!pane.audio.load(Ordering::Acquire));
+            assert!(Arc::ptr_eq(
+                &root.shared_receiver(&pane.channel).unwrap().inner,
+                &capture.inner
+            ));
+            pane.attach_presentation(10);
+            assert_eq!(pane.epoch.load(Ordering::Acquire), 10);
+            assert_eq!(pane.viewport.lock().unwrap().request_sequence, None);
+            assert_eq!(capture.inner.view.lock().unwrap().page_generation, 42);
+        }
     }
     #[test]
     fn chat_header_uses_configured_order_and_json_encoded_metadata() {

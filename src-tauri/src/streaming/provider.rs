@@ -93,7 +93,9 @@ impl ChzzkProvider {
         let image = image.map(|image| {
             let mut url = Url::parse(&image).expect("validated asset URL");
             if url.host_str() == Some("nng-phinf.pstatic.net") {
-                url.set_query(Some("type=f160_160"));
+                // CHZZK's CDN supports f120_120. f160_160 returns HTTP 404
+                // even for otherwise valid, publicly available avatars.
+                url.set_query(Some("type=f120_120"));
             }
             url.into()
         });

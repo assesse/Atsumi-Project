@@ -3,6 +3,8 @@
 use super::model::{ChatMessage, StreamError};
 use serde::Serialize;
 #[cfg(test)]
+use std::time::Duration;
+#[cfg(test)]
 use std::{
     fs,
     io::{Read, Seek, SeekFrom},
@@ -11,7 +13,7 @@ use std::{
     fs::{File, OpenOptions},
     io::Write,
     path::Path,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 const MAX_JOURNAL_LINE: usize = 64 * 1024;
@@ -149,6 +151,7 @@ pub(crate) struct ChatStore {
     root: std::path::PathBuf,
     viewers: Option<super::viewer_metrics::ViewerLog>,
     pending: usize,
+    needs_sync: bool,
     last_sync: Instant,
 }
 
@@ -164,16 +167,25 @@ impl ChatStore {
             root: root.to_owned(),
             viewers: super::viewer_metrics::ViewerLog::create(root).ok(),
             pending: 0,
+            needs_sync: true,
             last_sync: Instant::now(),
         })
     }
 
+    #[cfg(test)]
     pub fn append(&mut self, message: &ChatMessage) -> Result<(), StreamError> {
-        append_json(&mut self.file, message, false)?;
-        self.pending += 1;
+        self.append_batched(message)?;
         if self.pending >= 32 || self.last_sync.elapsed() >= Duration::from_secs(1) {
             self.sync()?;
         }
+        Ok(())
+    }
+    /// The caller fsyncs the complete batch before its ACK. Avoid an extra
+    /// mid-batch flush followed immediately by another empty flush.
+    pub fn append_batched(&mut self, message: &ChatMessage) -> Result<(), StreamError> {
+        self.needs_sync = true;
+        append_json(&mut self.file, message, false)?;
+        self.pending += 1;
         Ok(())
     }
     pub fn recording_root(&self) -> &Path {
@@ -181,8 +193,11 @@ impl ChatStore {
     }
 
     pub fn sync(&mut self) -> Result<(), StreamError> {
-        self.file.sync_all().map_err(|_| storage_error())?;
-        if self.viewers.as_ref().is_some_and(|log| log.sync().is_err()) {
+        if self.needs_sync {
+            self.file.sync_all().map_err(|_| storage_error())?;
+            self.needs_sync = false;
+        }
+        if self.viewers.as_mut().is_some_and(|log| log.sync().is_err()) {
             self.viewers = None;
         }
         self.pending = 0;
@@ -256,6 +271,22 @@ mod tests {
             read_chat_page(directory.path(), None).unwrap().items.len(),
             33
         );
+    }
+    #[test]
+    fn browser_batch_flushes_once_and_empty_sync_keeps_it_clean() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut log = ChatStore::create(directory.path()).unwrap();
+        log.sync().unwrap();
+        log.last_sync = Instant::now() - Duration::from_secs(2);
+        log.append_batched(&message(1)).unwrap();
+        log.append_batched(&message(2)).unwrap();
+        assert_eq!(log.pending, 2);
+        assert!(log.needs_sync);
+        log.sync().unwrap();
+        assert_eq!(log.pending, 0);
+        assert!(!log.needs_sync);
+        log.sync().unwrap();
+        assert!(!log.needs_sync);
     }
 
     #[test]

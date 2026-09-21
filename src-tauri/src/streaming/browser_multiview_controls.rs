@@ -62,6 +62,23 @@ impl OfficialBrowser {
             .request_control(action)?;
         self.multiview_snapshot()
     }
+    pub fn request_pane_control_from_ui(
+        &self,
+        app: &AppHandle,
+        id: &str,
+        action: ControlAction,
+        epoch: u64,
+    ) -> Result<MultiViewSnapshot, StreamError> {
+        if action != ControlAction::Screenshot {
+            return self.request_pane_control(id, action, epoch);
+        }
+        self.pane_for_control(id, epoch)?
+            .capture
+            .as_ref()
+            .ok_or_else(unavailable)?
+            .request_control_from_ui(app, action)?;
+        self.multiview_snapshot()
+    }
     #[allow(
         clippy::too_many_arguments,
         reason = "Keep the existing explicit IPC approval and context fences together"
@@ -159,13 +176,30 @@ impl OfficialBrowser {
     /// Capture document epochs remain distinct from trusted-UI viewport epochs.
     pub fn suspend_multiview(&self, app: &AppHandle) -> Option<u64> {
         let _gate = self.inner.contexts.gate.lock().ok()?;
-        if self.ui_active_ids().is_empty() {
+        if !self.multiview_active() {
             return self.detach_multiview(app);
         }
         let panes = self.inner.multiview.suspend_capture_views()?;
         for pane in panes {
             if let Some(view) = app.get_webview(&pane.id) {
-                let _ = view.hide();
+                if pane.id.starts_with("chzzk-auto-") {
+                    let revision = pane.revision.load(Ordering::Acquire);
+                    auto_watch::queue_hide(&view, pane.revision.clone(), revision);
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if pane.revision.load(Ordering::Acquire) != revision {
+                            return;
+                        }
+                        let _ = view.eval(format!("window.__atsumiAutoReceiver?.configure({{revision:{revision},viewing:false,multiview:false}});"));
+                        let _ = auto_watch::apply_auto_receiver_viewport(
+                            &view,
+                            &BrowserViewport::default(),
+                            pane.revision.clone(),
+                            revision,
+                        );
+                    });
+                } else {
+                    let _ = view.hide();
+                }
             }
         }
         None

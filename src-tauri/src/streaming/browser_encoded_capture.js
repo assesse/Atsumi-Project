@@ -27,6 +27,8 @@
   let appendBytes = 0;
   let lastAppendAt = null;
   let lastStop = null;
+  let lastTransportFault = null;
+  let maxAckMs = 0;
 
   const safeNotify = (current, detail) => {
     lastDetail = detail;
@@ -84,7 +86,9 @@
       source.buffers.some(state => state.blocked) ? source.buffers.find(state => state.blocked)?.reason ?? "buffer_blocked" :
       source.buffers.some(state => !configurationOK(state)) ? "timeline_unsupported" :
       source.buffers.some(state => !state.init || state.awaitingInit || state.initParts.length) ? "waiting_init" : candidate(video) ? "ready" : "tracks_unsupported";
-    return { version: 1, reason, installed, sourceCount: sourcesList.length, appendCount, appendBytes, lastStop,
+    return { version: 1, reason, installed, sourceCount: sourcesList.length, appendCount, appendBytes, lastStop, lastTransportFault,
+      queuedBytes: active?.queuedBytes ?? 0,
+      maxAckMs,
       lastAppendAgoMs: lastAppendAt === null ? null : Math.max(0, Date.now() - lastAppendAt),
       sources: sourcesList.map(item => ({ selected: item === source, blocked: item.blocked, reason: item.reason ?? null,
         tracks: item.buffers.slice(0, 2).map(state => ({ mimeType: state.mimeType.slice(0, 120), blocked: state.blocked,
@@ -162,6 +166,23 @@
     buffer.addEventListener("error", () => block(state, "source_buffer_error"));
     if (active?.source === source) failure(active, "track_changed");
   };
+  // Native receipts deduplicate the immediately previous, byte-identical
+  // chunk. Keep its indexes/payload unchanged and do not advance the serial
+  // queue before ACK. Never retry a parser, ownership or disk error.
+  const appendWithRetry = async (current, fields) => {
+    const retryStartedAt = Date.now();
+    for (let attempt = 0; ; attempt++) {
+      const requestedAt = Date.now();
+      try { const result = await current.options.request("encoded_append", fields); maxAckMs = Math.max(maxAckMs, Date.now() - requestedAt); return result; }
+      catch (error) {
+        lastTransportFault = { code: error?.code ?? "BRIDGE_POST_FAILED", attempt, at: Date.now(),
+          appendIndex: fields.appendIndex, chunkIndex: fields.chunkIndex, queuedBytes: current.queuedBytes };
+        if (attempt >= 32 || Date.now() - retryStartedAt >= 60_000 ||
+            !["BRIDGE_BUSY", "BROWSER_ACK_TIMEOUT"].includes(error?.code)) throw error;
+        await new Promise(resolve => setTimeout(resolve, Math.min(100 * 2 ** Math.min(attempt, 5), 2000)));
+      }
+    }
+  };
   const enqueue = (current, state, parts, byteLength) => {
     if (!current.accepting || byteLength === 0) return;
     if (byteLength > MAX_APPEND || current.queuedBytes + byteLength > MAX_QUEUE) { failure(current, "queue_overflow"); return; }
@@ -176,10 +197,11 @@
       let chunkIndex = 0;
       for (let at = 0; at < bytes.length; at += CHUNK) {
         const end = Math.min(bytes.length, at + CHUNK);
-        await current.options.request("encoded_append", { recordingId: current.recordingId, trackIndex: state.trackIndex,
+        await appendWithRetry(current, { recordingId: current.recordingId, trackIndex: state.trackIndex,
           appendIndex, chunkIndex: chunkIndex++, finalChunk: end === bytes.length, data: base64(bytes.subarray(at, end)) });
       }
-    }).catch(() => { current.transportFailed = true; failure(current, "native_rejected"); })
+    }).catch((error) => { current.transportFailed = true;
+      failure(current, ({ BROWSER_ACK_TIMEOUT:"bridge_ack_timeout", BRIDGE_BUSY:"bridge_busy", BRIDGE_POST_FAILED:"bridge_post_failed" })[error?.code] ?? "native_rejected"); })
       .finally(() => { current.queuedBytes -= byteLength; });
   };
   const observeAppend = (state, value) => {

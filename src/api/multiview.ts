@@ -5,6 +5,7 @@ import type { BrowserControlAction, OfficialBrowserViewport } from "./officialBr
 export type MultiviewEntry = { channelId: string; video: boolean; chat: boolean };
 export type MultiviewPane = { paneId: string; channelId: string; kind: "video" | "chat"; status: string;
   channelName?: string; audioEnabled?: boolean; ready?: boolean; recordingId?: string | null; recordingStatus?: string | null; error?: string | null;
+  receiverBacked?: boolean;
   chatStatus?: string; chatCount?: number;
   lastScreenshot?: { id: string; channelId: string; fileName: string; createdAt: number } | null;
 };

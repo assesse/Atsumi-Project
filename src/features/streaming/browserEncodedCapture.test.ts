@@ -53,7 +53,7 @@ function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number;
   const document = { title: "Synthetic fixture", querySelectorAll: (name: string) => name === "video" ? videos : [], get cookie(): never { throw new Error("No cookie reads"); } };
   let counter = 0;
   const context = { window, document, crypto: { randomUUID: () => `10000000-0000-4000-8000-${String(++counter).padStart(12, "0")}` },
-    Uint8Array, ArrayBuffer, DataView, btoa, SharedArrayBuffer, Date, setInterval, clearInterval };
+    Uint8Array, ArrayBuffer, DataView, btoa, SharedArrayBuffer, Date, setInterval, clearInterval, setTimeout };
   const script = options.queueBytes ? source.replace("const MAX_QUEUE = 64 * 1024 * 1024;", `const MAX_QUEUE = ${options.queueBytes};`) : source;
   runInNewContext(script, context);
   const ms = new MediaSource(); video.src = URLFactory.createObjectURL(ms); video.currentSrc = video.src;
@@ -220,6 +220,53 @@ describe("already-received encoded MSE capture", () => {
   it("native failure cannot produce a successful saved status or legacy fallback", async () => {
     const f = fixture(); f.load(); await f.start(); f.reject.add("encoded_append"); f.v.appendBuffer(media()); await flush();
     expect(f.ofKind("encoded_finish")[0]?.interrupted).toBe(true); expect(f.notices).not.toContain("encoded_saved");
+  });
+  it.each(["BRIDGE_BUSY", "BROWSER_ACK_TIMEOUT"])("retries an identical append after %s without advancing or stopping", async code => {
+    const f = fixture(); f.load(); await f.start(); f.hold.add("encoded_append");
+    f.v.appendBuffer(media(140000)); await flush();
+    const first = f.pending.shift()!;
+    first.reject(Object.assign(new Error("transient"), { code })); await flush();
+    expect(f.ofKind("encoded_append")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(100); await flush();
+    expect(f.ofKind("encoded_append")[1]).toEqual(first.message);
+    expect(f.ofKind("encoded_finish")).toHaveLength(0);
+    f.hold.delete("encoded_append"); f.release(); await flush();
+    expect(f.ofKind("encoded_append")[2]).toMatchObject({ chunkIndex: 1 });
+    expect(f.bridge().getStatus().active).toBe(true);
+    await f.bridge().stop();
+    expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: false });
+  });
+  it("bounds transient retries and never retries an unsupported source", async () => {
+    const f = fixture(); f.load(); await f.start(); f.hold.add("encoded_append");
+    f.v.appendBuffer(media()); await flush();
+    for (const delay of [100, 200, 400, 800, 1600, 2000]) {
+      f.pending.shift()!.reject(Object.assign(new Error("busy"), { code: "BRIDGE_BUSY" }));
+      await flush(); await vi.advanceTimersByTimeAsync(delay); await flush();
+    }
+    expect(f.bridge().getStatus().active).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    f.pending.shift()!.reject(Object.assign(new Error("busy"), { code: "BRIDGE_BUSY" })); await flush();
+    expect(f.ofKind("encoded_append")).toHaveLength(7);
+    expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true, reason:"bridge_busy" });
+    const hard = fixture(); hard.load(); await hard.start(); hard.hold.add("encoded_append");
+    hard.v.appendBuffer(media()); await flush();
+    hard.pending.shift()!.reject(Object.assign(new Error("real media gap"), { code: "ENCODED_UNSUPPORTED" })); await flush();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(hard.ofKind("encoded_append")).toHaveLength(1);
+    expect(hard.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true });
+  });
+  it("survives the observed seven-second storage congestion without advancing the chunk", async () => {
+    const f=fixture(); f.load(); await f.start(); f.hold.add("encoded_append");
+    f.v.appendBuffer(media()); await flush(); const first=f.ofKind("encoded_append")[0];
+    for (const delay of [100,200,400,800,1600,2000,2000,2000]) {
+      f.pending.shift()!.reject(Object.assign(new Error("busy"),{code:"BRIDGE_BUSY"}));
+      await flush(); await vi.advanceTimersByTimeAsync(delay); await flush();
+      expect(f.bridge().getStatus().active).toBe(true);
+      expect(f.ofKind("encoded_append").at(-1)).toEqual(first);
+      expect(f.ofKind("encoded_finish")).toHaveLength(0);
+    }
+    f.hold.delete("encoded_append"); f.release(); await flush(); await f.bridge().stop();
+    expect(f.ofKind("encoded_finish")[0]).toMatchObject({interrupted:false});
   });
   it("awaits chat drain before native finish and reports native actual interruption", async () => {
     const f = fixture(); f.load(); let drain: (() => void) | undefined;

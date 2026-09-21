@@ -1167,13 +1167,14 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
 
 
   useEffect(() => {
+    if (!shell.backgroundReady) return;
     void hydrateFavorites();
     void hydrateSearchHistory();
     void hydrateTagCatalogStatus();
     void hydrateAutoFind(true);
     void hydrateDuplicateSnapshot(true);
     void hydrateInternalSnapshot(true);
-  }, [hydrateAutoFind, hydrateDuplicateSnapshot, hydrateFavorites, hydrateInternalSnapshot, hydrateSearchHistory, hydrateTagCatalogStatus]);
+  }, [shell.backgroundReady, hydrateAutoFind, hydrateDuplicateSnapshot, hydrateFavorites, hydrateInternalSnapshot, hydrateSearchHistory, hydrateTagCatalogStatus]);
 
   useLayoutEffect(() => {
     const viewport = galleryViewport.current;
@@ -1434,6 +1435,7 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
   }, [hydrateSearchHistory, searchRefresh]);
 
   useEffect(() => {
+    if (!shell.backgroundReady) return;
     let cancelled = false;
     const token = ++downloadHydrationToken.current;
     setDownloadsLoading(true);
@@ -1474,6 +1476,9 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
         setDownloadIds([...nextIds]);
         totalItems = result.totalItems;
         page += 1;
+        // Retain every loaded summary, but yield between batches so native input
+        // and the first usable frame are not starved by a large saved library.
+        if (loadedItems < totalItems) await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
       } while (loadedItems < totalItems);
     })().catch(() => {
       if (!cancelled && token === downloadHydrationToken.current) {
@@ -1485,7 +1490,7 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
     return () => {
       cancelled = true;
     };
-  }, [downloadsRefresh]);
+  }, [downloadsRefresh, shell.backgroundReady]);
 
   const autoFindMatchedFavoriteTokens = useMemo(() => new Map(
     autoFindSnapshot.candidates.map((candidate) => [candidate.id, favoriteToken(candidate.matchedFavorite)]),

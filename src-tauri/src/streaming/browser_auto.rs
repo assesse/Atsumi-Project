@@ -9,6 +9,16 @@ const FILE: &str = "chzzk-auto-record.json";
 const MAX_CHANNELS: usize = 32;
 const POLL_MS: u64 = 30_000;
 
+fn start_retry_delay(attempts: u8, normal: u64) -> u64 {
+    // A temporary receiver/storage fault must not disable an opted-in broadcast
+    // forever. After five failures retry slowly (5/10/20/30 min), not in bursts.
+    if attempts < 5 {
+        normal
+    } else {
+        (300_000u64 << (attempts - 5).min(3)).min(1_800_000)
+    }
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Channel {
@@ -693,11 +703,15 @@ impl OfficialBrowser {
                 attempts.clear();
             }
             attempts.retain(|(id, key), _| {
-                observations
+                let same = observations
                     .get(id)
                     .and_then(Observation::live_key)
                     .as_ref()
-                    == Some(key)
+                    == Some(key);
+                if !same {
+                    retry.remove(id);
+                }
+                same
             });
             retry.retain(|id, _| channels.iter().any(|c| &c.channel_id == id));
             let mut completed = Vec::new();
@@ -851,7 +865,19 @@ impl OfficialBrowser {
                             None
                         },
                     );
-                    retry.insert(id.clone(), now_ms() + if failed { 60_000 } else { POLL_MS });
+                    let count = attempts
+                        .get(&(id.clone(), session.live_key.clone()))
+                        .copied()
+                        .unwrap_or(0);
+                    retry.insert(
+                        id.clone(),
+                        now_ms()
+                            + if failed {
+                                start_retry_delay(count, 60_000)
+                            } else {
+                                POLL_MS
+                            },
+                    );
                     completed.push(id.clone());
                     continue;
                 }
@@ -878,7 +904,11 @@ impl OfficialBrowser {
                     if let Err(cause) = result {
                         self.report_auto_start_failure(id, &session.live_key, &cause.code, "녹화 시작 요청이 거부되어 영상을 저장하지 못했습니다. 라이브의 연결 상태와 저장 공간을 확인해 주세요.");
                         auto.publish(id, "retry", None, Some(cause.message));
-                        retry.insert(id.clone(), now_ms() + 60_000);
+                        let count = attempts
+                            .get(&(id.clone(), session.live_key.clone()))
+                            .copied()
+                            .unwrap_or(0);
+                        retry.insert(id.clone(), now_ms() + start_retry_delay(count, 60_000));
                         completed.push(id.clone());
                     }
                 } else if session.started.elapsed() > Duration::from_secs(90) {
@@ -898,7 +928,11 @@ impl OfficialBrowser {
                         message,
                     );
                     auto.publish(id, "retry", None, Some(message.into()));
-                    retry.insert(id.clone(), now_ms() + 120_000);
+                    let count = attempts
+                        .get(&(id.clone(), session.live_key.clone()))
+                        .copied()
+                        .unwrap_or(0);
+                    retry.insert(id.clone(), now_ms() + start_retry_delay(count, 120_000));
                     completed.push(id.clone());
                 } else {
                     auto.publish(id, "starting", None, None);
@@ -981,10 +1015,6 @@ impl OfficialBrowser {
                     continue;
                 }
                 let attempt_key = (id.clone(), key.clone().unwrap());
-                if attempts.get(&attempt_key).copied().unwrap_or(0) >= 5 {
-                    auto.publish(id, "attention", None, Some("같은 방송의 시작이 5회 연속 실패해 자동 재시도를 멈췄습니다. 라이브에서 상태를 확인하거나 자동 녹화를 껐다 켜 주세요.".into()));
-                    continue;
-                }
                 let checking_end = self
                     .inner
                     .store
@@ -994,7 +1024,9 @@ impl OfficialBrowser {
                     auto.publish(id, "ending", None, None);
                     continue;
                 }
-                *attempts.entry(attempt_key).or_default() += 1;
+                let count = attempts.entry(attempt_key).or_default();
+                *count = count.saturating_add(1);
+                let attempt_count = *count;
                 match self.auto_target(app, id) {
                     Ok((host, owns_view, owns_recording)) => {
                         sessions.insert(
@@ -1015,7 +1047,10 @@ impl OfficialBrowser {
                     Err(cause) => {
                         self.report_auto_start_failure(id, key.as_deref().unwrap_or("unknown"), "receiver_create", "자동 녹화용 재생 창을 만들지 못해 저장을 시작하지 못했습니다. 자동 재시도 후에도 계속 실패하면 앱 오류 정보를 확인해 주세요.");
                         auto.publish(id, "retry", None, Some(cause.message));
-                        retry.insert(id.clone(), now_ms() + 30_000);
+                        retry.insert(
+                            id.clone(),
+                            now_ms() + start_retry_delay(attempt_count, 30_000),
+                        );
                     }
                 }
             }
@@ -1141,6 +1176,16 @@ pub async fn chzzk_browser_capture_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_start_failures_back_off_without_permanently_disabling_the_broadcast() {
+        assert_eq!(start_retry_delay(1, 30_000), 30_000);
+        assert_eq!(start_retry_delay(4, 120_000), 120_000);
+        assert_eq!(start_retry_delay(5, 30_000), 300_000);
+        assert_eq!(start_retry_delay(6, 30_000), 600_000);
+        assert_eq!(start_retry_delay(7, 30_000), 1_200_000);
+        assert_eq!(start_retry_delay(u8::MAX, 30_000), 1_800_000);
+    }
     const CHANNEL: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     fn live(id: &str, status: LiveStatus) -> LiveInfo {
         LiveInfo {

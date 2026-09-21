@@ -62,8 +62,8 @@ describe("CHZZK App composition", () => {
       expect(official.snapshot).not.toHaveBeenCalled();
       const initialSubscriptions = subscriptions.mock.calls.length;
       await switchMode("CHZZK");
-      expect(container.querySelectorAll(".official-browser-stage")).toHaveLength(1);
-      expect(official.snapshot).toHaveBeenCalled();
+      expect(container.querySelectorAll(".mado-workspace")).toHaveLength(1);
+      expect(official.snapshot).not.toHaveBeenCalled();
       expect(container.querySelector(".streaming-connect")).toBeNull();
       expect(container.querySelector(".streaming-current")).toBeNull();
       expect(container.querySelector("video")).toBeNull();
@@ -79,7 +79,7 @@ describe("CHZZK App composition", () => {
       expect(container.querySelector(".danbooru-workspace")).not.toBeNull();
       expect(container.querySelector(".streaming-workspace")).toBeNull();
       await switchMode("CHZZK");
-      expect(container.querySelectorAll(".official-browser-stage")).toHaveLength(1);
+      expect(container.querySelectorAll(".mado-workspace")).toHaveLength(1);
       expect(container.querySelector(".streaming-current")).toBeNull();
       expect(container.querySelector("video")).toBeNull();
       await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="녹화 목록"]')!.click());

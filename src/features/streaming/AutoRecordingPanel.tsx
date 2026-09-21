@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createAutoRecordingApi, type AutoRecordingApi, type AutoRecordingSnapshot } from "../../api/autoRecording";
 import type { ApiResult } from "../../api/contracts";
-import { createAutoWatchApi, type AutoWatchApi, type AutoWatchTarget } from "../../api/autoWatch";
 import "./AutoRecordingPanel.css";
 
 const statuses: Record<string, string> = {
@@ -9,16 +8,13 @@ const statuses: Record<string, string> = {
   stopping: "마무리 중", queued: "자리 대기", retry: "연결 확인 · 재시도 대기", skipped: "이번 방송 건너뜀",
   ending: "방송 종료 확인 중", attention: "반복 실패 · 확인 필요",
 };
-export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi, watchApi: suppliedWatchApi, onWatch }: {
+export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi }: {
   runtime: "tauri" | "browser-mock"; privacy?: boolean; api?: AutoRecordingApi;
-  watchApi?: AutoWatchApi; onWatch?(target: AutoWatchTarget): void;
 }) {
   const api = useMemo(() => suppliedApi ?? createAutoRecordingApi(runtime), [runtime, suppliedApi]);
-  const watchApi = useMemo(() => suppliedWatchApi ?? createAutoWatchApi(runtime), [runtime, suppliedWatchApi]);
   const [snapshot, setSnapshot] = useState<AutoRecordingSnapshot>({ channels: [], captureChat: true, error: null });
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
-  const [opening, setOpening] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pollError, setPollError] = useState<string | null>(null);
   const version = useRef(0), mounted = useRef(false), busy = useRef(false);
@@ -53,20 +49,6 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi,
     } catch { if (mounted.current) setError("요청을 처리하지 못했습니다. 다시 시도해 주세요."); }
     finally { busy.current = false; if (mounted.current) setPending(false); }
   };
-  const watch = async (channelId: string, recordingId: string) => {
-    if (busy.current || !onWatch) return;
-    busy.current = true; setPending(true); setOpening(channelId); setError(null);
-    const request = ++version.current;
-    try {
-      const result = await watchApi.open(channelId, recordingId);
-      if (!mounted.current || request !== version.current) {
-        if (result.ok && result.data.watchId) void watchApi.close(result.data.watchId).catch(() => {});
-        return;
-      }
-      if (result.ok) onWatch(result.data); else setError(result.error.message);
-    } catch { if (mounted.current) setError("실시간 보기를 열지 못했습니다. 다시 시도해 주세요."); }
-    finally { busy.current = false; if (mounted.current) { setPending(false); setOpening(null); } }
-  };
   const disabled = pending || runtime !== "tauri";
   return <section className="auto-record-panel" aria-label="자동 녹화">
     <header><div><h2>자동 녹화</h2><p>방송이 시작되면 녹화합니다.</p></div>
@@ -91,7 +73,6 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi,
             </div> : null}
           </div>
           <div className="auto-record-actions">
-            {channel.status === "recording" && channel.recordingId && onWatch ? <button type="button" className="auto-record-watch" disabled={disabled} aria-label={`${name} 실시간 보기`} title="녹화 중인 수신 화면을 그대로 봅니다. 녹화와 채팅 저장은 계속됩니다." onClick={() => void watch(channel.channelId, channel.recordingId!)}>{opening === channel.channelId ? "여는 중…" : "실시간 보기"}</button> : null}
             {active || channel.status === "retry" ? <button type="button" className="auto-record-stop" disabled={disabled || channel.status === "stopping"} onClick={() => void mutate(() => api.update(channel.channelId, { action: "stop" }))}>{channel.status === "starting" || channel.status === "retry" ? "시도 중지" : "녹화 중지"}</button> : null}
             <button type="button" aria-label={`${name} 자동 녹화 ${channel.enabled ? "끄기" : "켜기"}`} aria-pressed={channel.enabled} disabled={disabled} title="끄면 자동으로 시작한 녹화도 마무리합니다. 다시 켜면 현재 방송부터 확인합니다." onClick={() => void mutate(() => api.update(channel.channelId, { action: "enabled", enabled: !channel.enabled }))}>{channel.enabled ? "켜짐" : "꺼짐"}</button>
             <button type="button" aria-label={`${name} 등록 해제`} disabled={disabled} title="자동 녹화 등록만 해제합니다. 저장된 녹화본은 남습니다." onClick={() => void mutate(() => api.update(channel.channelId, { action: "remove" }))}>해제</button>

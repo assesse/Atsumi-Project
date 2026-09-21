@@ -330,6 +330,11 @@ impl OfficialBrowser {
         current: &mut EncodedSession,
         segments: Vec<EncodedSegment>,
     ) -> Result<(), StreamError> {
+        // Most packets only extend an in-memory fragment. They must not acquire
+        // the shared disk/store lock while another channel commits a segment.
+        if segments.is_empty() {
+            return Ok(());
+        }
         let store = self.inner.store.lock().map_err(|_| unavailable())?;
         for segment in segments {
             if segment.bytes.is_empty() || segment.bytes.len() > 64 * 1024 * 1024 {
@@ -511,6 +516,26 @@ mod tests {
             .snapshot()
             .unwrap();
         assert_eq!(restored.recordings[0].segments, saved.segments);
+    }
+    #[test]
+    fn partial_encoded_packets_do_not_wait_on_another_channels_disk_commit() {
+        let (_dir, host, nonce) = armed();
+        let ack = begin(&host, &nonce, &uuid::Uuid::new_v4().to_string()).unwrap();
+        let id = ack["id"].as_str().unwrap().to_owned();
+        let bytes = fmp4::fixtures::fragment(0, 4000 * 90_000, 4, true);
+        let held = host.inner.store.lock().unwrap();
+        let other = host.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let result = append(&other, &id, 0, 0, 0, false, &bytes[..bytes.len() / 2]);
+            let _ = send.send(result);
+        });
+        let result = receive.recv_timeout(Duration::from_secs(2));
+        drop(held);
+        worker.join().unwrap();
+        assert!(result
+            .expect("in-memory fragment waited on the disk store")
+            .is_ok());
     }
     #[test]
     fn pending_append_rejects_reordering_other_recordings_and_changed_retries() {

@@ -14,6 +14,7 @@ $env:PSModulePath = (@($launcherBuiltinModules) + @(
 )) -join ";"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $frontendRunner = Join-Path $PSScriptRoot "run_frontend.ps1"
+$developmentRunner = Join-Path $PSScriptRoot "run_tauri_dev.ps1"
 $runtimeDirectory = Join-Path $projectRoot ".runtime"
 $logPath = Join-Path $runtimeDirectory "debug-launch.log"
 $standardOutput = Join-Path $runtimeDirectory "debug-app.stdout.log"
@@ -108,6 +109,11 @@ public static class AtsumiLauncherWindow {
   [DllImport("user32.dll")]
   public static extern bool SetForegroundWindow(IntPtr hwnd);
 }
+
+if (-not (Test-Path -LiteralPath $developmentRunner -PathType Leaf)) {
+  "Missing tools\run_tauri_dev.ps1" | Add-Content -LiteralPath $logPath -Encoding UTF8
+  exit 1
+}
 '@
   foreach ($existingApp in $runningApp) {
     # Process.MainWindowHandle can pick the visible 16px single-instance helper
@@ -168,8 +174,7 @@ try {
       -NonInteractive `
       -ExecutionPolicy Bypass `
       -WindowStyle Hidden `
-      -File $frontendRunner `
-      tauri dev `
+      -File $developmentRunner `
       1> $standardOutput `
       2> $standardError
     $exitCode = $LASTEXITCODE

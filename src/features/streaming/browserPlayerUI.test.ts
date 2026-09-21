@@ -47,7 +47,8 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
     }
     return element;
   }) as typeof page.createElement);
-  vi.spyOn(canvas, "getContext").mockReturnValue({ drawImage: vi.fn() } as unknown as CanvasRenderingContext2D);
+  const capturedTimes: number[] = [];
+  vi.spyOn(canvas, "getContext").mockReturnValue({ drawImage: vi.fn(() => capturedTimes.push(video.currentTime)) } as unknown as CanvasRenderingContext2D);
   vi.spyOn(canvas, "toBlob").mockImplementation((callback) => callback({ size: pngSize, arrayBuffer: async () => new Uint8Array(pngSize).buffer } as Blob));
   const messages: Message[] = [];
   let frameId = 0;
@@ -60,7 +61,7 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
     chrome: { webview: { postMessage: (raw: string) => {
       const message = JSON.parse(raw.slice("ATSUMI_BROWSER_CAPTURE:".length)) as Message;
       messages.push(message);
-      const data = options.replyData ?? { saved: true };
+      const data = options.replyData ?? (message.kind === "control_intent" && message.action === "screenshot" ? { requestId: REQUEST, channelId: CHANNEL } : { saved: true });
       if (!options.manualReply) queueMicrotask(() => pageWindow.dispatchEvent(new CustomEvent("atsumi-browser-reply", { detail: { id: message.id, ok: !options.rejectReply, data } })));
     } } }, __atsumiPlayerUI: undefined as undefined | { update(state: Record<string, unknown>): void; configure(state: Record<string, unknown>): void; stopCatchup(): void },
     __atsumiEncodedCapture: undefined as undefined | { canChangePlaybackRate(video: HTMLVideoElement): boolean },
@@ -69,7 +70,8 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
   pageWindow.top = options.frame ? {} : pageWindow;
   const context = { window: pageWindow, document: page, crypto, CustomEvent, Date, setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array, btoa };
   runInNewContext(source, context);
-  return { page, player, live, video, messages, canvas, window: pageWindow,
+  return { page, player, live, video, messages, canvas, capturedTimes, window: pageWindow,
+    reply: (index: number, data: Record<string, unknown> = { saved: true }, ok = true) => pageWindow.dispatchEvent(new CustomEvent("atsumi-browser-reply", { detail: { id: messages[index]!.id, ok, data } })),
     windowListener,
     flushFrame: () => { const pendingFrames = [...frames.values()]; frames.clear(); for (const callback of pendingFrames) callback(0); },
     movePlayer: (top: number) => {
@@ -111,12 +113,31 @@ describe("official player controls", () => {
     expect(h.page.querySelector('[aria-label="녹화 중지"]')?.hasAttribute("hidden")).toBe(false);
     expect(h.page.querySelector('[aria-label="스크린샷"]')?.hasAttribute("hidden")).toBe(false);
     expect(h.page.querySelector('[aria-label="시청 설정"]')?.parentElement?.hasAttribute("hidden")).toBe(false);
-    expect(h.page.querySelector('[aria-label="녹화만 계속"]')?.hasAttribute("hidden")).toBe(false);
+    const exit = h.page.querySelector('[aria-label="실시간 보기 종료"]')!;
+    expect(exit.hasAttribute("hidden")).toBe(false);
+    expect(exit.hasAttribute("data-exit-live-view")).toBe(true);
+    expect(exit.getAttribute("title")).toBe("실시간 보기 종료 · 시청 화면과 소리만 닫고 녹화는 계속합니다");
+    expect(exit.querySelector("path")?.getAttribute("d")).toContain("M12 4H3v13h9");
     h.video.muted = false;
-    h.trustedClick("녹화만 계속"); await flush();
+    h.trustedClick("실시간 보기 종료"); await flush();
     expect(h.messages).toHaveLength(1);
     expect(h.messages[0]).toMatchObject({ kind: "view_intent", action: "record_only" });
     expect(h.video.muted).toBe(true); expect(h.page.querySelector("video")).toBe(h.video);
+  });
+  it("distinguishes leaving live view from the untouched official mute control", async () => {
+    const h = fixture(); h.ready();
+    const mute = h.page.createElement("button"); mute.setAttribute("aria-label", "음소거");
+    mute.innerHTML = '<svg><path d="official-volume-icon"/></svg>';
+    h.page.querySelector(".pzp-pc__bottom-buttons-right")!.appendChild(mute);
+    h.window.__atsumiPlayerUI!.update({ ready: true, recording: true, detail: "recording" });
+    expect(h.page.querySelectorAll('[aria-label="음소거"]')).toHaveLength(1);
+    expect(mute.innerHTML).toBe('<svg><path d="official-volume-icon"></path></svg>');
+    expect(h.page.querySelector('[data-exit-live-view]')?.getAttribute("aria-label")).toBe("실시간 보기 종료");
+    h.trustedClick("실시간 보기 종료"); await flush();
+    expect(h.messages.map(message => message.kind)).toEqual(["view_intent"]);
+    expect(h.messages[0]?.action).not.toBe("record_stop");
+    h.window.__atsumiPlayerUI!.configure({ automaticWatch: true });
+    expect(h.page.querySelector('[data-exit-live-view]')?.hasAttribute("hidden")).toBe(true);
   });
   it("does not install on foreign origins, non-live paths or child frames", () => {
     for (const options of [{ url: "https://evil.test/live/" + CHANNEL }, { url: "https://chzzk.naver.com:444/live/" + CHANNEL }, { url: "https://chzzk.naver.com/live/" + CHANNEL + "/chat" }, { frame: true }]) {
@@ -321,11 +342,65 @@ describe("official player controls", () => {
     const h = fixture(); h.setPngSize(16 * 1024 * 1024 + 1); h.command(); await flush();
     expect(h.messages.map((m) => m.kind)).toEqual(["screenshot_abort"]);
   });
-  it("maps S to the same screenshot confirmation without directly capturing a frame", async () => {
-    const h = fixture(); const event = h.key(); await flush();
-    expect(event.preventDefault).toHaveBeenCalledOnce();
+  it("freezes the clicked frame before native permission and saves without a confirmation", async () => {
+    const h = fixture({ manualReply: true }); h.ready(); h.trustedClick("스크린샷");
+    expect(h.capturedTimes).toEqual([100]);
     expect(h.messages).toEqual([expect.objectContaining({ kind: "control_intent", action: "screenshot", channelId: CHANNEL })]);
+    h.video.currentTime = 110;
+    expect(h.page.querySelector('[role="status"]')?.textContent).toBe("스크린샷 저장 중…");
+    expect(h.page.querySelector('[role="dialog"],[role="alertdialog"]')).toBeNull();
+    h.reply(0, { requestId: REQUEST, channelId: CHANNEL }); await flush();
+    expect(h.capturedTimes).toEqual([100]);
+    expect(h.messages[1]).toMatchObject({ kind: "screenshot_begin", requestId: REQUEST });
+    h.reply(1); await flush(); h.reply(2); await flush();
+    expect(h.messages[3]!.kind).toBe("screenshot_finish");
+    h.reply(3); await flush();
+    expect(h.page.querySelector('[role="status"]')?.textContent).toBe("스크린샷 저장 완료");
+    expect(h.canvas.width).toBe(0);
+    expect(h.video.currentTime).toBe(110); expect(h.video.paused).toBe(false);
+  });
+  it("maps S to immediate capture and ignores a second key while saving", async () => {
+    const h = fixture(); const event = h.key();
+    expect(h.capturedTimes).toEqual([100]);
+    expect(h.key().preventDefault).not.toHaveBeenCalled();
+    await flush();
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(h.messages.map((m) => m.kind)).toEqual(["control_intent", "screenshot_begin", "screenshot_chunk", "screenshot_finish"]);
+    expect(h.writes()).toBe(1);
+  });
+  it("keeps at most two bounded screenshot chunks in flight and waits for both ACKs", async () => {
+    const h = fixture({ manualReply: true }); h.setPngSize(3 * 128 * 1024 + 1); h.key();
+    h.reply(0, { requestId: REQUEST, channelId: CHANNEL }); await flush();
+    h.reply(1); await flush();
+    expect(h.messages.slice(2).map((m) => m.chunkIndex)).toEqual([0, 1]);
+    expect(h.messages[2]!.data).toHaveLength(Math.ceil(128 * 1024 / 3) * 4);
+    h.reply(2); await flush(); expect(h.messages).toHaveLength(4);
+    h.reply(3); await flush();
+    expect(h.messages.slice(4).map((m) => m.chunkIndex)).toEqual([2, 3]);
+    h.reply(4); h.reply(5); await flush(); expect(h.messages[6]!.kind).toBe("screenshot_finish");
+    h.reply(6); await flush(); expect(h.canvas.width).toBe(0);
+  });
+  it("drops a captured frame on native rejection without disturbing recording", async () => {
+    const h = fixture({ rejectReply: true }); h.window.__atsumiPlayerUI?.update({ ready: true, recording: true, detail: "recording" });
+    h.key(); await flush();
+    expect(h.messages).toHaveLength(1); expect(h.canvas.width).toBe(0);
+    expect(h.page.querySelector('[aria-label="녹화 중지"]')).not.toBeNull();
+    expect(h.page.querySelector('[role="status"]')?.textContent).toContain("저장 실패");
+  });
+  it.each(["channel", "pagehide"])("aborts a delayed native permit after %s changes", async (change) => {
+    const h = fixture({ manualReply: true }); h.key();
+    if (change === "channel") h.window.location.pathname = `/live/${"f".repeat(32)}`;
+    else { h.window.dispatchEvent(new Event("pagehide")); h.window.dispatchEvent(new Event("pageshow")); }
+    h.reply(0, { requestId: REQUEST, channelId: CHANNEL }); await flush();
+    expect(h.messages.map((m) => m.kind)).toEqual(["control_intent", "screenshot_abort"]);
+    expect(h.canvas.width).toBe(0);
+  });
+  it("does not capture synthetic camera clicks or upload without a valid bound permit", async () => {
+    const h = fixture({ replyData: { requestId: "bad", channelId: CHANNEL } });
+    h.page.querySelector<HTMLButtonElement>('[aria-label="스크린샷"]')!.click();
     expect(h.writes()).toBe(0);
+    h.key(); await flush(); expect(h.messages).toHaveLength(1);
+    expect(h.canvas.width).toBe(0);
   });
   it("does not steal typing, IME, modified, repeated or synthetic keys", () => {
     const h = fixture();
@@ -360,6 +435,22 @@ describe("official player controls", () => {
     expect(h.video.playbackRate).toBe(1.2); expect(h.video.currentTime).toBe(100);
     h.video.currentTime = 103.5; await vi.advanceTimersByTimeAsync(1000);
     expect(h.video.playbackRate).toBe(1); expect(h.messages).toEqual([]);
+  });
+  it("offers fixed rates and catch-up in one player button, with mutually exclusive selection", async () => {
+    const h = fixture(); h.ready();
+    const menu = h.page.querySelector<HTMLElement>('#atsumi-rate-menu')!;
+    expect(h.page.querySelectorAll('#atsumi-player-controls > [data-playback-rate]')).toHaveLength(1);
+    expect(h.page.querySelector('#atsumi-player-controls > [aria-label="따라잡기"]')).toBeNull();
+    expect(menu.hidden).toBe(true); expect(menu.querySelector('[aria-label="따라잡기"]')).not.toBeNull();
+    h.trustedClick('재생 배속'); h.trustedClick('2배속'); expect(h.video.playbackRate).toBe(2);
+    h.trustedClick('재생 배속'); h.trustedClick('따라잡기'); expect(h.video.playbackRate).toBe(1.2);
+    expect(menu.hidden).toBe(true); expect(h.page.querySelector('[data-playback-rate]')?.textContent).toBe('자동');
+    expect(menu.querySelector('[data-catchup]')?.getAttribute('aria-checked')).toBe('true');
+    expect(menu.querySelectorAll('[aria-checked="true"]')).toHaveLength(1);
+    h.trustedClick('재생 배속'); h.trustedClick('1.5배속'); expect(h.video.playbackRate).toBe(1.5);
+    expect(menu.querySelector('[data-catchup]')?.getAttribute('aria-checked')).toBe('false');
+    h.trustedClick('재생 배속'); h.page.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    expect(menu.hidden).toBe(true); expect(h.video.playbackRate).toBe(1.5); expect(h.messages).toEqual([]);
   });
   it("keeps legacy recording at 1x and allows only an approved matching encoded session", () => {
     const h = fixture(); h.window.__atsumiPlayerUI!.update({ ready: true, recording: true, detail: "recording" });

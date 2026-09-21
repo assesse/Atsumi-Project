@@ -17,13 +17,21 @@ use tauri::{AppHandle, Manager, Webview};
 
 #[path = "browser_auto.rs"]
 pub mod auto_record;
+#[path = "browser_live_channels.rs"]
+pub mod live_channels;
+#[path = "browser_live_profiles.rs"]
+pub mod live_profiles;
 
 #[path = "browser_auth.rs"]
 mod auth;
 #[path = "browser_chat_popup.rs"]
 mod chat_popup;
+#[path = "browser_clip_popup.rs"]
+mod clip_popup;
 #[path = "browser_contexts.rs"]
 mod contexts;
+#[path = "browser_diagnostics.rs"]
+mod diagnostics;
 #[path = "browser_encoded.rs"]
 pub(crate) mod encoded;
 #[path = "browser_ending.rs"]
@@ -78,6 +86,7 @@ struct Inner {
     detached: AtomicBool,
     contexts: Arc<contexts::ContextGroup>,
     auto_record: Arc<auto_record::AutoRecorder>,
+    favorites: Arc<live_channels::Favorites>,
     store: Arc<Mutex<BrowserCaptureStore>>,
     merges: super::browser_merge::BrowserMergeWorker,
     replay_assets: super::replay_assets::ReplayAssetCache,
@@ -395,6 +404,8 @@ enum BrowserMessage {
     },
     Status {
         channel_id: String,
+        #[serde(default)]
+        request_id: Option<String>,
         ready: bool,
         #[serde(default)]
         recording: bool,
@@ -423,6 +434,9 @@ enum BrowserMessage {
     },
 }
 impl BrowserMessage {
+    fn chat(&self) -> bool {
+        matches!(self, Self::ChatBatch { .. } | Self::ChatStatus { .. })
+    }
     fn screenshot(&self) -> bool {
         matches!(
             self,
@@ -431,6 +445,16 @@ impl BrowserMessage {
                 | Self::ScreenshotFinish { .. }
                 | Self::ScreenshotAbort { .. }
         )
+    }
+    fn screenshot_lane(&self) -> bool {
+        self.screenshot()
+            || matches!(
+                self,
+                Self::ControlIntent {
+                    action: ControlAction::Screenshot,
+                    ..
+                }
+            )
     }
 }
 
@@ -487,8 +511,17 @@ fn sanitized_capture_diagnostics(value: Option<Value>) -> Option<Value> {
         "ended": v["ended"].as_bool().unwrap_or(false), "sourceAttached":v["sourceAttached"].as_bool().unwrap_or(false),
         "sourceClosed":v["sourceClosed"].as_bool().unwrap_or(false), "readyState":v["readyState"].as_u64().unwrap_or(0).min(4)
     }));
+    let fault = value.get("lastTransportFault").filter(|v| v.is_object()).map(|v| json!({
+        "code": match v["code"].as_str() { Some("BROWSER_ACK_TIMEOUT") => "BROWSER_ACK_TIMEOUT", Some("BRIDGE_BUSY") => "BRIDGE_BUSY", Some("BRIDGE_POST_FAILED") => "BRIDGE_POST_FAILED", Some("BROWSER_CONTROL_STALE") => "BROWSER_CONTROL_STALE", Some("BROWSER_ENCODED_INVALID") => "BROWSER_ENCODED_INVALID", _ => "other" },
+        "at":v["at"].as_u64().unwrap_or(0), "attempt":v["attempt"].as_u64().unwrap_or(0).min(100),
+        "appendIndex":v["appendIndex"].as_u64().unwrap_or(0).min(1_000_000),
+        "chunkIndex":v["chunkIndex"].as_u64().unwrap_or(0).min(1024),
+        "queuedBytes":v["queuedBytes"].as_u64().unwrap_or(0).min(64*1024*1024)
+    }));
     Some(
         json!({"reason":reason, "installed":value["installed"].as_bool().unwrap_or(false),
+        "lastTransportFault":fault,"queuedBytes":value["queuedBytes"].as_u64().unwrap_or(0).min(64*1024*1024),
+        "maxAckMs":value["maxAckMs"].as_u64().unwrap_or(0).min(3_600_000),
         "appendCount":value["appendCount"].as_u64().unwrap_or(0).min(1_000_000_000),
         "appendBytes":value["appendBytes"].as_u64().unwrap_or(0).min(1_000_000_000_000_000), "sources":sources, "lastStop":last_stop}),
     )
@@ -525,6 +558,9 @@ fn parse_message(source: &str, body: &str) -> Option<(String, Envelope)> {
 }
 fn bridge_reason(reason: &str) -> &'static str {
     match reason {
+        "bridge_ack_timeout" => "영상 저장 응답이 제한 시간 안에 도착하지 않아 녹화를 중단했습니다. 저장된 영상은 보존됩니다.",
+        "bridge_busy" => "영상 저장 대기열의 혼잡이 해소되지 않아 녹화를 중단했습니다. 저장된 영상은 보존됩니다.",
+        "bridge_post_failed" => "플레이어와 영상 저장부의 연결이 끊겼습니다. 저장된 영상은 보존됩니다.",
         "seek" => "타임머신 또는 재생 위치 이동으로 녹화를 중단했습니다.",
         "rate_change" => "재생 배속이 변경되어 녹화를 중단했습니다.",
         "video_changed" | "channel_changed" | "source_changed" => "방송 또는 영상 소스가 변경되어 녹화를 중단했습니다.",
@@ -680,6 +716,93 @@ impl OfficialBrowser {
             state.confirming_control = Some(pending.clone());
         }
         Ok(Some(pending))
+    }
+    // Immediate screenshots have no PendingControl: React polling must never
+    // turn a short native authorization into a confirmation dialog/occlusion.
+    fn arm_immediate_screenshot(
+        &self,
+        app: &AppHandle,
+        channel: &str,
+        generation: Option<u64>,
+    ) -> Result<String, StreamError> {
+        let root = app
+            .state::<AppState>()
+            .settings_snapshot()
+            .map_err(|_| unavailable())?
+            .download_root;
+        let view = app.get_webview(self.label()).ok_or_else(unavailable)?;
+        if view.url().ok().as_ref().and_then(live_channel).as_deref() != Some(channel)
+            || self.account_window_open(app)
+        {
+            return Err(control_stale());
+        }
+        let _gate = self.inner.contexts.gate.lock().map_err(|_| unavailable())?;
+        let profile_busy = self.primary_profile_busy();
+        let mut capture = self.inner.screenshots.try_lock().map_err(|_| {
+            error(
+                "SCREENSHOT_BUSY",
+                "현재 스크린샷 저장이 끝난 뒤 다시 요청해 주세요.",
+            )
+        })?;
+        let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+        if state.channel.as_deref() != Some(channel)
+            || generation.is_some_and(|g| g != state.page_generation)
+            || !state.ready
+            || state.account_busy
+            || state.extension_connecting
+            || profile_busy
+            || self.inner.detached.load(Ordering::Acquire)
+            || self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0
+            || self.inner.closing.load(Ordering::Acquire)
+            || self.inner.reserved.load(Ordering::Acquire)
+            || self.multiview_active()
+        {
+            return Err(control_stale());
+        }
+        if state.pending_control.is_some()
+            || state.confirming_control.is_some()
+            || state
+                .last_control_intent
+                .is_some_and(|at| at.elapsed() < Duration::from_millis(200))
+        {
+            return Err(error("BROWSER_CONTROL_BUSY", "잠시 후 다시 요청해 주세요."));
+        }
+        let nonce = capture.arm(Path::new(&root), channel, state.page_generation)?;
+        state.last_control_intent = Some(Instant::now());
+        Ok(nonce)
+    }
+    pub fn request_control_from_ui(
+        &self,
+        app: &AppHandle,
+        action: ControlAction,
+    ) -> Result<BrowserSnapshot, StreamError> {
+        if action != ControlAction::Screenshot {
+            return self.request_control(action);
+        }
+        let (channel, generation) = {
+            let state = self.inner.view.lock().map_err(|_| unavailable())?;
+            (
+                state.channel.clone().ok_or_else(unavailable)?,
+                state.page_generation,
+            )
+        };
+        let nonce = self.arm_immediate_screenshot(app, &channel, Some(generation))?;
+        let result = app
+            .get_webview(self.label())
+            .ok_or_else(unavailable)
+            .and_then(|view| {
+                send_command(
+                    &view,
+                    json!({"kind":"screenshot","requestId":nonce,"channelId":channel}),
+                )
+            });
+        if result.is_err() {
+            if let Ok(mut capture) = self.inner.screenshots.lock() {
+                capture.abort(&nonce);
+            }
+        }
+        result?;
+        self.snapshot()
     }
     pub fn confirm_control(
         &self,
@@ -853,7 +976,7 @@ impl OfficialBrowser {
         data_dir: PathBuf,
         tools: Option<super::browser_merge::MediaTools>,
     ) -> Result<Self, StreamError> {
-        let store = Arc::new(Mutex::new(BrowserCaptureStore::new(&data_dir)?));
+        let store = Arc::new(Mutex::new(BrowserCaptureStore::new_deferred(&data_dir)?));
         let replay_assets = super::replay_assets::ReplayAssetCache::new(&data_dir, tools.is_some())
             .unwrap_or_else(|_| super::replay_assets::ReplayAssetCache::disabled());
         let merges = super::browser_merge::BrowserMergeWorker::start(store.clone(), tools)?;
@@ -868,6 +991,7 @@ impl OfficialBrowser {
         let host = Self {
             inner: Arc::new(Inner {
                 auto_record: Arc::new(auto_record::AutoRecorder::load(&data_dir)),
+                favorites: Arc::new(live_channels::Favorites::load(&data_dir)),
                 data_dir,
                 label: WINDOW_LABEL.into(),
                 detached: AtomicBool::new(false),
@@ -1356,6 +1480,7 @@ impl OfficialBrowser {
         }
         if let BrowserMessage::Status {
             channel_id,
+            request_id,
             ready,
             recording,
             detail,
@@ -1369,6 +1494,19 @@ impl OfficialBrowser {
                 return Err(unavailable());
             }
             let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+            // Status has a separate lane: a delayed terminal notification from
+            // recording A must never cancel a newer recording/arm B. The nonce
+            // is the native-issued start capability, not a page-selected ID.
+            let expected = state
+                .arm
+                .as_ref()
+                .map(|a| a.id.as_str())
+                .or_else(|| state.accepted_arm.as_ref().map(|a| a.0.as_str()));
+            if (state.recording.is_some() || state.arm.is_some())
+                && request_id.as_deref() != expected
+            {
+                return Ok(Value::Null);
+            }
             // A lost begin/finish ACK can leave native state active after the
             // renderer has already abandoned its recorder. Don't leave an orphan
             // session holding exit/update reservations indefinitely.
@@ -1403,6 +1541,18 @@ impl OfficialBrowser {
             state.video_paused = paused;
             state.page_recording = recording;
             let diagnostics = sanitized_capture_diagnostics(capture_diagnostics);
+            if diagnostics.as_ref().map(|d| &d["lastTransportFault"])
+                != state
+                    .capture_diagnostics
+                    .as_ref()
+                    .map(|d| &d["lastTransportFault"])
+            {
+                diagnostics::record(
+                    self,
+                    "capture_transport",
+                    json!({"recordingId":state.recording,"diagnostics":diagnostics}),
+                );
+            }
             if diagnostics.as_ref().map(|d| &d["reason"])
                 != state.capture_diagnostics.as_ref().map(|d| &d["reason"])
             {
@@ -1463,7 +1613,14 @@ impl OfficialBrowser {
             }
             return Ok(Value::Null);
         }
-        let _write = self.inner.writes.lock().map_err(|_| unavailable())?;
+        // Chat has its own ordered worker and PageChatLog mutex. Holding the
+        // video write reservation across a chat fsync stalls all media packets.
+        // Finish takes PageChatLog before closing it, so ACK still means durable.
+        let _write = if message.chat() {
+            None
+        } else {
+            Some(self.inner.writes.lock().map_err(|_| unavailable())?)
+        };
         if matches!(
             &message,
             BrowserMessage::Chunk { .. }
@@ -1683,7 +1840,7 @@ impl OfficialBrowser {
                                     .and_then(super::model::bounded_sender_key),
                                 rich,
                             };
-                            chat.log.append(&message)?;
+                            chat.log.append_batched(&message)?;
                             self.inner
                                 .replay_assets
                                 .submit_recording(chat.log.recording_root(), message.rich.as_ref());
@@ -1699,6 +1856,9 @@ impl OfficialBrowser {
                     Ok::<u64, StreamError>(chat.sequence)
                 })();
                 let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+                if state.recording.as_deref() != Some(&recording_id) {
+                    return Err(control_stale());
+                }
                 match result {
                     Ok(count) => {
                         state.chat_heartbeat = Some(Instant::now());
@@ -1716,11 +1876,15 @@ impl OfficialBrowser {
                 }
             }
             BrowserMessage::ChatStatus {
+                recording_id,
                 detail,
                 dropped_messages,
                 ..
             } => {
                 let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+                if state.recording.as_deref() != Some(&recording_id) {
+                    return Err(control_stale());
+                }
                 if !state.capture_chat {
                     return Err(unavailable());
                 }
@@ -1823,6 +1987,11 @@ impl OfficialBrowser {
                         chat_count,
                     )?;
                 self.inner.merges.wake();
+                // One later retry for a transient profile fetch failure. This
+                // is not part of the video/chat write path and does no UI I/O.
+                self.inner
+                    .replay_assets
+                    .submit_channel(Path::new(&finished.output_dir), &finished.channel_id);
                 let interrupted = finished.status != BrowserRecordingStatus::Stopped;
                 let ending = self.finish_reason(&finished, reason.as_deref().unwrap_or("unknown"));
                 {
@@ -1988,6 +2157,12 @@ impl OfficialBrowser {
             .canonicalize()
             .map_err(|_| unavailable())?;
         let path = if let Some(index) = index {
+            if record.media_removed_at.is_some() {
+                return Err(error(
+                    "RECORDING_MEDIA_REMOVED",
+                    "영상만 정리된 기록입니다. 오류·채팅 기록은 폴더에 보존되어 있습니다.",
+                ));
+            }
             root.join(
                 &record
                     .segments
@@ -2031,14 +2206,19 @@ fn bridge_worker(
     host: &OfficialBrowser,
     capacity: usize,
     name: &str,
-) -> Result<std::sync::mpsc::SyncSender<(String, u64, Envelope)>, StreamError> {
-    let (sender, receiver) = std::sync::mpsc::sync_channel::<(String, u64, Envelope)>(capacity);
+) -> Result<std::sync::mpsc::SyncSender<(String, u64, Envelope, Instant)>, StreamError> {
+    let (sender, receiver) =
+        std::sync::mpsc::sync_channel::<(String, u64, Envelope, Instant)>(capacity);
     let worker_window = window.clone();
     let worker_host = host.clone();
     thread::Builder::new()
         .name(name.into())
         .spawn(move || {
-            while let Ok((channel, generation, envelope)) = receiver.recv() {
+            let mut last_sample = Instant::now();
+            while let Ok((channel, generation, envelope, queued)) = receiver.recv() {
+                let began = Instant::now();
+                let queued_ms = queued.elapsed().as_millis();
+                let packet = diagnostics::packet(&envelope.message);
                 let notification = matches!(
                     &envelope.message,
                     BrowserMessage::Status { .. }
@@ -2064,7 +2244,11 @@ fn bridge_worker(
                 let immediate_record = matches!(&envelope.message, BrowserMessage::ControlIntent { action: ControlAction::RecordStart | ControlAction::RecordStop, .. });
                 let original = matches!(&envelope.message, BrowserMessage::EncodedBegin { .. } | BrowserMessage::EncodedAppend { .. } | BrowserMessage::EncodedFinish { .. });
                 let mut result = if current {
-                    worker_host.process(&channel, envelope.message)
+                    if let BrowserMessage::ControlIntent { channel_id, action: ControlAction::Screenshot } = &envelope.message {
+                        if channel_id != &channel { Err(control_stale()) }
+                        else { worker_host.arm_immediate_screenshot(worker_window.app_handle(), &channel, Some(generation))
+                            .map(|nonce| json!({"requestId":nonce,"channelId":channel})) }
+                    } else { worker_host.process(&channel, envelope.message) }
                 } else {
                     Err(control_stale())
                 };
@@ -2084,6 +2268,11 @@ fn bridge_worker(
                     if let Err(cause) = &result {
                         worker_host.inner.contexts.notice(&cause.message);
                     }
+                }
+                let process_ms = began.elapsed().as_millis();
+                if result.is_err() || queued_ms > 500 || process_ms > 500 || last_sample.elapsed() > Duration::from_secs(15) {
+                    diagnostics::record(&worker_host, "bridge_processed", json!({"packet":packet,"queuedMs":queued_ms,"processMs":process_ms,"errorCode":result.as_ref().err().map(|e| &e.code)}));
+                    last_sample = Instant::now();
                 }
                 if !notification {
                     if let Err(error) = &result {
@@ -2113,6 +2302,8 @@ fn attach_native(window: &Webview, host: OfficialBrowser) -> Result<(), StreamEr
     use webview2_com::{CoTaskMemPWSTR, ProcessFailedEventHandler, WebMessageReceivedEventHandler};
     use windows::core::PWSTR;
     let sender = bridge_worker(window, &host, 4, "chzzk-browser-writer")?;
+    let chat_sender = bridge_worker(window, &host, 4, "chzzk-chat-writer")?;
+    let status_sender = bridge_worker(window, &host, 1, "chzzk-capture-status")?;
     // PNG validation/fsync never delays recorder chunks; both queues stay bounded.
     let screenshot_sender = bridge_worker(window, &host, 2, "chzzk-screenshot-writer")?;
     let event_window = window.clone();
@@ -2146,24 +2337,36 @@ fn attach_native(window: &Webview, host: OfficialBrowser) -> Result<(), StreamEr
                                 return Ok(());
                             };
                             if let Some((channel, envelope)) = parse_message(&source, body) {
-                                let generation = source_host
-                                    .inner
-                                    .view
-                                    .lock()
-                                    .map(|state| state.page_generation)
-                                    .unwrap_or(u64::MAX);
-                                let queue = if envelope.message.screenshot() {
+                                // WebMessageReceived runs on the shared UI/COM
+                                // thread. Never wait here for a writer that is
+                                // holding ViewState while opening/flushing a file.
+                                let generation = match source_host.inner.view.try_lock() {
+                                    Ok(state) => state.page_generation,
+                                    Err(_) => {
+                                        if !matches!(&envelope.message, BrowserMessage::Status { .. }) {
+                                            diagnostics::record(&source_host, "bridge_state_busy", diagnostics::packet(&envelope.message));
+                                            reply(&event_window, &envelope.id, Err(error("BRIDGE_BUSY", "녹화 상태 처리 중입니다. 잠시 후 다시 시도합니다.")));
+                                        }
+                                        return Ok(());
+                                    }
+                                };
+                                let queue = if envelope.message.screenshot_lane() {
                                     &screenshot_sender
+                                } else if envelope.message.chat() {
+                                    &chat_sender
+                                } else if matches!(&envelope.message, BrowserMessage::Status { .. }) {
+                                    &status_sender
                                 } else {
                                     &sender
                                 };
-                                match queue.try_send((channel, generation, envelope)) {
+                                match queue.try_send((channel, generation, envelope, Instant::now())) {
                                     Ok(()) => {}
-                                    Err(std::sync::mpsc::TrySendError::Full((_, _, envelope))) => {
+                                    Err(std::sync::mpsc::TrySendError::Full((_, _, envelope, _))) => {
                                         if !matches!(
                                             envelope.message,
                                             BrowserMessage::Status { .. }
                                         ) {
+                                            diagnostics::record(&source_host, "bridge_busy", diagnostics::packet(&envelope.message));
                                             reply(
                                                 &event_window,
                                                 &envelope.id,
@@ -2356,10 +2559,12 @@ pub async fn chzzk_browser_request_control(
     window: Webview,
     action: ControlAction,
 ) -> ApiResult<BrowserSnapshot> {
-    (|| {
+    tauri::async_runtime::spawn_blocking(move || {
         require_main(&window)?;
-        host(&app)?.request_control(action)
-    })()
+        host(&app)?.request_control_from_ui(&app, action)
+    })
+    .await
+    .unwrap_or_else(|_| Err(unavailable()))
     .into()
 }
 #[tauri::command]
@@ -2591,7 +2796,7 @@ mod tests {
         let (_root, host, request) = armed_host();
         host.inner.view.lock().unwrap().error =
             Some("원본 저장 불가: 지원하지 않는 MP4 형식".into());
-        let message = serde_json::from_value(json!({"kind":"status","channelId":CHANNEL,"ready":false,"recording":false,"detail":"original_unavailable"})).unwrap();
+        let message = serde_json::from_value(json!({"kind":"status","channelId":CHANNEL,"requestId":request,"ready":false,"recording":false,"detail":"original_unavailable"})).unwrap();
         host.process(CHANNEL, message).unwrap();
         let snapshot = host.snapshot().unwrap();
         assert_eq!(snapshot.status, "error");
@@ -2607,7 +2812,7 @@ mod tests {
             .unwrap()
             .to_owned();
         for detail in ["waiting_source", "recording"] {
-            let message = serde_json::from_value(json!({"kind":"status","channelId":CHANNEL,"ready":true,"recording":true,"detail":detail,"paused":true})).unwrap();
+            let message = serde_json::from_value(json!({"kind":"status","channelId":CHANNEL,"requestId":request,"ready":true,"recording":true,"detail":detail,"paused":true})).unwrap();
             host.process(CHANNEL, message).unwrap();
             assert_eq!(host.snapshot().unwrap().status, detail);
             assert_eq!(host.active_ids(), vec![id.clone()]);
@@ -2730,6 +2935,26 @@ mod tests {
         }
         assert!(begin(&host, &request).is_err());
         assert!(host.snapshot().unwrap().recordings.is_empty());
+    }
+    #[test]
+    fn screenshot_intents_use_the_photo_lane_not_the_recording_writer() {
+        let photo = BrowserMessage::ControlIntent {
+            channel_id: CHANNEL.into(),
+            action: ControlAction::Screenshot,
+        };
+        assert!(photo.screenshot_lane());
+        assert!(!photo.screenshot());
+        for action in [ControlAction::RecordStart, ControlAction::RecordStop] {
+            assert!(!BrowserMessage::ControlIntent {
+                channel_id: CHANNEL.into(),
+                action
+            }
+            .screenshot_lane());
+        }
+        assert!(BrowserMessage::ScreenshotFinish {
+            request_id: uuid::Uuid::new_v4().to_string()
+        }
+        .screenshot_lane());
     }
     #[test]
     fn screenshot_failure_never_interrupts_recording_and_requires_bound_nonce() {
@@ -3229,6 +3454,7 @@ mod tests {
             CHANNEL,
             BrowserMessage::Status {
                 channel_id: CHANNEL.into(),
+                request_id: None,
                 ready: true,
                 recording: false,
                 detail: "saved".into(),
@@ -3252,6 +3478,50 @@ mod tests {
         assert_eq!(host.active_ids(), vec![id]);
     }
     #[test]
+    fn delayed_status_from_another_start_cannot_interrupt_the_current_recording() {
+        let (_root, host, request) = armed_host();
+        let id = begin(&host, &request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for nonce in [None, Some(uuid::Uuid::new_v4().to_string())] {
+            host.process(
+                CHANNEL,
+                serde_json::from_value(json!({"kind":"status", "channelId":CHANNEL,
+                "requestId":nonce,"ready":true,"recording":false,"detail":"native_rejected"}))
+                .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(host.active_ids(), vec![id.clone()]);
+        }
+    }
+    #[test]
+    fn chat_does_not_wait_for_the_video_write_reservation() {
+        let (_root, host, request) = armed_host();
+        let id = begin(&host, &request).unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let held = host.inner.writes.lock().unwrap();
+        let other = host.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let result = other.process(
+                CHANNEL,
+                BrowserMessage::ChatStatus {
+                    recording_id: id,
+                    detail: "connected".into(),
+                    dropped_messages: 0,
+                },
+            );
+            let _ = send.send(result);
+        });
+        let result = receive.recv_timeout(Duration::from_secs(2));
+        drop(held);
+        worker.join().unwrap();
+        assert!(result.is_ok(), "chat waited on the video writer");
+    }
+    #[test]
     fn renderer_abandoning_a_lost_begin_ack_releases_native_session() {
         let (_root, host, request) = armed_host();
         begin(&host, &request).unwrap();
@@ -3259,6 +3529,7 @@ mod tests {
             CHANNEL,
             BrowserMessage::Status {
                 channel_id: CHANNEL.into(),
+                request_id: Some(request.clone()),
                 ready: true,
                 recording: false,
                 detail: "native_rejected".into(),
@@ -3283,6 +3554,7 @@ mod tests {
             CHANNEL,
             BrowserMessage::Status {
                 channel_id: CHANNEL.into(),
+                request_id: Some(request.clone()),
                 ready: true,
                 recording: false,
                 detail: "no_audio".into(),

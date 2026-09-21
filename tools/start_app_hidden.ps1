@@ -161,6 +161,7 @@ try {
 
   $appProcess = Start-Process `
     -FilePath $releaseExecutable `
+    -ArgumentList "/prefetch:1" `
     -WorkingDirectory $projectRoot `
     -WindowStyle Normal `
     -RedirectStandardOutput $appStandardOutput `

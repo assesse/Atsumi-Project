@@ -5,6 +5,7 @@ pub mod domain;
 pub mod infrastructure;
 pub mod interface;
 pub mod source;
+mod startup;
 pub mod streaming;
 pub mod thumbnail;
 
@@ -485,6 +486,12 @@ fn schedule_tray_work_status_refresh(app: &tauri::AppHandle) {
 }
 
 fn request_tray_quit(app: &tauri::AppHandle) {
+    if let Some(startup) = app.try_state::<Arc<startup::Startup>>() {
+        if !startup.ready() {
+            startup::app_startup_cancel(app.clone(), startup);
+            return;
+        }
+    }
     let result = if let Some(state) = app.try_state::<AppState>() {
         match state.request_graceful_quit(
             app.clone(),
@@ -534,10 +541,430 @@ fn replay_protocol_failure(status: StatusCode) -> Response<Vec<u8>> {
         .expect("constant replay response")
 }
 
+fn initialize_backend(
+    app: &tauri::AppHandle,
+    startup: &startup::Startup,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if startup.cancelling() {
+        app.exit(0);
+        return Ok(());
+    }
+    let data_dir = app.path().app_data_dir()?;
+    apply_pending_factory_reset(&data_dir)?;
+    startup::mark("database_begin");
+    let database_path = data_dir.join("atsumi-next.sqlite3");
+    let repository = SqliteRepository::open(&database_path)?;
+    startup::mark("database_ready");
+    let repository = Arc::new(repository);
+    let overlap_merges = Arc::new(infrastructure::OverlapMergeService::new(repository.clone()));
+    // Restore an interrupted filesystem swap before any ordinary worker
+    // or recovery path can read or change its page checkpoints.
+    let recovered_merges = overlap_merges.recover_pending()?;
+    if recovered_merges > 0 {
+        tracing::info!(
+            recovered_merges,
+            "Recovered interrupted edition page merges"
+        );
+    }
+    startup::mark("merge_recovery_ready");
+    let settings = ApplicationService::new(repository.clone()).settings_get()?;
+    startup::mark("settings_ready");
+    // Only application-managed tools; never search a recording folder or PATH.
+    let media_bin = if cfg!(debug_assertions) {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../.runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/bin")
+    } else {
+        app.path().resource_dir()?.join("media-tools/bin")
+    };
+    let media_tools = streaming::browser_merge::MediaTools {
+        ffmpeg: media_bin.join("ffmpeg.exe"),
+        ffprobe: media_bin.join("ffprobe.exe"),
+    };
+    let download_root_configured = !settings.download_root.trim().is_empty();
+    let live_config = hitomi_config_for_settings(&settings);
+    let live_source = HitomiLiveAdapter::new_with_download_tuning(
+        live_config,
+        settings
+            .download_adaptive_concurrency
+            .then_some(settings.download_adaptive_max_requests as usize),
+        repository.clone(),
+    )?;
+    let live_source = Arc::new(live_source.with_summary_cache(repository.clone()));
+    let service = ApplicationService::new(repository.clone())
+        .with_download_repository(repository.clone())
+        .with_search_repository(live_source.clone())
+        .with_automation_repository(repository.clone())
+        .with_tag_catalog(repository.clone(), live_source.clone());
+    let danbooru = Arc::new(
+        interface::DanbooruClient::new()
+            .map_err(|_| std::io::Error::other("could not initialize the Danbooru client"))?,
+    );
+    let recovered_entries = service.download_recover_interrupted()?;
+    startup::mark("sources_ready");
+    let automation_repository: Arc<dyn AutomationRepository> = repository.clone();
+    let auto_find_settings: Arc<dyn StateRepository> = repository.clone();
+    let auto_find_source: Arc<dyn AutoFindSource> = live_source.clone();
+    let (auto_find_event_tx, auto_find_event_rx) = mpsc::channel::<AutoFindRun>();
+    let auto_find = AutoFindSupervisor::new(
+        automation_repository,
+        auto_find_settings,
+        auto_find_source,
+        auto_find_event_tx,
+    );
+    let recovered_auto_find_runs = auto_find.recover_interrupted()?;
+    startup::mark("auto_find_recovery_ready");
+    let auto_find_app = app.clone();
+    thread::Builder::new()
+        .name("atsumi-auto-find-events".into())
+        .spawn(move || {
+            while let Ok(run) = auto_find_event_rx.recv() {
+                if let Err(error) = auto_find_app.emit("auto-find:changed", &run) {
+                    tracing::warn!(error = %error, "could not emit auto-find:changed");
+                }
+                schedule_tray_work_status_refresh(&auto_find_app);
+            }
+        })?;
+    let artifact_store: Arc<dyn ArtifactStore> = Arc::new(FilesystemArtifactStore::new());
+    let (preview_event_tx, preview_event_rx) = mpsc::channel::<GalleryPreviewUpdate>();
+    let gallery_previews = GalleryPreviewService::new(
+        repository.clone(),
+        repository.clone(),
+        repository.clone(),
+        Arc::clone(&artifact_store),
+        preview_event_tx,
+    )?;
+    let excluded_artifacts = Arc::new(ExcludedArtifactService::new(
+        repository.clone(),
+        Arc::clone(&artifact_store),
+    ));
+    match excluded_artifacts.reconcile_pending() {
+        Ok(report) => {
+            for issue in &report.issues {
+                tracing::warn!(issue, "startup excluded folder move was deferred");
+            }
+            for id in report.gallery_ids {
+                if let Ok(id) = domain::GalleryId::new(id) {
+                    gallery_previews.enqueue(id);
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred")
+        }
+    }
+    let thumbnail_config = ThumbnailCoordinatorConfig {
+        max_concurrency: settings.concurrent_image_requests as usize,
+        request_start_interval: Duration::from_millis(settings.request_start_interval_ms),
+        ..ThumbnailCoordinatorConfig::default()
+    };
+    let remote_thumbnail_resolver: Arc<dyn ThumbnailResolver> = live_source.clone();
+    let artifact_repository: Arc<dyn ArtifactRepository> = repository.clone();
+    let thumbnail_settings: Arc<dyn StateRepository> = repository.clone();
+    let thumbnail_disk_cache = Arc::new(ThumbnailDiskCache::new(
+        data_dir.join("thumbnail-cache"),
+        u64::from(settings.cache_limit_gb) * 1024 * 1024 * 1024,
+    ));
+    let thumbnail_resolver: Arc<dyn ThumbnailResolver> = Arc::new(
+        CompositeThumbnailResolver::new(
+            remote_thumbnail_resolver,
+            Arc::clone(&artifact_repository),
+            thumbnail_settings,
+            Arc::clone(&artifact_store),
+        )
+        .with_disk_cache(Arc::clone(&thumbnail_disk_cache)),
+    );
+    let thumbnails = ThumbnailCoordinator::new(thumbnail_resolver, thumbnail_config)?;
+    startup::mark("previews_ready");
+    let preview_app = app.clone();
+    let preview_thumbnails = thumbnails.clone();
+    // Warming uses the shared, low-priority queue but has no UI subscriber.
+    // Dropping the receiver discards completions without an extra waiter thread.
+    let (preview_warm_tx, _) = mpsc::channel::<ThumbnailCompletionEventDto>();
+    thread::Builder::new()
+        .name("atsumi-gallery-preview-events".into())
+        .spawn(move || {
+            while let Ok(update) = preview_event_rx.recv() {
+                if let Some(preview) = update.preview {
+                    if let Err(error) = preview_app.emit("gallery-preview:updated", &preview) {
+                        tracing::warn!(error = %error, "could not emit gallery-preview:updated");
+                    }
+                    if let (Some(entry_id), Some(page)) = (preview.entry_id, preview.source_page) {
+                        if let Ok(key) = ThumbnailKey::artifact_page(entry_id, page) {
+                            let _ = preview_thumbnails.request_with_completion(
+                                ThumbnailRequestDto {
+                                    key,
+                                    consumer: ThumbnailConsumer::Downloads,
+                                    priority: ThumbnailPriority::Prefetch,
+                                },
+                                preview_warm_tx.clone(),
+                            );
+                        }
+                    }
+                }
+                for artist in update.artists {
+                    if let Err(error) = preview_app.emit("artist-preview:updated", &artist) {
+                        tracing::warn!(error = %error, "could not emit artist-preview:updated");
+                    }
+                }
+            }
+        })?;
+    let (thumbnail_completion_tx, thumbnail_completion_rx) =
+        mpsc::channel::<ThumbnailCompletionEventDto>();
+    let thumbnail_app = app.clone();
+    thread::Builder::new()
+        .name("atsumi-thumbnail-events".into())
+        .spawn(move || {
+            while let Ok(event) = thumbnail_completion_rx.recv() {
+                if let Err(error) = thumbnail_app.emit("thumbnail:ready", &event) {
+                    tracing::warn!(error = %error, "could not emit thumbnail:ready");
+                }
+            }
+        })?;
+    let detail_original_repository: Arc<dyn DownloadPipelineRepository> = repository.clone();
+    let detail_originals = DetailOriginalSupervisor::new_with_artifacts(
+        live_source.clone(),
+        detail_original_repository,
+        Arc::clone(&artifact_store),
+        &data_dir,
+    )?;
+    startup::mark("originals_ready");
+    let duplicate_repository: Arc<dyn DuplicateRepository> = repository.clone();
+    let duplicate_settings: Arc<dyn StateRepository> = repository.clone();
+    let (duplicate_event_tx, duplicate_event_rx) = mpsc::channel::<DuplicateScanRun>();
+    let duplicates = DuplicateSupervisor::new(
+        Arc::clone(&duplicate_repository),
+        duplicate_settings,
+        Arc::clone(&artifact_store),
+        Arc::new(DisabledDuplicateRelationProvider),
+        duplicate_event_tx,
+    );
+    let recovered_duplicate_runs = duplicates.recover_interrupted()?;
+    startup::mark("duplicates_ready");
+    let duplicate_app = app.clone();
+    thread::Builder::new()
+        .name("atsumi-duplicate-events".into())
+        .spawn(move || {
+            while let Ok(run) = duplicate_event_rx.recv() {
+                if let Err(error) = duplicate_app.emit("duplicate:changed", &run) {
+                    tracing::warn!(error = %error, "could not emit duplicate:changed");
+                }
+                schedule_tray_work_status_refresh(&duplicate_app);
+            }
+        })?;
+    let internal_repository: Arc<dyn InternalDuplicateRepository> = repository.clone();
+    let internal_artifact_repository: Arc<dyn ArtifactRepository> = repository.clone();
+    let internal_settings: Arc<dyn StateRepository> = repository.clone();
+    let (internal_event_tx, internal_event_rx) = mpsc::channel::<InternalScanRun>();
+    let (internal_progress_tx, internal_progress_rx) =
+        mpsc::channel::<InternalArtifactScanProgress>();
+    let internal_duplicates = InternalDuplicateSupervisor::new_with_progress_events(
+        internal_repository,
+        duplicate_repository,
+        internal_artifact_repository,
+        internal_settings,
+        Arc::clone(&artifact_store),
+        internal_event_tx,
+        internal_progress_tx,
+    );
+    let recovered_internal_runs = internal_duplicates.recover_interrupted()?;
+    let reconciled_internal_pages = if download_root_configured {
+        match internal_duplicates.reconcile_pending_page_moves() {
+            Ok(count) => count,
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "startup internal page quarantine reconciliation was deferred"
+                );
+                0
+            }
+        }
+    } else {
+        0
+    };
+    let internal_app = app.clone();
+    startup::mark("internal_recovery_ready");
+    thread::Builder::new()
+        .name("atsumi-internal-duplicate-events".into())
+        .spawn(move || {
+            while let Ok(run) = internal_event_rx.recv() {
+                if let Err(error) = internal_app.emit("internal-duplicate:changed", &run) {
+                    tracing::warn!(
+                        error = %error,
+                        "could not emit internal-duplicate:changed"
+                    );
+                }
+                schedule_tray_work_status_refresh(&internal_app);
+            }
+        })?;
+    let internal_progress_app = app.clone();
+    thread::Builder::new()
+        .name("atsumi-internal-duplicate-progress-events".into())
+        .spawn(move || {
+            while let Ok(progress) = internal_progress_rx.recv() {
+                if let Err(error) =
+                    internal_progress_app.emit("internal-duplicate:artifact-progress", &progress)
+                {
+                    tracing::warn!(
+                        error = %error,
+                        "could not emit internal-duplicate:artifact-progress"
+                    );
+                }
+            }
+        })?;
+    let download_repository: Arc<dyn DownloadOverlapRepository> = repository.clone();
+    let settings_repository: Arc<dyn StateRepository> = repository.clone();
+    let download_source: Arc<dyn DownloadSourcePort> = live_source.clone();
+    let (download_event_tx, download_event_rx) = mpsc::channel::<DownloadJobProjection>();
+    let download_app = app.clone();
+    thread::Builder::new()
+        .name("atsumi-download-events".into())
+        .spawn(move || {
+            while let Ok(projection) = download_event_rx.recv() {
+                if let Err(error) = download_app.emit("job:changed", &projection.job) {
+                    tracing::warn!(error = %error, "could not emit job:changed");
+                }
+                if let Err(error) = download_app.emit("download:changed", &projection.download) {
+                    tracing::warn!(error = %error, "could not emit download:changed");
+                }
+                schedule_tray_work_status_refresh(&download_app);
+            }
+        })?;
+    let downloads = DownloadSupervisor::new(
+        download_repository,
+        settings_repository,
+        download_source,
+        Arc::clone(&artifact_store),
+        download_event_tx,
+        DownloadSupervisor::worker_count_for_http_limit(
+            if settings.download_adaptive_concurrency {
+                settings.download_adaptive_max_requests as usize
+            } else {
+                settings.concurrent_image_requests as usize
+            },
+        ),
+    )?;
+    let completion_previews = gallery_previews.clone();
+    downloads.set_completion_handler(Arc::new(move |gallery_id| {
+        completion_previews.enqueue(gallery_id)
+    }));
+    let exclusion_service = Arc::clone(&excluded_artifacts);
+    let exclusion_previews = gallery_previews.clone();
+    downloads.set_exclusion_handler(Arc::new(move || match exclusion_service.reconcile() {
+        Ok(report) => {
+            for issue in &report.issues {
+                tracing::warn!(issue, "excluded folder move was deferred");
+            }
+            for id in report.gallery_ids {
+                if let Ok(id) = domain::GalleryId::new(id) {
+                    exclusion_previews.enqueue(id);
+                }
+            }
+        }
+        Err(error) => tracing::warn!(error = %error, "excluded folder reconciliation was deferred"),
+    }));
+    let mut recovery = if download_root_configured {
+        match downloads.recover_startup_state_without_resume() {
+            Ok(report) => Some(report),
+            Err(_) => {
+                tracing::warn!(
+                    "startup download recovery was deferred; no ambiguous file was changed"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    startup::mark("file_recovery_ready");
+    let startup_recovery_issues = recovery.as_ref().map_or(0, |r| r.issues.len());
+    let resume_downloads = downloads.clone();
+    let startup_previews = gallery_previews.clone();
+    let startup_excluded = excluded_artifacts.clone();
+    app.manage(
+        AppState::new(
+            service,
+            danbooru,
+            thumbnails,
+            thumbnail_completion_tx,
+            detail_originals,
+            downloads,
+            auto_find,
+            duplicates,
+            internal_duplicates,
+            Arc::new(WindowsFolderPicker::new()),
+            artifact_store,
+            live_source.clone(),
+            data_dir.clone(),
+        )
+        .with_gallery_previews(gallery_previews)
+        .with_excluded_artifacts(excluded_artifacts)
+        .with_overlap_merges(overlap_merges)
+        .with_thumbnail_disk_cache(thumbnail_disk_cache),
+    );
+
+    let mut resumed_jobs = 0;
+    if !startup.commit_ready(|| {
+        if let Some(report) = &mut recovery {
+            if let Err(error) = resume_downloads.resume_after_reconcile(report) {
+                tracing::warn!(error = %error, "download resume was deferred");
+            }
+            resumed_jobs = report.resumed_jobs;
+        }
+    }) {
+        app.state::<AppState>().cancel_startup(app.clone());
+        return Ok(());
+    }
+    startup::mark("workers_resumed");
+    app.state::<AppState>()
+        .deferred_browser()
+        .start(app.clone(), data_dir, media_tools);
+    // Maintenance has no role in rendering the first frame. It is cancellable
+    // through normal application shutdown and never runs on the UI event loop.
+    let maintenance_app = app.clone();
+    if let Err(error) = thread::Builder::new().name("atsumi-startup-maintenance".into()).spawn(move || {
+        thread::sleep(Duration::from_secs(2));
+        if maintenance_app.state::<AppState>().is_quitting() { return; }
+        startup_previews.start_backfill();
+        match startup_excluded.reconcile() {
+            Ok(report) => {
+                for issue in &report.issues { tracing::warn!(issue, "startup excluded folder move was deferred"); }
+                for id in report.gallery_ids { if let Ok(id) = domain::GalleryId::new(id) { startup_previews.enqueue(id); } }
+            }
+            Err(error) => tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred"),
+        }
+    }) {
+        tracing::warn!(error = %error, "optional startup maintenance could not start");
+    }
+    schedule_tray_work_status_refresh(app);
+    tracing::info!(
+        app_version = env!("CARGO_PKG_VERSION"),
+        recovered_entries,
+        recovered_auto_find_runs,
+        recovered_duplicate_runs,
+        recovered_internal_runs,
+        reconciled_internal_pages,
+        startup_recovery_issues,
+        resumed_jobs,
+        "Atsumi backend initialized"
+    );
+    Ok(())
+}
+
+/// Called at the first line of main, separately from the large Tauri builder.
+#[inline(never)]
+pub fn initialize_startup_metrics() {
+    startup::init_metrics();
+    startup::mark("rust_main");
+}
+
+#[inline(never)]
 pub fn run() -> tauri::Result<()> {
+    startup::init_metrics();
+    startup::mark("process_entry");
     infrastructure::telemetry::init();
 
     let result = tauri::Builder::default()
+        .manage(Arc::new(startup::Startup::default()))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol("atsumi-player", |context, request| {
@@ -569,7 +996,10 @@ pub fn run() -> tauri::Result<()> {
                     return;
                 }
             };
-            let state = context.app_handle().state::<AppState>();
+            let Some(state) = context.app_handle().try_state::<AppState>() else {
+                responder.respond(detail_original_protocol_response(StatusCode::SERVICE_UNAVAILABLE, Vec::new(), None));
+                return;
+            };
             let Some((path, content_type)) = state.detail_original_media_file(&request_id) else {
                 responder.respond(detail_original_protocol_response(StatusCode::NOT_FOUND, Vec::new(), None));
                 return;
@@ -591,7 +1021,11 @@ pub fn run() -> tauri::Result<()> {
                     return;
                 }
             };
-            let client = Arc::clone(&context.app_handle().state::<AppState>().danbooru);
+            let Some(state) = context.app_handle().try_state::<AppState>() else {
+                responder.respond(danbooru_media_protocol_response(StatusCode::SERVICE_UNAVAILABLE, Vec::new(), None));
+                return;
+            };
+            let client = Arc::clone(&state.danbooru);
             thread::spawn(move || {
                 let response = match client.media(&token) {
                     Ok(media) => danbooru_media_protocol_response(
@@ -653,7 +1087,7 @@ pub fn run() -> tauri::Result<()> {
                 }
             );
             if refresh_status {
-                refresh_tray_work_status(app);
+                schedule_tray_work_status_refresh(app);
             }
             let restore = matches!(
                 event,
@@ -695,6 +1129,11 @@ pub fn run() -> tauri::Result<()> {
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                let startup = window.state::<Arc<startup::Startup>>();
+                if !startup.frontend_connected() && !startup.ready() {
+                    startup::app_startup_cancel(window.app_handle().clone(), startup);
+                    return;
+                }
                 if let Err(error) =
                     window.emit("app:exit-requested", serde_json::json!({ "source": "window_close" }))
                 {
@@ -703,325 +1142,7 @@ pub fn run() -> tauri::Result<()> {
             }
         })
         .setup(|app| {
-            let data_dir = app.path().app_data_dir()?;
-            apply_pending_factory_reset(&data_dir)?;
-            let database_path = data_dir.join("atsumi-next.sqlite3");
-            let repository = SqliteRepository::open(&database_path)?;
-            let repository = Arc::new(repository);
-            let overlap_merges = Arc::new(infrastructure::OverlapMergeService::new(repository.clone()));
-            // Restore an interrupted filesystem swap before any ordinary worker
-            // or recovery path can read or change its page checkpoints.
-            let recovered_merges = overlap_merges.recover_pending()?;
-            if recovered_merges > 0 {
-                tracing::info!(recovered_merges, "Recovered interrupted edition page merges");
-            }
-            let settings = ApplicationService::new(repository.clone()).settings_get()?;
-            // Only application-managed tools; never search a recording folder or PATH.
-            let media_bin = if cfg!(debug_assertions) {
-                std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("../.runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/bin")
-            } else {
-                app.path().resource_dir()?.join("media-tools/bin")
-            };
-            let media_tools = streaming::browser_merge::MediaTools {
-                ffmpeg: media_bin.join("ffmpeg.exe"), ffprobe: media_bin.join("ffprobe.exe"),
-            };
-            let official_browser = match streaming::browser::OfficialBrowser::new_with_media_tools(data_dir.clone(), Some(media_tools)) {
-                Ok(service) => Some(service),
-                Err(error) => { tracing::warn!(code = %error.code, "official browser recording storage initialization failed"); None }
-            };
-            if let Some(browser) = &official_browser {
-                app.manage(streaming::replay::ReplayService::new(&data_dir, browser.capture_store()));
-            }
-            let download_root_configured = !settings.download_root.trim().is_empty();
-            let live_config = hitomi_config_for_settings(&settings);
-            let live_source = HitomiLiveAdapter::new_with_download_tuning(live_config, settings.download_adaptive_concurrency.then_some(settings.download_adaptive_max_requests as usize), repository.clone())?;
-            let live_source = Arc::new(live_source.with_summary_cache(repository.clone()));
-            let service = ApplicationService::new(repository.clone())
-                .with_download_repository(repository.clone())
-                .with_search_repository(live_source.clone())
-                .with_automation_repository(repository.clone())
-                .with_tag_catalog(repository.clone(), live_source.clone());
-            let danbooru = Arc::new(interface::DanbooruClient::new().map_err(|_| {
-                std::io::Error::other("could not initialize the Danbooru client")
-            })?);
-            let recovered_entries = service.download_recover_interrupted()?;
-            let automation_repository: Arc<dyn AutomationRepository> = repository.clone();
-            let auto_find_settings: Arc<dyn StateRepository> = repository.clone();
-            let auto_find_source: Arc<dyn AutoFindSource> = live_source.clone();
-            let (auto_find_event_tx, auto_find_event_rx) = mpsc::channel::<AutoFindRun>();
-            let auto_find = AutoFindSupervisor::new(
-                automation_repository,
-                auto_find_settings,
-                auto_find_source,
-                auto_find_event_tx,
-            );
-            let recovered_auto_find_runs = auto_find.recover_interrupted()?;
-            let auto_find_app = app.handle().clone();
-            thread::Builder::new()
-                .name("atsumi-auto-find-events".into())
-                .spawn(move || {
-                    while let Ok(run) = auto_find_event_rx.recv() {
-                        if let Err(error) = auto_find_app.emit("auto-find:changed", &run) {
-                            tracing::warn!(error = %error, "could not emit auto-find:changed");
-                        }
-                        schedule_tray_work_status_refresh(&auto_find_app);
-                    }
-                })?;
-            let artifact_store: Arc<dyn ArtifactStore> =
-                Arc::new(FilesystemArtifactStore::new());
-            let (preview_event_tx, preview_event_rx) = mpsc::channel::<GalleryPreviewUpdate>();
-            let gallery_previews = GalleryPreviewService::new(
-                repository.clone(), repository.clone(), repository.clone(),
-                Arc::clone(&artifact_store), preview_event_tx,
-            )?;
-            let excluded_artifacts = Arc::new(ExcludedArtifactService::new(repository.clone(), Arc::clone(&artifact_store)));
-            match excluded_artifacts.reconcile_pending() {
-                Ok(report) => {
-                    for issue in &report.issues { tracing::warn!(issue, "startup excluded folder move was deferred"); }
-                    for id in report.gallery_ids { if let Ok(id) = domain::GalleryId::new(id) { gallery_previews.enqueue(id); } }
-                }
-                Err(error) => tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred"),
-            }
-            let thumbnail_config = ThumbnailCoordinatorConfig {
-                max_concurrency: settings.concurrent_image_requests as usize,
-                request_start_interval: Duration::from_millis(settings.request_start_interval_ms),
-                ..ThumbnailCoordinatorConfig::default()
-            };
-            let remote_thumbnail_resolver: Arc<dyn ThumbnailResolver> = live_source.clone();
-            let artifact_repository: Arc<dyn ArtifactRepository> = repository.clone();
-            let thumbnail_settings: Arc<dyn StateRepository> = repository.clone();
-            let thumbnail_disk_cache = Arc::new(ThumbnailDiskCache::new(
-                data_dir.join("thumbnail-cache"),
-                u64::from(settings.cache_limit_gb) * 1024 * 1024 * 1024,
-            ));
-            let thumbnail_resolver: Arc<dyn ThumbnailResolver> = Arc::new(
-                CompositeThumbnailResolver::new(
-                    remote_thumbnail_resolver,
-                    Arc::clone(&artifact_repository),
-                    thumbnail_settings,
-                    Arc::clone(&artifact_store),
-                ).with_disk_cache(Arc::clone(&thumbnail_disk_cache)),
-            );
-            let thumbnails = ThumbnailCoordinator::new(thumbnail_resolver, thumbnail_config)?;
-            let preview_app = app.handle().clone();
-            let preview_thumbnails = thumbnails.clone();
-            // Warming uses the shared, low-priority queue but has no UI subscriber.
-            // Dropping the receiver discards completions without an extra waiter thread.
-            let (preview_warm_tx, _) = mpsc::channel::<ThumbnailCompletionEventDto>();
-            thread::Builder::new().name("atsumi-gallery-preview-events".into()).spawn(move || {
-                while let Ok(update) = preview_event_rx.recv() {
-                    if let Some(preview) = update.preview {
-                        if let Err(error) = preview_app.emit("gallery-preview:updated", &preview) {
-                            tracing::warn!(error = %error, "could not emit gallery-preview:updated");
-                        }
-                        if let (Some(entry_id), Some(page)) = (preview.entry_id, preview.source_page) {
-                            if let Ok(key) = ThumbnailKey::artifact_page(entry_id, page) {
-                                let _ = preview_thumbnails.request_with_completion(ThumbnailRequestDto {
-                                    key, consumer: ThumbnailConsumer::Downloads, priority: ThumbnailPriority::Prefetch,
-                                }, preview_warm_tx.clone());
-                            }
-                        }
-                    }
-                    for artist in update.artists {
-                        if let Err(error) = preview_app.emit("artist-preview:updated", &artist) {
-                            tracing::warn!(error = %error, "could not emit artist-preview:updated");
-                        }
-                    }
-                }
-            })?;
-            let (thumbnail_completion_tx, thumbnail_completion_rx) =
-                mpsc::channel::<ThumbnailCompletionEventDto>();
-            let thumbnail_app = app.handle().clone();
-            thread::Builder::new()
-                .name("atsumi-thumbnail-events".into())
-                .spawn(move || {
-                    while let Ok(event) = thumbnail_completion_rx.recv() {
-                        if let Err(error) = thumbnail_app.emit("thumbnail:ready", &event) {
-                            tracing::warn!(error = %error, "could not emit thumbnail:ready");
-                        }
-                    }
-                })?;
-            let detail_original_repository: Arc<dyn DownloadPipelineRepository> = repository.clone();
-            let detail_originals = DetailOriginalSupervisor::new_with_artifacts(
-                live_source.clone(),
-                detail_original_repository,
-                Arc::clone(&artifact_store),
-                &data_dir,
-            )?;
-            let duplicate_repository: Arc<dyn DuplicateRepository> = repository.clone();
-            let duplicate_settings: Arc<dyn StateRepository> = repository.clone();
-            let (duplicate_event_tx, duplicate_event_rx) = mpsc::channel::<DuplicateScanRun>();
-            let duplicates = DuplicateSupervisor::new(
-                Arc::clone(&duplicate_repository),
-                duplicate_settings,
-                Arc::clone(&artifact_store),
-                Arc::new(DisabledDuplicateRelationProvider),
-                duplicate_event_tx,
-            );
-            let recovered_duplicate_runs = duplicates.recover_interrupted()?;
-            let duplicate_app = app.handle().clone();
-            thread::Builder::new()
-                .name("atsumi-duplicate-events".into())
-                .spawn(move || {
-                    while let Ok(run) = duplicate_event_rx.recv() {
-                        if let Err(error) = duplicate_app.emit("duplicate:changed", &run) {
-                            tracing::warn!(error = %error, "could not emit duplicate:changed");
-                        }
-                        schedule_tray_work_status_refresh(&duplicate_app);
-                    }
-                })?;
-            let internal_repository: Arc<dyn InternalDuplicateRepository> = repository.clone();
-            let internal_artifact_repository: Arc<dyn ArtifactRepository> = repository.clone();
-            let internal_settings: Arc<dyn StateRepository> = repository.clone();
-            let (internal_event_tx, internal_event_rx) = mpsc::channel::<InternalScanRun>();
-            let (internal_progress_tx, internal_progress_rx) =
-                mpsc::channel::<InternalArtifactScanProgress>();
-            let internal_duplicates = InternalDuplicateSupervisor::new_with_progress_events(
-                internal_repository,
-                duplicate_repository,
-                internal_artifact_repository,
-                internal_settings,
-                Arc::clone(&artifact_store),
-                internal_event_tx,
-                internal_progress_tx,
-            );
-            let recovered_internal_runs = internal_duplicates.recover_interrupted()?;
-            let reconciled_internal_pages = if download_root_configured {
-                match internal_duplicates.reconcile_pending_page_moves() {
-                    Ok(count) => count,
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            "startup internal page quarantine reconciliation was deferred"
-                        );
-                        0
-                    }
-                }
-            } else {
-                0
-            };
-            let internal_app = app.handle().clone();
-            thread::Builder::new()
-                .name("atsumi-internal-duplicate-events".into())
-                .spawn(move || {
-                    while let Ok(run) = internal_event_rx.recv() {
-                        if let Err(error) = internal_app.emit("internal-duplicate:changed", &run) {
-                            tracing::warn!(
-                                error = %error,
-                                "could not emit internal-duplicate:changed"
-                            );
-                        }
-                        schedule_tray_work_status_refresh(&internal_app);
-                    }
-                })?;
-            let internal_progress_app = app.handle().clone();
-            thread::Builder::new()
-                .name("atsumi-internal-duplicate-progress-events".into())
-                .spawn(move || {
-                    while let Ok(progress) = internal_progress_rx.recv() {
-                        if let Err(error) = internal_progress_app
-                            .emit("internal-duplicate:artifact-progress", &progress)
-                        {
-                            tracing::warn!(
-                                error = %error,
-                                "could not emit internal-duplicate:artifact-progress"
-                            );
-                        }
-                    }
-                })?;
-            let download_repository: Arc<dyn DownloadOverlapRepository> = repository.clone();
-            let settings_repository: Arc<dyn StateRepository> = repository.clone();
-            let download_source: Arc<dyn DownloadSourcePort> = live_source.clone();
-            let (download_event_tx, download_event_rx) =
-                mpsc::channel::<DownloadJobProjection>();
-            let download_app = app.handle().clone();
-            thread::Builder::new()
-                .name("atsumi-download-events".into())
-                .spawn(move || {
-                    while let Ok(projection) = download_event_rx.recv() {
-                        if let Err(error) = download_app.emit("job:changed", &projection.job) {
-                            tracing::warn!(error = %error, "could not emit job:changed");
-                        }
-                        if let Err(error) =
-                            download_app.emit("download:changed", &projection.download)
-                        {
-                            tracing::warn!(error = %error, "could not emit download:changed");
-                        }
-                        schedule_tray_work_status_refresh(&download_app);
-                    }
-                })?;
-            let downloads = DownloadSupervisor::new(
-                download_repository,
-                settings_repository,
-                download_source,
-                Arc::clone(&artifact_store),
-                download_event_tx,
-                DownloadSupervisor::worker_count_for_http_limit(if settings.download_adaptive_concurrency { settings.download_adaptive_max_requests as usize } else { settings.concurrent_image_requests as usize }),
-            )?;
-            let completion_previews = gallery_previews.clone();
-            downloads.set_completion_handler(Arc::new(move |gallery_id| completion_previews.enqueue(gallery_id)));
-            let exclusion_service = Arc::clone(&excluded_artifacts);
-            let exclusion_previews = gallery_previews.clone();
-            downloads.set_exclusion_handler(Arc::new(move || {
-                match exclusion_service.reconcile() {
-                    Ok(report) => {
-                        for issue in &report.issues { tracing::warn!(issue, "excluded folder move was deferred"); }
-                        for id in report.gallery_ids { if let Ok(id) = domain::GalleryId::new(id) { exclusion_previews.enqueue(id); } }
-                    }
-                    Err(error) => tracing::warn!(error = %error, "excluded folder reconciliation was deferred"),
-                }
-            }));
-            let (startup_recovery_issues, resumed_jobs) =
-                if download_root_configured {
-                    match downloads.recover_startup_state() {
-                        Ok(report) => (report.issues.len(), report.resumed_jobs),
-                        Err(_) => {
-                            tracing::warn!(
-                                "startup download recovery was deferred; no ambiguous file was changed"
-                            );
-                            (1, 0)
-                        }
-                    }
-                } else {
-                    (0, 0)
-                };
-            gallery_previews.start_backfill();
-            let startup_excluded = Arc::clone(&excluded_artifacts);
-            let startup_previews = gallery_previews.clone();
-            thread::Builder::new().name("atsumi-excluded-folders".into()).spawn(move || {
-                match startup_excluded.reconcile() {
-                    Ok(report) => {
-                        for issue in &report.issues { tracing::warn!(issue, "startup excluded folder move was deferred"); }
-                        for id in report.gallery_ids { if let Ok(id) = domain::GalleryId::new(id) { startup_previews.enqueue(id); } }
-                    }
-                    Err(error) => tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred"),
-                }
-            })?;
-            app.manage(AppState::new(
-                service,
-                danbooru,
-                thumbnails,
-                thumbnail_completion_tx,
-                detail_originals,
-                downloads,
-                auto_find,
-                duplicates,
-                internal_duplicates,
-                Arc::new(WindowsFolderPicker::new()),
-                artifact_store,
-                live_source.clone(),
-                data_dir,
-            ).with_gallery_previews(gallery_previews).with_excluded_artifacts(excluded_artifacts)
-                .with_overlap_merges(overlap_merges)
-                .with_thumbnail_disk_cache(thumbnail_disk_cache)
-
-                .with_official_browser(official_browser));
-            if let Ok(browser) = app.state::<AppState>().official_browser() {
-                if let Err(cause) = browser.start_auto_recording(app.handle()) {
-                    tracing::warn!(code = %cause.code, "automatic recording worker could not start");
-                }
-            }
+            startup::mark("native_setup");
             let tray_status = MenuItem::with_id(
                 app,
                 TRAY_WORK_STATUS_ID,
@@ -1045,27 +1166,31 @@ pub fn run() -> tauri::Result<()> {
                 work_status: tray_status,
                 event_refresh_pending: Arc::new(AtomicBool::new(false)),
             });
-            refresh_tray_work_status(app.handle());
+            schedule_tray_work_status_refresh(app.handle());
             if let Some(window) = app.get_window("main") {
                 window.show()?;
                 window.unminimize()?;
                 window.set_focus()?;
             }
-            tracing::info!(
-                database_file = "atsumi-next.sqlite3",
-                app_version = env!("CARGO_PKG_VERSION"),
-                recovered_entries,
-                recovered_auto_find_runs,
-                recovered_duplicate_runs,
-                recovered_internal_runs,
-                reconciled_internal_pages,
-                startup_recovery_issues,
-                resumed_jobs,
-                "Atsumi backend initialized"
-            );
+            let worker_app = app.handle().clone();
+            let startup = app.state::<Arc<startup::Startup>>().inner().clone();
+            thread::Builder::new().name("atsumi-backend-initialize".into()).spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| initialize_backend(&worker_app, &startup)));
+                match result {
+                    Ok(Ok(())) => {}
+                    _ => {
+                        startup.fail();
+                        tracing::error!("backend startup failed; see startup stage timings");
+                        if startup.cancelling() { worker_app.exit(0); }
+                    }
+                }
+            })?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(startup::gate(tauri::generate_handler![
+            startup::app_startup_snapshot,
+            startup::app_startup_frame,
+            startup::app_startup_cancel,
             autostart::autostart_status_get,
             autostart::autostart_enabled_set,
             community::community_read,
@@ -1092,6 +1217,9 @@ pub fn run() -> tauri::Result<()> {
             streaming::browser::chzzk_browser_retry_merge,
             streaming::browser::chzzk_browser_delete_recordings,
             streaming::browser::auto_record::chzzk_auto_record_snapshot,
+            streaming::browser::live_channels::chzzk_live_favorites,
+            streaming::browser::live_channels::chzzk_live_favorite_set,
+            streaming::browser::live_profiles::chzzk_live_channel_profile,
             streaming::browser::auto_record::chzzk_auto_record_add,
             streaming::browser::auto_record::chzzk_auto_record_update,
             streaming::browser::multiview::auto_watch::chzzk_auto_watch_open,
@@ -1201,7 +1329,7 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::app_minimize_to_tray,
             interface::commands::app_active_work_snapshot,
             interface::commands::app_quit,
-        ])
+        ]))
         .run(tauri::generate_context!());
 
     if let Err(ref error) = result {

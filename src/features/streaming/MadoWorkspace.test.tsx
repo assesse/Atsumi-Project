@@ -37,6 +37,36 @@ const enter = async (index: number, text: string) => act(async () => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text); input.dispatchEvent(new Event("input", { bubbles: true }));
 });
 describe("마도 배치", () => {
+  it("routes a single pasted URL through the unified resolver, never the legacy player", async () => {
+    const api = fake();
+    const officialApi = { ...createOfficialBrowserApi("tauri"), open: vi.fn() };
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} officialApi={officialApi} />));
+    const input = container.querySelector<HTMLInputElement>("#official-browser-channel")!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, `https://chzzk.naver.com/live/${A}`); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    await act(async () => button("시청 시작").click());
+    expect(api.configure).toHaveBeenCalledExactlyOnceWith([{ channelId: A, video: true, chat: true }]);
+    expect(officialApi.open).not.toHaveBeenCalled();
+  });
+  it("mixes two recording receivers with an ordinary stream and closes only presentation", async () => {
+    const state = multiple(); state.panes = state.panes.filter(pane => pane.channelId !== D);
+    for (const pane of state.panes) if (pane.kind === "video") { pane.receiverBacked = true; if (pane.channelId !== C) { pane.recordingStatus = "recording"; pane.recordingId = `record-${pane.channelId}`; } }
+    const api = fake(); api.snapshot.mockResolvedValue(success(state)); api.configure.mockResolvedValue(success(state));
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
+    expect(container.querySelectorAll('.mado-native-slot.is-video')).toHaveLength(3);
+    await act(async () => button("내 채널").click());
+    expect(button("시청 시작")).toBeEnabled(); expect(button("마도모드")).toBeEnabled(); expect(button("로그인")).toBeDisabled();
+    await act(async () => button("시청 시작").click());
+    expect(api.configure).toHaveBeenCalledExactlyOnceWith([A, B, C].map(channelId => ({ channelId, video: true, chat: true })));
+    await act(async () => button("시청 종료").click());
+    expect(api.close).toHaveBeenCalledExactlyOnceWith(7); expect(api.requestControl).not.toHaveBeenCalled(); expect(api.confirmControl).not.toHaveBeenCalled();
+  });
+  it("allows grid connection with a live receiver even without the old root player", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    const officialApi = { ...createOfficialBrowserApi("tauri"), snapshot: vi.fn().mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))), connectExtension: vi.fn().mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))) };
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} officialApi={officialApi} />));
+    await act(async () => button("내 채널").click()); expect(button("그리드 연결")).toBeEnabled();
+    await act(async () => button("그리드 연결").click()); expect(officialApi.connectExtension).toHaveBeenCalledOnce(); expect(api.close).not.toHaveBeenCalled();
+  });
   it("forces an account recheck and displays failures without changing the Mado panes", async () => {
     const api = fake(); api.snapshot.mockResolvedValue(success(multiple()));
     const account = { ...createOfficialBrowserApi("tauri"), snapshot: vi.fn().mockResolvedValue(success({ ...emptyOfficialBrowserSnapshot("tauri"), authStatus: "unknown" })) };

@@ -14,6 +14,7 @@ pub mod original_player;
 pub mod provider;
 pub mod replay;
 pub mod replay_assets;
+pub(crate) mod startup;
 mod viewer_metrics;
 
 impl From<model::StreamError> for crate::interface::ApiError {

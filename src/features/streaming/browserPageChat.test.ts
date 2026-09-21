@@ -89,9 +89,20 @@ describe("official page chat receive bridge", () => {
   });
   it("reuses the same batch identity after a lost ACK and does not recreate the socket", async () => {
     const h = fixture(); const socket = h.socket(); const identities: (number | undefined)[] = [];
-    h.setTransport(async (events, id) => { identities.push(id); if (identities.length === 1) throw new Error("lost ACK"); h.batches.push(events); });
-    h.begin(); socket.emit(envelope([message()])); await h.api.stop(RECORDING);
+    h.setTransport(async (events, id) => { identities.push(id); if (identities.length === 1) throw Object.assign(new Error("lost ACK"),{code:"BROWSER_ACK_TIMEOUT"}); h.batches.push(events); });
+    h.begin(); socket.emit(envelope([message()])); const stopped = h.api.stop(RECORDING);
+    await flush(); await vi.advanceTimersByTimeAsync(100); await stopped;
     expect(identities).toEqual([1, 1]); expect(h.batches.flat()).toHaveLength(1); expect(socket.sent).toEqual([]);
+  });
+  it("waits out busy storage instead of exhausting all chat retries in milliseconds", async () => {
+    const h=fixture(); const socket=h.socket(); const identities: (number|undefined)[]=[];
+    h.setTransport(async (events,id)=>{identities.push(id); if(identities.length<=8) throw Object.assign(new Error("busy"),{code:"BRIDGE_BUSY"}); h.batches.push(events);});
+    h.begin(); socket.emit(envelope([message()])); const stopped=h.api.stop(RECORDING); await flush();
+    for(const delay of [100,200,400,800,1600,2000,2000,2000]) {
+      await vi.advanceTimersByTimeAsync(delay); await flush();
+      expect(h.status.some(s=>s.detail==="storage_failed")).toBe(false);
+    }
+    await stopped; expect(identities).toEqual(Array(9).fill(1)); expect(h.batches.flat()).toHaveLength(1);
   });
   it("exports only a bounded official default-color seed, never a raw opaque identifier", async () => {
     const h = fixture(); const socket = h.socket(); h.begin();

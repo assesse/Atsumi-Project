@@ -3,11 +3,11 @@
 //! The journal is authoritative; only the most recent segments are kept in RAM.
 
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     fs::{self, File, Metadata, OpenOptions},
     io::{BufRead, BufReader, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use serde::{Deserialize, Serialize};
@@ -22,14 +22,18 @@ pub(crate) mod deletion;
 #[path = "browser_parts.rs"]
 pub(crate) mod parts;
 pub use parts::ProgressiveSummary;
+#[path = "browser_startup_index.rs"]
+mod startup_index;
 
 const MAX_CHUNK: usize = 1024 * 1024;
 const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
 const MAX_CHUNKS: usize = 4096;
 const MAX_RECENT: usize = 128;
-const MAX_RECORDINGS: usize = 256;
+// Failed attempts and video-only cleanup retain their diagnostic records. The
+// old 256-entry cap prevented all new recordings once those records filled it.
+const MAX_RECORDINGS: usize = 4096;
 const MAX_ACTIVE: usize = 4;
-const MAX_CATALOG: u64 = 2 * 1024 * 1024;
+const MAX_CATALOG: u64 = 8 * 1024 * 1024;
 const MAX_METADATA: u64 = 256 * 1024;
 const MAX_JOURNAL: u64 = 64 * 1024 * 1024;
 const MAX_LINE: usize = 8192;
@@ -116,6 +120,15 @@ pub struct BrowserRecording {
     /// A durable user-confirmed deletion, possibly interrupted and retryable.
     #[serde(default)]
     pub deletion_pending: bool,
+    /// User-requested media-only cleanup; original diagnostics remain on disk.
+    /// The catalog is authoritative, not an old recording/startup summary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media_removed_at: Option<u64>,
+    /// Display-only last-known state; journal validation precedes every action.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub storage_check_pending: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub summary_pending: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -202,6 +215,8 @@ struct CatalogEntry {
     output_dir: String,
     #[serde(default)]
     deletion_pending: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    media_removed_at: Option<u64>,
 }
 
 impl CatalogEntry {
@@ -229,6 +244,9 @@ impl CatalogEntry {
             merge: None,
             progressive: None,
             deletion_pending: self.deletion_pending,
+            media_removed_at: self.media_removed_at,
+            storage_check_pending: false,
+            summary_pending: false,
         }
     }
 }
@@ -264,11 +282,16 @@ struct State {
     closing: bool,
     merge_job: Option<(String, String)>,
     deleting: HashMap<String, String>,
+    unverified: HashSet<String>,
+    indexed: HashSet<String>,
+    recovery_pending: VecDeque<String>,
 }
 
+#[derive(Clone)]
 pub struct BrowserCaptureStore {
     catalog_root: PathBuf,
-    state: Mutex<State>,
+    state: Arc<Mutex<State>>,
+    index_gate: Arc<Mutex<()>>,
 }
 
 /// An immutable, catalog-authorized completed recording. Handles remain local
@@ -285,21 +308,68 @@ pub(crate) struct BrowserReplaySource {
 
 impl BrowserCaptureStore {
     pub fn new(data_dir: &Path) -> Result<Self, StreamError> {
+        Self::load(data_dir, false)
+    }
+
+    /// Production startup exposes the SSD catalog immediately. Archive recovery
+    /// is owned by the merge worker, or performed on demand before an action.
+    pub(crate) fn new_deferred(data_dir: &Path) -> Result<Self, StreamError> {
+        Self::load(data_dir, true)
+    }
+
+    fn load(data_dir: &Path, deferred: bool) -> Result<Self, StreamError> {
         let base = checked_directory(data_dir)?;
         let streaming = child_directory(&base, "streaming")?;
         let catalog_root = child_directory(&streaming, "browser")?;
         let catalog = read_catalog(&catalog_root.join("catalog.jsonl"))?;
-        let recordings = catalog.iter().map(recover_recording).collect();
+        let mut cached = startup_index::load(&catalog_root, &catalog);
+        if !deferred {
+            cached.retain(|_, r| startup_index::settled(r));
+        }
+        let mut indexed: HashSet<String> = cached.keys().cloned().collect();
+        let mut unverified = indexed.clone();
+        let mut recovery_pending = VecDeque::new();
+        let recordings = catalog
+            .iter()
+            .map(|entry| {
+                if let Some(recording) = cached.remove(&entry.id) {
+                    if !startup_index::settled(&recording) {
+                        recovery_pending.push_back(entry.id.clone());
+                    }
+                    recording
+                } else if deferred {
+                    unverified.insert(entry.id.clone());
+                    recovery_pending.push_back(entry.id.clone());
+                    if let Some(recording) = startup_index::display_summary(entry) {
+                        indexed.insert(entry.id.clone());
+                        return recording;
+                    }
+                    let mut recording = entry.recording();
+                    recording.status = BrowserRecordingStatus::Interrupted;
+                    recording.storage_check_pending = true;
+                    recording.summary_pending = true;
+                    recording.last_error =
+                        Some("녹화 기록 확인 대기 중 · 원본 파일은 보존되어 있습니다.".into());
+                    recording
+                } else {
+                    recover_recording(entry)
+                }
+            })
+            .collect();
         Ok(Self {
             catalog_root,
-            state: Mutex::new(State {
+            state: Arc::new(Mutex::new(State {
                 catalog,
                 recordings,
                 active: HashMap::new(),
                 closing: false,
                 merge_job: None,
                 deleting: HashMap::new(),
-            }),
+                unverified,
+                indexed,
+                recovery_pending,
+            })),
+            index_gate: Arc::new(Mutex::new(())),
         })
     }
 
@@ -357,6 +427,7 @@ impl BrowserCaptureStore {
             mime_type,
             output_dir: root.to_string_lossy().into_owned(),
             deletion_pending: false,
+            media_removed_at: None,
         };
         let mut recording = entry.recording();
         recording.progressive = progressive.then(ProgressiveSummary::default);
@@ -436,7 +507,9 @@ impl BrowserCaptureStore {
             .iter()
             .position(|entry| entry.id == recording_id)
             .ok_or_else(inactive)?;
-        if state.recordings[index].deletion_pending {
+        if state.recordings[index].deletion_pending
+            || state.recordings[index].media_removed_at.is_some()
+        {
             return Err(inactive());
         }
         let recording = &state.recordings[index];
@@ -519,13 +592,16 @@ impl BrowserCaptureStore {
         chat: Option<(bool, &str, u64)>,
     ) -> Result<BrowserRecording, StreamError> {
         validate_id(recording_id)?;
+        self.ensure_recovered(recording_id)?;
         let mut state = self.lock()?;
         let index = state
             .recordings
             .iter()
             .position(|entry| entry.id == recording_id)
             .ok_or_else(inactive)?;
-        if state.recordings[index].deletion_pending {
+        if state.recordings[index].deletion_pending
+            || state.recordings[index].media_removed_at.is_some()
+        {
             return Err(inactive());
         }
         if let Some((enabled, status, count)) = chat {
@@ -583,11 +659,12 @@ impl BrowserCaptureStore {
         if key.len() > 160 || key.is_empty() || key.chars().any(char::is_control) {
             return Err(invalid());
         }
+        self.ensure_recovered(id)?;
         let mut state = self.lock()?;
         let recording = state
             .recordings
             .iter_mut()
-            .find(|r| r.id == id && !r.deletion_pending)
+            .find(|r| r.id == id && !r.deletion_pending && r.media_removed_at.is_none())
             .ok_or_else(inactive)?;
         if recording.broadcast_key.is_none() {
             recording.broadcast_key = Some(key.into());
@@ -602,11 +679,12 @@ impl BrowserCaptureStore {
         reason: &str,
         trigger: &str,
     ) -> Result<(), StreamError> {
+        self.ensure_recovered(id)?;
         let mut state = self.lock()?;
         let recording = state
             .recordings
             .iter_mut()
-            .find(|r| r.id == id && !r.deletion_pending)
+            .find(|r| r.id == id && !r.deletion_pending && r.media_removed_at.is_none())
             .ok_or_else(inactive)?;
         recording.ending = Some(RecordingEnd {
             reason: reason.into(),
@@ -620,11 +698,12 @@ impl BrowserCaptureStore {
     /// Only a pending source-end classification may be upgraded. Storage failures,
     /// partial files, explicit stops and older recordings are never rewritten.
     pub(crate) fn confirm_end(&self, id: &str, reason: &str) -> Result<(), StreamError> {
+        self.ensure_recovered(id)?;
         let mut state = self.lock()?;
         let recording = state
             .recordings
             .iter_mut()
-            .find(|r| r.id == id && !r.deletion_pending)
+            .find(|r| r.id == id && !r.deletion_pending && r.media_removed_at.is_none())
             .ok_or_else(inactive)?;
         if recording
             .ending
@@ -653,6 +732,7 @@ impl BrowserCaptureStore {
         code: &str,
         message: &str,
     ) -> Result<(), StreamError> {
+        self.ensure_recovered(id)?;
         let mut state = self.lock()?;
         let recording = state
             .recordings
@@ -660,6 +740,7 @@ impl BrowserCaptureStore {
             .find(|r| {
                 r.id == id
                     && !r.deletion_pending
+                    && r.media_removed_at.is_none()
                     && matches!(
                         r.status,
                         BrowserRecordingStatus::Failed | BrowserRecordingStatus::Interrupted
@@ -683,6 +764,7 @@ impl BrowserCaptureStore {
         self.state.lock().is_ok_and(|state| {
             state.recordings.iter().any(|r| {
                 r.channel_id == channel
+                    && r.media_removed_at.is_none()
                     && r.broadcast_key.as_deref() == key
                     && r.ending.as_ref().is_some_and(|end| {
                         end.reason == "checking" && now.saturating_sub(end.stopped_at) < 130_000
@@ -701,10 +783,12 @@ impl BrowserCaptureStore {
         for _ in 0..MAX_RECORDINGS {
             let Some(index) = state.recordings.iter().position(|r| {
                 r.status != BrowserRecordingStatus::Recording
+                    && !state.unverified.contains(&r.id)
                     && r.progressive
                         .as_ref()
                         .is_none_or(|p| p.segment_count == r.segment_count)
                     && !r.deletion_pending
+                    && r.media_removed_at.is_none()
                     && r.segment_count > 0
                     && !state.active.contains_key(&r.id)
                     && r.merge
@@ -760,14 +844,29 @@ impl BrowserCaptureStore {
     pub fn retry_merges(&self, id: Option<&str>) -> Result<usize, StreamError> {
         if let Some(id) = id {
             validate_id(id)?;
+            self.ensure_recovered(id)?;
+        } else {
+            let ids = self.lock()?.unverified.iter().cloned().collect::<Vec<_>>();
+            for id in ids {
+                self.ensure_recovered(&id)?;
+            }
         }
+        self.retry_loaded_merges(id)
+    }
+
+    /// Startup must not eagerly revalidate every archived display-only snapshot.
+    pub(crate) fn retry_loaded_merges(&self, id: Option<&str>) -> Result<usize, StreamError> {
         let mut state = self.lock()?;
         if state.closing {
             return Err(inactive());
         }
         let mut count = 0;
         let running = state.merge_job.as_ref().map(|(id, _)| id.clone());
+        let unverified = state.unverified.clone();
         for recording in &mut state.recordings {
+            if unverified.contains(&recording.id) || recording.media_removed_at.is_some() {
+                continue;
+            }
             if id.is_none_or(|id| id == recording.id)
                 && !recording.deletion_pending
                 && running.as_deref() != Some(recording.id.as_str())
@@ -836,11 +935,12 @@ impl BrowserCaptureStore {
     /// from an IPC caller. Validate a derivative without hashing a whole video.
     pub fn merged_file(&self, id: &str) -> Result<PathBuf, StreamError> {
         validate_id(id)?;
+        self.ensure_recovered(id)?;
         let state = self.lock()?;
         let recording = state
             .recordings
             .iter()
-            .find(|r| r.id == id && !r.deletion_pending)
+            .find(|r| r.id == id && !r.deletion_pending && r.media_removed_at.is_none())
             .ok_or_else(invalid)?;
         let merge = recording
             .merge
@@ -866,11 +966,12 @@ impl BrowserCaptureStore {
 
     pub(crate) fn replay_source(&self, id: &str) -> Result<BrowserReplaySource, StreamError> {
         validate_id(id)?;
+        self.ensure_recovered(id)?;
         let state = self.lock()?;
         let recording = state
             .recordings
             .iter()
-            .find(|r| r.id == id && !r.deletion_pending)
+            .find(|r| r.id == id && !r.deletion_pending && r.media_removed_at.is_none())
             .ok_or_else(invalid)?;
         if recording
             .progressive
@@ -1022,6 +1123,9 @@ impl BrowserCaptureStore {
             if let Err(error) = self.finish(&id, true, Some("app_shutdown")) {
                 failure = Some(error);
             }
+        }
+        if let Err(error) = self.save_startup_index() {
+            tracing::warn!(code = %error.code, "recording startup index not saved; journal recovery remains available");
         }
         failure.map_or(Ok(()), Err)
     }
@@ -1427,6 +1531,9 @@ fn read_catalog(path: &Path) -> Result<Vec<CatalogEntry>, StreamError> {
 
 fn recover_recording(entry: &CatalogEntry) -> BrowserRecording {
     let mut recording = entry.recording();
+    if entry.media_removed_at.is_some() {
+        recording.status = BrowserRecordingStatus::Interrupted;
+    }
     if entry.deletion_pending {
         // Never rebuild or automatically delete a half-removed recording.
         recording.status = BrowserRecordingStatus::Failed;
@@ -1435,6 +1542,11 @@ fn recover_recording(entry: &CatalogEntry) -> BrowserRecording {
         return recording;
     }
     let result = recover_into(entry, &mut recording);
+    if entry.media_removed_at.is_some() {
+        // Do not reclassify intentional cleanup as corruption, recover parts,
+        // or overwrite the historical interruption/merge error.
+        return recording;
+    }
     if result.is_err() {
         recording.status = BrowserRecordingStatus::Failed;
         recording.last_error =
@@ -1454,7 +1566,7 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
     // Damaged summary metadata must not hide independently journaled segments.
     let metadata = open_regular(&root.join("recording.json"), MAX_METADATA)
         .ok()
-        .and_then(|file| serde_json::from_reader::<_, BrowserRecording>(file).ok())
+        .and_then(|file| serde_json::from_reader::<_, BrowserRecording>(BufReader::new(file)).ok())
         .filter(|metadata| {
             metadata.id == entry.id
                 && metadata.channel_id == entry.channel_id
@@ -1477,6 +1589,16 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
                     .is_none_or(|value| value.chars().count() <= 512)
         });
     if let Some(metadata) = &metadata {
+        if entry.media_removed_at.is_some() {
+            *recording = metadata.clone();
+            recording.media_removed_at = entry.media_removed_at;
+            recording.storage_check_pending = false;
+            recording.summary_pending = false;
+            if recording.status == BrowserRecordingStatus::Recording {
+                recording.status = BrowserRecordingStatus::Interrupted;
+            }
+            return Ok(());
+        }
         recording.status = metadata.status;
         recording.updated_at = metadata.updated_at;
         recording.last_error = metadata.last_error.clone();
@@ -1514,6 +1636,10 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
                     Some("이전 병합이 중단되어 다시 시도합니다. 원본 조각은 보존됩니다.".into());
             }
         }
+    }
+    if entry.media_removed_at.is_some() {
+        recording.status = BrowserRecordingStatus::Interrupted;
+        return Ok(());
     }
     let file = open_regular(&root.join("segments.jsonl"), MAX_JOURNAL)?;
     let mut reader = BufReader::new(file);
@@ -2708,6 +2834,82 @@ mod tests {
         let catalog = store.catalog_root.join("catalog.jsonl");
         fs::write(&catalog, bytes).unwrap();
         assert!(read_catalog(&catalog).is_err());
+    }
+
+    #[test]
+    fn video_only_cleanup_preserves_diagnostics_and_never_schedules_media_work() {
+        let (directory, store, recording) = fixture();
+        store.append(&recording.id, 0, 0, WEBM).unwrap();
+        store.finish_segment(&recording.id, 0, 15.0).unwrap();
+        store
+            .finish(&recording.id, true, Some("native_rejected"))
+            .unwrap();
+        store
+            .note_capture_error(&recording.id, "TEST_GAP", "original gap evidence")
+            .unwrap();
+        let root = Path::new(&recording.output_dir);
+        let original_metadata = fs::read(root.join("recording.json")).unwrap();
+        let original_journal = fs::read(root.join("segments.jsonl")).unwrap();
+        fs::write(root.join("chat.jsonl"), b"preserve chat").unwrap();
+        store.save_startup_index().unwrap(); // Deliberately stale playable summary.
+        let mut catalog = store.lock().unwrap().catalog.clone();
+        catalog[0].media_removed_at = Some(12345);
+        save_catalog(&store.catalog_root, &catalog).unwrap();
+        fs::remove_file(root.join(segment_name(0, "webm"))).unwrap();
+
+        let reopened = BrowserCaptureStore::new_deferred(directory.path()).unwrap();
+        assert_eq!(
+            reopened.snapshot().unwrap()[0].media_removed_at,
+            Some(12345)
+        );
+        reopened.ensure_recovered(&recording.id).unwrap();
+        let archived = reopened.snapshot().unwrap().remove(0);
+        assert_eq!(
+            archived.last_error.as_deref(),
+            Some("original gap evidence")
+        );
+        assert_eq!(archived.segment_count, 1);
+        assert_eq!(archived.bytes_written, WEBM.len() as u64);
+        assert_eq!(reopened.retry_merges(None).unwrap(), 0);
+        assert!(reopened.take_part_job().unwrap().is_none());
+        assert!(reopened.take_cleanup_job().unwrap().is_none());
+        assert!(reopened.take_merge_job().unwrap().is_none());
+        assert!(reopened.merged_file(&recording.id).is_err());
+        assert!(reopened.replay_source(&recording.id).is_err());
+        reopened.shutdown().unwrap();
+        assert_eq!(
+            fs::read(root.join("recording.json")).unwrap(),
+            original_metadata
+        );
+        assert_eq!(
+            fs::read(root.join("segments.jsonl")).unwrap(),
+            original_journal
+        );
+        assert_eq!(fs::read(root.join("chat.jsonl")).unwrap(), b"preserve chat");
+    }
+
+    #[test]
+    fn catalog_retains_more_than_256_attempts_without_blocking_new_recordings() {
+        let (_directory, store, recording) = fixture();
+        let original = store.lock().unwrap().catalog[0].clone();
+        let parent = Path::new(&recording.output_dir).parent().unwrap();
+        let catalog: Vec<_> = (0..257)
+            .map(|index| {
+                let id = format!("{index:032x}");
+                CatalogEntry {
+                    output_dir: parent.join(&id).to_string_lossy().into_owned(),
+                    id,
+                    ..original.clone()
+                }
+            })
+            .collect();
+        save_catalog(&store.catalog_root, &catalog).unwrap();
+        assert_eq!(
+            read_catalog(&store.catalog_root.join("catalog.jsonl"))
+                .unwrap()
+                .len(),
+            257
+        );
     }
 
     #[test]

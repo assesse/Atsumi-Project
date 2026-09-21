@@ -22,6 +22,7 @@ type Result = {
   ownPresentation: boolean; bodyStyle: string | null; currentTime: number; messages: number;
   chatVisible: boolean; recordVisible: boolean; screenshotVisible: boolean; recordOnlyVisible: boolean;
   parkedChatHidden: boolean; returnedChatVisible: boolean; keptMute: boolean; keptInput: boolean;
+  receiverAudioEnabled: boolean; receiverUnmuted: boolean; keptVolume: number;
 };
 const localSource = playerSource
   .replace('window.location.origin === "https://chzzk.naver.com"', 'window.location.protocol === "file:"')
@@ -62,8 +63,8 @@ function fixture(inline: boolean, replaceHeader: boolean, attached = false): str
     input.focus();window.__atsumiPlayerUI.update({ready:true,recording:false,detail:'ready'});const focusedHeight=box(input).height;
     input.blur();window.dispatchEvent(new Event('scroll'));
     ${attached ? `setTimeout(()=>{
-      window.dispatchEvent(new CustomEvent('atsumi-multiview-audio',{detail:{enabled:true,applyToMedia:false}}));
-      window.__atsumiAutoReceiver.configure({revision:1,viewing:true});
+      window.__atsumiAutoReceiver.configure({revision:1,viewing:true,audioEnabled:true});
+      video.volume=0.35;video.muted=false;
       window.__atsumiPlayerUI.update({ready:true,recording:true,detail:'recording'});
     },350);` : ""}
     const originalHeader=document.getElementById('official-top');
@@ -81,15 +82,19 @@ function fixture(inline: boolean, replaceHeader: boolean, attached = false): str
         originalInput,inputAfter:input.outerHTML,initialHeight,focusedHeight,blurredHeight,oldPlaceholderHeight:box(positive).height,contentSizing:CSS.supports('field-sizing','content'),
         nativeWideClicks,nativeLiveClicks,ownPresentation:!!document.querySelector('[data-presentation],#atsumi-presentation-toggle,[data-atsumi-clean]'),bodyStyle:document.body.getAttribute('style'),currentTime:video.currentTime,messages,
         chatVisible:visible(document.querySelector('aside')),recordVisible:visible(document.querySelector('[aria-label="녹화 중지"]')),
-        screenshotVisible:visible(document.querySelector('[aria-label="스크린샷"]')),recordOnlyVisible:visible(document.querySelector('[aria-label="녹화만 계속"]'))};
+        screenshotVisible:visible(document.querySelector('[aria-label="스크린샷"]')),recordOnlyVisible:visible(document.querySelector('[aria-label="실시간 보기 종료"]'))};
       if(${attached}){
+        result.receiverAudioEnabled=window.__atsumiMultiView.getState().audioEnabled;
+        result.receiverUnmuted=!video.muted;
         input.value='작성 중인 채팅';video.muted=true;
-        window.__atsumiAutoReceiver.configure({revision:2,viewing:true});
+        window.__atsumiAutoReceiver.configure({revision:2,viewing:true,audioEnabled:true});
         result.keptMute=video.muted;
-        window.__atsumiAutoReceiver.configure({revision:3,viewing:false});
+        window.__atsumiAutoReceiver.configure({revision:3,viewing:false,audioEnabled:false});
         result.parkedChatHidden=!visible(document.querySelector('aside'));
-        window.__atsumiAutoReceiver.configure({revision:4,viewing:true});
+        window.__atsumiAutoReceiver.configure({revision:4,viewing:true,audioEnabled:true});
         result.returnedChatVisible=visible(document.querySelector('aside'));
+        result.keptVolume=video.volume;
+        result.keptMute=result.keptMute&&video.muted;
         result.keptInput=input===document.querySelector('textarea')&&input.value==='작성 중인 채팅';
         result.sameVideo=result.sameVideo&&video===document.querySelector('video');
       }
@@ -124,6 +129,8 @@ describe.skipIf(!edge)("official player passthrough rendered geometry", () => {
     expect(result.screenshotVisible).toBe(true); expect(result.recordOnlyVisible).toBe(true);
     expect(result.playerAfter).toEqual(result.playerBefore); expect(result.videoAfter).toEqual(result.videoBefore);
     expect(result.sameVideo).toBe(true); expect(result.keptInput).toBe(true); expect(result.keptMute).toBe(true);
+    expect(result.receiverAudioEnabled).toBe(true); expect(result.receiverUnmuted).toBe(true);
+    expect(result.keptVolume).toBe(.35);
     expect(result.parkedChatHidden).toBe(true); expect(result.returnedChatVisible).toBe(true);
     expect(result.gearCount).toBe(1); expect(result.messages).toBe(0);
   }, 30_000);

@@ -203,9 +203,14 @@
         // Final UTF-8 check, including serialized decoration fields and commas.
         if (bytes(events) > MAX_BATCH) throw new Error("batch_limit");
         // Native deduplicates the same batch after a lost acknowledgement.
+        const retryStartedAt = Date.now();
         for (let attempt = 0; ; attempt++) {
           try { await current.sendBatch(events, batchId); break; }
-          catch (error) { if (attempt >= 2) throw error; }
+          catch (error) {
+            if (attempt >= 32 || Date.now() - retryStartedAt >= 60_000 ||
+                !["BRIDGE_BUSY", "BROWSER_ACK_TIMEOUT"].includes(error?.code)) throw error;
+            await new Promise(resolve => setTimeout(resolve, Math.min(100 * 2 ** Math.min(attempt, 5), 2000)));
+          }
         }
         current.lastSavedAt = Date.now();
       } catch {

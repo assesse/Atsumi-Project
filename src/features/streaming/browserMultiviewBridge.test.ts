@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import source from "../../../src-tauri/src/streaming/browser_multiview.js?raw";
+import receiver from "../../../src-tauri/src/streaming/browser_auto_view.js?raw";
 
 const vmName = "node:vm";
 const { runInNewContext } = await import(vmName) as {
@@ -11,12 +12,13 @@ type PageWindow = EventTarget & {
   location: URL; top: unknown; innerWidth: number; innerHeight: number;
   getComputedStyle: typeof window.getComputedStyle;
   __atsumiMultiView?: { getState(): State; setVideoOnly(enabled: boolean): void; configureChat(value: { channelId: string; number: number; channelName: string }): void };
+  __atsumiAutoReceiver?: { configure(value: { revision: number; viewing: boolean; multiview: boolean; audioEnabled: boolean }): void };
 };
 const observers: MutationObserver[] = [];
 const rect = (node: Element, width = 900, height = 600) => vi.spyOn(node, "getBoundingClientRect").mockReturnValue({
   x: 0, y: 0, left: 0, top: 0, width, height, right: width, bottom: height, toJSON: () => ({}),
 });
-function fixture(options: { chat?: boolean; url?: string; nested?: boolean; width?: number; height?: number } = {}) {
+function fixture(options: { chat?: boolean; url?: string; nested?: boolean; width?: number; height?: number; receiver?: boolean } = {}) {
   const page = document.implementation.createHTMLDocument("isolated multiview fixture");
   page.body.innerHTML = `<header>Original</header><main><div class="pzp-pc"><div class="translated"><div class="aspect"><video></video></div></div><button id="official">Control</button></div></main><aside><textarea placeholder="채팅 입력"></textarea></aside>`;
   const pageWindow = Object.assign(new EventTarget(), {
@@ -32,7 +34,8 @@ function fixture(options: { chat?: boolean; url?: string; nested?: boolean; widt
   class Observer extends MutationObserver {
     constructor(callback: MutationCallback) { super(callback); observers.push(this); }
   }
-  const context = { window: pageWindow, document: page, MutationObserver: Observer, CustomEvent, setTimeout, clearTimeout };
+  const context = { window: pageWindow, document: page, location: pageWindow.location, MutationObserver: Observer, CustomEvent, setTimeout, clearTimeout, setInterval, clearInterval };
+  if (options.receiver) runInNewContext(receiver, context);
   runInNewContext(source, context);
   const advance = () => vi.advanceTimersByTime(160);
   const audio = (enabled: boolean, applyToMedia = true) => pageWindow.dispatchEvent(new CustomEvent("atsumi-multiview-audio", { detail: { enabled, applyToMedia } }));
@@ -186,6 +189,62 @@ describe("watch-only official multiview bridge", () => {
     expect(second.video.muted).toBe(true);
     const chat = fixture({ chat: true }); chat.audio(true, false); chat.video.muted = false; chat.video.dispatchEvent(new Event("volumechange", { bubbles: true }));
     expect(chat.video.muted).toBe(true);
+  });
+  it("restores the audio gate of borrowed receivers before accepting their independent original volume controls", () => {
+    const panes = Array.from({ length: 4 }, () => fixture({ receiver: true }));
+    for (const [index, pane] of panes.entries()) {
+      pane.advance();
+      expect(pane.state()?.audioEnabled).toBe(false);
+      expect(pane.video.muted).toBe(true);
+      pane.pageWindow.__atsumiAutoReceiver!.configure({ revision: 2, viewing: true, multiview: true, audioEnabled: true });
+      // Exercise the same media properties/events used by the original controls.
+      pane.video.volume = (index + 1) / 10;
+      pane.video.muted = false;
+      pane.video.dispatchEvent(new Event("volumechange", { bubbles: true }));
+      expect(pane.state()?.audioEnabled).toBe(true);
+      expect(pane.video.muted).toBe(false);
+    }
+    const first = panes[0]!;
+    first.video.muted = true;
+    first.video.dispatchEvent(new Event("volumechange", { bubbles: true }));
+    for (const [index, pane] of panes.entries()) {
+      pane.pageWindow.__atsumiAutoReceiver!.configure({ revision: 3, viewing: true, multiview: true, audioEnabled: true });
+      pane.advance();
+      expect(pane.video.volume).toBe((index + 1) / 10);
+      expect(pane.video.muted).toBe(index === 0);
+      expect(pane.video.currentTime).toBe(0);
+      expect(pane.pause).not.toHaveBeenCalled();
+    }
+  });
+  it("preserves the viewer's mute and volume across parking, reattachment and late viewport requests", () => {
+    for (const muted of [false, true]) {
+      const pane = fixture({ receiver: true }); pane.advance();
+      const configure = pane.pageWindow.__atsumiAutoReceiver!.configure;
+      configure({ revision: 1, viewing: true, multiview: true, audioEnabled: true });
+      pane.video.volume = .35; pane.video.muted = muted;
+      pane.video.dispatchEvent(new Event("volumechange", { bubbles: true }));
+      configure({ revision: 2, viewing: false, multiview: true, audioEnabled: false });
+      expect(pane.video.muted).toBe(true);
+      expect(pane.state()?.audioEnabled).toBe(false);
+      configure({ revision: 1, viewing: true, multiview: true, audioEnabled: true });
+      expect(pane.state()?.audioEnabled).toBe(false);
+      configure({ revision: 3, viewing: true, multiview: true, audioEnabled: true });
+      pane.video.dispatchEvent(new Event("volumechange", { bubbles: true }));
+      expect(pane.video.muted).toBe(muted);
+      expect(pane.video.volume).toBe(.35);
+      configure({ revision: 2, viewing: false, multiview: true, audioEnabled: false });
+      pane.advance();
+      expect(pane.state()?.audioEnabled).toBe(true);
+      expect(pane.video.muted).toBe(muted);
+      expect(pane.page.querySelector("video")).toBe(pane.video);
+      expect(pane.pause).not.toHaveBeenCalled();
+    }
+  });
+  it("never grants audio to a chat-only pane through a receiver presentation request", () => {
+    const pane = fixture({ chat: true, receiver: true }); pane.advance();
+    pane.pageWindow.__atsumiAutoReceiver!.configure({ revision: 1, viewing: true, multiview: true, audioEnabled: true });
+    pane.video.muted = false; pane.video.dispatchEvent(new Event("volumechange", { bubbles: true }));
+    expect(pane.state()?.audioEnabled).toBe(false); expect(pane.video.muted).toBe(true);
   });
   const chatHeader = (page: Document) => {
     const header = page.createElement("div"); header.className = "_container_1e2su_2";

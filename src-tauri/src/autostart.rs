@@ -6,6 +6,9 @@ use std::path::{Path, PathBuf};
 
 const LINK_NAME: &str = "Atsumi.Autostart.lnk";
 const OWNER_DESCRIPTION: &str = "Atsumi login startup [local.atsumi.next.autostart.v1]";
+// A stable UI-startup scenario, separate from the old unqualified launch trace.
+// This selects a Windows ALPF bucket; it does not disable caching or prefetch.
+const RELEASE_PREFETCH_ARGUMENT: &str = "/prefetch:1";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -48,7 +51,7 @@ fn trusted_main(label: &str, url: &tauri::Url, development: bool) -> bool {
             && url.port() == Some(1420))
 }
 
-fn require_main(window: &tauri::WebviewWindow) -> Result<(), String> {
+fn require_main(window: &tauri::Webview) -> Result<(), String> {
     let url = window
         .url()
         .map_err(|_| "앱 창의 주소를 확인하지 못했습니다.")?;
@@ -59,7 +62,7 @@ fn require_main(window: &tauri::WebviewWindow) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn autostart_status_get(window: tauri::WebviewWindow) -> Result<AutostartStatus, String> {
+pub async fn autostart_status_get(window: tauri::Webview) -> Result<AutostartStatus, String> {
     require_main(&window)?;
     tauri::async_runtime::spawn_blocking(|| platform::run(None))
         .await
@@ -68,7 +71,7 @@ pub async fn autostart_status_get(window: tauri::WebviewWindow) -> Result<Autost
 
 #[tauri::command]
 pub async fn autostart_enabled_set(
-    window: tauri::WebviewWindow,
+    window: tauri::Webview,
     enabled: bool,
 ) -> Result<AutostartStatus, String> {
     require_main(&window)?;
@@ -139,7 +142,7 @@ fn launch_spec(
                 .ok_or("앱 설치 경로를 찾지 못했습니다.")?;
             Ok(LaunchSpec {
                 executable: executable.to_path_buf(),
-                arguments: String::new(),
+                arguments: RELEASE_PREFETCH_ARGUMENT.into(),
                 working_directory: directory.to_path_buf(),
                 hidden: false,
             })
@@ -697,7 +700,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(installed.executable, executable);
-        assert!(installed.arguments.is_empty());
+        assert_eq!(installed.arguments, "/prefetch:1");
         assert!(!installed.hidden);
         std::fs::remove_file(&launcher).unwrap();
         assert!(launch_spec(LaunchMode::Development, &executable, &workspace, &system).is_err());

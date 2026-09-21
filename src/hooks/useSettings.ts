@@ -44,9 +44,12 @@ export type SettingsApi = Pick<BackendClient, "settingsGet" | "settingsUpdate"> 
 export function useSettings(api: SettingsApi = backend) {
   const [settings, setSettings] = useState<SettingsSnapshot>(fallback);
   const [loading, setLoading] = useState(true);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
 
   useEffect(() => {
+    setLoading(true);
+    setHasSnapshot(false);
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
     void (async () => {
@@ -55,6 +58,7 @@ export function useSettings(api: SettingsApi = backend) {
         const cleanup = await api.on("settings:changed", (snapshot) => {
           if (cancelled) return;
           setSettings((current) => snapshot.revision > current.revision ? snapshot : current);
+          setHasSnapshot(true);
           setError(null);
         });
         if (cancelled) {
@@ -71,6 +75,7 @@ export function useSettings(api: SettingsApi = backend) {
         if (cancelled) return;
         if (result.ok) {
           setSettings((current) => result.data.revision >= current.revision ? result.data : current);
+          setHasSnapshot(true);
           setError(subscriptionError);
         } else {
           setError(result.error);
@@ -99,6 +104,7 @@ export function useSettings(api: SettingsApi = backend) {
       }
       if (result.ok) {
         setSettings(result.data);
+        setHasSnapshot(true);
         setError(null);
       } else {
         setError(result.error);
@@ -107,6 +113,7 @@ export function useSettings(api: SettingsApi = backend) {
             const refreshed = await api.settingsGet();
             if (refreshed.ok) {
               setSettings((current) => refreshed.data.revision >= current.revision ? refreshed.data : current);
+              setHasSnapshot(true);
             }
           } catch {
             setError(runtimeError("최신 설정을 다시 불러오는"));
@@ -118,5 +125,5 @@ export function useSettings(api: SettingsApi = backend) {
     [api, settings.revision],
   );
 
-  return { settings, loading, error, save };
+  return { settings, loading, hasSnapshot, error, save };
 }

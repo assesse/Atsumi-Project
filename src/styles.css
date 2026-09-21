@@ -8453,3 +8453,22 @@ dialog::backdrop {
     grid-template-columns: minmax(0, 1fr) auto auto;
   }
 }
+/* Nonmodal startup feedback: recovery never takes the input surface hostage. */
+.startup-status {
+  position: fixed;
+  z-index: 10000;
+  right: 20px;
+  bottom: 20px;
+  max-width: min(560px, calc(100vw - 40px));
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  color: #e6e2eb;
+  background: #25222e;
+  border: 1px solid #595065;
+  border-radius: 10px;
+  box-shadow: 0 6px 24px #0006;
+  font-size: 13px;
+}
+.startup-status button { flex: none; }

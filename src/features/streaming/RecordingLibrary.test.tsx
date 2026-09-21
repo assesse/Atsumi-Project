@@ -19,6 +19,27 @@ beforeEach(() => { vi.clearAllMocks(); callbacks.onDelete.mockResolvedValue({ de
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe("recording library", () => {
+  it("keeps media-only cleanup in collapsed diagnostics without replay or merge controls", async () => {
+    const removed = { ...merged("removed"), mediaRemovedAt: 1234, lastError: "original gap evidence" };
+    await render([removed, merged("kept")], "removed");
+    expect(container).toHaveTextContent("저장 영상 1개");
+    expect(container).toHaveTextContent("영상 정리 기록 1개 · 로그 보존");
+    expect(container).toHaveTextContent("original gap evidence");
+    expect(cards()).toHaveLength(1);
+    expect(button("앱에서 다시보기")).toBeUndefined();
+    expect(button("병합 다시 시도")).toBeUndefined();
+    expect(button("녹화 폴더 열기")).toBeEnabled();
+    expect(callbacks.onDelete).not.toHaveBeenCalled();
+  });
+  it("labels cached history honestly and does not hide an unchecked summary as an empty failure", async () => {
+    await render([
+      { ...merged("cached"), storageCheckPending: true },
+      item("pending", { status: "interrupted", segmentCount: 0, bytesWritten: 0, durationSeconds: 0, storageCheckPending: true, summaryPending: true }),
+    ]);
+    expect(container).toHaveTextContent("마지막 저장 상태 · 저장 완료");
+    expect(container).toHaveTextContent("녹화 기록 확인 대기 중");
+    expect(container.querySelector(".recording-library-attempts")).toBeNull();
+  });
   it("separates empty startup failures from saved broadcasts without deleting their diagnostics", async () => {
     await render([item("retry", { segmentCount: 0, bytesWritten: 0, durationSeconds: 0, status: "interrupted" }), merged("success")]);
     expect(container).toHaveTextContent("저장 영상 1개");
