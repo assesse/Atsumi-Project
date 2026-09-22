@@ -38,6 +38,22 @@ describe("ActivityDrawer download controls", () => {
   });
   const actions = { onClose: vi.fn(), onReview: vi.fn(), onRetry: vi.fn(), onCancel: vi.fn() };
 
+  it("keeps only the latest 50 activities without pinning old queued jobs or restoring the whole queue", async () => {
+    const galleries = Array.from({ length: 70 }, (_, index) => activityGallery(index === 0 ? "queued" : "completed", index + 1));
+    const sessionDownloads = galleries.map((gallery, index) => ({ galleryId: gallery.id, occurredAt: index }));
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<ActivityDrawer open galleries={galleries} sessionDownloads={sessionDownloads} {...actions} />));
+      expect(sessionTitles(container)).toHaveLength(50);
+      expect(sessionTitles(container)[0]).toBe("completed-70");
+      expect(sessionTitles(container)).not.toContain("queued-1");
+      expect(container).toHaveTextContent("최근 50개만 표시합니다");
+      await act(async () => root.render(<ActivityDrawer open galleries={galleries} sessionDownloads={[]} {...actions} />));
+      expect(sessionTitles(container)).toHaveLength(0);
+    } finally { await act(async () => root.unmount()); }
+  });
+
   it("sorts live work and reviews before failures and finished work, newest first within each group", async () => {
     const states: DownloadState[] = [
       "queued", "resolving_metadata", "downloading", "hashing", "verifying", "retry_wait", "review_required",

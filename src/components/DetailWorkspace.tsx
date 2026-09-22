@@ -9,6 +9,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { Gallery, GalleryId } from "../core/types";
+import { runningDownloadStates } from "../state/downloadCancellation";
 import {
   galleryCoverThumbnailKey,
   sourcePageThumbnailKey,
@@ -68,6 +69,9 @@ type DetailWorkspaceProps = {
     options?: { activate?: boolean },
   ) => void;
   onQueue: (id: GalleryId) => void;
+  onCancelDownload?: (id: GalleryId) => void;
+  pendingDownloadEntryIds?: ReadonlySet<string>;
+  cancellingDownloadEntryIds?: ReadonlySet<string>;
   onOpenDownloadFolder?: (entryId: string) => void;
   onSetRepresentativePreview?: (galleryId: GalleryId, sourcePage: number | null) => Promise<boolean>;
   onMetadataSearch: (value: string) => void;
@@ -162,6 +166,9 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     onRestore,
     onOpenRelated,
     onQueue,
+    onCancelDownload,
+    pendingDownloadEntryIds,
+    cancellingDownloadEntryIds,
     onOpenDownloadFolder,
     onSetRepresentativePreview,
     onMetadataSearch,
@@ -815,12 +822,20 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                   </div>
                   <div className="detail-title-actions">
                     <CommunityReviewButton work={{ source: "hitomi", workId: String(gallery.id) }} />
-                    {gallery.download?.state === "completed" ? (
+                    {gallery.download && onCancelDownload && (runningDownloadStates.has(gallery.download.state) || cancellingDownloadEntryIds?.has(gallery.download.entryId)) ? (
+                      <button type="button" className="icon-button danger-button"
+                        title={cancellingDownloadEntryIds?.has(gallery.download.entryId) ? "취소 중…" : "다운로드 취소 · 이미 받은 파일은 유지합니다"}
+                        aria-label={cancellingDownloadEntryIds?.has(gallery.download.entryId) ? "다운로드 취소 중" : "다운로드 취소"}
+                        disabled={pendingDownloadEntryIds?.has(gallery.download.entryId)} onClick={() => onCancelDownload(gallery.id)}>
+                        {cancellingDownloadEntryIds?.has(gallery.download.entryId) ? <span className="spinner" /> : <FluentIcon glyph="\uE71A" />}
+                      </button>
+                    ) : gallery.download?.state === "completed" ? (
                       <span className="icon-button detail-download-complete" title="다운로드 완료" role="img" aria-label="다운로드 완료">
                         <FluentIcon glyph="\uE73E" />
                       </span>
                     ) : (
-                      <button type="button" className="icon-button" title="다운로드" aria-label="다운로드" onClick={() => onQueue(gallery.id)}>
+                      <button type="button" className="icon-button" title="다운로드" aria-label="다운로드"
+                        disabled={gallery.download && pendingDownloadEntryIds?.has(gallery.download.entryId)} onClick={() => onQueue(gallery.id)}>
                         <FluentIcon glyph="\uE896" />
                       </button>
                     )}

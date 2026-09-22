@@ -11,6 +11,27 @@ const callbacks = {
 };
 
 describe("SelectionToolbar", () => {
+  it("offers cancellation only for eligible items and locks actions while pending", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const cancel = vi.fn();
+    try {
+      await act(async () => root.render(<SelectionToolbar active count={5} downloadsView cancelCount={2} onCancelDownloads={cancel} {...callbacks} />));
+      const button = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("다운로드 취소"))!;
+      expect(button).toHaveTextContent("다운로드 취소 · 2개");
+      await act(async () => button.click());
+      expect(cancel).toHaveBeenCalledOnce();
+      await act(async () => root.render(<SelectionToolbar active count={5} downloadsView cancelCount={0} cancelPending downloadPending onCancelDownloads={cancel} {...callbacks} />));
+      const busy = [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.includes("취소 중"))!;
+      expect(busy).toBeDisabled();
+      expect(container.querySelector(".primary")).toBeDisabled();
+      await act(async () => busy.click());
+      expect(cancel).toHaveBeenCalledOnce();
+      await act(async () => root.render(<SelectionToolbar active count={5} downloadsView cancelCount={0} onCancelDownloads={cancel} {...callbacks} />));
+      expect(container).not.toHaveTextContent("다운로드 취소");
+    } finally { await act(async () => root.unmount()); }
+  });
+
   it("keeps its slot but renders no batch controls for a single selection", async () => {
     const container = document.createElement("div");
     document.body.append(container);

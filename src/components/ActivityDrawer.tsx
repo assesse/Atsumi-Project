@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
 import type { DownloadState, Gallery, GalleryId } from "../core/types";
+import { runningDownloadStates } from "../state/downloadCancellation";
 import { FluentIcon } from "./FluentIcon";
 import type { DownloadOverlapContainmentGroup } from "../state/downloadOverlapContainment";
 import "./ActivityDrawer.css";
@@ -60,14 +61,7 @@ export type DanbooruSessionActivity = {
   state: "completed" | "failed";
 };
 
-const runningDownloadStates = new Set([
-  "queued",
-  "resolving_metadata",
-  "downloading",
-  "hashing",
-  "verifying",
-  "retry_wait",
-]);
+const RECENT_ACTIVITY_LIMIT = 50;
 
 const duplicateProcessedDetail = "중복 처리 완료 · 목록에서 제외";
 
@@ -183,7 +177,7 @@ export function ActivityDrawer({
     .sort((left, right) => right.occurredAt - left.occurredAt)
     .filter((activity, index, activities) =>
       activities.findIndex((candidate) => candidate.reviewId === activity.reviewId) === index);
-  const feed = [
+  const allSessionActivities = [
     ...downloadActivities,
     ...latestAutomaticActivities.map((activity) => ({
       kind: "automatic-overlap" as const,
@@ -197,7 +191,12 @@ export function ActivityDrawer({
       occurredAt: activity.occurredAt,
       priority: sessionActivityPriority(activity.state),
     })),
-  ]
+  ];
+  // The drawer is a recent activity feed, not the complete download queue.
+  // Take the newest window first so old unfinished jobs do not stay pinned forever.
+  const feed = allSessionActivities
+    .sort((left, right) => right.occurredAt - left.occurredAt)
+    .slice(0, RECENT_ACTIVITY_LIMIT)
     .sort((left, right) => left.priority - right.priority || right.occurredAt - left.occurredAt);
   const liveAutomaticByReviewId = new Map(latestAutomaticActivities.map((activity) => [activity.reviewId, activity]));
   const persistedReviewIds = new Set(automationHistory.map((item) => item.reviewId));
@@ -281,6 +280,9 @@ export function ActivityDrawer({
         </section>
       )}
       {activeSection === "session" ? <div id="activity-session-panel" role="tabpanel" className="activity-list">
+        {allSessionActivities.length > RECENT_ACTIVITY_LIMIT ? (
+          <p className="activity-history-note">최근 {RECENT_ACTIVITY_LIMIT}개만 표시합니다. 이전 작업은 앨범을 선택하거나 상세 창에서 취소할 수 있습니다.</p>
+        ) : null}
         {feed.map((item) => {
           if (item.kind === "danbooru") {
             const { activity } = item;

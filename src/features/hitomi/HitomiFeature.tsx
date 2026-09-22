@@ -68,6 +68,7 @@ import { alignPageSizeToColumns } from "../../layout/pageSizeAlignment";
 import { buildSearchSuggestionCatalog, catalogSuggestion } from "../../search/searchSuggestions";
 import { activeSearchToken, metadataSearchToken, searchTokenKind } from "../../search/searchTokens";
 import { applyDownloadChanged } from "../../state/downloadProjection";
+import { cancelDownloads, canCancelDownload, runningDownloadStates } from "../../state/downloadCancellation";
 import { pickArtistBalancedCompletedDownload } from "../../state/downloadRandom";
 import { paginateAutoFindItems, paginateGalleryItems } from "../../state/autoFindPagination";
 import {
@@ -353,6 +354,7 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
   const [reconcilingArtifacts, setReconcilingArtifacts] = useState(false);
   const [settingsPreview, setSettingsPreview] = useState<{ maxColumns: number; previewWidth: number } | null>(null);
   const [pendingDownloadEntries, setPendingDownloadEntries] = useState<ReadonlySet<string>>(() => new Set());
+  const [cancellingDownloadEntries, setCancellingDownloadEntries] = useState<ReadonlySet<string>>(() => new Set());
   const [sessionDownloadActivities, setSessionDownloadActivities] = useState<SessionDownloadActivity[]>([]);
   const [automaticOverlapActivities, setAutomaticOverlapActivities] = useState<AutomaticOverlapActivity[]>([]);
   const [downloadOverlapAutomationHistory, setDownloadOverlapAutomationHistory] = useState<DownloadOverlapAutomationHistoryItem[]>([]);
@@ -2815,7 +2817,8 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
 
   const queueGalleries = useCallback(
     async (ids: GalleryId[]) => {
-      const uniqueIds = [...new Set(ids)].filter((id) => !duplicateHiddenGalleryIds.has(id));
+      const uniqueIds = [...new Set(ids)].filter((id) => !duplicateHiddenGalleryIds.has(id)
+        && !pendingDownloadEntriesRef.current.has(galleriesRef.current.get(id)?.download?.entryId ?? ""));
       const newGalleryIds = uniqueIds.filter((id) => !galleries.get(id)?.download);
       const retryGalleryIds = uniqueIds.filter((id) => {
         const download = galleries.get(id)?.download;
@@ -2890,25 +2893,42 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
     [beginDownloadMutation, duplicateHiddenGalleryIds, finishDownloadMutation, recordSessionDownloadActivity, showToast],
   );
 
-  const cancelGallery = useCallback(async (id: GalleryId) => {
-    const download = galleriesRef.current.get(id)?.download;
-    if (!download) return;
-    if (!beginDownloadMutation(download.entryId)) return;
+  const cancelGalleries = useCallback(async (ids: GalleryId[]) => {
+    const entryIds = [...new Set(ids.flatMap((id) => {
+      const download = galleriesRef.current.get(id)?.download;
+      if (!download || !canCancelDownload(download.state)
+        || pendingDownloadEntriesRef.current.has(download.entryId)
+        || (duplicateHiddenGalleryIds.has(id) && !runningDownloadStates.has(download.state))) return [];
+      return [download.entryId];
+    }))];
+    if (!entryIds.length) return;
+    entryIds.forEach((id) => pendingDownloadEntriesRef.current.add(id));
+    setPendingDownloadEntries(new Set(pendingDownloadEntriesRef.current));
+    setCancellingDownloadEntries((current) => new Set([...current, ...entryIds]));
     try {
-      const result = await backend.downloadCancel([download.entryId]);
-      if (!result.ok) {
-        showToast(result.error.message);
-        return;
-      }
-      result.data.forEach((entry) => recordSessionDownloadActivity(entry.galleryId, entry.state));
-      setGalleries((current) => mergeDownloadEntries(current, result.data));
-      showToast("다운로드를 취소했습니다.");
+      const result = await cancelDownloads(backend, entryIds, (entries) => {
+        entries.forEach((entry) => recordSessionDownloadActivity(entry.galleryId, entry.state));
+        setGalleries((current) => mergeDownloadEntries(current, entries));
+      });
+      const failed = result.failed.reduce((sum, item) => sum + item.entryIds.length, 0);
+      showToast([
+        `${result.cancelled.length}개 다운로드를 취소했습니다.`,
+        result.skipped.length ? `${result.skipped.length}개는 이미 완료되었거나 상태가 바뀌어 건너뛰었습니다.` : "",
+        failed ? `${failed}개 취소 실패: ${result.failed[0]?.message}` : "",
+      ].filter(Boolean).join(" "));
+      if (result.skipped.length || failed) setDownloadsRefresh((value) => value + 1);
     } catch {
       showToast("취소 요청을 backend에 전달하지 못했습니다.");
     } finally {
-      finishDownloadMutation(download.entryId);
+      entryIds.forEach((id) => pendingDownloadEntriesRef.current.delete(id));
+      setPendingDownloadEntries(new Set(pendingDownloadEntriesRef.current));
+      setCancellingDownloadEntries((current) => {
+        const next = new Set(current);
+        entryIds.forEach((id) => next.delete(id));
+        return next;
+      });
     }
-  }, [beginDownloadMutation, finishDownloadMutation, recordSessionDownloadActivity, showToast]);
+  }, [duplicateHiddenGalleryIds, recordSessionDownloadActivity, showToast]);
 
   const quarantineGalleries = useCallback(async (ids: GalleryId[]) => {
     const downloads = ids
@@ -3255,6 +3275,12 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
 
   const selectedIds = useMemo(() => [...ui.selection.ids], [ui.selection.ids]);
   const multiSelectionMode = ui.selection.ids.size >= 2;
+  const selectedRunningIds = selectedIds.filter((id) => {
+    const download = displayGalleries.get(id)?.download;
+    return download && runningDownloadStates.has(download.state);
+  });
+  const selectionDownloadPending = selectedIds.some((id) => pendingDownloadEntries.has(displayGalleries.get(id)?.download?.entryId ?? ""));
+  const selectionCancelPending = selectedIds.some((id) => cancellingDownloadEntries.has(displayGalleries.get(id)?.download?.entryId ?? ""));
   const selectedCompletedEntryIds = useMemo(() => [...new Set(selectedIds.flatMap((id) => {
     const download = displayGalleries.get(id)?.download;
     return download?.state === "completed" ? [download.entryId] : [];
@@ -4039,6 +4065,10 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
             count={ui.selection.ids.size}
             downloadsView={ui.view === "downloads"}
             restoreMode={selectedIds.length > 0 && selectedIds.every((id) => displayGalleries.get(id)?.download?.state === "quarantined")}
+            cancelCount={selectedRunningIds.length}
+            cancelPending={selectionCancelPending}
+            downloadPending={selectionDownloadPending}
+            onCancelDownloads={() => void cancelGalleries(selectedRunningIds)}
             onAll={() => dispatch({ type: "selection.all", ids: renderedActionableIds })}
             onClear={() => dispatch({ type: "selection.clear" })}
             onPrimary={() => void queueGalleries(selectedIds)}
@@ -4153,6 +4183,9 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
         onRestore={() => dispatch({ type: "detail.minimize", minimized: false })}
         onOpenRelated={openRelatedDetail}
         onQueue={(id) => void queueGalleries([id])}
+        onCancelDownload={(id) => void cancelGalleries([id])}
+        pendingDownloadEntryIds={pendingDownloadEntries}
+        cancellingDownloadEntryIds={cancellingDownloadEntries}
         onSetRepresentativePreview={setRepresentativePreview}
         onOpenDownloadFolder={(entryId) => void openDownloadFolder(entryId)}
         onMetadataSearch={searchMetadata}
@@ -4203,7 +4236,7 @@ export function HitomiFeature({ active, children, navigationRequest }: HitomiFea
         onRetryAutomationHistory={() => void hydrateDownloadOverlapAutomationHistoryPage(1, true)}
         onLoadMoreAutomationHistory={loadMoreDownloadOverlapAutomationHistory}
         onRetry={(id) => void retryGallery(id)}
-        onCancel={(id) => void cancelGallery(id)}
+        onCancel={(id) => void cancelGalleries([id])}
         pendingEntryIds={pendingDownloadEntries}
       />
 

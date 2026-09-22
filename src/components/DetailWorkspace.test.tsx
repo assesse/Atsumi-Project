@@ -15,6 +15,45 @@ afterEach(() => {
 });
 
 describe("DetailWorkspace page previews", () => {
+  it("replaces download with cancel throughout active phases, blocks repeats, and restores it after cancellation", async () => {
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    const source = { ...mockGalleries[0]!, pages: 1, relatedIds: [] };
+    const onQueue = vi.fn();
+    const onCancelDownload = vi.fn();
+    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test" }) });
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    const render = (state: NonNullable<Gallery["download"]>["state"], pending = false) => root.render(
+      <DetailWorkspace tabs={[source.id]} activeId={source.id} minimized={false}
+        galleries={new Map([[source.id, { ...source, download: { entryId: "active-entry", state } }]])}
+        favoriteMetadata={new Set()} thumbnailClient={client} onActivate={vi.fn()} onClose={vi.fn()}
+        onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()}
+        onQueue={onQueue} onCancelDownload={onCancelDownload}
+        pendingDownloadEntryIds={new Set(pending ? ["active-entry"] : [])}
+        cancellingDownloadEntryIds={new Set(pending ? ["active-entry"] : [])}
+        onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />,
+    );
+    try {
+      for (const state of ["queued", "resolving_metadata", "downloading", "hashing", "verifying", "retry_wait"] as const) {
+        await act(async () => render(state));
+        expect(container.querySelector('[aria-label="다운로드 취소"]')).toBeEnabled();
+        expect(container.querySelector('[aria-label="다운로드"]')).toBeNull();
+      }
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="다운로드 취소"]')!.click());
+      expect(onCancelDownload).toHaveBeenCalledWith(source.id);
+      expect(onQueue).not.toHaveBeenCalled();
+      await act(async () => render("cancelled", true));
+      expect(container.querySelector('[aria-label="다운로드 취소 중"]')).toBeDisabled();
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="다운로드 취소 중"]')!.click());
+      expect(onCancelDownload).toHaveBeenCalledOnce();
+      await act(async () => render("cancelled"));
+      expect(container.querySelector('[aria-label="다운로드"]')).toBeEnabled();
+      await act(async () => render("completed"));
+      expect(container.querySelector('[aria-label="다운로드 완료"]')).not.toBeNull();
+      expect(container.querySelector('[aria-label="다운로드 취소"]')).toBeNull();
+    } finally { await act(async () => root.unmount()); client.dispose(); }
+  });
+
   it("opens in-place comments from both headers and suspends preview shortcuts while composing", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const read = vi.spyOn(communityApi, "work").mockResolvedValue({ items: [], nextCursor: null });
