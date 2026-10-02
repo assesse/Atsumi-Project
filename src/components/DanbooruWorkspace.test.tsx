@@ -75,6 +75,74 @@ describe("DanbooruWorkspace", () => {
     vi.clearAllMocks();
   });
 
+  it("retains results, scroll and detail selection while inactive without loading or handling detail keys", async () => {
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    const props = { backend: danbooruApi, railCollapsed: false, pageSize: 50, previewWidth: 220, onToggleRail: vi.fn(), onSourceChange: vi.fn(), onOpenSettings: vi.fn() };
+    try {
+      await act(async () => { root.render(<DanbooruWorkspace {...props} />); await settle(); });
+      const viewport = container.querySelector<HTMLElement>(".danbooru-content")!;
+      await act(async () => { viewport.scrollTop = 480; viewport.dispatchEvent(new Event("scroll")); });
+      await act(async () => container.querySelector<HTMLButtonElement>(".danbooru-card-preview")!.click());
+      const calls = vi.mocked(backend.danbooruSearch).mock.calls.length;
+      await act(async () => root.render(<DanbooruWorkspace {...props} active={false} />));
+      expect(container.querySelector(".danbooru-shell")).toHaveAttribute("hidden");
+      expect(container.querySelector(".danbooru-detail")).toBeNull();
+      await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      await act(async () => root.render(<DanbooruWorkspace {...props} />));
+      expect(viewport.scrollTop).toBe(480);
+      expect(container.querySelector(".danbooru-detail")).not.toBeNull();
+      expect(backend.danbooruSearch).toHaveBeenCalledTimes(calls);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("returns from an artist search to its loaded result and scroll without refetching", async () => {
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />); await settle(); });
+      const viewport = container.querySelector<HTMLElement>(".danbooru-content")!;
+      await act(async () => { viewport.scrollTop = 350; viewport.dispatchEvent(new Event("scroll")); });
+      await act(async () => container.querySelector<HTMLButtonElement>(".danbooru-card-preview")!.click());
+      vi.mocked(backend.danbooruSearch).mockResolvedValueOnce({ ok: true, data: { items: [nextPost], page: 1, hasMore: false } });
+      await act(async () => { container.querySelector<HTMLButtonElement>(".danbooru-tag-section button")!.click(); await settle(); });
+      expect(container.querySelector(`[data-post-id="${nextPost.id}"]`)).not.toBeNull();
+      const calls = vi.mocked(backend.danbooruSearch).mock.calls.length;
+      await act(async () => container.querySelector<HTMLButtonElement>(".danbooru-search-history button")!.click());
+      expect(container.querySelector(`[data-post-id="${post.id}"]`)).not.toBeNull();
+      expect(viewport.scrollTop).toBe(350);
+      expect(backend.danbooruSearch).toHaveBeenCalledTimes(calls);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("dismisses download feedback on a timer without relying on CSS animation", async () => {
+    vi.useFakeTimers();
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
+      await act(async () => container.querySelector<HTMLButtonElement>(".danbooru-save-button")!.click());
+      expect(container.querySelector(".toast")).toHaveTextContent("원본을 저장했습니다");
+      await act(async () => vi.advanceTimersByTimeAsync(4000));
+      expect(container.querySelector(".toast")).toBeNull();
+    } finally { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); }
+  });
+
+  it("honors community navigation after a source round trip reuses a sequence number", async () => {
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    const props = { backend: danbooruApi, railCollapsed: false, pageSize: 50, previewWidth: 220, onToggleRail: vi.fn(), onSourceChange: vi.fn(), onOpenSettings: vi.fn() };
+    try {
+      await act(async () => { root.render(<DanbooruWorkspace {...props} />); await settle(); });
+      await act(async () => root.render(<DanbooruWorkspace {...props} navigationRequest={{ source: "danbooru", view: "downloads", sequence: 1 }} />));
+      expect(container.querySelector("h1")).toHaveTextContent("저장한 Danbooru 원본");
+      await act(async () => root.render(<DanbooruWorkspace {...props} active={false} navigationRequest={null} />));
+      await act(async () => root.render(<DanbooruWorkspace {...props} navigationRequest={{ source: "danbooru", view: "explore", sequence: 1 }} />));
+      expect(container.querySelector("h1")).toHaveTextContent("Danbooru post 탐색");
+      expect(backend.danbooruSearch).toHaveBeenCalledTimes(1);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
   it("loads real-mode post projections and records an original download", async () => {
     const container = document.createElement("div");
     document.body.append(container);

@@ -3,7 +3,6 @@ use std::{
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
-        mpsc::Sender,
         Arc, Mutex,
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -43,10 +42,9 @@ use crate::{
         ExcludedArtifactService, HitomiLiveAdapter, OverlapMergeService, ThumbnailDiskCache,
     },
     thumbnail::{
-        CancellationToken, ThumbnailCacheClearDto, ThumbnailCompletionEventDto,
-        ThumbnailCoordinator, ThumbnailCoordinatorError, ThumbnailInvalidationDto, ThumbnailKey,
-        ThumbnailPriority, ThumbnailRequestDto, ThumbnailRequestTokenDto,
-        ThumbnailRuntimeConfigDto, ThumbnailWorkerStatsDto,
+        CancellationToken, ThumbnailCacheClearDto, ThumbnailCoordinator, ThumbnailCoordinatorError,
+        ThumbnailInvalidationDto, ThumbnailKey, ThumbnailPriority, ThumbnailRequestDto,
+        ThumbnailRequestTokenDto, ThumbnailRuntimeConfigDto, ThumbnailWorkerStatsDto,
     },
 };
 
@@ -265,7 +263,7 @@ pub struct AppState {
     pub(crate) danbooru: Arc<super::danbooru::DanbooruClient>,
     thumbnails: ThumbnailCoordinator,
     thumbnail_disk_cache: Option<Arc<ThumbnailDiskCache>>,
-    thumbnail_completions: Sender<ThumbnailCompletionEventDto>,
+    pub(crate) thumbnail_transport: Arc<crate::thumbnail::transport::ThumbnailTransport>,
     detail_originals: DetailOriginalSupervisor,
     downloads: DownloadSupervisor,
     auto_find: AutoFindSupervisor,
@@ -358,7 +356,6 @@ impl AppState {
         service: ApplicationService,
         danbooru: Arc<super::danbooru::DanbooruClient>,
         thumbnails: ThumbnailCoordinator,
-        thumbnail_completions: Sender<ThumbnailCompletionEventDto>,
         detail_originals: DetailOriginalSupervisor,
         downloads: DownloadSupervisor,
         auto_find: AutoFindSupervisor,
@@ -374,7 +371,9 @@ impl AppState {
             danbooru,
             thumbnails,
             thumbnail_disk_cache: None,
-            thumbnail_completions,
+            thumbnail_transport: Arc::new(
+                crate::thumbnail::transport::ThumbnailTransport::default(),
+            ),
             detail_originals,
             downloads,
             auto_find,
@@ -1098,6 +1097,12 @@ pub async fn download_overlap_merge(
                     keys.push(ThumbnailKey::GalleryPage { gallery_id: target.gallery_id.get(), source_page: target_page });
                 }
             }
+            if request.selected_pages.is_some() {
+                for number in 1..=target.page_count + request.source_pages.len() as u32 {
+                    keys.push(ThumbnailKey::ArtifactPage { entry_id: target.entry_id.clone(), source_page: number });
+                    keys.push(ThumbnailKey::GalleryPage { gallery_id: target.gallery_id.get(), source_page: number });
+                }
+            }
             let result = downloads.with_overlap_merge_lock(&review_id, || merges.apply(request))?;
             // A committed merge must never be reported as failed because a
             // recreatable preview or delayed exclusion refresh failed afterward.
@@ -1269,6 +1274,20 @@ pub async fn settings_get(
 }
 
 #[tauri::command]
+pub async fn download_popularity_snapshot(
+    state: State<'_, AppState>,
+    period: crate::download_popularity::Period,
+) -> Result<crate::download_popularity::PopularitySnapshot, String> {
+    let source = state.live_source.clone();
+    let path = state.data_dir.join("atsumi-next.sqlite3");
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::download_popularity::snapshot(&path, &source, period)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn storage_usage_get(
     state: State<'_, AppState>,
 ) -> Result<ApiResult<StorageUsageSnapshot>, ApiError> {
@@ -1309,8 +1328,14 @@ pub async fn settings_update(
     expected_revision: u64,
 ) -> Result<ApiResult<SettingsSnapshot>, ApiError> {
     let cache_limit_changed = patch.cache_limit_gb.is_some();
+    let processing_changed = patch.high_performance_processing.is_some();
     match state.service.settings_update(patch, expected_revision) {
         Ok(snapshot) => {
+            if processing_changed {
+                crate::application::image_work_budget::configure(
+                    snapshot.high_performance_processing,
+                );
+            }
             if let Err(error) = state.thumbnails.reconfigure(ThumbnailRuntimeConfigDto {
                 concurrent_image_requests: snapshot.concurrent_image_requests,
                 request_start_interval_ms: snapshot.request_start_interval_ms,
@@ -1469,15 +1494,65 @@ pub async fn download_library_page_list(
 #[tauri::command(rename_all = "camelCase")]
 pub fn thumbnail_request(
     state: State<'_, AppState>,
+    window: tauri::WebviewWindow,
     request: ThumbnailRequestDto,
+    epoch: String,
 ) -> Result<ApiResult<ThumbnailRequestTokenDto>, ApiError> {
-    match state
-        .thumbnails
-        .request_with_completion(request, state.thumbnail_completions.clone())
-    {
+    use tauri::Emitter;
+    if window.label() != "main" || state.thumbnail_transport.epoch() != epoch {
+        return Ok(ApiResult::failure(ApiError {
+            code: "THUMBNAIL_STALE_DOCUMENT".into(),
+            message: "The thumbnail document was replaced".into(),
+            retryable: false,
+            action: Some(super::ApiAction::None),
+            details: None,
+        }));
+    }
+    let transport = Arc::clone(&state.thumbnail_transport);
+    match state.thumbnails.request_with_callback(
+        request,
+        Arc::new(move |event| {
+            let request_id = event.request_id.clone();
+            if let Some(value) = transport.publish(&epoch, event) {
+                if window.emit("thumbnail:ready", value).is_err() {
+                    transport.cancel_request(&request_id);
+                }
+            }
+        }),
+    ) {
         Ok(token) => Ok(ApiResult::success(token)),
         Err(error) => Ok(ApiResult::failure(thumbnail_coordinator_error(error))),
     }
+}
+
+#[tauri::command]
+pub fn thumbnail_session(state: State<'_, AppState>) -> ApiResult<String> {
+    ApiResult::success(state.thumbnail_transport.epoch())
+}
+
+#[tauri::command]
+pub fn thumbnail_read(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    token: String,
+) -> Result<tauri::ipc::Response, String> {
+    if window.label() != "main" {
+        return Err("Thumbnail bodies are restricted to the main document".into());
+    }
+    state
+        .thumbnail_transport
+        .read(&token)
+        .map(tauri::ipc::Response::new)
+        .ok_or_else(|| "Thumbnail capability expired or was already consumed".into())
+}
+
+#[tauri::command]
+pub fn thumbnail_release(
+    window: tauri::WebviewWindow,
+    state: State<'_, AppState>,
+    token: String,
+) -> ApiResult<bool> {
+    ApiResult::success(window.label() == "main" && state.thumbnail_transport.release(&token))
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1485,6 +1560,7 @@ pub fn thumbnail_cancel(
     state: State<'_, AppState>,
     request_id: String,
 ) -> Result<ApiResult<bool>, ApiError> {
+    state.thumbnail_transport.cancel_request(request_id.trim());
     Ok(ApiResult::success(
         state.thumbnails.cancel(request_id.trim()),
     ))
@@ -1515,6 +1591,7 @@ pub async fn thumbnail_invalidate(
             details: None,
         }));
     }
+    state.thumbnail_transport.invalidate(&key);
     let thumbnails = state.thumbnails.clone();
     let disk = state.thumbnail_disk_cache.clone();
     Ok(run_application_blocking("thumbnail_invalidate", move || {
@@ -1577,10 +1654,15 @@ fn clear_thumbnail_caches(
 pub async fn download_retry(
     state: State<'_, AppState>,
     entry_ids: Vec<String>,
+    fill_available: Option<bool>,
 ) -> Result<ApiResult<Vec<JobRef>>, ApiError> {
     let managed_work = state.managed_work();
     match managed_work.run(|| {
-        let job_refs = state.service.download_retry(entry_ids)?;
+        let job_refs = if fill_available.unwrap_or(false) {
+            state.service.download_retry_available(entry_ids)?
+        } else {
+            state.service.download_retry(entry_ids)?
+        };
         state
             .downloads
             .enqueue_retries(&job_refs)
@@ -1988,8 +2070,15 @@ pub async fn gallery_summary_get(
     gallery_id: i64,
 ) -> Result<ApiResult<GallerySummary>, ApiError> {
     let service = state.service.clone();
+    let merges = state.overlap_merges.clone();
     Ok(run_application_blocking("gallery_summary_get", move || {
-        service.gallery_summary_get(gallery_id)
+        let mut summary = service.gallery_summary_get(gallery_id)?;
+        if let Some(merges) = merges {
+            if let Some(count) = merges.composed_page_count(gallery_id)? {
+                summary.pages = count;
+            }
+        }
+        Ok(summary)
     })
     .await)
 }
@@ -2000,8 +2089,17 @@ pub async fn gallery_detail_get(
     gallery_id: i64,
 ) -> Result<ApiResult<GalleryDetail>, ApiError> {
     let service = state.service.clone();
+    let merges = state.overlap_merges.clone();
     Ok(run_application_blocking("gallery_detail_get", move || {
-        service.gallery_detail_get(gallery_id)
+        let mut detail = service.gallery_detail_get(gallery_id)?;
+        if let Some(merges) = merges {
+            if let Some(count) = merges.composed_page_count(gallery_id)? {
+                detail.summary.pages = count;
+                // Online dimensions refer to the original order, not this edition.
+                detail.page_dimensions.clear();
+            }
+        }
+        Ok(detail)
     })
     .await)
 }

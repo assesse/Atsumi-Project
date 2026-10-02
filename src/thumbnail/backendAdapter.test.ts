@@ -37,6 +37,67 @@ afterEach(() => {
 });
 
 describe("BackendThumbnailAdapter", () => {
+  const binaryHarness = (read: () => Promise<ArrayBuffer>) => {
+    let completion: ((event: ThumbnailCompletionEvent) => void) | undefined;
+    const transport = {
+      on: vi.fn(async (_event, handler) => { completion=handler; return () => undefined; }),
+      thumbnailRequest: vi.fn(async () => ({ok:true,data:{requestId:"binary-request",key:{kind:"galleryCover",galleryId:4_051_038}}})),
+      thumbnailRead: vi.fn(read), thumbnailRelease:vi.fn(async()=>({ok:true,data:true})),
+      thumbnailCancel:vi.fn(async()=>({ok:true,data:true})),
+    } as unknown as BackendClient;
+    const adapter=new BackendThumbnailAdapter(transport);
+    const event=readyEvent("binary-request");
+    if (event.outcome.status!=="ready") throw new Error("fixture");
+    event.outcome.delivery.thumbnail={contentType:"image/webp",resourceToken:"one-read-capability",byteLength:6,width:2,height:2};
+    return {transport,adapter,event,emit:()=>completion?.(event)};
+  };
+  it("reads native bodies as binary, acknowledges the lease and owns only a Blob URL", async () => {
+    Object.defineProperty(URL,"createObjectURL",{configurable:true,value:vi.fn(()=>"blob:binary")});
+    Object.defineProperty(URL,"revokeObjectURL",{configurable:true,value:vi.fn()});
+    const h=binaryHarness(async()=>new Uint8Array(6).buffer);
+    const resolution=h.adapter.resolve(request); await vi.waitFor(()=>expect(h.transport.thumbnailRequest).toHaveBeenCalledOnce());
+    h.emit(); const asset=await resolution;
+    expect(h.transport.thumbnailRead).toHaveBeenCalledWith("one-read-capability");
+    expect(h.transport.thumbnailRelease).toHaveBeenCalledWith("one-read-capability");
+    expect(asset).toMatchObject({kind:"image",byteLength:6});
+    expect(JSON.stringify(h.event)).not.toContain('"bytes"');
+    h.adapter.release(request,asset); h.adapter.dispose();
+  });
+  it("does not resurrect an image cancelled while its binary response was in flight",async()=>{
+    Object.defineProperty(URL,"createObjectURL",{configurable:true,value:vi.fn(()=>"blob:late")});
+    let resolveBody!: (body:ArrayBuffer)=>void;
+    const h=binaryHarness(()=>new Promise((resolve)=>{resolveBody=resolve;}));
+    const resolution=h.adapter.resolve(request); const rejected=expect(resolution).rejects.toThrow(/cancelled/);
+    await vi.waitFor(()=>expect(h.transport.thumbnailRequest).toHaveBeenCalledOnce()); h.emit();
+    expect(h.transport.thumbnailRead).toHaveBeenCalledOnce(); h.adapter.cancel(request); resolveBody(new ArrayBuffer(6));
+    await rejected; await vi.waitFor(()=>expect(h.transport.thumbnailRelease).toHaveBeenCalledOnce());
+    expect(URL.createObjectURL).not.toHaveBeenCalled(); h.adapter.dispose();
+  });
+  it("rejects truncated binary bodies and releases unused late capabilities",async()=>{
+    const h=binaryHarness(async()=>new ArrayBuffer(2)); const resolution=h.adapter.resolve(request);
+    const rejected=expect(resolution).rejects.toMatchObject({name:"THUMBNAIL_INVALID_BODY"});
+    await vi.waitFor(()=>expect(h.transport.thumbnailRequest).toHaveBeenCalledOnce()); h.emit(); await rejected;
+    expect(h.transport.thumbnailRelease).toHaveBeenCalledOnce(); h.emit();
+    expect(h.transport.thumbnailRelease).toHaveBeenCalledTimes(2); h.adapter.dispose();
+  });
+  it("keeps the saved review, candidate, revision and side in the image transport", async () => {
+    Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:review") });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    const submitted = vi.spyOn(backend, "thumbnailRequest");
+    const adapter = new BackendThumbnailAdapter(backend);
+    const reviewRequest: ThumbnailRequest = {
+      key: { kind: "overlap-review-page", reviewId: "review-101", candidateId: "candidate-9", reviewRevision: 4, side: "existing", page: 11 },
+      consumer: "review", priority: "critical",
+    };
+    const asset = await adapter.resolve(reviewRequest);
+    expect(asset.kind).toBe("image");
+    expect(submitted).toHaveBeenCalledWith({
+      key: { kind: "overlapReviewPage", reviewId: "review-101", candidateId: "candidate-9", reviewRevision: 4, side: "existing", sourcePage: 11 },
+      consumer: "review", priority: "critical",
+    });
+    adapter.release(reviewRequest, asset);
+    adapter.dispose();
+  });
   it("turns one backend completion into a revocable display URL", async () => {
     const createObjectURL = vi.fn((_blob: Blob) => "blob:https://atsumi.local/thumbnail-1");
     const revokeObjectURL = vi.fn();
@@ -178,6 +239,7 @@ describe("BackendThumbnailAdapter", () => {
     adapter.cancel(request);
     await vi.waitFor(() => expect(transport.thumbnailCancel).toHaveBeenCalledWith("cancelled-request"));
     await expect(first).rejects.toMatchObject({ name: "THUMBNAIL_cancelled" });
+    expect((adapter as unknown as { pendingByRequestId: Map<string, unknown> }).pendingByRequestId.size).toBe(0);
     completionHandler?.(readyEvent("cancelled-request"));
 
     const second = adapter.resolve(request);
@@ -190,7 +252,7 @@ describe("BackendThumbnailAdapter", () => {
     adapter.dispose();
   });
 
-  it("keeps the expected early completion while unrelated buffered events are evicted", async () => {
+  it("keeps the expected early completion but does not retain unsolicited byte arrays", async () => {
     let completeToken: ((result: ApiResult<ThumbnailRequestToken>) => void) | undefined;
     let completionHandler: ((event: ThumbnailCompletionEvent) => void) | undefined;
     const transport = {
@@ -224,6 +286,8 @@ describe("BackendThumbnailAdapter", () => {
     for (let index = 0; index < 300; index += 1) {
       completionHandler?.(readyEvent(`unrelated-${index}`, 5_000_000 + index));
     }
+    expect(adapter).not.toHaveProperty("bufferedCompletions");
+    expect((adapter as unknown as { pendingByRequestId: Map<string, unknown> }).pendingByRequestId.size).toBe(0);
     completionHandler?.(readyEvent("expected-early"));
     completeToken?.({
       ok: true,

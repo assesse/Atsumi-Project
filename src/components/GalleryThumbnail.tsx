@@ -68,6 +68,10 @@ const assignRef = <T,>(ref: Ref<T> | undefined, value: T | null): void => {
 
 const thumbnailFailureLabel = (code: string | undefined): string => {
   switch (code) {
+    case "THUMBNAIL_evidenceUnavailable":
+      return "판정 당시 원본 없음";
+    case "THUMBNAIL_evidenceChanged":
+      return "판정 당시 원본 변경됨";
     case "THUMBNAIL_notFound":
     case "THUMBNAIL_candidatesExhausted":
       return "원본 이미지를 찾을 수 없음";
@@ -393,7 +397,7 @@ export function GalleryThumbnail({
           title={snapshot.message}
           style={{ ...fullBleedStyle, display: "grid", placeItems: "center", color: "#64767d", fontStyle: "normal" }}
         >
-          ×
+          {thumbnailKey.kind === "overlap-review-page" ? <span style={{ padding: 4, fontSize: 11, textAlign: "center" }}>{thumbnailFailureLabel(snapshot.code)}</span> : "×"}
         </i>
       ) : (
         <i className="thumbnail-loading" aria-hidden="true" />

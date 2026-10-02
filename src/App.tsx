@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { backend } from "./api/backend";
 import { createDanbooruApi } from "./api/featureClients";
 import { AppShell, useAppShell } from "./app/AppShell";
@@ -19,6 +19,8 @@ const updateGuard = createRecordingUpdateGuard(backend.runtime);
 /** Composition only: shared services outlive presentation; feature rules stay inside features. */
 function Workspaces() {
   const shell = useAppShell();
+  const [danbooruVisited, setDanbooruVisited] = useState(shell.source === "danbooru");
+  useEffect(() => { if (shell.source === "danbooru") setDanbooruVisited(true); }, [shell.source]);
   const [communityOpen, setCommunityOpen] = useState(false);
   const [reviewWork, setReviewWork] = useState<WorkKey | null>(null);
   const [navigationRequest, setNavigationRequest] = useState<NavigationRequest | null>(null);
@@ -32,6 +34,7 @@ function Workspaces() {
           hitomi: gallery.workspace,
           danbooru: (
             <DanbooruWorkspace
+              active={shell.source === "danbooru" && !communityOpen}
               navigationRequest={navigationRequest}
               backend={danbooruApi}
               railCollapsed={shell.railCollapsed}
@@ -40,7 +43,7 @@ function Workspaces() {
               favoriteMetadata={gallery.favoriteMetadata}
               activityCount={gallery.activityCount}
               activityOpen={shell.activityOpen}
-              privacyMode={settings.privacyMode}
+              privacyMode={shell.privacyMode}
               privacyModePending={shell.privacyModePending || loading}
               onToggleRail={shell.toggleRail}
               onSourceChange={selectSource}
@@ -59,14 +62,17 @@ function Workspaces() {
           onToggleRail={shell.toggleRail} onSourceChange={selectSource}
           onNavigate={(view) => { setNavigationRequest((old) => ({ source: shell.source, view, sequence: (old?.sequence ?? 0) + 1 })); setCommunityOpen(false); }}
           onSettings={() => shell.setSettingsOpen(true)}
-        /> : workspaces[shell.source]}<StreamingWorkspace
+        /> : shell.source === "hitomi" ? gallery.workspace : null}
+        {(danbooruVisited || shell.source === "danbooru") ? workspaces.danbooru : null}
+        <StreamingWorkspace
           runtime={backend.runtime}
           active={shell.source === "chzzk" && !communityOpen}
           navigationRequest={navigationRequest}
           railCollapsed={shell.railCollapsed}
+          onOpenSettings={() => shell.setSettingsOpen(true)}
           onToggleRail={shell.toggleRail}
           onSourceChange={selectSource}
-          privacyMode={settings.privacyMode}
+          privacyMode={shell.privacyMode}
 
         /></>;
       }}

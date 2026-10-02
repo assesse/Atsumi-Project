@@ -13,12 +13,24 @@ beforeEach(() => { vi.useFakeTimers(); container = document.createElement("div")
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); });
 function setup(inputs = ["", "", "", ""], multiple = false, privacy = false) {
   const api = { snapshot: vi.fn().mockResolvedValue(ok([{ channelId: A, channelName: "저장한 이름" }, { channelId: B, channelName: "즐겨찾기 방송" }])), set: vi.fn().mockResolvedValue(ok([{ channelId: B, channelName: "즐겨찾기 방송" }])), profile: vi.fn().mockResolvedValue(ok({ channelName: "", image: "data:image/png;base64,fixture" })) } satisfies LiveChannelsApi;
-  const auto = { snapshot: vi.fn().mockResolvedValue(ok({ channels: [recording], captureChat: true, error: null })), add: vi.fn(), update: vi.fn() } satisfies AutoRecordingApi;
+  const auto = { snapshot: vi.fn<AutoRecordingApi["snapshot"]>().mockResolvedValue(ok({ channels: [recording], captureChat: true, error: null })), add: vi.fn(), update: vi.fn() } satisfies AutoRecordingApi;
   const onInputs = vi.fn();
   return { api, auto, onInputs, render: () => act(async () => root.render(<LiveChannelPicker runtime="tauri" inputs={inputs} multiple={multiple} privacy={privacy} disabled={false} onInputs={onInputs} api={api} autoApi={auto} />)) };
 }
 const click = async (name: string) => act(async () => container.querySelector<HTMLButtonElement>('[aria-label="' + name + '"]')!.click());
 describe("live channel selector", () => {
+  it("keeps available favorites during reservation initialization without raising an error", async () => {
+    const view = setup();
+    view.auto.snapshot.mockResolvedValue({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "준비 중", retryable: true } });
+    await view.render();
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2);
+    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("내 채널 준비 중");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    view.auto.snapshot.mockResolvedValue(ok({ channels: [recording], captureChat: true, error: null }));
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(container.querySelector(".recording-notice")).toBeNull();
+  });
   it("deduplicates favorites and reservations and selects without changing recording", async () => {
     const view = setup(); await view.render();
     expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2); expect(container).toHaveTextContent("녹화 중");
@@ -30,6 +42,15 @@ describe("live channel selector", () => {
     expect(view.api.set).toHaveBeenCalledExactlyOnceWith(A, false);
     expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2); expect(container).toHaveTextContent("녹화 중");
     expect(view.auto.update).not.toHaveBeenCalled();
+  });
+  it("treats a favorite action during initialization as preparation, not a red error", async () => {
+    const view = setup(); await view.render();
+    view.api.set.mockResolvedValueOnce({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "준비 중", retryable: true } });
+    await click("예약 방송 즐겨찾기 해제");
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("내 채널 준비 중");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2);
   });
   it("fills a free Mado slot without discarding the other selected channels", async () => {
     const view = setup([C, "", D, ""], true); await view.render(); await click("예약 방송 선택");

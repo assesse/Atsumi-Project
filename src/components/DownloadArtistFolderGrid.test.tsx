@@ -83,7 +83,7 @@ describe("DownloadArtistFolderGrid", () => {
     const expected = [...saved.values()].flatMap((ids) => ids.slice(0, count));
     const requestId = (request: ThumbnailRequest): number => request.key.kind === "artifact-page"
       ? Number(request.key.entryId.replace("entry-", ""))
-      : Number(request.key.galleryId);
+      : "galleryId" in request.key ? Number(request.key.galleryId) : -1;
     const resolvers = new Map<number, (asset: ThumbnailAsset) => void>();
     const resolve = vi.fn((request: ThumbnailRequest) => new Promise<ThumbnailAsset>((done) => {
       resolvers.set(requestId(request), done);

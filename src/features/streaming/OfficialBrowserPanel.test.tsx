@@ -109,6 +109,87 @@ afterEach(async () => {
 });
 
 describe("OfficialBrowserPanel", () => {
+  it("shows initialization as busy, not an error or an empty recording library, then clears it", async () => {
+    const api = fakeApi();
+    api.snapshot.mockResolvedValue({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "녹화 기록을 준비하고 있습니다. 다른 탭은 계속 사용할 수 있습니다.", retryable: true } });
+    await render(api, { view: "recordings" });
+    expect(container.querySelector(".recording-notice")).toBeNull();
+    expect(container.querySelector(".recording-library")).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(container.querySelector('.recording-notice[role="status"]')).toHaveTextContent("녹화 목록 준비 중");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container).not.toHaveTextContent("마지막 확인 상태");
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    expect(container).toHaveTextContent("녹화 목록 준비가 지연되고 있습니다");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    api.snapshot.mockResolvedValue(success(ready({ recordings: [recordingFixture()] })));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(container.querySelector(".recording-notice")).toBeNull();
+    expect(container.querySelector(".recording-library")).not.toBeNull();
+    expect(container).toHaveTextContent("공식 방송 테스트");
+  });
+
+  it("does not flash loading on a fast first snapshot or routine background refresh", async () => {
+    const api = fakeApi();
+    await render(api, { view: "recordings" });
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(container.querySelector(".recording-notice")).toBeNull();
+    const pending = deferred<ApiResult<OfficialBrowserSnapshot>>();
+    api.snapshot.mockReturnValueOnce(pending.promise);
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(container.querySelector(".recording-notice")).toBeNull();
+    expect(container.querySelector(".recording-library")).not.toBeNull();
+    await act(async () => pending.resolve(success(ready())));
+  });
+
+  it("shows a loading indicator while the first snapshot request is still unresolved", async () => {
+    const api = fakeApi();
+    const pending = deferred<ApiResult<OfficialBrowserSnapshot>>();
+    api.snapshot.mockReturnValueOnce(pending.promise);
+    await render(api, { view: "recordings" });
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("녹화 목록 준비 중");
+    expect(container.querySelector(".recording-library")).toBeNull();
+    await act(async () => pending.resolve(success(ready())));
+    expect(container.querySelector(".recording-notice")).toBeNull();
+  });
+
+  it("replaces busy status with an actual initialization failure, not an endless spinner", async () => {
+    const api = fakeApi();
+    api.snapshot.mockResolvedValueOnce({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "준비 중", retryable: true } });
+    await render(api, { view: "recordings" });
+    api.snapshot.mockResolvedValue({ ok: false, error: { code: "BROWSER_UNAVAILABLE", message: "저장 공간과 앱 로그를 확인해 주세요.", retryable: true } });
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(container.querySelector('.recording-notice.is-error[role="alert"]')).toHaveTextContent("녹화 목록을 불러오지 못했습니다");
+    expect(container.querySelector(".recording-notice.is-loading")).toBeNull();
+    expect(container).toHaveTextContent("아직 목록을 불러오지 못했습니다");
+    expect(container).not.toHaveTextContent("마지막으로 확인한 목록");
+  });
+
+  it("keeps the last successful library during a refresh failure and clears the warning on recovery", async () => {
+    const api = fakeApi();
+    api.snapshot.mockResolvedValue(success(ready({ recordings: [recordingFixture()] })));
+    await render(api, { view: "recordings" });
+    api.snapshot.mockRejectedValue(new Error("private internal error"));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(container.querySelector(".recording-notice.is-warning")).toHaveTextContent("녹화 상태 확인 실패 · 자동 재확인 중");
+    expect(container).toHaveTextContent("마지막으로 확인한 목록입니다");
+    expect(container).toHaveTextContent("공식 방송 테스트");
+    expect(container).not.toHaveTextContent("private internal error");
+    api.snapshot.mockResolvedValue(success(ready({ recordings: [recordingFixture()] })));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(container.querySelector(".recording-notice")).toBeNull();
+  });
+
+  it("does not report normal initialization as a live-player connection error", async () => {
+    const api = fakeApi();
+    api.snapshot.mockResolvedValue({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "준비 중", retryable: true } });
+    await render(api);
+    expect(container).toHaveTextContent("녹화 기능 준비 중");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector(".official-browser-focus-alert")).toBeNull();
+  });
+
   it.each(["error", "rejection"] as const)("keeps explicit account actions available after a snapshot %s and recovers from a fresh state", async (failure) => {
     const api = fakeApi(); await render(api); await openSettings(api);
     expect(button("로그아웃")).toBeEnabled();
@@ -1080,6 +1161,35 @@ describe("OfficialBrowserPanel", () => {
 
 describe("official browser viewport coordinator", () => {
   const viewport: OfficialBrowserViewport = { x: 10, y: 20, width: 800, height: 450, visible: true };
+  it("installs a nonmodal panel's holes before a pending ordinary viewport ACK", async () => {
+    const api = fakeApi();
+    const stale = deferred<ApiResult<void>>();
+    api.setViewport.mockReturnValueOnce(stale.promise);
+    const owner = claimOfficialBrowserViewport(api);
+    owner.update(viewport);
+    const panel = { ...viewport, occluded: false, preserveBackground: true,
+      clip: { x: 0, y: 0, width: 800, height: 450 }, occlusions: [{ x: 100, y: 100, width: 200, height: 200 }] };
+    owner.update(panel);
+    expect(api.setViewport).toHaveBeenCalledTimes(2);
+    expect(api.setViewport).toHaveBeenLastCalledWith(panel);
+    await act(async () => stale.resolve(success(undefined)));
+    owner.update(panel);
+    expect(api.setViewport).toHaveBeenCalledTimes(2);
+    owner.update(viewport);
+    await act(async () => {});
+    expect(api.setViewport).toHaveBeenLastCalledWith(viewport);
+    owner.release();
+  });
+  it("hides the native view if a nonmodal panel hole cannot be installed", async () => {
+    const api = fakeApi();
+    api.setViewport.mockResolvedValueOnce({ ok: false, error: { code: "LAYOUT", message: "layout failed", retryable: false } });
+    const owner = claimOfficialBrowserViewport(api);
+    owner.update({ ...viewport, occluded: false, preserveBackground: true,
+      clip: { x: 0, y: 0, width: 800, height: 450 }, occlusions: [{ x: 100, y: 100, width: 200, height: 200 }] });
+    await act(async () => {});
+    expect(api.setViewport).toHaveBeenLastCalledWith(expect.objectContaining(hiddenOfficialBrowserViewport));
+    owner.release();
+  });
   it("keeps a privacy audio gate during ownership cleanup until the next explicit update", async () => {
     const api = fakeApi();
     const owner = claimOfficialBrowserViewport(api);

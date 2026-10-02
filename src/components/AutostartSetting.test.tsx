@@ -51,9 +51,9 @@ describe("AutostartSetting", () => {
     expect(setEnabled).not.toHaveBeenCalled();
     expect(toggle()).not.toBeChecked();
     expect(toggle()).toHaveAccessibleName("Windows 로그인 시 자동 실행");
-    expect(container.textContent).toContain("저장 버튼과 별개로 즉시 적용");
-    expect(container.textContent).toContain("기본으로 켜지지 않습니다");
-    expect(container.textContent).toContain("개발 실행기를 사용");
+    expect(container.textContent).not.toContain("저장 버튼과 별개로 즉시 적용");
+    expect(container.textContent).not.toContain("기본으로 켜지지 않습니다");
+    expect(container.textContent).not.toContain("개발 실행기를 사용");
   });
 
   it("enables and disables immediately, using only the state confirmed by the native API", async () => {
@@ -105,7 +105,7 @@ describe("AutostartSetting", () => {
     getStatus.mockResolvedValue(success({ enabled: true, launchMode: "installed" }));
     await focus();
     expect(toggle()).toBeChecked();
-    expect(container.textContent).toContain("현재 앱의 실행 파일");
+    expect(container.textContent).not.toContain("현재 앱의 실행 파일");
     await render(false);
     await focus();
     expect(getStatus).toHaveBeenCalledTimes(2);
@@ -120,29 +120,35 @@ describe("AutostartSetting", () => {
     getStatus.mockResolvedValue(success({ supported: false, launchMode: "unsupported" }));
     await render();
     expect(toggle()).toBeDisabled();
-    expect(container.textContent).toContain("브라우저에서는 변경할 수 없습니다");
+    expect(container.textContent).not.toContain("브라우저에서는 변경할 수 없습니다");
     await act(async () => toggle().click());
     expect(setEnabled).not.toHaveBeenCalled();
   });
 
-  it("offers an explicit reconnection for a moved app and allows the old registration to be disabled", async () => {
-    getStatus.mockResolvedValue(success({ enabled: true, needsRepair: true }));
+  it.each(["development", "installed"] as const)("repairs a moved %s app through the same off/on switch, without a reconnection button", async (launchMode) => {
+    getStatus.mockResolvedValue(success({ enabled: true, needsRepair: true, launchMode }));
     await render();
     expect(setEnabled).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("이전 앱 위치");
-    await act(async () => button("현재 앱에 다시 연결").click());
-    expect(setEnabled).toHaveBeenCalledWith(true);
-    expect(container.textContent).not.toContain("현재 앱에 다시 연결");
-    await focus();
+    expect(toggle()).toBeChecked();
+    expect(toggle()).toHaveAttribute("title", expect.stringContaining("껐다 켜면"));
+    expect(container.textContent).toContain("재설정 필요");
+    expect(container.querySelectorAll("button")).toHaveLength(0);
     await act(async () => toggle().click());
     expect(setEnabled).toHaveBeenLastCalledWith(false);
+    expect(toggle()).not.toBeChecked();
+    await act(async () => toggle().click());
+    expect(setEnabled).toHaveBeenLastCalledWith(true);
+    expect(toggle()).toBeChecked();
+    expect(container.textContent).toContain("사용 중");
+    expect(container.textContent).not.toContain("다시 연결");
+    expect(container.textContent).not.toContain("재설정 필요");
   });
 
   it("explains Windows startup-app blocking without claiming the app will auto-run", async () => {
     getStatus.mockResolvedValue(success({ enabled: true, disabledByWindows: true }));
     await render();
     expect(container.textContent).toContain("등록됨 · Windows에서 중지");
-    expect(container.textContent).toContain("Windows 설정 → 앱 → 시작 프로그램");
+    expect(toggle()).toHaveAttribute("title", expect.stringContaining("Windows"));
     expect(setEnabled).not.toHaveBeenCalled();
     await act(async () => toggle().click());
     expect(setEnabled).toHaveBeenCalledWith(false);

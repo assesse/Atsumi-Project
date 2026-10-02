@@ -174,9 +174,14 @@ pub struct AutoFindRun {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoFindCutoffEvidence {
+    pub namespace: FavoriteNamespace,
+    /// Target name; retained for wire compatibility with earlier clients.
     pub artist: String,
+    /// Historical policy-v1 evidence; never relabel it as a latest-owned cutoff.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oldest_owned_gallery_id: Option<GalleryId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub latest_owned_gallery_id: Option<GalleryId>,
     pub qualified_owned_count: u32,
     pub source: String,
     pub policy_version: u32,
@@ -185,6 +190,7 @@ pub struct AutoFindCutoffEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutoFindTruncation {
+    pub namespace: FavoriteNamespace,
     pub artist: String,
     pub reason: String,
     pub eligible_count: u32,
@@ -198,6 +204,7 @@ pub struct AutoFindCandidate {
     #[serde(flatten)]
     pub gallery: GallerySummary,
     pub matched_favorite: FavoriteKey,
+    pub matched_favorites: Vec<FavoriteKey>,
     pub discovered_at: String,
 }
 

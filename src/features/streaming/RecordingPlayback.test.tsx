@@ -18,6 +18,17 @@ beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT",
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe("recorded file playback and merge status", () => {
+  it("keeps SSD playback available and offers archive retry without exposing paths in privacy mode", async () => {
+    const value = recording({ merge: merge(), archive: { status: "blocked", sourceDir: "C:\\private-ssd", destinationRoot: "D:\\private-archive", retryAt: 1, lastError: "드라이브 확인 후 재시도" } });
+    await render(value);
+    expect(container).toHaveTextContent("보관 이동 대기");
+    expect(button("앱에서 다시보기")).toBeEnabled();
+    await act(async () => button("보관 이동 다시 시도")!.click());
+    expect(callbacks.onRetryMerge).toHaveBeenCalledExactlyOnceWith(value.id);
+    await render(value, { privacyMode: true });
+    expect(container.innerHTML).not.toContain("private-ssd");
+    expect(container.innerHTML).not.toContain("private-archive");
+  });
   it("opens verified ranges during recording without starting another capture or final export", async () => {
     await render(recording({ status: "recording", progressive: { partCount: 1, segmentCount: 1, durationSeconds: 15, lastError: null } }));
     expect(container).toHaveTextContent("약 3분 또는 48 MiB");

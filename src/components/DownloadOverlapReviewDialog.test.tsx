@@ -161,6 +161,33 @@ const pageMergeFixture = (): DownloadOverlapReview => {
 };
 
 describe("DownloadOverlapReviewDialog", () => {
+  it("keeps processed evidence read-only and explains unavailable historical images", async () => {
+    const requests: ThumbnailRequest[] = [];
+    const client = new ThumbnailClient({ resolve: (request) => {
+      requests.push(request);
+      const error = new Error("판정 당시 원본을 사용할 수 없습니다.");
+      error.name = request.key.kind === "overlap-review-page" && request.key.side === "existing"
+        ? "THUMBNAIL_evidenceChanged" : "THUMBNAIL_evidenceUnavailable";
+      throw error;
+    } });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const review = fixture();
+    review.state = "resolved";
+    review.candidates = [{ ...review.candidates[0]!, decision: "existing_removed" }];
+    const decide = vi.fn();
+    await act(async () => root.render(<DownloadOverlapReviewDialog open={false} review={review} previewWidth={220} thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={decide} />));
+    expect(container).toHaveTextContent("격리·제외된 원본도 복원 없이 비교합니다");
+    expect(container).toHaveTextContent("판정 당시 원본 변경됨");
+    expect(container).toHaveTextContent("판정 당시 원본 없음");
+    expect(requests.every((request) => request.key.kind === "overlap-review-page")).toBe(true);
+    expect(decide).not.toHaveBeenCalled();
+    expect([...container.querySelectorAll("button")].some((button) => button.textContent === "기존 A 제거")).toBe(false);
+    await act(async () => root.unmount());
+    client.dispose();
+    container.remove();
+  });
   it("selects mapped source pages with Ctrl+click and submits a sorted merge request", async () => {
     const review = pageMergeFixture();
     const onMergePages = vi.fn();
@@ -198,29 +225,20 @@ describe("DownloadOverlapReviewDialog", () => {
     expect(incomingPage(11)).not.toHaveClass("is-merge-target");
     expect(container.querySelectorAll('[data-merge-state="source"]')).toHaveLength(2);
     expect(container.querySelectorAll('[data-merge-state="target"]')).toHaveLength(2);
-    expect(container.querySelector(".download-overlap-action-note")).toHaveTextContent("기존 A 2장 → 신규 B 대응 2장 교체");
-    expect(container.querySelector(".download-overlap-action-note")).toHaveTextContent("추가 페이지는 그대로 둡니다");
-    expect(container.querySelector(".download-overlap-action-note")).toHaveTextContent("교체 전 대상 파일은 백업합니다");
-    expect(container.querySelector(".download-overlap-action-note")).toHaveTextContent("기존 A 앨범은 제외하되 원본 파일은 보존합니다");
-    expect(container.textContent).not.toContain("검토 미루기");
-    for (const label of ["기존 A 제거", "신규 B 제거", "오탐 판정", "둘 다 보존"]) {
-      const button = [...container.querySelectorAll<HTMLButtonElement>("button")]
-        .find((item) => item.textContent === label)!;
-      expect(button).toBeDisabled();
+    expect(container.querySelector(".download-overlap-action-note")).toHaveTextContent("A 2장 · B 0장 선택");
+    expect(container.textContent).toContain("검토 미루기");
+    expect([...container.querySelectorAll(".overlap-destination-button")].map((b)=>b.textContent)).toEqual(["A에 병합","B에 병합"]);
+    for (const label of ["오탐 판정", "둘 다 보존"]) {
+      expect([...container.querySelectorAll("button")].find((b)=>b.textContent===label)).toBeDisabled();
     }
-
     await render(true);
-    expect(container.querySelector<HTMLButtonElement>(".download-overlap-merge-apply")).toBeDisabled();
+    expect(container.querySelector(".download-overlap-merge-apply")).toBeDisabled();
     await render(false);
-    const mergeButton = container.querySelector<HTMLButtonElement>(".download-overlap-merge-apply")!;
-    expect(mergeButton).toHaveTextContent("선택한 2장 병합");
+    const mergeButton = container.querySelectorAll<HTMLButtonElement>(".download-overlap-merge-apply")[1]!;
     await act(async () => mergeButton.click());
     expect(onMergePages).toHaveBeenCalledWith({
-      reviewId: "review-overlap",
-      expectedRevision: 4,
-      candidateId: "candidate-1",
-      sourceSide: "existing",
-      sourcePages: [1, 3],
+      reviewId:"review-overlap", expectedRevision:4,candidateId:"candidate-1",sourceSide:"existing",sourcePages:[1,3],
+      selectedPages:{existing:[1,3],incoming:[]},
     });
 
     await act(async () => root.unmount());
@@ -228,7 +246,7 @@ describe("DownloadOverlapReviewDialog", () => {
     container.remove();
   });
 
-  it("refuses unmapped, lossy-source, and opposite-side page merge selections with an explanation", async () => {
+  it("selects unique pages, switches pair sides exclusively and supports Shift ranges", async () => {
     const review = pageMergeFixture();
     const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
     const container = document.createElement("div");
@@ -251,26 +269,19 @@ describe("DownloadOverlapReviewDialog", () => {
     const ctrlClick = async (element: HTMLElement) => act(async () =>
       element.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, button: 0 })));
 
-    await ctrlClick(page("신규 B", 11));
-    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("대응 위치가 없어 병합할 수 없습니다");
-    expect(container.querySelector(".download-overlap-merge-apply")).toBeNull();
-
-    await ctrlClick(page("신규 B", 1));
-    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("신규 B 전체 페이지 중 2장의 대응을 확인할 수 없어");
-    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("자동 제외를 전제로 한 병합이 불가능합니다");
-
-    await ctrlClick(page("기존 A", 1));
-    expect(page("기존 A", 1)).toHaveClass("is-merge-source");
-    await ctrlClick(page("신규 B", 1));
-    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("현재 기존 A를 병합 원본으로 선택 중입니다");
-    expect(page("기존 A", 1)).toHaveClass("is-merge-source");
-    expect(page("신규 B", 1)).toHaveClass("is-merge-target");
-
-    await act(async () => container.querySelector<HTMLButtonElement>(".download-overlap-merge-clear")!.click());
+    await ctrlClick(page("신규 B",11));
+    expect(page("신규 B",11)).toHaveClass("is-merge-source");
+    await ctrlClick(page("기존 A",1));
+    expect(page("기존 A",1)).toHaveClass("is-merge-source");
+    await ctrlClick(page("신규 B",1));
+    expect(page("기존 A",1)).toHaveClass("is-merge-target");
+    expect(page("신규 B",1)).toHaveClass("is-merge-source");
+    await act(async () => page("신규 B",3).dispatchEvent(new MouseEvent("click",{bubbles:true,shiftKey:true,button:0})));
+    expect(page("신규 B",2)).toHaveClass("is-merge-source");
+    expect(page("신규 B",3)).toHaveClass("is-merge-source");
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(b=>b.textContent==="선택 해제")!.click());
     expect(container.querySelector(".download-overlap-page-cell.is-merge-source")).toBeNull();
     expect(container.querySelector(".download-overlap-page-cell.is-merge-target")).toBeNull();
-    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("선택을 모두 해제했습니다");
-    expect(container.textContent).toContain("검토 미루기");
 
     await act(async () => root.unmount());
     client.dispose();
@@ -300,10 +311,8 @@ describe("DownloadOverlapReviewDialog", () => {
     ));
 
     const mappedCell = container.querySelector<HTMLElement>('.download-overlap-page-cell[aria-label^="기존 A 1페이지"]')!;
-    expect(mappedCell).toHaveClass("is-merge-source-blocked");
     await act(async () => mappedCell.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, button: 0 })));
-    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("기존 A 전체 페이지 중 1장의 대응을 확인할 수 없어");
-    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("자동 제외를 전제로 한 병합이 불가능합니다");
+    expect(container.querySelector(".download-overlap-merge-guide")).toHaveTextContent("페이지 대응 개수나 순서가 달라졌습니다");
     expect(container.querySelector(".download-overlap-page-cell.is-merge-source")).toBeNull();
     expect(container.querySelector(".download-overlap-merge-apply")).toBeNull();
 
@@ -615,7 +624,7 @@ describe("DownloadOverlapReviewDialog", () => {
     expect(container.querySelector(".download-overlap-auto-recommendation")).toHaveTextContent("자동 정리 예정");
     expect(container.querySelector(".download-overlap-auto-recommendation")).toHaveTextContent("닫으면 재검증 후 적용 · 영구 삭제 없음");
     const defer = [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "검토 미루기")!;
-    expect(document.getElementById(defer.getAttribute("aria-describedby")!)).toHaveTextContent("자동 기준을 충족한 검토가 재검증 후 처리될 수 있습니다");
+    expect(document.getElementById(defer.getAttribute("aria-describedby")!)).toHaveTextContent("자동 모드에서는 자동 기준에 맞는 항목이 이후 처리될 수 있습니다");
     await renderWith("off");
     expect(container.querySelector(".download-overlap-auto-recommendation")).toBeNull();
     for (const state of ["resolved", "cancelled", "stale"] as const) {
@@ -681,11 +690,11 @@ describe("DownloadOverlapReviewDialog", () => {
     expect(container.querySelector(".download-overlap-artifact.is-kept")).toBeNull();
     const artifactPages = resolve.mock.calls
       .map(([request]) => request.key)
-      .filter((key) => key.kind === "artifact-page")
-      .map((key) => [key.entryId, key.page]);
+      .filter((key) => key.kind === "overlap-review-page")
+      .map((key) => [key.reviewId, key.candidateId, key.reviewRevision, key.side, key.page]);
     expect(artifactPages).toEqual(expect.arrayContaining([
-      ["existing-entry-1", 1],
-      ["incoming-entry", 1],
+      ["review-overlap", "candidate-1", 4, "existing", 1],
+      ["review-overlap", "candidate-1", 4, "incoming", 1],
     ]));
 
     await act(async () => root.unmount());
@@ -1129,7 +1138,7 @@ describe("DownloadOverlapReviewDialog", () => {
       action: "keep_both_continue",
       candidateId: "candidate-1",
     }));
-    expect(container.querySelector(".download-overlap-action-note")).toHaveTextContent("기존 제외를 복구하지 않고");
+    expect(container.querySelector(".download-overlap-action-note")).toHaveTextContent("현재 A/B에만 적용");
 
     await act(async () => root.unmount());
     client.dispose();

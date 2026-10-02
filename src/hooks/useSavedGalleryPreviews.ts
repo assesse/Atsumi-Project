@@ -10,9 +10,13 @@ export function useSavedGalleryPreviews(backend: BackendClient, galleries: Reado
   const requestedArtists = useRef(new Set<string>());
   const mounted = useRef(false);
   const subscriptionsReady = useRef(Promise.resolve());
-  const completed = [...galleries.values()].filter((gallery) => gallery.download?.state === "completed");
-  const gallerySignature = completed.map((gallery) => gallery.id).sort((a, b) => a - b).join(",");
-  const artistSignature = JSON.stringify([...new Set(completed.map((gallery) => gallery.artist.trim().toLocaleLowerCase()).filter(Boolean))].sort());
+  const { gallerySignature, artistSignature } = useMemo(() => {
+    const completed = [...galleries.values()].filter((gallery) => gallery.download?.state === "completed");
+    return {
+      gallerySignature: completed.map((gallery) => gallery.id).sort((a, b) => a - b).join(","),
+      artistSignature: JSON.stringify([...new Set(completed.map((gallery) => gallery.artist.trim().toLocaleLowerCase()).filter(Boolean))].sort()),
+    };
+  }, [galleries]);
 
   useEffect(() => {
     mounted.current = true;

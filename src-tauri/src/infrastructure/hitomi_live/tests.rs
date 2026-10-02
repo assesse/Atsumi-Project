@@ -35,6 +35,30 @@ use super::{
 };
 
 #[test]
+fn truncated_webp_has_a_specific_bounded_failure_without_relaxing_integrity() {
+    let mut bytes = b"RIFF".to_vec();
+    bytes.extend(1_337_444_u32.to_le_bytes());
+    bytes.extend(b"WEBP");
+    bytes.resize(1024 * 1024, 0);
+    let error = super::validate_webp_container_length(&bytes).unwrap_err();
+    assert_eq!(error.code, SourceErrorCode::ImageResponseInvalid);
+    assert!(error.message.contains("1337452"));
+    assert!(error.message.contains("1048576"));
+    assert!(error.diagnostic_detail().unwrap().len() <= 256);
+    let complete = b"RIFF\x04\x00\x00\x00WEBP";
+    assert!(super::validate_webp_container_length(complete).is_ok());
+    assert!(super::validate_webp_container_length(b"not a webp container").is_ok());
+    let detail = SourceContractError::invalid_data(
+        "input",
+        format!("{} https://invalid.example/?secret=value", "x".repeat(300)),
+    )
+    .diagnostic_detail()
+    .unwrap();
+    assert!(detail.len() <= 256);
+    assert!(!detail.contains("secret"));
+}
+
+#[test]
 fn image_candidate_fallback_stops_after_server_backpressure() {
     for status in [429, 503] {
         let error = crate::source::map_http_status(status, Some(30)).unwrap_err();
@@ -1096,6 +1120,9 @@ fn auto_find_filters_nozomi_ids_before_metadata_and_reports_the_bounded_plan() {
     let plan = adapter
         .auto_find_artist_plan(
             &AutoFindSourceRequest {
+                namespace: crate::domain::FavoriteNamespace::Artist,
+                language_ids: None,
+                history_expansion_ceiling: None,
                 artist: "serein".into(),
                 languages: vec![Language::English],
                 retain_after_gallery_id: None,
@@ -1139,6 +1166,63 @@ fn auto_find_filters_nozomi_ids_before_metadata_and_reports_the_bounded_plan() {
         300
     );
     assert_eq!(transport.call_count(&selected_url), 1);
+}
+
+#[test]
+fn auto_find_shares_language_indexes_across_artist_and_group_and_only_expands_missing_history() {
+    use crate::domain::FavoriteNamespace;
+    let transport = Arc::new(FakeTransport::default());
+    let language_url = format!("{HITOMI_METADATA_ORIGIN}/n/index-english.nozomi");
+    transport.respond(
+        language_url.clone(),
+        "application/x-nozomi",
+        nozomi(&[10, 20, 30, 40, 50]),
+    );
+    for namespace in ["artist", "group"] {
+        transport.respond(
+            format!("{HITOMI_METADATA_ORIGIN}/n/{namespace}/same-all.nozomi"),
+            "application/x-nozomi",
+            nozomi(&[10, 20, 30, 40, 50, 60]),
+        );
+    }
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone());
+    let cancellation = CancellationToken::new();
+    let languages = vec![Language::English];
+    let language_ids = adapter
+        .auto_find_language_ids(&languages, &cancellation)
+        .unwrap();
+    for namespace in [FavoriteNamespace::Artist, FavoriteNamespace::Group] {
+        let result = adapter
+            .auto_find_artist_plan(
+                &AutoFindSourceRequest {
+                    namespace,
+                    artist: "same".into(),
+                    languages: languages.clone(),
+                    language_ids: language_ids.clone(),
+                    retain_after_gallery_id: GalleryId::new(10).ok(),
+                    newer_than_gallery_id: GalleryId::new(40).ok(),
+                    history_expansion_ceiling: GalleryId::new(20).ok(),
+                    candidate_limit: 50_000,
+                },
+                &cancellation,
+            )
+            .unwrap();
+        assert_eq!(
+            result
+                .candidate_ids
+                .iter()
+                .map(|id| id.get())
+                .collect::<Vec<_>>(),
+            vec![50, 20]
+        );
+        assert_eq!(result.matching_ids.len(), 4);
+    }
+    assert_eq!(transport.call_count(&language_url), 1);
+    assert_eq!(
+        transport.calls.lock().unwrap().len(),
+        3,
+        "one shared index and two namespace-specific lists; no metadata"
+    );
 }
 
 #[test]

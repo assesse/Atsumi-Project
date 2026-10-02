@@ -36,6 +36,10 @@
 .mado-divider:hover::after,.mado-divider:focus-visible::after,.is-resizing>.mado-divider::after{background:#a3edcd}.mado-divider:focus-visible{outline:2px solid #a3edcd}
 .mado-error{position:absolute;z-index:30;left:12px;right:12px;top:46px;display:flex;align-items:center;justify-content:space-between;background:#422630;color:#ffd9df;border:1px solid #a86176;border-radius:6px;padding:10px;font-size:12px}
 .mado-error[role=alert]{isolation:isolate}.mado-empty{color:var(--muted);margin:auto;text-align:center}
+.mado-connection-inline{display:grid;justify-items:center;gap:12px;margin:16px 0}
+.mado-connection-intro{max-width:720px;margin:0;color:var(--text-soft);font-size:13px;line-height:1.7}
+.official-browser-dialog-backdrop.mado-connection-panel{pointer-events:none}
+.mado-connection-panel>.connection-setup{pointer-events:auto;max-height:calc(100dvh - 48px);overflow:auto}
 .streaming-watch-modes{display:flex;gap:5px;margin-bottom:8px}.streaming-watch-modes button{padding:5px 12px;font-size:12px}.streaming-watch-modes [aria-pressed=true]{color:var(--primary);border-color:var(--primary)}
 @container(max-width:1100px){.mado-surfaces.is-paired{grid-template-columns:minmax(0,1fr)}}
 @container(max-width:620px){.mado-pair{grid-template-columns:minmax(160px,1fr) minmax(220px,45%)}.mado-toolbar{flex-wrap:wrap;flex-basis:auto}}

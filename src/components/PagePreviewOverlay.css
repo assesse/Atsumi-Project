@@ -1,0 +1,106 @@
+.page-preview-dialog.page-preview-dialog .page-preview-dialog-body {
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+.page-preview-dialog.page-preview-dialog .dialog-header,
+.page-preview-dialog .page-preview-controls {
+  position: absolute;
+  inset-inline: 0;
+  z-index: 7;
+  color: #f8f8fa;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+  text-shadow: 0 1px 3px #000;
+}
+.page-preview-dialog.page-preview-dialog .dialog-header {
+  top: 0;
+  height: auto;
+  min-height: 76px;
+  padding-bottom: 24px;
+  background: linear-gradient(#0b0c11df, #0b0c1170 72%, transparent);
+}
+.page-preview-dialog .page-preview-controls {
+  bottom: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  padding-top: 24px;
+  background: linear-gradient(transparent, #0b0c1180 30%, #0b0c11e8);
+}
+.page-preview-dialog .page-preview-navigation { margin: 0; justify-self: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.page-preview-dialog .page-preview-toolbar { display: flex; justify-self: end; align-items: center; gap: 7px; }
+.page-preview-dialog .page-preview-pin { justify-self: start; width: 34px; height: 34px; padding: 6px; }
+.page-preview-pin svg { width: 22px; height: 22px; transition: transform 160ms ease; }
+.page-preview-pin[aria-pressed="true"] svg { transform: rotate(-35deg); }
+.page-preview-dialog .page-preview-pin[aria-pressed="true"] { color: #a7edc4; border-color: #69b38a; }
+.page-preview-dialog .page-preview-header-actions .bookmark-icon.has-page-number { width: 30px; height: 30px; }
+.page-preview-dialog .page-preview-empty-slot { min-width: 0; min-height: 0; width: 100%; height: 100%; background: #000; }
+.page-preview-dialog[data-controls-visible="true"] .dialog-header,
+.page-preview-dialog[data-controls-visible="true"] .page-preview-controls,
+.page-preview-dialog[data-controls-visible="true"] .page-preview-arrow {
+  opacity: 1;
+  pointer-events: auto;
+}
+.page-preview-dialog[data-controls-visible="false"] { cursor: none; }
+.page-preview-dialog .page-preview-arrow {
+  position: absolute;
+  z-index: 6;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: clamp(42px, 7vw, 72px);
+  height: 104px;
+  padding: 0;
+  border: 0;
+  background: transparent !important;
+  color: #fff;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease;
+  cursor: pointer;
+}
+.page-preview-arrow.is-left { left: 6px; }
+.page-preview-arrow.is-right { right: 6px; }
+.page-preview-dialog .page-preview-arrow.is-turning { opacity: 1; }
+.page-preview-arrow.is-left { --preview-arrow-nudge: -4px; }
+.page-preview-arrow.is-right { --preview-arrow-nudge: 4px; }
+.page-preview-chevron-pulse { animation: preview-chevron-turn 300ms ease-out; }
+@keyframes preview-chevron-turn {
+  0% { opacity: .4; transform: translateX(0); }
+  55% { opacity: 1; transform: translateX(var(--preview-arrow-nudge)); }
+  100% { opacity: 1; transform: translateX(0); }
+}
+.page-preview-arrow svg {
+  width: 42px;
+  height: 64px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 1px #000) drop-shadow(0 0 3px #000);
+  transition: transform 160ms ease;
+}
+.page-preview-arrow .chevron-outline { stroke: #13151c; stroke-width: 6.5; }
+.page-preview-arrow:hover svg, .page-preview-arrow:focus-visible svg { transform: scale(1.18); }
+.page-preview-dialog[data-controls-visible="true"] .page-preview-arrow:disabled { opacity: .18; cursor: default; }
+.page-preview-dialog .page-preview-controls button,
+.page-preview-dialog .page-preview-header-actions > button { background-color: #171820b8; color: #f8f8fa; }
+.page-preview-dialog[data-controls-visible="false"] .page-preview-resize-handle { opacity: 0; }
+@container bookmark-preview (max-width: 520px) {
+  .page-preview-dialog .page-preview-toolbar { gap: 4px; }
+  .page-preview-dialog .page-preview-toolbar button { padding-inline: 6px; font-size: 11px; }
+  .page-preview-dialog .page-preview-spread-toggle > span:last-child { display: none; }
+  .page-preview-dialog .page-preview-spread-toggle { min-width: 32px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .page-preview-dialog .dialog-header, .page-preview-dialog .page-preview-controls,
+  .page-preview-dialog .page-preview-arrow, .page-preview-arrow svg { transition: none; }
+  .page-preview-chevron-pulse { animation: none; }
+  .page-preview-pin svg { transition: none; }
+}

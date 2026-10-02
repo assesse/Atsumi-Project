@@ -11,8 +11,24 @@ let container: HTMLDivElement, root: Root;
 beforeEach(() => { vi.useFakeTimers(); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); });
 const button = (text: string) => [...container.querySelectorAll("button")].find(button => button.textContent === text)!;
-function fake() { return { snapshot: vi.fn().mockResolvedValue(ok()), add: vi.fn().mockResolvedValue(ok()), update: vi.fn().mockResolvedValue(ok()) } satisfies AutoRecordingApi; }
+function fake() { return { snapshot: vi.fn<AutoRecordingApi["snapshot"]>().mockResolvedValue(ok()), add: vi.fn().mockResolvedValue(ok()), update: vi.fn().mockResolvedValue(ok()) } satisfies AutoRecordingApi; }
 describe("automatic recording registration", () => {
+  it("treats initialization as busy, hides false empty state, and shows real failure separately", async () => {
+    const api = fake();
+    api.snapshot.mockResolvedValue({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "준비 중", retryable: true } });
+    await act(async () => root.render(<AutoRecordingPanel runtime="tauri" api={api} />));
+    await act(async () => vi.advanceTimersByTimeAsync(250));
+    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("자동 녹화 목록 준비 중");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(container.querySelector(".auto-record-empty")).toBeNull();
+    api.snapshot.mockResolvedValue({ ok: false, error: { code: "BROWSER_UNAVAILABLE", message: "저장소 초기화 실패", retryable: true } });
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(container.querySelector(".recording-notice.is-error")).not.toBeNull();
+    api.snapshot.mockResolvedValue(ok());
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(container.querySelector(".recording-notice")).toBeNull();
+    expect(container).toHaveTextContent("등록한 채널");
+  });
   it("has no live-view entry even when an automatic recording is active", async () => {
     const api = fake(); api.snapshot.mockResolvedValue(ok(data("recording")));
     await act(async () => root.render(<AutoRecordingPanel runtime="tauri" api={api} />));

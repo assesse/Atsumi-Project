@@ -20,6 +20,15 @@ const gallery: Gallery = {
 };
 
 describe("ProgressiveGallerySlot", () => {
+  it.each(["detail", "compact"] as const)("keeps the Korean-first title even in a %s placeholder", async (displayMode) => {
+    const container = document.createElement("div"), root = createRoot(container);
+    const bilingual = { ...gallery, title: "Original title | 한글 제목" };
+    try {
+      await act(async () => root.render(<ProgressiveGallerySlot gallery={bilingual} active={false} displayMode={displayMode}>loaded</ProgressiveGallerySlot>));
+      expect(container.querySelector("strong")).toHaveTextContent(/^한글 제목$/);
+      expect(container.querySelector('[title="Original title | 한글 제목"]')).not.toBeNull();
+    } finally { await act(async () => root.unmount()); }
+  });
   it("keeps local summary fields visible while the full card is outside the overscan window", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);

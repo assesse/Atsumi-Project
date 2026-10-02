@@ -177,7 +177,7 @@ describe("ExplorePageSession", () => {
     expect(released.length).toBeGreaterThan(0);
   });
 
-  it("parks without discarding cached pages or scroll and makes cancelled work stale", async () => {
+  it("parks image warmups but completes in-flight pages without cancelling another tab", async () => {
     const pending = new Map<number, (result: ApiResult<GalleryPage>) => void>();
     const fetchPage = vi.fn((_queryId: string, pageNumber: number, _requestId: string) => {
       if (pageNumber === 5) {
@@ -202,7 +202,6 @@ describe("ExplorePageSession", () => {
 
     const opening = session.open(5);
     await flush();
-    const requestId = fetchPage.mock.calls.find(([, pageNumber]) => pageNumber === 5)?.[2];
 
     session.park();
     session.park();
@@ -211,15 +210,14 @@ describe("ExplorePageSession", () => {
     expect(retainPage).toHaveBeenCalledWith(page(3));
     expect(warmReleases.get(2)).toHaveBeenCalledOnce();
     expect(warmReleases.get(4)).toHaveBeenCalledOnce();
-    expect(cancelPage).toHaveBeenCalledOnce();
-    expect(cancelPage).toHaveBeenCalledWith(requestId);
+    expect(cancelPage).not.toHaveBeenCalled();
     expect(session.cachedPageNumbers()).toEqual([2, 3, 4]);
     expect(session.scrollFor(3)).toBe(417);
     expect(retainedRelease).not.toHaveBeenCalled();
 
     pending.get(5)?.({ ok: true, data: page(5) });
-    await expect(opening).resolves.toEqual({ status: "stale" });
-    expect(session.cachedPageNumbers()).toEqual([2, 3, 4]);
+    await expect(opening).resolves.toMatchObject({ status: "ready", page: page(5) });
+    expect(session.cachedPageNumbers()).toContain(5);
   });
 
   it("resumes cached warmups without fetching and keeps the retained page until explicitly released", async () => {
@@ -261,7 +259,7 @@ describe("ExplorePageSession", () => {
     expect(retainedRelease).toHaveBeenCalledOnce();
   });
 
-  it("does not prefetch an uncached adjacent page while parked", async () => {
+  it("continues bounded adjacent metadata prefetch while parked", async () => {
     const fetchPage = vi.fn(async (_queryId: string, pageNumber: number): Promise<ApiResult<GalleryPage>> => ({
       ok: true,
       data: page(pageNumber),
@@ -272,7 +270,7 @@ describe("ExplorePageSession", () => {
 
     session.prefetchAdjacent();
     await flush();
-    expect(fetchPage).not.toHaveBeenCalled();
+    expect(fetchPage).toHaveBeenCalledOnce();
 
     session.resume();
     session.prefetchAdjacent();
@@ -301,5 +299,22 @@ describe("ExplorePageSession", () => {
     session.clear();
     expect(releases[1]).toHaveBeenCalledOnce();
     expect(session.cachedPageNumbers()).toEqual([]);
+  });
+
+  it("uses globally distinct cancellation identities across tab sessions", async () => {
+    const requestIds: string[] = [];
+    const fetchPage = vi.fn((_queryId: string, _page: number, requestId: string) => {
+      requestIds.push(requestId);
+      return new Promise<ApiResult<GalleryPage>>(() => undefined);
+    });
+    const cancelPage = vi.fn();
+    const sessions = [new ExplorePageSession({ fetchPage, cancelPage }), new ExplorePageSession({ fetchPage, cancelPage })];
+    sessions.forEach((session, index) => { session.start(`query-${index}`, page(1)); session.prefetchAdjacent(); });
+    await flush();
+    expect(new Set(requestIds).size).toBe(2);
+    sessions[0]!.clear();
+    expect(cancelPage).toHaveBeenCalledExactlyOnceWith(requestIds[0]);
+    expect(sessions[1]!.inFlightPageNumbers()).toEqual([2]);
+    sessions[1]!.clear();
   });
 });

@@ -1,13 +1,14 @@
 import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { ApiResult } from "../../api/contracts";
+import type { ApiError, ApiResult } from "../../api/contracts";
 import {
   claimOfficialBrowserViewport, createOfficialBrowserApi, emptyOfficialBrowserSnapshot, hiddenOfficialBrowserViewport,
   type BrowserRecording, type OfficialBrowserApi, type OfficialBrowserSnapshot, type OfficialBrowserViewport,
 } from "../../api/officialBrowser";
 import "./OfficialBrowserPanel.css";
 import { RecordingLibrary } from "./RecordingLibrary";
+import { RecordingLoadStatus, RecordingNotice } from "./RecordingLoadStatus";
 import { emptyRecordingAttempt, recordingStatus } from "./recordingStatus";
-import { hasNativeOverlay, nativeModalOcclusion, observeNativeOverlayGeometry } from "./nativeOverlayGeometry";
+import { hasBlockingNativeOverlay, hasNativeOverlay, nativeModalOcclusion, observeNativeOverlayGeometry } from "./nativeOverlayGeometry";
 export { hasNativeOverlay, nativeModalOcclusion } from "./nativeOverlayGeometry";
 // The full, locally preserved player/chat skin is only needed when opening a recording.
 const RecordingReplay = lazy(() => import("./RecordingReplay").then(module => ({ default: module.RecordingReplay })));
@@ -142,7 +143,8 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
   const [captureChat, setCaptureChat] = useState(true);
   useEffect(() => { if (snapshot.captureChatEnabled !== undefined) setCaptureChat(snapshot.captureChatEnabled); }, [snapshot.captureChatEnabled]);
   const [pending, setPending] = useState<PendingAction | null>(null);
-  const [pollError, setPollError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<ApiError | null>(null);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -230,7 +232,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
       for (let element: Element | null = stage.current; element; element = element.parentElement) resize?.observe(element);
     }
     const mutation = new MutationObserver(mutated);
-    mutation.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["open", "hidden", "aria-hidden", "aria-modal", "class", "style", "data-native-overlay"] });
+    mutation.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["open", "hidden", "aria-hidden", "aria-modal", "role", "class", "style", "data-native-overlay", "data-native-preserve-video", "data-native-interactive-background"] });
     const stopOverlayGeometry = observeNativeOverlayGeometry(measure);
     window.addEventListener("resize", schedule);
     document.addEventListener("scroll", schedule, true);
@@ -279,6 +281,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     actionInFlight.current = false;
     setPending(null);
     setPollError(null);
+    setHasSnapshot(false);
     setActionError(null);
     setMessage(null);
     setSnapshot(emptyOfficialBrowserSnapshot(runtime));
@@ -289,13 +292,13 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
         if (!actionInFlight.current) {
           const result = await api.snapshot();
           if (!cancelled && generation === lifetime.current && version === requestVersion.current && !actionInFlight.current) {
-            if (result.ok) { setSnapshot(result.data); setPollError(null); }
-            else setPollError(result.error.message);
+            if (result.ok) { setSnapshot(result.data); setPollError(null); setHasSnapshot(true); }
+            else setPollError(result.error);
           }
         }
       } catch {
         if (!cancelled && generation === lifetime.current && version === requestVersion.current && !actionInFlight.current) {
-          setPollError("공식 시청 창의 상태를 확인하지 못했습니다. 자동으로 다시 확인합니다.");
+          setPollError({ code: "SNAPSHOT_UNAVAILABLE", message: "공식 시청 창의 상태를 확인하지 못했습니다. 자동으로 다시 확인합니다.", retryable: true });
         }
       } finally {
         if (!cancelled) timer = setTimeout(() => void poll(), 2000);
@@ -322,6 +325,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
       const result = await operation();
       if (generation !== lifetime.current) return;
       if (result.ok) onSuccess?.(result.data);
+      else if (result.error.code === "BROWSER_INITIALIZING") setPollError(result.error);
       else setActionError(result.error.message);
     } catch {
       if (generation === lifetime.current) setActionError("요청을 처리하지 못했습니다. 공식 시청 창의 상태를 확인한 뒤 다시 시도해 주세요.");
@@ -329,7 +333,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
       if (generation === lifetime.current) { actionInFlight.current = false; setPending(null); }
     }
   };
-  const acceptSnapshot = (next: OfficialBrowserSnapshot) => { setSnapshot(next); setPollError(null); };
+  const acceptSnapshot = (next: OfficialBrowserSnapshot) => { setSnapshot(next); setPollError(null); setHasSnapshot(true); };
   useEffect(() => {
     const intent = snapshot.pendingUiAction;
     if (!active || !desktop || view !== "live" || privacyMode || control || pending !== null || !intent
@@ -348,7 +352,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     if (!active || !desktop || view !== "live") return;
     const shortcut = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "s" || event.defaultPrevented || event.repeat || event.isComposing || event.ctrlKey || event.altKey || event.metaKey || event.shiftKey
-        || pending !== null || control || privacyMode || hasNativeOverlay() || !snapshot.ready || !snapshot.windowOpen) return;
+        || pending !== null || control || privacyMode || hasBlockingNativeOverlay() || !snapshot.ready || !snapshot.windowOpen) return;
       const element = event.target instanceof Element ? event.target : null;
       if (element?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="dialog"], [role="alertdialog"]')) return;
       event.preventDefault();
@@ -452,9 +456,10 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     : `녹화 보관함 · ${recordings.filter(item => !emptyRecordingAttempt(item)).length}개${selected ? ` · ${recordingStatus(selected)}` : ""}.`;
   const screenshotDetails = snapshot.lastScreenshot ? privacyMode ? " 최근 화면이 저장되었습니다." : ` 최근 화면 저장: ${snapshot.lastScreenshot.fileName.slice(0, 160)}.` : "";
   const screenshotJustSaved = snapshot.lastScreenshot && Date.now() - snapshot.lastScreenshot.createdAt >= 0 && Date.now() - snapshot.lastScreenshot.createdAt < 5000;
-  const statusErrors = [pollError, viewportError, snapshot.error, actionError].filter((value): value is string => !!value);
+  const statusErrors = [pollError?.code === "BROWSER_INITIALIZING" ? null : pollError?.message, viewportError, snapshot.error, actionError].filter((value): value is string => !!value);
   const recordingPhase = snapshot.status === "starting" ? "녹화 준비" : snapshot.status === "waiting_source" ? "수신 대기" : snapshot.status === "stopping" || pending === "stop" ? "저장 중" : "녹화 중";
-  const compactStatus = statusErrors.length ? hasRecording ? `${recordingPhase} · 확인 필요` : "연결 확인 필요"
+  const compactStatus = pollError?.code === "BROWSER_INITIALIZING" ? "녹화 기능 준비 중"
+    : statusErrors.length ? hasRecording ? `${recordingPhase} · 확인 필요` : "연결 확인 필요"
     : pending === "stop" ? "파일 마무리 중"
     : chatProblem ? `${recordingPhase} · 채팅 확인`
     : screenshotJustSaved ? hasRecording ? `${recordingPhase} · 화면 저장됨` : "화면 저장됨" : connectionLabel(snapshot);
@@ -465,10 +470,11 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
   return <section className={`official-browser-panel${view === "live" ? " is-live" : ""}`} aria-label="CHZZK 공식 시청">
     {view === "live" ? <span className="official-browser-sr-only" role="status">{compactStatus}</span> : null}
     {!desktop && view !== "live" ? <p className="official-browser-note">미리보기입니다. 시청·녹화는 데스크톱 앱에서 이용해 주세요.</p> : null}
-    {pollError ? <p className={liveNoticeClass} role="alert">{pollError} 마지막 확인 상태를 표시하고 있습니다.</p> : null}
+    {view === "recordings" && desktop ? <RecordingLoadStatus error={pollError} hasSnapshot={hasSnapshot} /> : null}
+    {view === "live" && pollError && pollError.code !== "BROWSER_INITIALIZING" ? <p className={liveNoticeClass} role="alert">{pollError.message}{hasSnapshot ? " 마지막 확인 상태를 표시하고 있습니다." : ""}</p> : null}
     {viewportError ? <p className={liveNoticeClass} role="alert">{viewportError}</p> : null}
-    {snapshot.error ? <p className={liveNoticeClass} role="alert">{snapshot.error}</p> : null}
-    {actionError ? <p className={liveNoticeClass} role="alert">{actionError}</p> : null}
+    {snapshot.error ? view === "recordings" ? <RecordingNotice tone="error" title="녹화 기능 확인 필요" detail={snapshot.error} /> : <p className={liveNoticeClass} role="alert">{snapshot.error}</p> : null}
+    {actionError ? view === "recordings" ? <RecordingNotice tone="error" title="요청 처리 실패" detail={actionError} /> : <p className={liveNoticeClass} role="alert">{actionError}</p> : null}
     {message ? <p className={view === "live" ? "official-browser-sr-only" : "official-browser-note"} role="status">{message}</p> : null}
 
     {view === "live" ? <div ref={stage} className="official-browser-stage" role="region" aria-label="공식 CHZZK 플레이어와 채팅" data-native-visible={nativeVisible}>
@@ -499,7 +505,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
 
     {view === "live" && snapshot.windowOpen && focusError && focusError !== dismissedFocusError && !control && !settingsOpen ? <div className="official-browser-focus-alert" role="alert" data-native-overlay="true"><span>{focusError}</span><button type="button" onClick={() => setDismissedFocusError(focusError)}>확인</button></div> : null}
 
-    {view === "recordings" ? <RecordingLibrary recordings={recordings} selectedId={selectedId} onSelect={setSelectedId}
+    {view === "recordings" && (hasSnapshot || !desktop) ? <RecordingLibrary recordings={recordings} selectedId={selectedId} onSelect={setSelectedId}
       disabled={!desktop || pending !== null} privacy={privacyMode} retrying={pending === "merge"} opening={pending === "merged"}
       onFolder={openFolder} onReplay={setReplayId} onOpenMerged={openMerged} onRetryMerge={retryMerge} onOpenSegment={openSegment} onDelete={deleteRecordings}
       stopControl={hasRecording ? <button type="button" className="official-browser-stop" disabled={!desktop || pending !== null || snapshot.status === "stopping"} onClick={stop}>{pending === "stop" || snapshot.status === "stopping" ? "저장 중…" : "녹화 중지"}</button> : undefined}

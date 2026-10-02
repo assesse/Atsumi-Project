@@ -122,6 +122,11 @@ pub(crate) fn gate<R: tauri::Runtime>(
             || matches!(
                 command,
                 "app_startup_snapshot"
+                    | "ui_diagnostics_session"
+                    | "ui_diagnostics_pulse"
+                    | "ui_diagnostics_mark"
+                    | "work_checkpoint_get"
+                    | "work_checkpoint_save"
                     | "app_startup_frame"
                     | "app_startup_cancel"
                     | "app_minimize_to_tray"

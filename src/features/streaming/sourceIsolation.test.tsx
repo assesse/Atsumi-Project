@@ -57,6 +57,8 @@ describe("CHZZK App composition", () => {
     };
     try {
       await act(async () => { root.render(<ThumbnailProvider client={thumbnails}><App /></ThumbnailProvider>); await settle(); });
+      // Unmask this session before asserting source-specific titles and file names.
+      await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="프라이버시 모드"]')!.click());
       await act(async () => { container.querySelector<HTMLButtonElement>('button[type="submit"][aria-label="검색"]')!.click(); await settle(); });
       expect(container.querySelector('[data-gallery-id="9123000"]')).toHaveTextContent("유지되는 갤러리");
       expect(official.snapshot).not.toHaveBeenCalled();
@@ -90,7 +92,8 @@ describe("CHZZK App composition", () => {
       expect(container.querySelector("video,.streaming-chat")).toBeNull();
       await switchMode("Hitomi");
       expect(container.querySelector('[data-gallery-id="9123000"]')).toHaveTextContent("유지되는 갤러리");
-      expect(container.querySelector('[data-gallery-id="9123000"]')).toHaveTextContent("실패");
+      expect(container.querySelector('[data-gallery-id="9123000"] .gallery-processing-badge')).toHaveAccessibleName(/실패/);
+      expect(container.querySelector('[data-gallery-id="9123000"] [data-status-icon="failed"]')).not.toBeNull();
       expect(search).toHaveBeenCalledTimes(1);
       expect(subscriptions).toHaveBeenCalledTimes(initialSubscriptions);
       expect(cancel).not.toHaveBeenCalled();

@@ -2,12 +2,13 @@
 // No CHZZK page, user browser profile, account, native app or recording is used.
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { emptyMultiview, type MultiviewApi, type MultiviewSnapshot } from "../../api/multiview";
 import { MadoWorkspace } from "./MadoWorkspace";
 import appCss from "../../styles.css?raw";
 import workspaceCss from "./StreamingWorkspace.css?raw";
 import madoCss from "./MadoWorkspace.css?raw";
+import officialCss from "./OfficialBrowserPanel.css?raw";
 
 const fsName = "node:fs", pathName = "node:path", osName = "node:os", childName = "node:child_process", urlName = "node:url";
 const fs = await import(fsName) as { existsSync(path: string): boolean; mkdtempSync(prefix: string): string; writeFileSync(path: string, contents: string): void; realpathSync(path: string): string; rmSync(path: string, options: { recursive: boolean; force: boolean; maxRetries: number; retryDelay: number }): void };
@@ -18,9 +19,11 @@ const { execFile } = await import(childName) as { execFile(file: string, args: s
 const processName = "node:process";
 const { env } = await import(processName) as { env: Record<string, string | undefined> };
 const edge = [env.ATSUMI_TEST_BROWSER ?? "", "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"].find((candidate) => fs.existsSync(candidate));
-type Frame = { mode: string; privacy: boolean; html: string; videos: number; chats: number };
+beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); });
+afterEach(() => { vi.unstubAllGlobals(); });
+type Frame = { mode: string; privacy: boolean; html: string; videos: number; chats: number; panel?: boolean };
 type Box = { x: number; y: number; width: number; height: number; right: number; bottom: number };
-type Measurement = { mode: string; privacy: boolean; videos: number; chats: number; surface: Box; scrollWidth: number; clientWidth: number; scrollHeight: number; overflow: string; slots: { box: Box; parent: Box; kind: string }[]; lastAtEnd: Box };
+type Measurement = { mode: string; privacy: boolean; videos: number; chats: number; surface: Box; scrollWidth: number; clientWidth: number; scrollHeight: number; overflow: string; slots: { box: Box; parent: Box; kind: string }[]; lastAtEnd: Box; panel?: { box: Box; sidebarInteractive: boolean; surfaceInteractive: boolean } };
 
 async function snapshots(): Promise<Frame[]> {
   const container = document.createElement("div"); document.body.append(container);
@@ -37,6 +40,10 @@ async function snapshots(): Promise<Frame[]> {
       const api: MultiviewApi = { runtime: "tauri", snapshot, configure: snapshot, setAudio: snapshot, setPaneAudio: snapshot, requestControl: snapshot, confirmControl: snapshot, ackUiAction: snapshot, close: async () => ({ ok: true, data: emptyMultiview() }), setViewport: async () => ({ ok: true, data: undefined }) };
       await act(async () => root.render(<MadoWorkspace key={`${mode}-${privacy}`} api={api} runtime="tauri" privacy={privacy} onLeave={() => {}} />));
       frames.push({ mode, privacy, html: container.innerHTML, videos: mode === "paired" ? 4 : 1, chats: mode === "one" ? 1 : 4 });
+      if (mode === "one" && !privacy) {
+        await act(async () => [...container.querySelectorAll("button")].find(button => button.textContent === "연결 설정")!.click());
+        frames.push({ mode, privacy, html: container.innerHTML, videos: 1, chats: 1, panel: true });
+      }
     }
   } finally { await act(async () => root.unmount()); container.remove(); }
   return frames;
@@ -45,15 +52,19 @@ async function measure(frames: Frame[], width: number, height: number): Promise<
   const directory = fs.mkdtempSync(path.join(tmpdir(), "atsumi-mado-layout-"));
   try {
     const fixture = path.join(directory, "fixture.html");
-    fs.writeFileSync(fixture, `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"><style>${appCss}\n${workspaceCss}\n${madoCss}\nhtml,body,#fixture-root{margin:0;width:100%;height:100%;overflow:hidden}.app-shell{height:100%;grid-template-columns:200px minmax(0,1fr)}</style></head><body><div id="fixture-root"></div><script>
+    fs.writeFileSync(fixture, `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'"><style>${appCss}\n${workspaceCss}\n${officialCss}\n${madoCss}\nhtml,body,#fixture-root{margin:0;width:100%;height:100%;overflow:hidden}.app-shell{height:100%;grid-template-columns:200px minmax(0,1fr)}</style></head><body><div id="fixture-root"></div><script>
       const frames=${JSON.stringify(frames).replaceAll("</script", "<\\/script")},results=[],root=document.getElementById('fixture-root');
       const box=e=>{const r=e.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom}};
       for(const frame of frames){
-        root.innerHTML='<div class="app-shell streaming-shell"><aside></aside><main class="streaming-workspace is-official-view"><header class="streaming-heading"><h1>라이브 시청·녹화</h1></header>'+frame.html+'</main></div>';
+        root.innerHTML='<div class="app-shell streaming-shell"><aside><button id="layout-nav">녹화 목록</button></aside><main class="streaming-workspace is-official-view"><header class="streaming-heading"><h1>라이브 시청·녹화</h1></header>'+frame.html+'</main></div>';
         const surface=root.querySelector('.mado-surfaces'), slots=[...surface.querySelectorAll('.mado-native-slot')];
         const result={mode:frame.mode,privacy:frame.privacy,videos:surface.querySelectorAll('.is-video').length,chats:surface.querySelectorAll('.is-chat').length,surface:box(surface),scrollWidth:surface.scrollWidth,clientWidth:surface.clientWidth,scrollHeight:surface.scrollHeight,overflow:getComputedStyle(surface).overflowY,slots:slots.map(element=>({box:box(element),parent:box(element.parentElement),kind:element.classList.contains('is-video')?'video':'chat'}))};
         for(let parent=slots[slots.length-1].parentElement;parent&&surface.contains(parent);parent=parent.parentElement)parent.scrollTop=parent.scrollHeight;
         result.lastAtEnd=box(slots[slots.length-1]);results.push(result);
+        if(frame.panel){
+          const panel=root.querySelector('.mado-connection-panel>.connection-setup'),nav=root.querySelector('#layout-nav'),panelBox=box(panel),navBox=box(nav);
+          result.panel={box:panelBox,sidebarInteractive:nav.contains(document.elementFromPoint(navBox.x+navBox.width/2,navBox.y+navBox.height/2)),surfaceInteractive:panel.contains(document.elementFromPoint(panelBox.x+panelBox.width/2,panelBox.y+20))};
+        }
       }
       const output=document.createElement('output');output.id='mado-layout-result';output.setAttribute('data-result',encodeURIComponent(JSON.stringify(results)));document.body.append(output);
     </script></body></html>`);
@@ -85,6 +96,12 @@ describe.skipIf(!edge)("Mado real layout", () => {
         expect(slot.box.y, `${result.mode} ${slot.kind} has no outside header gap`).toBeCloseTo(slot.parent.y, 0);
       }
       expect(result.lastAtEnd.bottom, `${result.mode} final chat input reachability`).toBeLessThanOrEqual(result.surface.bottom + 1);
+      if (frame.panel) {
+        expect(result.panel?.sidebarInteractive, "the channel panel must not intercept sidebar clicks").toBe(true);
+        expect(result.panel?.surfaceInteractive, "the channel form must still receive input").toBe(true);
+        expect(result.panel!.box.y).toBeGreaterThanOrEqual(0);
+        expect(result.panel!.box.bottom).toBeLessThanOrEqual(height);
+      }
       if (result.privacy) {
         const visible = results.find((other) => other.mode === result.mode && !other.privacy)!;
         expect(result.slots.map((slot) => slot.box)).toEqual(visible.slots.map((slot) => slot.box));

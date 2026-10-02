@@ -4,6 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 import { SideRail } from "./SideRail";
 
 describe("SideRail source switcher", () => {
+  it("exposes shared settings directly from CHZZK without navigating away", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onSettings = vi.fn();
+    const onNavigate = vi.fn();
+    try {
+      await act(async () => root.render(<SideRail source="chzzk" view="recordings" collapsed={false} autoFindCount={0} attentionCount={0} sourceLabel="CHZZK" onNavigate={onNavigate} onSourceChange={vi.fn()} onToggle={vi.fn()} onSettings={onSettings} />));
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="설정"]')!.click());
+      expect(onSettings).toHaveBeenCalledOnce();
+      expect(onNavigate).not.toHaveBeenCalled();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
   it("opens from the Atsumi banner and hides unsupported Danbooru navigation", async () => {
     const container = document.createElement("div");
     document.body.append(container);

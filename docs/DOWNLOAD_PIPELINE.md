@@ -16,6 +16,7 @@
 - Child cancellation propagates user cancellation/shutdown downward without turning a source error into a user cancellation.
 - Queue close drains accepted work. Cancelled tasks return promptly, artist-lock waits poll cancellation, and album verification checks cancellation between pages. Unexpected page/finalization panics become stable worker failures rather than silently losing a worker.
 - Received albums use the existing durable `hashing` state while waiting for finalization. The normal startup interruption recovery requeues them and reuses verified checkpoints; no schema migration is required. A partial or changed file is not silently accepted.
+- A retry of a fully received, incomplete artifact pins its saved edition instead of fetching current remote metadata first. The repository checks the current attempt, complete contiguous page map, verification metadata and absence of in-flight file moves in one read transaction. Partial maps still fetch source metadata. Normal page/path/SHA validation, immutable page-revision checks on any missing-page fetch, artist locks, overlap review and manifest completion remain mandatory. Root/directory reservations and previous-edition recovery backups are preserved. This neither follows a replacement gallery ID nor marks a local snapshot completed without validation.
 
 ## Reused validation
 

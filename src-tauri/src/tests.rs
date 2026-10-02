@@ -99,7 +99,8 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         report.applied_versions,
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
-            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+            27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+            49, 50, 51,
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -184,7 +185,8 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         report.applied_versions,
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
-            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+            29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+            51,
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -295,7 +297,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
         ]
     );
     let metadata: (String, String) = connection
@@ -359,7 +361,8 @@ fn settings_constraint_migration_clamps_legacy_values() {
         report.applied_versions,
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
-            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+            26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+            48, 49, 50, 51,
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -400,6 +403,8 @@ fn default_settings_match_the_approved_foundation_values() {
         json!({
             "revision": 0,
             "downloadRoot": "",
+            "chzzkSsdStaging": false,
+            "highPerformanceProcessing": false,
             "folderNameTemplate": "[{artist}] {title} [{group}] {id}",
             "explorePageSize": 50,
             "danbooruPageSize": 60,
@@ -408,12 +413,13 @@ fn default_settings_match_the_approved_foundation_values() {
             "danbooruPreviewWidth": 190,
             "relatedPreviewWidth": 240,
             "privacyMode": false,
+            "privacyOnStartup": true,
             "cacheLimitGb": 10,
             "concurrentImageRequests": 5,
             "downloadAdaptiveConcurrency": true,
             "downloadAdaptiveMaxRequests": 8,
             "requestStartIntervalMs": 25,
-            "autoFindHistoryMode": "include_all_history",
+            "autoFindHistoryMode": "newer_than_latest_owned",
             "downloadOverlapAutoMode": "off",
             "autoFindGrouping": "all",
             "downloadsGrouping": "all",
@@ -424,6 +430,143 @@ fn default_settings_match_the_approved_foundation_values() {
             "searchIncludeTags": [],
             "searchExcludeTags": []
         })
+    );
+}
+
+#[test]
+fn ssd_recording_setting_is_opt_in_persistent_and_preserves_other_preferences() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let service = ApplicationService::new(repository.clone());
+    let initial = service.settings_get().unwrap();
+    assert!(!initial.chzzk_ssd_staging);
+    let enabled = service
+        .settings_update(
+            SettingsPatch {
+                chzzk_ssd_staging: Some(true),
+                ..Default::default()
+            },
+            initial.revision,
+        )
+        .unwrap();
+    assert!(repository.settings_get().unwrap().chzzk_ssd_staging);
+    assert_eq!(initial.download_root, enabled.download_root);
+    assert_eq!(
+        initial.concurrent_image_requests,
+        enabled.concurrent_image_requests
+    );
+    let disabled = service
+        .settings_update(
+            SettingsPatch {
+                chzzk_ssd_staging: Some(false),
+                ..Default::default()
+            },
+            enabled.revision,
+        )
+        .unwrap();
+    assert!(!disabled.chzzk_ssd_staging);
+}
+
+#[test]
+fn processing_mode_survives_database_reopen_without_changing_other_settings() {
+    let temporary = tempfile::tempdir().unwrap();
+    let database = temporary.path().join("processing.sqlite3");
+    let expected = {
+        let repository = Arc::new(SqliteRepository::open(&database).unwrap());
+        let service = ApplicationService::new(repository);
+        let initial = service.settings_get().unwrap();
+        assert!(!initial.high_performance_processing);
+        let enabled = service
+            .settings_update(
+                SettingsPatch {
+                    high_performance_processing: Some(true),
+                    ..Default::default()
+                },
+                initial.revision,
+            )
+            .unwrap();
+        let mut expected = initial;
+        expected.high_performance_processing = true;
+        expected.revision += 1;
+        assert_eq!(enabled, expected);
+        expected
+    };
+    let repository = Arc::new(SqliteRepository::open(&database).unwrap());
+    let service = ApplicationService::new(repository);
+    assert_eq!(service.settings_get().unwrap(), expected);
+    assert!(
+        !service
+            .settings_update(
+                SettingsPatch {
+                    high_performance_processing: Some(false),
+                    ..Default::default()
+                },
+                expected.revision
+            )
+            .unwrap()
+            .high_performance_processing
+    );
+}
+
+#[test]
+fn startup_privacy_defaults_on_and_is_saved_independently_from_legacy_toggle() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("privacy.sqlite3");
+    {
+        let repo = Arc::new(SqliteRepository::open(&path).unwrap());
+        let service = ApplicationService::new(repo);
+        let initial = service.settings_get().unwrap();
+        assert!(initial.privacy_on_startup);
+        let next = service
+            .settings_update(
+                SettingsPatch {
+                    privacy_on_startup: Some(false),
+                    ..Default::default()
+                },
+                initial.revision,
+            )
+            .unwrap();
+        assert!(!next.privacy_on_startup);
+        assert_eq!(next.privacy_mode, initial.privacy_mode);
+    }
+    assert!(
+        !SqliteRepository::open(&path)
+            .unwrap()
+            .settings_get()
+            .unwrap()
+            .privacy_on_startup
+    );
+}
+
+#[test]
+fn legacy_auto_find_setting_updates_use_latest_owned_but_include_all_remains_available() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let service = ApplicationService::new(repository);
+    let initial = service.settings_get().unwrap();
+    let updated = service
+        .settings_update(
+            SettingsPatch {
+                auto_find_history_mode: Some(AutoFindHistoryMode::NewerThanOldestDownloaded),
+                ..SettingsPatch::default()
+            },
+            initial.revision,
+        )
+        .unwrap();
+    assert_eq!(
+        updated.auto_find_history_mode,
+        AutoFindHistoryMode::NewerThanLatestOwned
+    );
+    let all_history = service
+        .settings_update(
+            SettingsPatch {
+                auto_find_history_mode: Some(AutoFindHistoryMode::IncludeAllHistory),
+                ..SettingsPatch::default()
+            },
+            updated.revision,
+        )
+        .unwrap();
+    assert_eq!(
+        all_history.auto_find_history_mode,
+        AutoFindHistoryMode::IncludeAllHistory
     );
 }
 
@@ -556,6 +699,9 @@ fn settings_display_normalization_does_not_move_or_rewrite_existing_artifacts() 
 #[test]
 fn settings_validation_matches_the_approved_ui_ranges() {
     let limits = SettingsSnapshot {
+        privacy_on_startup: true,
+        high_performance_processing: false,
+        chzzk_ssd_staging: false,
         revision: 0,
         download_root: String::new(),
         folder_name_template: "[{artist}] {title} [{group}] {id}".into(),
@@ -1807,6 +1953,59 @@ fn download_queue_is_batch_idempotent_and_reuses_active_gallery_entries() {
         ApplicationError::Validation(ref error)
             if error.field == "query" && error.message == "must be at most 500 bytes"
     ));
+}
+
+#[test]
+fn download_retry_available_fills_only_empty_slots_and_preserves_oversized_queues() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let service =
+        ApplicationService::new(repository.clone()).with_download_repository(repository.clone());
+    let mut retry_ids = Vec::new();
+    for batch in 0..3 {
+        let entries = service
+            .download_queue_add(
+                (1 + batch * 100..=100 + batch * 100).collect(),
+                format!("available-retry-{batch}"),
+            )
+            .unwrap()
+            .entries;
+        let ids = entries
+            .iter()
+            .map(|entry| entry.entry_id.to_string())
+            .collect::<Vec<_>>();
+        service.download_cancel(ids.clone()).unwrap();
+        retry_ids.extend(ids);
+    }
+    service
+        .download_queue_add((1001..=1012).collect(), "existing-12".into())
+        .unwrap();
+    assert_eq!(service.download_active_count().unwrap(), 12);
+    let mut with_duplicate = vec![retry_ids[0].clone()];
+    with_duplicate.extend(retry_ids.clone());
+    let filled = service.download_retry_available(with_duplicate).unwrap();
+    assert_eq!(filled.len(), 188);
+    assert_eq!(service.download_active_count().unwrap(), 200);
+    assert!(service
+        .download_retry_available(retry_ids[188..].to_vec())
+        .unwrap()
+        .is_empty());
+    service
+        .download_queue_add(vec![9999], "existing-oversized".into())
+        .unwrap();
+    assert!(service
+        .download_retry_available(retry_ids[188..].to_vec())
+        .unwrap()
+        .is_empty());
+    assert_eq!(service.download_active_count().unwrap(), 201);
+    let retained = service
+        .download_entries_list(DownloadListRequest {
+            state: Some(JobState::Cancelled),
+            query: None,
+            page: 1,
+            page_size: 200,
+        })
+        .unwrap();
+    assert_eq!(retained.total_items, 112);
 }
 
 #[test]

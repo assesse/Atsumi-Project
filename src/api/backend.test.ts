@@ -8,9 +8,11 @@ import type {
   DownloadOverlapMergeRequest,
   DownloadOverlapReview,
   DuplicateSnapshot,
+  FavoriteRecord,
   InternalArtifactScanProgress,
   InternalDuplicateSnapshot,
   SearchRequest,
+  SettingsSnapshot,
 } from "./contracts";
 
 const searchRequest = (patch: Partial<SearchRequest> = {}): SearchRequest => ({
@@ -29,11 +31,15 @@ const prepareOverlapMergeContract = (sourceSide: DownloadOverlapMergeRequest["so
     downloadOverlapReviews: Map<string, DownloadOverlapReview>;
     duplicateHiddenGalleryIds: Set<number>;
     explorationRestoredGalleryIds: Set<number>;
+    composedPageCounts: Map<GalleryId, number>;
+    downloadOverlapAutomationHistory: Map<string, unknown>;
   };
   const saved = {
     downloadEntries: state.downloadEntries, downloadOverlapReviews: state.downloadOverlapReviews,
     duplicateHiddenGalleryIds: state.duplicateHiddenGalleryIds,
     explorationRestoredGalleryIds: state.explorationRestoredGalleryIds,
+    composedPageCounts: state.composedPageCounts,
+    downloadOverlapAutomationHistory: state.downloadOverlapAutomationHistory,
   };
   const incoming = { entryId: "merge-incoming", galleryId: galleryId(7_310_201), title: "Incoming merge fixture", artists: ["fixture"], pageCount: sourceSide === "incoming" ? 4 : 6 };
   const existing = { entryId: "merge-existing", galleryId: galleryId(7_310_202), title: "Existing merge fixture", artists: ["fixture"], pageCount: sourceSide === "existing" ? 4 : 6 };
@@ -64,6 +70,8 @@ const prepareOverlapMergeContract = (sourceSide: DownloadOverlapMergeRequest["so
   state.downloadOverlapReviews = new Map([[review.reviewId, review]]);
   state.duplicateHiddenGalleryIds = new Set();
   state.explorationRestoredGalleryIds = new Set();
+  state.composedPageCounts = new Map();
+  state.downloadOverlapAutomationHistory = new Map();
   const request: DownloadOverlapMergeRequest = {
     reviewId: review.reviewId, expectedRevision: review.revision, candidateId: review.candidates[0]!.candidateId,
     sourceSide, sourcePages: [1, 3], excludeSource: true,
@@ -77,6 +85,32 @@ const prepareOverlapMergeContract = (sourceSide: DownloadOverlapMergeRequest["so
 };
 
 describe("browser download overlap page merge contract", () => {
+  it("adds selected unique pages while keeping destination pages and rejecting paired double choices", async () => {
+    const f = prepareOverlapMergeContract("incoming");
+    try {
+      const c = f.review.candidates[0]!;
+      const candidate = { ...c, matchedPages: 3, exactPages: 3, incomingUniquePages: 1, existingUniquePages: 3,
+        incomingCoverage: .75, existingCoverage: .5, pagePairs: c.pagePairs.filter((p) => p.incomingSourcePage !== 2) };
+      f.state.downloadOverlapReviews.set(f.review.reviewId, { ...f.review, candidates: [candidate] });
+      const selectedPages = { existing: [2], incoming: [1, 2] };
+      expect((await backend.downloadOverlapMerge({ ...f.request, sourcePages: [1, 2], selectedPages })).ok).toBe(false);
+      selectedPages.existing = [5];
+      expect(await backend.downloadOverlapMerge({ ...f.request, sourcePages: [1, 2], selectedPages })).toMatchObject({ ok: true, data: { replacedPages: 1, addedPages: 1 } });
+      expect(f.state.composedPageCounts.get(f.target.galleryId)).toBe(7);
+    } finally { f.restore(); }
+  });
+
+  it("records automatic uncensored merge evidence without allowing partial automatic selections", async () => {
+    const f = prepareOverlapMergeContract("incoming");
+    try {
+      f.state.downloadOverlapReviews.set(f.review.reviewId, { ...f.review, incoming: { ...f.review.incoming, title: "Edition (decensored)" } });
+      expect((await backend.downloadOverlapMerge({ ...f.request, automation: true })).ok).toBe(false);
+      expect((await backend.downloadOverlapMerge({ ...f.request, sourcePages: [1, 2, 3, 4], automation: true })).ok).toBe(true);
+      expect(f.state.downloadOverlapAutomationHistory.get(f.review.reviewId)).toMatchObject({ removedGalleryIds: [f.source.galleryId] });
+      expect(f.state.downloadOverlapReviews.get(f.review.reviewId)?.decisions).toContainEqual(expect.objectContaining({ actor: "automation", reasonCode: "uncensored_containment_merge_v1" }));
+    } finally { f.restore(); }
+  });
+
   it.each(["existing", "incoming"] as const)("rejects invalid %s page merges without changing either album", async (side) => {
     const fixture = prepareOverlapMergeContract(side);
     const { state, review, request, source, target } = fixture;
@@ -394,6 +428,18 @@ describe("browser backend settings contract", () => {
       downloadAdaptiveConcurrency: current.data.downloadAdaptiveConcurrency,
       downloadAdaptiveMaxRequests: current.data.downloadAdaptiveMaxRequests,
     }, updated.data.revision)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("persists opt-in processing independently of network and overlap policy", async () => {
+    const current = await backend.settingsGet();
+    if (!current.ok) throw new Error(current.error.message);
+    await expect(backend.settingsUpdate({ highPerformanceProcessing: "yes" as unknown as boolean }, current.data.revision))
+      .resolves.toMatchObject({ ok: false, error: { details: { field: "highPerformanceProcessing" } } });
+    const updated = await backend.settingsUpdate({ highPerformanceProcessing: true }, current.data.revision);
+    expect(updated).toEqual({ ok: true, data: { ...current.data, revision: current.data.revision + 1, highPerformanceProcessing: true } });
+    expect(JSON.parse(window.localStorage.getItem("atsumi.browser.settings.v1") ?? "{}"))
+      .toMatchObject({ highPerformanceProcessing: true });
+    if (updated.ok) await backend.settingsUpdate({ highPerformanceProcessing: current.data.highPerformanceProcessing ?? false }, updated.data.revision);
   });
 
   it("persists the Explore page size used by new searches", async () => {
@@ -836,6 +882,105 @@ describe("browser backend favorites and automation contract", () => {
     expect(removed.ok && removed.data.some((item) => item.value === "history artist")).toBe(false);
   });
 
+  it("upgrades the old cutoff and finds only albums above the latest owned ID while keeping include-all optional", async () => {
+    vi.useFakeTimers();
+    const state = backend as unknown as {
+      downloadEntries: Map<string, DownloadEntry>;
+      favorites: Map<string, FavoriteRecord>;
+      settings: SettingsSnapshot;
+      autoFind: AutoFindSnapshot;
+    };
+    const saved = { downloadEntries: state.downloadEntries, favorites: state.favorites, settings: state.settings, autoFind: state.autoFind };
+    const storedSettings = window.localStorage.getItem("atsumi.browser.settings.v1");
+    try {
+      state.favorites = new Map();
+      state.autoFind = { candidates: [], cutoffEvidence: [], truncations: [] };
+      state.downloadEntries = new Map([["latest-owned", {
+        entryId: "latest-owned", galleryId: galleryId(4051038), revision: 0, state: "completed",
+      }]]);
+      await backend.favoriteSet({ namespace: "artist", value: "serein" }, true);
+      expect(await backend.settingsUpdate({ autoFindHistoryMode: "newer_than_oldest_downloaded" }, state.settings.revision))
+        .toMatchObject({ ok: true, data: { autoFindHistoryMode: "newer_than_latest_owned" } });
+      await backend.autoFindRefresh();
+      await vi.advanceTimersByTimeAsync(60);
+      expect(await backend.autoFindSnapshot()).toMatchObject({ ok: true, data: {
+        run: { historyMode: "newer_than_latest_owned" }, candidates: [],
+        cutoffEvidence: [{ latestOwnedGalleryId: galleryId(4051038), policyVersion: 2 }],
+      } });
+
+      await backend.settingsUpdate({ autoFindHistoryMode: "include_all_history" }, state.settings.revision);
+      await backend.autoFindRefresh();
+      await vi.advanceTimersByTimeAsync(60);
+      expect(await backend.autoFindSnapshot()).toMatchObject({ ok: true, data: {
+        candidates: [expect.objectContaining({ id: galleryId(4050754) })],
+      } });
+
+      state.downloadEntries = new Map();
+      await backend.settingsUpdate({ autoFindHistoryMode: "newer_than_latest_owned" }, state.settings.revision);
+      await backend.autoFindRefresh();
+      await vi.advanceTimersByTimeAsync(60);
+      const withoutOwned = await backend.autoFindSnapshot();
+      expect(withoutOwned.ok && withoutOwned.data.candidates.map((candidate) => candidate.id).sort())
+        .toEqual([galleryId(4050754), galleryId(4051038)]);
+      expect(withoutOwned.ok && withoutOwned.data.cutoffEvidence[0]?.latestOwnedGalleryId).toBeUndefined();
+    } finally {
+      Object.assign(state, saved);
+      if (storedSettings === null) window.localStorage.removeItem("atsumi.browser.settings.v1");
+      else window.localStorage.setItem("atsumi.browser.settings.v1", storedSettings);
+      vi.useRealTimers();
+    }
+  });
+
+  it("discovers group favorites independently and preserves both reasons for a shared album", async () => {
+    vi.useFakeTimers();
+    try {
+      await backend.favoriteSet({ namespace: "group", value: "nocturne circle" }, true);
+      expect(await backend.autoFindRefresh()).toMatchObject({ ok: true, data: { totalFavorites: 1 } });
+      await vi.advanceTimersByTimeAsync(60);
+      const groupOnly = await backend.autoFindSnapshot();
+      expect(groupOnly.ok && groupOnly.data.candidates.find((item) => item.id === galleryId(4050754)))
+        .toMatchObject({ matchedFavorite: { namespace: "group", value: "nocturne circle" } });
+
+      await backend.favoriteSet({ namespace: "artist", value: "serein" }, true);
+      expect(await backend.autoFindRefresh()).toMatchObject({ ok: true, data: { totalFavorites: 2 } });
+      await vi.advanceTimersByTimeAsync(120);
+      const shared = await backend.autoFindSnapshot();
+      expect(shared.ok).toBe(true);
+      if (!shared.ok) return;
+      expect(shared.data.candidates.filter((item) => item.id === galleryId(4050754))).toHaveLength(1);
+      expect(shared.data.candidates.find((item) => item.id === galleryId(4050754))?.matchedFavorites)
+        .toEqual(expect.arrayContaining([
+          { namespace: "artist", value: "serein" },
+          { namespace: "group", value: "nocturne circle" },
+        ]));
+      expect(shared.data.cutoffEvidence.map((item) => item.namespace).sort()).toEqual(["artist", "group"]);
+    } finally {
+      await backend.favoriteSet({ namespace: "artist", value: "serein" }, false);
+      await backend.favoriteSet({ namespace: "group", value: "nocturne circle" }, false);
+      vi.useRealTimers();
+    }
+  });
+
+  it("reprojects saved Auto Find candidates when global tag rules change without rescanning", async () => {
+    const state = backend as unknown as { settings: SettingsSnapshot; autoFind: AutoFindSnapshot };
+    const saved = { settings: state.settings, autoFind: state.autoFind };
+    const fixture = { id: galleryId(9_550_001), title: "Tag filter fixture", artist: "serein", pages: 1,
+      language: "korean" as const, tags: ["female:glasses", "full_color"], series: [], characters: [],
+      publishedRank: 1, popularity: 0, thumbnailWidth: 512, thumbnailHeight: 512,
+      runId: "filter-run", matchedFavorite: { namespace: "artist" as const, value: "serein" }, discoveredAt: "2026-09-24T00:00:00Z" };
+    try {
+      state.autoFind = { candidates: [fixture, { ...fixture, id: galleryId(9_550_002), tags: ["full color", "male:yaoi"] }], cutoffEvidence: [], truncations: [] };
+      state.settings = { ...state.settings, searchIncludeTags: ["full color"], searchExcludeTags: ["male:yaoi"] };
+      expect(await backend.autoFindSnapshot()).toMatchObject({ ok: true, data: { candidates: [{ id: fixture.id }] } });
+      state.settings = { ...state.settings, searchIncludeTags: ["webtoon"] };
+      expect(await backend.autoFindSnapshot()).toMatchObject({ ok: true, data: { candidates: [] } });
+      state.settings = { ...state.settings, searchIncludeTags: [], searchExcludeTags: [] };
+      const restored = await backend.autoFindSnapshot();
+      expect(restored.ok && restored.data.candidates).toHaveLength(2);
+      expect(state.autoFind.candidates).toHaveLength(2);
+    } finally { Object.assign(state, saved); }
+  });
+
   it("preserves partial candidates on cancel and excludes them from later explicit refreshes", async () => {
     vi.useFakeTimers();
     const events: string[] = [];
@@ -848,7 +993,7 @@ describe("browser backend favorites and automation contract", () => {
       if (seededDownload.ok) seededDownloadEntryId = seededDownload.data[0]?.entryId;
 
       const started = await backend.autoFindRefresh();
-      expect(started).toMatchObject({ ok: true, data: { state: "running", totalFavorites: 2, historyMode: "include_all_history" } });
+      expect(started).toMatchObject({ ok: true, data: { state: "running", totalFavorites: 2, historyMode: "newer_than_latest_owned" } });
       await vi.advanceTimersByTimeAsync(60);
       const partial = await backend.autoFindSnapshot();
       expect(partial).toMatchObject({
@@ -955,6 +1100,34 @@ describe("browser backend download contract", () => {
         action: "none",
       },
     });
+  });
+
+  it.each([0, 12, 199, 200, 237])("fills retry slots without exceeding 200 active downloads (active=%i)", async (activeCount) => {
+    const state = backend as unknown as {
+      downloadEntries: Map<string, DownloadEntry>;
+      activeDownloadEntryByGallery: Map<GalleryId, string>;
+    };
+    const savedEntries = state.downloadEntries;
+    const savedActive = state.activeDownloadEntryByGallery;
+    const entries = Array.from({ length: activeCount + 250 }, (_, index): DownloadEntry => ({
+      entryId: `capacity-${index}`, galleryId: galleryId(8_600_000 + index),
+      revision: 0, progress: 0, state: index < activeCount ? "queued" : "failed",
+    }));
+    state.downloadEntries = new Map(entries.map((entry) => [entry.entryId, entry]));
+    state.activeDownloadEntryByGallery = new Map(entries.slice(0, activeCount).map((entry) => [entry.galleryId, entry.entryId]));
+    try {
+      const retryIds = entries.slice(activeCount).map((entry) => entry.entryId);
+      const result = await backend.downloadRetry(retryIds, true);
+      if (!result.ok) throw new Error(result.error.message);
+      expect(result.data).toHaveLength(Math.max(0, 200 - activeCount));
+      expect([...state.downloadEntries.values()].filter((entry) => entry.state === "queued"))
+        .toHaveLength(Math.max(activeCount, 200));
+      expect(entries.slice(0, activeCount).every((entry) => state.downloadEntries.get(entry.entryId) === entry)).toBe(true);
+      await expect(backend.downloadRetry(retryIds.slice(result.data.length), true)).resolves.toEqual({ ok: true, data: [] });
+    } finally {
+      state.downloadEntries = savedEntries;
+      state.activeDownloadEntryByGallery = savedActive;
+    }
   });
 
   it("persists idempotent cancellation and retries the same entry", async () => {

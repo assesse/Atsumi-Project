@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getAutostartStatus, setAutostartEnabled, type AutostartStatus } from "../api/autostart";
 
 type AutostartFailure = { message: string; retryEnabled?: boolean };
 
 export function AutostartSetting({ active }: { active: boolean }) {
-  const descriptionId = useId();
   const [status, setStatus] = useState<AutostartStatus | null>(null);
   const [reading, setReading] = useState(false);
   const [changing, setChanging] = useState(false);
@@ -91,21 +90,12 @@ export function AutostartSetting({ active }: { active: boolean }) {
   const stateLabel = changing ? "변경 중…" : reading ? "확인 중…"
     : !status ? "확인 필요" : !status.supported ? "지원되지 않음"
       : status.disabledByWindows ? "등록됨 · Windows에서 중지"
-        : status.needsRepair ? "연결 확인 필요" : status.enabled ? "사용 중" : "사용 안 함";
+        : status.needsRepair ? "재설정 필요" : status.enabled ? "사용 중" : "사용 안 함";
 
   return (
     <div className="setting-row" aria-busy={busy}>
       <div>
         <strong>Windows 로그인 시 자동 실행</strong>
-        <span id={descriptionId}>켜면 다음 Windows 로그인부터 Atsumi가 실행됩니다. 저장 버튼과 별개로 즉시 적용되며, 기본으로 켜지지 않습니다.</span>
-        {status?.supported && status.launchMode === "development" && <span>현재 작업 폴더의 개발 실행기를 사용합니다.</span>}
-        {status?.supported && status.launchMode === "installed" && <span>현재 앱의 실행 파일을 사용합니다.</span>}
-        {status && !status.supported && <span>Windows 데스크톱 앱에서만 설정할 수 있습니다. 브라우저에서는 변경할 수 없습니다.</span>}
-        {status?.needsRepair && <span>이전 앱 위치로 등록되어 있습니다. 현재 앱에 다시 연결하거나 자동 실행을 끌 수 있습니다.</span>}
-        {status?.disabledByWindows && <span>Windows 시작 앱 설정에서 사용 안 함으로 지정되어 있습니다. Windows 설정 → 앱 → 시작 프로그램에서 Atsumi를 켜 주세요.</span>}
-        {status?.supported && status.needsRepair && (
-          <button type="button" className="text-button" disabled={busy} onClick={() => { void change(true); }}>현재 앱에 다시 연결</button>
-        )}
         {failure && (
           <>
             <span className="setting-validation-error" role="alert">{failure.message}</span>
@@ -121,7 +111,8 @@ export function AutostartSetting({ active }: { active: boolean }) {
           type="checkbox"
           role="switch"
           aria-label="Windows 로그인 시 자동 실행"
-          aria-describedby={descriptionId}
+          title={status?.disabledByWindows ? "Windows 설정 → 앱 → 시작 프로그램에서 켜 주세요"
+            : status?.needsRepair ? "자동 실행을 껐다 켜면 현재 설치 위치로 갱신합니다" : undefined}
           checked={status?.enabled ?? false}
           disabled={!status?.supported || busy}
           onChange={(event) => { void change(event.target.checked); }}

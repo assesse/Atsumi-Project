@@ -95,7 +95,7 @@ describe("album cancellation without session activity", () => {
       for (let index = 0; index < items.length; index++) {
         const card = container.querySelector<HTMLElement>(`[data-gallery-id="${items[index]!.id}"]`)!;
         expect(card).not.toBeNull();
-        await act(async () => card.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: index > 0 })));
+        await act(async () => card.querySelector<HTMLButtonElement>(".card-select-toggle")!.click());
       }
       const button = [...container.querySelectorAll<HTMLButtonElement>(".selection-toolbar button")].find((item) => item.textContent?.includes("다운로드 취소"))!;
       expect(button).toHaveTextContent("다운로드 취소 · 2개");

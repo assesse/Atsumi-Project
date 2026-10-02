@@ -36,10 +36,12 @@ describe("ViewHeader language filter", () => {
       ));
       const languageButton = container.querySelector('button[aria-label="언어 필터"]');
       expect(languageButton?.querySelector(".icon-dot")).toBeNull();
-      expect(container.querySelector(".activity-count")).toHaveTextContent("3");
+      expect(container.querySelector(".activity-count")).toBeNull();
+      expect(container.querySelector('[aria-label="활동 기록"]')).not.toHaveAttribute("title");
       const randomOpen = container.querySelector<HTMLButtonElement>('button[aria-label="랜덤 열기"]');
       expect(randomOpen).toHaveAttribute("title", "Hitomi 전체 범위에서 랜덤 갤러리 열기");
-      expect(randomOpen?.querySelector(".random-open-label")).toHaveTextContent("랜덤 열기");
+      expect(randomOpen?.querySelector(".random-open-label")).toBeNull();
+      expect(randomOpen).toHaveAccessibleName("랜덤 열기");
       await act(async () => randomOpen?.click());
       expect(onRandomOpen).toHaveBeenCalledOnce();
     } finally {
@@ -82,7 +84,8 @@ describe("ViewHeader language filter", () => {
       expect(button).toHaveAttribute("aria-busy", "true");
       expect(button).toHaveClass("is-pending");
       expect(button?.querySelector(".random-open-spinner")).not.toBeNull();
-      expect(button?.querySelector(".random-open-label")).toHaveTextContent("찾는 중");
+      expect(button?.querySelector(".random-open-label")).toBeNull();
+      expect(button).toHaveAccessibleName("랜덤 열기 중");
     } finally {
       await act(async () => root.unmount());
       container.remove();

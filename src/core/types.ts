@@ -122,6 +122,7 @@ export type HitomiUiState = {
   search: Record<ViewId, SearchUi>;
   exploreSort: SearchSort;
   downloadsFilter: DownloadFilter;
+  downloadsSort?: import("../api/downloadPopularity").DownloadSort;
   grouping: Record<"auto-find" | "downloads", "all" | "day" | "artist">;
   displayMode: Record<ViewId, GalleryDisplayMode>;
   selection: SelectionState;

@@ -9,6 +9,7 @@ mod hitomi_live;
 mod internal_duplicate_repository;
 mod migrations;
 mod overlap_merge;
+mod overlap_review_thumbnail;
 mod preview_repository;
 mod sqlite_repository;
 pub mod telemetry;
@@ -22,6 +23,7 @@ pub use excluded_artifacts::{ExcludedArtifactReport, ExcludedArtifactService};
 pub use fixture_search::FixtureSearchRepository;
 pub use hitomi_live::{HitomiLiveAdapter, HitomiLiveConfig};
 pub use migrations::{MigrationReport, MigrationRunner, MIGRATIONS};
+pub(crate) use overlap_merge::composition::automatic_source as automatic_uncensored_merge_source;
 pub use overlap_merge::{
     DownloadOverlapMergeRequest, DownloadOverlapMergeResult, DownloadOverlapMergeSide,
     OverlapMergeService,

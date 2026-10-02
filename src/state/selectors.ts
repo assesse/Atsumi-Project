@@ -1,11 +1,12 @@
 import type { Gallery, GalleryId, UiState } from "../core/types";
 import { normalizeTokenValue } from "../search/searchTokens";
+import { participatingArtists } from "./autoFindFavorites";
 
 const galleryHaystack = (gallery: Gallery): string => normalizeTokenValue([
   String(gallery.id),
   gallery.title,
   gallery.subtitle,
-  gallery.artist,
+  ...participatingArtists(gallery),
   gallery.group ?? "",
   ...(gallery.series ?? []),
   ...(gallery.characters ?? []),
@@ -23,7 +24,7 @@ const matchesSearchToken = (gallery: Gallery, rawToken: string): boolean => {
     const namespace = token.slice(0, separator).toLocaleLowerCase();
     const metadataValue = normalizeTokenValue(token.slice(separator + 1));
     if (!metadataValue) return true;
-    if (namespace === "artist") matched = normalizeTokenValue(gallery.artist).includes(metadataValue);
+    if (namespace === "artist") matched = participatingArtists(gallery).some((artist) => normalizeTokenValue(artist).includes(metadataValue));
     else if (namespace === "group") matched = gallery.group ? normalizeTokenValue(gallery.group).includes(metadataValue) : false;
     else if (namespace === "series") {
       matched = (gallery.series ?? []).some((item) => normalizeTokenValue(item).includes(metadataValue));
@@ -76,7 +77,7 @@ const matchesDownloadFilter = (gallery: Gallery, state: UiState): boolean => {
 /** Auto Find is an inbox for discoveries that have not entered the download library yet. */
 export const isPendingAutoFindCandidate = (gallery: Gallery): boolean => gallery.download === undefined;
 
-export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>): Gallery[] {
+export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>, popularity: import("../api/downloadPopularity").PopularityRanks = {}): Gallery[] {
   const search = state.search[state.view];
   const directExploreId = state.view === "explore" && /^\d{7}$/.test(search.committed.trim());
   let items = [...galleries].filter((gallery) => directExploreId
@@ -99,8 +100,13 @@ export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>): 
     } else if (state.exploreSort === "random") {
       items.sort((left, right) => ((left.id * 2654435761) >>> 0) - ((right.id * 2654435761) >>> 0));
     }
-  } else if (state.view === "downloads" && state.grouping.downloads === "all") {
+  } else if (state.view === "downloads") {
+    const period = state.downloadsSort?.replace("popular_", "") as import("../api/downloadPopularity").PopularityPeriod;
+    const ranks = popularity[period] ?? {};
     items.sort((left, right) => {
+      const leftRank = ranks[left.id] ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = ranks[right.id] ?? Number.MAX_SAFE_INTEGER;
+      if (leftRank !== rightRank) return leftRank - rightRank;
       const leftCreatedAt = left.download?.createdAt ?? left.download?.updatedAt ?? left.publishedAt;
       const rightCreatedAt = right.download?.createdAt ?? right.download?.updatedAt ?? right.publishedAt;
       return rightCreatedAt.localeCompare(leftCreatedAt) || right.id - left.id;

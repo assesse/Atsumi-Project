@@ -156,6 +156,38 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 
 describe("encoded capture integration", () => {
+  it("waits for quality preparation before arming and ignores duplicate starts", async () => {
+    const h = fixture({ originalOnly: true });
+    let settle!: (ready: boolean) => void;
+    h.window.__atsumiQuality = { prepare: vi.fn(() => new Promise<boolean>(resolve => { settle = resolve; })), canStart: () => false };
+    const start = vi.fn(async () => ({ id: RECORDING, mode: "encoded", nativeApproved: true }));
+    h.window.__atsumiEncodedCapture = { canStart: () => true, getStatus: () => ({ active: false }), start };
+    h.command("start"); h.command("start"); await flush();
+    expect(start).not.toHaveBeenCalled();
+    expect(h.ofKind("status").at(-1)).toMatchObject({ recording: true, detail: "starting", ready: false });
+    settle(true); await flush();
+    expect(start).toHaveBeenCalledOnce();
+  });
+  it.each(["stop", "pagehide"])("does not start after %s during quality preparation", async action => {
+    const h = fixture({ originalOnly: true });
+    let settle!: (ready: boolean) => void;
+    h.window.__atsumiQuality = { prepare: () => new Promise<boolean>(resolve => { settle = resolve; }) };
+    const start = vi.fn();
+    h.window.__atsumiEncodedCapture = { canStart: () => true, getStatus: () => ({ active: false }), start };
+    h.command("start"); await flush();
+    if (action === "stop") h.command("stop"); else h.window.dispatch("pagehide");
+    settle(true); await flush();
+    expect(start).not.toHaveBeenCalled();
+  });
+  it("does not arm while a quality transition is unresolved", async () => {
+    const h = fixture({ originalOnly: true });
+    h.window.__atsumiQuality = { prepare: async () => false, canStart: () => false };
+    const start = vi.fn();
+    h.window.__atsumiEncodedCapture = { canStart: () => true, getStatus: () => ({ active: false }), start };
+    h.command("start"); await flush();
+    expect(start).not.toHaveBeenCalled();
+    expect(h.ofKind("status").at(-1)).toMatchObject({ recording: false, ready: false, detail: "unavailable" });
+  });
   it("uses an approved encoded session without creating a second MediaRecorder and drains chat before finish", async () => {
     const h = fixture({ originalOnly: true }); const order: string[] = [];
     const state = { active: false, starting: false, stopping: false, recordingId: RECORDING, channelId: CHANNEL, detail: "recording" };

@@ -116,6 +116,43 @@ impl Drop for BrowserMergeWorker {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JobKind {
+    Final,
+    Cleanup,
+    Part,
+    Archive,
+}
+
+// One bounded worker, but no task class can monopolize it. In particular,
+// continuously arriving live ranges cannot starve completed recordings.
+fn next_job(
+    store: &BrowserCaptureStore,
+    cursor: &mut usize,
+) -> Result<Option<(JobKind, BrowserMergeJob)>, StreamError> {
+    const KINDS: [JobKind; 4] = [
+        JobKind::Final,
+        JobKind::Cleanup,
+        JobKind::Part,
+        JobKind::Archive,
+    ];
+    for step in 0..KINDS.len() {
+        let index = (*cursor + step) % KINDS.len();
+        let job = match KINDS[index] {
+            JobKind::Final => store.take_merge_job()?,
+            JobKind::Cleanup => store.take_cleanup_job()?,
+            JobKind::Part => store.take_part_job()?,
+            JobKind::Archive => store.take_archive_job()?,
+        };
+        if let Some(job) = job {
+            *cursor = (index + 1) % KINDS.len();
+            return Ok(Some((KINDS[index], job)));
+        }
+    }
+    Ok(None)
+}
+
 fn worker(shared: Arc<Shared>) {
     #[cfg(windows)]
     unsafe {
@@ -125,6 +162,7 @@ fn worker(shared: Arc<Shared>) {
         let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
     }
     let history_ready_at = Instant::now() + HISTORY_RECOVERY_GRACE;
+    let mut job_cursor = 0;
     // Do not hydrate the whole display-only history through the manual retry API.
     if let Ok(store) = shared.store.lock() {
         let _ = store.retry_loaded_merges(None);
@@ -149,26 +187,27 @@ fn worker(shared: Arc<Shared>) {
                 }
             }
         }
-        let part = shared
+        let work = shared
             .store
             .lock()
             .ok()
-            .and_then(|store| store.take_part_job().ok())
+            .and_then(|store| next_job(&store, &mut job_cursor).ok())
             .flatten();
-        if let Some(job) = part {
+        if let Some((JobKind::Archive, job)) = work {
+            let store = shared.store.lock().ok().map(|s| s.clone());
+            if let Some(store) = store {
+                browser_store::archive::run(&store, &job, &shared.cancel);
+            }
+            continue;
+        }
+        if let Some((JobKind::Part, job)) = work {
             let result = merge_recording(&job, shared.tools.as_ref(), &shared.cancel);
             if let Ok(store) = shared.store.lock() {
                 let _ = store.finish_part_job(&job, result);
             }
             continue;
         }
-        let cleanup_job = shared
-            .store
-            .lock()
-            .ok()
-            .and_then(|store| store.take_cleanup_job().ok())
-            .flatten();
-        if let Some(job) = cleanup_job {
+        if let Some((JobKind::Cleanup, job)) = work {
             // Media hashing/deletion never holds either shared store mutex.
             let result = browser_store::cleanup::remove_verified_sources(&job, &shared.cancel);
             if let Ok(store) = shared.store.lock() {
@@ -176,13 +215,7 @@ fn worker(shared: Arc<Shared>) {
             }
             continue;
         }
-        let job = shared
-            .store
-            .lock()
-            .ok()
-            .and_then(|store| store.take_merge_job().ok())
-            .flatten();
-        if let Some(job) = job {
+        if let Some((JobKind::Final, job)) = work {
             let result = merge_recording(&job, shared.tools.as_ref(), &shared.cancel);
             if let Ok(store) = shared.store.lock() {
                 match result {
@@ -249,46 +282,66 @@ fn check_cancel(cancel: &AtomicBool) -> Result<(), StreamError> {
     }
 }
 
+fn verification_threads(logical_cpus: usize) -> usize {
+    // Keep viewers/capture responsive while avoiding a strictly serial
+    // full-broadcast decode on many-core machines. The child is below-normal
+    // priority, and decoder parallelism never exceeds a quarter of CPUs or 4.
+    (logical_cpus / 4).clamp(1, 4)
+}
+
 fn verify_full_decode(
     tools: &MediaTools,
     file: &Path,
     duration: f64,
     cancel: &AtomicBool,
 ) -> Result<(), StreamError> {
+    let threads =
+        verification_threads(thread::available_parallelism().map_or(1, |count| count.get()))
+            .to_string();
     let mut command = Command::new(&tools.ffmpeg);
-    command
-        .args([
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-xerror",
-            "-err_detect",
-            "explode",
-            "-threads",
-            "1",
-            "-filter_threads",
-            "1",
-            "-max_alloc",
-            "67108864",
-            "-protocol_whitelist",
-            "file",
-            "-i",
-        ])
-        .arg(file)
-        .args([
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0",
-            "-progress",
-            "pipe:1",
-            "-stats_period",
-            "60",
-            "-f",
-            "null",
-            "-",
-        ]);
+    command.args([
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-xerror",
+        "-err_detect",
+        "explode",
+        "-threads",
+        &threads,
+        "-filter_threads",
+        "1",
+        "-max_alloc",
+        "67108864",
+        "-protocol_whitelist",
+        "file",
+    ]);
+    if let Some(rate) = crate::storage_io_budget::media_read_rate(
+        file,
+        fs::metadata(file).map_or(0, |m| m.len()),
+        duration,
+    ) {
+        command.args(["-readrate", &rate]);
+    }
+    command.arg("-i").arg(file).args([
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0",
+        // Decode every frame using the stored clock. The null sink must
+        // not quantize fractional source PTS to a guessed output FPS.
+        "-fps_mode:v",
+        "passthrough",
+        "-enc_time_base:v",
+        "demux",
+        "-progress",
+        "pipe:1",
+        "-stats_period",
+        "60",
+        "-f",
+        "null",
+        "-",
+    ]);
     let timeout = Duration::from_secs(
         (duration.ceil() as u64)
             .saturating_mul(2)
@@ -487,8 +540,10 @@ fn run_tool(
     let outcome = loop {
         let guard = check_cancel(cancel).and_then(|()| {
             if started.elapsed() > timeout {
-                return Err(failure(
+                return Err(StreamError::new(
+                    "BROWSER_MERGE_TIMEOUT",
                     "병합 도구의 처리 시간이 초과되었습니다. 원본 조각은 보존됩니다.",
+                    true,
                 ));
             }
             if let Some((path, limit)) = output_limit {
@@ -587,6 +642,25 @@ fn parse_info(value: &Value) -> Result<(Value, Option<f64>), StreamError> {
         numeric(&value["format"]["duration"]).filter(|v| *v > 0.0),
     ))
 }
+// A metadata-only child may be delayed by Windows scheduling or disk contention.
+// Retry that read once, with more headroom. Never retry mux/cleanup, cancellation,
+// malformed media, or a failed decoder as though it were a transient timeout.
+fn retry_probe_timeout<T>(
+    initial: Duration,
+    mut attempt: impl FnMut(Duration) -> Result<T, StreamError>,
+) -> Result<T, StreamError> {
+    match attempt(initial) {
+        Err(error) if error.code == "BROWSER_MERGE_TIMEOUT" => {
+            tracing::warn!(
+                timeout_seconds = initial.as_secs(),
+                "media probe timed out; retrying read once"
+            );
+            attempt(Duration::from_secs(90))
+        }
+        result => result,
+    }
+}
+
 fn probe(
     tools: &MediaTools,
     file: &Path,
@@ -595,16 +669,20 @@ fn probe(
     max_duration: f64,
     packet_clock: bool,
 ) -> Result<MediaInfo, StreamError> {
+    let io_budget = crate::storage_io_budget::BulkReadBudget::for_path(file);
+    let probe_started = Instant::now();
     let format = if mime.starts_with("video/webm") {
         "matroska"
     } else {
         "mov"
     };
-    let mut cmd = Command::new(&tools.ffprobe);
-    cmd.args(["-v","error","-max_alloc","67108864","-protocol_whitelist","file","-f",format,"-show_data_hash","sha256","-show_entries",
+    let output = retry_probe_timeout(Duration::from_secs(20), |timeout| {
+        let mut cmd = Command::new(&tools.ffprobe);
+        cmd.args(["-v","error","-max_alloc","67108864","-protocol_whitelist","file","-f",format,"-show_data_hash","sha256","-show_entries",
         "stream=index,codec_type,codec_name,profile,time_base,width,height,sample_rate,channels,channel_layout,extradata_hash:format=duration","-of","json"]).arg(file);
-    let ToolOutput::Bytes(bytes) = run_tool(cmd, cancel, Duration::from_secs(20), false, None)?
-    else {
+        run_tool(cmd, cancel, timeout, false, None)
+    })?;
+    let ToolOutput::Bytes(bytes) = output else {
         unreachable!()
     };
     let (signature, duration) = parse_info(
@@ -616,32 +694,43 @@ fn probe(
     let duration = if let Some(duration) = duration.filter(|_| !packet_clock) {
         duration
     } else {
-        let mut cmd = Command::new(&tools.ffprobe);
-        cmd.args([
-            "-v",
-            "error",
-            "-max_alloc",
-            "67108864",
-            "-protocol_whitelist",
-            "file",
-            "-f",
-            format,
-            "-show_packets",
-            "-show_entries",
-            "packet=pts_time,dts_time,duration_time",
-            "-of",
-            "compact=p=0:nk=0",
-        ])
-        .arg(file);
-        let ToolOutput::Packets(clock) =
-            run_tool(cmd, cancel, Duration::from_secs(30), true, None)?
-        else {
+        let output = retry_probe_timeout(Duration::from_secs(30), |timeout| {
+            let mut cmd = Command::new(&tools.ffprobe);
+            cmd.args([
+                "-v",
+                "error",
+                "-max_alloc",
+                "67108864",
+                "-protocol_whitelist",
+                "file",
+                "-f",
+                format,
+                "-show_packets",
+                "-show_entries",
+                "packet=pts_time,dts_time,duration_time",
+                "-of",
+                "compact=p=0:nk=0",
+            ])
+            .arg(file);
+            run_tool(cmd, cancel, timeout, true, None)
+        })?;
+        let ToolOutput::Packets(clock) = output else {
             unreachable!()
         };
         clock.duration()?
     };
     if duration > max_duration || duration <= 0.0 {
         return Err(failure("녹화 미디어의 재생 시간이 올바르지 않습니다."));
+    }
+    // Thousands of tiny segment probes can saturate a seeking HDD without
+    // ever reaching the byte-rate ceiling. Leave a cancellable gap between
+    // successful local probes; SSD probes remain unchanged.
+    if !io_budget.account(
+        0,
+        probe_started.elapsed().min(Duration::from_millis(250)),
+        || cancel.load(Ordering::Acquire),
+    ) {
+        return Err(cancelled());
     }
     Ok(MediaInfo {
         signature,
@@ -740,7 +829,8 @@ fn merge_recording(
     let root = browser_store::validate_merge_generation(job)?;
     let sources = browser_store::read_merge_segments(job)?;
     let segments = if job.part.is_none() {
-        browser_store::parts::export_segments(&job.recording)?.unwrap_or_else(|| sources.clone())
+        browser_store::parts::export_segments(&job.recording, &sources)?
+            .unwrap_or_else(|| sources.clone())
     } else {
         sources.clone()
     };
@@ -776,33 +866,31 @@ fn merge_recording(
         .map_err(|_| failure("병합 목록을 저장하지 못했습니다."))?;
     let mut first_signature = None;
     let mut source_hashes = Vec::with_capacity(sources.len());
+    let range_parts = if job.part.is_none() && job.recording.progressive.is_some() {
+        let parts = browser_store::parts::load(&job.recording)?;
+        if parts
+            .last()
+            .is_some_and(|p| p.end == job.recording.segment_count)
+        {
+            parts
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
     // Keep final-export inputs immutable while the external muxer reads them.
     let _range_guards = if job.part.is_none() && job.recording.progressive.is_some() {
         segments
             .iter()
+            .take(range_parts.len())
             .map(|s| browser_store::cleanup::verification_guard(&root.join(&s.file)))
             .collect::<Result<Vec<_>, _>>()?
     } else {
         Vec::new()
     };
     let (range_hashes, _) = browser_store::cleanup::verified_range_inputs(job, cancel)?;
-    for (index, source) in sources.iter().enumerate() {
-        check_cancel(cancel)?;
-        let hash =
-            browser_store::cleanup::source_hash(&root.join(&source.file), source.bytes, cancel)?;
-        if !range_hashes.is_empty() && range_hashes.get(index) != Some(&hash) {
-            return Err(failure(
-                "구간 병합 후 원본 조각이 변경되었습니다. 원본을 보존합니다.",
-            ));
-        }
-        source_hashes.push(hash);
-    }
     let mut offset = 0.0;
-    let range_parts = if job.part.is_none() && job.recording.progressive.is_some() {
-        Some(browser_store::parts::load(&job.recording)?)
-    } else {
-        None
-    };
     for (index, segment) in segments.iter().enumerate() {
         check_cancel(cancel)?;
         if started.elapsed() > Duration::from_secs(7200) {
@@ -813,7 +901,7 @@ fn merge_recording(
         let path = root.join(&segment.file);
         if regular(
             &path,
-            if job.part.is_none() && job.recording.progressive.is_some() {
+            if index < range_parts.len() {
                 256 * 1024 * 1024
             } else {
                 MAX_SEGMENT
@@ -854,8 +942,8 @@ fn merge_recording(
             "sourceStartSeconds":segment.source_start_seconds,"sourceEndSeconds":segment.source_end_seconds,
             "clock":if segment.source_start_seconds.is_some(){"encoded_source"}else{"media_duration"},
             "chatClock":"original_recording_receive_time","chatRewritten":false});
-        if let Some(parts) = &range_parts {
-            let rows = browser_store::parts::timeline_rows(&root, &parts[index], offset, duration)?;
+        if let Some(part) = range_parts.get(index) {
+            let rows = browser_store::parts::timeline_rows(&root, part, offset, duration)?;
             timeline
                 .write_all(&rows)
                 .map_err(|_| failure("병합 시간표를 저장하지 못했습니다."))?;
@@ -882,47 +970,70 @@ fn merge_recording(
         .map_err(|_| failure("병합 목록을 확정하지 못했습니다."))?;
     drop(manifest);
     drop(timeline);
+    // Fail incompatible metadata BEFORE reading many GB of media for hashes.
+    tracing::info!(recording_id = %job.recording.id, sources = sources.len(), phase = "source_verification", "browser merge progress");
+    for (index, source) in sources.iter().enumerate() {
+        check_cancel(cancel)?;
+        let hash =
+            browser_store::cleanup::source_hash(&root.join(&source.file), source.bytes, cancel)?;
+        if range_hashes
+            .get(index)
+            .is_some_and(|expected| expected != &hash)
+        {
+            return Err(failure(
+                "구간 병합 후 원본 조각이 변경되었습니다. 원본을 보존합니다.",
+            ));
+        }
+        source_hashes.push(hash);
+    }
     browser_store::validate_merge_generation(job)?;
     check_cancel(cancel)?;
+    tracing::info!(recording_id = %job.recording.id, phase = "mux", "browser merge progress");
     // Reserve a unique, native-generated derivative first. A killed child
     // leaves a clearly named .partial; finalized/source names are never reused.
     let output = new_file(&partial)?;
     drop(output);
     let mut cmd = Command::new(&tools.ffmpeg);
-    cmd.current_dir(&root)
-        .args([
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-max_alloc",
-            "67108864",
-            "-xerror",
-            "-protocol_whitelist",
-            "file",
-            "-format_whitelist",
-            "concat,mov,matroska,webm",
-            "-f",
-            "concat",
-            "-safe",
-            "1",
-            "-i",
-        ])
-        .arg(&list_name)
-        .args([
-            "-map",
-            "0:v:0",
-            "-map",
-            "0:a:0",
-            "-map_metadata",
-            "-1",
-            "-map_chapters",
-            "-1",
-            "-c",
-            "copy",
-        ]);
+    cmd.current_dir(&root).args([
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-max_alloc",
+        "67108864",
+        "-xerror",
+        "-protocol_whitelist",
+        "file",
+        "-format_whitelist",
+        "concat,mov,matroska,webm",
+        "-f",
+        "concat",
+        "-safe",
+        "1",
+    ]);
+    if let Some(rate) = crate::storage_io_budget::media_read_rate(
+        &root,
+        sources.iter().map(|source| source.bytes).sum(),
+        offset,
+    ) {
+        cmd.args(["-readrate", &rate]);
+    }
+    cmd.arg("-i").arg(&list_name).args([
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0",
+        "-map_metadata",
+        "-1",
+        "-map_chapters",
+        "-1",
+        "-c",
+        "copy",
+    ]);
     if ext == "mp4" {
-        cmd.args(["-movflags", "+faststart", "-f", "mp4"]);
+        // Local replay already supports byte-range seeks. Relocating moov for
+        // HTTP progressive download needlessly rereads/rewrites the full movie.
+        cmd.args(["-f", "mp4"]);
     } else {
         cmd.args(["-f", "webm"]);
     }
@@ -968,7 +1079,9 @@ fn merge_recording(
         .and_then(|file| file.sync_all())
         .map_err(|_| failure("병합 영상을 디스크에 확정하지 못했습니다."))?;
     let verification_guard = browser_store::cleanup::verification_guard(&partial)?;
+    tracing::info!(recording_id = %job.recording.id, phase = "full_decode", duration_seconds = offset, "browser merge progress");
     verify_full_decode(tools, &partial, offset, cancel)?;
+    tracing::info!(recording_id = %job.recording.id, phase = "proof", "browser merge progress");
     let cleanup = Some(browser_store::cleanup::write_proof(
         job,
         &source_hashes,
@@ -997,6 +1110,39 @@ fn merge_recording(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn final_exports_are_not_starved_by_live_range_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BrowserCaptureStore::new(dir.path()).unwrap();
+        let channel = "a".repeat(32);
+        let live = store
+            .begin_progressive(dir.path(), &channel, "live", "video/webm")
+            .unwrap();
+        let stopped = store
+            .begin_progressive(dir.path(), &channel, "stopped", "video/webm")
+            .unwrap();
+        let webm = [
+            0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 1, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        for recording in [&live, &stopped] {
+            for index in 0..3 {
+                store.append(&recording.id, index, 0, &webm).unwrap();
+                store.finish_segment(&recording.id, index, 60.0).unwrap();
+            }
+        }
+        store.finish(&stopped.id, false, None).unwrap();
+        // Even when the next slot is a live range, one bounded range job is
+        // followed by the final export, not all of the live recording's ranges.
+        let mut cursor = 2;
+        let (kind, part) = next_job(&store, &mut cursor).unwrap().unwrap();
+        assert_eq!(kind, JobKind::Part);
+        assert_eq!(part.recording.id, live.id);
+        store.finish_part_job(&part, Err(cancelled())).unwrap_err();
+        let (kind, final_job) = next_job(&store, &mut cursor).unwrap().unwrap();
+        assert_eq!(kind, JobKind::Final);
+        assert_eq!(final_job.recording.id, stopped.id);
+        assert!(final_job.part.is_none());
+    }
     fn segment(index: u64, start: Option<f64>, end: Option<f64>, duration: f64) -> BrowserSegment {
         BrowserSegment {
             index,
@@ -1035,6 +1181,46 @@ mod tests {
         assert!((clock.duration().unwrap() - 15.0).abs() < 1e-8);
         clock.line("pts_time=nan|dts_time=N/A|duration_time=0.02");
         assert_eq!(clock.count, 2);
+    }
+    #[test]
+    fn probe_retries_only_timeout_once_with_bounded_headroom() {
+        let mut calls = Vec::new();
+        let result = retry_probe_timeout(Duration::from_secs(20), |timeout| {
+            calls.push(timeout.as_secs());
+            if calls.len() == 1 {
+                Err(StreamError::new("BROWSER_MERGE_TIMEOUT", "timeout", true))
+            } else {
+                Ok(42)
+            }
+        });
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(calls, [20, 90]);
+        for code in [
+            "BROWSER_MERGE_CANCELLED",
+            "BROWSER_MERGE_FAILED",
+            "BROWSER_MERGE_TIMEOUT",
+        ] {
+            let mut calls = 0;
+            let result: Result<(), _> = retry_probe_timeout(Duration::from_secs(20), |_| {
+                calls += 1;
+                Err(StreamError::new(code, "fixture", true))
+            });
+            assert_eq!(result.unwrap_err().code, code);
+            assert_eq!(
+                calls,
+                if code == "BROWSER_MERGE_TIMEOUT" {
+                    2
+                } else {
+                    1
+                }
+            );
+        }
+    }
+    #[test]
+    fn full_decode_parallelism_leaves_most_cpu_capacity_for_viewing() {
+        for (cpus, expected) in [(0, 1), (1, 1), (4, 1), (8, 2), (16, 4), (128, 4)] {
+            assert_eq!(verification_threads(cpus), expected);
+        }
     }
     #[test]
     fn missing_or_relative_tools_never_execute() {
@@ -1282,6 +1468,8 @@ mod tests {
             "aac",
             "-b:a",
             "64k",
+            "-video_track_timescale",
+            "6000",
             "-movflags",
             "+frag_keyframe+empty_moov+default_base_moof",
             "-f",
@@ -1647,14 +1835,11 @@ mod tests {
             .unwrap()
             .finish(&recording.id, false, None)
             .unwrap();
-        let tail = store.lock().unwrap().take_part_job().unwrap().unwrap();
-        let output = merge_recording(&tail, Some(&tools), &AtomicBool::new(false)).unwrap();
-        store
-            .lock()
-            .unwrap()
-            .finish_part_job(&tail, Ok(output))
-            .unwrap();
+        assert!(store.lock().unwrap().take_part_job().unwrap().is_none());
         let job = store.lock().unwrap().take_merge_job().unwrap().unwrap();
+        assert!(
+            job.recording.progressive.as_ref().unwrap().segment_count < job.recording.segment_count
+        );
         let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
         let timeline = fs::read_to_string(root.join(&output.timeline_file)).unwrap();
         assert_eq!(
@@ -1670,6 +1855,18 @@ mod tests {
         replay.close(&final_session.token).unwrap();
         replay.shutdown_and_wait();
         drop(replay);
+        let cleanup_job = store.lock().unwrap().take_cleanup_job().unwrap().unwrap();
+        let cleaned =
+            browser_store::cleanup::remove_verified_sources(&cleanup_job, &AtomicBool::new(false));
+        assert!(cleaned.complete);
+        assert_eq!(cleaned.deleted, segments.len() as u64);
+        store
+            .lock()
+            .unwrap()
+            .finish_cleanup(&cleanup_job, cleaned)
+            .unwrap();
+        assert!(!root.join("segment-000000000000.mp4").exists());
+        assert!(root.join("chat.jsonl").exists());
         let files: Vec<_> = fs::read_dir(dir.path().join("streaming/replay"))
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useSta
 import { createPortal } from "react-dom";
 import { normalizeTokenValue } from "../search/searchTokens";
 import "./GalleryArtists.css";
+import type { BackgroundOpenOptions } from "../state/downloadStatus";
 
 export type GalleryArtistsProps = {
   artist: string;
@@ -9,7 +10,7 @@ export type GalleryArtistsProps = {
   favoriteMetadata: ReadonlySet<string>;
   compact?: boolean;
   disabled?: boolean;
-  onSearch: (token: string) => void;
+  onSearch: (token: string, options?: BackgroundOpenOptions) => void;
   onToggleFavorite: (token: string) => void;
   onClickCapture?: MouseEventHandler<HTMLButtonElement>;
 };
@@ -167,7 +168,10 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
       <span className="gallery-artists-label">작가 정보 없음</span>
     </div>
   );
-  const search = (token: string) => { close(); onSearch(token); };
+  const search = (token: string, options?: BackgroundOpenOptions) => {
+    if (!options?.background) close();
+    if (options?.background) onSearch(token, options); else onSearch(token);
+  };
   const portalTarget = lineRef.current?.closest("dialog[open]") ?? document.body;
 
   return (
@@ -194,7 +198,7 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
           aria-label={`${item.name}${item.favorite ? ", 즐겨찾기" : ""}, 좌클릭 검색, 우클릭 즐겨찾기 변경`}
           title={`${item.name} · 좌클릭 검색 / 우클릭 즐겨찾기`}
           onClickCapture={onClickCapture}
-          onClick={(event) => { if (!event.defaultPrevented) search(item.token); }}
+          onClick={(event) => { if (!event.defaultPrevented && event.detail <= 1) search(item.token, event.ctrlKey || event.metaKey ? { background:true } : undefined); }}
           onContextMenu={(event) => { event.preventDefault(); if (!disabled) onToggleFavorite(item.token); }}
         >
           {item.favorite ? <span className="gallery-artists-star" aria-hidden="true">★</span> : null}
@@ -266,7 +270,7 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
                   className="gallery-artists-popover-search"
                   aria-label={`${item.name} 작가 검색`}
                   onClickCapture={onClickCapture}
-                  onClick={(event) => { if (!event.defaultPrevented) search(item.token); }}
+                  onClick={(event) => { if (!event.defaultPrevented && event.detail <= 1) search(item.token, event.ctrlKey || event.metaKey ? { background: true } : undefined); }}
                   onContextMenu={(event) => { event.preventDefault(); onToggleFavorite(item.token); }}
                 >{item.name}</button>
                 <button

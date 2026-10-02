@@ -1,5 +1,7 @@
 import type { ApiError, ApiResult, GalleryPage } from "../api/contracts";
 
+let nextSessionId = 0;
+
 export type ExplorePagePriority = "foreground" | "prefetch-next" | "prefetch-previous";
 
 export type ExplorePageLoadResult =
@@ -37,6 +39,7 @@ export type ExplorePageSessionOptions = {
 
 /** Query-scoped page cache and warmup lease owner for Explore. */
 export class ExplorePageSession {
+  private readonly sessionId = ++nextSessionId;
   private readonly fetchPage: ExplorePageSessionOptions["fetchPage"];
   private readonly warmPage?: ExplorePageSessionOptions["warmPage"];
   private readonly retainPage?: ExplorePageSessionOptions["retainPage"];
@@ -87,8 +90,6 @@ export class ExplorePageSession {
   park(): void {
     if (this.parked || !this.queryId) return;
     this.parked = true;
-    this.generation += 1;
-    this.foregroundIntent += 1;
 
     const current = this.pages.get(this.currentPage);
     if (current && this.retainPage && !this.releaseRetainedPageLease) {
@@ -97,12 +98,8 @@ export class ExplorePageSession {
     }
 
     this.releaseWarmups();
-    if (this.cancelPage) {
-      for (const request of this.inFlight.values()) {
-        void Promise.resolve(this.cancelPage(request.requestId)).catch(() => undefined);
-      }
-    }
-    this.inFlight.clear();
+    // Hiding a tab is not cancellation. Keep its page requests and bounded
+    // adjacent metadata prefetch alive; only invisible image warmup is parked.
   }
 
   resume(): void {
@@ -140,7 +137,7 @@ export class ExplorePageSession {
   }
 
   prefetchAdjacent(): void {
-    if (this.parked || !this.queryId || !this.pages.has(this.currentPage)) return;
+    if (!this.queryId || !this.pages.has(this.currentPage)) return;
     const next = this.currentPage + 1;
     const previous = this.currentPage - 1;
     // Forward navigation is intentionally submitted before back navigation.
@@ -196,7 +193,7 @@ export class ExplorePageSession {
     }
 
     const request: InFlightPage = {
-      requestId: `explore-page-${this.generation}-${++this.requestSequence}`,
+      requestId: `explore-page-${this.sessionId}-${this.generation}-${++this.requestSequence}`,
       priority,
       ...(priority === "foreground" ? { foregroundIntent } : {}),
       promise: Promise.resolve({ status: "stale" }),

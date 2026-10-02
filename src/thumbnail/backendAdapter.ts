@@ -1,4 +1,5 @@
 import type { BackendClient } from "../api/backend";
+import { imageCreated, imageReleased, uiCounters } from "../diagnostics/uiDiagnostics";
 import type {
   BackendThumbnailKey,
   ThumbnailCompletionEvent,
@@ -20,6 +21,7 @@ type PendingResolution = {
   requestId?: string;
   cancelled: boolean;
   settled: boolean;
+  receiving?: boolean;
   timeoutId: number;
   earlyCompletions: Map<string, ThumbnailCompletionEvent>;
   resolve: (asset: ThumbnailAsset) => void;
@@ -31,6 +33,10 @@ const THUMBNAIL_COMPLETION_TIMEOUT_MS = 30_000;
 const backendKey = (key: ThumbnailKey): BackendThumbnailKey => {
   if (key.kind === "gallery-cover") return { kind: "galleryCover", galleryId: key.galleryId };
   if (key.kind === "source-page") return { kind: "galleryPage", galleryId: key.galleryId, sourcePage: key.page };
+  if (key.kind === "overlap-review-page") return {
+    kind: "overlapReviewPage", reviewId: key.reviewId, candidateId: key.candidateId,
+    reviewRevision: key.reviewRevision, side: key.side, sourcePage: key.page,
+  };
   return { kind: "artifactPage", entryId: key.entryId, sourcePage: key.page };
 };
 
@@ -48,6 +54,9 @@ const keysEqual = (left: BackendThumbnailKey, right: BackendThumbnailKey): boole
       && left.galleryId === right.galleryId
       && left.sourcePage === right.sourcePage;
   }
+  if (left.kind === "overlapReviewPage") return right.kind === "overlapReviewPage"
+    && left.reviewId === right.reviewId && left.candidateId === right.candidateId
+    && left.reviewRevision === right.reviewRevision && left.side === right.side && left.sourcePage === right.sourcePage;
   return right.kind === "artifactPage"
     && left.entryId === right.entryId
     && left.sourcePage === right.sourcePage;
@@ -56,6 +65,10 @@ const keysEqual = (left: BackendThumbnailKey, right: BackendThumbnailKey): boole
 const backendKeyIdentity = (key: BackendThumbnailKey): string => {
   if (key.kind === "galleryCover") return `gallery-cover:${key.galleryId}`;
   if (key.kind === "galleryPage") return `source-page:${key.galleryId}:${key.sourcePage}`;
+  if (key.kind === "overlapReviewPage") return thumbnailKeyIdentity({
+    kind: "overlap-review-page", reviewId: key.reviewId, candidateId: key.candidateId,
+    reviewRevision: key.reviewRevision, side: key.side, page: key.sourcePage,
+  });
   return `artifact-page:${key.entryId}:${key.sourcePage}`;
 };
 
@@ -82,7 +95,6 @@ const errorFrom = (message: string, code?: string, retryable?: boolean): Retryab
 export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
   private readonly pendingByIdentity = new Map<string, PendingResolution>();
   private readonly pendingByRequestId = new Map<string, PendingResolution>();
-  private readonly bufferedCompletions = new Map<string, ThumbnailCompletionEvent>();
   private readonly cancelledRequestIds = new Set<string>();
   private readonly displayUrls = new Map<string, string>();
   private readonly completionListenerReady: Promise<void>;
@@ -116,11 +128,10 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
         if (this.pendingByIdentity.get(identity) === pending) this.pendingByIdentity.delete(identity);
         if (pending.requestId) {
           this.pendingByRequestId.delete(pending.requestId);
-          this.bufferedCompletions.delete(pending.requestId);
           this.rememberCancelledRequestId(pending.requestId);
           void this.backend.thumbnailCancel(pending.requestId).catch(() => undefined);
         }
-        pending.earlyCompletions.clear();
+        this.clearEarly(pending);
         pending.reject(errorFrom("Thumbnail completion timed out", "THUMBNAIL_COMPLETION_TIMEOUT"));
       }, THUMBNAIL_COMPLETION_TIMEOUT_MS);
       this.pendingByIdentity.set(identity, pending);
@@ -143,9 +154,10 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
     if (!pending) return;
     pending.cancelled = true;
     window.clearTimeout(pending.timeoutId);
-    pending.earlyCompletions.clear();
+    this.clearEarly(pending);
     this.pendingByIdentity.delete(identity);
     if (pending.requestId) {
+      this.pendingByRequestId.delete(pending.requestId);
       this.rememberCancelledRequestId(pending.requestId);
       void this.backend.thumbnailCancel(pending.requestId).catch(() => undefined);
     }
@@ -160,6 +172,7 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
     const identity = thumbnailKeyIdentity(request.key);
     if (this.displayUrls.get(identity) === asset.url) this.displayUrls.delete(identity);
     URL.revokeObjectURL(asset.url);
+    imageReleased(asset.url);
   }
 
   displayFailed(request: ThumbnailRequest, _reason?: string): void {
@@ -168,6 +181,7 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
     if (url) {
       this.displayUrls.delete(identity);
       URL.revokeObjectURL(url);
+      imageReleased(url);
     }
     try {
       void this.backend.thumbnailInvalidate(backendKey(request.key)).catch(() => undefined);
@@ -180,12 +194,12 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
     this.disposed = true;
     this.unlisten?.();
     this.unlisten = undefined;
-    for (const url of this.displayUrls.values()) URL.revokeObjectURL(url);
+    for (const url of this.displayUrls.values()) { URL.revokeObjectURL(url); imageReleased(url); }
     this.displayUrls.clear();
     for (const pending of this.pendingByIdentity.values()) {
       pending.cancelled = true;
       window.clearTimeout(pending.timeoutId);
-      pending.earlyCompletions.clear();
+      this.clearEarly(pending);
       if (pending.requestId) void this.backend.thumbnailCancel(pending.requestId).catch(() => undefined);
       if (pending.requestId) this.rememberCancelledRequestId(pending.requestId);
       if (!pending.settled) {
@@ -195,7 +209,6 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
     }
     this.pendingByIdentity.clear();
     this.pendingByRequestId.clear();
-    this.bufferedCompletions.clear();
     this.cancelledRequestIds.clear();
   }
 
@@ -210,7 +223,6 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
       this.pendingByRequestId.set(result.data.requestId, pending);
       if (pending.cancelled) {
         this.pendingByRequestId.delete(result.data.requestId);
-        this.bufferedCompletions.delete(result.data.requestId);
         this.rememberCancelledRequestId(result.data.requestId);
         void this.backend.thumbnailCancel(result.data.requestId).catch(() => undefined);
         return;
@@ -220,16 +232,14 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
           .thumbnailReprioritize(result.data.requestId, pending.request.priority)
           .catch(() => undefined);
       }
-      const buffered = pending.earlyCompletions.get(result.data.requestId)
-        ?? this.bufferedCompletions.get(result.data.requestId);
-      pending.earlyCompletions.clear();
+      const buffered = pending.earlyCompletions.get(result.data.requestId);
+      this.clearEarly(pending, result.data.requestId);
       if (buffered) {
-        this.bufferedCompletions.delete(result.data.requestId);
         this.complete(buffered);
       }
     } catch (error) {
       window.clearTimeout(pending.timeoutId);
-      pending.earlyCompletions.clear();
+      this.clearEarly(pending);
       if (this.pendingByIdentity.get(identity) === pending) this.pendingByIdentity.delete(identity);
       if (pending.requestId) this.pendingByRequestId.delete(pending.requestId);
       if (!pending.cancelled && !pending.settled) {
@@ -239,8 +249,12 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
     }
   }
 
-  private complete(event: ThumbnailCompletionEvent): void {
-    if (this.cancelledRequestIds.delete(event.requestId)) return;
+  private async complete(event: ThumbnailCompletionEvent): Promise<void> {
+    uiCounters.thumbnailReceived++;
+    if (this.disposed || this.cancelledRequestIds.delete(event.requestId)) {
+      this.releaseEvent(event);
+      return;
+    }
     const pending = this.pendingByRequestId.get(event.requestId);
     if (!pending) {
       const handshaking = this.pendingByIdentity.get(backendKeyIdentity(event.key));
@@ -248,51 +262,69 @@ export class BackendThumbnailAdapter implements ThumbnailCoordinatorAdapter {
         handshaking.earlyCompletions.set(event.requestId, event);
         return;
       }
-      this.bufferedCompletions.set(event.requestId, event);
-      if (this.bufferedCompletions.size > 256) {
-        const oldest = this.bufferedCompletions.keys().next().value as string | undefined;
-        if (oldest) this.bufferedCompletions.delete(oldest);
-      }
+      // The only legitimate response-before-token race is owned by a pending
+      // same-key handshake above. Unsolicited/late image byte arrays must never
+      // become a second, count-only WebView cache.
+      this.releaseEvent(event);
       return;
     }
-
-    this.pendingByRequestId.delete(event.requestId);
-    window.clearTimeout(pending.timeoutId);
-    pending.earlyCompletions.clear();
+    if (pending.receiving) return;
+    pending.receiving = true;
+    this.clearEarly(pending, event.requestId);
     const identity = thumbnailKeyIdentity(pending.request.key);
-    if (this.pendingByIdentity.get(identity) === pending) this.pendingByIdentity.delete(identity);
-    if (pending.cancelled || pending.settled) return;
-    pending.settled = true;
-    if (!keysEqual(event.key, backendKey(pending.request.key))) {
-      pending.reject(errorFrom("Thumbnail completion key did not match its request", "THUMBNAIL_KEY_MISMATCH"));
-      return;
-    }
-    if (event.outcome.status === "failed") {
-      pending.reject(errorFrom(
-        event.outcome.failure.message,
-        `THUMBNAIL_${event.outcome.failure.code}`,
-        event.outcome.failure.retryable,
-      ));
-      return;
-    }
-
-    const { thumbnail } = event.outcome.delivery;
     try {
-      const bytes = Uint8Array.from(thumbnail.bytes);
-      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: thumbnail.contentType });
+      if (pending.cancelled || pending.settled) return;
+      if (!keysEqual(event.key, backendKey(pending.request.key))) {
+        throw errorFrom("Thumbnail completion key did not match its request", "THUMBNAIL_KEY_MISMATCH");
+      }
+      if (event.outcome.status === "failed") {
+        throw errorFrom(event.outcome.failure.message, `THUMBNAIL_${event.outcome.failure.code}`, event.outcome.failure.retryable);
+      }
+      const { thumbnail } = event.outcome.delivery;
+      const buffer = thumbnail.resourceToken
+        ? await this.backend.thumbnailRead(thumbnail.resourceToken)
+        : Uint8Array.from(thumbnail.bytes!).buffer as ArrayBuffer;
+      if (this.disposed || pending.cancelled || pending.settled) return;
+      if (thumbnail.resourceToken && buffer.byteLength !== thumbnail.byteLength) {
+        throw errorFrom("Thumbnail binary length did not match", "THUMBNAIL_INVALID_BODY", true);
+      }
+      const blob = new Blob([buffer], { type: thumbnail.contentType });
       const url = URL.createObjectURL(blob);
+      imageCreated(url, buffer.byteLength);
       const asset: ThumbnailImageAsset = {
         kind: "image",
         url,
         width: thumbnail.width,
         height: thumbnail.height,
-        byteLength: bytes.byteLength,
+        byteLength: buffer.byteLength,
       };
       this.displayUrls.set(identity, url);
+      pending.settled = true;
       pending.resolve(asset);
     } catch (error) {
-      pending.reject(error instanceof Error ? error : errorFrom("Thumbnail payload could not be displayed"));
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.reject(error instanceof Error ? error : errorFrom("Thumbnail payload could not be displayed"));
+      }
+    } finally {
+      window.clearTimeout(pending.timeoutId);
+      this.pendingByRequestId.delete(event.requestId);
+      if (this.pendingByIdentity.get(identity) === pending) this.pendingByIdentity.delete(identity);
+      this.releaseEvent(event);
     }
+  }
+
+  private releaseEvent(event: ThumbnailCompletionEvent): void {
+    if (event.outcome.status !== "ready") return;
+    const token = event.outcome.delivery.thumbnail.resourceToken;
+    if (token) void this.backend.thumbnailRelease(token).catch(() => undefined);
+  }
+
+  private clearEarly(pending: PendingResolution, keep?: string): void {
+    for (const [requestId, event] of pending.earlyCompletions) {
+      if (requestId !== keep) this.releaseEvent(event);
+    }
+    pending.earlyCompletions.clear();
   }
 
   private rememberCancelledRequestId(requestId: string): void {

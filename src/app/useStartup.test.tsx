@@ -19,6 +19,16 @@ async function render(ready: boolean, runtime?: "tauri" | "browser-mock") {
 async function advance(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms); }); }
 
 describe("startup readiness", () => {
+  it("reports unavailable startup IPC separately from normal preparation and clears it on recovery", async () => {
+    request.mockRejectedValue(new Error("private diagnostic"));
+    await render(false);
+    expect(state.statusError).toBe("시작 상태 확인 실패 · 자동 재확인 중");
+    expect(state.phase).toBe("starting");
+    request.mockResolvedValue({ phase: "ready", elapsedMs: 500 });
+    await advance(200);
+    expect(state.statusError).toBeNull();
+    expect(state.phase).toBe("ready");
+  });
   beforeEach(() => {
     vi.useFakeTimers();
     request.mockReset();

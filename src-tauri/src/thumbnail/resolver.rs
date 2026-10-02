@@ -163,6 +163,9 @@ impl ThumbnailResolver for FixtureThumbnailResolver {
                 entry_id,
                 source_page,
             } => format!("{entry_id} · PAGE {source_page}"),
+            ThumbnailKey::OverlapReviewPage {
+                side, source_page, ..
+            } => format!("REVIEW {side:?} · PAGE {source_page}"),
         };
         let svg = format!(
             concat!(

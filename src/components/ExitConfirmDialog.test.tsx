@@ -102,7 +102,7 @@ describe("ExitConfirmDialog", () => {
       const rows = [...container.querySelectorAll(".exit-work-list li")].map((row) => row.textContent);
       expect(rows).toEqual([
         "다운로드 2개",
-        "Auto Find · 작가 3/7 · 후보 128개",
+        "Auto Find · 작가·그룹 3/7 · 후보 128개",
         "작품 중복 검사 · 아티팩트 12/80 · 비교 340/3160 · 후보 4개",
         "내부 중복 검사 · 앨범 4/20 · 제외 1개 · 검토 행 3개",
       ]);

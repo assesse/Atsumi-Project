@@ -3,6 +3,7 @@ import type { DownloadOverlapCandidate, DownloadOverlapReview } from "../api/con
 import { galleryId } from "../core/types";
 import {
   buildStrictOverlapPlan,
+  automaticUncensoredMerge,
   DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
   DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
 } from "./downloadOverlapAuto";
@@ -51,6 +52,12 @@ const review = (candidates: DownloadOverlapCandidate[]): DownloadOverlapReview =
 });
 
 describe("buildStrictOverlapPlan", () => {
+  it("never automates when both editions have unique pages even above 95% coverage", () => {
+    const c=candidate({relation:"near_equivalent",existingCoverage:.96,incomingCoverage:.96,existingUniquePages:1,incomingUniquePages:1});
+    const r=review([c]);
+    expect(buildStrictOverlapPlan(r)).toBeNull();
+    expect(automaticUncensoredMerge(r,c)).toBeNull();
+  });
   it("keeps an incoming edition only when it safely contains the existing edition", () => {
     const plan = buildStrictOverlapPlan(review([candidate()]));
     expect(plan?.winner).toBe("incoming");
@@ -118,106 +125,20 @@ describe("buildStrictOverlapPlan", () => {
     expect(buildStrictOverlapPlan(unknownTitles)?.winner).toBe("existing");
   });
 
-  it("prioritizes verified containment over an uncensored marker", () => {
-    const censoredIncoming = review([candidate({
-      existing: { ...candidate().existing, title: "Edition [Uncensored]" },
-    })]);
-    censoredIncoming.incoming = { ...censoredIncoming.incoming, title: "Edition [Censored]" };
-    expect(buildStrictOverlapPlan(censoredIncoming)?.winner).toBe("incoming");
-  });
-
-  it("keeps a clearly larger incoming omnibus even when contained editions are marked uncensored", () => {
-    const first = candidate({
-      existing: { ...candidate().existing, title: "Chapter A [Uncensored]" },
-      incomingCoverage: 1 / 3,
-      incomingUniquePages: 40,
+  it("merges uncensored contained editions before any ordinary removal, in both directions", () => {
+    const value = review([candidate({ existing: { ...candidate().existing, title: "Chapter (decensored)" } })]);
+    expect(buildStrictOverlapPlan(value)).toBeNull();
+    expect(automaticUncensoredMerge(value, value.candidates[0]!)).toMatchObject({
+      sourceSide: "existing", automation: true, excludeSource: true, sourcePages: Array.from({length:20},(_,i)=>i+1),
     });
-    const second = candidate({
-      candidateId: "candidate-c",
-      existing: {
-        entryId: "entry-c",
-        galleryId: galleryId(300),
-        title: "Chapter B [Uncensored]",
-        artists: ["artist"],
-        pageCount: 20,
-      },
-      existingFingerprint: "c".repeat(64),
-      incomingCoverage: 1 / 3,
-      incomingUniquePages: 40,
-      rank: 2,
-    });
-    const omnibus = review([first, second]);
-    omnibus.incoming = { ...omnibus.incoming, title: "Collected Edition [Censored]", pageCount: 60 };
-
-    const plan = buildStrictOverlapPlan(omnibus);
-    expect(plan?.winner).toBe("incoming");
-    expect(plan?.steps).toMatchObject([
-      { action: "remove_existing_continue", candidateId: "candidate-a" },
-      { action: "remove_existing_continue", candidateId: "candidate-c" },
-    ]);
-    expect(plan?.summary).toContain("완전 포함");
-
-    const snapshot = JSON.parse(plan!.steps[0]!.featureSnapshotJson) as {
-      rule: string;
-      ruleVersion: number;
-      winner: string;
-      decisionPath: string;
-      preferenceReason: string;
-      editionPreference: { incoming: string; existing: string };
-      metrics: {
-        containingPageCount: number;
-        containedPageCount: number;
-        containedUniquePages: number;
-        containingPageRatio: number;
-      };
-    };
-    expect(snapshot).toMatchObject({
-      rule: DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
-      ruleVersion: DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
-      winner: "incoming",
-      decisionPath: "complete_containment",
-      preferenceReason: "complete_containment",
-      editionPreference: { incoming: "censored", existing: "uncensored" },
-      metrics: {
-        containingPageCount: 60,
-        containedPageCount: 20,
-        containedUniquePages: 0,
-        containingPageRatio: 3,
-      },
-    });
-  });
-
-  it("removes a small incoming uncensored edition when one existing omnibus clearly contains it", () => {
-    const pagePairs = candidate().pagePairs.slice(0, 12);
-    const containingExisting = candidate({
-      relation: "existing_contains_incoming",
-      existing: {
-        ...candidate().existing,
-        title: "Collected Edition [Censored]",
-        pageCount: 20,
-      },
-      confidence: 0.9454,
-      matchedPages: 12,
-      exactPages: 0,
-      visualPages: 12,
-      existingCoverage: 0.6,
-      incomingCoverage: 1,
-      existingUniquePages: 8,
-      incomingUniquePages: 0,
-      longestAlignedRun: 4,
-      pagePairs: pagePairs.map((pair) => ({ ...pair, exactSha256: false })),
-    });
-    const smallUncensored = review([containingExisting]);
-    smallUncensored.incoming = {
-      ...smallUncensored.incoming,
-      title: "Chapter A [Uncensored]",
-      pageCount: 12,
-    };
-
-    const plan = buildStrictOverlapPlan(smallUncensored);
-    expect(plan?.winner).toBe("existing");
-    expect(plan?.steps).toMatchObject([{ action: "remove_incoming", candidateId: "candidate-a" }]);
-    expect(plan?.summary).toContain("완전 포함");
+    const c = candidate({ relation: "translation_edition", existing: {...candidate().existing, title:"A",pageCount:25},
+      incomingCoverage: 1, existingCoverage:.8,incomingUniquePages:0,existingUniquePages:5 });
+    const reverse = {...review([c]),incoming:{...value.incoming,title:"Chapter (decensored)",pageCount:20}};
+    expect(buildStrictOverlapPlan(reverse)).toBeNull();
+    expect(automaticUncensoredMerge(reverse,c)?.sourceSide).toBe("incoming");
+    expect(automaticUncensoredMerge(reverse,{...c, incomingUniquePages:1})).toBeNull();
+    expect(automaticUncensoredMerge(reverse,{...c, confidence:.84})).toBeNull();
+    expect(automaticUncensoredMerge(reverse,{...c, existing:{...c.existing,title:"Already (decensored)"}})).toBeNull();
   });
 
   it("keeps uncertain size or containment evidence on the manual-review path", () => {
@@ -283,20 +204,8 @@ describe("buildStrictOverlapPlan", () => {
       pageCount: 20,
     };
 
-    const plan = buildStrictOverlapPlan(observed);
-    expect(plan?.winner).toBe("incoming");
-    expect(plan?.steps[0]).toMatchObject({ action: "remove_existing_continue" });
-    expect(JSON.parse(plan!.steps[0]!.featureSnapshotJson)).toMatchObject({
-      decisionPath: "complete_containment",
-      metrics: {
-        confidence: 0.8646,
-        pageDifference: 8,
-        containedUniquePages: 0,
-        alignedRunRatio: 4 / 12,
-        informativeMatchRatio: 1,
-        monotonicPageOrder: true,
-      },
-    });
+    expect(buildStrictOverlapPlan(observed)).toBeNull();
+    expect(automaticUncensoredMerge(observed, observed.candidates[0]!)).toMatchObject({sourceSide:"existing",automation:true});
   });
 
   it("covers the observed short, split-run, and asymmetric 100% containment cases", () => {
@@ -375,10 +284,8 @@ describe("buildStrictOverlapPlan", () => {
       title: "Nightingale",
       pageCount: 9,
     };
-    expect(buildStrictOverlapPlan(largerCensored)).toMatchObject({
-      winner: "incoming",
-      steps: [{ action: "remove_existing_continue" }],
-    });
+    expect(buildStrictOverlapPlan(largerCensored)).toBeNull();
+    expect(automaticUncensoredMerge(largerCensored, largerCensored.candidates[0]!)).toMatchObject({sourceSide:"existing"});
   });
 
   it("removes independently proven candidates and leaves uncertain comparisons pending", () => {

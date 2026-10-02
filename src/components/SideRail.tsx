@@ -20,6 +20,9 @@ type SideRailProps<Source extends ContentSource> = {
   onNavigate: (view: WorkspaceViewId<Source>) => void;
   onSourceChange: (source: ContentSource) => void;
   onToggle: () => void;
+  onSettings?: () => void;
+  personalLibraryOpen?: boolean;
+  onOpenPersonalLibrary?: () => void;
 };
 
 export function SideRail<Source extends ContentSource>({
@@ -32,6 +35,9 @@ export function SideRail<Source extends ContentSource>({
   onNavigate,
   onSourceChange,
   onToggle,
+  onSettings,
+  personalLibraryOpen = false,
+  onOpenPersonalLibrary,
 }: SideRailProps<Source>) {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const common = useCommonNavigation();
@@ -96,8 +102,8 @@ export function SideRail<Source extends ContentSource>({
             <button
               key={item.view}
               type="button"
-              className={`nav-item${!common?.communityOpen && view === item.view ? " is-active" : ""}`}
-              aria-current={!common?.communityOpen && view === item.view ? "page" : undefined}
+              className={`nav-item${!personalLibraryOpen && !common?.communityOpen && view === item.view ? " is-active" : ""}`}
+              aria-current={!personalLibraryOpen && !common?.communityOpen && view === item.view ? "page" : undefined}
               aria-label={item.label}
               onClick={() => onNavigate(item.view)}
             >
@@ -109,10 +115,12 @@ export function SideRail<Source extends ContentSource>({
             </button>
           );
         })}
+        {onOpenPersonalLibrary ? <button type="button" className={`nav-item${personalLibraryOpen ? " is-active" : ""}`} aria-label="내 즐겨찾기" aria-current={personalLibraryOpen ? "page" : undefined} onClick={onOpenPersonalLibrary}><FluentIcon glyph="\uE8A4" /><span className="nav-label">내 즐겨찾기</span></button> : null}
         {common ? <button type="button" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
       </nav>
 
       <div className="sidebar-foot">
+        {onSettings ? <button type="button" className="icon-button" title="설정" aria-label="설정" onClick={onSettings}><FluentIcon glyph="\uE713" /></button> : null}
         <span className="live-indicator">
           <i />
           <span className="nav-label">{sourceLabel}</span>

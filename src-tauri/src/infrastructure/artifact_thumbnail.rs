@@ -16,7 +16,7 @@ use crate::{
     },
 };
 
-use super::thumbnail_disk_cache::ThumbnailDiskCache;
+use super::{overlap_review_thumbnail, thumbnail_disk_cache::ThumbnailDiskCache, SqliteRepository};
 
 const MAX_IMAGE_DIMENSION: u32 = 16_384;
 const MAX_IMAGE_DECODE_ALLOC: u64 = 256 * 1024 * 1024;
@@ -33,6 +33,7 @@ pub struct CompositeThumbnailResolver {
     settings: Arc<dyn StateRepository>,
     store: Arc<dyn ArtifactStore>,
     disk_cache: Option<Arc<ThumbnailDiskCache>>,
+    review_repository: Option<Arc<SqliteRepository>>,
 }
 
 impl CompositeThumbnailResolver {
@@ -48,12 +49,77 @@ impl CompositeThumbnailResolver {
             settings,
             store,
             disk_cache: None,
+            review_repository: None,
         }
     }
 
     pub fn with_disk_cache(mut self, disk_cache: Arc<ThumbnailDiskCache>) -> Self {
         self.disk_cache = Some(disk_cache);
         self
+    }
+
+    pub fn with_review_repository(mut self, repository: Arc<SqliteRepository>) -> Self {
+        self.review_repository = Some(repository);
+        self
+    }
+
+    fn resolve_review(
+        &self,
+        key: &ThumbnailKey,
+        cancellation: &CancellationToken,
+    ) -> Result<ResolvedThumbnail, ThumbnailResolveError> {
+        if cancellation.is_cancelled() {
+            return Err(ThumbnailResolveError::cancelled());
+        }
+        let repository = self
+            .review_repository
+            .as_ref()
+            .ok_or_else(overlap_review_thumbnail::unavailable)?;
+        let page = overlap_review_thumbnail::load_review_page(repository, key)?;
+        let ticket = self.disk_cache.as_ref().map(|cache| cache.ticket());
+        // Validate the real requested file even on a disk-cache hit. A cached
+        // image must not conceal a deleted, replaced or moved source artifact.
+        let bytes = self
+            .store
+            .read_integrity_checked_page_bytes(&page.root, &page.page)
+            .map_err(|error| match error.code {
+                crate::application::DownloadPipelineErrorCode::HashMismatch
+                | crate::application::DownloadPipelineErrorCode::ManifestInvalid => {
+                    overlap_review_thumbnail::changed()
+                }
+                _ => overlap_review_thumbnail::unavailable(),
+            })?;
+        if cancellation.is_cancelled() {
+            return Err(ThumbnailResolveError::cancelled());
+        }
+        let profile = format!(
+            "{LOCAL_THUMBNAIL_RECIPE}:review:{}",
+            page.page.sha256.as_ref().unwrap()
+        );
+        let cached = self
+            .disk_cache
+            .as_ref()
+            .zip(ticket)
+            .and_then(|(cache, ticket)| cache.get(key, &profile, ticket));
+        let cache_hit = cached.is_some();
+        let thumbnail = match cached {
+            Some(thumbnail) => thumbnail,
+            None => {
+                encode_local_thumbnail(&bytes, page.page.sha256.as_ref().map(ToString::to_string))?
+            }
+        };
+        if overlap_review_thumbnail::load_review_page(repository, key)? != page {
+            return Err(overlap_review_thumbnail::changed());
+        }
+        if cancellation.is_cancelled() {
+            return Err(ThumbnailResolveError::cancelled());
+        }
+        if !cache_hit {
+            if let (Some(cache), Some(ticket)) = (&self.disk_cache, ticket) {
+                let _ = cache.put(key, &profile, ticket, &thumbnail, cancellation);
+            }
+        }
+        Ok(thumbnail)
     }
 
     fn resolve_artifact(
@@ -117,7 +183,9 @@ impl CompositeThumbnailResolver {
         }
         let bytes = self
             .store
-            .read_verified_page_bytes(&PathBuf::from(settings.download_root), page)
+            // The thumbnail decoder below validates the image. Keep the SHA
+            // check but do not decode the entire original twice on a cache miss.
+            .read_integrity_checked_page_bytes(&PathBuf::from(settings.download_root), page)
             .map_err(|error| {
                 ThumbnailResolveError::new(
                     match error.code {
@@ -137,42 +205,11 @@ impl CompositeThumbnailResolver {
         if cancellation.is_cancelled() {
             return Err(ThumbnailResolveError::cancelled());
         }
-        let mut reader = ImageReader::with_format(Cursor::new(&bytes), ImageFormat::WebP);
-        let mut limits = Limits::default();
-        limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
-        limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
-        limits.max_alloc = Some(MAX_IMAGE_DECODE_ALLOC);
-        reader.limits(limits);
-        let image = reader.decode().map_err(|_| {
-            ThumbnailResolveError::new(
-                ThumbnailFailureCode::DecodeFailed,
-                "verified artifact page could not be decoded",
-                false,
-            )
-        })?;
-        let image = image.thumbnail(1_024, 1_024);
-        let (width, height) = image.dimensions();
-        let rgba = image.to_rgba8();
-        let mut preview_bytes = Vec::new();
-        WebPEncoder::new_lossless(&mut preview_bytes)
-            .write_image(&rgba, width, height, ExtendedColorType::Rgba8)
-            .map_err(|_| {
-                ThumbnailResolveError::new(
-                    ThumbnailFailureCode::DecodeFailed,
-                    "verified artifact preview could not be encoded",
-                    false,
-                )
-            })?;
+        let thumbnail =
+            encode_local_thumbnail(&bytes, page.sha256.as_ref().map(ToString::to_string))?;
         if cancellation.is_cancelled() {
             return Err(ThumbnailResolveError::cancelled());
         }
-        let thumbnail = ResolvedThumbnail {
-            content_type: "image/webp".into(),
-            bytes: preview_bytes,
-            width,
-            height,
-            source_revision: page.sha256.as_ref().map(ToString::to_string),
-        };
         // A page can be excluded or replaced while the codec is running. Read
         // current eligibility again before publishing those old bytes.
         let current = self
@@ -235,6 +272,7 @@ impl ThumbnailResolver for CompositeThumbnailResolver {
         priority: ThumbnailPriority,
     ) -> Result<ResolvedThumbnail, ThumbnailResolveError> {
         match key {
+            ThumbnailKey::OverlapReviewPage { .. } => self.resolve_review(key, cancellation),
             ThumbnailKey::ArtifactPage {
                 entry_id,
                 source_page,
@@ -271,6 +309,44 @@ impl ThumbnailResolver for CompositeThumbnailResolver {
             }
         }
     }
+}
+
+fn encode_local_thumbnail(
+    bytes: &[u8],
+    source_revision: Option<String>,
+) -> Result<ResolvedThumbnail, ThumbnailResolveError> {
+    let mut reader = ImageReader::with_format(Cursor::new(bytes), ImageFormat::WebP);
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_IMAGE_DIMENSION);
+    limits.max_image_height = Some(MAX_IMAGE_DIMENSION);
+    limits.max_alloc = Some(MAX_IMAGE_DECODE_ALLOC);
+    reader.limits(limits);
+    let image = reader.decode().map_err(|_| {
+        ThumbnailResolveError::new(
+            ThumbnailFailureCode::DecodeFailed,
+            "verified artifact page could not be decoded",
+            false,
+        )
+    })?;
+    let image = image.thumbnail(1_024, 1_024);
+    let (width, height) = image.dimensions();
+    let mut preview_bytes = Vec::new();
+    WebPEncoder::new_lossless(&mut preview_bytes)
+        .write_image(&image.to_rgba8(), width, height, ExtendedColorType::Rgba8)
+        .map_err(|_| {
+            ThumbnailResolveError::new(
+                ThumbnailFailureCode::DecodeFailed,
+                "verified artifact preview could not be encoded",
+                false,
+            )
+        })?;
+    Ok(ResolvedThumbnail {
+        content_type: "image/webp".into(),
+        bytes: preview_bytes,
+        width,
+        height,
+        source_revision,
+    })
 }
 
 fn repository_error(_error: crate::application::RepositoryError) -> ThumbnailResolveError {

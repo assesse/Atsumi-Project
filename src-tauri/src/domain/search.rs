@@ -123,6 +123,66 @@ pub struct GallerySummary {
     pub thumbnail_height: u32,
 }
 
+impl GallerySummary {
+    /// Keep raw discoveries durable: tag rules are a reversible projection,
+    /// not permanent exclusions or incremental-discovery checkpoints.
+    pub fn matches_search_tags(&self, include: &[String], exclude: &[String]) -> bool {
+        if include.is_empty() && exclude.is_empty() {
+            return true;
+        }
+        let mut tokens = self
+            .tags
+            .iter()
+            .map(|tag| search_rule_token(tag))
+            .collect::<std::collections::HashSet<_>>();
+        for artist in std::iter::once(&self.artist).chain(self.artists.iter()) {
+            tokens.insert(search_rule_token(&format!("artist:{artist}")));
+        }
+        if let Some(group) = &self.group {
+            tokens.insert(search_rule_token(&format!("group:{group}")));
+        }
+        for series in &self.series {
+            tokens.insert(search_rule_token(&format!("series:{series}")));
+        }
+        for character in &self.characters {
+            tokens.insert(search_rule_token(&format!("character:{character}")));
+        }
+        tokens.insert(format!(
+            "language:{}",
+            match self.language {
+                Language::Korean => "korean",
+                Language::Japanese => "japanese",
+                Language::Chinese => "chinese",
+                Language::English => "english",
+            }
+        ));
+        let excluded = exclude
+            .iter()
+            .map(|tag| search_rule_token(tag))
+            .collect::<std::collections::HashSet<_>>();
+        !excluded.iter().any(|tag| tokens.contains(tag))
+            && include
+                .iter()
+                .map(|tag| search_rule_token(tag))
+                .all(|tag| excluded.contains(&tag) || tokens.contains(&tag))
+    }
+}
+
+fn search_rule_token(value: &str) -> String {
+    let normalized = value
+        .trim()
+        .to_lowercase()
+        .replace("\\_", "_")
+        .replace('_', " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("_");
+    normalized
+        .strip_prefix("tag:")
+        .unwrap_or(&normalized)
+        .to_owned()
+}
+
 fn deserialize_summary_gallery_id<'de, D>(deserializer: D) -> Result<GalleryId, D::Error>
 where
     D: serde::Deserializer<'de>,

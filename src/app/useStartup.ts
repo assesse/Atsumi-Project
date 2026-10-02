@@ -9,6 +9,7 @@ export function useStartup(runtime: "tauri" | "browser-mock", settingsReady: boo
   const desktop = runtime === "tauri";
   const [phase, setPhase] = useState<StartupSnapshot["phase"]>(desktop ? "starting" : "ready");
   const [backgroundReady, setBackgroundReady] = useState(!desktop);
+  const [statusError, setStatusError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!desktop) return;
@@ -18,9 +19,13 @@ export function useStartup(runtime: "tauri" | "browser-mock", settingsReady: boo
       try {
         const snapshot = await invoke<StartupSnapshot>("app_startup_snapshot");
         if (cancelled) return;
+        setStatusError(null);
         setPhase(snapshot.phase);
         if (snapshot.phase === "ready" || snapshot.phase === "failed") return;
-      } catch { if (cancelled) return; }
+      } catch {
+        if (cancelled) return;
+        setStatusError("시작 상태 확인 실패 · 자동 재확인 중");
+      }
       timer = window.setTimeout(() => void poll(), 200);
     };
     void poll();
@@ -76,9 +81,11 @@ export function useStartup(runtime: "tauri" | "browser-mock", settingsReady: boo
   }, [desktop, settingsReady, phase]);
 
   return {
-    phase, backgroundReady,
+    phase, backgroundReady, statusError,
     cancel: async () => {
-      if (desktop && await invoke<boolean>("app_startup_cancel")) setPhase("cancelling");
+      try {
+        if (desktop && await invoke<boolean>("app_startup_cancel")) { setPhase("cancelling"); setStatusError(null); }
+      } catch { setStatusError("시작 취소를 전달하지 못했습니다. 다시 시도해 주세요."); }
     },
   };
 }

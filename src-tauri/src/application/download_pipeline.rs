@@ -324,6 +324,14 @@ pub trait DownloadPipelineRepository: Send + Sync {
         descriptor: &DownloadJobDescriptor,
     ) -> Result<DownloadJobProjection, RepositoryError>;
 
+    /// Reuse the immutable received edition, not whatever edition the remote
+    /// ID resolves to today. Only complete checkpoint maps qualify. This is not
+    /// an integrity proof: page bytes and the overlap gate still run normally.
+    fn pipeline_received_snapshot(
+        &self,
+        descriptor: &DownloadJobDescriptor,
+    ) -> Result<Option<DownloadGallerySnapshot>, RepositoryError>;
+
     fn pipeline_prepare(
         &self,
         plan: &DownloadArtifactPlan,

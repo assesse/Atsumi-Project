@@ -144,14 +144,19 @@ pub trait TagCatalogRepository: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoFindSourceRequest {
+    pub namespace: crate::domain::FavoriteNamespace,
+    /// Target name (legacy field name shared by artist and group discovery).
     pub artist: String,
     pub languages: Vec<crate::domain::Language>,
+    pub language_ids: Option<std::sync::Arc<std::collections::HashSet<u64>>>,
     /// Stable history-policy floor. IDs at or below it are not part of the
     /// current candidate set and therefore must not be carried forward.
     pub retain_after_gallery_id: Option<crate::domain::GalleryId>,
     /// Incremental metadata-fetch floor. The source still returns current
     /// membership separately so cached pending candidates can be reconciled.
     pub newer_than_gallery_id: Option<crate::domain::GalleryId>,
+    /// Newly opened history below an old floor, without refetching its overlap.
+    pub history_expansion_ceiling: Option<crate::domain::GalleryId>,
     pub candidate_limit: u32,
 }
 
@@ -172,6 +177,7 @@ pub struct AutoFindSourceResult {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoFindIncrementalCheckpoint {
+    pub namespace: crate::domain::FavoriteNamespace,
     pub artist: String,
     pub history_mode: AutoFindHistoryMode,
     pub policy_version: u32,
@@ -182,6 +188,7 @@ pub struct AutoFindIncrementalCheckpoint {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AutoFindCheckpointStage {
+    pub namespace: crate::domain::FavoriteNamespace,
     pub artist: String,
     pub history_mode: AutoFindHistoryMode,
     pub policy_version: u32,
@@ -194,6 +201,15 @@ pub struct AutoFindCheckpointStage {
 /// search cap so Auto Find can apply its persisted history cutoff before any
 /// gallery metadata is fetched.
 pub trait AutoFindSource: Send + Sync {
+    /// A fresh, run-scoped language index shared by every discovery target.
+    fn auto_find_language_ids(
+        &self,
+        _languages: &[crate::domain::Language],
+        _cancellation: &crate::thumbnail::CancellationToken,
+    ) -> Result<Option<std::sync::Arc<std::collections::HashSet<u64>>>, RepositoryError> {
+        Ok(None)
+    }
+
     fn auto_find_artist_plan(
         &self,
         request: &AutoFindSourceRequest,
@@ -227,12 +243,12 @@ pub trait AutomationRepository: Send + Sync {
 
     fn auto_find_owned_cutoffs(
         &self,
-        artists: &[String],
+        targets: &[FavoriteKey],
     ) -> Result<Vec<AutoFindCutoffEvidence>, RepositoryError>;
 
     fn auto_find_incremental_checkpoints(
         &self,
-        artists: &[String],
+        targets: &[FavoriteKey],
         history_mode: AutoFindHistoryMode,
         policy_version: u32,
         full_rescan_max_age_days: u32,
@@ -242,6 +258,19 @@ pub trait AutomationRepository: Send + Sync {
         &self,
         gallery_ids: &[GalleryId],
     ) -> Result<Vec<crate::domain::GallerySummary>, RepositoryError>;
+
+    /// Exclude already downloaded/hidden IDs before any remote metadata work.
+    fn auto_find_eligible_ids(
+        &self,
+        gallery_ids: &[GalleryId],
+    ) -> Result<Vec<GalleryId>, RepositoryError>;
+
+    fn auto_find_match_add(
+        &self,
+        run_id: &str,
+        gallery_id: GalleryId,
+        target: &FavoriteKey,
+    ) -> Result<(), RepositoryError>;
 
     fn auto_find_start(
         &self,

@@ -20,9 +20,13 @@ import {
   type ThumbnailPriority,
 } from "../thumbnail";
 import { GalleryThumbnail } from "./GalleryThumbnail";
+import { BookmarkButton } from "../features/personalLibrary/BookmarkButton";
+import { useGalleryDownload } from "../state/downloadProgress";
 import { GalleryStatusIcon } from "./GalleryStatusIcon";
 import { GalleryArtists } from "./GalleryArtists";
 import { MetadataChip } from "./MetadataChip";
+import { GalleryProcessingBadge, processingSurfaceAttributes } from "./GalleryProcessingBadge";
+import type { BackgroundOpenOptions } from "../state/downloadStatus";
 import { fitTagChips, sortGalleryTags, splitGalleryTitle, type TagFitResult } from "./galleryCardLayout";
 
 type GalleryCardProps = {
@@ -43,13 +47,13 @@ type GalleryCardProps = {
   keyboardFocusable?: boolean;
   onKeyboardFocus?: (id: GalleryId) => void;
   onSelect: (id: GalleryId, modifiers: { ctrlKey: boolean; shiftKey: boolean }) => void;
-  onOpenDetail: (id: GalleryId) => void;
+  onOpenDetail: (id: GalleryId, options?: BackgroundOpenOptions) => void;
   onOpenArtifact: (id: GalleryId) => void;
   onOpenDownloadFolder?: (entryId: string) => void;
   onOpenReview: (id: GalleryId) => void;
   onOpenInternalReview?: (entryId: string) => void;
   onStatusDetail: (id: GalleryId) => void;
-  onMetadataSearch: (value: string) => void;
+  onMetadataSearch: (value: string, options?: BackgroundOpenOptions) => void;
   onMetadataFavorite: (value: string) => void;
 };
 
@@ -105,7 +109,7 @@ function GalleryCardComponent({
   onMetadataSearch,
   onMetadataFavorite,
 }: GalleryCardProps) {
-  const download = gallery.download;
+  const download = useGalleryDownload(gallery.id, gallery.download);
   const isExplorationBlind = view === "explore"
     && (download?.state === "quarantined" || explorationExcluded);
   const explorationBlindLabel = download?.state === "quarantined"
@@ -119,7 +123,6 @@ function GalleryCardComponent({
     100,
     Math.max(0, download?.state === "completed" ? 100 : download?.progress ?? 0),
   );
-  const statusClass = ["failed", "interrupted"].includes(download?.state ?? "") ? " failed" : "";
   const language = gallery.languageKnown === false
     ? { label: "언어 확인 중", icon: null, fallback: "?" }
     : languagePresentation[gallery.language];
@@ -144,6 +147,8 @@ function GalleryCardComponent({
   const hiddenTags = sortedTags.slice(currentTagLayout.visibleCount);
   const overflowDigitCount = String(Math.max(1, sortedTags.length)).length;
   const cardRef = useRef<HTMLElement>(null);
+  const wasSelected = useRef(selected);
+  const pointerFocus = useRef(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const tagListRef = useRef<HTMLDivElement>(null);
   const tagChipRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -167,7 +172,6 @@ function GalleryCardComponent({
       : visibleInternalDuplicateProgress ? "결과 정리" : "";
   const isDownloadOverlapReview = download?.state === "review_required" && download.reviewKind === "gallery_duplicate";
   const showsGlobalDuplicate = hasDuplicateCandidates && !isDownloadOverlapReview;
-  const iconOnlyStatus = showsGlobalDuplicate || download?.state === "downloading" || download?.state === "review_required";
   const cardStatusClass = download?.state === "completed"
     ? " is-complete"
     : download?.state === "downloading"
@@ -175,9 +179,7 @@ function GalleryCardComponent({
       : showsGlobalDuplicate || ["review_required", "interrupted", "failed", "quarantined", "cancelled"].includes(download?.state ?? "")
         ? " has-problem"
         : "";
-  const statusLabel = selectionContext
-    ? `${gallery.title}만 선택`
-    : isDownloadOverlapReview
+  const statusLabel = isDownloadOverlapReview
       ? `${gallery.title}, 다운로드 판본 중복, 검토 열기`
     : showsGlobalDuplicate
       ? `${gallery.title}, 중복 후보 ${duplicateCandidateCount}개, 검토 열기`
@@ -186,13 +188,6 @@ function GalleryCardComponent({
     : download?.state === "review_required"
       ? `${gallery.title}, ${isDownloadOverlapReview ? "다운로드 판본 중복" : "중복 의심"}, 검토 열기`
       : download ? `${gallery.title}, ${workLabel[download.state]}, 작업 상태 열기` : "";
-  const compactStatusLabel = visibleInternalDuplicateProgress
-    ? `내부 검사 ${internalScanPercent}%`
-    : showsGlobalDuplicate
-      ? `중복 ${duplicateCandidateCount}`
-      : download
-        ? workLabel[download.state] ?? download.state
-        : view === "auto-find" ? "후보" : "탐색";
 
   const invalidateTagLayout = useCallback(() => {
     setTagLayout((current) => current ? null : current);
@@ -201,6 +196,14 @@ function GalleryCardComponent({
   useLayoutEffect(() => {
     if (cardRef.current) cardRef.current.inert = isExplorationBlind;
   }, [isExplorationBlind]);
+
+  useLayoutEffect(() => {
+    if (wasSelected.current && !selected && pointerFocus.current) {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && cardRef.current?.contains(focused)) focused.blur();
+    }
+    wasSelected.current = selected;
+  }, [selected]);
 
   useLayoutEffect(() => {
     const content = contentRef.current;
@@ -270,9 +273,9 @@ function GalleryCardComponent({
       event.stopPropagation();
       return true;
     }
-    // A selected-card context still permits metadata navigation. Only an
-    // explicit range/toggle gesture turns an interactive chip into selection.
-    if (!event.ctrlKey && !event.shiftKey) return false;
+    // A selected-card context still permits metadata navigation. Shift alone
+    // selects a range; Ctrl/Meta metadata clicks keep background navigation.
+    if (!event.shiftKey || event.ctrlKey || event.metaKey) return false;
     event.preventDefault();
     event.stopPropagation();
     if (event.detail <= 1) onSelect(gallery.id, event);
@@ -310,6 +313,7 @@ function GalleryCardComponent({
       className={`gallery-card${displayMode === "compact" ? " is-compact" : ""}${compactFavoriteTagCount ? " has-compact-favorites" : ""}${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
       ref={cardRef}
       data-gallery-id={gallery.id}
+      {...processingSurfaceAttributes(download, view === "explore")}
       data-display-mode={displayMode}
       style={{ "--download-progress": `${progress}%` } as CSSProperties}
       role="listitem"
@@ -324,18 +328,21 @@ function GalleryCardComponent({
         selected ? "선택됨" : "선택 안 됨",
       ].filter(Boolean).join(", ")}
       onKeyDown={selectFromKeyboard}
+      onKeyDownCapture={() => { pointerFocus.current = false; }}
+      onPointerDownCapture={() => { pointerFocus.current = true; }}
       onFocus={() => onKeyboardFocus?.(gallery.id)}
       onClick={(event) => {
         if (isExplorationBlind) return;
         if ((event.target as Element).closest("button")) return;
         if (event.detail > 1) return;
-        gestureSelectionContext.current = selectsInsteadOfActivating(event);
-        onSelect(gallery.id, event);
+        const modifiers = { ctrlKey: event.ctrlKey || event.metaKey, shiftKey: event.shiftKey };
+        gestureSelectionContext.current = selectsInsteadOfActivating(modifiers);
+        onSelect(gallery.id, modifiers);
       }}
       onDoubleClick={(event) => {
         if (isExplorationBlind) return;
         if ((event.target as Element).closest("button")) return;
-        if (gestureSelectionContext.current || event.ctrlKey || event.shiftKey) {
+        if (gestureSelectionContext.current || event.ctrlKey || event.metaKey || event.shiftKey) {
           gestureSelectionContext.current = false;
           return;
         }
@@ -356,13 +363,11 @@ function GalleryCardComponent({
         else onOpenDetail(gallery.id);
       }}
     >
-      {selectionContext ? (
-        <span className="selection-indicator" aria-hidden="true">
-          <svg viewBox="0 0 16 16" focusable="false">
-            <path d="m3.5 8.1 2.8 2.8 6.2-6.2" />
-          </svg>
-        </span>
-      ) : null}
+      {!isExplorationBlind ? <button type="button" className="card-select-toggle"
+        aria-label={`${gallery.title} 선택 전환`} aria-pressed={selected}
+        onClick={(event) => { event.stopPropagation(); onSelect(gallery.id, { ctrlKey:true, shiftKey:event.shiftKey }); }}>
+        {selected ? "✓" : ""}
+      </button> : null}
       <GalleryThumbnail
         className="cover"
         thumbnailKey={thumbnailKey}
@@ -376,33 +381,13 @@ function GalleryCardComponent({
           : undefined}
         alt={`${gallery.title} 표지`}
       >
-        {download ? <span className="status-wash" aria-hidden="true" /> : null}
+        <span className="processing-preview-wash" aria-hidden="true" />
+        <GalleryProcessingBadge gallery={gallery} overlay duplicateCount={showsGlobalDuplicate ? duplicateCandidateCount : 0}
+          label={statusLabel} onClick={openStatus} />
         {language.icon || language.fallback ? (
           <span className="language-flag">
             {language.icon ? <img src={language.icon} alt={language.label} /> : <span>{language.fallback}</span>}
           </span>
-        ) : null}
-        {view === "explore" && download?.state === "completed" ? (
-          <span className="download-check" title="다운로드 완료">
-            <GalleryStatusIcon kind="complete" />
-          </span>
-        ) : null}
-        {showsGlobalDuplicate || (download && !["completed", "quarantined"].includes(download.state)) ? (
-          <button
-            type="button"
-            className={`status-pill${statusClass}${iconOnlyStatus ? ` icon-only is-${showsGlobalDuplicate ? "review_required" : download?.state}` : ""}${showsGlobalDuplicate ? " has-duplicate-count" : ""}`}
-            title={selectionContext ? `${gallery.title}만 선택` : showsGlobalDuplicate ? `중복 후보 ${duplicateCandidateCount}개 · 클릭하여 검토` : download?.state === "downloading" ? `다운로드 중 · ${progress}%` : download?.state === "review_required" ? `${isDownloadOverlapReview ? "다운로드 판본 중복" : "중복 의심"} · 클릭하여 검토` : download ? workLabel[download.state] : "작업 상태"}
-            aria-label={statusLabel}
-            onClick={openStatus}
-          >
-            {showsGlobalDuplicate ? (
-              <><GalleryStatusIcon kind="warning" /><span className="duplicate-count">{duplicateCandidateCount}</span></>
-            ) : download?.state === "downloading" ? (
-              <GalleryStatusIcon kind="downloading" />
-            ) : download?.state === "review_required" ? (
-              <GalleryStatusIcon kind="warning" />
-            ) : download ? workLabel[download.state] : null}
-          </button>
         ) : null}
         {view === "downloads" ? (
           <div
@@ -467,7 +452,7 @@ function GalleryCardComponent({
             />
             <small>
               <span>{gallery.pages}p · #{gallery.id}</span>
-              <b className={`is-${download?.state ?? (view === "auto-find" ? "candidate" : "explore")}`}>{compactStatusLabel}</b>
+              {visibleInternalDuplicateProgress ? <b>내부 검사 {internalScanPercent}%</b> : null}
             </small>
           </div>
         ) : null}
@@ -487,6 +472,7 @@ function GalleryCardComponent({
             <span>{internalDuplicateResultCount}</span>
           </button>
         ) : null}
+        {!isExplorationBlind ? <span className="card-bookmark"><BookmarkButton gallery={gallery} compact /></span> : null}
       </GalleryThumbnail>
       {displayMode === "detail" ? <div ref={contentRef} className={`card-content${visibleInternalDuplicateProgress ? " has-internal-scan" : ""}`}>
         <div className="card-title" title={gallery.title}>

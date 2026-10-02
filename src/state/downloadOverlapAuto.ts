@@ -3,6 +3,7 @@ import type {
   DownloadOverlapDecisionRequest,
   DownloadOverlapGalleryRef,
   DownloadOverlapReview,
+  DownloadOverlapMergeRequest,
 } from "../api/contracts";
 
 export const DOWNLOAD_OVERLAP_AUTO_RULE_VERSION = 5;
@@ -38,6 +39,7 @@ export const DOWNLOAD_OVERLAP_AUTO_HELP = [
   "일반 판본: 포함률 95% 이상 · 페이지 차이 5장 이하 · 신뢰도 90% 이상.",
   "정보성·연속 일치 기준도 충족해야 합니다. 3장 이하 작품은 정확한 SHA-256 일치가 필요합니다.",
   "포함 판본을 우선합니다. 거의 동일하면 제목 표식(무검열 > 미표시 > 검열) → 페이지 수 → 기존본 순으로 보존합니다.",
+  "작은 무검열판이 완전히 포함되면 해당 페이지를 큰 판본에 자동 병합합니다. 양쪽 고유 페이지가 있으면 직접 검토합니다.",
   "자동 모드는 횟수 제한 없이 재검증 후 적용합니다. 완료본은 격리, 신규·대기본은 취소·제외 처리합니다. 영구 삭제하지 않습니다.",
 ].join("\n");
 
@@ -91,10 +93,33 @@ const editionPreference = (gallery: DownloadOverlapGalleryRef): EditionPreferenc
 const preferenceRank = (preference: EditionPreference): number =>
   preference === "uncensored" ? 1 : preference === "censored" ? -1 : 0;
 
+export function automaticUncensoredMerge(review: DownloadOverlapReview, candidate: DownloadOverlapCandidate): DownloadOverlapMergeRequest | null {
+  if (review.state !== "pending" || candidate.decision || candidate.existing.galleryId === review.incoming.galleryId) return null;
+  const side = review.incoming.pageCount < candidate.existing.pageCount ? "incoming" : "existing";
+  const small = side === "incoming" ? review.incoming : candidate.existing;
+  const large = side === "incoming" ? candidate.existing : review.incoming;
+  const coverage = side === "incoming" ? candidate.incomingCoverage : candidate.existingCoverage;
+  const unique = side === "incoming" ? candidate.incomingUniquePages : candidate.existingUniquePages;
+  const pairs = [...candidate.pagePairs].sort((a,b) => a.existingSourcePage-b.existingSourcePage);
+  if (small.pageCount >= large.pageCount || small.pageCount < 1 || unique !== 0 || coverage < 1
+    || editionPreference(small) !== "uncensored" || editionPreference(large) === "uncensored"
+    || candidate.confidence < .85 || candidate.matchedPages !== small.pageCount || pairs.length !== small.pageCount
+    || candidate.longestAlignedRun < Math.min(2,small.pageCount)
+    || pairs.filter((p) => !p.lowInformation).length / small.pageCount < .75
+    || (small.pageCount <= 3 && candidate.exactPages !== small.pageCount)
+    || pairs.some((p,i) => p.existingSourcePage < 1 || p.existingSourcePage > candidate.existing.pageCount
+      || p.incomingSourcePage < 1 || p.incomingSourcePage > review.incoming.pageCount
+      || (i > 0 && (pairs[i-1]!.existingSourcePage >= p.existingSourcePage || pairs[i-1]!.incomingSourcePage >= p.incomingSourcePage)))) return null;
+  return { reviewId: review.reviewId, expectedRevision: review.revision, candidateId: candidate.candidateId,
+    sourceSide: side, sourcePages: Array.from({length: small.pageCount},(_,i) => i+1), excludeSource: true, automation: true };
+}
+
 export const strictCandidateEvaluation = (
   review: DownloadOverlapReview,
   candidate: DownloadOverlapCandidate,
 ): CandidateEvaluation | null => {
+  if ((candidate.existingUniquePages > 0 && candidate.incomingUniquePages > 0)
+    || automaticUncensoredMerge(review, candidate)) return null;
   if (candidate.existing.galleryId === review.incoming.galleryId
     || candidate.existing.entryId === review.incoming.entryId) return null;
   const incomingPageCount = review.incoming.pageCount;

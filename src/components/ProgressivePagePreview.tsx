@@ -103,7 +103,7 @@ export function ProgressivePagePreview({
       generation.current = Math.max(generation.current, currentGeneration + 1);
       void backend.detailOriginalDispose(requestId);
     };
-  }, [backend, completedEntryId, gallery.id, page]);
+  }, [backend, completedEntryId, gallery.id, gallery.download?.revision, page]);
 
   const media = (original.kind === "prepared" || original.kind === "displayed")
     && original.entryId === completedEntryId

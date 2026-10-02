@@ -64,8 +64,8 @@ pub struct BrowserViewport {
     /// Privacy, inactive workspaces and detached documents must use visible=false.
     #[serde(default)]
     pub occluded: bool,
-    /// Only trusted measured popups may retain a clipped background. Native
-    /// input remains disabled for the entire surface, not only the sheet.
+    /// Only trusted measured popups may retain a clipped background. Modal
+    /// input is disabled by `occluded`; nonmodal panels mask only their holes.
     #[serde(default)]
     pub preserve_background: bool,
     /// Stage-local trusted popup rectangles, subtracted from the scroll clip.
@@ -127,13 +127,15 @@ impl BrowserViewport {
                 ));
             }
         }
-        if self.occluded && (!self.visible || self.width < 1.0 || self.height < 1.0) {
+        if (self.occluded || self.preserve_background)
+            && (!self.visible || self.width < 1.0 || self.height < 1.0)
+        {
             return Err(error(
                 "VIEWPORT_INVALID",
                 "가려진 시청 영역은 원래 화면 크기를 유지해야 합니다.",
             ));
         }
-        if self.preserve_background && (!self.occluded || self.clip.is_none()) {
+        if self.preserve_background && self.clip.is_none() {
             return Err(error(
                 "VIEWPORT_INVALID",
                 "확인 창의 시청 범위를 확인하지 못했습니다.",
@@ -252,7 +254,7 @@ fn occlusion_pixels(
     // Validates scale as well as shape before any float-to-integer conversion.
     let _ = clip_pixels(viewport, scale)?;
     let mut result = PixelOcclusions::default();
-    if !viewport.occluded || !viewport.preserve_background {
+    if !viewport.preserve_background {
         return Ok(result);
     }
     let width = (viewport.width * scale).round() as i32;
@@ -432,6 +434,7 @@ impl OfficialBrowser {
         .initialization_script(include_str!("browser_chat_enhancements.js"))
         .initialization_script(include_str!("browser_page_chat.js"))
         .initialization_script(include_str!("browser_encoded_capture.js"))
+        .initialization_script(include_str!("browser_quality.js"))
         .initialization_script(include_str!("browser_capture.js"))
         .initialization_script(include_str!("browser_player_ui.js"))
         .on_navigation(move |url| {
@@ -560,6 +563,7 @@ impl OfficialBrowser {
             } else if live_channel(payload.url()).is_some() {
                 let _ = view.eval(include_str!("browser_page_chat.js"));
                 let _ = view.eval(include_str!("browser_encoded_capture.js"));
+                let _ = view.eval(include_str!("browser_quality.js"));
                 let _ = view.eval(include_str!("browser_capture.js"));
                 let _ = view.eval(include_str!("browser_player_ui.js"));
                 page_host.probe_extensions(&view);
@@ -842,9 +846,9 @@ impl OfficialBrowser {
         };
         // Never block the UI thread on a worker which is waiting for native UI
         // dispatch. Ordinary frontend writes are already single-in-flight.
-        let result = if viewport.occluded {
-            // A trusted modal must mask an in-flight show immediately, without
-            // waiting for the ordinary visible writer's acknowledgement gate.
+        let result = if viewport.occluded || viewport.preserve_background {
+            // Both modal masks and nonmodal panel holes must preempt an
+            // in-flight show without waiting for its acknowledgement gate.
             apply_viewport(&view, &viewport, self.inner.clone(), revision)
         } else {
             match self.inner.viewport_writes.try_lock() {
@@ -1338,7 +1342,10 @@ fn paint_viewport(
     };
     let result = (|| {
         let before = surface.inspect()?;
-        let restricted = if desired.occluded {
+        let restricted = if desired.occluded || !desired.occlusions.is_empty() {
+            // Even a nonmodal panel must never have native pixels/input over
+            // its controls while its verified hole region is being installed.
+            // Keep the enabled state/focus unchanged outside a real modal.
             [0; 4]
         } else {
             intersect_clips(before.clip.unwrap_or([0; 4]), desired.clip)
@@ -1347,11 +1354,13 @@ fn paint_viewport(
             surface.clip(restricted)?;
         }
         check()?;
-        if desired.occluded {
+        if desired.occluded || !desired.occlusions.is_empty() {
             // Verify the actual HWND region before leaving IsVisible enabled.
             if surface.inspect()?.clip != Some([0; 4]) {
                 return Err(viewport_failed());
             }
+        }
+        if desired.occluded {
             surface.input(false)?;
             check()?;
             surface.focus_main()?;
@@ -1839,7 +1848,16 @@ mod tests {
     impl ViewportSurface for FakeSurface {
         fn inspect(&mut self) -> Result<SurfaceState, StreamError> {
             self.operation("inspect")?;
-            Ok(self.state)
+            Ok(SurfaceState {
+                // Like GetWindowRgnBox(COMPLEXREGION), a rectangle containing
+                // popup holes is not itself a safe rectangular visible clip.
+                clip: if self.occlusions.is_empty() {
+                    self.state.clip
+                } else {
+                    None
+                },
+                ..self.state
+            })
         }
         fn clip(&mut self, rect: [i32; 4]) -> Result<(), StreamError> {
             self.operation(if rect == [0; 4] {
@@ -2079,6 +2097,108 @@ mod tests {
         assert!(surface.state.visible && surface.state.enabled);
     }
     #[test]
+    fn nonmodal_panel_masks_only_its_holes_without_blocking_input_or_stealing_focus() {
+        let desired = PixelViewport {
+            bounds: [0, 0, 100, 100],
+            clip: [0, 0, 100, 100],
+            occluded: false,
+            occlusions: popup_occlusions(),
+        };
+        let mut surface = FakeSurface::new(true);
+        paint_viewport(&mut surface, desired, || true).unwrap();
+        assert!(surface.state.visible && surface.state.enabled);
+        assert_eq!(surface.occlusions, desired.occlusions);
+        assert!(!surface.operations.iter().any(|op| matches!(
+            *op,
+            "disable" | "enable" | "focus" | "bounds" | "hide" | "show"
+        )));
+
+        // Closing a panel must clear its holes even when no scroll, resize or
+        // rectangular clip change accompanies dismissal.
+        surface.operations.clear();
+        paint_viewport(
+            &mut surface,
+            PixelViewport {
+                occlusions: PixelOcclusions::default(),
+                ..desired
+            },
+            || true,
+        )
+        .unwrap();
+        assert!(surface.occlusions.is_empty());
+        assert_eq!(surface.state.clip, Some(desired.clip));
+        assert!(surface.state.visible && surface.state.enabled);
+        assert!(!surface.operations.iter().any(|op| matches!(
+            *op,
+            "disable" | "enable" | "focus" | "bounds" | "hide" | "show"
+        )));
+    }
+    #[test]
+    fn real_modal_overrides_nonmodal_input_and_dismissal_reenables_verified_background() {
+        let panel = PixelViewport {
+            bounds: [0, 0, 100, 100],
+            clip: [0, 0, 100, 100],
+            occluded: false,
+            occlusions: popup_occlusions(),
+        };
+        let mut surface = FakeSurface::new(true);
+        paint_viewport(&mut surface, panel, || true).unwrap();
+        paint_viewport(&mut surface, masked(), || true).unwrap();
+        assert!(!surface.state.enabled);
+        assert_eq!(surface.state.clip, Some([0; 4]));
+        surface.operations.clear();
+        paint_viewport(&mut surface, panel, || true).unwrap();
+        assert!(surface.state.visible && surface.state.enabled);
+        assert_eq!(surface.occlusions, panel.occlusions);
+        let reveal = surface
+            .operations
+            .iter()
+            .position(|op| *op == "final")
+            .unwrap();
+        let enable = surface
+            .operations
+            .iter()
+            .position(|op| *op == "enable")
+            .unwrap();
+        assert!(reveal < enable);
+        assert!(!surface.operations.contains(&"focus"));
+    }
+    #[test]
+    fn nonmodal_panel_invalid_holes_or_cancelled_paint_still_fail_closed() {
+        let panel = PixelViewport {
+            clip: [0, 0, 100, 100],
+            occluded: false,
+            occlusions: popup_occlusions(),
+            ..masked()
+        };
+        for phase in ["mask", "final"] {
+            for cancel in [false, true] {
+                let mut surface = FakeSurface::new(true);
+                if cancel {
+                    surface.cancel_after = Some(phase);
+                } else {
+                    surface.fail_at = Some(phase);
+                }
+                let revision = surface.revision.clone();
+                assert!(
+                    paint_viewport(&mut surface, panel, || revision.load(Ordering::Acquire)
+                        == 1)
+                    .is_err()
+                );
+                assert!(!surface.state.visible && !surface.state.enabled);
+            }
+        }
+        let mut surface = FakeSurface::new(true);
+        surface.ignore_occlusions = true;
+        assert!(paint_viewport(&mut surface, panel, || true).is_err());
+        assert!(!surface.state.visible && !surface.state.enabled);
+        let mut surface = FakeSurface::new(true);
+        surface.ignore_clip = true;
+        assert!(paint_viewport(&mut surface, panel, || true).is_err());
+        assert!(!surface.state.visible && !surface.state.enabled);
+        assert!(!surface.operations.contains(&"final"));
+    }
+    #[test]
     fn popup_rectangles_are_bounded_and_round_outward_at_fractional_dpi() {
         let mut viewport = BrowserViewport {
             visible: true,
@@ -2105,6 +2225,13 @@ mod tests {
             &[[12, 25, 51, 76]]
         );
         assert_eq!(clip_pixels(&viewport, 1.25).unwrap(), [0, 0, 1000, 750]);
+        viewport.occluded = false;
+        assert_eq!(
+            occlusion_pixels(&viewport, 1.25).unwrap().rectangles(),
+            &[[12, 25, 51, 76]]
+        );
+        assert_eq!(clip_pixels(&viewport, 1.25).unwrap(), [0, 0, 1000, 750]);
+        viewport.occluded = true;
         viewport.occlusions = vec![viewport.occlusions[0].clone(); 9];
         assert!(viewport.validate().is_err());
         viewport.occlusions.truncate(1);
@@ -2140,7 +2267,7 @@ mod tests {
         assert!(unsafe { EqualRgn(region.0, same.0) }.as_bool());
     }
     #[test]
-    fn trusted_sheet_clip_requires_explicit_occlusion_and_fails_closed_at_reveal() {
+    fn trusted_popup_requires_visible_measured_clip_and_fails_closed_at_reveal() {
         let mut viewport = BrowserViewport {
             visible: true,
             occluded: true,
@@ -2160,7 +2287,13 @@ mod tests {
         assert_eq!(clip_pixels(&viewport, 1.25).unwrap(), [0; 4]);
         viewport.preserve_background = true;
         viewport.occluded = false;
+        assert!(viewport.validate().is_ok());
+        viewport.visible = false;
         assert!(viewport.validate().is_err());
+        viewport.visible = true;
+        viewport.width = 0.0;
+        assert!(viewport.validate().is_err());
+        viewport.width = 800.0;
         viewport.occluded = true;
         viewport.clip = None;
         assert!(viewport.validate().is_err());

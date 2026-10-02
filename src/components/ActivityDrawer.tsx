@@ -1,12 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
 import type { DownloadState, Gallery, GalleryId } from "../core/types";
 import { runningDownloadStates } from "../state/downloadCancellation";
+import { DownloadProgressLabel } from "../state/downloadProgress";
 import { FluentIcon } from "./FluentIcon";
+import { GalleryProcessingBadge } from "./GalleryProcessingBadge";
+import { splitGalleryTitle } from "./galleryCardLayout";
 import type { DownloadOverlapContainmentGroup } from "../state/downloadOverlapContainment";
 import "./ActivityDrawer.css";
 
 type ActivityDrawerProps = {
+  queuePanel?: ReactNode;
+  queueSummary?: ReactNode;
   containmentGroups?: DownloadOverlapContainmentGroup[];
   containmentLoading?: boolean;
   onReviewContainment?: (keeperId: GalleryId, reviewId: string) => void;
@@ -62,17 +67,19 @@ export type DanbooruSessionActivity = {
 };
 
 const RECENT_ACTIVITY_LIMIT = 50;
+const sessionActivityGroups = ["검토", "해시 · 검증", "다운로드", "실패 · 중단 · 취소", "완료"] as const;
 
 const duplicateProcessedDetail = "중복 처리 완료 · 목록에서 제외";
 
-// Keep live work and decisions visible, then failures, then finished history.
-// Excluded downloads can retain a failed/review state after duplicate removal.
+// Separate decisions, image processing, transfers, stopped jobs, and finished work.
+// Duplicate removal is finished unless the album has an active download again.
 const sessionActivityPriority = (state: DownloadState, duplicateExcluded = false): number => {
-  if (runningDownloadStates.has(state)) return 0;
-  if (duplicateExcluded) return 2;
+  if (duplicateExcluded && !runningDownloadStates.has(state)) return 4;
   if (state === "review_required") return 0;
-  if (state === "failed" || state === "interrupted") return 1;
-  return 2;
+  if (state === "hashing" || state === "verifying") return 1;
+  if (runningDownloadStates.has(state)) return 2;
+  if (state === "failed" || state === "interrupted" || state === "cancelled") return 3;
+  return 4;
 };
 
 const stateDetail: Partial<Record<NonNullable<Gallery["download"]>["state"], string>> = {
@@ -95,11 +102,6 @@ const downloadDetail = (download: NonNullable<Gallery["download"]>): string => {
   if (download.state === "failed") return "다운로드 작업이 실패했습니다.";
   if (download.state === "interrupted") return "다운로드 작업이 중단되었습니다.";
   return stateDetail[download.state] ?? "다운로드 상태를 확인하고 있습니다.";
-};
-
-const displayedProgress = (download: NonNullable<Gallery["download"]>): number => {
-  const rawProgress = download.state === "completed" ? 100 : download.progress ?? 0;
-  return Math.floor(Math.min(100, Math.max(0, Number.isFinite(rawProgress) ? rawProgress : 0)));
 };
 
 const automationReviewStateLabel: Record<DownloadOverlapAutomationHistoryItem["reviewState"], string> = {
@@ -127,6 +129,8 @@ const formatOccurredAt = (occurredAt: string): string => {
 };
 
 export function ActivityDrawer({
+  queuePanel,
+  queueSummary,
   containmentGroups = [],
   containmentLoading = false,
   onReviewContainment,
@@ -156,7 +160,7 @@ export function ActivityDrawer({
   pendingEntryIds = new Set(),
 }: ActivityDrawerProps) {
   const closeButton = useRef<HTMLButtonElement>(null);
-  const [activeSection, setActiveSection] = useState<"session" | "automation">("session");
+  const [activeSection, setActiveSection] = useState<"session" | "automation" | "queue">("session");
 
   useEffect(() => {
     if (open) window.requestAnimationFrame(() => closeButton.current?.focus());
@@ -198,6 +202,11 @@ export function ActivityDrawer({
     .sort((left, right) => right.occurredAt - left.occurredAt)
     .slice(0, RECENT_ACTIVITY_LIMIT)
     .sort((left, right) => left.priority - right.priority || right.occurredAt - left.occurredAt);
+  const feedGroups = sessionActivityGroups.map((label, priority) => ({
+    label,
+    priority,
+    items: feed.filter((item) => item.priority === priority),
+  })).filter((group) => group.items.length > 0);
   const liveAutomaticByReviewId = new Map(latestAutomaticActivities.map((activity) => [activity.reviewId, activity]));
   const persistedReviewIds = new Set(automationHistory.map((item) => item.reviewId));
   const automationReviewRows = [
@@ -246,6 +255,7 @@ export function ActivityDrawer({
         </button>
       </header>
       <nav className="activity-section-tabs" role="tablist" aria-label="활동 기록 분류">
+        {queuePanel ? <button type="button" role="tab" aria-selected={activeSection === "queue"} className={`mini-command${activeSection === "queue" ? " is-active" : ""}`} onClick={() => setActiveSection("queue")}>다운로드 큐</button> : null}
         <button
           type="button"
           role="tab"
@@ -253,7 +263,7 @@ export function ActivityDrawer({
           aria-controls="activity-session-panel"
           className={`mini-command${activeSection === "session" ? " is-active" : ""}`}
           onClick={() => setActiveSection("session")}
-        >이번 실행</button>
+        >실시간 실행</button>
         <button
           type="button"
           role="tab"
@@ -262,10 +272,13 @@ export function ActivityDrawer({
           className={`mini-command${activeSection === "automation" ? " is-active" : ""}`}
           onClick={() => setActiveSection("automation")}
         >
-          자동분류 검토{automationHistoryUnacknowledgedItems > 0 ? ` ${automationHistoryUnacknowledgedItems}` : ""}
+          자동분류 검토{automationHistoryUnacknowledgedItems > 0 ? <span className="activity-tab-count" title={`미확인 ${automationHistoryUnacknowledgedItems}개`}>{automationHistoryUnacknowledgedItems}</span> : null}
         </button>
       </nav>
-      {(containmentGroups.length > 0 || containmentLoading) && (
+      <div className="activity-panel-content">
+      {activeSection !== "queue" ? queueSummary : null}
+      {activeSection === "queue" ? queuePanel : null}
+      {activeSection !== "queue" && (containmentGroups.length > 0 || containmentLoading) && (
         <section className="activity-containment-priority" aria-label="합본 우선 검토">
           <h3>합본 우선 검토</h3>
           {containmentLoading && <small role="status">연관 검토를 모으는 중…</small>}
@@ -281,102 +294,96 @@ export function ActivityDrawer({
       )}
       {activeSection === "session" ? <div id="activity-session-panel" role="tabpanel" className="activity-list">
         {allSessionActivities.length > RECENT_ACTIVITY_LIMIT ? (
-          <p className="activity-history-note">최근 {RECENT_ACTIVITY_LIMIT}개만 표시합니다. 이전 작업은 앨범을 선택하거나 상세 창에서 취소할 수 있습니다.</p>
+          <p className="activity-history-note" title="이전 작업은 다운로드 큐 또는 앨범 상세에서 확인·취소할 수 있습니다.">최근 {RECENT_ACTIVITY_LIMIT}개만 표시합니다.</p>
         ) : null}
-        {feed.map((item) => {
-          if (item.kind === "danbooru") {
-            const { activity } = item;
-            return (
-              <article key={activity.id} className={`activity-item${activity.state === "completed" ? " complete" : " warning"}`}>
-                <span className="activity-icon"><FluentIcon glyph={activity.state === "completed" ? "\uE73E" : "\uE7BA"} /></span>
-                <div>
-                  <strong>{activity.title}</strong>
-                  <span>{activity.detail}</span>
-                  <small>Danbooru #{activity.postId}</small>
-                </div>
-              </article>
-            );
-          }
-          if (item.kind === "automatic-overlap") {
-            const { activity } = item;
-            return (
-              <article
-                key={activity.id}
-                className={`activity-item automatic-overlap${activity.state === "completed" ? " complete" : " warning"}`}
-              >
-                <span className="activity-icon">
-                  <FluentIcon glyph={activity.state === "completed" ? "\uE73E" : "\uE7BA"} />
-                </span>
-                <div>
-                  <strong>{activity.title}</strong>
-                  <span>{activity.detail}</span>
-                  <small>자동 판본 분류 · 이번 실행</small>
-                </div>
-                <div className="activity-actions">
-                  <button
-                    type="button"
-                    className="mini-command"
-                    onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}
-                  >근거 보기</button>
-                </div>
-              </article>
-            );
-          }
-          const gallery = item.gallery;
-          const download = gallery.download!;
-          const running = runningDownloadStates.has(download.state);
-          const duplicateProcessed = duplicateExcludedGalleryIds.has(gallery.id) && !running;
-          const complete = download.state === "completed" || duplicateProcessed;
-          const warning = !duplicateProcessed && ["review_required", "failed", "interrupted"].includes(download.state);
-          const retryable = !duplicateProcessed && ["failed", "interrupted", "cancelled"].includes(download.state);
-          const cancellable = !duplicateProcessed && (running || warning);
-          const pending = pendingEntryIds.has(download.entryId);
-          const progress = displayedProgress(download);
-          return (
-            <article
-              key={download.entryId}
-              className={`activity-item${warning ? " warning" : ""}${complete ? " complete" : ""}${duplicateProcessed ? " duplicate-resolved" : ""}`}
-            >
-              <span className={`activity-icon${running ? " is-running" : ""}`}>
-                {running ? <span className="spinner" /> : <FluentIcon glyph={complete ? "\uE73E" : "\uE7BA"} />}
-              </span>
-              <div>
-                <strong>{gallery.title}</strong>
-                <span>{duplicateProcessed ? duplicateProcessedDetail : downloadDetail(download)}</span>
-                {!duplicateProcessed && (download.attempt || download.errorCode) ? (
-                  <small>
-                    {download.attempt ? `시도 ${download.attempt}` : ""}
-                    {download.attempt && download.errorCode ? " · " : ""}
-                    {download.errorCode ?? ""}
-                  </small>
-                ) : null}
-              </div>
-              <div className="activity-actions">
-                {duplicateProcessed ? <b className="activity-resolution">처리 완료</b> : null}
-                {!duplicateProcessed && download.state === "review_required" ? (
-                  <button type="button" className="mini-command" disabled={pending} onClick={() => onReview(gallery.id)}>검토</button>
-                ) : null}
-                {retryable ? (
-                  <button type="button" className="mini-command" disabled={pending} onClick={() => onRetry(gallery.id)}>재시도</button>
-                ) : null}
-                {cancellable ? (
-                  <button type="button" className="mini-command" disabled={pending} onClick={() => onCancel(gallery.id)}>취소</button>
-                ) : null}
-                {!duplicateProcessed && !warning && !retryable ? (
-                  <b
-                    role="progressbar"
-                    aria-label={`${gallery.title} 진행률`}
-                    aria-valuemin={0}
-                    aria-valuemax={100}
-                    aria-valuenow={progress}
+        {feedGroups.map((group) => (
+          <section key={group.priority} className="activity-state-group" aria-labelledby={`activity-state-${group.priority}`}>
+            <h3 id={`activity-state-${group.priority}`} className="activity-state-heading">{group.label}</h3>
+            {group.items.map((item) => {
+              if (item.kind === "danbooru") {
+                const { activity } = item;
+                return (
+                  <article key={activity.id} className={`activity-item${activity.state === "completed" ? " complete" : " warning"}`}>
+                    <span className="activity-icon"><FluentIcon glyph={activity.state === "completed" ? "\uE73E" : "\uE7BA"} /></span>
+                    <div>
+                      <strong>{activity.title}</strong>
+                      <span>{activity.detail}</span>
+                      <small>Danbooru #{activity.postId}</small>
+                    </div>
+                  </article>
+                );
+              }
+              if (item.kind === "automatic-overlap") {
+                const { activity } = item;
+                return (
+                  <article
+                    key={activity.id}
+                    className={`activity-item automatic-overlap${activity.state === "completed" ? " complete" : " warning"}`}
                   >
-                    {progress}%
-                  </b>
-                ) : null}
-              </div>
-            </article>
-          );
-        })}
+                    <span className="activity-icon">
+                      <FluentIcon glyph={activity.state === "completed" ? "\uE73E" : "\uE7BA"} />
+                    </span>
+                    <div>
+                      <strong>{activity.title}</strong>
+                      <span>{activity.detail}</span>
+                      <small>자동 판본 분류 · 실시간 실행</small>
+                    </div>
+                    <div className="activity-actions">
+                      <button
+                        type="button"
+                        className="mini-command"
+                        onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}
+                      >근거 보기</button>
+                    </div>
+                  </article>
+                );
+              }
+              const gallery = item.gallery;
+              const download = gallery.download!;
+              const running = runningDownloadStates.has(download.state);
+              const duplicateProcessed = duplicateExcludedGalleryIds.has(gallery.id) && !running;
+              const complete = download.state === "completed" || duplicateProcessed;
+              const warning = !duplicateProcessed && ["review_required", "failed", "interrupted"].includes(download.state);
+              const retryable = !duplicateProcessed && ["failed", "interrupted", "cancelled"].includes(download.state);
+              const cancellable = !duplicateProcessed && (running || warning);
+              const pending = pendingEntryIds.has(download.entryId);
+              return (
+                <article
+                  key={download.entryId}
+                  className={`activity-item${warning ? " warning" : ""}${complete ? " complete" : ""}${duplicateProcessed ? " duplicate-resolved" : ""}`}
+                >
+                  {duplicateProcessed ? <span className="activity-icon" role="img" title={duplicateProcessedDetail} aria-label={duplicateProcessedDetail}><FluentIcon glyph="\uE73E" /></span>
+                    : <GalleryProcessingBadge gallery={gallery} />}
+                  <div>
+                    <strong title={gallery.title}>{splitGalleryTitle(gallery.title, gallery.subtitle).primary}</strong>
+                    <span>{gallery.artist} · #{gallery.id}</span>
+                    {!duplicateProcessed && (download.errorMessage || download.errorCode || download.attempt) ? (
+                      <details className="activity-item-details">
+                        <summary aria-label={`${gallery.title} 처리 상세`}>상세</summary>
+                        <p>{downloadDetail(download)}</p>
+                        <small>{download.attempt ? `시도 ${download.attempt} · ` : ""}{download.errorCode}</small>
+                      </details>
+                    ) : null}
+                  </div>
+                  <div className="activity-actions">
+                    {!duplicateProcessed && download.state === "review_required" ? (
+                      <button type="button" className="mini-command" disabled={pending} onClick={() => onReview(gallery.id)}>검토</button>
+                    ) : null}
+                    {retryable ? (
+                      <button type="button" className="mini-command" disabled={pending} onClick={() => onRetry(gallery.id)}>재시도</button>
+                    ) : null}
+                    {cancellable ? (
+                      <button type="button" className="mini-command" disabled={pending} onClick={() => onCancel(gallery.id)}>취소</button>
+                    ) : null}
+                    {!duplicateProcessed && running ? (
+                      <DownloadProgressLabel gallery={gallery} />
+                    ) : null}
+                  </div>
+                </article>
+              );
+            })}
+          </section>
+        ))}
         {feed.length === 0 ? (
           <div className="activity-empty">
             <FluentIcon glyph="\uE823" />
@@ -384,18 +391,17 @@ export function ActivityDrawer({
             <span>다운로드와 자동 처리가 여기에 표시됩니다.</span>
           </div>
         ) : null}
-      </div> : (
+      </div> : activeSection === "automation" ? (
         <div id="activity-automation-panel" role="tabpanel" className="activity-list">
           {onStartAutomationSequence ? (
             <div className="activity-history-toolbar">
               <button type="button" className="mini-command" disabled={automationSequenceLoading || automationHistoryPendingReviewIds.size > 0 || (automationHistoryUnacknowledgedItems === 0 && !automationHistory.some((item) => !item.acknowledgedAt))} onClick={onStartAutomationSequence} title="미확인 기록 전체를 순서대로 검토합니다. 확인 완료하거나 목록에 복원하면 다음 기록으로 이동합니다.">
                 {automationSequenceLoading ? <><span className="spinner" /> 검토 목록 준비 중…</> : <><FluentIcon glyph="\uE8FD" /> 미확인 순차 검토</>}
               </button>
-              <small>확인·복원 후 다음 항목으로 이동</small>
             </div>
           ) : null}
           <p className="activity-history-note" title="탐색·목록 제외만 해제하며 격리된 실제 파일은 복원하지 않습니다.">
-            목록 복원은 탐색·목록 제외만 해제합니다. 격리된 실제 파일은 복원하지 않습니다.
+            목록 복원 시 격리 파일은 복원되지 않습니다.
           </p>
           {automationReviewRows.map((row) => {
             if (row.kind === "live") {
@@ -406,7 +412,7 @@ export function ActivityDrawer({
                   <div>
                     <strong>{activity.title}</strong>
                     <span>{activity.detail}</span>
-                    <small>이번 실행 · 영구 기록 반영 대기</small>
+                    <small>실시간 실행 · 영구 기록 반영 대기</small>
                   </div>
                   <div className="activity-actions">
                     <button type="button" className="mini-command" onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}>근거 보기</button>
@@ -423,10 +429,10 @@ export function ActivityDrawer({
                 <div>
                   <strong>{item.title}</strong>
                   <span>{live?.detail ?? automaticHistoryDetail(item)}</span>
-                  <small>{automationReviewStateLabel[item.reviewState]} · {formatOccurredAt(item.occurredAt)}</small>
+                  <small title={`${automationReviewStateLabel[item.reviewState]} · ${formatOccurredAt(item.occurredAt)}`}>{formatOccurredAt(item.occurredAt)}</small>
                 </div>
                 <div className="activity-actions automation-history-actions">
-                  {acknowledged ? <b className="activity-resolution">확인 완료</b> : null}
+                  {acknowledged ? <span className="activity-resolution" role="img" aria-label="확인 완료" title="확인 완료"><FluentIcon glyph="\uE73E" /></span> : null}
                   <button type="button" className="mini-command" disabled={pending} onClick={() => onReviewOverlap?.(item.reviewId, item.incomingGalleryId)}>근거 보기</button>
                   {!acknowledged && item.removedGalleryIds.length > 0 ? (
                     <button
@@ -468,7 +474,8 @@ export function ActivityDrawer({
             </button>
           ) : null}
         </div>
-      )}
+      ) : null}
+      </div>
     </aside>
   );
 }

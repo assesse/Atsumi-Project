@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { galleryId, type GalleryId } from "../core/types";
+import { mergeOutputPages } from "../downloadOverlap/mergeSelection";
+import { automaticUncensoredMerge } from "../state/downloadOverlapAuto";
 import {
   GALLERY_PREVIEW_PRESETS,
   normalizeGalleryPreviewWidth,
@@ -95,7 +97,7 @@ import type {
   WindowPlacementSnapshot,
 } from "./contracts";
 import { hasActiveWork } from "./contracts";
-import { applyGlobalSearchRules } from "../search/globalSearchRules";
+import { applyGlobalSearchRules, matchesGlobalSearchRules } from "../search/globalSearchRules";
 import { strictCandidateEvaluation } from "../state/downloadOverlapAuto";
 import {
   galleryDetailFixture,
@@ -114,6 +116,7 @@ export type BackendEventMap = {
   "internal-duplicate:artifact-progress": InternalArtifactScanProgress;
   "job:changed": JobEvent;
   "download:changed": DownloadChangedEvent;
+  "download:resync": boolean;
   "gallery-preview:updated": GalleryPreview;
   "artist-preview:updated": ArtistPreview;
   "thumbnail:ready": ThumbnailCompletionEvent;
@@ -185,7 +188,7 @@ export interface BackendClient {
   galleryPreviewList(galleryIds: GalleryId[]): Promise<ApiResult<GalleryPreview[]>>;
   galleryPreviewSet(request: GalleryPreviewSetRequest): Promise<ApiResult<GalleryPreview>>;
   artistPreviewList(artists: string[]): Promise<ApiResult<ArtistPreview[]>>;
-  downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>>;
+  downloadRetry(entryIds: string[], fillAvailable?: boolean): Promise<ApiResult<JobRef[]>>;
   downloadCancel(entryIds: string[]): Promise<ApiResult<DownloadEntry[]>>;
   downloadQuarantine(entryIds: string[], reason: string): Promise<ApiResult<DownloadEntry[]>>;
   downloadQuarantineUndo(entryIds: string[]): Promise<ApiResult<DownloadEntry[]>>;
@@ -197,6 +200,8 @@ export interface BackendClient {
   maintenanceExecute(previewId: string, action: MaintenanceAction): Promise<ApiResult<MaintenanceResult>>;
   thumbnailRequest(request: ThumbnailRequestDto): Promise<ApiResult<ThumbnailRequestToken>>;
   thumbnailCancel(requestId: string): Promise<ApiResult<boolean>>;
+  thumbnailRead(token: string): Promise<ArrayBuffer>;
+  thumbnailRelease(token: string): Promise<ApiResult<boolean>>;
   thumbnailReprioritize(requestId: string, priority: ThumbnailRequestDto["priority"]): Promise<ApiResult<boolean>>;
   thumbnailInvalidate(key: ThumbnailRequestDto["key"]): Promise<ApiResult<ThumbnailInvalidation>>;
   thumbnailStats(): Promise<ApiResult<ThumbnailWorkerStats>>;
@@ -210,10 +215,12 @@ export interface BackendClient {
 }
 
 const defaultSettings: SettingsSnapshot = {
+  highPerformanceProcessing: false,
+  chzzkSsdStaging: false,
   revision: 0,
   downloadRoot: "",
   folderNameTemplate: "[{artist}] {title} [{group}] {id}",
-  autoFindHistoryMode: "include_all_history",
+  autoFindHistoryMode: "newer_than_latest_owned",
   downloadOverlapAutoMode: "off",
   explorePageSize: 50,
   danbooruPageSize: 60,
@@ -222,6 +229,7 @@ const defaultSettings: SettingsSnapshot = {
   danbooruPreviewWidth: 190,
   relatedPreviewWidth: 240,
   privacyMode: false,
+  privacyOnStartup: true,
   cacheLimitGb: 10,
   concurrentImageRequests: 5,
   downloadAdaptiveConcurrency: true,
@@ -317,8 +325,11 @@ const readPersistedBrowserSettings = (): SettingsSnapshot => {
         ? parsed.danbooruPreviewWidth ?? defaultSettings.danbooruPreviewWidth
         : defaultSettings.danbooruPreviewWidth,
       privacyMode: parsed.privacyMode === true,
+      privacyOnStartup: parsed.privacyOnStartup !== false,
       downloadAdaptiveConcurrency: typeof parsed.downloadAdaptiveConcurrency === "boolean"
         ? parsed.downloadAdaptiveConcurrency : defaultSettings.downloadAdaptiveConcurrency,
+      chzzkSsdStaging: parsed.chzzkSsdStaging === true,
+      highPerformanceProcessing: parsed.highPerformanceProcessing === true,
       downloadAdaptiveMaxRequests: Number.isInteger(parsed.downloadAdaptiveMaxRequests)
         && (parsed.downloadAdaptiveMaxRequests ?? 0) >= 1
         && (parsed.downloadAdaptiveMaxRequests ?? 0) <= 8
@@ -334,9 +345,9 @@ const readPersistedBrowserSettings = (): SettingsSnapshot => {
         : [],
       searchIncludeTags: normalizeGlobalSearchTags(parsed.searchIncludeTags) ?? [],
       searchExcludeTags: normalizeGlobalSearchTags(parsed.searchExcludeTags) ?? [],
-      autoFindHistoryMode: parsed.autoFindHistoryMode === "newer_than_oldest_downloaded"
-        ? "newer_than_oldest_downloaded"
-        : "include_all_history",
+      autoFindHistoryMode: parsed.autoFindHistoryMode === "include_all_history"
+        ? "include_all_history"
+        : "newer_than_latest_owned",
       downloadOverlapAutoMode: parsed.downloadOverlapAutoMode === "recommend"
         || parsed.downloadOverlapAutoMode === "strict_quarantine"
         ? parsed.downloadOverlapAutoMode
@@ -511,6 +522,7 @@ const cloneAutoFindSnapshot = (snapshot: AutoFindSnapshot): AutoFindSnapshot => 
     series: [...(candidate.series ?? [])],
     characters: [...(candidate.characters ?? [])],
     matchedFavorite: { ...candidate.matchedFavorite },
+    ...(candidate.matchedFavorites ? { matchedFavorites: candidate.matchedFavorites.map((favorite) => ({ ...favorite })) } : {}),
   })),
   cutoffEvidence: snapshot.cutoffEvidence.map((evidence) => ({ ...evidence })),
   truncations: snapshot.truncations.map((truncation) => ({ ...truncation })),
@@ -520,9 +532,13 @@ const historyModeAllows = (
   galleryIdValue: GalleryId,
   evidence: AutoFindSnapshot["cutoffEvidence"][number] | undefined,
   mode: AutoFindRun["historyMode"],
-): boolean => mode === "include_all_history"
-  || evidence?.oldestOwnedGalleryId === undefined
-  || galleryIdValue > evidence.oldestOwnedGalleryId;
+): boolean => {
+  if (mode === "include_all_history") return true;
+  const cutoff = mode === "newer_than_oldest_downloaded"
+    ? evidence?.oldestOwnedGalleryId
+    : evidence?.latestOwnedGalleryId;
+  return cutoff === undefined || galleryIdValue > cutoff;
+};
 
 const duplicateProfile: DuplicateSnapshot["profile"] = {
   profileVersion: 1,
@@ -887,6 +903,8 @@ const filterAndSortBrowserDanbooruPosts = (terms: string[]): DanbooruPost[] => {
 };
 
 class BrowserMockBackend implements BackendClient {
+  async thumbnailRead(_token: string): Promise<ArrayBuffer> { throw new Error("No native image capability in fixture mode"); }
+  async thumbnailRelease(_token: string): Promise<ApiResult<boolean>> { return { ok: true, data: false }; }
   readonly runtime = "browser-mock" as const;
   private settings = readPersistedBrowserSettings();
   private placement = { ...defaultPlacement };
@@ -897,6 +915,7 @@ class BrowserMockBackend implements BackendClient {
     "internal-duplicate:artifact-progress": new Set(),
     "job:changed": new Set(),
     "download:changed": new Set(),
+    "download:resync": new Set(),
     "gallery-preview:updated": new Set(),
     "artist-preview:updated": new Set(),
     "thumbnail:ready": new Set(),
@@ -929,6 +948,7 @@ class BrowserMockBackend implements BackendClient {
   };
   private duplicateReviews = new Map<string, DuplicateReview>();
   private downloadOverlapReviews = new Map<string, DownloadOverlapReview>();
+  private composedPageCounts = new Map<GalleryId, number>();
   private downloadOverlapAutomationHistory = new Map<string, DownloadOverlapAutomationHistoryItem>();
   private duplicateResolvedCandidates = new Set<string>();
   private duplicateHiddenGalleryIds = new Set<GalleryId>();
@@ -966,12 +986,16 @@ class BrowserMockBackend implements BackendClient {
   async settingsUpdate(patch: SettingsPatch, expectedRevision: number): Promise<ApiResult<SettingsSnapshot>> {
     if (expectedRevision !== this.settings.revision) return conflict("설정");
     const next = { ...this.settings, ...patch };
+    if (next.autoFindHistoryMode === "newer_than_oldest_downloaded") {
+      next.autoFindHistoryMode = "newer_than_latest_owned";
+    }
     next.downloadRoot = windowsPathForDisplay(next.downloadRoot);
     const searchIncludeTags = normalizeGlobalSearchTags(next.searchIncludeTags);
     const searchExcludeTags = normalizeGlobalSearchTags(next.searchExcludeTags);
     const invalid =
       validateFolderNameTemplate(next.folderNameTemplate) ??
-      (next.autoFindHistoryMode !== "include_all_history" && next.autoFindHistoryMode !== "newer_than_oldest_downloaded"
+      (typeof next.highPerformanceProcessing !== "boolean" ? validationError("highPerformanceProcessing", "must be a boolean") : null) ??
+      (next.autoFindHistoryMode !== "include_all_history" && next.autoFindHistoryMode !== "newer_than_latest_owned"
         ? validationError("autoFindHistoryMode", "must be a supported history mode")
         : null) ??
       (!["off", "recommend", "strict_quarantine"].includes(next.downloadOverlapAutoMode)
@@ -989,6 +1013,7 @@ class BrowserMockBackend implements BackendClient {
       (![180, 200, 220, 240, 260, 280, 300, 320].includes(next.relatedPreviewWidth)
         ? validationError("relatedPreviewWidth", "must be one of the supported related preview presets")
         : null) ??
+      (typeof next.privacyOnStartup !== "boolean" ? validationError("privacyOnStartup", "must be a boolean") : null) ??
       (typeof next.privacyMode !== "boolean"
         ? validationError("privacyMode", "must be a boolean")
         : null) ??
@@ -1023,6 +1048,8 @@ class BrowserMockBackend implements BackendClient {
         : null) ??
       validateIntegerRange(next.cacheLimitGb, "cacheLimitGb", 1, 30) ??
       validateIntegerRange(next.concurrentImageRequests, "concurrentImageRequests", 1, 30) ??
+      (next.chzzkSsdStaging !== undefined && typeof next.chzzkSsdStaging !== "boolean"
+        ? validationError("chzzkSsdStaging", "must be a boolean") : null) ??
       (typeof next.downloadAdaptiveConcurrency !== "boolean"
         ? validationError("downloadAdaptiveConcurrency", "must be a boolean")
         : null) ??
@@ -1305,7 +1332,7 @@ class BrowserMockBackend implements BackendClient {
     }
     const detail = galleryDetailFixture(galleryId);
     return detail
-      ? ok(detail)
+      ? ok(this.composedPageCounts.has(galleryId) ? { ...detail, pages: this.composedPageCounts.get(galleryId)!, pageDimensions: [] } : detail)
       : notFoundError(
         "SOURCE_NOT_FOUND",
         "The gallery could not be found in the current source",
@@ -1318,7 +1345,7 @@ class BrowserMockBackend implements BackendClient {
     const detail = galleryDetailFixture(galleryId);
     if (!detail) return notFoundError("SOURCE_NOT_FOUND", "The gallery could not be found in the current source", { galleryId });
     const { related: _related, pageDimensions: _dimensions, ...summary } = detail;
-    return ok(summary);
+    return ok(this.composedPageCounts.has(galleryId) ? { ...summary, pages: this.composedPageCounts.get(galleryId)! } : summary);
   }
 
   async favoritesList(): Promise<ApiResult<FavoriteRecord[]>> {
@@ -1366,13 +1393,17 @@ class BrowserMockBackend implements BackendClient {
   }
 
   async autoFindSnapshot(): Promise<ApiResult<AutoFindSnapshot>> {
-    return ok(cloneAutoFindSnapshot(this.autoFind));
+    const snapshot = cloneAutoFindSnapshot(this.autoFind);
+    snapshot.candidates = snapshot.candidates.filter((gallery) => matchesGlobalSearchRules(
+      gallery, this.settings.searchIncludeTags, this.settings.searchExcludeTags,
+    ));
+    return ok(snapshot);
   }
 
   async autoFindRefresh(): Promise<ApiResult<AutoFindRun>> {
     if (this.autoFind.run?.state === "running") return ok(cloneAutoFindRun(this.autoFind.run));
 
-    const artists = [...this.favorites.values()].filter((favorite) => favorite.namespace === "artist");
+    const artists = [...this.favorites.values()].filter((favorite) => favorite.namespace === "artist" || favorite.namespace === "group");
     const now = new Date().toISOString();
     const generation = ++this.autoFindGeneration;
     const historyMode = this.settings.autoFindHistoryMode;
@@ -1380,7 +1411,7 @@ class BrowserMockBackend implements BackendClient {
       .filter((entry) => entry.state === "completed" || entry.state === "quarantined");
     const cutoffEvidence = artists.map((favorite) => {
       const ownedIds = runSearchFixture({
-        text: `artist:${favorite.value}`,
+        text: `${favorite.namespace}:${favorite.value.replaceAll(" ", "_")}`,
         includeTags: [],
         excludeTags: [],
         languages: ["korean", "japanese", "chinese", "english"],
@@ -1389,13 +1420,14 @@ class BrowserMockBackend implements BackendClient {
       }).items
         .filter((gallery) => completedOwned.some((entry) => entry.galleryId === gallery.id))
         .map((gallery) => gallery.id)
-        .sort((left, right) => left - right);
+        .sort((left, right) => right - left);
       return {
+        namespace: favorite.namespace,
         artist: favorite.value,
-        ...(ownedIds[0] !== undefined ? { oldestOwnedGalleryId: ownedIds[0] } : {}),
+        ...(ownedIds[0] !== undefined ? { latestOwnedGalleryId: ownedIds[0] } : {}),
         qualifiedOwnedCount: ownedIds.length,
         source: "verified_owned_artifact" as const,
-        policyVersion: 1 as const,
+        policyVersion: 2 as const,
       };
     });
     const run: AutoFindRun = {
@@ -2101,7 +2133,7 @@ class BrowserMockBackend implements BackendClient {
     const candidate = review.candidates.find((item) => item.candidateId === request.candidateId);
     if (review.state !== "pending" || !candidate || candidate.decision !== undefined
       || !["existing", "incoming"].includes(request.sourceSide)
-      || !request.sourcePages.length || request.sourcePages.length > 200
+      || (!request.selectedPages && !request.sourcePages.length) || request.sourcePages.length > 4000
       || new Set(request.sourcePages).size !== request.sourcePages.length) {
       return validationError("request", "현재 검토의 한쪽 페이지를 선택해야 합니다");
     }
@@ -2113,7 +2145,27 @@ class BrowserMockBackend implements BackendClient {
         || this.duplicateHiddenGalleryIds.has(ref.galleryId);
     })) return validationError("request", "병합할 앨범의 상태가 변경되었습니다");
     const targets = new Set<number>();
-    for (const page of request.sourcePages) {
+    let addedPages = 0;
+    if (request.automation) {
+      const automatic = automaticUncensoredMerge(review, candidate);
+      if (!automatic || automatic.sourceSide !== request.sourceSide || !request.excludeSource || request.selectedPages
+        || automatic.sourcePages.length !== request.sourcePages.length
+        || automatic.sourcePages.some((page) => !request.sourcePages.includes(page))) {
+        return validationError("automation", "완전 포함된 무검열판의 전체 페이지만 자동 병합할 수 있습니다");
+      }
+    }
+    if (request.selectedPages) {
+      const donor = request.selectedPages[request.sourceSide];
+      const count = request.selectedPages.existing.length + request.selectedPages.incoming.length;
+      if (count < 1 || count > 4000 || donor.length !== request.sourcePages.length
+        || donor.some((page) => !request.sourcePages.includes(page))) return validationError("selectedPages", "선택한 제공 페이지가 변경되었습니다");
+      try {
+        const output = mergeOutputPages(candidate,review.incoming.pageCount,request);
+        addedPages = output.length - target.pageCount;
+        output.forEach((p,i) => { if (p.side === request.sourceSide) targets.add(i+1); });
+      } catch (error) { return validationError("selectedPages", String(error)); }
+    }
+    for (const page of request.selectedPages ? [] : request.sourcePages) {
       const pairs = candidate.pagePairs.filter((pair) => (request.sourceSide === "existing"
         ? pair.existingSourcePage : pair.incomingSourcePage) === page);
       const pair = pairs[0];
@@ -2126,7 +2178,7 @@ class BrowserMockBackend implements BackendClient {
       }
       targets.add(targetPage);
     }
-    if (request.excludeSource) {
+    if (request.excludeSource && !request.selectedPages) {
       const sourceCounts = new Map<number, number>();
       const targetCounts = new Map<number, number>();
       for (const pair of candidate.pagePairs) {
@@ -2176,8 +2228,26 @@ class BrowserMockBackend implements BackendClient {
       this.downloadEntries.set(source.entryId, { ...entry, state: "cancelled", revision: entry.revision + 1,
         reviewKind: undefined, reviewId: undefined });
     }
+    if (request.selectedPages) this.composedPageCounts.set(target.galleryId, target.pageCount + addedPages);
+    if (request.automation) {
+      const updated = this.downloadOverlapReviews.get(review.reviewId)!;
+      const action = request.sourceSide === "incoming" ? "remove_incoming" as const : "remove_existing_continue" as const;
+      const now = new Date().toISOString();
+      this.downloadOverlapReviews.set(review.reviewId, { ...updated,
+        candidates: updated.candidates.map((c) => request.sourceSide === "existing" && c.candidateId === candidate.candidateId ? { ...c, decision: "existing_removed" as const } : c),
+        decisions: [...(updated.decisions ?? []), { candidateId: candidate.candidateId, action, actor: "automation", reasonCode: "uncensored_containment_merge_v1", ruleVersion: 1, createdAt: now,
+          featureSnapshotJson: JSON.stringify({ preferenceReason: "uncensored_merge", winner: request.sourceSide === "incoming" ? "existing" : "incoming", candidateId: candidate.candidateId, sourceGalleryId: source.galleryId, targetGalleryId: target.galleryId, mergeId, replacedPages: targets.size }) }],
+      });
+      const old = this.downloadOverlapAutomationHistory.get(review.reviewId);
+      this.downloadOverlapAutomationHistory.set(review.reviewId, { reviewId: review.reviewId, incomingGalleryId: review.incoming.galleryId,
+        title: review.incoming.title, occurredAt: now, reviewState: updated.state,
+        removeIncomingCount: (old?.removeIncomingCount ?? 0) + Number(request.sourceSide === "incoming"),
+        removeExistingCount: (old?.removeExistingCount ?? 0) + Number(request.sourceSide === "existing"),
+        removedGalleryIds: [...new Set([...(old?.removedGalleryIds ?? []), source.galleryId])],
+      });
+    }
     return ok({ mergeId, sourceGalleryId: source.galleryId, targetGalleryId: target.galleryId,
-      replacedPages: targets.size, backupPath: `.atsumi-page-merges/${mergeId}/original`,
+      replacedPages: targets.size - addedPages, addedPages, backupPath: `.atsumi-page-merges/${mergeId}/original`,
       affectedReviewIds, sourceExcluded: request.excludeSource === true });
   }
 
@@ -2658,8 +2728,14 @@ class BrowserMockBackend implements BackendClient {
     }));
   }
 
-  async downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>> {
-    const normalized = [...new Set(entryIds.map((entryId) => entryId.trim()))];
+  async downloadRetry(entryIds: string[], fillAvailable = false): Promise<ApiResult<JobRef[]>> {
+    let normalized = [...new Set(entryIds.map((entryId) => entryId.trim()))];
+    if (fillAvailable) {
+      const active = [...this.downloadEntries.values()].filter((entry) => activeDownloadStates.has(entry.state)).length;
+      const available = Math.max(0, 200 - active);
+      if (available === 0) return ok([]);
+      normalized = normalized.slice(0, available);
+    }
     if (!normalized.length || normalized.some((entryId) => !entryId)) {
       return validationError("entryIds", "must contain at least one non-empty entry ID");
     }
@@ -2801,11 +2877,16 @@ class BrowserMockBackend implements BackendClient {
   }
 
   async thumbnailRequest(request: ThumbnailRequestDto): Promise<ApiResult<ThumbnailRequestToken>> {
-    if (request.key.kind !== "artifactPage" && (!Number.isInteger(request.key.galleryId) || request.key.galleryId <= 0)) {
+    if ((request.key.kind === "galleryCover" || request.key.kind === "galleryPage") && (!Number.isInteger(request.key.galleryId) || request.key.galleryId <= 0)) {
       return validationError("key.galleryId", "must be a positive integer");
     }
     if (request.key.kind === "artifactPage" && !request.key.entryId.trim()) {
       return validationError("key.entryId", "must not be empty");
+    }
+    if (request.key.kind === "overlapReviewPage" && (!request.key.reviewId.trim() || !request.key.candidateId.trim()
+      || !Number.isSafeInteger(request.key.reviewRevision) || request.key.reviewRevision < 0
+      || !["existing", "incoming"].includes(request.key.side))) {
+      return validationError("key.reviewId", "must identify a saved comparison and side");
     }
     if (request.key.kind !== "galleryCover" && (!Number.isInteger(request.key.sourcePage) || request.key.sourcePage < 1)) {
       return validationError("key.sourcePage", "must be one-based");
@@ -2820,7 +2901,9 @@ class BrowserMockBackend implements BackendClient {
         ? `G${request.key.galleryId} · COVER`
         : request.key.kind === "galleryPage"
           ? `G${request.key.galleryId} · PAGE ${request.key.sourcePage}`
-          : `${request.key.entryId} · VERIFIED PAGE ${request.key.sourcePage}`;
+          : request.key.kind === "overlapReviewPage"
+            ? `REVIEW ${request.key.side} · PAGE ${request.key.sourcePage}`
+            : `${request.key.entryId} · VERIFIED PAGE ${request.key.sourcePage}`;
       const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"><rect width="512" height="512" fill="#49656b"/><text x="28" y="470" fill="white" font-family="Segoe UI" font-size="24">${label}</text></svg>`;
       this.emit("thumbnail:ready", {
         ...token,
@@ -3189,7 +3272,7 @@ class BrowserMockBackend implements BackendClient {
     if (generation !== this.autoFindGeneration || !current || current.state !== "running") return;
 
     const fixture = runSearchFixture({
-      text: `artist:${favorite.value}`,
+      text: `${favorite.namespace}:${favorite.value.replaceAll(" ", "_")}`,
       includeTags: [],
       excludeTags: [],
       languages: ["korean", "japanese", "chinese", "english"],
@@ -3199,11 +3282,20 @@ class BrowserMockBackend implements BackendClient {
     const downloaded = new Set([...this.downloadEntries.values()].map((entry) => entry.galleryId));
     const existing = new Set(this.autoFind.candidates.map((candidate) => candidate.id));
     const discoveredAt = new Date().toISOString();
-    const cutoff = this.autoFind.cutoffEvidence.find((evidence) => evidence.artist === favorite.value);
+    const cutoff = this.autoFind.cutoffEvidence.find((evidence) => (evidence.namespace ?? "artist") === favorite.namespace && evidence.artist === favorite.value);
     const eligible = fixture.items.filter((gallery) => historyModeAllows(gallery.id, cutoff, current.historyMode));
+    const eligibleIds = new Set(eligible.map((gallery) => gallery.id));
+    for (const candidate of this.autoFind.candidates) {
+      if (!eligibleIds.has(candidate.id)) continue;
+      const matches = candidate.matchedFavorites ?? [candidate.matchedFavorite];
+      if (!matches.some((match) => match.namespace === favorite.namespace && match.value === favorite.value)) {
+        candidate.matchedFavorites = [...matches, { namespace: favorite.namespace, value: favorite.value }];
+      }
+    }
     const candidateLimit = 200;
     const truncation = eligible.length > candidateLimit
       ? {
+        namespace: favorite.namespace,
         artist: favorite.value,
         reason: "candidate_limit_after_cutoff" as const,
         eligibleCount: eligible.length,
@@ -3220,6 +3312,7 @@ class BrowserMockBackend implements BackendClient {
         ...gallery,
         runId: current.runId,
         matchedFavorite: { namespace: favorite.namespace, value: favorite.value },
+        matchedFavorites: [{ namespace: favorite.namespace, value: favorite.value }],
         discoveredAt,
       }));
     const allCandidates = [...this.autoFind.candidates, ...candidates];
@@ -3235,7 +3328,8 @@ class BrowserMockBackend implements BackendClient {
       updatedAt: now,
       ...(completed ? { finishedAt: now } : {}),
     };
-    const truncations = this.autoFind.truncations.filter((item) => item.artist !== favorite.value);
+    const truncations = this.autoFind.truncations.filter((item) =>
+      item.artist !== favorite.value || (item.namespace ?? "artist") !== favorite.namespace);
     if (truncation) truncations.push(truncation);
     this.autoFind = { ...this.autoFind, run, candidates: allCandidates, truncations };
     this.emit("auto-find:changed", cloneAutoFindRun(run));
@@ -3301,6 +3395,8 @@ class BrowserMockBackend implements BackendClient {
 }
 
 class TauriBackend implements BackendClient {
+  private readonly downloads = new DownloadEventPoller();
+  private thumbnailEpoch?: Promise<ApiResult<string>>;
   readonly runtime = "tauri" as const;
 
   settingsGet(): Promise<ApiResult<SettingsSnapshot>> {
@@ -3522,8 +3618,8 @@ class TauriBackend implements BackendClient {
     return invoke("artist_preview_list", { artists });
   }
 
-  downloadRetry(entryIds: string[]): Promise<ApiResult<JobRef[]>> {
-    return invoke("download_retry", { entryIds });
+  downloadRetry(entryIds: string[], fillAvailable?: boolean): Promise<ApiResult<JobRef[]>> {
+    return invoke("download_retry", { entryIds, ...(fillAvailable ? { fillAvailable: true } : {}) });
   }
 
   downloadCancel(entryIds: string[]): Promise<ApiResult<DownloadEntry[]>> {
@@ -3562,9 +3658,15 @@ class TauriBackend implements BackendClient {
     return invoke("maintenance_execute", { previewId, action });
   }
 
-  thumbnailRequest(request: ThumbnailRequestDto): Promise<ApiResult<ThumbnailRequestToken>> {
-    return invoke("thumbnail_request", { request });
+  async thumbnailRequest(request: ThumbnailRequestDto): Promise<ApiResult<ThumbnailRequestToken>> {
+    this.thumbnailEpoch ??= invoke<ApiResult<string>>("thumbnail_session");
+    const session = await this.thumbnailEpoch;
+    if (!session.ok) return session;
+    return invoke("thumbnail_request", { request, epoch: session.data });
   }
+
+  thumbnailRead(token: string): Promise<ArrayBuffer> { return invoke("thumbnail_read", { token }); }
+  thumbnailRelease(token: string): Promise<ApiResult<boolean>> { return invoke("thumbnail_release", { token }); }
 
   thumbnailCancel(requestId: string): Promise<ApiResult<boolean>> {
     return invoke("thumbnail_cancel", { requestId });
@@ -3615,7 +3717,12 @@ class TauriBackend implements BackendClient {
     handler: (payload: BackendEventMap[K]) => void,
   ): Promise<Unsubscribe> {
     const unlisten: UnlistenFn = await listen<BackendEventMap[K]>(event, ({ payload }) => handler(payload));
-    return unlisten;
+    const unsubscribe = event === "download:changed"
+      ? this.downloads.subscribe("download:changed", handler as (e: DownloadChangedEvent) => void)
+      : event === "job:changed" ? this.downloads.subscribe("job:changed", handler as (e: JobEvent) => void)
+      : event === "download:resync" ? this.downloads.subscribe("download:resync", handler as (e: boolean) => void)
+      : () => undefined;
+    return () => { unsubscribe(); unlisten(); };
   }
 }
 
@@ -3629,3 +3736,4 @@ export const backend: BackendClient = window.__TAURI_INTERNALS__
   ? new TauriBackend()
   : new BrowserMockBackend();
 import { completedPairReview } from "../state/completedPairReview";
+import { DownloadEventPoller } from "./downloadEventPoller";

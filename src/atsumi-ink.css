@@ -230,7 +230,7 @@ textarea:focus-visible {
 /* Main search and action hierarchy */
 
 .view-header {
-  grid-template-columns: minmax(220px, 1fr) 48px 48px minmax(108px, auto) repeat(3, 48px);
+  grid-template-columns: minmax(220px, 1fr) repeat(6, 48px);
 }
 
 .search-box,
@@ -320,10 +320,10 @@ textarea:focus-visible {
 
 .random-open-button {
   display: inline-flex;
-  width: auto;
-  min-width: 108px;
-  gap: 7px;
-  padding: 0 13px;
+  width: 48px;
+  min-width: 48px;
+  justify-content: center;
+  padding: 0;
   white-space: nowrap;
 }
 
@@ -925,7 +925,7 @@ dialog::backdrop {
   }
 
   .view-header {
-    grid-template-columns: minmax(220px, 1fr) 48px 48px minmax(108px, auto) repeat(3, 48px);
+    grid-template-columns: minmax(220px, 1fr) repeat(6, 48px);
   }
 }
 

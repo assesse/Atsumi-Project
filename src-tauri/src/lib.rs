@@ -2,12 +2,21 @@ pub mod application;
 mod autostart;
 mod community;
 pub mod domain;
+pub mod download_popularity;
 pub mod infrastructure;
 pub mod interface;
+mod local_control;
+mod native_focus;
+mod personal_library;
+mod renderer_recovery;
 pub mod source;
 mod startup;
+mod storage_io_budget;
 pub mod streaming;
 pub mod thumbnail;
+mod ui_diagnostics;
+mod ui_download_events;
+mod work_console;
 
 #[cfg(test)]
 mod tests;
@@ -116,6 +125,7 @@ fn apply_pending_factory_reset(data_dir: &std::path::Path) -> std::io::Result<()
 
 const TRAY_WORK_STATUS_ID: &str = "tray-work-status";
 const TRAY_QUIT_ID: &str = "tray-quit";
+const TRAY_RELOAD_ID: &str = "tray-reload";
 const TRAY_EVENT_REFRESH_DEBOUNCE: Duration = Duration::from_millis(200);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -568,6 +578,7 @@ fn initialize_backend(
     }
     startup::mark("merge_recovery_ready");
     let settings = ApplicationService::new(repository.clone()).settings_get()?;
+    application::image_work_budget::configure(settings.high_performance_processing);
     startup::mark("settings_ready");
     // Only application-managed tools; never search a recording folder or PATH.
     let media_bin = if cfg!(debug_assertions) {
@@ -671,6 +682,7 @@ fn initialize_backend(
             thumbnail_settings,
             Arc::clone(&artifact_store),
         )
+        .with_review_repository(Arc::clone(&repository))
         .with_disk_cache(Arc::clone(&thumbnail_disk_cache)),
     );
     let thumbnails = ThumbnailCoordinator::new(thumbnail_resolver, thumbnail_config)?;
@@ -705,18 +717,6 @@ fn initialize_backend(
                     if let Err(error) = preview_app.emit("artist-preview:updated", &artist) {
                         tracing::warn!(error = %error, "could not emit artist-preview:updated");
                     }
-                }
-            }
-        })?;
-    let (thumbnail_completion_tx, thumbnail_completion_rx) =
-        mpsc::channel::<ThumbnailCompletionEventDto>();
-    let thumbnail_app = app.clone();
-    thread::Builder::new()
-        .name("atsumi-thumbnail-events".into())
-        .spawn(move || {
-            while let Ok(event) = thumbnail_completion_rx.recv() {
-                if let Err(error) = thumbnail_app.emit("thumbnail:ready", &event) {
-                    tracing::warn!(error = %error, "could not emit thumbnail:ready");
                 }
             }
         })?;
@@ -820,12 +820,9 @@ fn initialize_backend(
         .name("atsumi-download-events".into())
         .spawn(move || {
             while let Ok(projection) = download_event_rx.recv() {
-                if let Err(error) = download_app.emit("job:changed", &projection.job) {
-                    tracing::warn!(error = %error, "could not emit job:changed");
-                }
-                if let Err(error) = download_app.emit("download:changed", &projection.download) {
-                    tracing::warn!(error = %error, "could not emit download:changed");
-                }
+                download_app
+                    .state::<Arc<ui_download_events::DownloadEvents>>()
+                    .publish(projection);
                 schedule_tray_work_status_refresh(&download_app);
             }
         })?;
@@ -885,7 +882,6 @@ fn initialize_backend(
             service,
             danbooru,
             thumbnails,
-            thumbnail_completion_tx,
             detail_originals,
             downloads,
             auto_find,
@@ -1106,8 +1102,19 @@ pub fn run() -> tauri::Result<()> {
             restore_main_window(app, "restore Atsumi from the tray");
         })
         .on_page_load(|view, payload| {
+            if view.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                tracing::info!("main frontend document loaded");
+                if let Some(diagnostics) = view.app_handle().try_state::<Arc<ui_diagnostics::UiDiagnostics>>() {
+                    diagnostics.record("document_loaded",serde_json::json!({"epoch":diagnostics.epoch()}));
+                }
+                if let Some(window) = view.app_handle().get_webview_window("main") {
+                    ui_diagnostics::start_sampling(&window);
+                }
+            }
             if view.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                if let Some(diagnostics) = view.app_handle().try_state::<Arc<ui_diagnostics::UiDiagnostics>>() { diagnostics.document_started(); }
                 if let Some(state) = view.app_handle().try_state::<AppState>() {
+                    state.thumbnail_transport.reset_document();
                     if let Ok(browser) = state.official_browser() {
                         browser.detach_viewport(view.app_handle());
                         browser.detach_auto_watch(view.app_handle());
@@ -1143,6 +1150,15 @@ pub fn run() -> tauri::Result<()> {
         })
         .setup(|app| {
             startup::mark("native_setup");
+            ui_diagnostics::install(app.handle())?;
+            if let Err(error) = local_control::install(app.handle()) {
+                tracing::warn!(%error, "local rescue channel unavailable");
+            }
+            app.manage(Arc::new(ui_download_events::DownloadEvents::default()));
+            if let Some(view) = app.get_webview_window("main") {
+                renderer_recovery::install(&view)?;
+                native_focus::install(&view)?;
+            }
             let tray_status = MenuItem::with_id(
                 app,
                 TRAY_WORK_STATUS_ID,
@@ -1151,8 +1167,10 @@ pub fn run() -> tauri::Result<()> {
                 None::<&str>,
             )?;
             let tray_quit = MenuItem::with_id(app, TRAY_QUIT_ID, "종료", true, None::<&str>)?;
+            let tray_reload = MenuItem::with_id(app, TRAY_RELOAD_ID, "화면 새로 고침", true, None::<&str>)?;
+            let tray_diagnostics = MenuItem::with_id(app, "tray-diagnostics", "진단 기록 저장", true, None::<&str>)?;
             let tray_separator = PredefinedMenuItem::separator(app)?;
-            let tray_menu = Menu::with_items(app, &[&tray_status, &tray_separator, &tray_quit])?;
+            let tray_menu = Menu::with_items(app, &[&tray_status, &tray_separator, &tray_reload, &tray_diagnostics, &tray_quit])?;
             let tray = app
                 .tray_by_id("main")
                 .ok_or_else(|| tauri::Error::AssetNotFound("main tray icon".into()))?;
@@ -1160,6 +1178,18 @@ pub fn run() -> tauri::Result<()> {
             tray.on_menu_event(|app, event| {
                 if event.id() == TRAY_QUIT_ID {
                     request_tray_quit(app);
+                } else if event.id() == TRAY_RELOAD_ID {
+                    if let Some(diagnostics) = app.try_state::<Arc<ui_diagnostics::UiDiagnostics>>() {
+                        diagnostics.record("manual_tray_reload",serde_json::json!({"epoch":diagnostics.epoch()}));
+                    }
+                    if let Some(view) = app.get_webview_window("main") {
+                        if let Err(error) = view.reload() {
+                            tracing::warn!(%error, "manual main renderer reload failed");
+                        }
+                        restore_main_window(app, "restore Atsumi after a manual renderer reload");
+                    }
+                } else if event.id() == "tray-diagnostics" {
+                    ui_diagnostics::capture(app,"manual_tray");
                 }
             });
             app.manage(TrayMenuState {
@@ -1188,6 +1218,10 @@ pub fn run() -> tauri::Result<()> {
             Ok(())
         })
         .invoke_handler(startup::gate(tauri::generate_handler![
+            work_console::work_queue_snapshot,
+            interface::commands::download_popularity_snapshot,
+            local_control::work_checkpoint_get,
+            local_control::work_checkpoint_save,
             startup::app_startup_snapshot,
             startup::app_startup_frame,
             startup::app_startup_cancel,
@@ -1195,6 +1229,7 @@ pub fn run() -> tauri::Result<()> {
             autostart::autostart_enabled_set,
             community::community_read,
             community::community_write,
+            personal_library::personal_library,
 
             streaming::browser::chzzk_browser_open,
             streaming::browser::chzzk_browser_snapshot,
@@ -1319,6 +1354,13 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::artifact_open_folder,
             interface::commands::app_reconcile,
             interface::commands::thumbnail_request,
+            ui_diagnostics::ui_diagnostics_session,
+            ui_diagnostics::ui_diagnostics_pulse,
+            ui_diagnostics::ui_diagnostics_mark,
+            ui_download_events::download_events_take,
+            interface::commands::thumbnail_session,
+            interface::commands::thumbnail_read,
+            interface::commands::thumbnail_release,
             interface::commands::thumbnail_cancel,
             interface::commands::thumbnail_invalidate,
             interface::commands::thumbnail_reprioritize,

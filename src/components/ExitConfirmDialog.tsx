@@ -33,7 +33,7 @@ function ActiveWorkStatus({ snapshot }: { snapshot: AppActiveWorkSnapshot }) {
         {snapshot.autoFind
           ? (
             <li>
-              {["Auto Find", progress("작가", snapshot.autoFind.completedFavorites, snapshot.autoFind.totalFavorites), `후보 ${snapshot.autoFind.candidatesFound}개`]
+              {["Auto Find", progress("작가·그룹", snapshot.autoFind.completedFavorites, snapshot.autoFind.totalFavorites), `후보 ${snapshot.autoFind.candidatesFound}개`]
                 .filter(Boolean).join(" · ")}
             </li>
           )

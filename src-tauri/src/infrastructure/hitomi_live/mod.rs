@@ -88,7 +88,8 @@ impl Default for HitomiLiveConfig {
             metadata_cache_capacity: 2_000,
             metadata_cache_ttl: Duration::from_secs(15 * 60),
             gg_cache_ttl: Duration::from_secs(60 * 60),
-            query_cache_capacity: 32,
+            // 64 open Explore tabs plus refreshes/in-flight search headroom.
+            query_cache_capacity: 128,
             max_candidate_ids: 1_000,
             related_gallery_limit: 8,
         }
@@ -345,6 +346,24 @@ impl HitomiLiveAdapter {
 
     fn fetch_nozomi_path(&self, path: &str) -> Result<Vec<u64>, SourceContractError> {
         self.fetch_nozomi_path_with_cancellation(path, None)
+    }
+
+    pub fn popularity_ids(&self, period: &str) -> Result<Vec<u64>, SourceContractError> {
+        if !matches!(period, "today" | "week" | "month" | "year") {
+            return Err(SourceContractError::validation(
+                "period",
+                "unsupported popularity period",
+            ));
+        }
+        let payload = self.transport.execute(HttpRequest {
+            url: format!("{HITOMI_METADATA_ORIGIN}/n/popular/{period}-all.nozomi"),
+            expected: ExpectedContent::Nozomi,
+            max_bytes: NOZOMI_RESPONSE_LIMIT,
+            range: None,
+            priority: HttpPriority::Prefetch,
+            cancellation: None,
+        })?;
+        parse_nozomi_ids(&payload.bytes)
     }
 
     fn fetch_nozomi_path_with_cancellation(
@@ -648,6 +667,7 @@ impl DownloadSourcePort for HitomiLiveAdapter {
             let candidate_index = u32::try_from(candidate_index).unwrap_or(u32::MAX);
             if candidate.format == HitomiImageFormat::Jxl {
                 diagnostics.push(SourceCandidateDiagnostic {
+                    detail: None,
                     candidate_index,
                     format: candidate.format.as_str().to_owned(),
                     http_status: None,
@@ -701,6 +721,7 @@ impl DownloadSourcePort for HitomiLiveAdapter {
             match decoded {
                 Ok(mut page) => {
                     diagnostics.push(SourceCandidateDiagnostic {
+                        detail: None,
                         candidate_index,
                         format: candidate.format.as_str().to_owned(),
                         http_status: Some(http_status),
@@ -714,6 +735,7 @@ impl DownloadSourcePort for HitomiLiveAdapter {
                 }
                 Err(mut error) => {
                     diagnostics.push(SourceCandidateDiagnostic {
+                        detail: error.diagnostic_detail(),
                         candidate_index,
                         format: candidate.format.as_str().to_owned(),
                         http_status: Some(http_status),
@@ -785,12 +807,26 @@ fn candidate_fallback_allowed(error: &SourceContractError) -> bool {
         )
 }
 
+fn validate_webp_container_length(bytes: &[u8]) -> Result<(), SourceContractError> {
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP" {
+        let expected = u64::from(u32::from_le_bytes(bytes[4..8].try_into().unwrap())) + 8;
+        if expected > bytes.len() as u64 {
+            return Err(SourceContractError::image_response_invalid(format!(
+                "WebP body is truncated: container declares {expected} bytes, received {} bytes",
+                bytes.len()
+            )));
+        }
+    }
+    Ok(())
+}
+
 fn candidate_error_diagnostic(
     candidate_index: u32,
     format: HitomiImageFormat,
     error: &SourceContractError,
 ) -> SourceCandidateDiagnostic {
     SourceCandidateDiagnostic {
+        detail: error.diagnostic_detail(),
         candidate_index,
         format: format.as_str().to_owned(),
         http_status: error.http_status,
@@ -886,6 +922,7 @@ fn decode_thumbnail(
     }
 
     let bytes = payload.bytes;
+    validate_webp_container_length(&bytes)?;
     let decode_result = catch_unwind(AssertUnwindSafe(|| {
         if format == ImageFormat::Avif {
             return super::avif_decode::decode_avif_rgba(&bytes).map_err(|_| {
@@ -998,6 +1035,7 @@ fn decode_download_payload(
     }
 
     let bytes = payload.bytes;
+    validate_webp_container_length(&bytes)?;
     let decode_result = catch_unwind(AssertUnwindSafe(|| {
         if format == ImageFormat::Avif {
             return super::avif_decode::decode_avif_rgba(&bytes).map_err(|_| {
@@ -1021,10 +1059,10 @@ fn decode_download_payload(
     }));
     let image = match decode_result {
         Ok(Ok(image)) => image,
-        Ok(Err(_)) => {
-            return Err(SourceContractError::image_decode_failed(
-                "image decoder rejected the download payload",
-            ))
+        Ok(Err(error)) => {
+            return Err(SourceContractError::image_decode_failed(format!(
+                "image decoder rejected the download payload: {error}"
+            )))
         }
         Err(_) => {
             return Err(SourceContractError::image_decode_failed(

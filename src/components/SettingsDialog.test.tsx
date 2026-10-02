@@ -135,11 +135,28 @@ describe("SettingsDialog operational boundaries", () => {
       });
 
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "Danbooru")!.click());
+      expect(container.querySelector("details.danbooru-metatag-guide")).not.toHaveAttribute("open");
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "일반")!.click());
+      const ssdStaging = container.querySelector<HTMLInputElement>('[aria-label="CHZZK 녹화에 SSD 사용"]');
+      expect(ssdStaging).not.toBeVisible();
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "치지직")!.click());
+      expect(ssdStaging).toBeVisible();
+      expect(container.querySelector('[aria-label="다운로드 폴더"]')).not.toBeVisible();
+      expect(container.querySelector(".settings-scope-intro")).toBeNull();
+      expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]"))).toHaveLength(1);
+      expect(ssdStaging).toHaveAttribute("role", "switch");
+      expect(ssdStaging).not.toBeChecked();
+      await act(async () => ssdStaging!.click());
+      expect(ssdStaging).toBeChecked();
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "일반")!.click());
       const autostart = container.querySelector<HTMLInputElement>('[aria-label="Windows 로그인 시 자동 실행"]');
       expect(autostart).toHaveAttribute("role", "switch");
       expect(autostart).toBeDisabled(); // A browser preview cannot register a Windows startup entry.
       expect(autostart).not.toBeChecked();
-      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru"]);
+      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru", "치지직"]);
+      expect(container.querySelector(".settings-scope-intro")).toBeNull();
+      expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "다운로드 폴더", "설정 초기화"]);
       expect(container.textContent).not.toContain("다음 단계");
       expect(container.querySelectorAll('[data-settings-scroll-root="true"]')).toHaveLength(1);
       expect(container.querySelector(".settings-dialog > .settings-form")).not.toBeNull();
@@ -177,19 +194,30 @@ describe("SettingsDialog operational boundaries", () => {
 
       expect(container.querySelector(".settings-reset-row")).not.toBeNull();
       expect(container.querySelector(".maintenance-panel .settings-reset-row")).toBeNull();
-      const maintenanceItems = [...container.querySelectorAll<HTMLElement>(".maintenance-item")];
-      expect(maintenanceItems).toHaveLength(3);
-      const [quickRepair, rebuild, factoryReset] = maintenanceItems;
+      const factoryReset = container.querySelector<HTMLElement>(".maintenance-item--factory-reset");
+      expect(factoryReset).toBeVisible();
+      await act(async () => factoryReset?.querySelector<HTMLButtonElement>("button")?.click());
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("외부 다운로드 원본 파일, 커뮤니티 작성자 키와 서버 후기는 유지"));
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "Hitomi")!.click());
+      expect(factoryReset).not.toBeVisible();
+      expect(container.querySelector(".settings-scope-intro")).toBeNull();
+      const maintenanceItems = [...container.querySelectorAll<HTMLElement>(".maintenance-panel .maintenance-item")];
+      expect(maintenanceItems).toHaveLength(2);
+      const [quickRepair, rebuild] = maintenanceItems;
+      const orderedHitomiLabels = [...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent);
+      expect(orderedHitomiLabels).toEqual(["앨범 카드 최대 열 수", "Hitomi 카드 미리보기 크기", "Related galleries 미리보기 크기", "Hitomi 페이지당 앨범 수", "Auto Find 기록 기준", "갤러리 폴더 이름", "다운로드 판본 자동 판정", "동시 이미지 요청", "다운로드 동시 요청 자동 조절", "자동 조절 최대 요청", "요청 시작 간격", "고성능 처리 모드"]);
+      expect(container.querySelector(".search-rules-panel")!.compareDocumentPosition(container.querySelector(".search-catalog-panel")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+      expect(container.querySelector(".exclusion-manager")!.compareDocumentPosition(container.querySelector(".maintenance-panel")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       expect(quickRepair).toHaveTextContent("빠른 복구");
       expect(quickRepair?.querySelectorAll("button")).toHaveLength(1);
       expect(rebuild).toHaveTextContent("라이브러리 검사 및 재구축");
       expect(rebuild?.querySelectorAll('input[type="checkbox"]')).toHaveLength(4);
       expect([...rebuild?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []].map((input) => input.checked)).toEqual([true, false, false, false]);
       expect(factoryReset).toHaveTextContent("앱 데이터 완전 초기화");
-      expect(factoryReset).toHaveTextContent("외부 다운로드 원본 파일과 quarantine/recovery 파일, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.");
+      expect(factoryReset).toHaveTextContent("외부 다운로드 원본 파일과 quarantine/recovery 파일, 개인 앨범·페이지 즐겨찾기와 컬렉션, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.");
       expect(factoryReset).toHaveClass("maintenance-item--factory-reset");
-      const maintenance = [...container.querySelectorAll<HTMLButtonElement>(".maintenance-item > button")];
-      expect(maintenance.map((button) => button.textContent)).toEqual(["빠른 복구", "라이브러리 검사 및 재구축", "앱 데이터 완전 초기화"]);
+      const maintenance = [...container.querySelectorAll<HTMLButtonElement>(".maintenance-panel .maintenance-item > button")];
+      expect(maintenance.map((button) => button.textContent)).toEqual(["빠른 복구", "라이브러리 검사 및 재구축"]);
       await act(async () => maintenance[0]?.click());
       expect(onMaintenance).toHaveBeenCalledWith({ kind: "quickRepair" });
       const duplicateOption = rebuild?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')[1];
@@ -202,13 +230,15 @@ describe("SettingsDialog operational boundaries", () => {
         rebuildInternalAnalysis: false,
         rebuildAutoFindResults: false,
       });
-      await act(async () => maintenance[2]?.click());
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("외부 다운로드 원본 파일, 커뮤니티 작성자 키와 서버 후기는 유지"));
 
       const template = container.querySelector<HTMLInputElement>('[aria-label="갤러리 폴더 이름 템플릿"]');
       expect(template?.value).toBe("[{artist}] {title} [{group}] {id}");
       const historyMode = container.querySelector<HTMLSelectElement>('[aria-label="Auto Find 기록 기준"]');
       expect(historyMode?.value).toBe("include_all_history");
+      expect([...historyMode!.options].map((option) => [option.value, option.textContent])).toEqual([
+        ["include_all_history", "전체 기록 포함"],
+        ["newer_than_latest_owned", "가장 최근 소유 작품 이후"],
+      ]);
       expect(historyMode?.closest(".settings-select-control")?.querySelector(".fluent")).not.toBeNull();
       const explorePageSize = container.querySelector<HTMLInputElement>('[aria-label="Hitomi 페이지당 앨범 수"]');
       expect(explorePageSize?.min).toBe("10");
@@ -230,16 +260,17 @@ describe("SettingsDialog operational boundaries", () => {
       expect(relatedPreviewRange?.min).toBe("180");
       expect(relatedPreviewRange?.max).toBe("320");
       expect(relatedPreviewRange?.value).toBe("240");
-      const privacyMode = container.querySelector<HTMLInputElement>('[aria-label="프라이버시 모드"]');
-      expect(privacyMode).not.toBeChecked();
-      await act(async () => privacyMode?.click());
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "일반")!.click());
+      const privacyMode = container.querySelector<HTMLInputElement>('[aria-label="프라이버시 모드 상태로 시작"]');
       expect(privacyMode).toBeChecked();
+      await act(async () => privacyMode?.click());
+      expect(privacyMode).not.toBeChecked();
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>("button")]
           .find((button) => button.textContent === "설정 기본값")
           ?.click();
       });
-      expect(privacyMode).not.toBeChecked();
+      expect(privacyMode).toBeChecked();
       expect(container.textContent).toContain("사용가능 인자 : {artist}, {title}, {group}, {id}");
       expect(container.textContent).toContain("미리보기 : [작가] 작품 제목 [그룹] 4113714");
       expect(container.textContent).not.toContain("{id}는 필수입니다");
@@ -270,6 +301,10 @@ describe("SettingsDialog operational boundaries", () => {
       const adaptive = container.querySelector<HTMLInputElement>('[aria-label="다운로드 동시 요청 자동 조절"]');
       const adaptiveMaximum = container.querySelector<HTMLInputElement>('[aria-label="자동 조절 최대 요청"]');
       expect(adaptive).toBeChecked();
+      const performance = container.querySelector<HTMLInputElement>('[aria-label="고성능 처리 모드"]');
+      expect(performance).not.toBeChecked();
+      await act(async () => performance?.click());
+      expect(performance).toBeChecked();
       expect(adaptiveMaximum).toHaveValue(8);
       expect(adaptiveMaximum).toHaveAttribute("min", "1");
       expect(adaptiveMaximum).toHaveAttribute("max", "8");
@@ -366,6 +401,9 @@ describe("SettingsDialog operational boundaries", () => {
       });
       const danbooruSettings = container.querySelector<HTMLElement>(".danbooru-settings-panel");
       expect(danbooruSettings).toBeVisible();
+      expect(container.querySelector(".settings-scope-intro")).toBeNull();
+      expect(danbooruSettings?.querySelectorAll("h3")).toHaveLength(0);
+      expect([...danbooruSettings!.querySelectorAll<HTMLElement>(".setting-row")].map(row => row.querySelector("strong")?.textContent)).toEqual(["카드 미리보기 크기", "카드 이미지 품질", "페이지당 post 수", "기본 정렬", "기본 등급", "기본 파일 형식", "Danbooru 기본값 초기화"]);
       expect(danbooruSettings).toHaveTextContent("4종: General(g), Sensitive(s), Questionable(q), Explicit(e)");
       expect(danbooruSettings).toHaveTextContent("status rating limit is id date age filesize filetype");
       expect(danbooruSettings?.querySelectorAll('.danbooru-settings-checks:not(.is-files) input[type="checkbox"]')).toHaveLength(4);
@@ -382,14 +420,16 @@ describe("SettingsDialog operational boundaries", () => {
           ?.click();
       });
       expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+        chzzkSsdStaging: true,
         folderNameTemplate: "[{artist}] {title} [{group}] {id}",
-        autoFindHistoryMode: "include_all_history",
+        autoFindHistoryMode: "newer_than_latest_owned",
         explorePageSize: 50,
         danbooruPageSize: 60,
         danbooruPreviewWidth: 190,
         relatedPreviewWidth: 240,
-        privacyMode: true,
+        privacyOnStartup: false,
         downloadAdaptiveConcurrency: false,
+        highPerformanceProcessing: true,
         downloadAdaptiveMaxRequests: 6,
         searchIncludeTags: ["female:glasses", "webtoon"],
         searchExcludeTags: ["male:glasses"],

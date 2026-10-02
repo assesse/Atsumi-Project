@@ -2422,7 +2422,8 @@ h2 {
 }
 
 .gallery-card.is-compact:hover .compact-favorite-reveal,
-.gallery-card.is-compact:focus-within .compact-favorite-reveal {
+.gallery-card.is-compact:focus-visible .compact-favorite-reveal,
+.gallery-card.is-compact:has(:focus-visible) .compact-favorite-reveal {
   pointer-events: auto;
   visibility: visible;
   opacity: 1;
@@ -2431,7 +2432,8 @@ h2 {
 }
 
 .gallery-card.is-compact:hover .compact-favorite-count-badge,
-.gallery-card.is-compact:focus-within .compact-favorite-count-badge {
+.gallery-card.is-compact:focus-visible .compact-favorite-count-badge,
+.gallery-card.is-compact:has(:focus-visible) .compact-favorite-count-badge {
   color: #fff4de;
   background: rgba(19, 31, 37, 0.96);
   border-color: var(--favorite);
@@ -4255,6 +4257,17 @@ dialog::backdrop {
   display: none !important;
 }
 
+.settings-divider {
+  width: 100%;
+  margin: 16px 0 4px;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.setting-row:has(+ .settings-divider:not([hidden])) {
+  border-bottom: 0;
+}
+
 .settings-scope-intro {
   display: grid;
   gap: 5px;
@@ -4282,7 +4295,7 @@ dialog::backdrop {
 
 .danbooru-settings-panel {
   display: grid;
-  gap: 18px;
+  gap: 0;
 }
 
 .danbooru-settings-section,
@@ -4961,6 +4974,10 @@ dialog::backdrop {
   accent-color: var(--primary);
 }
 
+.danbooru-metatag-guide > summary { display: flex; align-items: center; justify-content: space-between; list-style: none; }
+.danbooru-metatag-guide > summary::-webkit-details-marker { display: none; }
+.danbooru-metatag-guide[open] > summary .fluent-icon { transform: rotate(180deg); }
+
 .range-wrap {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 66px;
@@ -5226,7 +5243,7 @@ dialog::backdrop {
 
 .maintenance-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 240px;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
     "copy action"
     "options options";
@@ -5243,8 +5260,10 @@ dialog::backdrop {
 .maintenance-item > button {
   grid-area: action;
   align-self: center;
-  width: 100%;
-  min-height: 42px;
+  justify-self: end;
+  width: auto;
+  min-height: 34px;
+  padding: 6px 12px;
 }
 
 .maintenance-options {
@@ -5273,7 +5292,9 @@ dialog::backdrop {
 }
 
 .settings-reset-row > button {
-  width: min(100%, 240px);
+  width: auto;
+  min-height: 34px;
+  padding: 6px 12px;
   justify-self: end;
 }
 
@@ -8344,6 +8365,7 @@ dialog::backdrop {
 [data-privacy-mode="on"] .detail-hero::after,
 [data-privacy-mode="on"] .page-preview-media::after,
 [data-privacy-mode="on"] .danbooru-card-preview::after,
+[data-privacy-mode="on"] .danbooru-related-card::after,
 [data-privacy-mode="on"] .danbooru-detail-media::after {
   position: absolute;
   inset: 0;
@@ -8472,3 +8494,28 @@ dialog::backdrop {
   font-size: 13px;
 }
 .startup-status button { flex: none; }
+
+.startup-status.is-loading { border-left: 3px solid var(--source-teal); }
+.startup-status.is-warning { border-left: 3px solid var(--warning); }
+.startup-status.is-error { border-left: 3px solid var(--danger); }
+.startup-status-icon { flex: 0 0 16px; text-align: center; font-weight: 700; }
+.startup-status.is-loading .startup-status-icon { width: 16px; height: 16px; border: 2px solid var(--source-teal); border-right-color: transparent; border-radius: 50%; animation: spin .85s linear infinite; }
+.startup-status.is-warning .startup-status-icon { color: var(--warning); }
+.startup-status.is-error .startup-status-icon { color: var(--danger); }
+
+.danbooru-search-history { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.danbooru-search-history > span { color: var(--muted); font-size: 12px; }
+.danbooru-metatag-guide > summary { cursor: pointer; font-weight: 600; }
+.download-overlap-safety-detail { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.download-overlap-safety-detail > summary { cursor: pointer; }
+.download-overlap-safety-detail > p { margin: 6px 0; line-height: 1.6; }
+
+/* Keep settings actions compact even when their row/column stretches. */
+.settings-form .maintenance-item > button,
+.settings-form .settings-reset-row > button { width: auto; min-height: 34px; height: auto; justify-self: end; align-self: center; padding: 6px 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .startup-status.is-loading .startup-status-icon,
+  .danbooru-relations-status > span:empty,
+  .atsumi-dropdown-menu { animation: none; }
+}

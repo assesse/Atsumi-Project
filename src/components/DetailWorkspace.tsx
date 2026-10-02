@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -17,13 +18,21 @@ import {
 } from "../thumbnail";
 import { FluentIcon } from "./FluentIcon";
 import { CommunityReviewButton } from "../features/community/CommunityReviewButton";
-import { GalleryStatusIcon } from "./GalleryStatusIcon";
+import { BookmarkButton } from "../features/personalLibrary/BookmarkButton";
+import { GalleryProcessingBadge, GalleryProcessingSurface } from "./GalleryProcessingBadge";
+import type { BackgroundOpenOptions } from "../state/downloadStatus";
+import { adjacentPreviewPages, readDetailPositions, saveDetailPosition } from "../state/detailPositions";
+import { useThumbnailClient } from "../thumbnail/ThumbnailProvider";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 import { orderGalleryArtists } from "./GalleryArtists";
 import { ProgressiveDetailHero } from "./ProgressiveDetailHero";
 import { MetadataChip } from "./MetadataChip";
 import { detailPreviewLayout, type DetailPreviewLayout } from "./detailPreviewLayout";
-import { sortGalleryTags } from "./galleryCardLayout";
+import "./DetailWorkspace.css";
+import { attachDetailScrollSnap } from "./detailScrollSnap";
+import "./PagePreviewOverlay.css";
+import { nextPagePreviewAnchor, pagePreviewSlots } from "./pagePreviewNavigation";
+import { sortGalleryTags, splitGalleryTitle } from "./galleryCardLayout";
 import { galleryPreviewPreset, galleryPreviewPresetStyle } from "../layout/galleryPreviewPresets";
 import {
   detailPreviewWindowClampStart,
@@ -74,8 +83,9 @@ type DetailWorkspaceProps = {
   cancellingDownloadEntryIds?: ReadonlySet<string>;
   onOpenDownloadFolder?: (entryId: string) => void;
   onSetRepresentativePreview?: (galleryId: GalleryId, sourcePage: number | null) => Promise<boolean>;
-  onMetadataSearch: (value: string) => void;
+  onMetadataSearch: (value: string, options?: BackgroundOpenOptions) => void;
   onMetadataFavorite: (value: string) => void;
+  pageOpenRequest?: { galleryId: GalleryId; page: number; sequence: number } | null;
 };
 
 type MetadataBoxProps = {
@@ -84,7 +94,7 @@ type MetadataBoxProps = {
   type: string;
   favorite?: boolean;
   favoriteMetadata?: ReadonlySet<string>;
-  onSearch: (value: string) => void;
+  onSearch: (value: string, options?: BackgroundOpenOptions) => void;
   onFavorite: (value: string) => void;
 };
 
@@ -174,7 +184,24 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     onMetadataSearch,
     onMetadataFavorite,
   } = props;
+  const sharedThumbnailClient = useThumbnailClient(thumbnailClient);
+  const [closeRequest, setCloseRequest] = useState<GalleryId | "all" | null>(null);
+  const closeDialog = useRef<HTMLDialogElement>(null);
+  const closeCancelButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (closeRequest !== null && !closeDialog.current?.open) {
+      closeDialog.current?.showModal();
+      closeCancelButton.current?.focus({ preventScroll: true });
+    }
+    else if (closeRequest === null && closeDialog.current?.open) closeDialog.current.close();
+  }, [closeRequest]);
+  const requestClose = (id: GalleryId | "all") => {
+    if (id === "all" && tabs.length > 1) setCloseRequest(id);
+    else if (id === "all") onCloseAll();
+    else onClose(id);
+  };
   const workspace = useRef<HTMLElement>(null);
+  const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const restoreButton = useRef<HTMLButtonElement>(null);
   const previousVisible = useRef(false);
   const previousTabCount = useRef(0);
@@ -188,6 +215,43 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   const [representativeSave, setRepresentativeSave] = useState<{ galleryId: GalleryId; status: "busy" | "error" } | null>(null);
   const [previewPage, setPreviewPage] = useState<number | null>(null);
   const [twoPageView, setTwoPageView] = useState(false);
+  const [readingDirection, setReadingDirection] = useState<"ltr" | "rtl">(() => {
+    try { return localStorage.getItem("atsumi.pagePreview.readingDirection") === "rtl" ? "rtl" : "ltr"; }
+    catch { return "ltr"; }
+  });
+  const [previewControlsVisible, setPreviewControlsVisible] = useState(false);
+  const [previewControlsPinned, setPreviewControlsPinned] = useState(() => {
+    try { return localStorage.getItem("atsumi.pagePreview.controlsPinned") === "true"; }
+    catch { return false; }
+  });
+  const [previewArrowPulse, setPreviewArrowPulse] = useState<{ side: "left" | "right"; sequence: number } | null>(null);
+  useEffect(() => {
+    if (!previewArrowPulse) return;
+    const timeout = window.setTimeout(() => setPreviewArrowPulse(null), 300);
+    return () => window.clearTimeout(timeout);
+  }, [previewArrowPulse]);
+  useEffect(() => {
+    try { localStorage.setItem("atsumi.pagePreview.controlsPinned", String(previewControlsPinned)); } catch { /* optional preference */ }
+  }, [previewControlsPinned]);
+  const previewControlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealPreviewControls = () => {
+    setPreviewControlsVisible(true);
+    if (previewControlsTimer.current) clearTimeout(previewControlsTimer.current);
+    const hide = () => {
+      const node = previewDialog.current;
+      if (node?.querySelector('[aria-expanded="true"], input:focus, textarea:focus, button:focus-visible')) {
+        previewControlsTimer.current = setTimeout(hide, 500);
+      } else setPreviewControlsVisible(false);
+    };
+    previewControlsTimer.current = setTimeout(hide, 1800);
+  };
+  useEffect(() => {
+    setPreviewControlsVisible(false);
+    return () => { if (previewControlsTimer.current) clearTimeout(previewControlsTimer.current); };
+  }, [previewPage === null, activeId]);
+  useEffect(() => {
+    try { localStorage.setItem("atsumi.pagePreview.readingDirection", readingDirection); } catch { /* optional preference */ }
+  }, [readingDirection]);
   const [previewPageInput, setPreviewPageInput] = useState("1");
   const [previewViewport, setPreviewViewport] = useState(() => ({
     width: window.innerWidth,
@@ -199,7 +263,8 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   );
   const [previewResizeBox, setPreviewResizeBox] = useState<PagePreviewResizeBox | null>(null);
   const previewLayouts = useRef(new Map<GalleryId, DetailPreviewLayout>());
-  const previewWindowStarts = useRef(new Map<GalleryId, number>());
+  const initialPreviewPositions = useMemo(() => new Map(Array.from(readDetailPositions(), ([id, value]) => [id as GalleryId, value.previewStart])), []);
+  const previewWindowStarts = useRef(initialPreviewPositions);
   const [, setPreviewRevision] = useState(0);
 
   useEffect(() => {
@@ -211,14 +276,14 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
       window.requestAnimationFrame(() => {
         workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus();
       });
-    } else if (!visible && minimized) {
+    } else if (!visible && minimized && previousVisible.current) {
       window.requestAnimationFrame(() => restoreButton.current?.focus());
     } else if (previousTabCount.current > 0 && tabs.length === 0) {
       const target = opener.current;
       opener.current = null;
       window.requestAnimationFrame(() => {
         if (target?.isConnected) target.focus();
-        else document.querySelector<HTMLElement>(".view-header input")?.focus();
+        else document.querySelector<HTMLElement>(".gallery-viewport")?.focus();
       });
     }
     previousVisible.current = visible;
@@ -226,7 +291,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   }, [minimized, tabs.length]);
 
   useEffect(() => {
-    const activeTabs = new Set(tabs);
+    const activeTabs = new Set([...tabs, ...Array.from(previewWindowStarts.current.keys()).slice(-32)]);
     for (const id of previewLayouts.current.keys()) {
       if (!activeTabs.has(id)) previewLayouts.current.delete(id);
     }
@@ -235,13 +300,45 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     }
   }, [tabs]);
 
-  useEffect(() => {
-    workspace.current?.querySelector<HTMLElement>(".detail-body")?.scrollTo?.({ top: 0, left: 0 });
+  useLayoutEffect(() => {
+    const body = workspace.current?.querySelector<HTMLElement>(".detail-body");
+    if (body && activeId !== null) body.scrollTop = readDetailPositions().get(activeId)?.scrollTop ?? 0;
     if (!minimized && activeId !== null) {
       window.requestAnimationFrame(() => {
         workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus();
       });
     }
+    return () => {
+      clearTimeout(scrollSaveTimer.current);
+      if (body && activeId !== null && !minimized) saveDetailPosition(activeId, { scrollTop: body.scrollTop });
+    };
+  }, [activeId, minimized]);
+
+  useEffect(() => {
+    if (minimized || activeId === null) return;
+    const focusForeground = () => {
+      if (document.visibilityState === "hidden") return;
+      if (document.activeElement instanceof Element
+        && document.activeElement.closest('[role="dialog"][data-gallery-shortcuts-suspended]')) return;
+      const preview = previewDialog.current;
+      if (preview?.open) {
+        if ([...document.querySelectorAll("dialog[open]")].some((dialog) => dialog !== preview)) return;
+        // Preserve comment/collection editors. On return from another app the
+        // native WebView may instead leave focus on body or a background tab.
+        if (!preview.contains(document.activeElement)) preview.focus({ preventScroll: true });
+        return;
+      }
+      if (document.querySelector('dialog[open], .activity-panel, [role="dialog"][data-gallery-shortcuts-suspended]')) return;
+      if (!workspace.current?.contains(document.activeElement)) {
+        workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus({ preventScroll: true });
+      }
+    };
+    window.addEventListener("focus", focusForeground);
+    document.addEventListener("visibilitychange", focusForeground);
+    return () => {
+      window.removeEventListener("focus", focusForeground);
+      document.removeEventListener("visibilitychange", focusForeground);
+    };
   }, [activeId, minimized]);
 
   const navigateTabs = (event: KeyboardEvent<HTMLElement>, index: number) => {
@@ -263,11 +360,24 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   };
 
   const gallery = activeId === null ? undefined : galleries.get(activeId);
+  useEffect(() => {
+    if (minimized || activeId === null) return;
+    const body = workspace.current?.querySelector<HTMLElement>(".detail-body");
+    if (body) return attachDetailScrollSnap(body);
+  }, [activeId, minimized, Boolean(gallery)]);
   const participatingArtists = useMemo(
     () => gallery ? orderGalleryArtists(gallery.artist, gallery.artists, favoriteMetadata) : [],
     [gallery?.artist, gallery?.artists, favoriteMetadata],
   );
   const totalPageCount = gallery ? galleryPageCount(gallery.pages) : 0;
+  const consumedPageRequest = useRef<number | null>(null);
+  useEffect(() => {
+    const request = props.pageOpenRequest;
+    if (!request || consumedPageRequest.current === request.sequence || request.galleryId !== activeId || minimized || !gallery) return;
+    consumedPageRequest.current = request.sequence;
+    setTwoPageView(false);
+    setPreviewPage(request.page > 0 && request.page <= totalPageCount ? request.page : null);
+  }, [props.pageOpenRequest, activeId, minimized, gallery, totalPageCount]);
   const pageOneDimension = gallery?.pageDimensions?.find((page) => page.sourcePage === 1);
   const metadataReady = gallery?.pageDimensions !== undefined;
   const metadataLayout = gallery && metadataReady
@@ -285,35 +395,41 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     return resolvedPreviewDimensions.get(previewDimensionKey(gallery.id, page))
       ?? gallery.pageDimensions?.find((item) => item.sourcePage === page);
   };
-  const previewPageDimension = previewDimensionForPage(previewPage);
-  const companionPreviewPage = previewPage !== null && previewPage < totalPageCount
-    ? previewPage + 1
-    : null;
-  const companionPreviewDimension = previewDimensionForPage(companionPreviewPage);
-  const twoPageEligible = previewPage !== null
-    && companionPreviewPage !== null
-    && validPagePreviewDimension(previewPageDimension)
-    && validPagePreviewDimension(companionPreviewDimension)
-    && pagePreviewOrientation(previewPageDimension) === "portrait"
-    && pagePreviewOrientation(companionPreviewDimension) === "portrait";
-  const isTwoPagePreview = twoPageView && twoPageEligible;
+  const primaryPreviewPage = Math.max(1, previewPage ?? 1);
+  const previewPageDimension = previewDimensionForPage(primaryPreviewPage);
+  const isTwoPagePreview = twoPageView;
+  const previewDisplayPages = pagePreviewSlots(previewPage, totalPageCount, isTwoPagePreview, readingDirection);
+  const actualPreviewPages = previewDisplayPages.filter((page): page is number => page !== null);
+  const previewPageLabel = actualPreviewPages.length > 1
+    ? `${Math.min(...actualPreviewPages)}–${Math.max(...actualPreviewPages)}` : String(actualPreviewPages[0] ?? primaryPreviewPage);
+  const previewSlotDimensions = previewDisplayPages.map((page) => previewDimensionForPage(page ?? primaryPreviewPage) ?? { width: 2, height: 3 });
   const spreadDimension = isTwoPagePreview
-    ? pagePreviewSpreadDimension(previewPageDimension, companionPreviewDimension)
+    ? pagePreviewSpreadDimension(previewSlotDimensions[0], previewSlotDimensions[1])
     : undefined;
   const previewFrame = pagePreviewFrame(spreadDimension ?? previewPageDimension, previewViewport);
-  const previewDisplayPages = previewPage === null
-    ? []
-    : isTwoPagePreview && companionPreviewPage !== null
-      ? [previewPage, companionPreviewPage]
-      : [previewPage];
-  const previewNavigationStep = isTwoPagePreview ? 2 : 1;
+  useEffect(() => {
+    if (!gallery || minimized || previewPage === null || gallery.download?.state === "completed") return;
+    const last = Math.min(totalPageCount, previewPage + (isTwoPagePreview ? 1 : 0));
+    const releases = adjacentPreviewPages(primaryPreviewPage, last, totalPageCount).map((page) =>
+      sharedThumbnailClient.subscribe({ key: sourcePageThumbnailKey(gallery, page), consumer: "detail", priority: "prefetch" }, () => {}));
+    return () => releases.forEach((release) => release());
+  }, [gallery?.id, gallery?.thumbnailKey, gallery?.download?.state, minimized, previewPage, primaryPreviewPage, isTwoPagePreview, totalPageCount, sharedThumbnailClient]);
   const previewResizable = gallery?.download?.state === "completed";
+  useEffect(() => {
+    if (!gallery || !previewResizable) return;
+    setResolvedPreviewDimensions((previous) => {
+      const next = new Map(previous);
+      for (const [key,value] of next) if (value.galleryId === gallery.id) next.delete(key);
+      return next;
+    });
+    previewLayouts.current.delete(gallery.id);
+  }, [gallery?.id, previewResizable, gallery?.download?.revision]);
   const representativeBusy = representativeSave?.status === "busy";
   const representativeError = representativeSave?.galleryId === gallery?.id && representativeSave?.status === "error";
   const currentManualRepresentative = gallery?.representativePreview?.mode === "manual"
     && gallery.representativePreview.entryId === gallery.download?.entryId
-    && gallery.representativePreview.sourcePage === previewPage
-    && gallery.representativePreview.manualSourcePage === previewPage;
+    && gallery.representativePreview.sourcePage === primaryPreviewPage
+    && gallery.representativePreview.manualSourcePage === primaryPreviewPage;
   const previewSourceOrientation = pagePreviewOrientation(previewPageDimension) ?? "pending";
   const previewResizeLimits = pagePreviewResizeBounds(previewViewport);
   const previewWindowSlideDirection = gallery
@@ -357,6 +473,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
       direction: nextStart > currentStart ? "next" : "previous",
     });
     previewWindowStarts.current.set(gallery.id, nextStart);
+    saveDetailPosition(gallery.id, { previewStart: nextStart });
     setPreviewRevision((revision) => revision + 1);
   };
 
@@ -398,11 +515,6 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     window.addEventListener("resize", updateViewport);
     return () => window.removeEventListener("resize", updateViewport);
   }, [previewPage]);
-
-  useEffect(() => {
-    if (!twoPageView || twoPageEligible) return;
-    setTwoPageView(false);
-  }, [twoPageEligible, twoPageView]);
 
   useEffect(() => {
     if (previewPage !== null && previewResizable) return;
@@ -457,14 +569,14 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     setPreviewPageInput(String(previewWindowStart));
   }, [gallery?.id, previewWindowStart]);
 
-  const navigatePreviewPage = (direction: -1 | 1) => {
+  const navigatePreviewPage = useCallback((direction: -1 | 1) => {
     if (previewPage === null) return;
-    const requested = previewPage + direction * previewNavigationStep;
-    if (direction > 0 && requested > totalPageCount) return;
-    const next = direction < 0 ? Math.max(1, requested) : requested;
-    if (next === previewPage) return;
+    const next = nextPagePreviewAnchor(previewPage, totalPageCount, isTwoPagePreview, direction);
+    if (next === null) return;
     setPreviewPage(next);
-  };
+    const side = (direction < 0) === (readingDirection === "ltr") ? "left" : "right";
+    setPreviewArrowPulse((previous) => ({ side, sequence: (previous?.sequence ?? 0) + 1 }));
+  }, [previewPage, totalPageCount, isTwoPagePreview, readingDirection]);
 
   const beginPagePreviewResize = (
     event: ReactPointerEvent<HTMLElement>,
@@ -570,6 +682,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
         || event.altKey
         || event.shiftKey
         || document.querySelector("dialog[open]")
+        || document.querySelector(".activity-panel")
       ) return;
       const target = event.target instanceof Element
         ? event.target
@@ -578,6 +691,12 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
           : null;
       if (target?.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [data-gallery-shortcuts-suspended]')) return;
       const key = event.key.toLocaleLowerCase();
+      if ((event.code === "KeyQ" || key === "q" || event.code === "KeyE" || key === "e") && tabs.length > 1 && activeId !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        onActivate(tabs[(tabs.indexOf(activeId) + (event.code === "KeyQ" || key === "q" ? -1 : 1) + tabs.length) % tabs.length]!);
+        return;
+      }
       const previousWindow = event.key === "ArrowLeft" || event.code === "KeyA" || key === "a";
       const nextWindow = event.key === "ArrowRight" || event.code === "KeyD" || key === "d";
       const direction = previousWindow ? -1 : nextWindow ? 1 : 0;
@@ -588,7 +707,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [gallery, minimized, previewPage, previewPageCount, totalPageCount]);
+  }, [gallery, minimized, previewPage, previewPageCount, totalPageCount, tabs, activeId, onActivate]);
 
   useEffect(() => {
     const node = previewDialog.current;
@@ -599,7 +718,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     }
     if (previewPage !== null && gallery && !node.open) {
       node.showModal();
-      window.requestAnimationFrame(() => previewCloseButton.current?.focus());
+      window.requestAnimationFrame(() => node.focus());
     } else if ((previewPage === null || !gallery) && node.open) {
       previewClosingInternally.current = true;
       node.close();
@@ -616,21 +735,22 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     if (previewPage === null || !gallery) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [data-gallery-shortcuts-suspended]')) return;
+      const preview = previewDialog.current;
+      if (!preview?.open || [...document.querySelectorAll("dialog[open]")].some((dialog) => dialog !== preview)) return;
+      const target = event.target instanceof Element ? event.target : document.activeElement;
+      if (target instanceof Element && target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [data-gallery-shortcuts-suspended], [data-resize-edge]')) return;
       const key = event.key.toLocaleLowerCase();
-      const previous = event.key === "ArrowLeft" || event.code === "KeyA" || key === "a";
-      const nextPage = event.key === "ArrowRight" || event.code === "KeyD" || key === "d";
-      if (!previous && !nextPage) return;
-      const requested = previewPage + (previous ? -previewNavigationStep : previewNavigationStep);
-      if (!previous && requested > totalPageCount) return;
-      const next = previous ? Math.max(1, requested) : requested;
-      if (next === previewPage) return;
+      const left = event.key === "ArrowLeft" || event.code === "KeyA" || key === "a";
+      const right = event.key === "ArrowRight" || event.code === "KeyD" || key === "d";
+      if (!left && !right) return;
+      const previous = readingDirection === "rtl" ? right : left;
       event.preventDefault();
-      setPreviewPage(next);
+      event.stopPropagation();
+      navigatePreviewPage(previous ? -1 : 1);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [gallery, previewNavigationStep, previewPage, totalPageCount]);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [gallery, previewPage, readingDirection, navigatePreviewPage]);
 
   if (!tabs.length) return null;
 
@@ -670,7 +790,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                       aria-label={`${tab.title} 탭 닫기`}
                       onClick={(event) => {
                         event.stopPropagation();
-                        onClose(id);
+                        requestClose(id);
                         window.requestAnimationFrame(() => {
                           workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus();
                         });
@@ -685,7 +805,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
             <button type="button" className="icon-button small" title="상세 최소화" aria-label="상세 최소화" onClick={onMinimize}>
               <FluentIcon glyph="\uE921" />
             </button>
-            <button type="button" className="icon-button small" title="상세 전체 닫기" aria-label="상세 전체 닫기" onClick={onCloseAll}>
+            <button type="button" className="icon-button small" title="상세 전체 닫기" aria-label="상세 전체 닫기" onClick={() => requestClose("all")}>
               <FluentIcon glyph="\uE711" />
             </button>
           </div>
@@ -695,6 +815,11 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
             id={`detail-panel-${gallery.id}`}
             role="tabpanel"
             aria-labelledby={`detail-tab-${gallery.id}`}
+            onScroll={(event) => {
+              const scrollTop = event.currentTarget.scrollTop;
+              clearTimeout(scrollSaveTimer.current);
+              scrollSaveTimer.current = setTimeout(() => saveDetailPosition(gallery.id, { scrollTop }), 250);
+            }}
           >
             <div className="detail-layout">
               <section className="detail-media">
@@ -819,8 +944,10 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                       {gallery.subtitle}
                     </h2>
                     <p>#{gallery.id} · {gallery.pages} pages</p>
+                    {gallery.download?.state !== "completed" ? <GalleryProcessingBadge gallery={gallery} /> : null}
                   </div>
                   <div className="detail-title-actions">
+                    <BookmarkButton gallery={gallery} />
                     <CommunityReviewButton work={{ source: "hitomi", workId: String(gallery.id) }} />
                     {gallery.download && onCancelDownload && (runningDownloadStates.has(gallery.download.state) || cancellingDownloadEntryIds?.has(gallery.download.entryId)) ? (
                       <button type="button" className="icon-button danger-button"
@@ -830,8 +957,8 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                         {cancellingDownloadEntryIds?.has(gallery.download.entryId) ? <span className="spinner" /> : <FluentIcon glyph="\uE71A" />}
                       </button>
                     ) : gallery.download?.state === "completed" ? (
-                      <span className="icon-button detail-download-complete" title="다운로드 완료" role="img" aria-label="다운로드 완료">
-                        <FluentIcon glyph="\uE73E" />
+                      <span className="icon-button detail-download-complete" data-processing-state="completed" role="img" title="다운로드 완료" aria-label="다운로드 완료">
+                        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
                       </span>
                     ) : (
                       <button type="button" className="icon-button" title="다운로드" aria-label="다운로드"
@@ -894,9 +1021,10 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                         return item ? [item] : [];
                       })
                       .slice(0, 5)
-                      .map((item) => (
-                        <article
+                      .map((item) => { const title = splitGalleryTitle(item.title, item.subtitle); return (
+                        <GalleryProcessingSurface
                           key={item.id}
+                          gallery={item}
                           className="related-card"
                           tabIndex={0}
                           style={{
@@ -931,14 +1059,11 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                             sizing="container"
                             alt={`${item.title} 표지`}
                           >
-                            {item.download?.state === "completed" ? (
-                              <span className="download-check" title="다운로드 완료" role="img" aria-label="다운로드 완료">
-                                <GalleryStatusIcon kind="complete" />
-                              </span>
-                            ) : null}
+                            <span className="processing-preview-wash" aria-hidden="true" />
+                            <GalleryProcessingBadge gallery={item} overlay />
                           </GalleryThumbnail>
                           <div className="related-copy card-content">
-                            <div className="card-title"><strong>{item.title}</strong>{item.subtitle ? <span className="title-sub">{item.subtitle}</span> : null}</div>
+                            <div className="card-title" title={item.title}><strong>{title.primary}</strong>{title.secondary ? <span className="title-sub">{title.secondary}</span> : null}</div>
                             <div className="card-byline">
                               <MetadataChip value={`artist:${item.artist}`} label={item.artist} kind="byline" favorite={favoriteMetadata.has(`artist:${item.artist}`)} onSearch={onMetadataSearch} onToggleFavorite={onMetadataFavorite} />
                               {item.group ? <MetadataChip value={`group:${item.group}`} label={item.group} kind="byline" favorite={favoriteMetadata.has(`group:${item.group}`)} onSearch={onMetadataSearch} onToggleFavorite={onMetadataFavorite} /> : null}
@@ -950,8 +1075,8 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                             </div>
                             <div className="meta-bottom"><span>{item.pages}p</span><span>#{item.id}</span></div>
                           </div>
-                        </article>
-                      ))}
+                        </GalleryProcessingSurface>
+                      ); })}
                   </div>
                 </section>
               </section>
@@ -959,13 +1084,34 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
           </div>
         </section>
       ) : null}
+      <dialog ref={closeDialog} className="detail-close-dialog" aria-labelledby="detail-close-title" aria-describedby="detail-close-description" onCancel={() => setCloseRequest(null)}>
+        <div className="detail-close-copy">
+          <h2 id="detail-close-title">{closeRequest === "all" ? `탭 ${tabs.length}개를 닫을까요?` : "탭을 닫을까요?"}</h2>
+          <p id="detail-close-description"><kbd>Ctrl+Shift+T</kbd>로 다시 열 수 있어요.</p>
+        </div>
+        <div className="detail-close-actions">
+          <button type="button" className="detail-close-confirm" onClick={() => {
+            if (closeRequest === "all") onCloseAll();
+            else if (closeRequest !== null) onClose(closeRequest);
+            setCloseRequest(null);
+          }}>{closeRequest === "all" ? "모두 닫기" : "닫기"}</button>
+          <button ref={closeCancelButton} type="button" onClick={() => setCloseRequest(null)}>취소</button>
+        </div>
+      </dialog>
       <dialog
         ref={previewDialog}
+        tabIndex={-1}
         className={`page-preview-dialog${previewResizable ? " is-resizable" : ""}`}
         aria-labelledby="page-preview-title"
         data-page-preview-orientation={previewFrame.orientation}
         data-page-preview-source-orientation={previewSourceOrientation}
         data-page-preview-view={isTwoPagePreview ? "spread" : "single"}
+        data-reading-direction={readingDirection}
+        data-controls-visible={previewControlsPinned || previewControlsVisible}
+        data-controls-pinned={previewControlsPinned}
+        onPointerMove={revealPreviewControls}
+        onPointerDown={revealPreviewControls}
+        onKeyDown={(event) => { if (event.key === "Tab") revealPreviewControls(); }}
         style={{
           "--page-preview-dialog-width": `${previewFrame.dialogWidth}px`,
           "--page-preview-dialog-height": `${previewFrame.dialogHeight}px`,
@@ -1002,10 +1148,11 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
               <div>
                 <span className="eyebrow">PAGE PREVIEW</span>
                 <h2 id="page-preview-title">
-                  {gallery.title} · {isTwoPagePreview ? `${previewPage}–${companionPreviewPage}페이지` : `${previewPage}페이지`}
+                  {gallery.title} · {previewPageLabel}페이지
                 </h2>
               </div>
               <div className="page-preview-header-actions">
+                {actualPreviewPages.map((page) => <BookmarkButton key={page} gallery={gallery} page={page} pageLabelInside />)}
                 <CommunityReviewButton work={{ source: "hitomi", workId: String(gallery.id) }} small />
                 {previewResizable && onSetRepresentativePreview ? (
                   <>
@@ -1017,10 +1164,10 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                       aria-label="앨범커버로 지정"
                       aria-pressed={currentManualRepresentative}
                       title={currentManualRepresentative
-                        ? `${previewPage}페이지가 앨범커버로 지정됨`
-                        : isTwoPagePreview ? `${previewPage}페이지를 앨범커버로 지정` : "앨범커버로 지정"}
+                        ? `${primaryPreviewPage}페이지가 앨범커버로 지정됨`
+                        : isTwoPagePreview ? `${primaryPreviewPage}페이지를 앨범커버로 지정` : "앨범커버로 지정"}
                       disabled={representativeBusy || currentManualRepresentative}
-                      onClick={() => { void setRepresentativePreview(previewPage); }}
+                      onClick={() => { void setRepresentativePreview(primaryPreviewPage); }}
                     >
                       <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                         <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -1052,10 +1199,11 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
               className="page-preview-media-stage"
               data-page-preview-count={previewDisplayPages.length}
               style={isTwoPagePreview ? {
-                gridTemplateColumns: `${pagePreviewAspect(previewPageDimension)}fr ${pagePreviewAspect(companionPreviewDimension)}fr`,
+                gridTemplateColumns: previewSlotDimensions.map((dimension) => `${pagePreviewAspect(dimension)}fr`).join(" "),
               } : undefined}
             >
-              {previewDisplayPages.map((page) => (
+              {previewDisplayPages.map((page, index) => page === null
+                ? <div key={`blank-${index}`} className="page-preview-empty-slot" aria-hidden="true" /> : (
                 <ProgressivePagePreview
                   key={`${gallery.id}:${page}`}
                   gallery={gallery}
@@ -1067,32 +1215,42 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                 />
               ))}
             </div>
+            {(["left", "right"] as const).map((side) => {
+              const direction = (side === "left") === (readingDirection === "ltr") ? -1 : 1;
+              const turning = previewArrowPulse?.side === side;
+              return <button key={side} type="button" className={`page-preview-arrow is-${side}${turning ? " is-turning" : ""}`}
+                aria-label={direction < 0 ? "이전 페이지" : "다음 페이지"}
+                disabled={nextPagePreviewAnchor(previewPage, totalPageCount, isTwoPagePreview, direction) === null}
+                onClick={() => navigatePreviewPage(direction)}>
+                <svg viewBox="0 0 32 48" aria-hidden="true"><g key={previewArrowPulse?.sequence ?? 0} className={turning ? "page-preview-chevron-pulse" : undefined}><path className="chevron-outline" d={side === "left" ? "M22 6 9 24 22 42" : "M10 6 23 24 10 42"} /><path d={side === "left" ? "M22 6 9 24 22 42" : "M10 6 23 24 10 42"} /></g></svg>
+              </button>;
+            })}
             <div className="page-preview-controls">
-              <div className="page-preview-navigation">
-                <button type="button" className="text-button" disabled={previewPage <= 1} onClick={() => navigatePreviewPage(-1)}>이전</button>
-                <span>{isTwoPagePreview ? `${previewPage}–${companionPreviewPage}` : previewPage} / {totalPageCount}</span>
-                <button
-                  type="button"
-                  className="text-button"
-                  disabled={previewPage + previewNavigationStep > totalPageCount}
-                  onClick={() => navigatePreviewPage(1)}
-                >
-                  다음
-                </button>
+              <button type="button" className="icon-button small page-preview-pin" aria-label={previewControlsPinned ? "UI 고정 해제" : "UI 고정"}
+                title={previewControlsPinned ? "UI 고정 해제" : "UI 항상 표시"} aria-pressed={previewControlsPinned}
+                onClick={() => { setPreviewControlsPinned((current) => !current); revealPreviewControls(); }}>
+                <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3h8l-1 6 3 4v2H6v-2l3-4-1-6Zm4 12v6" /></svg>
+              </button>
+              <div className="page-preview-navigation" aria-live="polite" aria-label="현재 페이지">
+                <span>{previewPageLabel} / {totalPageCount}</span>
               </div>
-              {twoPageEligible ? (
+              <div className="page-preview-toolbar">
+                <button type="button" className="text-button" aria-label="읽기 방향" title="읽기 방향과 좌우 이동 방향을 바꿉니다"
+                  onClick={() => setReadingDirection((value) => value === "ltr" ? "rtl" : "ltr")}>
+                  {readingDirection === "ltr" ? "좌 → 우" : "우 → 좌"}
+                </button>
                 <button
                   type="button"
                   className="text-button page-preview-spread-toggle"
                   aria-label="두쪽 보기"
                   aria-pressed={isTwoPagePreview}
                   title={isTwoPagePreview ? "한쪽 보기로 전환" : "현재 페이지와 다음 페이지를 함께 보기"}
-                  onClick={() => setTwoPageView((current) => !current)}
+                  onClick={() => { setTwoPageView((current) => !current); if (previewPage === 0) setPreviewPage(1); }}
                 >
                   <span className="page-preview-spread-icon" aria-hidden="true"><i /><i /></span>
                   <span>두쪽 보기</span>
                 </button>
-              ) : null}
+              </div>
             </div>
           </div>
         ) : null}

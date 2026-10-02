@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import { backend, type BackendEventMap } from "./api/backend";
+import * as workConsole from "./api/workConsole";
 import type {
   AppActiveWorkSnapshot,
   ApiResult,
@@ -200,6 +201,9 @@ const prepareContainmentBatchApp = async (failSecond = false) => {
 
 describe("App Phase 3A backend flow", () => {
   beforeEach(() => {
+    sessionStorage.clear();
+    vi.spyOn(workConsole, "getQueueSnapshot").mockResolvedValue({ queriedAt: new Date().toISOString(), counts: {}, globalActive: 0,
+      totalRows: 0, page: 1, pageSize: 100, items: [], batches: [], etaSeconds: null, recentCompleted: 0, lastProgressAt: null });
     setTutorialDismissed(true);
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     class TestResizeObserver {
@@ -267,11 +271,11 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
-  it("persists the global privacy toggle and scopes the preview mask to the app document", async () => {
+  it("starts hidden and toggles only this session without changing the startup preference", async () => {
     const current = await backend.settingsGet();
     if (!current.ok) throw new Error(current.error.message);
-    if (current.data.privacyMode) {
-      const reset = await backend.settingsUpdate({ privacyMode: false }, current.data.revision);
+    if (current.data.privacyOnStartup === false) {
+      const reset = await backend.settingsUpdate({ privacyOnStartup: true }, current.data.revision);
       if (!reset.ok) throw new Error(reset.error.message);
     }
     const settingsUpdate = vi.spyOn(backend, "settingsUpdate");
@@ -283,7 +287,7 @@ describe("App Phase 3A backend flow", () => {
       root.render(<TestApp />);
       await settle();
     });
-    expect(document.documentElement.dataset.privacyMode).toBe("off");
+    expect(document.documentElement.dataset.privacyMode).toBe("on");
     const toggle = container.querySelector<HTMLButtonElement>('button[aria-label="프라이버시 모드"]');
     if (!toggle) throw new Error("Privacy mode toggle was not rendered");
 
@@ -291,19 +295,19 @@ describe("App Phase 3A backend flow", () => {
       toggle.click();
       await settle();
     });
-    await vi.waitFor(() => expect(document.documentElement.dataset.privacyMode).toBe("on"));
-    expect(toggle).toHaveAttribute("aria-pressed", "true");
-    expect(settingsUpdate).toHaveBeenCalledWith({ privacyMode: true }, expect.any(Number));
+    await vi.waitFor(() => expect(document.documentElement.dataset.privacyMode).toBe("off"));
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    expect(settingsUpdate.mock.calls.some(([patch]) => "privacyMode" in patch || "privacyOnStartup" in patch)).toBe(false);
 
     await act(async () => {
       toggle.click();
       await settle();
     });
-    await vi.waitFor(() => expect(document.documentElement.dataset.privacyMode).toBe("off"));
-    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await vi.waitFor(() => expect(document.documentElement.dataset.privacyMode).toBe("on"));
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
 
     await act(async () => root.unmount());
-    expect(document.documentElement).not.toHaveAttribute("data-privacy-mode");
+    expect(document.documentElement.dataset.privacyMode).toBe("on");
     container.remove();
   });
 
@@ -414,12 +418,14 @@ describe("App Phase 3A backend flow", () => {
     expect(firstCard.querySelector(".selection-indicator")).toBeNull();
     expect(container.querySelector(".selection-toolbar")).not.toHaveClass("is-visible");
     await act(async () => {
-      secondCard.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+      secondCard.querySelector<HTMLButtonElement>(".card-select-toggle")!.click();
     });
     const queueButton = container.querySelector<HTMLButtonElement>(".selection-toolbar .primary");
     expect(container.querySelector(".selection-toolbar")).toHaveClass("is-visible");
-    expect(firstCard.querySelector(".selection-indicator")).not.toBeNull();
-    expect(secondCard.querySelector(".selection-indicator")).not.toBeNull();
+    expect(firstCard.querySelectorAll(".card-select-toggle")).toHaveLength(1);
+    expect(firstCard.querySelector(".card-select-toggle")).toHaveAttribute("aria-pressed", "true");
+    expect(secondCard.querySelectorAll(".card-select-toggle")).toHaveLength(1);
+    expect(secondCard.querySelector(".card-select-toggle")).toHaveAttribute("aria-pressed", "true");
     await act(async () => {
       queueButton?.click();
       await settle();
@@ -734,24 +740,24 @@ describe("App Phase 3A backend flow", () => {
       expect(grid).not.toHaveClass("is-selection-context");
       expect(first.querySelector(".selection-indicator")).toBeNull();
 
-      await act(async () => second.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true })));
+      await act(async () => second.querySelector<HTMLButtonElement>(".card-select-toggle")!.click());
       expect(first).toHaveClass("is-selected");
       expect(second).toHaveClass("is-selected");
       expect(toolbar).toHaveClass("is-visible");
       expect(toolbar).toHaveTextContent("2개 선택됨");
       expect(toolbar?.querySelector(".primary")).not.toBeNull();
       expect(grid).toHaveClass("is-selection-context");
-      expect(first.querySelector(".selection-indicator")).not.toBeNull();
-      expect(second.querySelector(".selection-indicator")).not.toBeNull();
+      expect(first.querySelector(".card-select-toggle")).toHaveAttribute("aria-pressed", "true");
+      expect(second.querySelector(".card-select-toggle")).toHaveAttribute("aria-pressed", "true");
 
-      await act(async () => second.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true })));
+      await act(async () => second.querySelector<HTMLButtonElement>(".card-select-toggle")!.click());
       expect(first).toHaveClass("is-selected");
       expect(second).not.toHaveClass("is-selected");
       expect(toolbar).not.toHaveClass("is-visible");
       expect(grid).not.toHaveClass("is-selection-context");
       expect(first.querySelector(".selection-indicator")).toBeNull();
 
-      await act(async () => second.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true })));
+      await act(async () => second.querySelector<HTMLButtonElement>(".card-select-toggle")!.click());
       await act(async () => first.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
       expect(first).toHaveClass("is-selected");
       expect(second).not.toHaveClass("is-selected");
@@ -926,7 +932,7 @@ describe("App Phase 3A backend flow", () => {
         input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", ctrlKey: true, bubbles: true }));
         await settle();
       });
-      expect(container).toHaveTextContent("즐겨찾기 작가 자동 탐색");
+      expect(container).toHaveTextContent("즐겨찾기 작가·그룹 자동 탐색");
       await act(async () => {
         input?.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", ctrlKey: true, shiftKey: true, bubbles: true }));
         await settle();
@@ -1109,7 +1115,10 @@ describe("App Phase 3A backend flow", () => {
     expect(searchPageGet.mock.calls.filter(([, page]) => page === 3)).toHaveLength(thirdCallsBeforeReturn);
     await vi.waitFor(() => expect(viewport.scrollTop).toBe(417));
 
-    await submitExploreSearch(container);
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "F5", bubbles: true }));
+      await settle();
+    });
     expect(searchSubmit).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("Explore page 1");
     expect(container.querySelector(".pager")).toHaveTextContent("1 / 20");
@@ -1337,7 +1346,86 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
-  it("restores parked root and child Explore contexts without repeating backend searches", async () => {
+  it("Ctrl-selects album cards while keeping artist Ctrl-click searches in the background", async () => {
+    const search = vi.spyOn(backend, "searchSubmit");
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(container);
+      const card = container.querySelector<HTMLElement>('[data-gallery-id="4051038"]')!;
+      const viewport = container.querySelector<HTMLElement>(".gallery-viewport")!;
+      viewport.scrollTop = 345;
+      await act(async () => { card.dispatchEvent(new MouseEvent("click",{bubbles:true,ctrlKey:true,detail:1})); await settle(); });
+      expect(container.querySelector(".detail-workspace")).toBeNull();
+      expect(container.querySelector(".detail-restore")).toBeNull();
+      expect(card).toHaveClass("is-selected");
+      await act(async () => { card.querySelector(".byline")!.dispatchEvent(new MouseEvent("click",{bubbles:true,ctrlKey:true,detail:1})); await settle(); });
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(container.querySelector('.explore-context-bar [aria-selected="true"]')).toHaveTextContent("새 탐색");
+      expect(viewport.scrollTop).toBe(345);
+      expect(container.querySelector('[data-gallery-id="4051038"]')).not.toBeNull();
+      expect(container.querySelector(".detail-workspace")).toBeNull();
+      expect(container.querySelector(".detail-restore")).toBeNull();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("opens every Ctrl-selected album with plain Enter, without downloading or taking Enter from inputs", async () => {
+    vi.spyOn(backend, "searchSubmit").mockResolvedValue({ ok: true, data: { queryId: "selection-tabs", firstPage: selectionFixturePage() } });
+    const queue = vi.spyOn(backend, "downloadQueueAdd");
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(container);
+      const cards = [...container.querySelectorAll<HTMLElement>(".gallery-card")];
+      expect(cards).toHaveLength(2);
+      for (const card of cards) await act(async () => card.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 })));
+      expect(container.querySelectorAll(".gallery-card.is-selected")).toHaveLength(2);
+      expect(container.querySelector(".detail-workspace")).toBeNull();
+      const input = container.querySelector<HTMLInputElement>('[aria-label="검색"]')!;
+      const composing = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true, isComposing: true });
+      await act(async () => input.dispatchEvent(composing));
+      expect(container.querySelector(".detail-workspace")).toBeNull();
+      const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      await act(async () => { cards[1]!.dispatchEvent(enter); await settle(); });
+      expect(enter.defaultPrevented).toBe(true);
+      expect(container.querySelectorAll(".detail-tabs [role=tab]")).toHaveLength(2);
+      expect(container.querySelector('.detail-tabs [aria-selected="true"]')).toHaveTextContent(mockGalleries[0]!.title);
+      expect(queue).not.toHaveBeenCalled();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("returns from an artist search to its originating album and restores the closed search with Ctrl+Shift+T", async () => {
+    const container=document.createElement("div"); document.body.append(container);
+    const root=createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(container);
+      await act(async () => { container.querySelector('[data-gallery-id="4051038"]')!.dispatchEvent(new MouseEvent("dblclick",{bubbles:true,detail:2})); await settle(); });
+      const body=container.querySelector<HTMLElement>(".detail-body")!;
+      body.scrollTop=321;
+      await act(async () => { container.querySelector<HTMLButtonElement>('.detail-workspace [aria-label^="serein,"]')!.click(); await settle(); });
+      expect(container.querySelector(".detail-workspace")).toBeNull();
+      expect(container.querySelectorAll(".explore-context-bar [role=tab]")).toHaveLength(2);
+      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true})); await settle(); });
+      expect(container.querySelector(".detail-workspace")).toHaveAttribute("aria-label","Archive of Rain 상세");
+      expect(container.querySelector<HTMLElement>(".detail-body")!.scrollTop).toBe(321);
+      expect(container.querySelectorAll(".explore-context-bar [role=tab]")).toHaveLength(1);
+      await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"T",ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true})); await settle(); });
+      expect(container.querySelectorAll(".explore-context-bar [role=tab]")).toHaveLength(2);
+      expect(container.querySelector(".detail-workspace")).toBeNull();
+      expect(container.querySelector('.explore-context-bar [aria-selected="true"]')).toHaveTextContent("artist:serein");
+      // Ctrl+Z within the search input belongs to editing, never to navigation restoration.
+      const input=container.querySelector<HTMLInputElement>('[aria-label="검색"]')!;
+      input.focus();
+      const undo=new KeyboardEvent("keydown",{key:"z",ctrlKey:true,bubbles:true,cancelable:true});
+      await act(async () => input.dispatchEvent(undo));
+      expect(undo.defaultPrevented).toBe(false);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("restores independent Explore contexts without repeating backend searches", async () => {
     const originalSettings = await backend.settingsGet();
     if (!originalSettings.ok) throw new Error(originalSettings.error.message);
     const contextPage = (
@@ -1436,14 +1524,14 @@ describe("App Phase 3A backend flow", () => {
       };
 
       await act(async () => {
-        findContextTab("전체 탐색").click();
+        findContextTab("새 탐색").click();
         await settle();
       });
       expect(container).toHaveTextContent("Root page 3");
       expect(container.querySelector(".pager")).toHaveTextContent("3 / 20");
       expect(container.querySelector('[data-gallery-id="8100003"]')).not.toBeNull();
       expect(container.querySelector('[data-gallery-id="8200002"]')).toBeNull();
-      expect(findContextTab("전체 탐색")).toHaveAttribute("aria-selected", "true");
+      expect(findContextTab("새 탐색")).toHaveAttribute("aria-selected", "true");
       await vi.waitFor(() => expect(viewport.scrollTop).toBe(417));
       expect(searchSubmit).toHaveBeenCalledTimes(callsBeforeSwitching.submit);
       expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
@@ -1501,6 +1589,98 @@ describe("App Phase 3A backend flow", () => {
         );
       }
     }
+  });
+
+  it("keeps 64 searches running across tab/view changes and ignores only closed-tab responses", async () => {
+    type Result = Awaited<ReturnType<typeof backend.searchSubmit>>;
+    const pending = new Map<string, (result: Result) => void>();
+    const search = vi.spyOn(backend, "searchSubmit").mockImplementation((request) =>
+      new Promise((resolve) => pending.set(request.text, resolve)));
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const tabs = () => [...container.querySelectorAll<HTMLButtonElement>(".explore-context-bar [role='tab']")];
+    const complete = (index: number) => pending.get(`artist:parallel_${index}`)?.({ ok: true, data: {
+      queryId: `parallel-${index}`, firstPage: { ...explorePage(1, 1), items: [{ ...explorePage(1).items[0]!,
+        id: galleryId(8_400_000 + index), artist: `parallel_${index}`, title: `Parallel result ${index}` }] },
+    } });
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      const input = container.querySelector<HTMLInputElement>('input[aria-label="검색"]')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      for (let index = 0; index < 64; index += 1) {
+        await act(async () => {
+          setter.call(input, `artist:parallel_${index}`);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        await submitExploreSearch(container, 0);
+      }
+      expect(search).toHaveBeenCalledTimes(64);
+      expect(tabs()).toHaveLength(64);
+      expect(tabs().every((tab) => tab.getAttribute("aria-busy") === "true")).toBe(true);
+      expect(container).not.toHaveTextContent("전체 탐색");
+      await act(async () => {
+        setter.call(input, "artist:over_the_limit");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await submitExploreSearch(container, 0);
+      expect(search).toHaveBeenCalledTimes(64);
+      expect(tabs()).toHaveLength(64);
+      expect(container).toHaveTextContent("검색 탭은 최대 64개");
+      await act(async () => { complete(0); await settle(); });
+      expect(tabs()[0]).not.toHaveAttribute("aria-busy");
+      expect(tabs()[63]).toHaveAttribute("aria-selected", "true");
+      expect(container).not.toHaveTextContent("Parallel result 0");
+      await act(async () => { tabs()[0]!.click(); await settle(); });
+      expect(container).toHaveTextContent("Parallel result 0");
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[aria-label="artist:parallel_1 탐색 닫기"]')!.click();
+        complete(1);
+        await settle();
+      });
+      expect(tabs()).toHaveLength(63);
+      expect(container).not.toHaveTextContent("Parallel result 1");
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      await act(async () => { complete(2); complete(63); await settle(); });
+      expect(container.querySelector(".page-heading h1")).not.toHaveTextContent("갤러리 탐색");
+      await act(async () => { clickButtonContaining(container, "Explore"); await settle(); });
+      await act(async () => { tabs().find((tab) => tab.textContent?.startsWith("artist:parallel_2"))!.click(); await settle(); });
+      expect(container).toHaveTextContent("Parallel result 2");
+      expect(search).toHaveBeenCalledTimes(64);
+      expect(container).not.toHaveTextContent("검색이 중단되었습니다");
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  }, 15_000);
+
+  it("finishes a requested page in its own tab after another search takes focus", async () => {
+    let finishPage!: (value: ApiResult<GalleryPage>) => void;
+    vi.spyOn(backend, "searchSubmit").mockResolvedValueOnce({ ok: true,
+      data: { queryId: "background-page", firstPage: explorePage(1, 3) },
+    }).mockResolvedValueOnce({ ok: true,
+      data: { queryId: "foreground-other", firstPage: { ...explorePage(1, 1), items: [] } },
+    });
+    const pages = vi.spyOn(backend, "searchPageGet").mockImplementation((_queryId, page) => page === 2
+      ? new Promise((resolve) => { finishPage = resolve; })
+      : Promise.resolve({ ok: true, data: explorePage(page, 3) }));
+    const cancel = vi.spyOn(backend, "searchPageCancel");
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(container);
+      await act(async () => { clickButtonContaining(container, "다음"); await settle(); });
+      const input = container.querySelector<HTMLInputElement>('input[aria-label="검색"]')!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "other");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await submitExploreSearch(container);
+      await act(async () => { finishPage({ ok: true, data: explorePage(2, 3) }); await settle(); });
+      expect(cancel).not.toHaveBeenCalled();
+      expect(container).not.toHaveTextContent("Explore page 2");
+      await act(async () => { container.querySelector<HTMLButtonElement>(".explore-context-bar [role='tab']")!.click(); await settle(); });
+      expect(container).toHaveTextContent("Explore page 2");
+      expect(pages.mock.calls.filter(([, page]) => page === 2)).toHaveLength(1);
+    } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
   it("does not search while typing and replays structured history with the current page size", async () => {
@@ -1857,7 +2037,7 @@ describe("App Phase 3A backend flow", () => {
       await settle();
     });
     await act(async () => {
-      clickButtonContaining(container, "즐겨찾기 작가 갱신");
+      clickButtonContaining(container, "즐겨찾기 작가·그룹 갱신");
       await settle(10);
     });
     expect(refresh).toHaveBeenCalledTimes(1);
@@ -1869,7 +2049,7 @@ describe("App Phase 3A backend flow", () => {
     expect(container.textContent).toContain("탐색 취소됨");
 
     await act(async () => {
-      clickButtonContaining(container, "즐겨찾기 작가 갱신");
+      clickButtonContaining(container, "즐겨찾기 작가·그룹 갱신");
       await settle(150);
       container.querySelector<HTMLButtonElement>('button[aria-label="언어 필터"]')?.click();
       await settle();
@@ -1898,7 +2078,7 @@ describe("App Phase 3A backend flow", () => {
       await settle();
     });
     await act(async () => {
-      clickButtonContaining(container, "작가별");
+      clickButtonContaining(container, "작가·그룹별");
       await settle();
     });
     expect(container.querySelectorAll(".gallery-group").length).toBeGreaterThanOrEqual(1);
@@ -2024,7 +2204,7 @@ describe("App Phase 3A backend flow", () => {
 
       await act(async () => {
         cards[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-        cards[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+        cards[1]?.querySelector<HTMLButtonElement>(".card-select-toggle")?.click();
         await settle();
       });
       const downloadSelected = container.querySelector<HTMLButtonElement>(".selection-toolbar .primary");
@@ -2039,6 +2219,56 @@ describe("App Phase 3A backend flow", () => {
       expect(autoFindNav?.querySelector(".nav-count")).toBeNull();
       expect(container).toHaveTextContent("확인된 항목 3개 · 다운로드 전 0개");
       expect(container).toHaveTextContent("표시할 갤러리가 없습니다");
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it("groups Auto Find anthologies and group-only works without duplicating counts or downloads", async () => {
+    const settings = await backend.settingsGet();
+    if (!settings.ok) throw new Error(settings.error.message);
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({ ok: true, data: { ...settings.data, autoFindGrouping: "artist", collapsedGroupKeys: [] } });
+    const keys = [
+      { namespace: "artist" as const, value: "dekosuke 18gou" },
+      { namespace: "artist" as const, value: "narita koh" },
+      { namespace: "group" as const, value: "favorite circle" },
+    ];
+    vi.spyOn(backend, "favoritesList").mockResolvedValue({ ok: true, data: keys.map((key) => ({ ...key, revision: 0, createdAt: "now", updatedAt: "now" })) });
+    const candidates = [1775102, 2726891].map((id, index) => ({
+      id: galleryId(id), title: index ? "Group-only candidate" : "Favorite anthology", artist: index ? "Unknown artist" : "akairo",
+      artists: index ? [] : ["akairo", "dekosuke 18gou", "narita koh"], group: "favorite circle",
+      pages: 10, language: "korean" as const, tags: [], series: [], characters: [], publishedRank: id, popularity: 0,
+      thumbnailWidth: 512, thumbnailHeight: 768, runId: "group-test", discoveredAt: "2026-09-22T00:00:00Z",
+      matchedFavorite: keys[index ? 2 : 0]!, matchedFavorites: index ? [keys[2]!] : keys,
+    }));
+    vi.spyOn(backend, "autoFindSnapshot").mockResolvedValue({ ok: true, data: { candidates, cutoffEvidence: [], truncations: [] } });
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({ ok: true, data: { page: 1, totalItems: 0, entries: [] } });
+    vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({ ok: true, data: [] });
+    const queue = vi.spyOn(backend, "downloadQueueAdd").mockImplementation(async (ids) => ({ ok: true,
+      data: ids.map((id) => ({ entryId: `group-test-${id}`, galleryId: id, revision: 1, state: "queued" as const, progress: 0 })) }));
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(80); });
+      await act(async () => { clickButtonContaining(container, "Auto Find"); await settle(40); });
+      expect([...container.querySelectorAll(".gallery-group-title")].map((item) => item.textContent))
+        .toEqual(["그룹 · favorite circle", "작가 · dekosuke 18gou", "작가 · narita koh"]);
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(4);
+      const nav = [...container.querySelectorAll(".nav-item")].find((item) => item.textContent?.includes("Auto Find"));
+      expect(nav?.querySelector(".nav-count")).toHaveTextContent("2");
+      await act(async () => {
+        container.querySelector<HTMLElement>(".gallery-card")?.focus();
+        window.dispatchEvent(new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true }));
+        await settle();
+      });
+      expect(container.querySelector(".selection-toolbar")).toHaveTextContent("2개 선택됨");
+      await act(async () => { container.querySelector<HTMLButtonElement>(".selection-toolbar .primary")?.click(); await settle(); });
+      expect(queue).toHaveBeenCalledTimes(1);
+      expect(queue.mock.calls[0]?.[0]).toHaveLength(2);
+      expect(queue.mock.calls[0]?.[0]).toEqual(expect.arrayContaining(candidates.map((candidate) => candidate.id)));
+      expect(container.querySelectorAll(".gallery-card")).toHaveLength(0);
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -2075,11 +2305,11 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       await act(async () => {
-        clickButtonContaining(container, "즐겨찾기 작가 갱신");
+        clickButtonContaining(container, "즐겨찾기 작가·그룹 갱신");
         await settle(180);
       });
       expect(container).toHaveTextContent("기간별");
-      expect(container).toHaveTextContent("작가별");
+      expect(container).toHaveTextContent("작가·그룹별");
       expect(container).toHaveTextContent("전체");
       const autoFindGroupingToolbar = container.querySelector(".context-left > .gallery-grouping-toolbar");
       expect(autoFindGroupingToolbar).not.toBeNull();
@@ -2093,7 +2323,7 @@ describe("App Phase 3A backend flow", () => {
       expect(container.querySelector(".gallery-viewport > .gallery-grid")).not.toBeNull();
       expect(autoFindGroupingToolbar?.querySelector<HTMLButtonElement>(".gallery-groups-toggle-all")).toBeDisabled();
       await act(async () => {
-        clickButtonContaining(container, "작가별");
+        clickButtonContaining(container, "작가·그룹별");
         await settle();
       });
       await vi.waitFor(() => expect(settingsUpdate).toHaveBeenCalledWith(
@@ -2122,11 +2352,11 @@ describe("App Phase 3A backend flow", () => {
         clickButtonContaining(container, "Downloads");
         await settle();
       });
-      expect(container).toHaveTextContent("기간별");
+      expect(container.querySelector(".gallery-grouping-control")).not.toHaveTextContent("기간별");
       const downloadsGroupingToolbar = container.querySelector(".context-left > .gallery-grouping-toolbar");
       expect(downloadsGroupingToolbar).not.toBeNull();
       expect(downloadsGroupingToolbar?.querySelectorAll("button")).toHaveLength(
-        autoFindGroupingToolbar?.querySelectorAll("button").length ?? 0,
+        3,
       );
       const statusFilter = container.querySelector<HTMLSelectElement>("#download-status-filter");
       expect(statusFilter).toHaveAccessibleName("다운로드 상태 필터");
@@ -2135,19 +2365,7 @@ describe("App Phase 3A backend flow", () => {
       expect(container.querySelector(".status-filter")).toBeNull();
       expect(downloadsGroupingToolbar?.querySelector<HTMLButtonElement>("button[aria-pressed='true']")).toHaveTextContent("전체");
       expect(container.querySelector(".gallery-group-toggle")).toBeNull();
-      await act(async () => {
-        clickButtonContaining(downloadsGroupingToolbar as HTMLElement, "기간별");
-        await settle();
-      });
-      expect(container.querySelector(".gallery-group-toggle")).not.toBeNull();
-      expect(container.querySelectorAll(".gallery-groups[data-group-view='downloads'] .gallery-group-toggle[aria-expanded='true']")).toHaveLength(0);
-      expect(container).toHaveTextContent("전부 펼치기");
-      await act(async () => {
-        clickButtonContaining(container, "전부 펼치기");
-        await settle();
-      });
-      expect(container.querySelector(".gallery-groups[data-group-view='downloads'] .gallery-group-toggle[aria-expanded='true']")).not.toBeNull();
-      expect(container).toHaveTextContent("전부 접기");
+      expect(container.querySelector<HTMLSelectElement>("#downloads-sort-select")?.options).toHaveLength(5);
       await act(async () => {
         clickButtonContaining(container, "작가별");
         await settle();
@@ -2176,7 +2394,7 @@ describe("App Phase 3A backend flow", () => {
         clickButtonContaining(container, "Auto Find");
         await settle();
       });
-      expect(container.querySelector(".gallery-grouping-control button[aria-pressed='true']")).toHaveTextContent("작가별");
+      expect(container.querySelector(".gallery-grouping-control button[aria-pressed='true']")).toHaveTextContent("작가·그룹별");
       await act(async () => {
         clickButtonContaining(container, "Downloads");
         await settle();
@@ -2495,7 +2713,7 @@ describe("App Phase 3A backend flow", () => {
       expect(scanStart).toHaveBeenLastCalledWith({ entryIds: ["selected-entry-a"] });
 
       await act(async () => {
-        second.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+        second.querySelector<HTMLButtonElement>(".card-select-toggle")!.click();
         await settle();
       });
       expect(scanButton).toHaveTextContent("선택 앨범 내부 페이지 검사 (2)");
@@ -2508,7 +2726,7 @@ describe("App Phase 3A backend flow", () => {
       });
 
       await act(async () => {
-        unfinished.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+        unfinished.querySelector<HTMLButtonElement>(".card-select-toggle")!.click();
         await settle();
       });
       expect(scanButton).toBeDisabled();
@@ -2561,7 +2779,7 @@ describe("App Phase 3A backend flow", () => {
         clickButtonContaining(container, "Downloads");
         await settle();
       });
-      const status = container.querySelector<HTMLButtonElement>(`[data-gallery-id="${fixture.keeper.galleryId}"] .status-pill`);
+      const status = container.querySelector<HTMLButtonElement>(`[data-gallery-id="${fixture.keeper.galleryId}"] .gallery-processing-badge`);
       expect(status).not.toBeNull();
       await act(async () => {
         status!.click();
@@ -2575,13 +2793,14 @@ describe("App Phase 3A backend flow", () => {
       });
       expect(dialog.querySelectorAll(".is-merge-source")).toHaveLength(2);
       expect(dialog.querySelectorAll(".is-merge-target")).toHaveLength(2);
-      const apply = dialog.querySelector<HTMLButtonElement>(".download-overlap-merge-apply")!;
-      expect(apply).toHaveTextContent("선택한 2장 병합");
+      const apply = [...dialog.querySelectorAll<HTMLButtonElement>(".download-overlap-merge-apply")].find((button) => button.textContent === "B에 병합")!;
+      expect(apply).toHaveTextContent("B에 병합");
       await act(async () => { apply.click(); });
       expect(merge).toHaveBeenCalledExactlyOnceWith({
         reviewId: review.reviewId, expectedRevision: review.revision,
         candidateId: review.candidates[0]!.candidateId,
         sourceSide: "existing", sourcePages: [1, 3], excludeSource: true,
+        selectedPages: { existing: [1, 3], incoming: [] },
       });
       expect(apply).toBeDisabled();
       expect(dialog.querySelector(".download-overlap-merge-clear")).toBeDisabled();
@@ -2622,7 +2841,8 @@ describe("App Phase 3A backend flow", () => {
         await act(async () => dialog.querySelector<HTMLButtonElement>('button[aria-label="닫기"]')!.click());
       } else {
         expect(container.querySelector(".download-overlap-dialog[open]")).toBeNull();
-        expect(container).toHaveTextContent("2장 병합 완료");
+        expect(container).toHaveTextContent("2장 교체");
+        expect(container).toHaveTextContent("에 병합 완료");
         expect(invalidate).toHaveBeenCalledOnce();
         const predicate = invalidate.mock.calls[0]![0];
         expect(predicate({ kind: "gallery-cover", galleryId: fixture.keeper.galleryId })).toBe(true);
@@ -2691,7 +2911,7 @@ describe("App Phase 3A backend flow", () => {
         clickButtonContaining(container, "Downloads");
         await settle();
       });
-      const status = container.querySelector<HTMLButtonElement>('[data-gallery-id="4051038"] .status-pill');
+      const status = container.querySelector<HTMLButtonElement>('[data-gallery-id="4051038"] .gallery-processing-badge');
       if (!status) throw new Error("Overlap review status was not rendered");
       expect(status).toHaveAttribute("title", expect.stringContaining("다운로드 판본 중복"));
       await act(async () => {
@@ -3118,7 +3338,7 @@ describe("App Phase 3A backend flow", () => {
       });
       await vi.waitFor(() => expect(historyList).toHaveBeenCalledWith({ page: 1, pageSize: 1 }));
       expect(historyList).not.toHaveBeenCalledWith({ page: 1, pageSize: 50 });
-      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toHaveTextContent("1");
+      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toBeNull();
 
       await act(async () => {
         container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')?.click();
@@ -3130,7 +3350,7 @@ describe("App Phase 3A backend flow", () => {
           .find((button) => button.textContent?.includes("자동분류 검토"))?.click();
       });
       expect(container.querySelector("#activity-automation-panel")).toHaveTextContent("새로고침 뒤 자동분류 기록");
-      expect(container.querySelector("#activity-automation-panel")).toHaveTextContent("격리된 실제 파일은 복원하지 않습니다");
+      expect(container.querySelector("#activity-automation-panel")).toHaveTextContent("격리 파일은 복원되지 않습니다");
 
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>("#activity-automation-panel button")]
@@ -3139,7 +3359,7 @@ describe("App Phase 3A backend flow", () => {
       });
       expect(restoreExclusions).toHaveBeenCalledWith(removedGalleryIds);
       expect(historyAcknowledge).toHaveBeenCalledWith(historyItem.reviewId);
-      expect(container.querySelector("#activity-automation-panel")).toHaveTextContent("확인 완료");
+      expect(container.querySelector('#activity-automation-panel [aria-label="확인 완료"]')).not.toBeNull();
       expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toBeNull();
       expect(container).toHaveTextContent("격리된 실제 파일은 복원하지 않았습니다");
     } finally {
@@ -3306,7 +3526,7 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       const panel = container.querySelector<HTMLElement>("#activity-automation-panel")!;
-      expect(panel).toHaveTextContent("확인 완료");
+      expect(panel?.querySelector('[aria-label="확인 완료"]')).not.toBeNull();
       expect([...panel.querySelectorAll("button")].some((button) => button.textContent === "목록에 복원")).toBe(false);
     } finally {
       await act(async () => root.unmount());
@@ -3337,7 +3557,7 @@ describe("App Phase 3A backend flow", () => {
       });
       expect(dialog).toBeInTheDocument();
       expect(container).toHaveTextContent("자동 분류 기록 처리 실패");
-      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toHaveTextContent("1");
+      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toBeNull();
       expect([...dialog.querySelectorAll<HTMLButtonElement>("button")]
         .find((button) => button.textContent?.includes(action))).not.toBeDisabled();
       if (failure === "restore") expect(fixture.historyAcknowledge).not.toHaveBeenCalled();
@@ -3975,9 +4195,9 @@ describe("App Phase 3A backend flow", () => {
     });
     expect(container.textContent).toContain("중복 검사 완료");
     const warning = container.querySelector<HTMLButtonElement>(
-      '[data-gallery-id="4051038"] .status-pill.has-duplicate-count',
+      '[data-gallery-id="4051038"] .gallery-processing-badge[data-processing-state="duplicate"]',
     );
-    expect(warning).toHaveTextContent("1");
+    expect(warning?.textContent).toBe("");
     expect(warning).toHaveAccessibleName(expect.stringContaining("중복 후보 1개"));
 
     await act(async () => {
@@ -4034,8 +4254,7 @@ describe("App Phase 3A backend flow", () => {
     });
     const processedActivity = [...container.querySelectorAll<HTMLElement>("#activity-panel .activity-item")]
       .find((item) => item.textContent?.includes("The Last Tram"));
-    expect(processedActivity).toHaveTextContent("중복 처리 완료 · 목록에서 제외");
-    expect(processedActivity).toHaveTextContent("처리 완료");
+    expect(processedActivity?.querySelector('[aria-label="중복 처리 완료 · 목록에서 제외"]')).not.toBeNull();
     expect(processedActivity).not.toHaveTextContent("재시도");
 
     await act(async () => root.unmount());
@@ -4099,7 +4318,7 @@ describe("App Phase 3A backend flow", () => {
         expectedWorkSetFingerprint: current.workSetFingerprint,
         confirmActiveWork: true,
       });
-      expect(container).toHaveTextContent("Auto Find · 작가 1/3 · 후보 4개");
+      expect(container).toHaveTextContent("Auto Find · 작가·그룹 1/3 · 후보 4개");
       expect(container).toHaveTextContent("진행 작업이 변경되었습니다. 내용을 확인하고 다시 선택해 주세요.");
       expect(container.querySelector(".exit-dialog")).toHaveAttribute("open");
     } finally {
@@ -4211,6 +4430,45 @@ describe("App Phase 3A backend flow", () => {
       container.remove();
       if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
       else delete (HTMLDialogElement.prototype as unknown as { showModal?: unknown }).showModal;
+    }
+  });
+
+  it("retries a large filtered Downloads list through capacity filling and keeps overflow visible", async () => {
+    const settings = await backend.settingsGet();
+    if (!settings.ok) throw new Error(settings.error.message);
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({ ok: true, data: { ...settings.data, downloadsGrouping: "all" } });
+    const items: DownloadLibraryPage["items"] = Array.from({ length: 250 }, (_, index) => ({
+      gallery: { id: galleryId(8_700_000 + index), title: `Retry fixture ${index}`, artist: "Retry artist", pages: 1, language: "korean" },
+      download: { entryId: `retry-limit-${index}`, galleryId: galleryId(8_700_000 + index), revision: 1, state: "failed", progress: 0 },
+    }));
+    vi.spyOn(backend, "downloadLibraryPageList").mockImplementation(async ({ page, pageSize }) => ({
+      ok: true, data: { page, totalItems: items.length, items: items.slice((page - 1) * pageSize, page * pageSize) },
+    }));
+    const retry = vi.spyOn(backend, "downloadRetry").mockResolvedValue({ ok: true,
+      data: Array.from({ length: 188 }, (_, index) => ({ jobId: `available-${index}`, reused: false })) });
+    const queue = vi.spyOn(backend, "downloadQueueAdd");
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(100); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(80); });
+      await act(async () => {
+        const filter = container.querySelector<HTMLSelectElement>("#download-status-filter")!;
+        filter.value = "failed";
+        filter.dispatchEvent(new Event("change", { bubbles: true }));
+        await settle();
+      });
+      await act(async () => { clickButtonContaining(container, "전체 다운로드"); await settle(); });
+      expect(retry).toHaveBeenCalledTimes(1);
+      expect(retry.mock.calls[0]?.[0]).toHaveLength(200);
+      expect(retry.mock.calls[0]?.[1]).toBe(true);
+      expect(queue).not.toHaveBeenCalled();
+      expect(container).toHaveTextContent("188개 항목을 대기열에 추가했습니다. 나머지 62개");
+      retry.mockResolvedValueOnce({ ok: true, data: [] });
+      await act(async () => { clickButtonContaining(container, "전체 다운로드"); await settle(); });
+      expect(container).toHaveTextContent("이미 200개 이상");
+    } finally {
+      await act(async () => root.unmount()); container.remove();
     }
   });
 
@@ -4353,7 +4611,7 @@ describe("App Phase 3A backend flow", () => {
       await act(async () => {
         firstPageCards[0]?.focus();
         firstPageCards[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-        firstPageCards[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true }));
+        firstPageCards[1]?.querySelector<HTMLButtonElement>(".card-select-toggle")?.click();
         await settle();
       });
       expect(container.querySelector(".selection-toolbar")).toHaveTextContent("2개 선택됨");
@@ -4393,6 +4651,51 @@ describe("App Phase 3A backend flow", () => {
         await backend.settingsUpdate({ explorePageSize: originalSettings.data.explorePageSize }, latest.data.revision);
       }
     }
+  });
+
+  it("opens common settings directly from CHZZK", async () => {
+    window.localStorage.setItem("atsumi.content-source.v1", "chzzk");
+    const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value() { this.setAttribute("open", ""); } });
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(50); });
+      await act(async () => container.querySelector<HTMLButtonElement>('.streaming-shell button[aria-label="설정"]')!.click());
+      expect(container.querySelector(".settings-dialog")).toHaveAttribute("open");
+      expect(container.querySelector('.settings-dialog [role="tab"][aria-selected="true"]')).toHaveTextContent("일반");
+      expect(container.querySelector('.settings-dialog [aria-label="프라이버시 모드 상태로 시작"]')).toBeVisible();
+      expect(container.querySelector(".settings-dialog .settings-scope-intro")).toBeNull();
+    } finally {
+      await act(async () => root.unmount()); container.remove(); window.localStorage.removeItem("atsumi.content-source.v1");
+      if (previousShowModal) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previousShowModal);
+      else delete (HTMLDialogElement.prototype as unknown as { showModal?: unknown }).showModal;
+    }
+  });
+
+  it("keeps Danbooru mounted with its loaded list and scroll across a source round trip", async () => {
+    window.localStorage.setItem("atsumi.content-source.v1", "danbooru");
+    const search = vi.spyOn(backend, "danbooruSearch");
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    const switchSource = async (source: string) => {
+      await act(async () => container.querySelector<HTMLButtonElement>('.app-shell:not([hidden]) .brand')!.click());
+      const choice = [...container.querySelectorAll<HTMLButtonElement>('.app-shell:not([hidden]) [role="menuitemradio"]')].find(item => item.querySelector("strong")?.textContent === source)!;
+      await act(async () => { choice.click(); await settle(30); });
+    };
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(50); });
+      const viewport = container.querySelector<HTMLElement>(".danbooru-content")!;
+      await act(async () => { viewport.scrollTop = 270; viewport.dispatchEvent(new Event("scroll")); });
+      const calls = search.mock.calls.length;
+      expect(calls).toBeGreaterThan(0);
+      await switchSource("Hitomi");
+      expect(container.querySelector(".danbooru-shell")).toHaveAttribute("hidden");
+      await switchSource("Danbooru");
+      expect(container.querySelector(".danbooru-content")).toBe(viewport);
+      expect(viewport.scrollTop).toBe(270);
+      expect(search).toHaveBeenCalledTimes(calls);
+    } finally { await act(async () => root.unmount()); container.remove(); window.localStorage.removeItem("atsumi.content-source.v1"); }
   });
 
   it("switches sources from the Atsumi banner and restores the Hitomi workspace", async () => {
@@ -4474,7 +4777,7 @@ describe("App Phase 3A backend flow", () => {
       await switchMode("Hitomi");
       const retained = container.querySelector(`[data-gallery-id="${page.items[0]!.id}"]`);
       expect(retained).toHaveTextContent("Explore page 1");
-      expect(retained).toHaveTextContent("실패");
+      expect(retained?.querySelector('.gallery-processing-badge')).toHaveAccessibleName(expect.stringContaining("실패"));
       await switchMode("Danbooru");
       await switchMode("Hitomi");
 

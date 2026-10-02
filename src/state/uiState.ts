@@ -25,6 +25,7 @@ export const initialUiState: UiState = {
   },
   exploreSort: "recent",
   downloadsFilter: "all",
+  downloadsSort: "recent",
   grouping: { "auto-find": "all", downloads: "all" },
   displayMode: { explore: "detail", "auto-find": "detail", downloads: "detail" },
   selection: { ids: new Set(), anchorId: null },
@@ -42,6 +43,7 @@ export type UiAction =
   | { type: "search.languages"; view: ViewId; languages: Language[] }
   | { type: "sort.set"; sort: SearchSort }
   | { type: "downloads.filter"; filter: DownloadFilter }
+  | { type: "downloads.sort"; sort: import("../api/downloadPopularity").DownloadSort }
   | { type: "grouping.set"; view: "auto-find" | "downloads"; grouping: "all" | "day" | "artist" }
   | { type: "displayMode.set"; view: ViewId; mode: GalleryDisplayMode }
   | {
@@ -164,6 +166,8 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
     }
     case "sort.set":
       return { ...state, exploreSort: action.sort };
+    case "downloads.sort":
+      return { ...state, downloadsSort: action.sort };
     case "downloads.filter":
       return {
         ...state,
@@ -219,12 +223,12 @@ export function uiReducer(state: UiState, action: UiAction): UiState {
       if (parentIndex >= 0) tabs.splice(parentIndex + 1, 0, action.id);
       else tabs.push(action.id);
       if (action.activate === false) {
-        return { ...state, detail: { ...state.detail, tabs } };
+        return { ...state, detail: { ...state.detail, tabs, activeId: state.detail.activeId ?? action.id, minimized: state.detail.activeId === null ? true : state.detail.minimized } };
       }
       return { ...state, detail: { tabs, activeId: action.id, minimized: false } };
     }
     case "detail.activate":
-      return { ...state, detail: { ...state.detail, activeId: action.id } };
+      return { ...state, detail: { ...state.detail, activeId: action.id, minimized: false } };
     case "detail.close":
       return closeDetail(state, action.id);
     case "detail.closeAll":

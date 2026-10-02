@@ -52,6 +52,23 @@ fn key_and_event_dtos_use_the_frontend_contract() {
     );
     assert!(ThumbnailKey::artifact_page("", 1).is_err());
     assert!(ThumbnailKey::artifact_page("entry-73", 0).is_err());
+    let review = ThumbnailKey::OverlapReviewPage {
+        review_id: "review-73".into(),
+        candidate_id: "candidate-2".into(),
+        review_revision: 4,
+        side: OverlapReviewSide::Existing,
+        source_page: 3,
+    };
+    assert_eq!(
+        serde_json::to_value(&review).unwrap(),
+        serde_json::json!({
+            "kind":"overlapReviewPage", "reviewId":"review-73", "candidateId":"candidate-2",
+            "reviewRevision":4, "side":"existing", "sourcePage":3
+        })
+    );
+    let mut invalid_review = serde_json::to_value(&review).unwrap();
+    invalid_review["side"] = "unrelated".into();
+    assert!(serde_json::from_value::<ThumbnailKey>(invalid_review).is_err());
 
     let request = ThumbnailRequestDto {
         key,

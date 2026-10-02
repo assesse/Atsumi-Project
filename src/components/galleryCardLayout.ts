@@ -118,17 +118,13 @@ export function splitGalleryTitle(title: string, subtitle?: string): {
   secondary: string;
 } {
   const canonical = title.trim();
-  const pipeIndex = canonical.indexOf("|");
-  const primary = (pipeIndex >= 0 ? canonical.slice(0, pipeIndex) : canonical).trim();
-  const pipedSecondary = pipeIndex >= 0
-    ? canonical.slice(pipeIndex + 1).split("|").map((part) => part.trim()).filter(Boolean)
-    : [];
-  const explicitSecondary = subtitle?.trim() ?? "";
-  const safePrimary = primary || canonical;
-  const secondaryParts = [...pipedSecondary, explicitSecondary]
-    .filter((part, index, parts) => Boolean(part) && part !== safePrimary && parts.indexOf(part) === index);
+  // Display only: keep the full source title in metadata, search and detail views.
+  const parts = [...canonical.split(/[|｜]/u), subtitle ?? ""]
+    .map((part) => part.trim())
+    .filter((part, index, all) => Boolean(part) && all.indexOf(part) === index);
+  const primary = parts.find((part) => /\p{Script=Hangul}/u.test(part)) ?? parts[0] ?? canonical;
   return {
-    primary: safePrimary,
-    secondary: secondaryParts.join(" · "),
+    primary,
+    secondary: parts.filter((part) => part !== primary).join(" · "),
   };
 }

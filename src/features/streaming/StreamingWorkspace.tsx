@@ -7,6 +7,17 @@ import { MadoWorkspace } from "./MadoWorkspace";
 import { AutoRecordingPanel } from "./AutoRecordingPanel";
 import "./StreamingWorkspace.css";
 
+type StreamingView = WorkspaceViewId<"chzzk">;
+const viewStorageKey = "atsumi.chzzk.view.v1";
+const isStreamingView = (view: unknown): view is StreamingView => view === "live" || view === "recordings" || view === "auto-record";
+function readStreamingView(): StreamingView {
+  try {
+    const saved = localStorage.getItem(viewStorageKey);
+    if (isStreamingView(saved)) return saved;
+  } catch { /* Optional presentation preference; navigation remains available. */ }
+  return "live";
+}
+
 export type StreamingWorkspaceProps = {
   navigationRequest?: import("../../app/CommonNavigation").NavigationRequest | null;
   runtime: OfficialBrowserApi["runtime"];
@@ -15,21 +26,26 @@ export type StreamingWorkspaceProps = {
   onToggleRail: () => void;
   onSourceChange: (source: ContentSource) => void;
   privacyMode: boolean;
+  onOpenSettings?: () => void;
 };
 
-export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRail, onSourceChange, privacyMode, navigationRequest }: StreamingWorkspaceProps) {
-  const [view, setView] = useState<WorkspaceViewId<"chzzk">>("live");
+export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRail, onSourceChange, privacyMode, navigationRequest, onOpenSettings }: StreamingWorkspaceProps) {
+  const requestedView = navigationRequest?.source === "chzzk" && isStreamingView(navigationRequest.view) ? navigationRequest.view : null;
+  const [view, setView] = useState<StreamingView>(() => requestedView ?? readStreamingView());
   // Live is the only presentation entry. Bookmarks and scheduled recordings
   // use that same channel selector; leaving it never owns recording lifetime.
   const navigate = (next: WorkspaceViewId<"chzzk">) => { setView(next); };
   useEffect(() => {
     if (navigationRequest?.source !== "chzzk") return;
     const next = navigationRequest.view;
-    if (next === "live" || next === "recordings" || next === "auto-record") setView(next);
+    if (isStreamingView(next)) setView(next);
   }, [navigationRequest]);
+  useEffect(() => {
+    try { localStorage.setItem(viewStorageKey, view); } catch { /* Keep navigation usable when preferences cannot be saved. */ }
+  }, [view]);
   if (!active) return null;
   return <div className={`app-shell streaming-shell${railCollapsed ? " sidebar-collapsed" : ""}`} hidden={!active} style={active ? undefined : { display: "none" }}>
-    <SideRail source="chzzk" view={view} collapsed={railCollapsed} autoFindCount={0} attentionCount={0} sourceLabel="CHZZK" onNavigate={navigate} onSourceChange={onSourceChange} onToggle={onToggleRail} />
+    <SideRail source="chzzk" view={view} collapsed={railCollapsed} autoFindCount={0} attentionCount={0} sourceLabel="CHZZK" onNavigate={navigate} onSourceChange={onSourceChange} onToggle={onToggleRail} onSettings={onOpenSettings} />
     <main className={`streaming-workspace${view === "live" ? " is-official-view" : ""}`}>
       {view === "auto-record" ? <AutoRecordingPanel runtime={runtime} privacy={privacyMode} />
         : view === "live" ? <MadoWorkspace runtime={runtime} privacy={privacyMode} unifiedLive onLeave={() => {}} />

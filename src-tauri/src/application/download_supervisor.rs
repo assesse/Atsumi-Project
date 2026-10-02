@@ -1379,9 +1379,19 @@ fn run_download(
         return Err(DownloadPipelineError::root_required().into());
     }
 
-    let snapshot = inner
-        .source
-        .gallery_snapshot(descriptor.gallery_id, cancellation)?;
+    let snapshot = match inner.repository.pipeline_received_snapshot(descriptor)? {
+        Some(snapshot) => {
+            tracing::info!(
+                gallery_id = descriptor.gallery_id.get(),
+                pages = snapshot.pages.len(),
+                "resuming fully received edition from durable checkpoints"
+            );
+            snapshot
+        }
+        None => inner
+            .source
+            .gallery_snapshot(descriptor.gallery_id, cancellation)?,
+    };
     check_cancelled(cancellation)?;
     let root = PathBuf::from(settings.download_root);
     let planned_relative_directory =
@@ -1501,6 +1511,14 @@ fn download_one_page(
         ExistingPageVerification::Missing => {}
     }
 
+    if source_page
+        .source_revision
+        .starts_with("local-composition:")
+    {
+        return Err(DownloadPipelineError::new(DownloadPipelineErrorCode::ManifestInvalid,
+            "A locally composed page is missing. Restore its merge backup; remote pages cannot replace a composed edition.", false).into());
+    }
+
     let receiving_started = std::time::Instant::now();
     let payload = match inner.source.download_page(
         descriptor.gallery_id,
@@ -1511,6 +1529,7 @@ fn download_one_page(
         Err(error) => {
             let diagnostics = if error.candidate_diagnostics.is_empty() {
                 vec![SourceCandidateDiagnostic {
+                    detail: error.diagnostic_detail(),
                     candidate_index: 0,
                     format: "unknown".into(),
                     http_status: error.http_status,
@@ -1533,6 +1552,7 @@ fn download_one_page(
     };
     let diagnostics = if payload.candidate_diagnostics.is_empty() {
         vec![SourceCandidateDiagnostic {
+            detail: None,
             candidate_index: payload.candidate_index,
             format: payload.source_format.as_str().to_owned(),
             http_status: None,
@@ -1732,6 +1752,9 @@ fn run_overlap_review_gate(
         })?;
     let review_id = format!("download-overlap-{}", Uuid::new_v4());
     let mut candidates = Vec::new();
+    let mut verify_ms = 0_u64;
+    let mut compare_ms = 0_u64;
+    let mut compared = 0_u64;
 
     for identity in identities {
         check_cancelled(cancellation).map_err(|_| DownloadPipelineError::cancelled())?;
@@ -1799,6 +1822,7 @@ fn run_overlap_review_gate(
                 continue;
             }
         };
+        let verification_started = std::time::Instant::now();
         if let Err(error) = verify_bundle_files(
             inner,
             &existing_layout,
@@ -1815,6 +1839,7 @@ fn run_overlap_review_gate(
             )?;
             continue;
         }
+        verify_ms += verification_started.elapsed().as_millis() as u64;
         let existing_fingerprint =
             overlap_artifact_fingerprint(&existing_bundle, profile.profile_version).ok_or_else(
                 || {
@@ -1867,13 +1892,17 @@ fn run_overlap_review_gate(
                     continue;
                 }
             };
-        if let Some(mut candidate) = analyze_download_overlap_pair(
+        let comparison_started = std::time::Instant::now();
+        let result = analyze_download_overlap_pair(
             &review_id,
             &incoming_hashed,
             &existing_hashed,
             existing_fingerprint,
             &profile,
-        ) {
+        );
+        compare_ms += comparison_started.elapsed().as_millis() as u64;
+        compared += 1;
+        if let Some(mut candidate) = result {
             match inner.repository.overlap_candidate_is_eligible(
                 &incoming_bundle.artifact.entry_id,
                 &identity.entry_id,
@@ -1904,6 +1933,13 @@ fn run_overlap_review_gate(
             candidates.push(candidate);
         }
     }
+    tracing::info!(
+        gallery_id = descriptor.gallery_id.get(),
+        compared,
+        verify_ms,
+        compare_ms,
+        "download overlap candidate stage timings"
+    );
     if candidates.is_empty() {
         tracing::info!(
             entry_id = descriptor.entry_id,
@@ -2015,8 +2051,12 @@ fn prepare_overlap_hashes(
     let root = inner
         .repository
         .pipeline_artifact_root(&bundle.artifact.entry_id)?;
-    let mut hashes = Vec::with_capacity(pages.len());
-    for page in pages {
+    let started = std::time::Instant::now();
+    let cached_pages = std::sync::atomic::AtomicUsize::new(0);
+    let workers = super::image_work_budget::parallel_workers();
+    let rotational = crate::storage_io_budget::is_solid_state(&root) == Some(false);
+    let read_budget = crate::storage_io_budget::BulkReadBudget::for_path(&root);
+    let hashes = super::processing_pool::try_map(&pages, workers, |page| -> Result<_, RunError> {
         check_cancelled(cancellation)?;
         let sha = page.sha256.as_ref().ok_or_else(|| {
             DownloadPipelineError::new(
@@ -2031,15 +2071,33 @@ fn prepare_overlap_hashes(
             profile.profile_version,
             sha.as_str(),
         )? {
-            hashes.push(cached);
-            continue;
+            cached_pages.fetch_add(1, Ordering::Relaxed);
+            return Ok(cached);
         }
         let hash = {
             // Check path/length/SHA here; perceptual hashing performs the full
             // decode once under this slot. Release it before database work.
             let _image_work = super::image_work_budget::acquire(Some(cancellation))
                 .ok_or_else(DownloadPipelineError::cancelled)?;
-            let bytes = inner.store.read_integrity_checked_page_bytes(&root, page)?;
+            let bytes = {
+                let _read_slot = if rotational {
+                    Some(
+                        super::image_work_budget::acquire_hdd_read(cancellation)
+                            .ok_or_else(DownloadPipelineError::cancelled)?,
+                    )
+                } else {
+                    None
+                };
+                check_cancelled(cancellation)?;
+                let read_started = std::time::Instant::now();
+                let bytes = inner.store.read_integrity_checked_page_bytes(&root, page)?;
+                if !read_budget.account(bytes.len(), read_started.elapsed(), || {
+                    cancellation.is_cancelled()
+                }) {
+                    return Err(DownloadPipelineError::cancelled().into());
+                }
+                bytes
+            };
             compute_page_hash(
                 bundle.artifact.entry_id.as_str(),
                 bundle.gallery.id,
@@ -2050,8 +2108,16 @@ fn prepare_overlap_hashes(
             )?
         };
         inner.repository.overlap_page_hash_upsert(&hash)?;
-        hashes.push(hash);
-    }
+        Ok(hash)
+    })?;
+    tracing::info!(
+        gallery_id = bundle.gallery.id.get(),
+        pages = pages.len(),
+        cached_pages = cached_pages.load(Ordering::Relaxed),
+        workers,
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "download overlap page hashes prepared"
+    );
     Ok(hashed_artifact(
         DuplicateGalleryRef {
             gallery_id: bundle.gallery.id,
@@ -2228,6 +2294,13 @@ fn strict_overlap_winner(
     incoming: &crate::domain::DownloadOverlapGalleryRef,
     candidate: &crate::domain::DownloadOverlapCandidate,
 ) -> Option<StrictOverlapWinner> {
+    // Never discard an uncensored donor before its pixels have been merged.
+    // Unique content on both sides always requires an explicit page choice.
+    if (candidate.existing_unique_pages > 0 && candidate.incoming_unique_pages > 0)
+        || crate::infrastructure::automatic_uncensored_merge_source(incoming, candidate).is_some()
+    {
+        return None;
+    }
     if incoming.gallery_id == candidate.existing.gallery_id
         || incoming.entry_id == candidate.existing.entry_id
     {
@@ -2651,6 +2724,15 @@ fn handle_download_error(
         return;
     }
     let (code, message, retryable) = error.stable();
+    let detail = match &error {
+        RunError::Source(source) | RunError::Repository(RepositoryError::Source(source)) => {
+            source.diagnostic_detail()
+        }
+        _ => None,
+    };
+    let message = detail
+        .map(|reason| format!("{message}: {reason}"))
+        .unwrap_or_else(|| message.to_owned());
     tracing::error!(
         job_id = descriptor.job_id,
         gallery_id = descriptor.gallery_id.get(),
@@ -2661,7 +2743,7 @@ fn handle_download_error(
     );
     match inner
         .repository
-        .pipeline_fail(descriptor, code, message, retryable)
+        .pipeline_fail(descriptor, code, &message, retryable)
     {
         Ok(Some(projection)) => emit(inner, projection),
         Ok(None) => {}
@@ -2777,7 +2859,7 @@ fn persist_candidate_diagnostics(
                 http_status: diagnostic.http_status,
                 content_type: diagnostic.content_type.clone(),
                 error_code: diagnostic.error_code.map(|code| code.as_str().to_owned()),
-                error_message: None,
+                error_message: diagnostic.detail.clone(),
                 retryable: diagnostic.retryable,
             })?;
     }
@@ -3044,8 +3126,15 @@ mod tests {
     #[test]
     fn strict_overlap_automation_accepts_observed_complete_containment_boundary() {
         let review = strict_complete_containment_review();
-        validate_strict_overlap_automatic_decision(&review, &strict_automatic_request())
-            .expect("the observed 20-to-12 clear-containment boundary should be eligible");
+        assert!(
+            validate_strict_overlap_automatic_decision(&review, &strict_automatic_request())
+                .is_err()
+        );
+        assert!(crate::infrastructure::automatic_uncensored_merge_source(
+            &review.incoming,
+            &review.candidates[0]
+        )
+        .is_some());
     }
 
     #[test]
@@ -3065,8 +3154,12 @@ mod tests {
         let mut request = strict_automatic_request();
         request.action = DownloadOverlapDecisionAction::RemoveIncoming;
 
-        validate_strict_overlap_automatic_decision(&review, &request)
-            .expect("a clearly contained small incoming remains removable despite its marker");
+        assert!(validate_strict_overlap_automatic_decision(&review, &request).is_err());
+        assert!(crate::infrastructure::automatic_uncensored_merge_source(
+            &review.incoming,
+            &review.candidates[0]
+        )
+        .is_some());
     }
 
     #[test]
@@ -3162,13 +3255,22 @@ mod tests {
             pair.exact_sha256 = index == 0;
             pair.low_information = false;
         }
-        validate_strict_overlap_automatic_decision(&marker_conflict, &strict_automatic_request())
-            .expect("1860999 containment takes priority over the smaller decensored marker");
+        assert!(validate_strict_overlap_automatic_decision(
+            &marker_conflict,
+            &strict_automatic_request()
+        )
+        .is_err());
+        assert!(crate::infrastructure::automatic_uncensored_merge_source(
+            &marker_conflict.incoming,
+            &marker_conflict.candidates[0]
+        )
+        .is_some());
     }
 
     #[test]
     fn strict_overlap_automation_preserves_a_witness_before_removing_other_candidates() {
         let mut all_incoming = strict_complete_containment_review();
+        all_incoming.candidates[0].existing.title = "Chapter".into();
         let mut second = all_incoming.candidates[0].clone();
         second.candidate_id = "strict-candidate-2".to_owned();
         second.existing.entry_id = "existing-entry-2".to_owned();
@@ -3260,6 +3362,7 @@ mod tests {
         pages: u32,
         block_page: Option<u32>,
         fail_page: Option<u32>,
+        unavailable: bool,
         gallery_revision: u64,
         calls: Mutex<Vec<u32>>,
     }
@@ -3270,6 +3373,7 @@ mod tests {
                 pages,
                 block_page,
                 fail_page: None,
+                unavailable: false,
                 gallery_revision: 1,
                 calls: Mutex::new(Vec::new()),
             }
@@ -3291,6 +3395,12 @@ mod tests {
             gallery_id: GalleryId,
             _cancellation: &CancellationToken,
         ) -> Result<DownloadGallerySnapshot, SourceContractError> {
+            if self.unavailable {
+                return Err(SourceContractError::invalid_data(
+                    "galleryinfo.id",
+                    "remote ID was replaced",
+                ));
+            }
             let metadata = GalleryMetadata::new(
                 "Synthetic download fixture",
                 Some("fixture artist".into()),
@@ -3318,6 +3428,12 @@ mod tests {
             cancellation: &CancellationToken,
         ) -> Result<DownloadPagePayload, SourceContractError> {
             unpoison(self.calls.lock()).push(source_page_number.get());
+            if self.unavailable {
+                return Err(SourceContractError::invalid_data(
+                    "galleryinfo.id",
+                    "remote ID was replaced",
+                ));
+            }
             if self.fail_page == Some(source_page_number.get()) {
                 return Err(SourceContractError::image_decode_failed(
                     "synthetic page failure",
@@ -4760,6 +4876,140 @@ mod tests {
         assert_eq!(bundle.pages.len(), 2);
         assert_eq!(bundle.pages[0].page_id.source_page_number.get(), 1);
         assert_eq!(bundle.pages[1].page_id.source_page_number.get(), 2);
+    }
+
+    fn received_download_fixture(
+        repository: &Arc<SqliteRepository>,
+        service: &ApplicationService,
+    ) -> (DownloadJobDescriptor, ArtifactLayout) {
+        let (supervisor, _events) = launch(repository, Arc::new(FakeDownloadSource::new(2, None)));
+        let queued = service
+            .download_queue_add(vec![77], "received-edition".into())
+            .unwrap();
+        let descriptor = queued.jobs[0].clone();
+        let layout = run_download(
+            &supervisor.inner,
+            &descriptor,
+            &CancellationToken::default(),
+        )
+        .unwrap_or_else(|error| panic!("could not seed received download: {error}"));
+        assert!(!layout
+            .root
+            .join(layout.manifest_relative_path.as_str())
+            .exists());
+        repository
+            .pipeline_fail(
+                &descriptor,
+                "TEST_INTERRUPTION",
+                "Received before finalization",
+                true,
+            )
+            .unwrap();
+        supervisor.shutdown_and_wait();
+        (descriptor, layout)
+    }
+
+    #[test]
+    fn received_retry_finishes_pinned_edition_without_remote_metadata() {
+        let temp = tempdir().unwrap();
+        let (repository, service) = configured_repository(temp.path());
+        let (descriptor, layout) = received_download_fixture(&repository, &service);
+        let settings = service.settings_get().unwrap();
+        service
+            .settings_update(
+                SettingsPatch {
+                    download_root: Some(
+                        temp.path()
+                            .join("different-root")
+                            .to_string_lossy()
+                            .into_owned(),
+                    ),
+                    folder_name_template: Some("{id} renamed".into()),
+                    ..SettingsPatch::default()
+                },
+                settings.revision,
+            )
+            .unwrap();
+        let mut unavailable = FakeDownloadSource::new(3, None);
+        unavailable.unavailable = true;
+        let unavailable = Arc::new(unavailable);
+        let (supervisor, _events) = launch(&repository, unavailable.clone());
+        let retried = service
+            .download_retry(vec![descriptor.entry_id.clone()])
+            .unwrap();
+        supervisor.enqueue_retries(&retried).unwrap();
+        let completed = wait_for_state(&service, &descriptor.entry_id, JobState::Completed, 100.0);
+        supervisor.shutdown_and_wait();
+        assert_eq!(completed.attempt, Some(2));
+        assert!(unavailable.calls().is_empty());
+        let manifest = FilesystemArtifactStore::new()
+            .read_manifest(&layout)
+            .unwrap()
+            .unwrap();
+        assert_eq!(manifest.expected_page_count, 2);
+        assert_eq!(manifest.pages.len(), 2);
+        assert!(!temp.path().join("different-root").exists());
+    }
+
+    #[test]
+    fn received_retry_still_rejects_tampered_or_missing_files() {
+        for missing in [false, true] {
+            let temp = tempdir().unwrap();
+            let (repository, service) = configured_repository(temp.path());
+            let (descriptor, layout) = received_download_fixture(&repository, &service);
+            let page = layout
+                .root
+                .join(layout.relative_directory.as_str())
+                .join("0001.webp");
+            if missing {
+                std::fs::remove_file(&page).unwrap();
+            } else {
+                std::fs::write(&page, b"tampered checkpoint").unwrap();
+            }
+            let mut unavailable = FakeDownloadSource::new(2, None);
+            unavailable.unavailable = true;
+            let (supervisor, _events) = launch(&repository, Arc::new(unavailable));
+            let retried = service
+                .download_retry(vec![descriptor.entry_id.clone()])
+                .unwrap();
+            supervisor.enqueue_retries(&retried).unwrap();
+            let failed = wait_for_state(&service, &descriptor.entry_id, JobState::Failed, 0.0);
+            supervisor.shutdown_and_wait();
+            assert_eq!(
+                failed.error_code.as_deref(),
+                Some(if missing {
+                    "SOURCE_INVALID_DATA"
+                } else {
+                    "RECOVERY_CONFLICT"
+                })
+            );
+            assert!(!layout
+                .root
+                .join(layout.manifest_relative_path.as_str())
+                .exists());
+        }
+    }
+
+    #[test]
+    fn received_snapshot_requires_complete_verified_page_map_and_current_attempt() {
+        for mutation in [
+            "UPDATE download_pages SET state='pending' WHERE source_page_number=1",
+            "UPDATE download_pages SET excluded=1 WHERE source_page_number=1",
+            "DELETE FROM download_pages WHERE source_page_number=1",
+            "UPDATE galleries SET source_page_count=3",
+            "UPDATE download_pages SET source_revision=NULL,sha256=NULL,storage_format=NULL,verified_at=NULL WHERE source_page_number=1",
+        ] {
+            let temp = tempdir().unwrap();
+            let (repository, service) = configured_repository(temp.path());
+            let (old_descriptor, _layout) = received_download_fixture(&repository, &service);
+            let connection = rusqlite::Connection::open(temp.path().join("state.sqlite3")).unwrap();
+            connection.execute(mutation, []).unwrap();
+            let retried = service.download_retry(vec![old_descriptor.entry_id.clone()]).unwrap();
+            let descriptors = repository.pipeline_descriptors_for_jobs(&retried).unwrap();
+            repository.pipeline_begin(&descriptors[0]).unwrap();
+            assert!(repository.pipeline_received_snapshot(&old_descriptor).is_err());
+            assert!(repository.pipeline_received_snapshot(&descriptors[0]).unwrap().is_none(), "{mutation}");
+        }
     }
 
     #[test]

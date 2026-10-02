@@ -27,6 +27,25 @@ pub enum ThumbnailKey {
         #[serde(rename = "sourcePage")]
         source_page: u32,
     },
+    #[serde(rename = "overlapReviewPage")]
+    OverlapReviewPage {
+        #[serde(rename = "reviewId")]
+        review_id: String,
+        #[serde(rename = "candidateId")]
+        candidate_id: String,
+        #[serde(rename = "reviewRevision")]
+        review_revision: u64,
+        side: OverlapReviewSide,
+        #[serde(rename = "sourcePage")]
+        source_page: u32,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OverlapReviewSide {
+    Existing,
+    Incoming,
 }
 
 impl ThumbnailKey {
@@ -62,16 +81,16 @@ impl ThumbnailKey {
             Self::GalleryCover { gallery_id } | Self::GalleryPage { gallery_id, .. } => {
                 Some(*gallery_id)
             }
-            Self::ArtifactPage { .. } => None,
+            Self::ArtifactPage { .. } | Self::OverlapReviewPage { .. } => None,
         }
     }
 
     pub fn source_page(&self) -> Option<u32> {
         match self {
             Self::GalleryCover { .. } => None,
-            Self::GalleryPage { source_page, .. } | Self::ArtifactPage { source_page, .. } => {
-                Some(*source_page)
-            }
+            Self::GalleryPage { source_page, .. }
+            | Self::ArtifactPage { source_page, .. }
+            | Self::OverlapReviewPage { source_page, .. } => Some(*source_page),
         }
     }
 
@@ -84,6 +103,19 @@ impl ThumbnailKey {
         if let Self::ArtifactPage { entry_id, .. } = self {
             if entry_id.trim().is_empty() || entry_id.len() > 200 {
                 return Err(ThumbnailKeyError::InvalidEntryId);
+            }
+        }
+        if let Self::OverlapReviewPage {
+            review_id,
+            candidate_id,
+            ..
+        } = self
+        {
+            if [review_id, candidate_id]
+                .iter()
+                .any(|id| id.trim().is_empty() || id.len() > 200)
+            {
+                return Err(ThumbnailKeyError::InvalidReviewIdentity);
             }
         }
         if matches!(self.source_page(), Some(0)) {
@@ -106,6 +138,8 @@ impl ThumbnailKey {
                 "artifact:{}:{entry_id}:source-page:{source_page}",
                 entry_id.len()
             ),
+            Self::OverlapReviewPage { review_id, candidate_id, review_revision, side, source_page } =>
+                format!("overlap-review:{}:{review_id}:{}:{candidate_id}:{review_revision}:{side:?}:{source_page}", review_id.len(), candidate_id.len()),
         }
     }
 }
@@ -122,6 +156,8 @@ pub enum ThumbnailKeyError {
     InvalidGalleryId(i64),
     #[error("artifact entry ID must be non-empty and at most 200 bytes")]
     InvalidEntryId,
+    #[error("review and candidate IDs must be non-empty and at most 200 bytes")]
+    InvalidReviewIdentity,
     #[error("source page must be one-based")]
     InvalidSourcePage,
 }
@@ -219,6 +255,8 @@ pub enum ThumbnailFailureCode {
     TemporarilyUnavailable,
     Unauthorized,
     InvalidData,
+    EvidenceUnavailable,
+    EvidenceChanged,
     Resolver,
     CoordinatorClosed,
 }

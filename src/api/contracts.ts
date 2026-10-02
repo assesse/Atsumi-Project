@@ -157,6 +157,10 @@ export type AppExitRequestedEvent = {
 };
 
 export type SettingsSnapshot = {
+  /** Missing on older backends; SSD staging is opt-in. */
+  chzzkSsdStaging?: boolean;
+  /** Opt-in CPU fan-out; older settings default to balanced processing. */
+  highPerformanceProcessing?: boolean;
   revision: number;
   downloadRoot: string;
   folderNameTemplate: string;
@@ -172,6 +176,7 @@ export type SettingsSnapshot = {
   danbooruPreviewWidth: number;
   relatedPreviewWidth: number;
   privacyMode: boolean;
+  privacyOnStartup?: boolean;
   cacheLimitGb: number;
   concurrentImageRequests: number;
   downloadAdaptiveConcurrency: boolean;
@@ -288,7 +293,8 @@ export type JobRef = {
 export type BackendThumbnailKey =
   | { kind: "galleryCover"; galleryId: number }
   | { kind: "galleryPage"; galleryId: number; sourcePage: number }
-  | { kind: "artifactPage"; entryId: string; sourcePage: number };
+  | { kind: "artifactPage"; entryId: string; sourcePage: number }
+  | { kind: "overlapReviewPage"; reviewId: string; candidateId: string; reviewRevision: number; side: "existing" | "incoming"; sourcePage: number };
 
 export type ThumbnailRequestDto = {
   key: BackendThumbnailKey;
@@ -307,13 +313,19 @@ export type ThumbnailInvalidation = {
   negativeCacheRemoved: boolean;
 };
 
-export type ResolvedThumbnail = {
+type ThumbnailDescription = {
   contentType: string;
-  bytes: number[];
   width: number;
   height: number;
-  sourceRevision?: string;
+  sourceRevision?: string | null;
 };
+
+// Numeric fixture bodies are retained for browser-only tests. The native wire
+// format contains only a capability; thumbnail_read returns an ArrayBuffer.
+export type ResolvedThumbnail = ThumbnailDescription & (
+  | { bytes: number[]; resourceToken?: never }
+  | { resourceToken: string; byteLength: number; bytes?: never }
+);
 
 export type ThumbnailDelivery = {
   key: BackendThumbnailKey;
@@ -332,6 +344,8 @@ export type ThumbnailFailure = {
     | "temporarilyUnavailable"
     | "unauthorized"
     | "invalidData"
+    | "evidenceUnavailable"
+    | "evidenceChanged"
     | "resolver"
     | "coordinatorClosed";
   message: string;
@@ -499,17 +513,20 @@ export type SearchHistoryEntry = {
 
 export type AutoFindRunState = "running" | "completed" | "failed" | "cancelled";
 
-export type AutoFindHistoryMode = "include_all_history" | "newer_than_oldest_downloaded";
+export type AutoFindHistoryMode = "include_all_history" | "newer_than_latest_owned" | "newer_than_oldest_downloaded";
 
 export type AutoFindCutoffEvidence = {
+  namespace?: FavoriteNamespace;
   artist: string;
   oldestOwnedGalleryId?: GalleryId;
+  latestOwnedGalleryId?: GalleryId;
   qualifiedOwnedCount: number;
   source: "verified_owned_artifact";
-  policyVersion: 1;
+  policyVersion: 1 | 2;
 };
 
 export type AutoFindTruncation = {
+  namespace?: FavoriteNamespace;
   artist: string;
   reason: "candidate_limit_after_cutoff";
   eligibleCount: number;
@@ -534,6 +551,7 @@ export type AutoFindRun = {
 export type AutoFindCandidate = GallerySummary & {
   runId: string;
   matchedFavorite: FavoriteKey;
+  matchedFavorites?: FavoriteKey[];
   discoveredAt: string;
 };
 
@@ -823,6 +841,10 @@ export type DownloadOverlapMergeRequest = {
   candidateId: string;
   sourceSide: "existing" | "incoming";
   sourcePages: number[];
+  /** Explicit choices on both sides. Unselected counterparts retain destination bytes. */
+  selectedPages?: { existing: number[]; incoming: number[] };
+  /** The server independently validates the automatic uncensored-containment rule. */
+  automation?: boolean;
   excludeSource?: boolean;
 };
 
@@ -831,6 +853,7 @@ export type DownloadOverlapMergeResult = {
   sourceGalleryId: GalleryId;
   targetGalleryId: GalleryId;
   replacedPages: number;
+  addedPages?: number;
   backupPath: string;
   affectedReviewIds: string[];
   sourceExcluded: boolean;

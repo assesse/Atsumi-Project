@@ -123,8 +123,8 @@ describe("completed pairs share DownloadOverlapReviewDialog", () => {
       const cell = f.container.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="기존 A ${page}페이지"]`)!;
       await act(async () => cell.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
     }
-    await f.click("선택한 2장 병합");
-    expect(f.onMergePages).toHaveBeenCalledWith({ reviewId: "duplicate:candidate-real-evidence", candidateId: "candidate-real-evidence", expectedRevision: 7, sourceSide: "existing", sourcePages: [1,2] });
+    await f.click("B에 병합");
+    expect(f.onMergePages).toHaveBeenCalledWith({ reviewId: "duplicate:candidate-real-evidence", candidateId: "candidate-real-evidence", expectedRevision: 7, sourceSide: "existing", sourcePages: [1,2], selectedPages: { existing: [1,2], incoming: [] } });
     await f.dispose();
   });
   it("shows previously processed decisions read-only", async () => {

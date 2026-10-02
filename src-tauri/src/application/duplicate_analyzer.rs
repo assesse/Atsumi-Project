@@ -384,21 +384,7 @@ fn detail_hash_hex(image: &image::GrayImage) -> String {
 
 fn perceptual_hash(image: &image::GrayImage) -> u64 {
     let resized = image::imageops::resize(image, 32, 32, FilterType::Triangle);
-    let mut coefficients = [0_f64; 64];
-    for v in 0..8 {
-        for u in 0..8 {
-            let mut sum = 0_f64;
-            for y in 0..32 {
-                for x in 0..32 {
-                    let pixel = f64::from(resized.get_pixel(x, y)[0]) - 127.5;
-                    sum += pixel
-                        * ((std::f64::consts::PI * f64::from((2 * x + 1) * u)) / 64.0).cos()
-                        * ((std::f64::consts::PI * f64::from((2 * y + 1) * v)) / 64.0).cos();
-                }
-            }
-            coefficients[(v * 8 + u) as usize] = sum;
-        }
-    }
+    let coefficients = dct_coefficients(&resized);
     let mut median_values = coefficients[1..].to_vec();
     median_values.sort_by(f64::total_cmp);
     let median = median_values[median_values.len() / 2];
@@ -410,6 +396,34 @@ fn perceptual_hash(image: &image::GrayImage) -> u64 {
         })
 }
 
+fn dct_coefficients(resized: &image::GrayImage) -> [f64; 64] {
+    static COSINES: std::sync::OnceLock<[[f64; 32]; 8]> = std::sync::OnceLock::new();
+    let cosines = COSINES.get_or_init(|| {
+        std::array::from_fn(|frequency| {
+            std::array::from_fn(|position| {
+                ((std::f64::consts::PI * ((2 * position + 1) * frequency) as f64) / 64.0).cos()
+            })
+        })
+    });
+    let mut coefficients = [0_f64; 64];
+    for v in 0..8 {
+        for u in 0..8 {
+            let mut sum = 0_f64;
+            for y in 0..32 {
+                for x in 0..32 {
+                    let pixel = f64::from(resized.get_pixel(x, y)[0]) - 127.5;
+                    sum +=
+                        pixel * cosines[u as usize][x as usize] * cosines[v as usize][y as usize];
+                }
+            }
+            coefficients[(v * 8 + u) as usize] = sum;
+        }
+    }
+    // Keep the original multiplication and accumulation order exactly; changing
+    // DCT association could change near-median bits in the persistent hash cache.
+    coefficients
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum MatchTier {
     Strict,
@@ -417,7 +431,7 @@ enum MatchTier {
     HeavyTypesetting,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct PairMetric {
     score: f64,
     pair: DuplicatePagePair,
@@ -708,14 +722,48 @@ fn page_metric_matrix(
     candidate: &[DuplicatePageHash],
     profile: &HashProfile,
 ) -> Vec<Vec<Option<PairMetric>>> {
-    let mut metrics = vec![vec![None; candidate.len()]; parent.len()];
-    for (parent_index, parent_page) in parent.iter().enumerate() {
-        for (candidate_index, candidate_page) in candidate.iter().enumerate() {
-            metrics[parent_index][candidate_index] =
-                page_metric_candidate(parent_page, candidate_page, profile);
-        }
-    }
-    metrics
+    page_metric_matrix_with_workers(
+        parent,
+        candidate,
+        profile,
+        super::image_work_budget::parallel_workers(),
+    )
+}
+
+fn page_metric_matrix_with_workers(
+    parent: &[DuplicatePageHash],
+    candidate: &[DuplicatePageHash],
+    profile: &HashProfile,
+    workers: usize,
+) -> Vec<Vec<Option<PairMetric>>> {
+    // Parse each 1024-bit detail hash once per album comparison, not hundreds
+    // of times per page pair. Distances and every matching threshold stay exact.
+    let parent_detail: Vec<_> = parent
+        .iter()
+        .map(|page| PackedDetail::parse(&page.detail_d_hash_hex))
+        .collect();
+    let candidate_detail: Vec<_> = candidate
+        .iter()
+        .map(|page| PackedDetail::parse(&page.detail_d_hash_hex))
+        .collect();
+    let rows: Vec<_> = parent.iter().zip(&parent_detail).collect();
+    let result: Result<_, std::convert::Infallible> =
+        super::processing_pool::try_map(&rows, workers, |(page, detail)| {
+            let _permit = if workers > 1 {
+                super::image_work_budget::acquire(None)
+            } else {
+                None
+            };
+            Ok(candidate
+                .iter()
+                .zip(&candidate_detail)
+                .map(|(other, other_detail)| {
+                    let distances = detail.as_ref()?.distances(other_detail.as_ref()?);
+                    page_metric_with_distances(page, other, profile, distances)
+                })
+                .collect())
+        });
+    result.unwrap()
 }
 
 fn align_metric_matrix(
@@ -785,13 +833,20 @@ fn page_metric_candidate(
     candidate: &DuplicatePageHash,
     profile: &HashProfile,
 ) -> Option<PairMetric> {
+    let distances = PackedDetail::parse(&parent.detail_d_hash_hex)?
+        .distances(&PackedDetail::parse(&candidate.detail_d_hash_hex)?);
+    page_metric_with_distances(parent, candidate, profile, distances)
+}
+
+fn page_metric_with_distances(
+    parent: &DuplicatePageHash,
+    candidate: &DuplicatePageHash,
+    profile: &HashProfile,
+    (detail_distance, central_detail_distance): (u32, u32),
+) -> Option<PairMetric> {
     let exact = parent.artifact_sha256 == candidate.artifact_sha256;
     let coarse_distance = (parent.coarse_d_hash ^ candidate.coarse_d_hash).count_ones();
     let p_distance = (parent.p_hash ^ candidate.p_hash).count_ones();
-    let detail_distance =
-        hex_hamming_distance(&parent.detail_d_hash_hex, &candidate.detail_d_hash_hex)?;
-    let central_detail_distance =
-        central_detail_distance(&parent.detail_d_hash_hex, &candidate.detail_d_hash_hex)?;
     let edge_similarity = ratio_similarity(parent.edge_density, candidate.edge_density, 0.20);
     let std_similarity = ratio_similarity(parent.std_dev, candidate.std_dev, 96.0);
     let content_similarity =
@@ -914,6 +969,54 @@ fn ratio_similarity(left: f64, right: f64, scale: f64) -> f64 {
     (1.0 - (left - right).abs() / scale).clamp(0.0, 1.0)
 }
 
+struct PackedDetail([u64; 16]);
+
+impl PackedDetail {
+    fn parse(text: &str) -> Option<Self> {
+        if text.len() != 256 {
+            return None;
+        }
+        let mut words = [0_u64; 16];
+        for (index, pair) in text.as_bytes().chunks_exact(2).enumerate() {
+            let nibble = |value: u8| match value {
+                b'0'..=b'9' => Some(value - b'0'),
+                b'a'..=b'f' => Some(value - b'a' + 10),
+                b'A'..=b'F' => Some(value - b'A' + 10),
+                _ => None,
+            };
+            let byte = nibble(pair[0])? * 16 + nibble(pair[1])?;
+            words[index / 8] |= u64::from(byte) << ((index % 8) * 8);
+        }
+        Some(Self(words))
+    }
+
+    fn distances(&self, other: &Self) -> (u32, u32) {
+        const CENTRAL: [u64; 16] = {
+            let mut masks = [0_u64; 16];
+            let mut y = 7;
+            while y < 25 {
+                let mut x = 7;
+                while x < 25 {
+                    let bit = y * 32 + x;
+                    masks[bit / 64] |= 1 << (bit % 64);
+                    x += 1;
+                }
+                y += 1;
+            }
+            masks
+        };
+        let mut full = 0;
+        let mut central = 0;
+        for (index, mask) in CENTRAL.iter().enumerate() {
+            let xor = self.0[index] ^ other.0[index];
+            full += xor.count_ones();
+            central += (xor & mask).count_ones();
+        }
+        (full, central)
+    }
+}
+
+#[cfg(test)]
 fn hex_hamming_distance(left: &str, right: &str) -> Option<u32> {
     if left.len() != right.len() || !left.len().is_multiple_of(2) {
         return None;
@@ -927,6 +1030,7 @@ fn hex_hamming_distance(left: &str, right: &str) -> Option<u32> {
     Some(distance)
 }
 
+#[cfg(test)]
 fn central_detail_distance(left: &str, right: &str) -> Option<u32> {
     if left.len() != 256 || right.len() != 256 {
         return None;
@@ -1466,6 +1570,147 @@ mod tests {
             hash_compute.as_micros(),
             hash_compare.as_micros(),
         );
+    }
+
+    #[test]
+    fn packed_detail_distances_equal_original_for_every_bit_and_mixed_inputs() {
+        let zero = "00".repeat(128);
+        let packed_zero = PackedDetail::parse(&zero).unwrap();
+        for bit in 0..1024 {
+            let mut bytes = [0_u8; 128];
+            bytes[bit / 8] = 1 << (bit % 8);
+            let text = hex_bytes(&bytes);
+            assert_eq!(
+                PackedDetail::parse(&text).unwrap().distances(&packed_zero),
+                (
+                    hex_hamming_distance(&text, &zero).unwrap(),
+                    central_detail_distance(&text, &zero).unwrap()
+                )
+            );
+        }
+        for seed in 1..32_u64 {
+            let left = format!("{:016x}", seed.wrapping_mul(0x9e3779b97f4a7c15)).repeat(16);
+            let right = format!("{:016X}", seed.wrapping_mul(0x517cc1b727220a95)).repeat(16);
+            assert_eq!(
+                PackedDetail::parse(&left)
+                    .unwrap()
+                    .distances(&PackedDetail::parse(&right).unwrap()),
+                (
+                    hex_hamming_distance(&left, &right).unwrap(),
+                    central_detail_distance(&left, &right).unwrap()
+                )
+            );
+        }
+        for invalid in ["0".repeat(255), "z".repeat(256), "한".repeat(86)] {
+            assert!(PackedDetail::parse(&invalid).is_none());
+        }
+    }
+
+    #[test]
+    fn serial_parallel_and_legacy_comparisons_have_identical_evidence() {
+        let (left, right) = heavy_typesetting_fixture();
+        let profile = HashProfile::current();
+        let legacy: Vec<Vec<_>> = left
+            .pages
+            .iter()
+            .map(|left| {
+                right
+                    .pages
+                    .iter()
+                    .map(|right| {
+                        let distances = (
+                            hex_hamming_distance(&left.detail_d_hash_hex, &right.detail_d_hash_hex)
+                                .unwrap(),
+                            central_detail_distance(
+                                &left.detail_d_hash_hex,
+                                &right.detail_d_hash_hex,
+                            )
+                            .unwrap(),
+                        );
+                        page_metric_with_distances(left, right, &profile, distances)
+                    })
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            page_metric_matrix_with_workers(&left.pages, &right.pages, &profile, 1),
+            legacy
+        );
+        assert_eq!(
+            page_metric_matrix_with_workers(&left.pages, &right.pages, &profile, 4),
+            legacy
+        );
+    }
+
+    #[test]
+    fn cached_dct_is_bit_identical_to_original_accumulation() {
+        for seed in [0, 1, 7, 113, 255] {
+            let image = GrayImage::from_fn(32, 32, |x, y| {
+                Luma([((x * y + x * 7 + y * seed) % 256) as u8])
+            });
+            let actual = dct_coefficients(&image);
+            for v in 0..8 {
+                for u in 0..8 {
+                    let mut expected = 0.0_f64;
+                    for y in 0..32 {
+                        for x in 0..32 {
+                            let pixel = f64::from(image.get_pixel(x, y)[0]) - 127.5;
+                            expected += pixel
+                                * ((std::f64::consts::PI * f64::from((2 * x + 1) * u)) / 64.0)
+                                    .cos()
+                                * ((std::f64::consts::PI * f64::from((2 * y + 1) * v)) / 64.0)
+                                    .cos();
+                        }
+                    }
+                    assert_eq!(actual[(v * 8 + u) as usize].to_bits(), expected.to_bits());
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual bounded synthetic before/after CPU benchmark; no user data"]
+    fn profile_processing_improvements() {
+        let texts: Vec<_> = (1..=180_u64)
+            .map(|seed| format!("{:016x}", seed.wrapping_mul(0x9e3779b97f4a7c15)).repeat(16))
+            .collect();
+        let old_started = Instant::now();
+        let mut old_sum = 0_u64;
+        for left in &texts {
+            for right in &texts {
+                old_sum +=
+                    u64::from(hex_hamming_distance(black_box(left), black_box(right)).unwrap());
+                old_sum +=
+                    u64::from(central_detail_distance(black_box(left), black_box(right)).unwrap());
+            }
+        }
+        let old_time = old_started.elapsed();
+        let new_started = Instant::now();
+        let packed: Vec<_> = texts
+            .iter()
+            .map(|text| PackedDetail::parse(text).unwrap())
+            .collect();
+        let mut new_sum = 0_u64;
+        for left in &packed {
+            for right in &packed {
+                let (full, central) = black_box(left).distances(black_box(right));
+                new_sum += u64::from(full + central);
+            }
+        }
+        let new_time = new_started.elapsed();
+        assert_eq!(old_sum, new_sum);
+        let bytes = png_bytes(scene_image(640, 960, false));
+        let inputs: Vec<_> = (0..48).collect();
+        let hash = |_: &i32| Ok::<_, ()>(computed_hash(1, &bytes));
+        let serial_started = Instant::now();
+        let serial = super::super::processing_pool::try_map(&inputs, 1, hash).unwrap();
+        let serial_time = serial_started.elapsed();
+        let parallel_started = Instant::now();
+        let parallel = super::super::processing_pool::try_map(&inputs, 14, hash).unwrap();
+        let parallel_time = parallel_started.elapsed();
+        assert_eq!(serial, parallel);
+        eprintln!("processing_profile pairs=32400 old_distance_ms={} packed_distance_ms={} pages=48 serial_hash_ms={} parallel_14_hash_ms={}",
+            old_time.as_millis(), new_time.as_millis(), serial_time.as_millis(), parallel_time.as_millis());
     }
 
     fn scene_image(width: u32, height: u32, overlay: bool) -> GrayImage {

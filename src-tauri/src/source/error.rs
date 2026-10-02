@@ -83,6 +83,8 @@ impl SourceErrorCode {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceCandidateDiagnostic {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
     pub candidate_index: u32,
     pub format: String,
     pub http_status: Option<u16>,
@@ -117,6 +119,26 @@ pub struct SourceContractError {
 }
 
 impl SourceContractError {
+    /// Decoder/parser reasons only, capped and without response bodies or URLs.
+    /// Transport/auth errors retain their stable code and HTTP status instead.
+    pub fn diagnostic_detail(&self) -> Option<String> {
+        if !matches!(
+            self.code,
+            SourceErrorCode::InvalidData
+                | SourceErrorCode::Protocol
+                | SourceErrorCode::ImageDecodeFailed
+                | SourceErrorCode::ImageResponseInvalid
+        ) {
+            return None;
+        }
+        let text = self
+            .message
+            .split_whitespace()
+            .map(|word| if word.contains("://") { "[url]" } else { word })
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(text.chars().filter(|c| !c.is_control()).take(256).collect())
+    }
     pub fn validation(field: impl AsRef<str>, message: impl AsRef<str>) -> Self {
         Self::new(
             SourceErrorCode::Validation,

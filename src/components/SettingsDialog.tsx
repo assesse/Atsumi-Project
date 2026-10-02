@@ -14,6 +14,7 @@ import type {
   TagCatalogStatus,
 } from "../api/contracts";
 import type { GalleryId } from "../core/types";
+import { splitGalleryTitle } from "./galleryCardLayout";
 import {
   DANBOORU_FILE_TYPES,
   DANBOORU_RATINGS,
@@ -242,7 +243,7 @@ export function SettingsDialog({
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateMessage, setUpdateMessage] = useState("");
   const [rebuildOptions, setRebuildOptions] = useState({ thumbnail: true, duplicate: false, internal: false, autoFind: false });
-  const [activeTab, setActiveTab] = useState<"general" | "hitomi" | "danbooru">("general");
+  const [activeTab, setActiveTab] = useState<"general" | "hitomi" | "danbooru" | "chzzk">("general");
   const [danbooruDraft, setDanbooruDraft] = useState<DanbooruSearchFilters>(defaultDanbooruSearchFilters);
   const [exclusions, setExclusions] = useState<ExplorationExclusion[]>([]);
   const [exclusionsLoading, setExclusionsLoading] = useState(false);
@@ -414,7 +415,7 @@ export function SettingsDialog({
     const previewWidth = 220;
     setDraft((current) => ({
       ...current,
-      autoFindHistoryMode: "include_all_history",
+      autoFindHistoryMode: "newer_than_latest_owned",
       downloadOverlapAutoMode: "off",
       explorePageSize: 50,
       danbooruPageSize: 60,
@@ -422,9 +423,10 @@ export function SettingsDialog({
       previewWidth,
       danbooruPreviewWidth: 190,
       relatedPreviewWidth: 240,
-      privacyMode: false,
+      privacyOnStartup: true,
       concurrentImageRequests: 5,
       downloadAdaptiveConcurrency: true,
+      highPerformanceProcessing: false,
       downloadAdaptiveMaxRequests: 8,
       requestStartIntervalMs: 25,
     }));
@@ -516,6 +518,7 @@ export function SettingsDialog({
     setSaving(true);
     const success = await onSave({
       downloadRoot: draft.downloadRoot,
+      chzzkSsdStaging: draft.chzzkSsdStaging ?? false,
       folderNameTemplate: draft.folderNameTemplate,
       autoFindHistoryMode: draft.autoFindHistoryMode,
       downloadOverlapAutoMode: draft.downloadOverlapAutoMode,
@@ -525,10 +528,11 @@ export function SettingsDialog({
       previewWidth: draft.previewWidth,
       danbooruPreviewWidth: draft.danbooruPreviewWidth,
       relatedPreviewWidth: draft.relatedPreviewWidth,
-      privacyMode: draft.privacyMode,
+      privacyOnStartup: draft.privacyOnStartup ?? true,
       cacheLimitGb: draft.cacheLimitGb,
       concurrentImageRequests: draft.concurrentImageRequests,
       downloadAdaptiveConcurrency: draft.downloadAdaptiveConcurrency,
+      highPerformanceProcessing: draft.highPerformanceProcessing ?? false,
       downloadAdaptiveMaxRequests: draft.downloadAdaptiveMaxRequests,
       requestStartIntervalMs: draft.requestStartIntervalMs,
       searchIncludeTags: draft.searchIncludeTags,
@@ -595,16 +599,36 @@ export function SettingsDialog({
             className={activeTab === "danbooru" ? "is-active" : ""}
             onClick={() => setActiveTab("danbooru")}
           >Danbooru</button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "chzzk"}
+            className={activeTab === "chzzk" ? "is-active" : ""}
+            onClick={() => setActiveTab("chzzk")}
+          >치지직</button>
         </nav>
         <div className="settings-layout settings-layout-single">
           <section className="settings-content" data-settings-scroll-root="true">
               {error ? <div className="inline-error" role="alert">{error.message}</div> : null}
-              {activeTab === "general" ? <div className="settings-scope-intro"><span className="eyebrow">ATSUMI COMMON</span><h3>일반 설정</h3><p>두 소스가 함께 사용하는 저장 위치·화면 크기·개인정보 보호·프로그램 관리 설정입니다.</p></div> : null}
-              {activeTab === "hitomi" ? <div className="settings-scope-intro"><span className="eyebrow">HITOMI LIBRARY</span><h3>Hitomi 설정</h3><p>앨범·Auto Find·판본 중복·Related galleries·Hitomi 태그 검색에만 적용됩니다.</p></div> : null}
               {activeTab !== "danbooru" ? <>
                 <AutostartSetting active={open && activeTab === "general"} />
                 <div className="setting-row" hidden={activeTab !== "general"}>
-                  <div><strong>다운로드 폴더</strong><span>Hitomi 앨범과 Danbooru 원본을 저장할 공통 루트</span></div>
+                  <div>
+                    <strong>프라이버시 모드 상태로 시작</strong>
+                  </div>
+                  <label className="setting-checkbox">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      aria-label="프라이버시 모드 상태로 시작"
+                      checked={draft.privacyOnStartup ?? true}
+                      onChange={(event) => patch("privacyOnStartup", event.target.checked)}
+                    />
+                  </label>
+                </div>
+                <hr className="settings-divider" hidden={activeTab !== "general"} />
+                <div className="setting-row" hidden={activeTab !== "general"}>
+                  <div><strong>다운로드 폴더</strong><span>앨범·이미지·치지직 녹화를 저장할 공통 루트</span></div>
                   <input value={draft.downloadRoot} placeholder="폴더를 선택하세요" aria-label="다운로드 폴더" onChange={(event) => patch("downloadRoot", event.target.value)} />
                 </div>
                 <section className="storage-usage-panel" aria-labelledby="storage-usage-title" hidden={activeTab !== "general"}>
@@ -686,6 +710,256 @@ export function SettingsDialog({
                     </ul> : null}
                   </> : null}
                 </section>
+                <hr className="settings-divider" hidden={activeTab !== "general"} />
+                <div className="setting-row settings-reset-row" hidden={activeTab !== "general"}>
+                  <div>
+                    <strong>설정 초기화</strong>
+                    <span>화면·미리보기·네트워크 설정을 기본값으로 되돌립니다. 저장을 눌러야 적용됩니다.</span>
+                  </div>
+                  <button type="button" className="text-button" disabled={maintenanceBusy !== null} onClick={restorePreferenceDefaults}>설정 기본값</button>
+                </div>
+                {activeTab === "general" && maintenanceMessage ? <p className="maintenance-message" role="status">{maintenanceMessage}</p> : null}
+                <article className="maintenance-item maintenance-item--factory-reset" hidden={activeTab !== "general"}>
+                  <div className="maintenance-copy">
+                    <strong>앱 데이터 완전 초기화</strong>
+                    <p>앱을 첫 실행 상태로 되돌립니다. 외부 다운로드 원본 파일과 quarantine/recovery 파일, 개인 앨범·페이지 즐겨찾기와 컬렉션, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.</p>
+                  </div>
+                  <button type="button" className="text-button danger-button" disabled={maintenanceBusy !== null} onClick={() => void runMaintenance({ kind: "factoryReset", confirmation: "RESET_ALL_APP_DATA" })}>{maintenanceBusy === "factoryReset" ? "초기화 준비 중" : "앱 데이터 완전 초기화"}</button>
+                </article>
+                <section className="settings-about-panel" aria-labelledby="settings-about-title" hidden={activeTab !== "general"}>
+                  <header>
+                    <div>
+                      <span className="eyebrow">ABOUT &amp; FEEDBACK</span>
+                      <strong id="settings-about-title">프로그램 정보</strong>
+                    </div>
+                    <span className="settings-about-version">v{packageMetadata.version}</span>
+                  </header>
+                  <dl className="settings-about-details">
+                    <div><dt>프로그램</dt><dd>Atsumi</dd></div>
+                    <div><dt>제작</dt><dd>assesse · Atsumi contributors</dd></div>
+                    <div><dt>프로젝트</dt><dd>github.com/assesse/Atsumi-Project</dd></div>
+                  </dl>
+                  <p>버그와 기능 제안은 GitHub Issues에서 받습니다. 복사되는 진단 정보에는 앨범 제목, 태그, 파일 경로, 데이터베이스 내용이 포함되지 않습니다.</p>
+                  <div className="settings-about-actions">
+                    <button type="button" className="text-button primary" disabled={updateCheckBusy} onClick={() => void checkForUpdates()}>{updateCheckBusy ? "확인 중" : "업데이트 확인"}</button>
+                    <button type="button" className="text-button" onClick={() => void copyInformation("feedback")}>피드백 주소 복사</button>
+                    <button type="button" className="text-button" onClick={() => void copyInformation("diagnostics")}>진단 정보 복사</button>
+                  </div>
+                  <p className="settings-about-message" role="status" aria-live="polite">{updateMessage || informationMessage}</p>
+                </section>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <div><strong>앨범 카드 최대 열 수</strong><span>창이 넓어도 설정한 열 수를 넘지 않습니다</span></div>
+                  <div className="range-wrap"><input id="settings-max-columns" aria-label="앨범 카드 최대 열 수" type="range" min="1" max="4" step="1" value={draft.maxColumns} onChange={(event) => { const value = Number(event.target.value); patch("maxColumns", value); previewLayout(value, draft.previewWidth); }} /><output htmlFor="settings-max-columns">{draft.maxColumns}열</output></div>
+                </div>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <div><strong>Hitomi 카드 미리보기 크기</strong><span>Hitomi Explore·Auto Find·Downloads 카드에 적용</span></div>
+                  <div className="range-wrap"><input id="settings-preview-width" aria-label="Hitomi 카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(draft.previewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[2]!; patch("previewWidth", preset.width); previewLayout(draft.maxColumns, preset.width); }} /><output htmlFor="settings-preview-width">{draft.previewWidth}px</output></div>
+                </div>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <div><strong>Related galleries 미리보기 크기</strong><span>Floating Detail 안의 Related galleries에만 적용</span></div>
+                  <div className="range-wrap"><input id="settings-related-preview-width" aria-label="Related galleries 미리보기 크기" type="range" min="180" max="320" step="20" value={draft.relatedPreviewWidth} onChange={(event) => patch("relatedPreviewWidth", Number(event.target.value))} /><output htmlFor="settings-related-preview-width">{draft.relatedPreviewWidth}px</output></div>
+                </div>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <div>
+                    <strong>Hitomi 페이지당 앨범 수</strong>
+                    <span>현재 열 수에 맞춰 마지막 행이 차도록 요청량을 가까운 열 배수로 자동 조정합니다.</span>
+                  </div>
+                  <div className="range-wrap">
+                    <input
+                      id="settings-explore-page-size"
+                      aria-label="Hitomi 페이지당 앨범 수"
+                      type="range"
+                      min="10"
+                      max="200"
+                      step="10"
+                      value={draft.explorePageSize}
+                      onChange={(event) => patch("explorePageSize", Number(event.target.value))}
+                    />
+                    <output htmlFor="settings-explore-page-size">{draft.explorePageSize}개</output>
+                  </div>
+                </div>
+                <hr className="settings-divider" hidden={activeTab !== "hitomi"} />
+                {activeTab === "hitomi" ? <>
+                  <section className="search-rules-panel" aria-labelledby="search-rules-title">
+                    <header>
+                      <span className="eyebrow">GLOBAL SEARCH RULES</span>
+                      <h3 id="search-rules-title">Explore·자동탐색에 적용할 태그</h3>
+                      <p>태그를 한 줄에 하나씩 입력하세요. 쉼표로도 구분할 수 있습니다. Explore의 새 검색과 자동탐색에 공통 적용되며, 저장된 자동탐색 후보도 즉시 필터링됩니다.</p>
+                    </header>
+                    <div className="search-rule-fields">
+                      <label>
+                        <strong>필수 포함 태그</strong>
+                        <span>모든 검색의 포함 조건에 자동으로 추가됩니다.</span>
+                        <textarea
+                          aria-label="모든 검색 필수 포함 태그"
+                          value={includeTagInput}
+                          placeholder={"female:glasses\nwebtoon"}
+                          onChange={(event) => {
+                            setIncludeTagInput(event.target.value);
+                            patch("searchIncludeTags", parseGlobalSearchTagInput(event.target.value));
+                          }}
+                        />
+                      </label>
+                      <label>
+                        <strong>항상 제외할 태그</strong>
+                        <span>개별 검색이 같은 태그를 요구해도 제외 조건이 우선합니다.</span>
+                        <textarea
+                          aria-label="모든 검색 제외 태그"
+                          value={excludeTagInput}
+                          placeholder={"male:glasses\nfull_color"}
+                          onChange={(event) => {
+                            setExcludeTagInput(event.target.value);
+                            patch("searchExcludeTags", parseGlobalSearchTagInput(event.target.value));
+                          }}
+                        />
+                      </label>
+                    </div>
+                    {overlappingSearchTags.length ? (
+                      <p className="inline-error" role="alert">포함과 제외에 동시에 지정된 태그를 정리하세요: {overlappingSearchTags.join(", ")}</p>
+                    ) : null}
+                  </section>
+                  <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                    <SettingCopy
+                      title="Auto Find 기록 기준"
+                      summary="후보를 찾기 시작할 기록 범위를 선택합니다."
+                      detail="변경한 기준은 다음 Auto Find 실행부터 적용됩니다. ‘가장 최근 소유 작품 이후’는 작가·그룹별 검증 완료·격리 소유본 중 가장 높은 작품번호 이후만 찾습니다. 다운로드한 시각은 기준이 아니며, 보유본이 없는 대상은 전체 범위를 탐색합니다."
+                    />
+                    <div className="settings-select-control">
+                      <select
+                        aria-label="Auto Find 기록 기준"
+                        value={draft.autoFindHistoryMode}
+                        onChange={(event) => patch("autoFindHistoryMode", event.target.value as SettingsSnapshot["autoFindHistoryMode"])}
+                      >
+                        <option value="include_all_history">전체 기록 포함</option>
+                        <option value="newer_than_latest_owned">가장 최근 소유 작품 이후</option>
+                      </select>
+                      <FluentIcon glyph="\uE70D" />
+                    </div>
+                  </div>
+                  <section className="search-catalog-panel" aria-labelledby="search-catalog-title">
+                    <header>
+                      <div>
+                        <span className="eyebrow">SEARCH AUTOCOMPLETE</span>
+                        <h3 id="search-catalog-title">검색어 자동완성 데이터</h3>
+                        <p>Hitomi의 태그·작가·그룹 목록을 내려받아 Explore 검색 제안을 최신 상태로 유지합니다.</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-button primary"
+                        aria-busy={tagCatalogRefreshing || undefined}
+                        disabled={tagCatalogRefreshing}
+                        onClick={() => void onTagCatalogRefresh()}
+                      >
+                        {tagCatalogRefreshing ? <span className="spinner catalog-refresh-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE72C" />}
+                        {tagCatalogRefreshing ? "최신화 중" : "지금 최신화"}
+                      </button>
+                    </header>
+                    <div className={`search-catalog-status${tagCatalogIncomplete ? " is-incomplete" : ""}`} role="status" aria-live="polite">
+                      <strong>{tagCatalogStatus?.entryCount
+                        ? `${tagCatalogStatus.entryCount.toLocaleString()}개 항목 저장됨`
+                        : "저장된 자동완성 데이터 없음"}</strong>
+                      {tagCatalogStatus?.entryCount ? (
+                        <span>
+                          작가 {tagCatalogStatus.artistCount.toLocaleString()} · 그룹 {tagCatalogStatus.groupCount.toLocaleString()} · 일반 태그 {tagCatalogStatus.neutralCount.toLocaleString()} · F {tagCatalogStatus.femaleCount.toLocaleString()} · M {tagCatalogStatus.maleCount.toLocaleString()}
+                        </span>
+                      ) : <span>처음 최신화하기 전에도 검색 자체는 사용할 수 있습니다.</span>}
+                      {tagCatalogStatus?.lastErrorMessage ? <small>최근 실패: {tagCatalogStatus.lastErrorMessage}</small> : null}
+                    </div>
+                  </section>
+                  <section className="exclusion-manager" aria-labelledby="exclusion-manager-title">
+                    <header className="exclusion-manager-header">
+                      <div>
+                        <span className="eyebrow">EXCLUDED ALBUMS</span>
+                        <h3 id="exclusion-manager-title">탐색 제외·중복 숨김 앨범</h3>
+                        <p>목록은 설정을 열 때 자동으로 불러오지 않습니다. 관리가 필요할 때만 열고, 화면에는 50개씩 나누어 표시합니다.</p>
+                      </div>
+                      <div className="exclusion-manager-actions">
+                        {exclusionManagerOpen ? (
+                          <button
+                            type="button"
+                            className="text-button primary"
+                            disabled={!selectedExclusionIds.size || restoringExclusions}
+                            onClick={() => void restoreExclusions([...selectedExclusionIds])}
+                          >{restoringExclusions ? "복원 중" : `선택 복원 (${selectedExclusionIds.size})`}</button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="text-button"
+                          aria-expanded={exclusionManagerOpen}
+                          aria-controls="exclusion-manager-body"
+                          onClick={exclusionManagerOpen ? closeExclusionManager : loadExclusionManager}
+                        >{exclusionManagerOpen ? "목록 닫기" : "제외 앨범 관리"}</button>
+                      </div>
+                    </header>
+                    {exclusionManagerOpen ? (
+                      <div id="exclusion-manager-body" className="exclusion-manager-body">
+                        <p className="exclusion-manager-note">직접 제외했거나 중복 판정 때문에 Auto Find 또는 Downloads에서 숨겨진 앨범입니다. 해제해도 중복 판정 기록은 삭제되지 않습니다.</p>
+                        {exclusionsError ? (
+                          <div className="exclusion-load-error" role="alert">
+                            <span>{exclusionsError}</span>
+                            <button type="button" className="text-button" onClick={loadExclusionManager}>다시 불러오기</button>
+                          </div>
+                        ) : null}
+                        {exclusionsLoading ? <p className="exclusion-empty" role="status">제외 앨범을 불러오는 중입니다.</p> : null}
+                        {!exclusionsLoading && !exclusionsError && !exclusions.length ? <p className="exclusion-empty">현재 관리할 제외·숨김 앨범이 없습니다.</p> : null}
+                        {exclusions.length ? (
+                          <div className="exclusion-list">
+                            <label className="exclusion-select-all">
+                              <input
+                                type="checkbox"
+                                checked={exclusions.length > 0 && selectedExclusionIds.size === exclusions.length}
+                                onChange={(event) => setSelectedExclusionIds(event.target.checked
+                                  ? new Set(exclusions.map((item) => item.galleryId))
+                                  : new Set())}
+                              />
+                              불러온 {exclusions.length.toLocaleString("ko-KR")}개 전체 선택
+                            </label>
+                            {visibleExclusions.map((item) => (
+                              <article className="exclusion-item" key={item.galleryId}>
+                                <input
+                                  type="checkbox"
+                                  aria-label={`${item.title} 선택`}
+                                  checked={selectedExclusionIds.has(item.galleryId)}
+                                  onChange={(event) => setSelectedExclusionIds((current) => {
+                                    const next = new Set(current);
+                                    if (event.target.checked) next.add(item.galleryId);
+                                    else next.delete(item.galleryId);
+                                    return next;
+                                  })}
+                                />
+                                <div className="exclusion-copy">
+                                  <strong title={item.title}>{splitGalleryTitle(item.title).primary}</strong>
+                                  <span>{item.artist} · Gallery #{item.galleryId}</span>
+                                  <div className="exclusion-reasons">
+                                    {item.reasons.map((reason, index) => (
+                                      <span key={`${reason.kind}-${reason.excludedAt}-${index}`} title={`${reason.detail} · ${reason.excludedAt}`}>
+                                        {exclusionReasonLabel(reason.kind)}
+                                      </span>
+                                    ))}
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="text-button"
+                                  disabled={restoringExclusions}
+                                  onClick={() => void restoreExclusions([item.galleryId])}
+                                >제외/숨김 해제</button>
+                              </article>
+                            ))}
+                            {visibleExclusions.length < exclusions.length ? (
+                              <button
+                                type="button"
+                                className="text-button exclusion-load-more"
+                                onClick={() => setVisibleExclusionCount((current) => current + EXCLUSION_RENDER_BATCH)}
+                              >더 보기 ({(exclusions.length - visibleExclusions.length).toLocaleString("ko-KR")}개 남음)</button>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </section>
+                </> : null}
+                <hr className="settings-divider" hidden={activeTab !== "hitomi"} />
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div>
                     <strong>갤러리 폴더 이름</strong>
@@ -711,24 +985,6 @@ export function SettingsDialog({
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <SettingCopy
-                    title="Auto Find 기록 기준"
-                    summary="후보를 찾기 시작할 기록 범위를 선택합니다."
-                    detail="변경한 기준은 다음 Auto Find 실행부터 적용됩니다. ‘가장 오래된 소유 작품 이후’는 검증 완료·격리된 소유 작품 중 가장 오래된 gallery ID보다 최신인 항목만 후보로 봅니다."
-                  />
-                  <div className="settings-select-control">
-                    <select
-                      aria-label="Auto Find 기록 기준"
-                      value={draft.autoFindHistoryMode}
-                      onChange={(event) => patch("autoFindHistoryMode", event.target.value as SettingsSnapshot["autoFindHistoryMode"])}
-                    >
-                      <option value="include_all_history">전체 기록 포함</option>
-                      <option value="newer_than_oldest_downloaded">가장 오래된 소유 작품 이후</option>
-                    </select>
-                    <FluentIcon glyph="\uE70D" />
-                  </div>
-                </div>
-                <div className="setting-row" hidden={activeTab !== "hitomi"}>
-                  <SettingCopy
                     title="다운로드 판본 자동 판정"
                     summary="확실한 포함·거의 동일 판본만 자동 추천하거나 격리합니다."
                     detail={DOWNLOAD_OVERLAP_AUTO_HELP}
@@ -747,53 +1003,6 @@ export function SettingsDialog({
                   </div>
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
-                  <div>
-                    <strong>Hitomi 페이지당 앨범 수</strong>
-                    <span>현재 열 수에 맞춰 마지막 행이 차도록 요청량을 가까운 열 배수로 자동 조정합니다.</span>
-                  </div>
-                  <div className="range-wrap">
-                    <input
-                      id="settings-explore-page-size"
-                      aria-label="Hitomi 페이지당 앨범 수"
-                      type="range"
-                      min="10"
-                      max="200"
-                      step="10"
-                      value={draft.explorePageSize}
-                      onChange={(event) => patch("explorePageSize", Number(event.target.value))}
-                    />
-                    <output htmlFor="settings-explore-page-size">{draft.explorePageSize}개</output>
-                  </div>
-                </div>
-                <div className="setting-row" hidden={activeTab !== "hitomi"}>
-                  <div><strong>앨범 카드 최대 열 수</strong><span>창이 넓어도 설정한 열 수를 넘지 않습니다</span></div>
-                  <div className="range-wrap"><input id="settings-max-columns" aria-label="앨범 카드 최대 열 수" type="range" min="1" max="4" step="1" value={draft.maxColumns} onChange={(event) => { const value = Number(event.target.value); patch("maxColumns", value); previewLayout(value, draft.previewWidth); }} /><output htmlFor="settings-max-columns">{draft.maxColumns}열</output></div>
-                </div>
-                <div className="setting-row" hidden={activeTab !== "hitomi"}>
-                  <div><strong>Hitomi 카드 미리보기 크기</strong><span>Hitomi Explore·Auto Find·Downloads 카드에 적용</span></div>
-                  <div className="range-wrap"><input id="settings-preview-width" aria-label="Hitomi 카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(draft.previewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[2]!; patch("previewWidth", preset.width); previewLayout(draft.maxColumns, preset.width); }} /><output htmlFor="settings-preview-width">{draft.previewWidth}px</output></div>
-                </div>
-                <div className="setting-row" hidden={activeTab !== "hitomi"}>
-                  <div><strong>Related galleries 미리보기 크기</strong><span>Floating Detail 안의 Related galleries에만 적용</span></div>
-                  <div className="range-wrap"><input id="settings-related-preview-width" aria-label="Related galleries 미리보기 크기" type="range" min="180" max="320" step="20" value={draft.relatedPreviewWidth} onChange={(event) => patch("relatedPreviewWidth", Number(event.target.value))} /><output htmlFor="settings-related-preview-width">{draft.relatedPreviewWidth}px</output></div>
-                </div>
-                <div className="setting-row" hidden={activeTab !== "general"}>
-                  <div>
-                    <strong>프라이버시 모드</strong>
-                    <span>Hitomi와 Danbooru의 미리보기·상세 이미지를 가립니다.</span>
-                  </div>
-                  <label className="setting-checkbox">
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      aria-label="프라이버시 모드"
-                      checked={draft.privacyMode}
-                      onChange={(event) => patch("privacyMode", event.target.checked)}
-                    />
-                    <span>{draft.privacyMode ? "사용 중" : "사용 안 함"}</span>
-                  </label>
-                </div>
-                <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>동시 이미지 요청</strong><span>안정 기본값 5</span></div>
                   <input type="number" min="1" max="30" value={draft.concurrentImageRequests} aria-label="동시 이미지 요청" onChange={(event) => patch("concurrentImageRequests", Number(event.target.value))} />
                 </div>
@@ -803,7 +1012,7 @@ export function SettingsDialog({
                     summary="다운로드 속도에 맞춰 조절 · 재시작 후 적용"
                     detail="처음에는 5개, 기존 동시 이미지 요청 값, 설정한 최대 요청 수 중 가장 작은 값으로 시작하고, 속도와 오류를 살펴 동시 요청 수를 조절합니다. 학습한 안정값은 이 기기에 저장되어 다음 실행에 사용됩니다. 끄면 다운로드 요청 상한은 기존 동시 이미지 요청 값과 8 중 작은 값으로 고정되며, 서버의 대기 요구는 계속 따릅니다."
                   />
-                  <input type="checkbox" checked={draft.downloadAdaptiveConcurrency} aria-label="다운로드 동시 요청 자동 조절" onChange={(event) => patch("downloadAdaptiveConcurrency", event.target.checked)} />
+                  <label className="setting-checkbox"><input type="checkbox" checked={draft.downloadAdaptiveConcurrency} aria-label="다운로드 동시 요청 자동 조절" onChange={(event) => patch("downloadAdaptiveConcurrency", event.target.checked)} /></label>
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <SettingCopy
@@ -817,17 +1026,17 @@ export function SettingsDialog({
                   <div><strong>요청 시작 간격</strong><span>안정 기본값 25ms</span></div>
                   <input type="number" min="0" max="5000" value={draft.requestStartIntervalMs} aria-label="요청 시작 간격" onChange={(event) => patch("requestStartIntervalMs", Number(event.target.value))} />
                 </div>
-                <div className="setting-row settings-reset-row" hidden={activeTab !== "general"}>
-                  <div>
-                    <strong>설정 초기화</strong>
-                    <span>화면·미리보기·네트워크 설정을 기본값으로 되돌립니다. 저장을 눌러야 적용됩니다.</span>
-                  </div>
-                  <button type="button" className="text-button" disabled={maintenanceBusy !== null} onClick={restorePreferenceDefaults}>설정 기본값</button>
+                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                  <SettingCopy
+                    title="고성능 처리 모드"
+                    summary="해시 계산·중복 대조 병렬 처리"
+                    detail="CPU와 사용 가능한 메모리에 맞춰 이미지 처리와 중복 대조를 병렬로 수행합니다. 팬 소음과 메모리 사용량이 늘 수 있습니다. 저장 즉시 처리 한도를 조절하며, 이미 시작한 작업은 안전하게 마칩니다. 무결성 검사와 판정 기준, HDD 보호 속도 및 서버 요청 제한은 그대로 유지합니다."
+                  />
+                  <label className="setting-checkbox"><input type="checkbox" role="switch" checked={draft.highPerformanceProcessing ?? false} aria-label="고성능 처리 모드" onChange={(event) => patch("highPerformanceProcessing", event.target.checked)} /></label>
                 </div>
                 <section className="maintenance-panel" aria-labelledby="maintenance-panel-title" hidden={activeTab !== "hitomi"}>
                   <header className="maintenance-panel-header">
                     <strong id="maintenance-panel-title">저장 데이터 관리</strong>
-                    <p>원본 파일과 사용자 판정을 보존하는 복구·검사 작업과, 외부 원본을 보존하는 앱 데이터 초기화를 제공합니다.</p>
                   </header>
                   {maintenanceMessage ? <p className="maintenance-message" role="status">{maintenanceMessage}</p> : null}
                   <div className="maintenance-list">
@@ -852,199 +1061,12 @@ export function SettingsDialog({
                       </fieldset>
                       <button type="button" className="text-button" disabled={maintenanceBusy !== null} onClick={() => void runMaintenance({ kind: "rebuildLibrary", rebuildThumbnailData: rebuildOptions.thumbnail, rebuildDuplicateAnalysis: rebuildOptions.duplicate, rebuildInternalAnalysis: rebuildOptions.internal, rebuildAutoFindResults: rebuildOptions.autoFind })}>{maintenanceBusy === "rebuildLibrary" ? "검사 중" : "라이브러리 검사 및 재구축"}</button>
                     </article>
-                    <article className="maintenance-item maintenance-item--factory-reset">
-                      <div className="maintenance-copy">
-                        <strong>앱 데이터 완전 초기화</strong>
-                        <p>앱을 첫 실행 상태로 되돌립니다. 외부 다운로드 원본 파일과 quarantine/recovery 파일, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.</p>
-                      </div>
-                      <button type="button" className="text-button danger-button" disabled={maintenanceBusy !== null} onClick={() => void runMaintenance({ kind: "factoryReset", confirmation: "RESET_ALL_APP_DATA" })}>{maintenanceBusy === "factoryReset" ? "초기화 준비 중" : "앱 데이터 완전 초기화"}</button>
-                    </article>
                   </div>
                 </section>
-                <section className="settings-about-panel" aria-labelledby="settings-about-title" hidden={activeTab !== "general"}>
-                  <header>
-                    <div>
-                      <span className="eyebrow">ABOUT &amp; FEEDBACK</span>
-                      <strong id="settings-about-title">프로그램 정보</strong>
-                    </div>
-                    <span className="settings-about-version">v{packageMetadata.version}</span>
-                  </header>
-                  <dl className="settings-about-details">
-                    <div><dt>프로그램</dt><dd>Atsumi</dd></div>
-                    <div><dt>제작</dt><dd>assesse · Atsumi contributors</dd></div>
-                    <div><dt>프로젝트</dt><dd>github.com/assesse/Atsumi-Project</dd></div>
-                  </dl>
-                  <p>버그와 기능 제안은 GitHub Issues에서 받습니다. 복사되는 진단 정보에는 앨범 제목, 태그, 파일 경로, 데이터베이스 내용이 포함되지 않습니다.</p>
-                  <div className="settings-about-actions">
-                    <button type="button" className="text-button primary" disabled={updateCheckBusy} onClick={() => void checkForUpdates()}>{updateCheckBusy ? "확인 중" : "업데이트 확인"}</button>
-                    <button type="button" className="text-button" onClick={() => void copyInformation("feedback")}>피드백 주소 복사</button>
-                    <button type="button" className="text-button" onClick={() => void copyInformation("diagnostics")}>진단 정보 복사</button>
-                  </div>
-                  <p className="settings-about-message" role="status" aria-live="polite">{updateMessage || informationMessage}</p>
-                </section>
-              </> : null}
-              {activeTab === "hitomi" ? <>
-                <section className="search-catalog-panel" aria-labelledby="search-catalog-title">
-                  <header>
-                    <div>
-                      <span className="eyebrow">SEARCH AUTOCOMPLETE</span>
-                      <h3 id="search-catalog-title">검색어 자동완성 데이터</h3>
-                      <p>Hitomi의 태그·작가·그룹 목록을 내려받아 Explore 검색 제안을 최신 상태로 유지합니다.</p>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-button primary"
-                      aria-busy={tagCatalogRefreshing || undefined}
-                      disabled={tagCatalogRefreshing}
-                      onClick={() => void onTagCatalogRefresh()}
-                    >
-                      {tagCatalogRefreshing ? <span className="spinner catalog-refresh-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE72C" />}
-                      {tagCatalogRefreshing ? "최신화 중" : "지금 최신화"}
-                    </button>
-                  </header>
-                  <div className={`search-catalog-status${tagCatalogIncomplete ? " is-incomplete" : ""}`} role="status" aria-live="polite">
-                    <strong>{tagCatalogStatus?.entryCount
-                      ? `${tagCatalogStatus.entryCount.toLocaleString()}개 항목 저장됨`
-                      : "저장된 자동완성 데이터 없음"}</strong>
-                    {tagCatalogStatus?.entryCount ? (
-                      <span>
-                        작가 {tagCatalogStatus.artistCount.toLocaleString()} · 그룹 {tagCatalogStatus.groupCount.toLocaleString()} · 일반 태그 {tagCatalogStatus.neutralCount.toLocaleString()} · F {tagCatalogStatus.femaleCount.toLocaleString()} · M {tagCatalogStatus.maleCount.toLocaleString()}
-                      </span>
-                    ) : <span>처음 최신화하기 전에도 검색 자체는 사용할 수 있습니다.</span>}
-                    {tagCatalogStatus?.lastErrorMessage ? <small>최근 실패: {tagCatalogStatus.lastErrorMessage}</small> : null}
-                  </div>
-                </section>
-                <section className="search-rules-panel" aria-labelledby="search-rules-title">
-                  <header>
-                    <span className="eyebrow">GLOBAL SEARCH RULES</span>
-                    <h3 id="search-rules-title">모든 Explore 검색에 적용할 태그</h3>
-                    <p>태그를 한 줄에 하나씩 입력하세요. 쉼표로도 구분할 수 있으며, 저장 후 새 검색·검색 기록 재실행·메타데이터 검색에 공통 적용됩니다.</p>
-                  </header>
-                  <div className="search-rule-fields">
-                    <label>
-                      <strong>필수 포함 태그</strong>
-                      <span>모든 검색의 포함 조건에 자동으로 추가됩니다.</span>
-                      <textarea
-                        aria-label="모든 검색 필수 포함 태그"
-                        value={includeTagInput}
-                        placeholder={"female:glasses\nwebtoon"}
-                        onChange={(event) => {
-                          setIncludeTagInput(event.target.value);
-                          patch("searchIncludeTags", parseGlobalSearchTagInput(event.target.value));
-                        }}
-                      />
-                    </label>
-                    <label>
-                      <strong>항상 제외할 태그</strong>
-                      <span>개별 검색이 같은 태그를 요구해도 제외 조건이 우선합니다.</span>
-                      <textarea
-                        aria-label="모든 검색 제외 태그"
-                        value={excludeTagInput}
-                        placeholder={"male:glasses\nfull_color"}
-                        onChange={(event) => {
-                          setExcludeTagInput(event.target.value);
-                          patch("searchExcludeTags", parseGlobalSearchTagInput(event.target.value));
-                        }}
-                      />
-                    </label>
-                  </div>
-                  {overlappingSearchTags.length ? (
-                    <p className="inline-error" role="alert">포함과 제외에 동시에 지정된 태그를 정리하세요: {overlappingSearchTags.join(", ")}</p>
-                  ) : null}
-                </section>
-
-                <section className="exclusion-manager" aria-labelledby="exclusion-manager-title">
-                  <header className="exclusion-manager-header">
-                    <div>
-                      <span className="eyebrow">EXCLUDED ALBUMS</span>
-                      <h3 id="exclusion-manager-title">탐색 제외·중복 숨김 앨범</h3>
-                      <p>목록은 설정을 열 때 자동으로 불러오지 않습니다. 관리가 필요할 때만 열고, 화면에는 50개씩 나누어 표시합니다.</p>
-                    </div>
-                    <div className="exclusion-manager-actions">
-                      {exclusionManagerOpen ? (
-                        <button
-                          type="button"
-                          className="text-button primary"
-                          disabled={!selectedExclusionIds.size || restoringExclusions}
-                          onClick={() => void restoreExclusions([...selectedExclusionIds])}
-                        >{restoringExclusions ? "복원 중" : `선택 복원 (${selectedExclusionIds.size})`}</button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="text-button"
-                        aria-expanded={exclusionManagerOpen}
-                        aria-controls="exclusion-manager-body"
-                        onClick={exclusionManagerOpen ? closeExclusionManager : loadExclusionManager}
-                      >{exclusionManagerOpen ? "목록 닫기" : "제외 앨범 관리"}</button>
-                    </div>
-                  </header>
-                  {exclusionManagerOpen ? (
-                    <div id="exclusion-manager-body" className="exclusion-manager-body">
-                      <p className="exclusion-manager-note">직접 제외했거나 중복 판정 때문에 Auto Find 또는 Downloads에서 숨겨진 앨범입니다. 해제해도 중복 판정 기록은 삭제되지 않습니다.</p>
-                      {exclusionsError ? (
-                        <div className="exclusion-load-error" role="alert">
-                          <span>{exclusionsError}</span>
-                          <button type="button" className="text-button" onClick={loadExclusionManager}>다시 불러오기</button>
-                        </div>
-                      ) : null}
-                      {exclusionsLoading ? <p className="exclusion-empty" role="status">제외 앨범을 불러오는 중입니다.</p> : null}
-                      {!exclusionsLoading && !exclusionsError && !exclusions.length ? <p className="exclusion-empty">현재 관리할 제외·숨김 앨범이 없습니다.</p> : null}
-                      {exclusions.length ? (
-                        <div className="exclusion-list">
-                          <label className="exclusion-select-all">
-                            <input
-                              type="checkbox"
-                              checked={exclusions.length > 0 && selectedExclusionIds.size === exclusions.length}
-                              onChange={(event) => setSelectedExclusionIds(event.target.checked
-                                ? new Set(exclusions.map((item) => item.galleryId))
-                                : new Set())}
-                            />
-                            불러온 {exclusions.length.toLocaleString("ko-KR")}개 전체 선택
-                          </label>
-                          {visibleExclusions.map((item) => (
-                            <article className="exclusion-item" key={item.galleryId}>
-                              <input
-                                type="checkbox"
-                                aria-label={`${item.title} 선택`}
-                                checked={selectedExclusionIds.has(item.galleryId)}
-                                onChange={(event) => setSelectedExclusionIds((current) => {
-                                  const next = new Set(current);
-                                  if (event.target.checked) next.add(item.galleryId);
-                                  else next.delete(item.galleryId);
-                                  return next;
-                                })}
-                              />
-                              <div className="exclusion-copy">
-                                <strong>{item.title}</strong>
-                                <span>{item.artist} · Gallery #{item.galleryId}</span>
-                                <div className="exclusion-reasons">
-                                  {item.reasons.map((reason, index) => (
-                                    <span key={`${reason.kind}-${reason.excludedAt}-${index}`} title={`${reason.detail} · ${reason.excludedAt}`}>
-                                      {exclusionReasonLabel(reason.kind)}
-                                    </span>
-                                  ))}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                className="text-button"
-                                disabled={restoringExclusions}
-                                onClick={() => void restoreExclusions([item.galleryId])}
-                              >제외/숨김 해제</button>
-                            </article>
-                          ))}
-                          {visibleExclusions.length < exclusions.length ? (
-                            <button
-                              type="button"
-                              className="text-button exclusion-load-more"
-                              onClick={() => setVisibleExclusionCount((current) => current + EXCLUSION_RENDER_BATCH)}
-                            >더 보기 ({(exclusions.length - visibleExclusions.length).toLocaleString("ko-KR")}개 남음)</button>
-                          ) : null}
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </section>
+                <div className="setting-row" hidden={activeTab !== "chzzk"} title="새 녹화부터 PC의 SSD를 자동으로 찾아 녹화·병합합니다. 검증된 영상과 채팅·프로필을 다운로드 폴더로 복사하고 확인한 뒤 SSD 작업 파일을 정리합니다. SSD가 없거나 시작 여유 공간이 20 GiB 미만이면 이유를 알리고 시작하지 않습니다. 끄더라도 이미 SSD에 저장한 녹화의 이관은 계속됩니다.">
+                  <div><strong>CHZZK 녹화에 SSD 사용</strong><span>SSD에서 녹화·병합 후 다운로드 폴더로 자동 이동</span></div>
+                  <label className="setting-checkbox"><input type="checkbox" role="switch" aria-label="CHZZK 녹화에 SSD 사용" checked={draft.chzzkSsdStaging ?? false} onChange={(event) => patch("chzzkSsdStaging", event.target.checked)} /><span>{draft.chzzkSsdStaging ? "사용 중" : "사용 안 함"}</span></label>
+                </div>
               </> : null}
               {activeTab === "danbooru" ? (
                 <DanbooruSettingsPanel
@@ -1093,63 +1115,50 @@ function DanbooruSettingsPanel({
   });
   return (
     <div className="danbooru-settings-panel">
-      <div className="settings-scope-intro">
-        <span className="eyebrow">DANBOORU POSTS</span>
-        <h3>Danbooru 설정</h3>
-        <p>개별 post 검색의 기본 메타 조건입니다. Hitomi 앨범 검색·Auto Find·중복 판정에는 영향을 주지 않습니다.</p>
+      <div className="setting-row">
+        <div><strong>카드 미리보기 크기</strong><span>Danbooru Explore·Downloads 카드에만 적용합니다.</span></div>
+        <div className="range-wrap">
+          <input id="settings-danbooru-preview-width" aria-label="Danbooru 카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(settings.danbooruPreviewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[1]!; onSettingsChange("danbooruPreviewWidth", preset.width); }} />
+          <output htmlFor="settings-danbooru-preview-width">{settings.danbooruPreviewWidth}px</output>
+        </div>
       </div>
-      <section className="danbooru-settings-section" aria-labelledby="danbooru-layout-title">
-        <header><h3 id="danbooru-layout-title">카드와 페이지</h3><p>Danbooru에만 적용되며 Hitomi 카드 설정과 독립적으로 저장됩니다.</p></header>
-        <div className="setting-row">
-          <div><strong>페이지당 post 수</strong><span>현재 열 수에 맞춰 마지막 행이 차도록 100개 이내의 가까운 열 배수로 조정합니다.</span></div>
-          <div className="range-wrap">
-            <input id="settings-danbooru-page-size" aria-label="Danbooru 페이지당 post 수" type="range" min="10" max="100" step="10" value={settings.danbooruPageSize} onChange={(event) => onSettingsChange("danbooruPageSize", Number(event.target.value))} />
-            <output htmlFor="settings-danbooru-page-size">{settings.danbooruPageSize}개</output>
-          </div>
+      <div className="setting-row">
+        <div><strong>카드 이미지 품질</strong><span>카드는 최대 850px large/sample poster를 쓰고, MP4·WebM은 상세 화면에서 바로 재생합니다.</span></div>
+        <span className="settings-fixed-value">고화질 고정</span>
+      </div>
+      <div className="setting-row">
+        <div><strong>페이지당 post 수</strong><span>현재 열 수에 맞춰 마지막 행이 차도록 100개 이내의 가까운 열 배수로 조정합니다.</span></div>
+        <div className="range-wrap">
+          <input id="settings-danbooru-page-size" aria-label="Danbooru 페이지당 post 수" type="range" min="10" max="100" step="10" value={settings.danbooruPageSize} onChange={(event) => onSettingsChange("danbooruPageSize", Number(event.target.value))} />
+          <output htmlFor="settings-danbooru-page-size">{settings.danbooruPageSize}개</output>
         </div>
-        <div className="setting-row">
-          <div><strong>카드 미리보기 크기</strong><span>Danbooru Explore·Downloads 카드에만 적용합니다.</span></div>
-          <div className="range-wrap">
-            <input id="settings-danbooru-preview-width" aria-label="Danbooru 카드 미리보기 크기" type="range" min="0" max={GALLERY_PREVIEW_PRESETS.length - 1} step="1" value={galleryPreviewPresetIndex(settings.danbooruPreviewWidth)} onChange={(event) => { const preset = GALLERY_PREVIEW_PRESETS[Number(event.target.value)] ?? GALLERY_PREVIEW_PRESETS[1]!; onSettingsChange("danbooruPreviewWidth", preset.width); }} />
-            <output htmlFor="settings-danbooru-preview-width">{settings.danbooruPreviewWidth}px</output>
-          </div>
+      </div>
+      <hr className="settings-divider" />
+      <div className="setting-row">
+        <div><strong>기본 정렬</strong><span>최신순 외 정렬은 무료 검색의 일반 조건 1개를 사용합니다.</span></div>
+        <DropdownSelect
+          ariaLabel="Danbooru 기본 정렬"
+          className="settings-dropdown"
+          value={filters.sort}
+          options={DANBOORU_SORTS}
+          onChange={(sort) => onChange({ ...filters, sort })}
+        />
+      </div>
+      <div className="setting-row">
+        <div><strong>기본 등급</strong><span>4종: General(g), Sensitive(s), Questionable(q), Explicit(e)</span></div>
+        <div className="danbooru-settings-checks">
+          {DANBOORU_RATINGS.map((rating) => <label key={rating.value} title={rating.description}><input type="checkbox" checked={filters.ratings.includes(rating.value)} onChange={(event) => toggleRating(rating.value, event.target.checked)} /> {rating.label}</label>)}
         </div>
-      </section>
-      <section className="danbooru-settings-section" aria-labelledby="danbooru-default-search-title">
-        <header><h3 id="danbooru-default-search-title">새 검색 기본값</h3><p>단부루 모드를 새로 열거나 기본 조건을 불러올 때 사용합니다.</p></header>
-        <div className="setting-row">
-          <div><strong>기본 등급</strong><span>4종: General(g), Sensitive(s), Questionable(q), Explicit(e)</span></div>
-          <div className="danbooru-settings-checks">
-            {DANBOORU_RATINGS.map((rating) => <label key={rating.value} title={rating.description}><input type="checkbox" checked={filters.ratings.includes(rating.value)} onChange={(event) => toggleRating(rating.value, event.target.checked)} /> {rating.label}</label>)}
-          </div>
+      </div>
+      <div className="setting-row">
+        <div><strong>기본 파일 형식</strong><span>미선택 또는 전체 선택은 형식을 제한하지 않습니다.</span></div>
+        <div className="danbooru-settings-checks is-files">
+          {DANBOORU_FILE_TYPES.map((fileType) => <label key={fileType.value}><input type="checkbox" checked={filters.fileTypes.includes(fileType.value)} onChange={(event) => toggleFileType(fileType.value, event.target.checked)} /> {fileType.label}</label>)}
         </div>
-        <div className="setting-row">
-          <div><strong>기본 파일 형식</strong><span>미선택 또는 전체 선택은 형식을 제한하지 않습니다.</span></div>
-          <div className="danbooru-settings-checks is-files">
-            {DANBOORU_FILE_TYPES.map((fileType) => <label key={fileType.value}><input type="checkbox" checked={filters.fileTypes.includes(fileType.value)} onChange={(event) => toggleFileType(fileType.value, event.target.checked)} /> {fileType.label}</label>)}
-          </div>
-        </div>
-        <div className="setting-row">
-          <div><strong>기본 정렬</strong><span>최신순 외 정렬은 무료 검색의 일반 조건 1개를 사용합니다.</span></div>
-          <DropdownSelect
-            ariaLabel="Danbooru 기본 정렬"
-            className="settings-dropdown"
-            value={filters.sort}
-            options={DANBOORU_SORTS}
-            onChange={(sort) => onChange({ ...filters, sort })}
-          />
-        </div>
-        <div className="setting-row">
-          <div><strong>카드 이미지 품질</strong><span>카드는 최대 850px large/sample poster를 쓰고, MP4·WebM은 상세 화면에서 바로 재생합니다.</span></div>
-          <span className="settings-fixed-value">고화질 고정</span>
-        </div>
-        <div className="setting-row settings-reset-row">
-          <div><strong>Danbooru 기본값 초기화</strong><span>카드·페이지·검색 기본값을 되돌립니다.</span></div>
-          <button type="button" className="text-button" onClick={onReset}>Danbooru 기본값</button>
-        </div>
-      </section>
-      <section className="danbooru-metatag-guide" aria-labelledby="danbooru-metatag-guide-title">
-        <header><span className="eyebrow">SEARCH METADATA</span><h3 id="danbooru-metatag-guide-title">검색 제한과 메타데이터</h3><p>익명·무료 Member는 제한 대상 조건을 최대 2개 사용할 수 있습니다.</p></header>
+      </div>
+      <details className="danbooru-metatag-guide" aria-labelledby="danbooru-metatag-guide-title">
+        <summary id="danbooru-metatag-guide-title">검색 제한과 메타데이터 <FluentIcon glyph="\uE70D" /></summary>
+        <p>익명·무료 Member는 제한 대상 조건을 최대 2개 사용할 수 있습니다.</p>
         <div className="danbooru-metatag-groups">
           <article><strong>고정 선택 값</strong><p>등급은 정확히 4종이며 관계는 존재 여부나 post ID를 받습니다.</p><code>rating:g|s|q|e · parent:any|none|ID · child:any|none|ID · filetype:jpg|png|gif|webp|avif|webm|mp4|zip</code></article>
           <article><strong>범위·비교 입력</strong><p>날짜 범위와 수치 비교를 같은 문법으로 조합할 수 있습니다.</p><code>date:2026-08-01..2026-08-31 · score:&gt;=20 · favcount:&gt;=5 · width:&gt;=1600 · ratio:&gt;1</code></article>
@@ -1157,7 +1166,12 @@ function DanbooruSettingsPanel({
           <article><strong>제한에 포함</strong><p>각 종류가 일반 태그와 같은 슬롯을 사용합니다.</p><code>order source pool user fav favgroup has ai note comment commentary search wildcards</code></article>
           <article><strong>정렬 값</strong><p>Atsumi가 제공하는 주요 정렬이며 한 번에 하나만 사용할 수 있습니다.</p><code>id_asc score favcount mpixels filesize tagcount portrait landscape</code></article>
         </div>
-      </section>
+      </details>
+      <hr className="settings-divider" />
+      <div className="setting-row settings-reset-row">
+        <div><strong>Danbooru 기본값 초기화</strong><span>카드·페이지·검색 기본값을 되돌립니다.</span></div>
+        <button type="button" className="text-button" onClick={onReset}>Danbooru 기본값</button>
+      </div>
     </div>
   );
 }

@@ -1,5 +1,6 @@
 import type { Gallery } from "../core/types";
-import type { ThumbnailAsset, ThumbnailClient } from "./client";
+import type { ThumbnailClient } from "./client";
+import { thumbnailMemoryCost } from "./memoryCost";
 import { thumbnailKeyIdentity, type ThumbnailRequest } from "./model";
 import {
   galleryCoverPrefetchRequests,
@@ -7,36 +8,11 @@ import {
 } from "./pagePrefetch";
 
 /**
- * Eight times the ordinary short-lived display-handle count, guarded first by
- * a byte budget. In practice the retained value is a compressed thumbnail Blob
- * URL, not a mounted/decoded card. Both ceilings prevent a full library walk
- * from growing the WebView without bound while keeping a long session revisitable.
+ * Keep recently visited covers, but budget decoded surfaces as well as Blobs.
+ * The SSD cache remains authoritative after an old display handle is released.
  */
 export const SESSION_GALLERY_COVER_CAPACITY = 2_048;
-export const SESSION_GALLERY_COVER_BYTE_BUDGET = 512 * 1024 * 1024;
-
-const FALLBACK_IMAGE_BYTES_PER_PIXEL = 0.5;
-const FALLBACK_IMAGE_MIN_BYTES = 16 * 1024;
-const FALLBACK_SPRITE_MIN_BYTES = 8 * 1024;
-const FALLBACK_MISSING_BYTES = 1024;
-
-const estimatedAssetBytes = (asset: ThumbnailAsset): number => {
-  if (asset.kind === "missing") return FALLBACK_MISSING_BYTES;
-  if (asset.kind === "image") {
-    if (asset.byteLength !== undefined && Number.isSafeInteger(asset.byteLength) && asset.byteLength >= 0) {
-      return Math.max(1, asset.byteLength);
-    }
-    return Math.max(
-      FALLBACK_IMAGE_MIN_BYTES,
-      Math.ceil(asset.width * asset.height * FALLBACK_IMAGE_BYTES_PER_PIXEL),
-    );
-  }
-  const cells = Math.max(1, asset.columns * asset.rows);
-  return Math.max(
-    FALLBACK_SPRITE_MIN_BYTES,
-    Math.ceil((asset.sheetWidth * asset.sheetHeight * FALLBACK_IMAGE_BYTES_PER_PIXEL) / cells),
-  );
-};
+export const SESSION_GALLERY_COVER_BYTE_BUDGET = 192 * 1024 * 1024;
 
 type RetainedCover = {
   request: ThumbnailRequest;
@@ -111,7 +87,7 @@ export class GalleryCoverSessionRetainer {
     if (this.entries.get(identity) !== entry) return;
     const snapshot = this.client.getSnapshot(entry.request.key);
     if (snapshot.status === "resolved") {
-      const nextEstimate = estimatedAssetBytes(snapshot.asset);
+      const nextEstimate = thumbnailMemoryCost(snapshot.asset);
       this.retainedBytesValue += nextEstimate - entry.estimatedBytes;
       entry.estimatedBytes = nextEstimate;
       this.evictLeastRecentlyVisited();

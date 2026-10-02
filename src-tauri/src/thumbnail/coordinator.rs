@@ -290,6 +290,14 @@ impl ThumbnailCoordinator {
         self.enqueue(request, SubscriberSink::Completion(completion))
     }
 
+    pub fn request_with_callback(
+        &self,
+        request: ThumbnailRequestDto,
+        completion: Arc<dyn Fn(ThumbnailCompletionEventDto) + Send + Sync>,
+    ) -> Result<ThumbnailRequestTokenDto, ThumbnailCoordinatorError> {
+        self.enqueue(request, SubscriberSink::Callback(completion))
+    }
+
     fn enqueue(
         &self,
         request: ThumbnailRequestDto,
@@ -395,7 +403,9 @@ impl ThumbnailCoordinator {
                 request.key.clone(),
                 WorkEntry {
                     generation,
-                    cacheable: true,
+                    // Review evidence must pass the current review/file checks on
+                    // every request, including after a successful earlier read.
+                    cacheable: !matches!(request.key, ThumbnailKey::OverlapReviewPage { .. }),
                     queue_version: 1,
                     queue_sequence: sequence,
                     priority: request.priority,
@@ -773,6 +783,7 @@ struct WorkEntry {
 enum SubscriberSink {
     Handle(Sender<ThumbnailResult>),
     Completion(Sender<ThumbnailCompletionEventDto>),
+    Callback(Arc<dyn Fn(ThumbnailCompletionEventDto) + Send + Sync>),
 }
 
 impl SubscriberSink {
@@ -783,6 +794,9 @@ impl SubscriberSink {
             }
             Self::Completion(sender) => {
                 let _ = sender.send(ThumbnailCompletionEventDto::from_result(token, result));
+            }
+            Self::Callback(callback) => {
+                callback(ThumbnailCompletionEventDto::from_result(token, result))
             }
         }
     }

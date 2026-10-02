@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OfficialBrowserViewport } from "../../api/officialBrowser";
-import { hasNativeOverlay, nativeModalOcclusion, observeNativeOverlayGeometry } from "./nativeOverlayGeometry";
+import { hasBlockingNativeOverlay, hasNativeOverlay, nativeModalOcclusion, observeNativeOverlayGeometry } from "./nativeOverlayGeometry";
 
 function rect(x: number, y: number, width: number, height: number): DOMRect { return { x, y, width, height, left: x, top: y, right: x + width, bottom: y + height, toJSON: () => ({}) }; }
 function stage(x = 100, y = 100, width = 800, height = 600) {
@@ -14,6 +14,13 @@ function popup(x: number, y: number, width: number, height: number) {
   const surface = document.createElement("div"); surface.dataset.nativeDialogSurface = "true"; overlay.append(surface); document.body.append(overlay);
   vi.spyOn(surface, "getBoundingClientRect").mockReturnValue(rect(x, y, width, height));
   return { overlay, surface };
+}
+function panel(x: number, y: number, width: number, height: number) {
+  const result = popup(x, y, width, height);
+  result.overlay.setAttribute("role", "dialog");
+  result.overlay.setAttribute("aria-modal", "false");
+  result.overlay.dataset.nativeInteractiveBackground = "true";
+  return result;
 }
 afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -35,6 +42,40 @@ describe("native popup occlusion geometry", () => {
   it("keeps a nonoverlapping pane painted but input-disabled while a global modal is open", () => {
     const { element, viewport } = stage(); popup(1000, 100, 100, 100);
     expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: true, preserveBackground: true, clip: viewport.clip, occlusions: [] });
+  });
+  it("keeps video and chat interactive outside an explicitly nonmodal panel", () => {
+    const { element, viewport } = stage(); panel(400, 300, 200, 150);
+    expect(hasNativeOverlay()).toBe(true);
+    expect(hasBlockingNativeOverlay()).toBe(false);
+    expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: false, preserveBackground: true, clip: viewport.clip,
+      occlusions: [{ x: 292, y: 192, width: 216, height: 166 }] });
+  });
+  it("does not block a native pane outside the nonmodal panel's bounds", () => {
+    const { element, viewport } = stage(); panel(1000, 100, 100, 100);
+    expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: false, preserveBackground: true, clip: viewport.clip, occlusions: [] });
+  });
+  it("lets a real modal override the nonmodal panel without trusting an interactive flag", () => {
+    const { element, viewport } = stage(); panel(400, 300, 200, 150);
+    const { overlay } = panel(200, 200, 100, 100);
+    for (const role of ["alertdialog", "menu"]) {
+      overlay.setAttribute("role", role);
+      expect(hasBlockingNativeOverlay()).toBe(true);
+      expect(nativeModalOcclusion(element, viewport).occluded).toBe(true);
+    }
+    overlay.setAttribute("role", "dialog"); overlay.setAttribute("aria-modal", "true");
+    expect(hasBlockingNativeOverlay()).toBe(true);
+    expect(nativeModalOcclusion(element, viewport).occluded).toBe(true);
+    overlay.remove();
+    expect(hasBlockingNativeOverlay()).toBe(false);
+    expect(nativeModalOcclusion(element, viewport).occluded).toBe(false);
+  });
+  it("still masks invalid or untrusted nonmodal panel geometry", () => {
+    const { element, viewport } = stage(); const { overlay, surface } = panel(200, 200, 100, 100);
+    vi.mocked(surface.getBoundingClientRect).mockReturnValue(rect(200, 200, 0, 100));
+    expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: true });
+    overlay.dataset.nativePreserveVideo = "false";
+    expect(hasBlockingNativeOverlay()).toBe(true);
+    expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: true });
   });
   it("intersects holes with an existing scroll clip without changing the original video geometry", () => {
     const { element, viewport } = stage(); viewport.clip = { x: 50, y: 100, width: 500, height: 400 }; popup(100, 100, 200, 200);

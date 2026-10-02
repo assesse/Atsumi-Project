@@ -22,9 +22,13 @@
 .recording-library .recording-library-card-bottom time { white-space: nowrap; }
 .recording-library .recording-library-length { font-variant-numeric: tabular-nums; color: var(--text-soft); }
 .recording-library .recording-library-state { display: inline-flex; align-items: center; gap: 6px; color: var(--text-soft); font-size: 11px; }
-.recording-library .recording-library-state i { display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
-.recording-library .recording-library-state.needs-attention { color: var(--danger); }
-.recording-library .recording-library-state.needs-attention i, .recording-library .is-recording .recording-library-state i { background: var(--danger); }
+.recording-library .recording-library-state i { display: inline-grid; place-items: center; width: 14px; font-style: normal; font-weight: 700; }
+.recording-library .recording-library-state.is-waiting { color: var(--muted); }
+.recording-library .recording-library-state.is-processing { color: var(--source-teal, #63b7b4); }
+.recording-library .recording-library-state.is-warning { color: var(--warning); }
+.recording-library .recording-library-state.is-error { color: var(--danger); }
+.recording-library .recording-library-state.is-success { color: var(--success); }
+.recording-library .recording-library-state.is-recording i { color: var(--danger); }
 .recording-library .official-browser-saved-chat-warning { color: var(--danger); }
 .recording-library-detail.official-browser-files { padding: 20px; border-radius: 12px; background: var(--surface); }
 .recording-library-detail-heading > span { font-size: 10px; letter-spacing: .03em; color: var(--muted); }

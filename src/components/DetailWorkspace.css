@@ -1,0 +1,45 @@
+.detail-workspace .detail-body {
+  /* Reaching a detail stop must not scroll the gallery underneath it. */
+  overscroll-behavior-y: contain;
+}
+
+.detail-close-dialog {
+  box-sizing: border-box;
+  width: min(360px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  padding: 0;
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+.detail-close-copy { padding: 22px 24px 20px; }
+.detail-close-dialog h2 { margin: 0; font-size: 18px; font-weight: 650; line-height: 1.45; }
+.detail-close-dialog p { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.detail-close-dialog kbd { font: inherit; color: var(--text-soft); white-space: nowrap; }
+.detail-close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 70%, var(--canvas));
+}
+.detail-close-actions button {
+  min-width: 86px;
+  min-height: 36px;
+  padding: 7px 14px;
+  color: var(--text);
+  background: var(--surface-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.detail-close-actions .detail-close-confirm { color: var(--primary-strong); background: var(--primary-soft); }
+.detail-close-actions button:hover { border-color: var(--primary); background: var(--surface-hover); }
+.detail-close-actions button:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }

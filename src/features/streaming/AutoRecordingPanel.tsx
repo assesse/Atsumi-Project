@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createAutoRecordingApi, type AutoRecordingApi, type AutoRecordingSnapshot } from "../../api/autoRecording";
-import type { ApiResult } from "../../api/contracts";
+import type { ApiError, ApiResult } from "../../api/contracts";
+import { RecordingLoadStatus } from "./RecordingLoadStatus";
 import "./AutoRecordingPanel.css";
 
 const statuses: Record<string, string> = {
@@ -16,7 +17,8 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
   const [input, setInput] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pollError, setPollError] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<ApiError | null>(null);
+  const [hasSnapshot, setHasSnapshot] = useState(false);
   const version = useRef(0), mounted = useRef(false), busy = useRef(false);
   useEffect(() => {
     mounted.current = true;
@@ -27,9 +29,9 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
         try {
           const result = await api.snapshot();
           if (!disposed && request === version.current && !busy.current) {
-            if (result.ok) { setSnapshot(result.data); setPollError(null); } else setPollError(result.error.message);
+            if (result.ok) { setSnapshot(result.data); setPollError(null); setHasSnapshot(true); } else setPollError(result.error);
           }
-        } catch { if (!disposed) setPollError("자동 녹화 상태를 확인하지 못했습니다."); }
+        } catch { if (!disposed && request === version.current && !busy.current) setPollError({ code: "AUTO_RECORD_TRANSPORT", message: "자동 녹화 상태를 확인하지 못했습니다.", retryable: true }); }
       }
       if (!disposed) timer = setTimeout(poll, 2000);
     };
@@ -43,7 +45,8 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
     try {
       const result = await action();
       if (mounted.current && request === version.current) {
-        if (result.ok) { setSnapshot(result.data); if (clearInput) setInput(""); }
+        if (result.ok) { setSnapshot(result.data); setHasSnapshot(true); setPollError(null); if (clearInput) setInput(""); }
+        else if (result.error.code === "BROWSER_INITIALIZING") setPollError(result.error);
         else setError(result.error.message);
       }
     } catch { if (mounted.current) setError("요청을 처리하지 못했습니다. 다시 시도해 주세요."); }
@@ -57,7 +60,8 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
       <input aria-label="자동 녹화 채널 주소" placeholder="채널 주소 또는 ID" maxLength={300} value={input} disabled={disabled} onChange={(event) => setInput(event.target.value)} />
       <button type="submit" disabled={disabled || !input.trim() || snapshot.channels.length >= 32}>등록</button>
     </form>
-    {error || pollError || snapshot.error ? <p className="auto-record-error" role="alert">{error || pollError || snapshot.error}</p> : null}
+    <RecordingLoadStatus error={pollError} hasSnapshot={hasSnapshot} subject="자동 녹화 목록" />
+    {error || snapshot.error ? <p className="auto-record-error" role="alert">{error || snapshot.error}</p> : null}
     <div className="auto-record-channels">
       {snapshot.channels.map((channel, index) => {
         const active = ["recording", "starting", "stopping"].includes(channel.status);
@@ -79,7 +83,7 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
           </div>
         </article>;
       })}
-      {!snapshot.channels.length ? <div className="auto-record-empty">자동으로 녹화할 채널을 등록해 주세요.</div> : null}
+      {hasSnapshot && !snapshot.channels.length ? <div className="auto-record-empty">자동으로 녹화할 채널을 등록해 주세요.</div> : null}
     </div>
   </section>;
 }

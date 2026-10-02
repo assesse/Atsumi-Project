@@ -1,0 +1,20 @@
+.download-overlap-dialog .review-summary {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  background: color-mix(in srgb, var(--panel) 94%, var(--muted));
+  border: 1px solid var(--line);
+  color: var(--text);
+}
+.download-overlap-dialog .review-summary > span:last-child { text-align: left; }
+.download-overlap-dialog .review-summary .review-signal { align-self: flex-start; color: var(--muted); }
+.download-overlap-dialog .download-overlap-action-note { font-size: 12px; line-height: 1.6; }
+.overlap-destination-button { transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease; }
+.download-overlap-dialog .overlap-destination-button.is-merge { color: #b5f4d0; background: #24523e; border-color: #508d69; }
+.download-overlap-dialog .overlap-destination-button.is-merge:hover:not(:disabled) { background: #306a50; }
+.overlap-destination-button > span { display: inline-block; animation: overlap-action-reveal 180ms ease; }
+.download-overlap-page-cell.is-merge-source { outline: 3px solid #7ee8a7; outline-offset: -3px; }
+.download-overlap-page-cell.is-merge-target { filter: grayscale(1); opacity: .55; }
+@keyframes overlap-action-reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .overlap-destination-button, .overlap-destination-button > span { animation: none; transition: none; } }

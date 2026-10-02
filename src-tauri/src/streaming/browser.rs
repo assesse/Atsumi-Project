@@ -152,6 +152,7 @@ struct ChatWorker {
 struct Arm {
     id: String,
     root: PathBuf,
+    archive_root: Option<PathBuf>,
     capture_chat: bool,
     created: Instant,
     generation: u64,
@@ -1153,6 +1154,12 @@ impl OfficialBrowser {
                 "설정에서 다운로드 폴더를 지정해 주세요.",
             ));
         }
+        let enabled = app
+            .state::<AppState>()
+            .settings_snapshot()
+            .map_err(|_| unavailable())?
+            .chzzk_ssd_staging;
+        let storage_plan = super::browser_store::ssd::plan(enabled, &self.inner.data_dir, &root)?;
         let window = app.get_webview(self.label()).ok_or_else(unavailable)?;
         // Query the dispatcher before locking state: navigation callbacks also
         // acquire this mutex and must never deadlock with a synchronous URL query.
@@ -1248,7 +1255,8 @@ impl OfficialBrowser {
             }
             state.arm = Some(Arm {
                 id: nonce.clone(),
-                root,
+                root: storage_plan.working_root,
+                archive_root: storage_plan.archive_root,
                 capture_chat,
                 created: Instant::now(),
                 generation: state.page_generation,
@@ -1685,7 +1693,14 @@ impl OfficialBrowser {
                 .store
                 .lock()
                 .map_err(|_| unavailable())?
-                .begin_progressive(&arm.root, channel, &title, &mime_type)?;
+                .begin_with_storage(
+                    &arm.root,
+                    arm.archive_root.as_deref(),
+                    channel,
+                    &title,
+                    &mime_type,
+                    true,
+                )?;
             state.recording = Some(session.id.clone());
             self.inner.contexts.notice("녹화를 시작했습니다.");
             state.accepted_arm = Some((request_id, session.id.clone(), state.page_generation));
@@ -2831,6 +2846,7 @@ mod tests {
             state.arm = Some(Arm {
                 id: request.clone(),
                 root: root.path().to_owned(),
+                archive_root: None,
                 capture_chat: false,
                 created: Instant::now(),
                 generation: 0,

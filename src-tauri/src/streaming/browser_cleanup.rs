@@ -123,6 +123,7 @@ pub(crate) fn verification_guard(path: &Path) -> Result<File, StreamError> {
 }
 
 fn hash_file(file: &mut File, cancel: &AtomicBool) -> Result<String, StreamError> {
+    let budget = crate::storage_io_budget::BulkReadBudget::for_file(file);
     file.seek(SeekFrom::Start(0)).map_err(|_| storage())?;
     let mut digest = Sha256::new();
     let mut buffer = [0u8; 128 * 1024];
@@ -130,9 +131,15 @@ fn hash_file(file: &mut File, cancel: &AtomicBool) -> Result<String, StreamError
         if cancel.load(Ordering::Acquire) {
             return Err(inactive());
         }
+        let read_started = std::time::Instant::now();
         let count = file.read(&mut buffer).map_err(|_| storage())?;
         if count == 0 {
             break;
+        }
+        if !budget.account(count, read_started.elapsed(), || {
+            cancel.load(Ordering::Acquire)
+        }) {
+            return Err(inactive());
         }
         digest.update(&buffer[..count]);
     }
@@ -202,7 +209,9 @@ pub(crate) fn verified_range_inputs(
             });
         }
     }
-    if hashes.len() as u64 != job.recording.segment_count {
+    // Only the committed progressive prefix has earlier proofs. The raw tail
+    // is hashed before muxing and again in write_proof after full A/V decode.
+    if hashes.len() as u64 > job.recording.segment_count {
         return Err(invalid());
     }
     Ok((hashes, derivatives))

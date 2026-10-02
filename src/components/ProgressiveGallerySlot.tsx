@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react";
 import type { Gallery, GalleryDisplayMode } from "../core/types";
+import { splitGalleryTitle } from "./galleryCardLayout";
 
 type ProgressiveGallerySlotProps = {
   gallery: Gallery;
@@ -14,6 +15,7 @@ type ProgressiveGallerySlotProps = {
  */
 export function ProgressiveGallerySlot({ gallery, active, displayMode = "detail", children }: ProgressiveGallerySlotProps) {
   const slotRef = useRef<HTMLDivElement>(null);
+  const { primary: displayTitle } = splitGalleryTitle(gallery.title, gallery.subtitle);
 
   useLayoutEffect(() => {
     const slot = slotRef.current;
@@ -41,7 +43,7 @@ export function ProgressiveGallerySlot({ gallery, active, displayMode = "detail"
             <span className="thumbnail-loading" />
             {displayMode === "compact" ? (
               <div className="compact-card-summary">
-                <strong title={gallery.title}>{gallery.title}</strong>
+                <strong title={gallery.title}>{displayTitle}</strong>
                 <span title={gallery.artist}>{gallery.artist}</span>
                 <small><span>{gallery.pages}p · #{gallery.id}</span></small>
               </div>
@@ -49,7 +51,7 @@ export function ProgressiveGallerySlot({ gallery, active, displayMode = "detail"
           </div>
           {displayMode === "detail" ? <div className="card-content progressive-gallery-placeholder-content">
             <div className="card-title" title={gallery.title}>
-              <strong>{gallery.title}</strong>
+              <strong>{displayTitle}</strong>
             </div>
             <div className="card-byline" title={gallery.artist}>
               <span className="progressive-gallery-placeholder-artist">{gallery.artist}</span>

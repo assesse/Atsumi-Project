@@ -17,11 +17,12 @@ pub struct DeleteReport {
     pub failures: Vec<DeleteFailure>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct DeleteJob {
     pub id: String,
     root: PathBuf,
     token: String,
+    secondary_roots: Vec<PathBuf>,
 }
 
 pub(crate) fn validate_ids(ids: &[String]) -> Result<(), StreamError> {
@@ -78,6 +79,7 @@ impl BrowserCaptureStore {
         if !record.deletion_pending {
             owned_root(&record.output_dir, id)?;
         }
+        let secondary_roots = archive::extra_delete_roots(record)?;
         let mut catalog = state.catalog.clone();
         catalog
             .iter_mut()
@@ -90,6 +92,7 @@ impl BrowserCaptureStore {
         let token = uuid::Uuid::new_v4().simple().to_string();
         state.deleting.insert(id.to_owned(), token.clone());
         Ok(DeleteJob {
+            secondary_roots,
             id: id.to_owned(),
             root,
             token,
@@ -283,6 +286,14 @@ mod files {
 pub(crate) fn remove_files(job: &DeleteJob) -> Result<(), StreamError> {
     #[cfg(windows)]
     {
+        // Delete secondary copies first. If interrupted, the catalog's primary
+        // directory still contains the transfer metadata needed for a retry.
+        for root in &job.secondary_roots {
+            files::recording(&DeleteJob {
+                root: root.clone(),
+                ..job.clone()
+            })?;
+        }
         files::recording(job)
     }
     #[cfg(not(windows))]

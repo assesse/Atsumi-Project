@@ -1,3 +1,37 @@
+aside.activity-panel { display: flex; flex-direction: column; overflow: hidden; }
+.activity-panel > header, .activity-panel > .activity-section-tabs { flex: none; }
+.activity-panel > .activity-section-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.activity-panel > .activity-section-tabs:not(:has(:nth-child(3))) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.activity-section-tabs > button { position: relative; min-width: 0; white-space: nowrap; font-size: 12px; padding: 0 4px; }
+.activity-tab-count { position: absolute; right: 2px; top: -6px; background: var(--surface-raised); color: var(--warning); border: 1px solid var(--line); border-radius: 8px; padding: 0 3px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.activity-panel-content { min-height: 0; overflow: auto; scrollbar-gutter: stable; }
+.activity-panel-content > .queue-summary { margin: 8px; }
+.activity-item-details { font-size: 11px; color: var(--muted); }
+.activity-item-details summary { cursor: pointer; width: fit-content; }
+.activity-item-details p { margin: 4px 0; overflow-wrap: anywhere; }
+.activity-item .gallery-processing-badge { align-self: start; margin-top: 3px; color: var(--state-color); }
+.activity-item .activity-actions { flex-wrap: wrap; max-width: 112px; }
+.activity-item .activity-actions .mini-command { font-size: 11px; padding: 0 7px; }
+.activity-panel .activity-history-note { padding: 6px 8px; font-size: 11px; }
+
+.activity-state-group {
+  min-width: 0;
+}
+
+.activity-state-group + .activity-state-group {
+  margin-top: 8px;
+}
+
+.activity-state-heading {
+  margin: 0;
+  padding: 8px 9px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
 .activity-history-toolbar {
   display: flex;
   align-items: center;

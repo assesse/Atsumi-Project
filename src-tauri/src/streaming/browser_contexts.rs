@@ -472,6 +472,7 @@ mod tests {
             pane.inner.view.lock().unwrap().arm = Some(Arm {
                 id: uuid::Uuid::new_v4().to_string(),
                 root: dir.path().into(),
+                archive_root: None,
                 capture_chat: false,
                 created: Instant::now(),
                 generation: 0,
@@ -521,6 +522,7 @@ mod tests {
                 state.arm = Some(Arm {
                     id: nonce.clone(),
                     root: dir.path().into(),
+                    archive_root: None,
                     capture_chat: false,
                     created: Instant::now(),
                     generation: 0,

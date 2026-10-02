@@ -4,6 +4,7 @@ import {
   type ThumbnailPriority,
   type ThumbnailRequest,
 } from "./model";
+import { thumbnailMemoryCost } from "./memoryCost";
 
 export type ThumbnailImageAsset = {
   readonly kind: "image";
@@ -77,6 +78,7 @@ const ORPHAN_GRACE_MS = 400;
 /** Keep a decoded display handle briefly so a revisited card need not recreate it. */
 const RETAINED_ASSET_TTL_MS = 120_000;
 const RETAINED_ASSET_CAPACITY = 256;
+const RETAINED_ASSET_BYTE_BUDGET = 64 * 1024 * 1024;
 const priorityRank: Record<ThumbnailPriority, number> = {
   prefetch: 0,
   visible: 1,
@@ -85,7 +87,8 @@ const priorityRank: Record<ThumbnailPriority, number> = {
 
 /** Full source pages can be much larger than covers. Keep their canonical bytes
  * in the backend cache, but never retain WebView Blob URLs between Detail windows. */
-const retainsDisplayHandle = (request: ThumbnailRequest): boolean => request.key.kind !== "source-page";
+const retainsDisplayHandle = (request: ThumbnailRequest): boolean =>
+  request.key.kind !== "source-page" && request.key.kind !== "overlap-review-page";
 
 const retryableThumbnailErrorNames = new Set([
   "THUMBNAIL_cancelled",
@@ -300,6 +303,12 @@ export class ThumbnailClient {
 
   private scheduleOrphanCleanup(entry: Entry): void {
     if (!entry.active || entry.listeners.size > 0 || entry.orphanTimer !== undefined) return;
+    // Reopening evidence must revalidate the source even within the ordinary
+    // card orphan grace period. Simultaneous visible consumers still coalesce.
+    if (entry.request.key.kind === "overlap-review-page") {
+      this.cleanup(entry);
+      return;
+    }
     entry.orphanTimer = setTimeout(() => {
       entry.orphanTimer = undefined;
       if (
@@ -383,7 +392,9 @@ export class ThumbnailClient {
   }
 
   private evictRetainedEntries(): void {
-    while (this.retainedEntryCount() > RETAINED_ASSET_CAPACITY) {
+    while (true) {
+      const usage = this.retainedUsage();
+      if (usage.count <= RETAINED_ASSET_CAPACITY && usage.bytes <= RETAINED_ASSET_BYTE_BUDGET) return;
       let oldest: Entry | undefined;
       for (const entry of this.entries.values()) {
         if (!entry.active || !entry.retained || entry.listeners.size > 0) continue;
@@ -394,12 +405,16 @@ export class ThumbnailClient {
     }
   }
 
-  private retainedEntryCount(): number {
+  private retainedUsage(): { count: number; bytes: number } {
     let count = 0;
+    let bytes = 0;
     for (const entry of this.entries.values()) {
-      if (entry.active && entry.retained && entry.listeners.size === 0) count += 1;
+      if (entry.active && entry.retained && entry.listeners.size === 0) {
+        count += 1;
+        if (entry.snapshot.status === "resolved") bytes += thumbnailMemoryCost(entry.snapshot.asset);
+      }
     }
-    return count;
+    return { count, bytes };
   }
 
   private scheduleRetry(entry: Entry): void {

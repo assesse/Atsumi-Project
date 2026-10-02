@@ -27,6 +27,7 @@ use std::{
 use uuid::Uuid;
 #[path = "completed_pair.rs"]
 mod completed_pair;
+pub(crate) mod composition;
 
 pub(super) const OVERLAP_MERGE_SCHEMA: &str = r#"
 CREATE TABLE overlap_page_merges (
@@ -105,6 +106,10 @@ pub struct DownloadOverlapMergeRequest {
     pub source_pages: Vec<u32>,
     #[serde(default)]
     pub exclude_source: bool,
+    #[serde(default)]
+    pub selected_pages: Option<composition::PageSelection>,
+    #[serde(default)]
+    pub automation: bool,
 }
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,6 +118,7 @@ pub struct DownloadOverlapMergeResult {
     pub source_gallery_id: GalleryId,
     pub target_gallery_id: GalleryId,
     pub replaced_pages: usize,
+    pub added_pages: usize,
     pub backup_path: String,
     pub affected_review_ids: Vec<String>,
     pub source_excluded: bool,
@@ -147,6 +153,18 @@ struct Journal {
     operation_directory: String,
     exclude_source: bool,
     replacements: Vec<Replacement>,
+    #[serde(default)]
+    composition: Vec<composition::ComposedPage>,
+    #[serde(default)]
+    added_pages: usize,
+    #[serde(default)]
+    automation: bool,
+    #[serde(default)]
+    candidate_id: String,
+    #[serde(default)]
+    original_pages: Vec<crate::domain::ArtifactManifestPage>,
+    #[serde(default)]
+    original_fingerprint: String,
     // Whole-tree digest prevents recovery from overwriting files changed outside Atsumi.
     original_tree: BTreeMap<String, String>,
     merged_tree: BTreeMap<String, String>,
@@ -220,6 +238,9 @@ impl OverlapMergeService {
         let candidate = validate_request(&review, &request)?;
         let incoming = self.bundle(&review.entry_id)?;
         let existing = self.bundle(&candidate.existing.entry_id)?;
+        if request.automation {
+            composition::validate_automatic(&review, candidate, &request, &incoming, &existing)?;
+        }
         if overlap_artifact_fingerprint(&incoming, review.profile_version).as_deref()
             != Some(review.incoming_fingerprint.as_str())
             || overlap_artifact_fingerprint(&existing, review.profile_version).as_deref()
@@ -233,12 +254,17 @@ impl OverlapMergeService {
             DownloadOverlapMergeSide::Existing => (existing, incoming),
             DownloadOverlapMergeSide::Incoming => (incoming, existing),
         };
-        let mapping = derive_mapping(
-            candidate,
-            &request,
-            source.artifact.expected_page_count,
-            target.artifact.expected_page_count,
-        )?;
+        let composition = composition::plan(candidate, &request, &source, &target)?;
+        let mapping = if request.selected_pages.is_some() {
+            Vec::new()
+        } else {
+            derive_mapping(
+                candidate,
+                &request,
+                source.artifact.expected_page_count,
+                target.artifact.expected_page_count,
+            )?
+        };
         let source_root = self
             .repository
             .pipeline_artifact_root(&source.artifact.entry_id)?;
@@ -276,6 +302,29 @@ impl OverlapMergeService {
             operation_directory,
             exclude_source: request.exclude_source,
             replacements: Vec::new(),
+            added_pages: composition.len().saturating_sub(target.pages.len()),
+            composition,
+            automation: request.automation,
+            candidate_id: candidate.candidate_id.clone(),
+            original_fingerprint: if request.source_side == DownloadOverlapMergeSide::Existing {
+                review.incoming_fingerprint.clone()
+            } else {
+                candidate.existing_fingerprint.clone()
+            },
+            original_pages: target
+                .pages
+                .iter()
+                .map(|p| crate::domain::ArtifactManifestPage {
+                    source_page_number: p.page_id.source_page_number.get(),
+                    relative_path: p.relative_path.to_string(),
+                    byte_length: p.byte_length.unwrap(),
+                    sha256: p.sha256.clone().unwrap(),
+                    storage_format: p.storage_format.unwrap(),
+                    source_revision: p.source_revision.clone().unwrap(),
+                    excluded: p.excluded,
+                    quarantined: false,
+                })
+                .collect(),
             original_tree: BTreeMap::new(),
             merged_tree: BTreeMap::new(),
         };
@@ -305,6 +354,9 @@ impl OverlapMergeService {
             create_private_directory(&operation)?;
             let staging = operation.join("merged");
             copy_tree(&target_directory, &staging)?;
+            if !journal.composition.is_empty() {
+                composition::stage(&journal, &source_root, &source, &mut target, &staging)?;
+            }
             for replacement in &journal.replacements {
                 let from = page(&source, replacement.source_page)?;
                 let source_path = checked_path(&source_root, from.relative_path.as_str())?;
@@ -528,6 +580,9 @@ impl OverlapMergeService {
                 return Err(invalid("The replacement page changed before commit"));
             }
         }
+        if !journal.composition.is_empty() {
+            composition::commit(&transaction, journal)?;
+        }
         transaction
             .execute(
                 "UPDATE download_artifacts SET revision=revision+1 WHERE entry_id=?1",
@@ -569,6 +624,15 @@ impl OverlapMergeService {
             transaction.execute("UPDATE download_jobs SET state='cancelled',revision=revision+1,last_error_code=NULL,last_error_message=NULL,last_error_retryable=NULL,finished_at=COALESCE(finished_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE entry_id=?1",[&journal.source_entry_id]).map_err(sql)?;
             transaction.execute("UPDATE download_attempts SET outcome_state='cancelled',finished_at=COALESCE(finished_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE EXISTS(SELECT 1 FROM download_jobs job WHERE job.entry_id=?1 AND job.job_id=download_attempts.job_id AND job.attempt=download_attempts.attempt)",[&journal.source_entry_id]).map_err(sql)?;
         }
+        if journal.automation {
+            let source_is_incoming = journal.source_entry_id
+                == self.repository_entry_for_review(&transaction, &journal.review_id)?;
+            let snapshot = serde_json::json!({"preferenceReason":"uncensored_merge","winner":if source_is_incoming {"existing"} else {"incoming"},"candidateId":journal.candidate_id,"mergeId":journal.merge_id,"sourceGalleryId":journal.source_gallery_id,"targetGalleryId":journal.target_gallery_id,"replacedPages":journal.replacements.len(),"backupPath":Path::new(&journal.target_root).join(&journal.operation_directory).join("original")});
+            if !source_is_incoming {
+                transaction.execute("UPDATE download_overlap_candidates SET decision='existing_removed' WHERE candidate_id=?1",[&journal.candidate_id]).map_err(sql)?;
+            }
+            transaction.execute("INSERT INTO download_overlap_decisions(decision_id,review_id,review_revision,candidate_id,action,actor,reason_code,rule_version,feature_snapshot_json,created_at) VALUES(?1,?2,?3,?4,?5,'automation','uncensored_containment_merge_v1',1,?6,strftime('%Y-%m-%dT%H:%M:%fZ','now'))", params![journal.merge_id,journal.review_id,journal.review_revision,journal.candidate_id,if source_is_incoming {"remove_incoming"} else {"remove_existing_continue"},snapshot.to_string()]).map_err(sql)?;
+        }
         let related = {
             let mut statement=transaction.prepare("SELECT DISTINCT r.review_id,r.entry_id FROM download_overlap_reviews r LEFT JOIN download_overlap_candidates c ON c.review_id=r.review_id WHERE r.state='pending' AND (r.entry_id=?1 OR c.existing_entry_id=?1 OR (?3=1 AND (r.entry_id=?2 OR c.existing_entry_id=?2)))").map_err(sql)?;
             let items = statement
@@ -603,7 +667,17 @@ impl OverlapMergeService {
             merge_id: journal.merge_id.clone(),
             source_gallery_id: GalleryId::new(journal.source_gallery_id)?,
             target_gallery_id: GalleryId::new(journal.target_gallery_id)?,
-            replaced_pages: journal.replacements.len(),
+            replaced_pages: if journal.composition.is_empty() {
+                journal.replacements.len()
+            } else {
+                journal
+                    .composition
+                    .iter()
+                    .filter(|p| p.donor)
+                    .count()
+                    .saturating_sub(journal.added_pages)
+            },
+            added_pages: journal.added_pages,
             backup_path: Path::new(&journal.target_root)
                 .join(&journal.operation_directory)
                 .join("original")
@@ -613,6 +687,21 @@ impl OverlapMergeService {
             source_excluded: journal.exclude_source,
             resume_jobs,
         })
+    }
+    fn repository_entry_for_review(
+        &self,
+        c: &Connection,
+        review: &str,
+    ) -> Result<String, ApplicationError> {
+        c.query_row(
+            "SELECT entry_id FROM download_overlap_reviews WHERE review_id=?1",
+            [review],
+            |r| r.get(0),
+        )
+        .map_err(sql)
+    }
+    pub fn composed_page_count(&self, gallery_id: i64) -> Result<Option<u32>, ApplicationError> {
+        self.repository.connection()?.query_row("SELECT a.expected_page_count FROM download_artifacts a WHERE a.gallery_id=?1 AND EXISTS(SELECT 1 FROM download_pages p WHERE p.entry_id=a.entry_id AND p.source_revision LIKE 'local-composition:%') ORDER BY a.revision DESC LIMIT 1",[gallery_id],|r|r.get(0)).optional().map_err(sql)
     }
 }
 
@@ -630,10 +719,12 @@ fn validate_request<'a>(
     if review.state != DownloadOverlapReviewState::Pending {
         return Err(invalid("Only an active comparison can be merged"));
     }
-    if request.source_pages.is_empty()
-        || request.source_pages.len() > 200
-        || request.source_pages.contains(&0)
-        || request.source_pages.iter().collect::<BTreeSet<_>>().len() != request.source_pages.len()
+    if request.selected_pages.is_none()
+        && (request.source_pages.is_empty()
+            || request.source_pages.len() > 4000
+            || request.source_pages.contains(&0)
+            || request.source_pages.iter().collect::<BTreeSet<_>>().len()
+                != request.source_pages.len())
     {
         return Err(invalid("Select unique valid pages on exactly one side"));
     }
@@ -648,6 +739,67 @@ fn validate_request<'a>(
         return Err(invalid("An album cannot be merged into itself"));
     }
     Ok(candidate)
+}
+
+/// Saved comparisons continue reading the exact pre-merge bytes, never the new
+/// edition masquerading as old evidence. Each thumbnail still verifies SHA/size.
+pub(super) fn review_backup_page(
+    repository: &SqliteRepository,
+    entry: &DownloadEntryId,
+    fingerprint: &str,
+    number: u32,
+) -> Result<Option<(PathBuf, PageArtifact, u64)>, ApplicationError> {
+    let records = {
+        let c = repository.connection()?;
+        let mut statement=c.prepare("SELECT journal_json FROM overlap_page_merges WHERE target_entry_id=?1 AND state='applied' ORDER BY created_at DESC").map_err(sql)?;
+        let rows = statement
+            .query_map([entry.as_str()], |r| r.get::<_, String>(0))
+            .map_err(sql)?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sql)?;
+        rows
+    };
+    for json in records {
+        let j: Journal = serde_json::from_str(&json).map_err(serialization)?;
+        if j.target_entry_id != entry.as_str() || j.original_fingerprint != fingerprint {
+            continue;
+        }
+        if j.operation_directory != format!(".atsumi-page-merges/{}", j.merge_id)
+            || !j
+                .merge_id
+                .strip_prefix("merge-")
+                .is_some_and(|id| Uuid::parse_str(id).is_ok())
+        {
+            return Err(invalid("Invalid evidence journal identity"));
+        }
+        let Some(p) = j
+            .original_pages
+            .iter()
+            .find(|p| p.source_page_number == number)
+        else {
+            return Ok(None);
+        };
+        let suffix = relative_inside(&p.relative_path, &j.target_directory)?;
+        let relative = format!("{}/original/{suffix}", j.operation_directory);
+        let root = PathBuf::from(j.target_root);
+        checked_path(&root, &relative)?;
+        let page = PageArtifact::new(
+            entry.clone(),
+            GalleryId::new(j.target_gallery_id)?,
+            crate::domain::SourcePageNumber::new(number)?,
+            ArtifactRelativePath::new(relative)?,
+            PageArtifactState::Present,
+            Some(p.byte_length),
+        )?
+        .with_verification(
+            p.sha256.clone(),
+            p.storage_format,
+            p.source_revision.clone(),
+            "merge-backup",
+        )?;
+        return Ok(Some((root, page, j.target_artifact_revision)));
+    }
+    Ok(None)
 }
 fn derive_mapping(
     candidate: &crate::domain::DownloadOverlapCandidate,
@@ -1059,6 +1211,284 @@ mod tests {
     }
 
     #[test]
+    fn mixed_selection_inserts_unique_pages_and_preserves_manifest_hashes_and_checkpoints() {
+        for side in [
+            DownloadOverlapMergeSide::Existing,
+            DownloadOverlapMergeSide::Incoming,
+        ] {
+            let f = Fixture::new(4, 4);
+            f.seed_hashes();
+            let (target_id, target_entry, donor_id) = if side == DownloadOverlapMergeSide::Existing
+            {
+                (101, &f.incoming, 102)
+            } else {
+                (102, &f.existing, 101)
+            };
+            let expected = [
+                f.bytes(donor_id, 1),
+                f.bytes(target_id, 2),
+                f.bytes(target_id, 3),
+                f.bytes(donor_id, 2),
+                f.bytes(target_id, 4),
+            ];
+            let mut req = f.request(side, true);
+            req.source_pages = vec![1, 2];
+            req.selected_pages = Some(if side == DownloadOverlapMergeSide::Existing {
+                composition::PageSelection {
+                    existing: vec![1, 2],
+                    incoming: vec![4],
+                }
+            } else {
+                composition::PageSelection {
+                    existing: vec![4],
+                    incoming: vec![1, 2],
+                }
+            });
+            let result = f.service.apply(req).unwrap();
+            assert_eq!(result.added_pages, 1);
+            assert_eq!(result.replaced_pages, 1);
+            let bundle = f.service.bundle(target_entry).unwrap();
+            assert_eq!(bundle.artifact.expected_page_count, 5);
+            assert_eq!(bundle.gallery.metadata.source_page_count, 5);
+            for (index, bytes) in expected.iter().enumerate() {
+                assert_eq!(&f.bytes(target_id, (index + 1) as u32), bytes);
+            }
+            verify_bundle(f.root.path(), &bundle).unwrap();
+            assert_eq!(
+                f.repository
+                    .connection()
+                    .unwrap()
+                    .query_row(
+                        "SELECT count(*) FROM duplicate_page_hashes WHERE entry_id=?1",
+                        [target_entry],
+                        |r| r.get::<_, usize>(0)
+                    )
+                    .unwrap(),
+                5
+            );
+            assert!(Path::new(&result.backup_path).join("0004.webp").is_file());
+            if target_id == 101 {
+                let descriptor = &result.resume_jobs[0];
+                f.repository.pipeline_begin(descriptor).unwrap();
+                let snapshot = f
+                    .repository
+                    .pipeline_received_snapshot(descriptor)
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(snapshot.pages.len(), 5);
+                assert!(snapshot
+                    .pages
+                    .iter()
+                    .all(|p| p.source_revision.starts_with("local-composition:")));
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_selection_rejects_dual_choice_crossing_alignment_and_changed_files() {
+        for failure in ["both", "crossed", "file"] {
+            let f = Fixture::new(4, 4);
+            let original = f.bytes(102, 1);
+            let mut req = f.request(DownloadOverlapMergeSide::Incoming, true);
+            req.selected_pages = Some(composition::PageSelection {
+                existing: if failure == "both" { vec![1] } else { vec![] },
+                incoming: vec![1],
+            });
+            if failure == "crossed" {
+                f.repository.connection().unwrap().execute("UPDATE download_overlap_page_pairs SET existing_source_page=1 WHERE pair_index=1",[]).unwrap();
+            }
+            if failure == "file" {
+                fs::write(f.root.path().join("album-101/0001.webp"), b"changed").unwrap();
+            }
+            assert!(f.service.apply(req).is_err());
+            assert_eq!(f.bytes(102, 1), original);
+            assert_eq!(
+                f.repository
+                    .connection()
+                    .unwrap()
+                    .query_row("SELECT count(*) FROM duplicate_hidden_galleries", [], |r| r
+                        .get::<_, usize>(0))
+                    .unwrap(),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn composition_refuses_remote_metadata_fallback_when_a_checkpoint_is_lost() {
+        let f = Fixture::new(4, 4);
+        let mut req = f.request(DownloadOverlapMergeSide::Existing, true);
+        req.source_pages = vec![2];
+        req.selected_pages = Some(composition::PageSelection {
+            existing: vec![2],
+            incoming: vec![],
+        });
+        let result = f.service.apply(req).unwrap();
+        let descriptor = &result.resume_jobs[0];
+        f.repository.pipeline_begin(descriptor).unwrap();
+        f.repository
+            .connection()
+            .unwrap()
+            .execute(
+                "DELETE FROM download_pages WHERE entry_id=?1 AND source_page_number=2",
+                [&f.incoming],
+            )
+            .unwrap();
+        assert!(f.repository.pipeline_received_snapshot(descriptor).is_err());
+    }
+
+    #[test]
+    fn saved_review_reads_verified_original_backup_after_composition() {
+        let f = Fixture::new(4, 4);
+        let old = f.bytes(102, 4);
+        let mut req = f.request(DownloadOverlapMergeSide::Incoming, true);
+        req.source_pages = vec![2];
+        req.selected_pages = Some(composition::PageSelection {
+            existing: vec![],
+            incoming: vec![2],
+        });
+        f.service.apply(req).unwrap();
+        let review = f.repository.overlap_review_get("review").unwrap().unwrap();
+        assert_eq!(review.candidates[0].existing.page_count, 4);
+        let key = crate::thumbnail::ThumbnailKey::OverlapReviewPage {
+            review_id: "review".into(),
+            candidate_id: "candidate".into(),
+            review_revision: review.revision,
+            side: crate::thumbnail::OverlapReviewSide::Existing,
+            source_page: 4,
+        };
+        let evidence =
+            super::super::overlap_review_thumbnail::load_review_page(&f.repository, &key).unwrap();
+        assert_eq!(
+            fs::read(evidence.root.join(evidence.page.relative_path.as_str())).unwrap(),
+            old
+        );
+        assert!(evidence.page.relative_path.as_str().contains("/original/"));
+    }
+
+    #[test]
+    fn automatic_uncensored_merge_rechecks_evidence_and_records_audit() {
+        let f = Fixture::new(2, 4);
+        // A two-page work requires exact SHA evidence; use a realistic verified
+        // fixture and rewrite the manifest after the metadata-only title change.
+        {
+            let c = f.repository.connection().unwrap();
+            c.execute("UPDATE galleries SET title=CASE WHEN gallery_id=101 THEN 'Edition (decensored)' ELSE 'Edition' END,language='korean'",[]).unwrap();
+            c.execute("UPDATE download_overlap_candidates SET exact_pages=2,visual_pages=0,relation='translation_edition'",[]).unwrap();
+            c.execute("UPDATE download_overlap_page_pairs SET exact_sha256=1", [])
+                .unwrap();
+        }
+        let bundle = f.service.bundle(&f.existing).unwrap();
+        fs::write(
+            f.root.path().join("album-102/manifest.json"),
+            serde_json::to_vec(&ArtifactManifest::from_bundle(&bundle).unwrap()).unwrap(),
+        )
+        .unwrap();
+        let mut req = f.request(DownloadOverlapMergeSide::Incoming, true);
+        req.source_pages = vec![1, 2];
+        req.automation = true;
+        let result = f.service.apply(req).unwrap();
+        assert_eq!(result.replaced_pages, 2);
+        let c = f.repository.connection().unwrap();
+        assert_eq!(
+            c.query_row(
+                "SELECT reason_code FROM download_overlap_decisions",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            "uncensored_containment_merge_v1"
+        );
+        assert_eq!(
+            c.query_row("SELECT actor FROM download_overlap_decisions", [], |r| {
+                r.get::<_, String>(0)
+            })
+            .unwrap(),
+            "automation"
+        );
+    }
+
+    #[test]
+    fn automatic_uncensored_merge_keeps_originals_when_languages_differ() {
+        let f = Fixture::new(2, 4);
+        let before = tree_digest(&f.root.path().join("album-102")).unwrap();
+        let c = f.repository.connection().unwrap();
+        c.execute("UPDATE galleries SET title=CASE WHEN gallery_id=101 THEN 'Edition (decensored)' ELSE 'Edition' END, language=CASE WHEN gallery_id=101 THEN 'korean' ELSE 'japanese' END", []).unwrap();
+        c.execute(
+            "UPDATE download_overlap_candidates SET exact_pages=2,visual_pages=0",
+            [],
+        )
+        .unwrap();
+        c.execute("UPDATE download_overlap_page_pairs SET exact_sha256=1", [])
+            .unwrap();
+        let mut request = f.request(DownloadOverlapMergeSide::Incoming, true);
+        request.source_pages = vec![1, 2];
+        request.automation = true;
+        drop(c);
+        assert!(f.service.apply(request).is_err());
+        assert_eq!(
+            tree_digest(&f.root.path().join("album-102")).unwrap(),
+            before
+        );
+        let c = f.repository.connection().unwrap();
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM duplicate_hidden_galleries", [], |r| r
+                .get::<_, usize>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn composition_exclusion_failure_restores_original_files_and_checkpoints() {
+        let f = Fixture::new(4, 4);
+        f.seed_hashes();
+        let before = tree_digest(&f.root.path().join("album-102")).unwrap();
+        f.repository.connection().unwrap().execute_batch("CREATE TRIGGER composition_fail_exclusion BEFORE INSERT ON duplicate_hidden_galleries BEGIN SELECT RAISE(ABORT,'injected composition exclusion failure'); END;").unwrap();
+        let mut request = f.request(DownloadOverlapMergeSide::Incoming, true);
+        request.source_pages = vec![1, 2];
+        request.selected_pages = Some(composition::PageSelection {
+            existing: vec![4],
+            incoming: vec![1, 2],
+        });
+        assert!(f
+            .service
+            .apply(request)
+            .unwrap_err()
+            .to_string()
+            .contains("injected composition"));
+        assert_eq!(
+            tree_digest(&f.root.path().join("album-102")).unwrap(),
+            before
+        );
+        let bundle = f.service.bundle(&f.existing).unwrap();
+        assert_eq!(bundle.artifact.expected_page_count, 4);
+        verify_bundle(f.root.path(), &bundle).unwrap();
+        let c = f.repository.connection().unwrap();
+        assert_eq!(
+            c.query_row(
+                "SELECT count(*) FROM duplicate_page_hashes WHERE entry_id=?1",
+                [&f.existing],
+                |r| r.get::<_, usize>(0)
+            )
+            .unwrap(),
+            4
+        );
+        assert_eq!(
+            c.query_row("SELECT count(*) FROM duplicate_hidden_galleries", [], |r| r
+                .get::<_, usize>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            c.query_row("SELECT state FROM overlap_page_merges", [], |r| r
+                .get::<_, String>(0))
+                .unwrap(),
+            "rolled_back"
+        );
+    }
+
+    #[test]
     fn completed_pair_removal_excludes_only_selected_album_without_requeue() {
         for (action, selected) in [("remove_existing_continue", 101), ("remove_incoming", 102)] {
             let f = Fixture::completed_pair();
@@ -1115,6 +1545,8 @@ mod tests {
             source_side: DownloadOverlapMergeSide::Existing,
             source_pages: vec![1, 2],
             exclude_source: true,
+            selected_pages: None,
+            automation: false,
         };
         let request = f.service.prepare_completed_merge(request).unwrap();
         let result = f.service.apply(request).unwrap();
@@ -1339,6 +1771,8 @@ mod tests {
                 source_side: side,
                 source_pages: vec![1],
                 exclude_source: exclude,
+                selected_pages: None,
+                automation: false,
             }
         }
         fn bytes(&self, id: i64, page: u32) -> Vec<u8> {
@@ -1370,6 +1804,12 @@ mod tests {
                 operation_directory: format!(".atsumi-page-merges/{id}"),
                 exclude_source: true,
                 replacements: vec![],
+                composition: vec![],
+                added_pages: 0,
+                automation: false,
+                candidate_id: "candidate".into(),
+                original_pages: vec![],
+                original_fingerprint: String::new(),
                 original_tree: tree_digest(&self.root.path().join("album-102")).unwrap(),
                 merged_tree: BTreeMap::new(),
             };

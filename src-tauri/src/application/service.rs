@@ -268,6 +268,26 @@ impl ApplicationService {
         }
     }
 
+    /// Fill only free slots in the active queue. The command holds ManagedWorkGate
+    /// across this count, mutation and enqueue so concurrent UI requests cannot
+    /// both consume the same slots. Existing oversized queues are left untouched.
+    pub fn download_retry_available(
+        &self,
+        entry_ids: Vec<String>,
+    ) -> Result<Vec<JobRef>, ApplicationError> {
+        let available = 200u64.saturating_sub(self.download_active_count()?) as usize;
+        if available == 0 {
+            return Ok(Vec::new());
+        }
+        let mut seen = BTreeSet::new();
+        let selected = entry_ids
+            .into_iter()
+            .filter(|id| seen.insert(id.clone()))
+            .take(available)
+            .collect::<Vec<_>>();
+        self.download_retry(selected)
+    }
+
     pub fn download_cancel(
         &self,
         entry_ids: Vec<String>,

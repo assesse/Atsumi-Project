@@ -376,6 +376,7 @@ mod tests {
             state.arm = Some(Arm {
                 id: nonce.clone(),
                 root: dir.path().to_owned(),
+                archive_root: None,
                 capture_chat: false,
                 created: Instant::now(),
                 generation: state.page_generation,

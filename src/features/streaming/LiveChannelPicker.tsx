@@ -3,6 +3,8 @@ import { createLiveChannelsApi, mergeLiveChannels, type LiveChannelsApi, type Li
 import { createAutoRecordingApi, type AutoRecordingApi, type AutoRecordingEntry } from "../../api/autoRecording";
 import { normalizeMultiviewChannel } from "../../api/multiview";
 import "./LiveChannelPicker.css";
+import type { ApiError } from "../../api/contracts";
+import { RecordingLoadStatus } from "./RecordingLoadStatus";
 
 export function LiveChannelPicker({ runtime, inputs, multiple, privacy, disabled, onInputs, api: suppliedApi, autoApi: suppliedAutoApi }: {
   runtime: "tauri" | "browser-mock"; inputs: string[]; multiple: boolean; privacy: boolean; disabled: boolean;
@@ -12,6 +14,8 @@ export function LiveChannelPicker({ runtime, inputs, multiple, privacy, disabled
   const autoApi = useMemo(() => suppliedAutoApi ?? createAutoRecordingApi(runtime), [runtime, suppliedAutoApi]);
   const [favorites, setFavorites] = useState<LiveFavorite[]>([]), [scheduled, setScheduled] = useState<AutoRecordingEntry[]>([]);
   const [error, setError] = useState<string | null>(null), [pending, setPending] = useState(false);
+  const [pollError, setPollError] = useState<ApiError | null>(null);
+  const [hasSnapshot, setHasSnapshot] = useState(runtime !== "tauri");
   const [filter, setFilter] = useState("");
   const [profiles, setProfiles] = useState<Record<string, LiveChannelProfile>>({});
   const version = useRef(0), alive = useRef(false), busy = useRef(false);
@@ -24,8 +28,9 @@ export function LiveChannelPicker({ runtime, inputs, multiple, privacy, disabled
         if (cancelled || version.current !== current || busy.current) return;
         if (saved.ok && Array.isArray(saved.data)) setFavorites(saved.data);
         if (auto.ok && Array.isArray(auto.data.channels)) setScheduled(auto.data.channels);
-        setError(!saved.ok ? saved.error.message : !auto.ok ? auto.error.message : null);
-      } catch { if (!cancelled) setError("내 채널을 불러오지 못했습니다. 주소로 연결할 수 있습니다."); }
+        setPollError(!saved.ok ? saved.error : !auto.ok ? auto.error : null);
+        if (saved.ok && auto.ok) setHasSnapshot(true);
+      } catch { if (!cancelled && version.current === current && !busy.current) setPollError({ code: "CHANNELS_TRANSPORT", message: "내 채널을 불러오지 못했습니다. 주소로 연결할 수 있습니다.", retryable: true }); }
       finally { if (!cancelled) timer = setTimeout(poll, 3000); }
     };
     if (runtime === "tauri") void poll();
@@ -47,7 +52,9 @@ export function LiveChannelPicker({ runtime, inputs, multiple, privacy, disabled
     try {
       const result = await api.set(input, favorite);
       if (!alive.current || request !== version.current) return;
-      if (result.ok) setFavorites(result.data); else setError(result.error.message);
+      if (result.ok) setFavorites(result.data);
+      else if (result.error.code === "BROWSER_INITIALIZING") setPollError(result.error);
+      else setError(result.error.message);
     } catch { if (alive.current) setError("즐겨찾기를 변경하지 못했습니다."); }
     finally { busy.current = false; if (alive.current) setPending(false); }
   };
@@ -88,9 +95,10 @@ export function LiveChannelPicker({ runtime, inputs, multiple, privacy, disabled
           <button type="button" className="live-channel-star" disabled={pending || runtime !== "tauri"} aria-pressed={row.favorite} aria-label={`${name} 즐겨찾기 ${row.favorite ? "해제" : "추가"}`} title="즐겨찾기만 변경합니다. 녹화 예약은 유지됩니다." onClick={() => void toggle(row.channelId, !row.favorite)}>{row.favorite ? "★" : "☆"}</button>
         </div>;
       })}
-      {!channels.length ? <p>즐겨찾기와 녹화 예약 채널이 여기에 표시됩니다.</p> : null}
+      {hasSnapshot && !channels.length ? <p>즐겨찾기와 녹화 예약 채널이 여기에 표시됩니다.</p> : null}
     </div>
     {draft.length ? <div className="live-channel-save">{draft.map((id, index) => <button type="button" key={id} disabled={pending || disabled} onClick={() => void toggle(id, true)}>{pending ? "저장 중…" : draft.length === 1 ? "☆ 입력한 채널 즐겨찾기" : `☆ ${index + 1}번 채널 즐겨찾기`}</button>)}</div> : null}
+    <RecordingLoadStatus error={pollError} hasSnapshot={hasSnapshot} subject="내 채널" />
     {error ? <small role="alert">{error}</small> : null}
   </section>;
 }

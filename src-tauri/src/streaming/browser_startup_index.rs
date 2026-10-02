@@ -17,12 +17,12 @@ pub(super) fn settled(r: &BrowserRecording) -> bool {
         return r.status != BrowserRecordingStatus::Recording && !r.deletion_pending;
     }
     r.status != BrowserRecordingStatus::Recording
+        && r.archive.as_ref().is_none_or(|a| a.status == archive::ArchiveStatus::Complete)
         && !r.deletion_pending
         && r.partial.is_none()
         && r.ending.as_ref().is_none_or(|e| e.reason != "checking")
-        && r.progressive
-            .as_ref()
-            .is_none_or(|p| p.segment_count == r.segment_count || p.last_error.is_some())
+        // Completed final export supersedes an incomplete progressive prefix.
+        // Re-scanning that prefix on every launch would restore archive I/O lag.
         && if r.segment_count == 0 {
             r.bytes_written == 0 && r.merge.is_none()
         } else {
@@ -217,6 +217,34 @@ mod tests {
         }
         store.finish(&r.id, false, None).unwrap();
         (dir, store, r)
+    }
+
+    #[test]
+    fn completed_direct_export_is_settled_with_an_incomplete_progressive_prefix() {
+        let (_dir, store, _) = fixture(true);
+        let mut r = store.snapshot().unwrap().remove(0);
+        r.progressive = Some(ProgressiveSummary::default());
+        assert!(!settled(&r));
+        let mut merge = BrowserMerge::pending(r.segment_count);
+        merge.status = BrowserMergeStatus::Complete;
+        r.merge = Some(merge);
+        assert!(settled(&r));
+        r.merge.as_mut().unwrap().source_cleanup = Some(BrowserSourceCleanup {
+            status: BrowserSourceCleanupStatus::Pending,
+            deleted_segments: 0,
+            proof_file: String::new(),
+            proof_sha256: String::new(),
+            last_error: None,
+        });
+        assert!(!settled(&r));
+        r.merge
+            .as_mut()
+            .unwrap()
+            .source_cleanup
+            .as_mut()
+            .unwrap()
+            .status = BrowserSourceCleanupStatus::Complete;
+        assert!(settled(&r));
     }
 
     #[test]

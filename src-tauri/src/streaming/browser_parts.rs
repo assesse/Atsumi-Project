@@ -204,6 +204,7 @@ pub(crate) fn read_part_segments(
 }
 
 impl BrowserCaptureStore {
+    #[cfg(test)]
     pub(crate) fn begin_progressive(
         &self,
         root: &Path,
@@ -228,9 +229,19 @@ impl BrowserCaptureStore {
         if state.closing || state.merge_job.is_some() {
             return Ok(None);
         }
-        for index in 0..state.recordings.len() {
+        let count = state.recordings.len();
+        let start = state
+            .last_part_recording
+            .as_ref()
+            .and_then(|id| state.recordings.iter().position(|r| &r.id == id))
+            .map_or(0, |index| index + 1);
+        for step in 0..count {
+            let index = (start + step) % count;
             let r = &state.recordings[index];
-            if r.deletion_pending
+            // A stopped recording goes directly to final export, including its
+            // unmerged tail. Do not force hundreds of tiny range jobs first.
+            if r.status != BrowserRecordingStatus::Recording
+                || r.deletion_pending
                 || r.media_removed_at.is_some()
                 || state.unverified.contains(&r.id)
                 || r.progressive
@@ -279,6 +290,7 @@ impl BrowserCaptureStore {
             })();
             match prepared {
                 Ok(Some(job)) => {
+                    state.last_part_recording = Some(job.recording.id.clone());
                     state.merge_job = Some((job.recording.id.clone(), job.token.clone()));
                     return Ok(Some(job));
                 }
@@ -390,24 +402,30 @@ pub(crate) fn recover_summary(record: &mut BrowserRecording) {
     }
 }
 
-/// Final export consumes each verified range once, rather than re-probing all
-/// tiny source segments. The original journal remains the cleanup authority.
+/// Reuse ranges only when they cover the entire recording. An MP4 remux can
+/// normalize timebases/extradata, so mixing a normalized prefix with raw fMP4
+/// would not be a safe concat. For an incomplete prefix, export the originals
+/// directly without waiting for another pass through the progressive queue.
 pub(crate) fn export_segments(
     record: &BrowserRecording,
+    sources: &[BrowserSegment],
 ) -> Result<Option<Vec<BrowserSegment>>, StreamError> {
     if record.progressive.is_none() {
         return Ok(None);
     }
     let parts = load(record)?;
-    if parts.is_empty() || summary(&parts).segment_count != record.segment_count {
+    let covered = summary(&parts).segment_count as usize;
+    if sources.len() as u64 != record.segment_count || covered > sources.len() {
         return Err(invalid());
+    }
+    if covered < sources.len() {
+        return Ok(Some(sources.to_vec()));
     }
     Ok(Some(
         parts
             .iter()
-            .enumerate()
-            .map(|(i, p)| BrowserSegment {
-                index: i as u64,
+            .map(|p| BrowserSegment {
+                index: p.first,
                 file: p.file.clone(),
                 bytes: p.bytes,
                 duration_seconds: p.duration,
@@ -495,6 +513,7 @@ pub(crate) fn replay_source(record: &BrowserRecording) -> Result<BrowserReplaySo
         None
     };
     Ok(BrowserReplaySource {
+        storage_lease: None,
         recording: record.clone(),
         media: open_regular(&root.join(&first.file), 256 * 1024 * 1024)?,
         timeline: open_regular(&root.join(&first.timeline_file), MAX_JOURNAL)?,
@@ -574,20 +593,68 @@ mod tests {
         assert!(store.has_active());
         assert!(store.take_part_job().unwrap().is_none());
         store.finish(&r.id, false, None).unwrap();
-        let tail = store.take_part_job().unwrap().unwrap();
-        assert_eq!(tail.part.as_ref().unwrap().first, 3);
-        publish_fixture(&store, &tail);
         assert!(store.take_part_job().unwrap().is_none());
         let final_job = store.take_merge_job().unwrap().unwrap();
         assert!(final_job.part.is_none());
-        assert_eq!(
-            export_segments(&final_job.recording)
+        let sources = read_merge_segments(&final_job).unwrap();
+        let export = export_segments(&final_job.recording, &sources)
+            .unwrap()
+            .unwrap();
+        assert_eq!(export.len(), 4);
+        assert_eq!(export[0].index, 0);
+        assert_eq!(export[0].file, sources[0].file);
+        assert_eq!(export[3].index, 3);
+        assert_eq!(export[3].file, "segment-000000000003.webm");
+        assert_eq!(sources.len(), 4);
+        let (hashes, derivatives) =
+            cleanup::verified_range_inputs(&final_job, &std::sync::atomic::AtomicBool::new(false))
+                .unwrap();
+        assert_eq!(hashes.len(), 3);
+        assert_eq!(derivatives.len(), 2);
+    }
+    #[test]
+    fn stopped_recording_without_ranges_exports_raw_sources_immediately() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BrowserCaptureStore::new(dir.path()).unwrap();
+        let r = store
+            .begin_progressive(dir.path(), CHANNEL, "tail", "video/webm")
+            .unwrap();
+        append(&store, &r.id, 0, 2);
+        store.finish(&r.id, true, Some("source changed")).unwrap();
+        assert!(store.take_part_job().unwrap().is_none());
+        let job = store.take_merge_job().unwrap().unwrap();
+        let sources = read_merge_segments(&job).unwrap();
+        let export = export_segments(&job.recording, &sources).unwrap().unwrap();
+        assert_eq!(export.len(), 2);
+        assert_eq!(export[0].file, sources[0].file);
+        assert_eq!(export[1].file, sources[1].file);
+        assert!(
+            cleanup::verified_range_inputs(&job, &std::sync::atomic::AtomicBool::new(false))
                 .unwrap()
-                .unwrap()
-                .len(),
-            2
+                .0
+                .is_empty()
         );
-        assert_eq!(read_merge_segments(&final_job).unwrap().len(), 4);
+    }
+    #[test]
+    fn live_ranges_rotate_between_recordings_with_backlog() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BrowserCaptureStore::new(dir.path()).unwrap();
+        let a = store
+            .begin_progressive(dir.path(), CHANNEL, "first", "video/webm")
+            .unwrap();
+        let b = store
+            .begin_progressive(dir.path(), CHANNEL, "second", "video/webm")
+            .unwrap();
+        append(&store, &a.id, 0, 6);
+        append(&store, &b.id, 0, 3);
+        let first = store.take_part_job().unwrap().unwrap();
+        assert_eq!(first.recording.id, a.id);
+        publish_fixture(&store, &first);
+        let second = store.take_part_job().unwrap().unwrap();
+        assert_eq!(second.recording.id, b.id);
+        publish_fixture(&store, &second);
+        let third = store.take_part_job().unwrap().unwrap();
+        assert_eq!(third.recording.id, a.id);
     }
     #[test]
     fn range_prefix_mutation_rejects_publication_without_stopping_capture() {

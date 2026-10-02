@@ -149,16 +149,16 @@ describe("AppShell without feature workspaces", () => {
     expect(window.localStorage.getItem("atsumi.content-source.v1")).toBe("danbooru");
 
     await act(async () => shell.current.togglePrivacyMode());
-    expect(fake.api.settingsUpdate).toHaveBeenCalledExactlyOnceWith({ privacyMode: true }, initialSettings.revision);
-    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "on");
-    expect(shell.container.querySelector('.toast[role="status"]')).toHaveTextContent("프라이버시 모드 켬");
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "off");
 
     await act(async () => {
       shell.current.selectSource("hitomi");
       fake.requestExit();
     });
     expect(shell.current).toMatchObject({ source: "hitomi", railCollapsed: true, settingsOpen: true, activityOpen: true, exitConfirmOpen: true });
-    expect(shell.current.settingsStore.settings.privacyMode).toBe(true);
+    expect(shell.current.privacyMode).toBe(false);
+    expect(shell.current.settingsStore.settings.privacyMode).toBe(false);
     expect(shell.container.querySelector(".exit-dialog")).toHaveAttribute("open");
     expect(fake.api.appActiveWorkSnapshot).toHaveBeenCalledOnce();
 
@@ -178,29 +178,27 @@ describe("AppShell without feature workspaces", () => {
     expect(fake.unsubscribeExit).toHaveBeenCalledOnce();
     expect(fake.settingsListeners.size).toBe(0);
     expect(fake.exitListeners.size).toBe(0);
-    expect(document.documentElement).not.toHaveAttribute("data-privacy-mode");
+    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "off");
   });
 
-  it("blocks repeated privacy mutations while a save spans a mode change", async () => {
-    const fake = fakeShellApi();
-    let finishSave!: (result: ApiResult<SettingsSnapshot>) => void;
-    fake.api.settingsUpdate.mockReturnValueOnce(new Promise((resolve) => { finishSave = resolve; }));
-    const shell = await mountShell(fake.api);
-    await act(async () => {
-      void shell.current.togglePrivacyMode();
-      void shell.current.togglePrivacyMode();
-    });
-    expect(shell.current.privacyModePending).toBe(true);
-    await act(async () => shell.current.selectSource("danbooru"));
-    await act(async () => { void shell.current.togglePrivacyMode(); });
-    expect(fake.api.settingsUpdate).toHaveBeenCalledExactlyOnceWith({ privacyMode: true }, initialSettings.revision);
-    expect(shell.current.privacyModePending).toBe(true);
-
-    await act(async () => finishSave(success({ ...initialSettings, revision: 43, privacyMode: true })));
-    expect(shell.current.source).toBe("danbooru");
-    expect(shell.current.privacyModePending).toBe(false);
-    expect(shell.current.settingsStore.settings.privacyMode).toBe(true);
-    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "on");
-    expect(fake.api.on).toHaveBeenCalledTimes(2);
+  it("does not overwrite the current privacy choice when the startup setting changes", async () => {
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current.privacyMode).toBe(true);
+    await act(async () => shell.current.togglePrivacyMode());
+    expect(shell.current.privacyMode).toBe(false);
+    await act(async () => fake.emitSettings({...initialSettings,revision:43,privacyOnStartup:true}));
+    expect(shell.current.privacyMode).toBe(false);
+    await shell.unmount();
+    const next=await mountShell(fake.api);
+    expect(next.current.privacyMode).toBe(true);
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it("honors an explicitly disabled startup mask", async () => {
+    const fake=fakeShellApi();
+    fake.api.settingsGet.mockResolvedValueOnce(success({...initialSettings,privacyOnStartup:false}));
+    const shell=await mountShell(fake.api);
+    expect(shell.current.privacyMode).toBe(false);
+    await act(async()=>shell.current.togglePrivacyMode());
+    expect(shell.current.privacyMode).toBe(true);
   });
 });

@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import type { BackendClient } from "../api/backend";
 import type { SettingsPatch } from "../api/contracts";
 import { ExitConfirmDialog } from "../components/ExitConfirmDialog";
@@ -27,6 +27,7 @@ type AppShellServices = ShellState & {
   settingsStore: ReturnType<typeof useSettings>;
   preferenceQueue: ReturnType<typeof usePreferenceQueue>;
   saveSettingsPatch: (patch: SettingsPatch) => Promise<boolean>;
+  privacyMode: boolean;
   privacyModePending: boolean;
   togglePrivacyMode: () => Promise<void>;
   checkForUpdates: ReturnType<typeof useAppUpdater>["checkForUpdates"];
@@ -54,8 +55,15 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const toastSequence = useRef(0);
-  const [privacyModePending, setPrivacyModePending] = useState(false);
-  const privacyMutationPending = useRef(false);
+  const [privacyMode, setPrivacyMode] = useState(true);
+  const privacyInitialized = useRef(false);
+  const privacyModePending = !settingsStore.hasSnapshot;
+  useLayoutEffect(() => {
+    if (settingsStore.hasSnapshot && !privacyInitialized.current) {
+      privacyInitialized.current = true;
+      setPrivacyMode(settings.privacyOnStartup ?? true);
+    }
+  }, [settingsStore.hasSnapshot, settings.privacyOnStartup]);
   useWindowPlacement();
 
   const showToast = useCallback((message: string) => {
@@ -76,10 +84,9 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   const setSettingsOpen = useCallback((open: boolean) => dispatch({ type: "settings.set", open }), []);
   const setActivityOpen = useCallback((open: boolean) => dispatch({ type: "activity.set", open }), []);
 
-  useEffect(() => {
-    document.documentElement.dataset.privacyMode = settings.privacyMode ? "on" : "off";
-    return () => { delete document.documentElement.dataset.privacyMode; };
-  }, [settings.privacyMode]);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.privacyMode = privacyMode ? "on" : "off";
+  }, [privacyMode]);
 
   const saveSettingsPatch = useCallback(async (patch: SettingsPatch) => {
     const result = await saveSettings(patch);
@@ -88,17 +95,9 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   }, [saveSettings, showToast]);
 
   const togglePrivacyMode = useCallback(async () => {
-    if (privacyMutationPending.current) return;
-    privacyMutationPending.current = true;
-    setPrivacyModePending(true);
-    try {
-      const result = await saveSettings({ privacyMode: !settings.privacyMode });
-      showToast(result.ok ? result.data.privacyMode ? "프라이버시 모드 켬" : "프라이버시 모드 끔" : result.error.message);
-    } finally {
-      privacyMutationPending.current = false;
-      setPrivacyModePending(false);
-    }
-  }, [saveSettings, settings.privacyMode, showToast]);
+    if (privacyModePending) return;
+    setPrivacyMode((current) => !current);
+  }, [privacyModePending]);
 
   const closeTutorial = useCallback((doNotShowAgain: boolean) => {
     if (doNotShowAgain) setTutorialDismissed(true);
@@ -107,20 +106,22 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
 
   const value = useMemo<AppShellServices>(() => ({
     ...state, selectSource, toggleRail, setSettingsOpen, setActivityOpen, showToast,
-    settingsStore, preferenceQueue, saveSettingsPatch, privacyModePending, togglePrivacyMode,
+    settingsStore, preferenceQueue, saveSettingsPatch, privacyMode, privacyModePending, togglePrivacyMode,
     checkForUpdates: updater.checkForUpdates,
     exitConfirmOpen: exit.open, openExitConfirm: exit.openExitConfirm,
     backgroundReady: startup.backgroundReady,
   }), [state, selectSource, toggleRail, setSettingsOpen, setActivityOpen, showToast, settingsStore, preferenceQueue,
-    saveSettingsPatch, privacyModePending, togglePrivacyMode, updater.checkForUpdates, exit.open, exit.openExitConfirm, startup.backgroundReady]);
+    saveSettingsPatch, privacyMode, privacyModePending, togglePrivacyMode, updater.checkForUpdates, exit.open, exit.openExitConfirm, startup.backgroundReady]);
 
   return (
     <AppShellContext.Provider value={value}>
       {children}
-      {startup.phase !== "ready" ? <aside className="startup-status" role="status">
-        <span>{startup.phase === "failed" ? "앱 데이터를 준비하지 못했습니다. 기존 데이터는 보존되어 있습니다."
+      {startup.phase !== "ready" ? <aside className={`startup-status is-${startup.phase === "failed" ? "error" : startup.statusError ? "warning" : "loading"}`} role={startup.phase === "failed" || startup.statusError ? "alert" : "status"}>
+        <i className="startup-status-icon" aria-hidden="true">{startup.phase === "failed" ? "×" : startup.statusError ? "!" : ""}</i>
+        <span>{startup.phase === "failed" ? "앱 데이터 준비 실패 · 기존 데이터는 보존됩니다."
+          : startup.statusError ? startup.statusError
           : startup.phase === "cancelling" ? "시작을 취소하고 작업을 안전하게 정리하는 중입니다."
-          : "저장된 설정과 작업을 준비하는 중입니다. 화면 조작은 계속할 수 있습니다."}</span>
+          : "저장된 설정·작업 준비 중 · 다른 화면을 이용할 수 있습니다."}</span>
         {startup.phase !== "cancelling" ? <button type="button" onClick={() => void startup.cancel()}>시작 취소 및 종료</button> : null}
       </aside> : null}
       <UpdateDialog

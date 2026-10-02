@@ -30,6 +30,7 @@
   let lastDetail = "ready";
   let toolbar = null;
   let encodedStarting = false;
+  let preparingRequest = null;
   let encodedChat = null;
   let lastCaptureRequestId = null;
   const encodedState = () => window.__atsumiEncodedCapture?.getStatus() ?? null;
@@ -143,10 +144,10 @@
   const status = () => {
     const video = videoSource();
     const encoded = encodedState();
-    const encodedActive = Boolean(encodedStarting || encoded?.active);
-    const ready = Boolean(channel() && video &&
+    const encodedActive = Boolean(preparingRequest || encodedStarting || encoded?.active);
+    const ready = Boolean(channel() && video && window.__atsumiQuality?.canStart?.() !== false &&
       (window.__atsumiEncodedCapture?.canStart(video) || (ALLOW_REENCODED_CAPTURE && !video.paused && !video.seeking && video.playbackRate === 1 && video.captureStream && chooseMime())));
-    const detail = encodedActive ? (encodedStarting && !encoded?.active ? "starting" : encodedDetail(encoded?.detail ?? "starting")) : session ? (session.stopping ? "saving" : session.recordingId ? "recording" : "starting") :
+    const detail = encodedActive ? ((preparingRequest || encodedStarting) && !encoded?.active ? "starting" : encodedDetail(encoded?.detail ?? "starting")) : session ? (session.stopping ? "saving" : session.recordingId ? "recording" : "starting") :
       lastDetail === "ready" && !ready ? "unavailable" : lastDetail;
     renderStatus(detail);
     const fields = { channelId: session?.channelId ?? channel(), requestId: lastCaptureRequestId, ready,
@@ -347,13 +348,24 @@
     status();
   };
   const start = async (command) => {
-    if (session || encodedStarting || encodedState()?.active) return;
+    if (session || preparingRequest || encodedStarting || encodedState()?.active) return;
     if (command.rightsAcknowledged !== true || !UUID.test(command.requestId ?? "")) {
       lastDetail = "rights_required";
       status();
       return;
     }
     lastCaptureRequestId = command.requestId;
+    if (command.channelId !== channel()) return;
+    if (window.__atsumiQuality?.prepare) {
+      preparingRequest = command.requestId;
+      lastDetail = "starting"; status();
+      let qualityReady = true;
+      try { qualityReady = await window.__atsumiQuality.prepare() !== false; } catch { /* Native player remains the fallback. */ }
+      if (preparingRequest !== command.requestId || command.channelId !== channel()) return;
+      preparingRequest = null;
+      if (!qualityReady) { lastDetail = "unavailable"; status(); return; }
+      if (session || encodedStarting || encodedState()?.active) return;
+    }
     const channelId = channel();
     const video = videoSource();
     if (channelId && channelId === command.channelId && video &&
@@ -476,6 +488,9 @@
     const command = event.detail;
     if (!command || typeof command !== "object") return;
     if (command.kind === "start") void start(command);
+    else if (command.kind === "stop" && preparingRequest && command.channelId === channel()) {
+      preparingRequest = null; lastDetail = "ready"; status();
+    }
     else if (command.kind === "stop" && encodedState()?.active && command.channelId === encodedState()?.channelId) {
       const reason = ["broadcast_ended", "broadcast_changed", "app_shutdown"].includes(command.reason) ? command.reason : "user_stop";
       void window.__atsumiEncodedCapture.stop(reason, false).catch(() => { lastDetail = "native_rejected"; status(); });
@@ -485,6 +500,7 @@
     }
   });
   window.addEventListener("pagehide", () => {
+    preparingRequest = null;
     // Best effort only: the native host owns crash/window-destruction recovery.
     // visibilitychange is deliberately NOT a stop signal.
     if (session) stop(session, "page_hidden", true);

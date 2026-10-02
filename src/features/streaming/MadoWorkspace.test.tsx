@@ -37,6 +37,63 @@ const enter = async (index: number, text: string) => act(async () => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text); input.dispatchEvent(new Event("input", { bubbles: true }));
 });
 describe("마도 배치", () => {
+  it.each([false, true])("starts with an inline connection form without opening a dialog or moving focus (unified: %s)", async unifiedLive => {
+    const api = fake(), background = document.createElement("button"); document.body.append(background); background.focus();
+    try {
+      const render = () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive={unifiedLive} onLeave={() => {}} api={api} />);
+      await act(async () => render());
+      expect(container.querySelector(".mado-connection-inline .connection-setup")).not.toBeNull();
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(container.querySelector('[aria-label="연결 설정 닫기"]')).toBeNull();
+      expect(document.activeElement).toBe(background);
+      expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+      await act(async () => root.render(null));
+      await act(async () => render());
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(document.activeElement).toBe(background);
+    } finally { background.remove(); }
+  });
+  it("opens a nonmodal channel panel, lets Tab leave it and respects background focus when closing", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    const background = document.createElement("button"); document.body.append(background);
+    try {
+      await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
+      const opener = button("내 채널"); opener.focus();
+      await act(async () => opener.click());
+      const dialog = container.querySelector('[role="dialog"]')!;
+      expect(dialog).toHaveAttribute("aria-modal", "false");
+      expect(dialog).toHaveAttribute("data-native-overlay", "true");
+      expect(dialog).toHaveAttribute("data-native-preserve-video", "true");
+      expect(dialog).toHaveAttribute("data-native-interactive-background", "true");
+      expect(document.activeElement).toBe(button("설정 닫기"));
+      const last = button("상태 확인"); last.focus();
+      const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+      await act(async () => last.dispatchEvent(tab));
+      expect(tab.defaultPrevented).toBe(false);
+      const first = button("일반모드"); first.focus();
+      const previous = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
+      await act(async () => first.dispatchEvent(previous));
+      expect(previous.defaultPrevented).toBe(false);
+      background.focus();
+      await act(async () => button("설정 닫기").click());
+      expect(document.activeElement).toBe(background);
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      opener.focus(); await act(async () => opener.click());
+      await act(async () => button("설정 닫기").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      expect(document.activeElement).toBe(opener);
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+      expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+    } finally { background.remove(); }
+  });
+  it("keeps an explicitly opened panel open when the initial active snapshot arrives", async () => {
+    const api = fake(), initial = deferred<Awaited<ReturnType<MultiviewApi["snapshot"]>>>();
+    api.snapshot.mockReturnValue(initial.promise);
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
+    await act(async () => button("내 채널").click());
+    await act(async () => initial.resolve(success(active())));
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull();
+    expect(container.querySelectorAll(".mado-native-slot")).toHaveLength(2);
+  });
   it("routes a single pasted URL through the unified resolver, never the legacy player", async () => {
     const api = fake();
     const officialApi = { ...createOfficialBrowserApi("tauri"), open: vi.fn() };
@@ -59,6 +116,8 @@ describe("마도 배치", () => {
     expect(api.configure).toHaveBeenCalledExactlyOnceWith([A, B, C].map(channelId => ({ channelId, video: true, chat: true })));
     await act(async () => button("시청 종료").click());
     expect(api.close).toHaveBeenCalledExactlyOnceWith(7); expect(api.requestControl).not.toHaveBeenCalled(); expect(api.confirmControl).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(container.querySelector(".mado-connection-inline .connection-setup")).not.toBeNull();
   });
   it("allows grid connection with a live receiver even without the old root player", async () => {
     const api = fake(); api.snapshot.mockResolvedValue(success(active()));
@@ -135,7 +194,7 @@ describe("마도 배치", () => {
     await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} onLeave={() => {}} api={api} />));
     const help = container.querySelector<HTMLButtonElement>('.connection-help')!;
     const reveal = container.querySelector('.connection-help-reveal')!;
-    const content = container.querySelector('.connection-help-content')!;
+    const content = container.querySelector<HTMLElement>('.connection-help-content')!;
     expect(reveal).toHaveAttribute("aria-hidden", "true"); expect(reveal).toHaveAttribute("inert");
     expect(button("Chrome")).toBeDisabled();
     await act(async () => help.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
@@ -148,7 +207,8 @@ describe("마도 배치", () => {
     expect(document.activeElement).toBe(help); expect(reveal).toHaveAttribute("inert");
     expect(reveal).toHaveAttribute("aria-hidden", "true"); expect(button("Chrome")).toBeDisabled();
     expect(container.querySelector('.connection-help-content')).toBe(content);
-    expect(container.querySelector('[aria-label="연결 설정"][role="dialog"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="연결 설정"][role="dialog"]')).toBeNull();
+    expect(container.querySelector(".mado-connection-inline")).toContainElement(content);
     expect(api.configure).not.toHaveBeenCalled();
   });
   it.each([false, true])("keeps video and chat panes free of duplicate outside headers and audio controls (one video: %s)", async (oneVideo) => {
@@ -206,8 +266,26 @@ describe("마도 배치", () => {
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true })));
     expect(api.requestControl).toHaveBeenCalledExactlyOnceWith("video-0", "screenshot", 7);
     expect(button("저장 확인")).toBeEnabled(); expect(api.confirmControl).not.toHaveBeenCalled();
+    expect(container.querySelector('[role="alertdialog"]')).toHaveAttribute("aria-modal", "true");
     await act(async () => container.querySelector('[role="alertdialog"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(api.confirmControl.mock.calls[0]?.[0]).toMatchObject({ paneId: "video-0", approve: false, rightsAcknowledged: false });
+  });
+  it("keeps background S available with the channel panel open while protecting text entry and real modals", async () => {
+    const api = fake(), state = active(); api.snapshot.mockResolvedValue(success(state)); api.requestControl.mockResolvedValue(success(state));
+    const background = document.createElement("button"), modal = document.createElement("div"); document.body.append(background);
+    try {
+      await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
+      await act(async () => button("내 채널").click());
+      const input = container.querySelector<HTMLInputElement>("#official-browser-channel")!;
+      input.focus(); await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true })));
+      expect(api.requestControl).not.toHaveBeenCalled();
+      background.focus(); await act(async () => background.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true })));
+      expect(api.requestControl).toHaveBeenCalledExactlyOnceWith("mado-7-a-video", "screenshot", 7);
+      modal.setAttribute("role", "alertdialog"); modal.setAttribute("aria-modal", "true");
+      await act(async () => document.body.append(modal));
+      await act(async () => background.dispatchEvent(new KeyboardEvent("keydown", { key: "s", bubbles: true })));
+      expect(api.requestControl).toHaveBeenCalledTimes(1);
+    } finally { modal.remove(); background.remove(); }
   });
   it("persists bounded split preferences and supports keyboard adjustment", async () => {
     localStorage.setItem("atsumi.mado.layout.v1", '{"version":1,"direction":"horizontal","horizontal":999,"vertical":-20}');
@@ -500,16 +578,40 @@ describe("마도 배치", () => {
       expect(api.close).not.toHaveBeenCalled(); expect(api.setAudio).not.toHaveBeenCalled(); expect(api.setPaneAudio).not.toHaveBeenCalled();
     } finally { modal.remove(); }
   });
-  it("hard-hides after a modal transport rejection before reporting its safe error", async () => {
+  it("installs nonmodal panel holes immediately while an older visible update is still pending", async () => {
+    const api = fake(), visible = deferred<Awaited<ReturnType<MultiviewApi["setViewport"]>>>();
+    api.snapshot.mockResolvedValue(success(active()));
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 10, 400, 300));
+    api.setViewport.mockImplementation(async (_paneId, viewport) => viewport.visible && !viewport.preserveBackground ? visible.promise : success(undefined));
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
+    expect(api.setViewport).toHaveBeenCalledTimes(2);
+    await act(async () => button("내 채널").click());
+    const protectedUpdates = api.setViewport.mock.calls.filter(([, viewport]) => viewport.preserveBackground);
+    expect(protectedUpdates).toHaveLength(2);
+    for (const [, viewport] of protectedUpdates) {
+      expect(viewport).toMatchObject({ visible: true, occluded: false, preserveBackground: true });
+      expect(viewport.occlusions).toHaveLength(1);
+    }
+    await act(async () => { button("설정 닫기").click(); await vi.advanceTimersByTimeAsync(20); });
+    await act(async () => visible.resolve(success(undefined)));
+    expect(api.setViewport.mock.calls.slice(-2).every(([, viewport]) => viewport.visible && !viewport.occluded && !viewport.preserveBackground)).toBe(true);
+    expect(api.close).not.toHaveBeenCalled();
+  });
+  it.each(["modal", "panel"] as const)("hard-hides after a %s transport rejection before reporting its safe error", async kind => {
     const api = fake(); api.snapshot.mockResolvedValue(success(active()));
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 10, 400, 300));
     await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} onLeave={() => {}} api={api} />));
     const rejected = new Set<string>();
     api.setViewport.mockClear().mockImplementation(async (paneId, viewport) => {
-      if (viewport.occluded && !rejected.has(paneId)) { rejected.add(paneId); throw new Error("secret transport detail"); }
+      if ((viewport.occluded || viewport.preserveBackground) && !rejected.has(paneId)) { rejected.add(paneId); throw new Error("secret transport detail"); }
       return success(undefined);
     });
     const modal = document.createElement("div"); modal.setAttribute("role", "alertdialog");
+    if (kind === "panel") {
+      modal.setAttribute("role", "dialog"); modal.setAttribute("aria-modal", "false");
+      modal.dataset.nativeOverlay = "true"; modal.dataset.nativePreserveVideo = "true"; modal.dataset.nativeInteractiveBackground = "true";
+      const surface = document.createElement("div"); surface.dataset.nativeDialogSurface = "true"; modal.append(surface);
+    }
     try {
       await act(async () => document.body.append(modal));
       expect(api.setViewport.mock.calls.filter(([, viewport]) => !viewport.visible)).toHaveLength(2);

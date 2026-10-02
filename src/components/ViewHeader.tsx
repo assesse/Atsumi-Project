@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import type { Language, SearchUi, ViewId } from "../core/types";
 import { languageOrder, languagePresentation } from "../data/languages";
 import type { TagNamespace } from "../api/contracts";
@@ -14,14 +14,21 @@ const suggestionNamespaces = new Set<TagNamespace>(["artist", "group", "tag", "f
 const isSuggestionNamespace = (value: string | null): value is TagNamespace =>
   value !== null && suggestionNamespaces.has(value as TagNamespace);
 
-const placeholders: Record<ViewId, string> = {
+type HeaderView = ViewId | "personal-library";
+const placeholders: Record<HeaderView, string> = {
   explore: "앨범, 작가, 그룹, 태그 검색",
   "auto-find": "현재 후보에서 검색",
   downloads: "다운로드 목록에서 검색",
+  "personal-library": "즐겨찾기 제목, 작가, 작품번호 검색",
 };
 
 type ViewHeaderProps = {
-  view: ViewId;
+  queueProgress?: number;
+  queueActiveCount?: number;
+  view: HeaderView;
+  searchFormId?: string;
+  searchLabel?: string;
+  filterControl?: ReactNode;
   search: SearchUi;
   searchPending?: boolean;
   suggestions: SearchSuggestion[];
@@ -30,7 +37,7 @@ type ViewHeaderProps = {
   onDraft: (value: string) => void;
   onSuggestions: (open: boolean, active?: number | null) => void;
   onCommit: (value?: string) => void;
-  onSelectSuggestion: (suggestion: SearchSuggestion, value: string) => void;
+  onSelectSuggestion: (suggestion: SearchSuggestion, value: string, options?: { background?: boolean }) => void;
   onCompleteSuggestion: (value: string) => void;
   onLanguages: (languages: Language[]) => void;
   tagCatalogRevision?: number;
@@ -46,11 +53,15 @@ type ViewHeaderProps = {
 };
 
 export function ViewHeader({
+  queueProgress,
+  queueActiveCount,
   view,
+  searchFormId = "gallery-search-form",
+  searchLabel = "검색",
+  filterControl,
   search,
   searchPending = false,
   suggestions,
-  activityCount,
   activityOpen,
   onDraft,
   onSuggestions,
@@ -76,11 +87,12 @@ export function ViewHeader({
   const [languageOpen, setLanguageOpen] = useState(false);
   const [selection, setSelection] = useState({ start: 0, end: 0 });
   const visibleSuggestions = suggestions;
+  const suggestionsId = searchFormId === "gallery-search-form" ? "search-suggestions" : `${searchFormId}-suggestions`;
   const randomOpenDescription = view === "explore"
     ? "Hitomi 전체 범위에서 랜덤 갤러리 열기"
     : view === "auto-find"
       ? "현재 로드된 Auto Find 후보에서 랜덤 열기"
-      : "다운로드 완료 앨범에서 랜덤 열기";
+      : view === "personal-library" ? "현재 불러온 즐겨찾기에서 랜덤 열기" : "다운로드 완료 앨범에서 랜덤 열기";
 
   useEffect(() => {
     if (search.activeSuggestion !== null && search.activeSuggestion >= visibleSuggestions.length) {
@@ -124,13 +136,14 @@ export function ViewHeader({
     return () => window.clearTimeout(timer);
   }, [onTagSuggestionQuery, search.draft, search.suggestionsOpen, selection.end, selection.start, tagCatalogRevision, view]);
 
-  const complete = (item: SearchSuggestion, submitNow: boolean) => {
+  const complete = (item: SearchSuggestion, submitNow: boolean, background = false) => {
     const caretStart = input.current?.selectionStart ?? selection.start;
     const caretEnd = input.current?.selectionEnd ?? selection.end;
     const nextValue = item.request
       ? item.token
       : replaceActiveSearchToken(search.draft, caretStart, item.token, caretEnd);
-    if (item.request || submitNow) onSelectSuggestion(item, nextValue);
+    if (background) onSelectSuggestion(item, nextValue, { background: true });
+    else if (item.request || submitNow) onSelectSuggestion(item, nextValue);
     else {
       onCompleteSuggestion(nextValue);
       window.requestAnimationFrame(() => {
@@ -185,7 +198,7 @@ export function ViewHeader({
 
   return (
     <header className="view-header" ref={host}>
-      <form id="gallery-search-form" className="search-box" autoComplete="off" onSubmit={submit}>
+      <form id={searchFormId} className="search-box" autoComplete="off" onSubmit={submit}>
         <FluentIcon glyph="\uE721" />
         <input
           ref={input}
@@ -194,8 +207,8 @@ export function ViewHeader({
           aria-autocomplete="list"
           value={search.draft}
           placeholder={placeholders[view]}
-          aria-label="검색"
-          aria-controls="search-suggestions"
+          aria-label={searchLabel}
+          aria-controls={suggestionsId}
           aria-expanded={search.suggestionsOpen && visibleSuggestions.length > 0}
           aria-activedescendant={
             search.activeSuggestion === null ? undefined : `search-suggestion-${search.activeSuggestion}`
@@ -218,7 +231,7 @@ export function ViewHeader({
           onKeyDown={keyDown}
         />
         {search.suggestionsOpen && visibleSuggestions.length ? (
-          <div className="suggestions" id="search-suggestions" role="listbox" aria-label="검색 제안">
+          <div className="suggestions" id={suggestionsId} role="listbox" aria-label="검색 제안">
             {visibleSuggestions.map((item, index) => (
               <button
                 key={`${item.type}-${item.token}`}
@@ -231,8 +244,8 @@ export function ViewHeader({
                   search.activeSuggestion === index ? " is-active" : ""
                 }`}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  complete(item, true);
+                onClick={(event) => {
+                  complete(item, true, event.ctrlKey || event.metaKey);
                 }}
               >
                 <span className="suggestion-type">{item.type}</span>
@@ -243,10 +256,10 @@ export function ViewHeader({
           </div>
         ) : null}
       </form>
-      <button type="submit" form="gallery-search-form" className="icon-button primary-soft" title="검색" aria-label="검색" disabled={searchPending}>
+      <button type="submit" form={searchFormId} className="icon-button primary-soft" title="검색" aria-label="검색" disabled={searchPending}>
         <FluentIcon glyph="\uE721" />
       </button>
-      <div className="menu-anchor">
+      {filterControl ?? <div className="menu-anchor">
         <button
           type="button"
           ref={languageButton}
@@ -278,7 +291,7 @@ export function ViewHeader({
             ))}
           </div>
         ) : null}
-      </div>
+      </div>}
       <button
         type="button"
         className={`icon-button random-open-button${randomOpenPending ? " is-pending" : ""}`}
@@ -289,19 +302,18 @@ export function ViewHeader({
         onClick={onRandomOpen}
       >
         {randomOpenPending ? <span className="spinner random-open-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE8B1" />}
-        <span className="random-open-label">{randomOpenPending ? "찾는 중" : "랜덤 열기"}</span>
       </button>
       <button
         type="button"
         className="icon-button activity-button"
-        title="활동 기록"
         aria-label="활동 기록"
+        aria-description={queueProgress === undefined ? undefined : `완료 ${queueProgress}% · 대기·실행 ${queueActiveCount ?? 0}개`}
         aria-controls="activity-panel"
         aria-expanded={activityOpen}
         onClick={onActivity}
       >
         <FluentIcon glyph="\uE9D9" />
-        {activityCount > 0 ? <span className="activity-count">{activityCount}</span> : null}
+        {queueProgress !== undefined ? <svg className="queue-progress-ring" viewBox="0 0 36 36" aria-hidden="true"><circle className="queue-ring-track" cx="18" cy="18" r="16" /><circle cx="18" cy="18" r="16" pathLength="100" strokeDasharray={`${queueProgress} 100`} /></svg> : null}
       </button>
       <button
         type="button"

@@ -39,6 +39,24 @@ describe("recording library", () => {
     expect(container).toHaveTextContent("마지막 저장 상태 · 저장 완료");
     expect(container).toHaveTextContent("녹화 기록 확인 대기 중");
     expect(container.querySelector(".recording-library-attempts")).toBeNull();
+    expect(cards()[1]!.querySelector(".recording-library-state.is-waiting")).toHaveTextContent("녹화 기록 확인 대기");
+    expect(cards()[0]!.querySelector(".recording-library-state.is-success")).toBeNull();
+    await act(async () => button("확인 필요").click());
+    expect(cards()).toHaveLength(0);
+  });
+  it("distinguishes recording, processing, ready, warning and actual failure by labels and symbols", async () => {
+    await render([
+      item("live", { status: "recording" }),
+      item("merging", { merge: { status: "merging", segmentCount: 2, updatedAt: 1 } }),
+      merged("ready"),
+      item("interrupted", { status: "interrupted" }),
+      item("failed", { status: "failed" }),
+    ]);
+    expect(container.querySelector(".recording-library-state.is-recording")).toHaveTextContent("●녹화 중");
+    expect(container.querySelector(".recording-library-state.is-processing")).toHaveTextContent("↻병합 중");
+    expect(container.querySelector(".recording-library-state.is-success")).toHaveTextContent("✓재생 가능");
+    expect(container.querySelector(".recording-library-state.is-warning")).toHaveTextContent("!확인 필요");
+    expect(container.querySelector(".recording-library-state.is-error")).toHaveTextContent("×녹화 실패");
   });
   it("separates empty startup failures from saved broadcasts without deleting their diagnostics", async () => {
     await render([item("retry", { segmentCount: 0, bytesWritten: 0, durationSeconds: 0, status: "interrupted" }), merged("success")]);

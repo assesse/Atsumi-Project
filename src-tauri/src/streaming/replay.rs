@@ -171,6 +171,7 @@ impl Default for IndexStatus {
 }
 
 pub(super) struct Session {
+    _storage_lease: Option<Arc<()>>,
     token: String,
     recording_id: String,
     recording_root: PathBuf,
@@ -473,6 +474,7 @@ impl ReplayService {
         root: &Path,
     ) -> Result<Session, StreamError> {
         let BrowserReplaySource {
+            storage_lease,
             recording,
             media,
             mut chat,
@@ -566,6 +568,7 @@ impl ReplayService {
             &recording.channel_id,
         );
         Ok(Session {
+            _storage_lease: storage_lease,
             token,
             recording_root: PathBuf::from(&recording.output_dir),
             recording_id: recording.id,

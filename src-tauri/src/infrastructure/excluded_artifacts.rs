@@ -1390,7 +1390,7 @@ mod tests {
         let fixture = Fixture::new();
         {
             // Reconstruct the actual v42 schema in this in-memory fixture.
-            // Remove the v44-v46 schema additions and history before replaying v43.
+            // Remove later schema additions and history before replaying v43.
             let connection = fixture.repository.connection().unwrap();
             let names = {
                 let mut statement = connection.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name GLOB 'overlap_merge_*'").unwrap();
@@ -1411,13 +1411,19 @@ mod tests {
             }
             connection
                 .execute_batch(
-                    "ALTER TABLE auto_find_candidates DROP COLUMN artists_json;
+                    "DROP TABLE auto_find_candidate_matches;
+                     ALTER TABLE auto_find_candidates DROP COLUMN artists_json;
                      DROP TABLE download_tuning_profiles;
                      ALTER TABLE settings DROP COLUMN download_adaptive_concurrency;
                      ALTER TABLE settings DROP COLUMN download_adaptive_max_requests;
+                     ALTER TABLE settings DROP COLUMN chzzk_ssd_staging;
+                     ALTER TABLE settings DROP COLUMN high_performance_processing;
+                     ALTER TABLE settings DROP COLUMN privacy_on_startup;
+                     DROP TABLE download_popularity_ranks;
+                     DROP TABLE hitomi_popularity_snapshots;
                      DROP TABLE overlap_page_merges;
                      ALTER TABLE duplicate_candidates DROP COLUMN artifact_stale;
-                     DELETE FROM schema_migrations WHERE version IN (44, 45, 46);",
+                     DELETE FROM schema_migrations WHERE version IN (44, 45, 46, 47, 48, 49, 50, 51);",
                 )
                 .unwrap();
         }
@@ -1466,8 +1472,11 @@ mod tests {
         {
             let mut connection = fixture.repository.connection().unwrap();
             let migrated = MigrationRunner::run(&mut connection).unwrap();
-            assert_eq!(migrated.applied_versions, vec![43, 44, 45, 46]);
-            assert_eq!(migrated.current_version, 46);
+            assert_eq!(
+                migrated.applied_versions,
+                vec![43, 44, 45, 46, 47, 48, 49, 50, 51]
+            );
+            assert_eq!(migrated.current_version, 51);
             assert!(MigrationRunner::run(&mut connection)
                 .unwrap()
                 .applied_versions

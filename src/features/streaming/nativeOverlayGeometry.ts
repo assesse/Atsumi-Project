@@ -11,6 +11,18 @@ function visibleOverlays(): HTMLElement[] {
 }
 export function hasNativeOverlay(): boolean { return visibleOverlays().length > 0; }
 
+function allowsBackgroundInput(overlay: HTMLElement): boolean {
+  // Opt in only an explicitly nonmodal, app-owned panel. Confirmation dialogs,
+  // menus and native <dialog> elements must keep their existing input barrier.
+  return overlay.tagName !== "DIALOG"
+    && overlay.getAttribute("role") === "dialog"
+    && overlay.getAttribute("aria-modal") === "false"
+    && overlay.dataset.nativeOverlay === "true"
+    && overlay.dataset.nativePreserveVideo === "true"
+    && overlay.dataset.nativeInteractiveBackground === "true";
+}
+export function hasBlockingNativeOverlay(): boolean { return visibleOverlays().some(overlay => !allowsBackgroundInput(overlay)); }
+
 /** Popup text, help expansion and responsive wrapping can resize the dialog
  * without resizing its native pane. Update the hole during that same layout. */
 export function observeNativeOverlayGeometry(onResize: () => void): () => void {
@@ -24,13 +36,14 @@ export function observeNativeOverlayGeometry(onResize: () => void): () => void {
     for (const surface of current) if (!surfaces.has(surface)) { surfaces.add(surface); resize.observe(surface); }
   };
   const mutation = new MutationObserver(sync);
-  mutation.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "aria-hidden", "open", "class", "style", "data-native-overlay", "data-native-dialog-surface"] });
+  mutation.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "aria-hidden", "aria-modal", "open", "role", "class", "style", "data-native-overlay", "data-native-preserve-video", "data-native-interactive-background", "data-native-dialog-surface"] });
   sync();
   return () => { disposed = true; mutation.disconnect(); resize.disconnect(); surfaces.clear(); };
 }
 
 /** Keep the native viewport and scroll clip unchanged; subtract only the actual
- * trusted popup rectangles. Unknown/unmeasurable overlays still fail closed. */
+ * trusted popup rectangles. Nonmodal panels leave the remaining native video
+ * and chat interactive. Unknown/unmeasurable overlays still fail closed. */
 export function nativeModalOcclusion(stage: HTMLElement, viewport: OfficialBrowserViewport): Partial<OfficialBrowserViewport> {
   const overlays = visibleOverlays();
   if (!overlays.length) return { occluded: false };
@@ -53,5 +66,5 @@ export function nativeModalOcclusion(stage: HTMLElement, viewport: OfficialBrows
     if (!occlusions.some(old => old.x === hole.x && old.y === hole.y && old.width === hole.width && old.height === hole.height)) occlusions.push(hole);
     if (occlusions.length > MAX_OCCLUSIONS) return masked;
   }
-  return { occluded: true, preserveBackground: true, clip, occlusions };
+  return { occluded: overlays.some(overlay => !allowsBackgroundInput(overlay)), preserveBackground: true, clip, occlusions };
 }

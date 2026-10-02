@@ -200,7 +200,7 @@ describe("gallery selectors", () => {
     expect(visibleGalleries(autoFind, [{ ...candidate, download: undefined }])).toHaveLength(1);
   });
 
-  it("shows the most recently added download first only in the flat all view", () => {
+  it("keeps recency ordering in both flat and artist grouped views", () => {
     const older = {
       ...mockGalleries[0]!,
       download: {
@@ -232,8 +232,12 @@ describe("gallery selectors", () => {
       grouping: "artist",
     });
     expect(visibleGalleries(artistGrouping, [older, newer]).map((gallery) => gallery.id)).toEqual([
-      older.id,
       newer.id,
+      older.id,
     ]);
+    const popular = uiReducer(artistGrouping, { type: "downloads.sort", sort: "popular_year" });
+    expect(visibleGalleries(popular, [older, newer], { year: { [older.id]: 3, [newer.id]: null } }).map(g => g.id)).toEqual([older.id, newer.id]);
+    const month = uiReducer(popular, { type: "downloads.sort", sort: "popular_month" });
+    expect(visibleGalleries(month, [older, newer], { year: { [older.id]: 3 }, month: { [newer.id]: 2 } }).map(g => g.id)).toEqual([newer.id, older.id]);
   });
 });

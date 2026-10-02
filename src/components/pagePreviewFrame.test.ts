@@ -13,7 +13,7 @@ describe("pagePreviewFrame", () => {
     );
     expect(frame.orientation).toBe("portrait");
     expect(frame.dialogHeight).toBe(952);
-    expect(frame.mediaHeight).toBe(824);
+    expect(frame.mediaHeight).toBe(950);
     expect(frame.mediaWidth / frame.mediaHeight).toBeCloseTo(2 / 3, 2);
     expect(frame.aspectRatio).toBe("800 / 1200");
   });

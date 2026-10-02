@@ -123,9 +123,11 @@ pub fn download_root_for_display(value: &str) -> String {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoFindHistoryMode {
-    #[default]
     IncludeAllHistory,
+    /// Read-only compatibility for runs saved before the latest-owned policy.
     NewerThanOldestDownloaded,
+    #[default]
+    NewerThanLatestOwned,
 }
 
 impl AutoFindHistoryMode {
@@ -133,6 +135,7 @@ impl AutoFindHistoryMode {
         match self {
             Self::IncludeAllHistory => "include_all_history",
             Self::NewerThanOldestDownloaded => "newer_than_oldest_downloaded",
+            Self::NewerThanLatestOwned => "newer_than_latest_owned",
         }
     }
 
@@ -140,6 +143,7 @@ impl AutoFindHistoryMode {
         match value {
             "include_all_history" => Some(Self::IncludeAllHistory),
             "newer_than_oldest_downloaded" => Some(Self::NewerThanOldestDownloaded),
+            "newer_than_latest_owned" => Some(Self::NewerThanLatestOwned),
             _ => None,
         }
     }
@@ -231,6 +235,8 @@ impl GalleryDisplayMode {
 pub struct SettingsSnapshot {
     pub revision: u64,
     pub download_root: String,
+    #[serde(default)]
+    pub chzzk_ssd_staging: bool,
     pub folder_name_template: String,
     pub explore_page_size: u32,
     pub danbooru_page_size: u32,
@@ -239,8 +245,12 @@ pub struct SettingsSnapshot {
     pub danbooru_preview_width: u32,
     pub related_preview_width: u32,
     pub privacy_mode: bool,
+    #[serde(default = "default_privacy_on_startup")]
+    pub privacy_on_startup: bool,
     pub cache_limit_gb: u32,
     pub concurrent_image_requests: u32,
+    #[serde(default)]
+    pub high_performance_processing: bool,
     #[serde(default = "default_download_adaptive_concurrency")]
     pub download_adaptive_concurrency: bool,
     #[serde(default = "default_download_adaptive_max_requests")]
@@ -263,6 +273,7 @@ impl Default for SettingsSnapshot {
         Self {
             revision: 0,
             download_root: String::new(),
+            chzzk_ssd_staging: false,
             folder_name_template: DEFAULT_FOLDER_NAME_TEMPLATE.to_owned(),
             explore_page_size: DEFAULT_EXPLORE_PAGE_SIZE,
             danbooru_page_size: DEFAULT_DANBOORU_PAGE_SIZE,
@@ -271,8 +282,10 @@ impl Default for SettingsSnapshot {
             danbooru_preview_width: DEFAULT_DANBOORU_PREVIEW_WIDTH,
             related_preview_width: DEFAULT_RELATED_PREVIEW_WIDTH,
             privacy_mode: false,
+            privacy_on_startup: true,
             cache_limit_gb: DEFAULT_CACHE_LIMIT_GB,
             concurrent_image_requests: DEFAULT_CONCURRENT_IMAGE_REQUESTS,
+            high_performance_processing: false,
             download_adaptive_concurrency: DEFAULT_DOWNLOAD_ADAPTIVE_CONCURRENCY,
             download_adaptive_max_requests: DEFAULT_DOWNLOAD_ADAPTIVE_MAX_REQUESTS,
             request_start_interval_ms: DEFAULT_REQUEST_START_INTERVAL_MS,
@@ -294,6 +307,7 @@ impl Default for SettingsSnapshot {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SettingsPatch {
     pub download_root: Option<String>,
+    pub chzzk_ssd_staging: Option<bool>,
     pub folder_name_template: Option<String>,
     pub explore_page_size: Option<u32>,
     pub danbooru_page_size: Option<u32>,
@@ -302,8 +316,10 @@ pub struct SettingsPatch {
     pub danbooru_preview_width: Option<u32>,
     pub related_preview_width: Option<u32>,
     pub privacy_mode: Option<bool>,
+    pub privacy_on_startup: Option<bool>,
     pub cache_limit_gb: Option<u32>,
     pub concurrent_image_requests: Option<u32>,
+    pub high_performance_processing: Option<bool>,
     pub download_adaptive_concurrency: Option<bool>,
     pub download_adaptive_max_requests: Option<u32>,
     pub request_start_interval_ms: Option<u64>,
@@ -340,6 +356,10 @@ pub fn normalize_collapsed_group_keys(values: Vec<String>) -> Result<Vec<String>
     Ok(normalized.into_iter().collect())
 }
 
+const fn default_privacy_on_startup() -> bool {
+    true
+}
+
 const fn default_download_adaptive_concurrency() -> bool {
     DEFAULT_DOWNLOAD_ADAPTIVE_CONCURRENCY
 }
@@ -354,6 +374,9 @@ impl SettingsSnapshot {
 
         if let Some(value) = patch.download_root {
             next.download_root = value;
+        }
+        if let Some(value) = patch.chzzk_ssd_staging {
+            next.chzzk_ssd_staging = value;
         }
         if let Some(value) = patch.folder_name_template {
             next.folder_name_template = value;
@@ -376,6 +399,9 @@ impl SettingsSnapshot {
         if let Some(value) = patch.related_preview_width {
             next.related_preview_width = value;
         }
+        if let Some(value) = patch.privacy_on_startup {
+            next.privacy_on_startup = value;
+        }
         if let Some(value) = patch.privacy_mode {
             next.privacy_mode = value;
         }
@@ -384,6 +410,9 @@ impl SettingsSnapshot {
         }
         if let Some(value) = patch.concurrent_image_requests {
             next.concurrent_image_requests = value;
+        }
+        if let Some(value) = patch.high_performance_processing {
+            next.high_performance_processing = value;
         }
         if let Some(value) = patch.download_adaptive_concurrency {
             next.download_adaptive_concurrency = value;
@@ -395,7 +424,12 @@ impl SettingsSnapshot {
             next.request_start_interval_ms = value;
         }
         if let Some(value) = patch.auto_find_history_mode {
-            next.auto_find_history_mode = value;
+            next.auto_find_history_mode = match value {
+                AutoFindHistoryMode::NewerThanOldestDownloaded => {
+                    AutoFindHistoryMode::NewerThanLatestOwned
+                }
+                value => value,
+            };
         }
         if let Some(value) = patch.download_overlap_auto_mode {
             next.download_overlap_auto_mode = value;
@@ -534,6 +568,36 @@ impl SettingsSnapshot {
             ));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod processing_settings_tests {
+    use super::*;
+
+    #[test]
+    fn old_settings_default_to_balanced_and_mode_does_not_change_other_limits() {
+        let original = SettingsSnapshot::default();
+        let mut json = serde_json::to_value(&original).unwrap();
+        json.as_object_mut()
+            .unwrap()
+            .remove("highPerformanceProcessing");
+        assert_eq!(
+            serde_json::from_value::<SettingsSnapshot>(json).unwrap(),
+            original
+        );
+        let mut expected = original.clone();
+        expected.high_performance_processing = true;
+        expected.revision += 1;
+        assert_eq!(
+            original
+                .apply_patch(SettingsPatch {
+                    high_performance_processing: Some(true),
+                    ..Default::default()
+                })
+                .unwrap(),
+            expected
+        );
     }
 }
 

@@ -9,6 +9,7 @@ import { browserFixtureThumbnailAdapter, ThumbnailClient } from "../thumbnail";
 import { GalleryCard, compactFavoriteTagValues } from "./GalleryCard";
 import { fitTagChips, sortGalleryTags, splitGalleryTitle } from "./galleryCardLayout";
 import cardStyles from "../styles.css?raw";
+import processingStyles from "./GalleryProcessingBadge.css?raw";
 
 const defaultThumbnailClient = new ThumbnailClient(browserFixtureThumbnailAdapter);
 
@@ -64,7 +65,7 @@ describe("GalleryCard event projection", () => {
     expect(document.body.querySelector(".gallery-artists-popover")).toBeNull();
   });
 
-  it("keeps Ctrl artist clicks as card selection and never opens excluded artist popovers", async () => {
+  it("keeps Shift artist overflow clicks as range selection and never opens excluded artist popovers", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -77,8 +78,8 @@ describe("GalleryCard event projection", () => {
     try {
       await act(async () => render(false));
       const more = container.querySelector<HTMLButtonElement>(".gallery-artists-more")!;
-      await act(async () => more.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
-      expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, expect.objectContaining({ ctrlKey: true }));
+      await act(async () => more.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true })));
+      expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, expect.objectContaining({ shiftKey: true }));
       expect(document.body.querySelector(".gallery-artists-popover")).toBeNull();
       expect(callbacks.onMetadataSearch).not.toHaveBeenCalled();
       await act(async () => render(true));
@@ -170,10 +171,12 @@ describe("GalleryCard event projection", () => {
       expect(container.querySelector(".compact-favorite-tags")).toBeNull();
       expect(container.querySelector(".compact-favorite-count-badge")).toBeNull();
       expect(container.querySelector(".compact-favorite-reveal")).toBeNull();
-      expect(container.querySelector(".compact-card-summary")).toHaveTextContent(gallery.title.split("|")[0]!.trim());
+      expect(container.querySelector(".compact-card-summary")).toHaveTextContent(splitGalleryTitle(gallery.title, gallery.subtitle).primary);
       expect(container.querySelector(".compact-card-summary")).toHaveTextContent(gallery.artist);
       expect(container.querySelector(".compact-card-summary")).toHaveTextContent(`${gallery.pages}p · #${gallery.id}`);
-      expect(container.querySelector(".compact-card-summary")).toHaveTextContent("완료");
+      expect(container.querySelector(".compact-card-summary")).not.toHaveTextContent("완료");
+      expect(container.querySelectorAll('.gallery-processing-badge')).toHaveLength(1);
+      expect(container.querySelector('.gallery-processing-badge')).toHaveAccessibleName(expect.stringContaining("완료"));
 
       await act(async () => card?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
       expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, { ctrlKey: true, shiftKey: false });
@@ -254,7 +257,7 @@ describe("GalleryCard event projection", () => {
   });
 
   it("keeps compact review controls above the expanded favorite tags", async () => {
-    const control = cardStyles.match(/\.gallery-card\.is-compact \.status-pill,\s*\.gallery-card\.is-compact \.download-check\s*\{([^}]+)/)![1]!;
+    const control = processingStyles.match(/\.gallery-processing-badge\.is-overlay\s*\{([^}]+)/)![1]!;
     const reveal = cardStyles.match(/\.compact-favorite-reveal\s*\{([^}]+)/)![1]!;
     const layer = (rule: string) => Number(rule.match(/z-index:\s*(\d+)/)![1]);
     expect(layer(control)).toBeGreaterThan(layer(reveal));
@@ -264,7 +267,7 @@ describe("GalleryCard event projection", () => {
       const gallery = { ...mockGalleries[0]!, tags: ["female:glasses"], download: { entryId: "compact-review", state: "review_required" as const, progress: 100, reviewKind: "gallery_duplicate" as const, reviewId: "review" } };
       await act(async () => root.render(<GalleryCard gallery={gallery} view="downloads" displayMode="compact" selected={false} selectionContext={false} favoriteMetadata={new Set(["female:glasses"])} {...callbacks} />));
       expect(container.querySelector(".compact-favorite-reveal")).not.toBeNull();
-      await act(async () => container.querySelector<HTMLButtonElement>(".status-pill")!.click());
+      await act(async () => container.querySelector<HTMLButtonElement>(".gallery-processing-badge")!.click());
       expect(callbacks.onOpenReview).toHaveBeenCalledWith(gallery.id);
     } finally { await act(async () => root.unmount()); }
   });
@@ -560,8 +563,8 @@ describe("GalleryCard event projection", () => {
       />,
     ));
     const article = container.querySelector<HTMLElement>("article");
-    const warning = container.querySelector<HTMLButtonElement>(".status-pill.has-duplicate-count");
-    expect(warning).toHaveTextContent("2");
+    const warning = container.querySelector<HTMLButtonElement>('.gallery-processing-badge[data-processing-state="duplicate"]');
+    expect(warning?.textContent).toBe("");
     expect(warning).toHaveAccessibleName(expect.stringContaining("중복 후보 2개"));
 
     await act(async () => warning?.click());
@@ -613,7 +616,7 @@ describe("GalleryCard event projection", () => {
     ));
 
     const article = container.querySelector<HTMLElement>("article");
-    const warning = container.querySelector<HTMLButtonElement>(".status-pill.is-review_required");
+    const warning = container.querySelector<HTMLButtonElement>('.gallery-processing-badge[data-processing-state="duplicate"]');
     expect(warning).not.toBeNull();
     expect(warning).not.toHaveClass("has-duplicate-count");
     expect(warning).toHaveAccessibleName(expect.stringContaining("다운로드 판본 중복"));
@@ -655,11 +658,12 @@ describe("GalleryCard event projection", () => {
     await act(async () => {
       container.querySelector<HTMLButtonElement>(".card-byline .byline")?.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true }));
     });
-    expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, expect.anything());
+    expect(callbacks.onMetadataSearch).toHaveBeenLastCalledWith(`artist:${gallery.artist}`, { background: true });
+    expect(callbacks.onSelect).not.toHaveBeenCalled();
     await act(async () => {
       container.querySelector<HTMLButtonElement>(".card-byline .byline")?.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
     });
-    expect(callbacks.onSelect).toHaveBeenCalledTimes(2);
+    expect(callbacks.onSelect).toHaveBeenCalledTimes(1);
     await act(async () => root.unmount());
     container.remove();
   });
@@ -938,10 +942,10 @@ describe("GalleryCard event projection", () => {
     expect(input).toEqual(original);
   });
 
-  it("splits a pipe title for display while preserving the canonical title", () => {
+  it("prioritizes Korean in listing titles without discarding the original or other translations", () => {
     expect(splitGalleryTitle("Archive of Rain | 비 내리는 도시의 기록")).toEqual({
-      primary: "Archive of Rain",
-      secondary: "비 내리는 도시의 기록",
+      primary: "비 내리는 도시의 기록",
+      secondary: "Archive of Rain",
     });
     expect(splitGalleryTitle("Archive of Rain | Pipe subtitle", "Explicit subtitle")).toEqual({
       primary: "Archive of Rain",
@@ -952,9 +956,27 @@ describe("GalleryCard event projection", () => {
       secondary: "",
     });
     expect(splitGalleryTitle("Archive of Rain | 한국어 | English", "English")).toEqual({
-      primary: "Archive of Rain",
-      secondary: "한국어 · English",
+      primary: "한국어",
+      secondary: "Archive of Rain · English",
     });
+    expect(splitGalleryTitle("  한국어 | Original | 한국어 ", "Original")).toEqual({ primary: "한국어", secondary: "Original" });
+    expect(splitGalleryTitle("Original ｜ 日本語 ｜ 한글 제목")).toEqual({ primary: "한글 제목", secondary: "Original · 日本語" });
+    expect(splitGalleryTitle("Original", "한글 부제")).toEqual({ primary: "한글 부제", secondary: "Original" });
+    expect(splitGalleryTitle(" | 한글 제목 | ")).toEqual({ primary: "한글 제목", secondary: "" });
+    expect(splitGalleryTitle("A title without translations")).toEqual({ primary: "A title without translations", secondary: "" });
+    expect(splitGalleryTitle("   ")).toEqual({ primary: "", secondary: "" });
+  });
+
+  it.each(["detail", "compact"] as const)("shows the Korean title first in %s cards, retaining the full title tooltip", async (displayMode) => {
+    const container = document.createElement("div"), root = createRoot(container);
+    const gallery = { ...mockGalleries[0]!, title: "Original title | 먼저 보여줄 한글 제목", subtitle: "" };
+    try {
+      await act(async () => root.render(<GalleryCard gallery={gallery} view="explore" displayMode={displayMode} selected={false} selectionContext={false} favoriteMetadata={new Set()} {...callbacks} />));
+      const title = container.querySelector(displayMode === "compact" ? ".compact-card-summary strong" : ".card-title strong");
+      expect(title).toHaveTextContent(/^먼저 보여줄 한글 제목$/);
+      expect(title).toHaveAttribute("title", gallery.title);
+      expect(gallery.title).toBe("Original title | 먼저 보여줄 한글 제목");
+    } finally { await act(async () => root.unmount()); }
   });
 
   it("renders a non-color selection indicator while preserving selection in the card name", async () => {
@@ -975,9 +997,11 @@ describe("GalleryCard event projection", () => {
     ));
 
     const article = container.querySelector("article");
-    const indicator = article?.querySelector(".selection-indicator");
-    expect(indicator).toHaveAttribute("aria-hidden", "true");
-    expect(indicator?.querySelector("svg path")).not.toBeNull();
+    const indicator = article?.querySelector(".card-select-toggle");
+    expect(indicator).toHaveAttribute("aria-pressed", "true");
+    expect(indicator).toHaveTextContent("✓");
+    expect(article?.querySelectorAll(".card-select-toggle")).toHaveLength(1);
+    expect(article?.querySelector(".selection-indicator")).toBeNull();
     expect(article).toHaveAccessibleName(expect.stringContaining("선택됨"));
     await act(async () => root.unmount());
     container.remove();
@@ -1054,6 +1078,24 @@ describe("GalleryCard event projection", () => {
     expect(image).toHaveAttribute("alt", `${gallery.title} 표지`);
     await act(async () => root.unmount());
     container.remove();
+  });
+
+  it.each(["pointer", "keyboard"] as const)("clears mouse focus after deselection while preserving keyboard navigation (%s)", async (input) => {
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    const render = (selected: boolean) => root.render(<GalleryCard gallery={mockGalleries[0]!} view="explore" displayMode="compact" selected={selected} selectionContext={false} favoriteMetadata={new Set(mockGalleries[0]!.tags)} {...callbacks} />);
+    try {
+      await act(async () => render(true));
+      const card = container.querySelector<HTMLElement>(".gallery-card")!;
+      const toggle = container.querySelector<HTMLButtonElement>(".card-select-toggle")!;
+      await act(async () => {
+        toggle.dispatchEvent(new Event("pointerdown", { bubbles: true })); toggle.focus();
+        if (input === "keyboard") toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true }));
+      });
+      expect(card.contains(document.activeElement)).toBe(true);
+      await act(async () => render(false));
+      expect(card.contains(document.activeElement)).toBe(input === "keyboard");
+    } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
   it("keeps an unusually tall cover from stretching its gallery row", async () => {
@@ -1188,8 +1230,8 @@ describe("GalleryCard event projection", () => {
 
     expect(article).toHaveClass("is-downloading");
     expect(article).toHaveStyle({ "--download-progress": "41%" });
-    expect(cover?.querySelector(".status-wash")).not.toBeNull();
-    expect(cover?.querySelector('.status-pill [data-status-icon="downloading"]')).not.toBeNull();
+    expect(cover?.querySelector(".processing-preview-wash")).not.toBeNull();
+    expect(cover?.querySelector('.gallery-processing-badge [data-status-icon="downloading"]')).not.toBeNull();
     expect(progress).toHaveAttribute("aria-valuenow", "41");
     expect(progress?.querySelector("span")).toHaveStyle({ width: "41%" });
     await act(async () => root.unmount());
@@ -1244,7 +1286,7 @@ describe("GalleryCard event projection", () => {
     expect(internalProgress).toHaveTextContent("비교 10764/21528");
     expect(internalProgress?.querySelector("i > b")).toHaveStyle({ width: "78%" });
     expect(container.querySelector(".cover .progress-track")).toHaveAttribute("aria-valuenow", "100");
-    expect(container.querySelector(".status-pill.has-duplicate-count")).toHaveTextContent("2");
+    expect(container.querySelector('.gallery-processing-badge[data-processing-state="duplicate"]')).toHaveAccessibleName(expect.stringContaining("중복 후보 2개"));
 
     await act(async () => root.unmount());
     container.remove();
@@ -1320,9 +1362,9 @@ describe("GalleryCard event projection", () => {
   });
 
   it.each([
-    ["downloading", "다운로드 중", "is-downloading"],
-    ["review_required", "중복 의심", "is-review_required"],
-  ] as const)("renders %s as an accessible icon-only status", async (state, label, className) => {
+    ["downloading", "다운로드 중"],
+    ["review_required", "중복 의심"],
+  ] as const)("renders %s as an accessible icon-only status", async (state, label) => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -1342,12 +1384,12 @@ describe("GalleryCard event projection", () => {
       />,
     ));
 
-    const status = container.querySelector<HTMLButtonElement>(`.status-pill.${className}`);
+    const status = container.querySelector<HTMLButtonElement>(`.gallery-processing-badge[data-processing-state="${state}"]`);
     expect(status).not.toBeNull();
     expect(status).toHaveAccessibleName(expect.stringContaining(label));
     expect(status?.textContent).not.toContain(label);
     expect(status?.querySelector(".fluent")).toBeNull();
-    expect(status?.querySelector(`[data-status-icon="${state === "downloading" ? "downloading" : "warning"}"]`)).not.toBeNull();
+    expect(status?.querySelector(`[data-status-icon="${state}"]`)).not.toBeNull();
     await act(async () => root.unmount());
     container.remove();
   });
@@ -1372,8 +1414,12 @@ describe("GalleryCard event projection", () => {
       />,
     ));
 
-    const completion = container.querySelector(".download-check");
-    expect(completion?.querySelector('[data-status-icon="complete"]')).not.toBeNull();
+    const completion = container.querySelector(".gallery-processing-badge");
+    expect(completion?.querySelector('[data-status-icon="completed"]')).not.toBeNull();
+    expect(container.querySelectorAll('.gallery-processing-badge')).toHaveLength(1);
+    expect(container.querySelector('.download-check')).toBeNull();
+    expect(completion?.textContent).toBe("");
+    expect(container.querySelector('article')).toHaveAttribute('data-processing-muted', 'true');
     expect(completion?.textContent).not.toContain("✓");
     expect(container.querySelector("article")).toHaveAccessibleName(expect.stringContaining("다운로드 완료"));
     await act(async () => root.unmount());
@@ -1409,7 +1455,7 @@ describe("GalleryCard event projection", () => {
     container.remove();
   });
 
-  it("keeps a modifier double click in selection instead of opening detail", async () => {
+  it("toggles selection once on Ctrl double click without opening a detail", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -1432,13 +1478,13 @@ describe("GalleryCard event projection", () => {
       article?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, ctrlKey: true, detail: 2 }));
     });
 
-    expect(callbacks.onSelect).toHaveBeenCalledTimes(1);
+    expect(callbacks.onSelect).toHaveBeenCalledExactlyOnceWith(gallery.id, { ctrlKey: true, shiftKey: false });
     expect(callbacks.onOpenDetail).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     container.remove();
   });
 
-  it("selects only once when an internal action is modifier-double-clicked", async () => {
+  it("opens one background artist search when an internal action is Ctrl-double-clicked", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -1461,8 +1507,8 @@ describe("GalleryCard event projection", () => {
       byline?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, ctrlKey: true, detail: 2 }));
     });
 
-    expect(callbacks.onSelect).toHaveBeenCalledTimes(1);
-    expect(callbacks.onMetadataSearch).not.toHaveBeenCalled();
+    expect(callbacks.onSelect).not.toHaveBeenCalled();
+    expect(callbacks.onMetadataSearch).toHaveBeenCalledExactlyOnceWith(`artist:${gallery.artist}`, { background: true });
     expect(callbacks.onOpenDetail).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     container.remove();

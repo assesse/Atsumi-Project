@@ -3,10 +3,12 @@ import { backend, type BackendClient, type Unsubscribe } from "../api/backend";
 import type { ApiError, ApiResult, SettingsPatch, SettingsSnapshot } from "../api/contracts";
 
 const fallback: SettingsSnapshot = {
+  chzzkSsdStaging: false,
+  highPerformanceProcessing: false,
   revision: 0,
   downloadRoot: "",
   folderNameTemplate: "[{artist}] {title} [{group}] {id}",
-  autoFindHistoryMode: "include_all_history",
+  autoFindHistoryMode: "newer_than_latest_owned",
   downloadOverlapAutoMode: "off",
   explorePageSize: 50,
   danbooruPageSize: 60,
@@ -15,6 +17,7 @@ const fallback: SettingsSnapshot = {
   danbooruPreviewWidth: 190,
   relatedPreviewWidth: 240,
   privacyMode: false,
+  privacyOnStartup: true,
   cacheLimitGb: 10,
   concurrentImageRequests: 5,
   downloadAdaptiveConcurrency: true,

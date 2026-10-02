@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type Gallery } from "../core/types";
 import { mockGalleries } from "../data/mockGalleries";
 import { ThumbnailClient } from "../thumbnail";
@@ -9,12 +9,72 @@ import { CommonNavigationContext } from "../app/CommonNavigation";
 import { communityApi } from "../features/community/api";
 import { detailPreviewWindowSize } from "./detailPreviewWindow";
 
+beforeEach(() => { sessionStorage.clear(); localStorage.removeItem("atsumi.pagePreview.readingDirection"); localStorage.removeItem("atsumi.pagePreview.controlsPinned"); });
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("DetailWorkspace page previews", () => {
+  it("confirms only close-all, closes individual tabs directly, restores Alt-Tab focus and releases prefetches", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT",true);
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
+    const descriptors=["showModal","close"].map((name)=>[name,Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype,name)] as const);
+    Object.defineProperty(HTMLDialogElement.prototype,"showModal",{configurable:true,value:function(this:HTMLDialogElement){this.setAttribute("open","");}});
+    Object.defineProperty(HTMLDialogElement.prototype,"close",{configurable:true,value:function(this:HTMLDialogElement){this.removeAttribute("open");}});
+    const galleries=[mockGalleries[0]!,mockGalleries[1]!].map((g):Gallery=>({...g,download:undefined,relatedIds:[],pages:30,pageDimensions:Array.from({length:30},(_,i)=>({sourcePage:i+1,width:800,height:1200}))}));
+    const client=new ThumbnailClient({resolve:()=>({kind:"missing",reason:"fixture"})});
+    const subscribe=client.subscribe.bind(client);
+    const prefetches:Array<{page:number;release:ReturnType<typeof vi.fn>}>=[];
+    vi.spyOn(client,"subscribe").mockImplementation((request,listener)=>{
+      const release=vi.fn(subscribe(request,listener));
+      if(request.priority==="prefetch" && request.key.kind==="source-page") prefetches.push({page:request.key.page,release});
+      return release;
+    });
+    const close=vi.fn(); const closeAll=vi.fn();
+    const container=document.createElement("div"); const input=document.createElement("input"); document.body.append(container,input);
+    const root=createRoot(container);
+    try {
+      await act(async()=>root.render(<DetailWorkspace tabs={galleries.map(g=>g.id)} activeId={galleries[0]!.id} minimized={false} galleries={new Map(galleries.map(g=>[g.id,g]))} favoriteMetadata={new Set()} thumbnailClient={client} onActivate={vi.fn()} onClose={close} onCloseAll={closeAll} onMinimize={vi.fn()} onRestore={vi.fn()} onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />));
+      input.focus();
+      await act(async()=>window.dispatchEvent(new Event("focus")));
+      expect(document.activeElement).toBe(container.querySelector('.detail-tabs [aria-selected="true"]'));
+      await act(async()=>container.querySelector<HTMLButtonElement>(".tab-close")!.click());
+      expect(close).toHaveBeenCalledExactlyOnceWith(galleries[0]!.id);
+      const dialog=container.querySelector<HTMLDialogElement>('.detail-close-dialog')!;
+      expect(dialog).not.toHaveAttribute("open");
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="상세 전체 닫기"]')!.click());
+      expect(dialog).toHaveAttribute("open");
+      expect(dialog).toHaveAccessibleName("탭 2개를 닫을까요?");
+      expect(dialog).toHaveAccessibleDescription("Ctrl+Shift+T로 다시 열 수 있어요.");
+      expect([...dialog.querySelectorAll("button")].map(button => button.textContent)).toEqual(["모두 닫기", "취소"]);
+      expect(document.activeElement).toBe(dialog.querySelector("button:last-child"));
+      expect(closeAll).not.toHaveBeenCalled();
+      await act(async()=>[...dialog.querySelectorAll("button")].find(b=>b.textContent==="취소")!.click());
+      expect(closeAll).not.toHaveBeenCalled();
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="상세 전체 닫기"]')!.click());
+      await act(async()=>dialog.dispatchEvent(new Event("cancel", { cancelable: true })));
+      expect(dialog).not.toHaveAttribute("open");
+      expect(closeAll).not.toHaveBeenCalled();
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="상세 전체 닫기"]')!.click());
+      await act(async()=>[...dialog.querySelectorAll("button")].find(b=>b.textContent==="모두 닫기")!.click());
+      expect(closeAll).toHaveBeenCalledOnce();
+      prefetches.length=0;
+      await act(async()=>container.querySelector<HTMLButtonElement>('.preview-thumb[title="5페이지 확대"]')!.click());
+      // The mounted contact sheet also owns prefetch leases. Locate the four
+      // consecutive neighbour leases belonging to the enlarged preview.
+      const start=prefetches.findIndex((p,i)=>p.page===3 && prefetches.slice(i,i+4).map(p=>p.page).join(",")==="3,4,6,7");
+      expect(start).toBeGreaterThanOrEqual(0);
+      const leases=prefetches.slice(start,start+4);
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="페이지 미리보기 닫기"]')!.click());
+      expect(leases.every(p=>p.release.mock.calls.length===1)).toBe(true);
+    } finally {
+      await act(async()=>root.unmount()); client.dispose(); container.remove(); input.remove();
+      for(const [name,descriptor] of descriptors) { if(descriptor) Object.defineProperty(HTMLDialogElement.prototype,name,descriptor); else Reflect.deleteProperty(HTMLDialogElement.prototype,name); }
+    }
+  });
+
   it("replaces download with cancel throughout active phases, blocks repeats, and restores it after cancellation", async () => {
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
     const source = { ...mockGalleries[0]!, pages: 1, relatedIds: [] };
@@ -181,10 +241,11 @@ describe("DetailWorkspace page previews", () => {
 
   it("keeps main and Related artist favorites scoped to the exact visible artist", async () => {
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
-    const related: Gallery = { ...mockGalleries[6]!, artist: "another artist", favorite: true };
+    const related: Gallery = { ...mockGalleries[6]!, title: "Related title | 연관 앨범 한글 제목", subtitle: "", artist: "another artist", favorite: true };
     const gallery: Gallery = {
       ...mockGalleries[0]!,
       artist: "chisunosuke",
+      title: "Original main title | 상세에서는 원제도 그대로",
       favorite: true,
       relatedIds: [related.id],
       pageDimensions: [],
@@ -217,6 +278,8 @@ describe("DetailWorkspace page previews", () => {
       await act(async () => render(new Set(["artist:horieros"])));
       expect(container.querySelector(".detail-metadata-primary .metadata-box .meta-chip")).not.toHaveClass("favorite");
       expect(container.querySelector(".related-card .byline.artist")).not.toHaveClass("favorite");
+      expect(container.querySelector(".related-card .card-title strong")).toHaveTextContent(/^연관 앨범 한글 제목$/);
+      expect(container.querySelector(".detail-title-row h2")).toHaveTextContent(gallery.title);
 
       await act(async () => render(new Set(["artist:horieros", "artist:chisunosuke", "artist:another artist"])));
       expect(container.querySelector(".detail-metadata-primary .metadata-box .meta-chip")).toHaveClass("favorite");
@@ -294,7 +357,8 @@ describe("DetailWorkspace page previews", () => {
         download: { ...started.download!, state: "completed", progress: 100 },
       }));
       expect(container.querySelector('[aria-label="다운로드"]')).toBeNull();
-      expect(container.querySelector('[aria-label="다운로드 완료"]')).toHaveClass("detail-download-complete");
+      expect(container.querySelector('[aria-label="다운로드 완료"]')).toHaveClass("icon-button", "detail-download-complete");
+      expect(container.querySelectorAll('.detail-title-row [data-processing-state="completed"]')).toHaveLength(1);
       expect(container.querySelector('[aria-label="저장 폴더 열기"]')).not.toBeNull();
       expect(container.querySelector(".page-preview-dialog")).toHaveClass("is-resizable");
     } finally {
@@ -619,7 +683,7 @@ describe("DetailWorkspace page previews", () => {
       expect(dialog).toHaveAttribute("data-page-preview-orientation", "portrait");
       expect(dialog.style.getPropertyValue("--page-preview-aspect-ratio")).toBe("800 / 1200");
       expect(container.querySelector(".page-preview-media")).toHaveAttribute("data-page-orientation", "portrait");
-      expect(container.querySelector('[aria-label="두쪽 보기"]')).toBeNull();
+      expect(container.querySelector('[aria-label="두쪽 보기"]')).toHaveAttribute("aria-pressed", "false");
       const backgroundStart = container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent;
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
@@ -644,7 +708,7 @@ describe("DetailWorkspace page previews", () => {
     }
   });
 
-  it("offers two-page view only for adjacent portrait pages and advances by spreads", async () => {
+  it("offers two-page view and advances by spreads while retaining reading direction", async () => {
     vi.stubGlobal("requestAnimationFrame", vi.fn(() => 0));
     const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
     Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
@@ -721,6 +785,26 @@ describe("DetailWorkspace page previews", () => {
       expect(container.querySelector(".page-preview-dialog")).toHaveAttribute("data-page-preview-view", "single");
       expect(container.querySelectorAll(".page-preview-media")).toHaveLength(1);
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
+      await act(async () => toggle.click());
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="읽기 방향"]')!.click());
+      const dialog=container.querySelector<HTMLDialogElement>('.page-preview-dialog')!;
+      expect(dialog).toHaveAttribute('data-reading-direction','rtl');
+      expect(localStorage.getItem('atsumi.pagePreview.readingDirection')).toBe('rtl');
+      expect(Array.from(container.querySelectorAll<HTMLImageElement>('.page-preview-media img')).map(img=>img.alt)).toEqual([
+        expect.stringContaining('2페이지'),expect.stringContaining('1페이지'),
+      ]);
+      expect(dialog.querySelector('.page-preview-arrow.is-left')).toHaveAttribute('aria-label','다음 페이지');
+      await act(async () => window.dispatchEvent(new KeyboardEvent('keydown',{key:'a',code:'KeyA',bubbles:true})));
+      expect(container.querySelector('#page-preview-title')).toHaveTextContent('3–4페이지');
+      vi.useFakeTimers();
+      expect(dialog).toHaveAttribute('data-controls-visible','false');
+      await act(async () => dialog.dispatchEvent(new MouseEvent('pointermove',{bubbles:true})));
+      expect(dialog).toHaveAttribute('data-controls-visible','true');
+      await act(async () => vi.advanceTimersByTime(1900));
+      expect(dialog).toHaveAttribute('data-controls-visible','false');
+      await act(async () => dialog.dispatchEvent(new KeyboardEvent('keydown',{key:'Tab',bubbles:true})));
+      expect(dialog).toHaveAttribute('data-controls-visible','true');
+      vi.useRealTimers();
     } finally {
       await act(async () => root.unmount());
       client.dispose();
@@ -984,7 +1068,7 @@ describe("DetailWorkspace page previews", () => {
       const closedEvent = await press(backgroundControl, {});
       expect(closedEvent.defaultPrevented).toBe(false);
       await act(async () => render(false));
-      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "1페이지 확대");
+      expect(container.querySelector<HTMLButtonElement>(".preview-thumb")).toHaveAttribute("title", "10페이지 확대");
     } finally {
       await act(async () => root.unmount());
       client.dispose();
@@ -1050,8 +1134,12 @@ describe("DetailWorkspace page previews", () => {
       expect(container.querySelector(".related-card .meta-bottom")).toHaveTextContent(`${related.pages}p`);
       expect(container.querySelector(".related-card .meta-bottom")).toHaveTextContent(`#${related.id}`);
       expect(container.querySelector(".related-card")).toHaveAttribute("tabindex", "0");
-      expect(container.querySelector('.related-card [aria-label="다운로드 완료"]')).toHaveClass("download-check");
-      expect(container.querySelector('.related-card [data-status-icon="complete"]')).not.toBeNull();
+      expect(container.querySelector('.related-card [data-processing-state="completed"]')).toHaveClass("gallery-processing-badge");
+      expect(container.querySelector('.related-card [data-processing-state="completed"]')).toHaveAccessibleName(expect.stringContaining("완료"));
+      expect(container.querySelector('.related-card [data-processing-state="completed"]')?.textContent).toBe("");
+      expect(container.querySelector('.related-card')).toHaveAttribute("data-processing-tone", "complete");
+      expect(container.querySelector('.related-card')).toHaveAttribute("data-processing-muted", "true");
+      expect(container.querySelector('.related-cover > .processing-preview-wash')).not.toBeNull();
 
       await act(async () => {
         mainSeries?.click();

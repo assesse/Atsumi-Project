@@ -1,6 +1,6 @@
 [package]
 name = "atsumi"
-version = "1.9.0"
+version = "2.0.0"
 description = "Atsumi desktop backend"
 authors = ["Atsumi contributors"]
 edition = "2021"
@@ -46,8 +46,12 @@ windows = { version = "0.61.3", features = [
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
+    "Win32_System_IO",
+    "Win32_System_Ioctl",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_ProcessStatus",
     "Win32_UI_Shell",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",

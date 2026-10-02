@@ -1,0 +1,42 @@
+.gallery-processing-badge {
+  --state-color: var(--muted);
+  display: inline-grid; place-items: center; flex: none;
+  width: 28px; height: 28px; padding: 4px;
+  border: 1px solid color-mix(in srgb, var(--state-color) 48%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--state-color) 15%, var(--surface));
+  color: var(--state-color);
+}
+.gallery-processing-badge.tone-complete { --state-color: var(--success); }
+.gallery-processing-badge.tone-active, .gallery-processing-badge.tone-waiting { --state-color: var(--source-teal); }
+.gallery-processing-badge.tone-processing { --state-color: #bda6e7; }
+.gallery-processing-badge.tone-review { --state-color: var(--warning); }
+.gallery-processing-badge.tone-error { --state-color: var(--danger); }
+.gallery-processing-badge:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+button.gallery-processing-badge { cursor: pointer; }
+.gallery-processing-badge.is-overlay { position: absolute; z-index: 10; right: 7px; bottom: 7px; width: clamp(20px, 13%, 38px); height: auto; aspect-ratio: 1; padding: 3px; box-shadow: 0 1px 4px #0008; }
+.gallery-processing-badge.is-overlay .gallery-status-icon { width: 75%; height: 75%; }
+.gallery-card.is-compact[data-processing-tone] .compact-card-summary { padding-right: calc(clamp(20px, 13%, 38px) + 14px); }
+/* One selection control, independent from the one processing-status icon. */
+.gallery-card .card-select-toggle { position: absolute; z-index: 11; top: 7px; left: 7px; width: 26px; height: 26px; border-radius: 5px; border: 1px solid var(--muted); background: var(--surface); color: var(--text); opacity: 0; }
+.gallery-card:hover .card-select-toggle, .gallery-card:has(:focus-visible) .card-select-toggle, .gallery-card:focus-visible .card-select-toggle,
+.gallery-card.is-selected .card-select-toggle, .gallery-grid.is-selection-context .card-select-toggle { opacity: 1; }
+.gallery-card .card-select-toggle[aria-pressed="true"] { background: var(--primary); color: var(--canvas); border-color: var(--primary); }
+.gallery-card.is-compact .language-flag { left: 8px; z-index: 10; transform: translateX(0); transition: transform 160ms ease; }
+.gallery-card.is-compact:is(:hover, :focus-visible, .is-selected) .language-flag,
+.gallery-card.is-compact:has(:focus-visible) .language-flag,
+.gallery-grid.is-selection-context .gallery-card.is-compact .language-flag { transform: translateX(32px); }
+.gallery-grid.is-selection-context .gallery-card.is-compact.has-compact-favorites .cover > .compact-favorite-count-badge { right: 8px; }
+
+/* Shared by Explore and related galleries. Soften usable completed work only;
+   pending review / failures stay legible. Exclusion and privacy masks are separate. */
+:is(.gallery-card, .related-card)[data-processing-tone="complete"] { background: color-mix(in srgb, var(--success) 12%, var(--surface)); border-color: color-mix(in srgb, var(--success) 52%, var(--line)); }
+:is(.gallery-card, .related-card)[data-processing-tone="waiting"],
+:is(.gallery-card, .related-card)[data-processing-tone="active"] { border-color: color-mix(in srgb, var(--source-teal) 48%, var(--line)); }
+:is(.gallery-card, .related-card)[data-processing-tone="processing"] { border-color: color-mix(in srgb, #bda6e7 60%, var(--line)); }
+:is(.gallery-card, .related-card)[data-processing-tone="review"] { background: color-mix(in srgb, var(--warning) 9%, var(--surface)); border-color: color-mix(in srgb, var(--warning) 48%, var(--line)); }
+:is(.gallery-card, .related-card)[data-processing-tone="error"] { border-color: color-mix(in srgb, var(--danger) 65%, var(--line)); }
+.processing-preview-wash { position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity 140ms ease; }
+[data-processing-muted="true"] > :is(.cover, .related-cover) > .processing-preview-wash { background: color-mix(in srgb, var(--success) 26%, var(--surface)); opacity: .6; }
+[data-processing-muted="true"]:is(:hover, :focus-within) > :is(.cover, .related-cover) > .processing-preview-wash { opacity: 0; }
+@media (prefers-reduced-motion: reduce) { .processing-preview-wash, .gallery-card.is-compact .language-flag { transition: none; } }

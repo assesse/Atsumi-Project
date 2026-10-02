@@ -37,6 +37,13 @@ export type BrowserRecording = {
   status: "recording" | "stopped" | "interrupted" | "failed";
   mimeType: string;
   outputDir: string;
+  archive?: {
+    status: "pending" | "copying" | "cleanup_pending" | "complete" | "blocked";
+    sourceDir: string;
+    destinationRoot: string;
+    retryAt: number;
+    lastError: string | null;
+  } | null;
   segmentCount: number;
   bytesWritten: number;
   durationSeconds: number;
@@ -98,9 +105,9 @@ export type OfficialBrowserViewport = {
   visible: boolean;
   /** Privacy silences attached playback without changing the user's mute choice. */
   suspendAudio?: boolean;
-  /** Mask remote pixels/input for trusted popups without suspending playback. */
+  /** Block native input for a modal without suspending playback. */
   occluded?: boolean;
-  /** Retain background paint while disabling input throughout the native view. */
+  /** Retain paint outside measured popup holes; occluded controls background input. */
   preserveBackground?: boolean;
   /** At most eight stage-local popup rectangles subtracted from the scroll clip. */
   occlusions?: { x: number; y: number; width: number; height: number }[];
@@ -179,7 +186,7 @@ function mutateViewport(viewport: OfficialBrowserViewport): Promise<ApiResult<vo
   const request = { ...viewport, epoch: viewport.epoch ?? nativeViewportSession.epoch, requestSequence: generation };
   // Privacy must invalidate an in-flight native layout without waiting for its
   // ACK. Also discard any not-yet-dispatched show superseded by that hide.
-  if (!viewport.visible || viewport.occluded) return call<void>("chzzk_browser_set_viewport", { viewport: request });
+  if (!viewport.visible || viewport.occluded || viewport.preserveBackground) return call<void>("chzzk_browser_set_viewport", { viewport: request });
   const result = nativeViewportSession.tail.then(() => generation === nativeViewportSession.generation
     ? call<void>("chzzk_browser_set_viewport", { viewport: request })
     : { ok: true as const, data: undefined });
@@ -228,7 +235,7 @@ export function claimOfficialBrowserViewport(api: OfficialBrowserApi, report?: (
     try {
       const result = await api.setViewport(next.viewport);
       if (!current(next)) return; // An old ACK cannot clear a newer hide/error.
-      if (!result.ok && next.viewport.occluded) {
+      if (!result.ok && (next.viewport.occluded || next.viewport.preserveBackground)) {
         void api.setViewport({ ...hiddenOfficialBrowserViewport, epoch: next.viewport.epoch }).catch(() => {});
       }
       state.last = result.ok ? next.key : undefined;
@@ -244,7 +251,7 @@ export function claimOfficialBrowserViewport(api: OfficialBrowserApi, report?: (
       }
       next.report?.(result.ok ? null : result.error.message);
     } catch {
-      if (current(next) && next.viewport.occluded) void api.setViewport({ ...hiddenOfficialBrowserViewport, epoch: next.viewport.epoch }).catch(() => {});
+      if (current(next) && (next.viewport.occluded || next.viewport.preserveBackground)) void api.setViewport({ ...hiddenOfficialBrowserViewport, epoch: next.viewport.epoch }).catch(() => {});
       if (current(next)) { state.last = undefined; next.report?.("시청 화면을 표시하지 못했습니다. 화면을 다시 열어 주세요."); }
     } finally { next.inFlight = false; }
   };
@@ -266,7 +273,7 @@ export function claimOfficialBrowserViewport(api: OfficialBrowserApi, report?: (
     state.target = next;
     state.pending = undefined;
     state.last = undefined;
-    if (!viewport.visible || viewport.occluded) void write(next);
+    if (!viewport.visible || viewport.occluded || viewport.preserveBackground) void write(next);
     else { state.pending = next; void drain(); }
   };
   return {

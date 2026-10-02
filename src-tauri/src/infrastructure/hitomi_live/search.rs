@@ -504,13 +504,41 @@ impl SearchRepository for HitomiLiveAdapter {
 }
 
 impl AutoFindSource for HitomiLiveAdapter {
+    fn auto_find_language_ids(
+        &self,
+        languages: &[Language],
+        cancellation: &CancellationToken,
+    ) -> Result<Option<std::sync::Arc<HashSet<u64>>>, RepositoryError> {
+        let mut ids = HashSet::new();
+        for &language in languages {
+            check_auto_find_cancelled(cancellation)?;
+            let path = format!("n/index-{}.nozomi", language_slug(language));
+            ids.extend(self.fetch_optional_nozomi_path_with_cancellation(&path, cancellation)?);
+        }
+        Ok(Some(std::sync::Arc::new(ids)))
+    }
+
     fn auto_find_artist_plan(
         &self,
         request: &AutoFindSourceRequest,
         cancellation: &CancellationToken,
     ) -> Result<AutoFindSourceResult, RepositoryError> {
-        let artist_path = prefixed_nozomi_path(&format!("artist:{}", request.artist))
-            .ok_or_else(|| SourceContractError::validation("artist", "must not be empty"))?;
+        if !matches!(
+            request.namespace,
+            crate::domain::FavoriteNamespace::Artist | crate::domain::FavoriteNamespace::Group
+        ) {
+            return Err(SourceContractError::validation(
+                "namespace",
+                "Auto Find supports artists and groups",
+            )
+            .into());
+        }
+        let artist_path = prefixed_nozomi_path(&format!(
+            "{}:{}",
+            request.namespace.as_str(),
+            request.artist
+        ))
+        .ok_or_else(|| SourceContractError::validation("artist", "must not be empty"))?;
         // Build the complete ID set first. Gallery metadata is deliberately
         // fetched only after language, artist and history constraints apply.
         let artist_ids = self
@@ -524,17 +552,17 @@ impl AutoFindSource for HitomiLiveAdapter {
         };
         let retain_cutoff = request.retain_after_gallery_id.map(|id| id.get() as u64);
         let incremental_cutoff = request.newer_than_gallery_id.map(|id| id.get() as u64);
-        let mut ids = Vec::new();
-        for language in languages {
-            check_auto_find_cancelled(cancellation)?;
-            let path = format!("n/index-{}.nozomi", language_slug(language));
-            ids.extend(self.fetch_optional_nozomi_path_with_cancellation(&path, cancellation)?);
-        }
+        let language_ids = match &request.language_ids {
+            Some(ids) => std::sync::Arc::clone(ids),
+            None => self
+                .auto_find_language_ids(&languages, cancellation)?
+                .unwrap_or_default(),
+        };
+        let mut ids = artist_ids
+            .into_iter()
+            .filter(|id| language_ids.contains(id))
+            .collect::<Vec<_>>();
         ids.sort_unstable_by(|left, right| right.cmp(left));
-        let mut seen = HashSet::new();
-        ids.retain(|id| seen.insert(*id));
-        ids.retain(|id| artist_ids.contains(id));
-        ids.dedup();
         let latest_available_gallery_id = ids
             .first()
             .copied()
@@ -566,7 +594,12 @@ impl AutoFindSource for HitomiLiveAdapter {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
-        ids.retain(|id| incremental_cutoff.is_none_or(|minimum| *id > minimum));
+        ids.retain(|id| {
+            incremental_cutoff.is_none_or(|minimum| *id > minimum)
+                || request
+                    .history_expansion_ceiling
+                    .is_some_and(|ceiling| *id <= ceiling.get() as u64)
+        });
         let eligible_count = u32::try_from(ids.len()).unwrap_or(u32::MAX);
         let bounded_limit = request.candidate_limit.min(AUTO_FIND_CANDIDATE_LIMIT);
         let limit = usize::try_from(bounded_limit).unwrap_or(usize::MAX);

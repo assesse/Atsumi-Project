@@ -28,8 +28,32 @@ const failedGallery: Gallery = {
 };
 
 describe("ActivityDrawer download controls", () => {
+  it("keeps all navigation buttons before the changing scroll body and collapses technical details", async () => {
+    const container = document.createElement("div"); const root = createRoot(container);
+    try {
+      await act(async () => root.render(<ActivityDrawer open galleries={[failedGallery]} sessionDownloads={[{galleryId:failedGallery.id,occurredAt:1}]}
+        queuePanel={<section>queue body</section>} queueSummary={<section>queue summary</section>} {...actions} />));
+      const nav = container.querySelector(".activity-section-tabs")!;
+      expect(nav.previousElementSibling?.tagName).toBe("HEADER");
+      expect(nav.nextElementSibling).toHaveClass("activity-panel-content");
+      const buttons = [...nav.querySelectorAll<HTMLButtonElement>("button")];
+      expect(buttons.map(b => b.textContent)).toEqual(["다운로드 큐", "실시간 실행", "자동분류 검토"]);
+      const details = container.querySelector(".activity-item-details")!;
+      expect(details).not.toHaveAttribute("open");
+      expect(details).toHaveTextContent("SOURCE_TIMEOUT");
+      for (const button of buttons) {
+        await act(async () => button.click());
+        expect(container.querySelector(".activity-section-tabs")).toBe(nav);
+        expect(nav.previousElementSibling?.tagName).toBe("HEADER");
+        expect(nav.nextElementSibling).toHaveClass("activity-panel-content");
+        expect(button).toHaveAttribute("aria-selected", "true");
+      }
+    } finally { await act(async () => root.unmount()); }
+  });
   const sessionTitles = (container: HTMLElement) => [...container.querySelectorAll("#activity-session-panel .activity-item strong")]
     .map((title) => title.textContent);
+  const sessionGroups = (container: HTMLElement) => [...container.querySelectorAll("#activity-session-panel .activity-state-heading")]
+    .map((heading) => heading.textContent);
   const activityGallery = (state: DownloadState, id: number): Gallery => ({
     ...failedGallery,
     id: galleryId(id),
@@ -49,15 +73,17 @@ describe("ActivityDrawer download controls", () => {
       expect(sessionTitles(container)[0]).toBe("completed-70");
       expect(sessionTitles(container)).not.toContain("queued-1");
       expect(container).toHaveTextContent("최근 50개만 표시합니다");
+      expect(sessionGroups(container)).toEqual(["완료"]);
       await act(async () => root.render(<ActivityDrawer open galleries={galleries} sessionDownloads={[]} {...actions} />));
       expect(sessionTitles(container)).toHaveLength(0);
+      expect(sessionGroups(container)).toHaveLength(0);
     } finally { await act(async () => root.unmount()); }
   });
 
-  it("sorts live work and reviews before failures and finished work, newest first within each group", async () => {
+  it("separates reviews, hashing, downloads, stopped jobs, and completed work, newest first within each group", async () => {
     const states: DownloadState[] = [
       "queued", "resolving_metadata", "downloading", "hashing", "verifying", "retry_wait", "review_required",
-      "interrupted", "failed", "completed", "quarantined", "cancelled",
+      "interrupted", "failed", "completed", "quarantined", "cancelled", "review_required",
     ];
     const galleries = states.map((state, index) => activityGallery(state, index + 1));
     const sessionDownloads = galleries.map((gallery, index) => ({ galleryId: gallery.id, occurredAt: index + 1 }));
@@ -67,9 +93,12 @@ describe("ActivityDrawer download controls", () => {
       await act(async () => root.render(
         <ActivityDrawer open galleries={galleries} sessionDownloads={sessionDownloads} {...actions} />,
       ));
+      expect(container.querySelector('[role="tab"][aria-controls="activity-session-panel"]')).toHaveTextContent("실시간 실행");
+      expect(container).not.toHaveTextContent("이번 실행");
+      expect(sessionGroups(container)).toEqual(["검토", "해시 · 검증", "다운로드", "실패 · 중단 · 취소", "완료"]);
       expect(sessionTitles(container)).toEqual([
-        "review_required-7", "retry_wait-6", "verifying-5", "hashing-4", "downloading-3", "resolving_metadata-2", "queued-1",
-        "failed-9", "interrupted-8", "cancelled-12", "quarantined-11", "completed-10",
+        "review_required-13", "review_required-7", "verifying-5", "hashing-4", "retry_wait-6", "downloading-3", "resolving_metadata-2", "queued-1",
+        "cancelled-12", "failed-9", "interrupted-8", "quarantined-11", "completed-10",
       ]);
       expect(sessionDownloads.map((activity) => activity.occurredAt)).toEqual(states.map((_, index) => index + 1));
     } finally {
@@ -92,12 +121,19 @@ describe("ActivityDrawer download controls", () => {
     try {
       await render([active, review, completed]);
       expect(sessionTitles(container)).toEqual([review.title, active.title, completed.title]);
+      expect(sessionGroups(container)).toEqual(["검토", "다운로드", "완료"]);
+      const hashing = { ...active, download: { ...active.download!, state: "hashing" as const } };
+      await render([hashing, review, completed]);
+      expect(sessionGroups(container)).toEqual(["검토", "해시 · 검증", "완료"]);
+      expect(container.querySelector('[aria-labelledby="activity-state-1"] strong')).toHaveTextContent(active.title);
       await render([active, review, completed], new Set([active.id, review.id]));
       expect(sessionTitles(container)).toEqual([active.title, completed.title, review.title]);
+      expect(sessionGroups(container)).toEqual(["다운로드", "완료"]);
       expect(container.querySelector(".duplicate-resolved strong")).toHaveTextContent(review.title);
       const finished = { ...active, download: { ...active.download!, state: "completed" as const } };
       await render([finished, review, completed]);
       expect(sessionTitles(container)).toEqual([review.title, completed.title, active.title]);
+      expect(sessionGroups(container)).toEqual(["검토", "완료"]);
       await render([active, review, completed]);
       expect(sessionTitles(container)).toEqual([review.title, active.title, completed.title]);
     } finally {
@@ -127,6 +163,7 @@ describe("ActivityDrawer download controls", () => {
       expect(sessionTitles(container)).toEqual([
         gallery.title, "Danbooru failure", "Automatic failure", "Danbooru completed", "Automatic completed",
       ]);
+      expect(sessionGroups(container)).toEqual(["해시 · 검증", "실패 · 중단 · 취소", "완료"]);
       const automationTab = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!;
       await act(async () => automationTab.click());
       expect([...container.querySelectorAll(".activity-item strong")].map((item) => item.textContent))
@@ -361,7 +398,7 @@ describe("ActivityDrawer download controls", () => {
     const historyPanel = container.querySelector("#activity-automation-panel");
     expect(historyPanel?.querySelectorAll("article")).toHaveLength(1);
     expect(historyPanel).toHaveTextContent("자동 분류 완료 · 신규 앨범 B 보존");
-    expect(historyPanel).toHaveTextContent("격리된 실제 파일은 복원하지 않습니다");
+    expect(historyPanel).toHaveTextContent("격리 파일은 복원되지 않습니다");
     const buttons = [...(historyPanel?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
     await act(async () => {
       buttons.find((button) => button.textContent === "근거 보기")?.click();

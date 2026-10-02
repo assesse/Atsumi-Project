@@ -11,6 +11,26 @@ const coverKey = {
 };
 
 describe("ThumbnailClient", () => {
+  it("revalidates review images after the final subscriber leaves, even on immediate reopen", () => {
+    const resolve = vi.fn((): ThumbnailAsset => ({ kind: "image", url: "blob:review", width: 20, height: 20 }));
+    const release = vi.fn();
+    const client = new ThumbnailClient({ resolve, release });
+    const request: ThumbnailRequest = {
+      key: { kind: "overlap-review-page", reviewId: "review", candidateId: "candidate", reviewRevision: 2, side: "existing", page: 1 },
+      consumer: "review", priority: "critical",
+    };
+    const first = client.subscribe(request, vi.fn());
+    const second = client.subscribe(request, vi.fn());
+    expect(resolve).toHaveBeenCalledOnce();
+    first();
+    expect(release).not.toHaveBeenCalled();
+    second();
+    expect(release).toHaveBeenCalledOnce();
+    const reopened = client.subscribe(request, vi.fn());
+    expect(resolve).toHaveBeenCalledTimes(2);
+    reopened();
+    client.dispose();
+  });
   it("invalidates an active display handle and refreshes all existing listeners", async () => {
     const oldAsset: ThumbnailAsset = { kind: "image", url: "blob:old-cover", width: 100, height: 150 };
     const freshAsset: ThumbnailAsset = { kind: "image", url: "blob:fresh-cover", width: 100, height: 150 };
@@ -64,7 +84,7 @@ describe("ThumbnailClient", () => {
 
       const predicate = (key: ThumbnailRequest["key"]) => key.kind === "artifact-page"
         ? key.entryId === "merged-entry"
-        : key.galleryId === coverKey.galleryId;
+        : "galleryId" in key && key.galleryId === coverKey.galleryId;
       expect(client.invalidate(predicate)).toBe(2);
       expect(client.invalidate(predicate)).toBe(0);
       expect(client.getSnapshot(coverKey)).toEqual({ status: "idle" });
@@ -598,6 +618,31 @@ describe("ThumbnailClient", () => {
       expect(release).toHaveBeenCalledWith(request, expect.objectContaining({ url: "blob:detail-page" }));
       expect(client.getSnapshot(pageKey)).toEqual({ status: "idle" });
       expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("caps unused covers by decoded bytes while preserving visible subscribers", async () => {
+    vi.useFakeTimers();
+    try {
+      const release = vi.fn();
+      const client = new ThumbnailClient({
+        resolve: () => ({ kind: "image", url: "blob:large-cover", width: 2048, height: 2048, byteLength: 100 }),
+        release,
+      });
+      const visible = { key: { kind: "gallery-cover" as const, galleryId: galleryId(1) }, consumer: "explore" as const, priority: "visible" as const };
+      const unsubscribeVisible = client.subscribe(visible, vi.fn());
+      for (let index = 2; index <= 8; index += 1) {
+        const unused = { ...visible, key: { ...visible.key, galleryId: galleryId(index) } };
+        client.subscribe(unused, vi.fn())();
+      }
+      await vi.advanceTimersByTimeAsync(400);
+      // Seven ~16 MiB covers cannot all fit in the 64 MiB idle budget.
+      expect(release).toHaveBeenCalledTimes(4);
+      expect(client.getSnapshot(visible.key).status).toBe("resolved");
+      unsubscribeVisible();
+      client.dispose();
     } finally {
       vi.useRealTimers();
     }

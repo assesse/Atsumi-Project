@@ -15,6 +15,12 @@ $logPath = Join-Path $verificationDirectory "verify-$timestamp.log"
 $env:CI = "true"
 $previousCargoIncremental = $env:CARGO_INCREMENTAL
 $env:CARGO_INCREMENTAL = "0"
+$previousCargoBuildJobs = $env:CARGO_BUILD_JOBS
+# Each Tauri example maps the large application library. Bound simultaneous
+# compilers on Windows without changing the machine's paging configuration.
+if ([string]::IsNullOrWhiteSpace($env:CARGO_BUILD_JOBS)) {
+  $env:CARGO_BUILD_JOBS = "2"
+}
 
 New-Item -ItemType Directory -Force -Path $verificationDirectory | Out-Null
 
@@ -183,5 +189,10 @@ try {
     Remove-Item Env:CARGO_INCREMENTAL -ErrorAction SilentlyContinue
   } else {
     $env:CARGO_INCREMENTAL = $previousCargoIncremental
+  }
+  if ($null -eq $previousCargoBuildJobs) {
+    Remove-Item Env:CARGO_BUILD_JOBS -ErrorAction SilentlyContinue
+  } else {
+    $env:CARGO_BUILD_JOBS = $previousCargoBuildJobs
   }
 }

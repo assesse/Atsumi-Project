@@ -45,7 +45,7 @@ describe("GalleryCoverSessionRetainer", () => {
     retainer.visit("downloads", [visited]);
     vi.advanceTimersByTime(5 * 60_000);
     expect(retainer.size).toBe(1);
-    expect(retainer.retainedBytes).toBe(512 * 768 * 0.5);
+    expect(retainer.retainedBytes).toBe(512 * 768 * 4.5);
     expect(client.getSnapshot(galleryCoverThumbnailKey(visited)).status).toBe("resolved");
     expect(release).not.toHaveBeenCalled();
 
@@ -58,7 +58,7 @@ describe("GalleryCoverSessionRetainer", () => {
     client.dispose();
   });
 
-  it("evicts by exact backend delivery bytes before reaching the count ceiling", async () => {
+  it("budgets decoded RGBA surfaces even when encoded deliveries are tiny", async () => {
     vi.useFakeTimers();
     const client = new ThumbnailClient({
       resolve: (request) => asset(
@@ -66,13 +66,14 @@ describe("GalleryCoverSessionRetainer", () => {
         60,
       ),
     });
-    const retainer = new GalleryCoverSessionRetainer(client, 10, 100);
+    const cost = 512 * 768 * 4 + 60;
+    const retainer = new GalleryCoverSessionRetainer(client, 10, cost + 1);
     const first = gallery(501);
     const second = gallery(502);
 
     retainer.visit("downloads", [first, second]);
     expect(retainer.size).toBe(1);
-    expect(retainer.retainedBytes).toBe(60);
+    expect(retainer.retainedBytes).toBe(cost);
     await vi.advanceTimersByTimeAsync(121_000);
     expect(client.getSnapshot(galleryCoverThumbnailKey(first)).status).toBe("idle");
     expect(client.getSnapshot(galleryCoverThumbnailKey(second)).status).toBe("resolved");

@@ -14,6 +14,7 @@ mod internal_duplicate_analyzer;
 mod internal_duplicate_corpus;
 mod internal_duplicate_supervisor;
 mod ports;
+mod processing_pool;
 mod service;
 
 pub use auto_find_supervisor::AutoFindSupervisor;

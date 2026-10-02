@@ -895,15 +895,18 @@ fn verify_checkpoint_webp_file(
 
     let mut digest = Sha256::new();
     let mut signature = [0_u8; 12];
+    let budget = crate::storage_io_budget::BulkReadBudget::for_path(&path);
     let mut signature_length = 0_usize;
     let mut buffer = [0_u8; 64 * 1024];
     loop {
+        let read_started = std::time::Instant::now();
         let read = file
             .read(&mut buffer)
             .map_err(|_| filesystem_error("The checkpointed page could not be hashed"))?;
         if read == 0 {
             break;
         }
+        budget.account(read, read_started.elapsed(), || false);
         if signature_length < signature.len() {
             let copied = (signature.len() - signature_length).min(read);
             signature[signature_length..signature_length + copied]

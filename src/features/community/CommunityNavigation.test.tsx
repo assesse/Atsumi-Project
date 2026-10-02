@@ -43,7 +43,7 @@ describe("community app composition", () => {
       expect(comments).toHaveBeenLastCalledWith({ source: "hitomi", workId: "9123456" }, null);
       expect(write).not.toHaveBeenCalled();
       await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="코멘트 닫기"]')!.click(); await settle(); });
-      expect(host.querySelector('[role="tab"][aria-selected="true"]')).toHaveTextContent("보존되는 탐색 결과");
+      expect(host.querySelector('.detail-workspace [role="tab"][aria-selected="true"]')).toHaveTextContent("보존되는 탐색 결과");
       await act(async () => { host.querySelector<HTMLButtonElement>('.preview-thumb')!.click(); await settle(); });
       expect(host.querySelector('.page-preview-dialog[open]')).toBeInTheDocument();
       await act(async () => { host.querySelector<HTMLButtonElement>('.page-preview-header-actions [aria-label="코멘트 남기기"]')!.click(); await settle(); });
@@ -52,7 +52,7 @@ describe("community app composition", () => {
       await act(async () => { document.querySelector('[aria-label="앨범 코멘트"]')!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); await settle(); });
       expect(host.querySelector('.page-preview-dialog[open]')).toBeInTheDocument();
       await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="페이지 미리보기 닫기"]')!.click(); await settle(); });
-      expect(host.querySelector('[role="tab"][aria-selected="true"]')).toHaveTextContent("보존되는 탐색 결과");
+      expect(host.querySelector('.detail-workspace [role="tab"][aria-selected="true"]')).toHaveTextContent("보존되는 탐색 결과");
       expect(detail).toHaveBeenCalledTimes(1);
       await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="커뮤니티"]')!.click(); await settle(); });
       expect(host.querySelector('[aria-label="커뮤니티 화면"]')).toHaveAttribute("data-review-work", "none");

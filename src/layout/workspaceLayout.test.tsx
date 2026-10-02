@@ -40,8 +40,8 @@ describe("workspace result viewport layout", () => {
       document.body.append(container);
       const root = createRoot(container);
       const tabs = [
-        { id: "root", label: "전체 탐색", root: true, busy: false },
-        ...(extraPanel ? [{ id: "artist", label: "작가 검색", root: false, busy: false }] : []),
+        { id: "root", label: "첫 검색", busy: false },
+        ...(extraPanel ? [{ id: "artist", label: "작가 검색", busy: false }] : []),
       ];
 
       try {
@@ -87,7 +87,7 @@ describe("workspace result viewport layout", () => {
         expect(children.map((child) => child.className)).toEqual([
           "view-header",
           "page-heading",
-          ...(extraPanel ? [view === "explore" ? "explore-context-bar" : "pair-compare-panel"] : []),
+          ...(view === "explore" ? ["explore-context-bar"] : extraPanel ? ["pair-compare-panel"] : []),
           "context-row",
           "selection-slot",
           "gallery-viewport",

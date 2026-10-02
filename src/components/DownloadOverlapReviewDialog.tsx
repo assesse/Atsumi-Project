@@ -30,13 +30,16 @@ import {
   uniquePagesForSide,
 } from "../downloadOverlap/alignment";
 import { galleryPreviewPreset } from "../layout/galleryPreviewPresets";
-import { buildStrictOverlapPlan, DOWNLOAD_OVERLAP_AUTO_HELP } from "../state/downloadOverlapAuto";
+import { selectMergePages, emptyMergeSelection, mergeOutputPages, type MergeSelection } from "../downloadOverlap/mergeSelection";
+import "./OverlapMergeControls.css";
+import { automaticUncensoredMerge, buildStrictOverlapPlan, DOWNLOAD_OVERLAP_AUTO_HELP } from "../state/downloadOverlapAuto";
+import { isCompletedPairReview } from "../state/completedPairReview";
 import {
   buildDownloadOverlapContainmentGroup,
   type DownloadOverlapContainmentGroup,
   type DownloadOverlapContainmentItem,
 } from "../state/downloadOverlapContainment";
-import { artifactPageThumbnailKey, type ThumbnailClient, type ThumbnailKey } from "../thumbnail";
+import { artifactPageThumbnailKey, overlapReviewPageThumbnailKey, type ThumbnailClient, type ThumbnailKey } from "../thumbnail";
 import { FluentIcon } from "./FluentIcon";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 import "./DownloadOverlapReviewDialog.css";
@@ -102,6 +105,7 @@ type AutomaticDecisionSnapshot = {
     | "complete_containment"
     | "omnibus_containment"
     | "uncensored"
+    | "uncensored_merge"
     | "page_count"
     | "stable_existing";
   metrics?: {
@@ -164,6 +168,7 @@ const automaticDecisionSnapshot = (
         "complete_containment",
         "omnibus_containment",
         "uncensored",
+        "uncensored_merge",
         "page_count",
         "stable_existing",
       ].includes(String(preferenceReason))) return null;
@@ -209,6 +214,8 @@ const automaticArtifactReason = (
   const loserCoverage = snapshot.metrics?.loserCoverage
     ?? (snapshot.winner === "incoming" ? candidate.existingCoverage : candidate.incomingCoverage);
   switch (snapshot.preferenceReason) {
+    case "uncensored_merge":
+      return isWinner ? "무검열 페이지 병합 · 추가 페이지 유지" : "보존판에 무검열 페이지 제공 · 원본 보관";
     case "uncensored":
       return isWinner
         ? `무검열 표식 우선 · 신뢰도 ${percent(candidate.confidence)}`
@@ -290,6 +297,12 @@ const comparisonOutcome = (
   review: DownloadOverlapReview,
   candidate: DownloadOverlapCandidate,
 ): ComparisonOutcome | null => {
+  const mergeAudit = latestDecision(review, (audit) => audit.candidateId === candidate.candidateId && audit.reasonCode === "uncensored_containment_merge_v1");
+  const merged = mergeAudit && automaticDecisionSnapshot(mergeAudit, review, candidate);
+  if (merged) return {
+    existing: { outcome: merged.winner === "existing" ? "kept" : "excluded", reason: automaticArtifactReason(merged, review, candidate, "existing") },
+    incoming: { outcome: merged.winner === "incoming" ? "kept" : "excluded", reason: automaticArtifactReason(merged, review, candidate, "incoming") },
+  };
   const incomingOutcome: ArtifactOutcome | undefined = review.state === "resolved"
     ? "kept"
     : review.state === "cancelled"
@@ -483,14 +496,26 @@ function PageHoverPreviewLayer({ preview, previewWidth, thumbnailClient }: {
   );
 }
 
-function ArtifactSummary({ gallery, label, page, presentation, thumbnailClient }: {
+type ReviewImageContext = Pick<DownloadOverlapReview, "reviewId" | "revision">;
+
+const reviewPageKey = (review: ReviewImageContext, candidateId: string, side: "existing" | "incoming", entryId: string, page: number, fallbackIndex: number): ThumbnailKey =>
+  isCompletedPairReview(review.reviewId)
+    ? artifactPageThumbnailKey(entryId, page, fallbackIndex)
+    : overlapReviewPageThumbnailKey(review.reviewId, candidateId, review.revision, side, page, fallbackIndex);
+
+function ArtifactSummary({ gallery, review, candidateId, side, label, page, presentation, thumbnailClient }: {
   gallery: DownloadOverlapGalleryRef;
+  review: ReviewImageContext;
+  candidateId: string;
+  side: "existing" | "incoming";
   label: string;
   page: number;
   presentation?: ArtifactPresentation;
   thumbnailClient?: ThumbnailClient;
 }) {
   const outcome = presentation?.outcome;
+  const thumbnailKey = useMemo(() => reviewPageKey(review, candidateId, side, gallery.entryId, page, Number(gallery.galleryId) % 6),
+    [review.reviewId, review.revision, candidateId, side, gallery.entryId, gallery.galleryId, page]);
   const outcomeLabel = outcome === "kept"
     ? "이 검토에서 보존"
     : outcome === "excluded"
@@ -507,7 +532,7 @@ function ArtifactSummary({ gallery, label, page, presentation, thumbnailClient }
     >
       <GalleryThumbnail
         className="download-overlap-cover"
-        thumbnailKey={artifactPageThumbnailKey(gallery.entryId, page, Number(gallery.galleryId) % 6)}
+        thumbnailKey={thumbnailKey}
         consumer="review"
         priority="critical"
         client={thumbnailClient}
@@ -538,73 +563,18 @@ function ArtifactSummary({ gallery, label, page, presentation, thumbnailClient }
 }
 
 type MergePageSide = DownloadOverlapMergeRequest["sourceSide"];
-
 type PageMergeSelection = {
   reviewId: string;
   reviewRevision: number;
   candidateId: string;
-  sourceSide: MergePageSide;
-  sourcePages: ReadonlySet<number>;
+  pages: MergeSelection;
+  anchor: { side: MergePageSide; page: number };
 };
 
-const MAX_PAGE_MERGE_SELECTION = 200;
-
-type SourceMappingValidation = {
-  valid: boolean;
-  missingPages: number;
-  reason?: "bounds" | "duplicate" | "incomplete";
-};
-
-const validateMergeSourceMapping = (
-  candidate: DownloadOverlapCandidate,
-  incoming: DownloadOverlapGalleryRef,
-  sourceSide: MergePageSide,
-): SourceMappingValidation => {
-  const existingPageCount = Math.max(0, Math.floor(candidate.existing.pageCount));
-  const incomingPageCount = Math.max(0, Math.floor(incoming.pageCount));
-  const sourcePageCount = sourceSide === "existing" ? existingPageCount : incomingPageCount;
-  const sourcePages = new Set<number>();
-  const targetPages = new Set<number>();
-  for (const pair of candidate.pagePairs) {
-    const existingInBounds = Number.isInteger(pair.existingSourcePage)
-      && pair.existingSourcePage >= 1
-      && pair.existingSourcePage <= existingPageCount;
-    const incomingInBounds = Number.isInteger(pair.incomingSourcePage)
-      && pair.incomingSourcePage >= 1
-      && pair.incomingSourcePage <= incomingPageCount;
-    if (!existingInBounds || !incomingInBounds) {
-      return { valid: false, missingPages: sourcePageCount, reason: "bounds" };
-    }
-    const sourcePage = sourceSide === "existing" ? pair.existingSourcePage : pair.incomingSourcePage;
-    const targetPage = sourceSide === "existing" ? pair.incomingSourcePage : pair.existingSourcePage;
-    if (sourcePages.has(sourcePage) || targetPages.has(targetPage)) {
-      return { valid: false, missingPages: Math.max(0, sourcePageCount - sourcePages.size), reason: "duplicate" };
-    }
-    sourcePages.add(sourcePage);
-    targetPages.add(targetPage);
-  }
-  const missingPages = Math.max(0, sourcePageCount - sourcePages.size);
-  return missingPages === 0
-    ? { valid: true, missingPages: 0 }
-    : { valid: false, missingPages, reason: "incomplete" };
-};
-
-const mergeSourceMappingMessage = (
-  side: MergePageSide,
-  validation: SourceMappingValidation,
-): string => {
-  const sideLabel = side === "existing" ? "기존 A" : "신규 B";
-  if (validation.reason === "bounds") {
-    return "저장된 페이지 대응 정보가 실제 판본 범위를 벗어납니다. 최신 검토를 다시 불러온 뒤 확인해 주세요.";
-  }
-  if (validation.reason === "duplicate") {
-    return "저장된 페이지 대응이 일대일 관계가 아니어서 교체 위치를 안전하게 정할 수 없습니다. 최신 검토를 다시 불러와 주세요.";
-  }
-  return `${sideLabel} 전체 페이지 중 ${validation.missingPages}장의 대응을 확인할 수 없어 자동 제외를 전제로 한 병합이 불가능합니다. 반대 판본을 원본으로 선택하거나 직접 검토해 주세요.`;
-};
-
-function PageCell({ entryId, page, side, pair, index, mergeEnabled, mergeDisabled, mergeSourceBlocked, mergeSelection, thumbnailClient, onPreviewOpen, onPreviewClose, onMergeToggle }: {
+function PageCell({ entryId, review, candidateId, page, side, pair, index, mergeEnabled, mergeDisabled, mergeSourceBlocked, mergeSelection, thumbnailClient, onPreviewOpen, onPreviewClose, onMergeToggle }: {
   entryId: string;
+  review: ReviewImageContext;
+  candidateId: string;
   page?: number;
   side: MergePageSide;
   pair?: DownloadOverlapPagePair;
@@ -616,9 +586,11 @@ function PageCell({ entryId, page, side, pair, index, mergeEnabled, mergeDisable
   thumbnailClient?: ThumbnailClient;
   onPreviewOpen: (preview: PageHoverPreview) => void;
   onPreviewClose: () => void;
-  onMergeToggle?: (side: MergePageSide, page: number, pair?: DownloadOverlapPagePair) => void;
+  onMergeToggle?: (side: MergePageSide, page: number, pair?: DownloadOverlapPagePair, range?: boolean) => void;
 }) {
-  if (!page) {
+  const thumbnailKey = useMemo(() => page ? reviewPageKey(review, candidateId, side, entryId, page, index) : null,
+    [review.reviewId, review.revision, candidateId, side, entryId, page, index]);
+  if (!page || !thumbnailKey) {
     return <div className="download-overlap-page-cell is-gap" aria-label="이 판본에는 대응 페이지 없음"><span>—</span></div>;
   }
   const matched = Boolean(pair);
@@ -626,34 +598,16 @@ function PageCell({ entryId, page, side, pair, index, mergeEnabled, mergeDisable
     ? pair.exactSha256 ? "SHA-256 일치" : `시각 ${percent(pair.visualSimilarity)}`
     : "이 판본에만 있음";
   const sideLabel = side === "existing" ? "기존 A" : "신규 B";
-  const thumbnailKey = artifactPageThumbnailKey(entryId, page, index);
-  const selectedSourcePage = pair && mergeSelection
-    ? mergeSelection.sourceSide === "existing"
-      ? pair.existingSourcePage
-      : pair.incomingSourcePage
-    : undefined;
-  const selectedPair = selectedSourcePage !== undefined
-    && mergeSelection?.sourcePages.has(selectedSourcePage);
-  const mergeState = selectedPair
-    ? side === mergeSelection?.sourceSide ? "source" : "target"
-    : undefined;
-  const sideLocked = Boolean(mergeSelection && mergeSelection.sourceSide !== side);
-  const mergeLabel = mergeState === "source"
-    ? " · 병합 원본으로 선택됨"
-    : mergeState === "target"
-      ? " · 이 페이지가 교체됨"
-      : mergeEnabled && mergeSourceBlocked
-        ? " · 이 판본에만 있는 페이지가 있어 병합 원본 선택 불가"
-        : mergeEnabled && !pair
-        ? " · 대응 페이지가 없어 병합 선택 불가"
-        : mergeEnabled && sideLocked
-          ? ` · ${mergeSelection?.sourceSide === "existing" ? "기존 A" : "신규 B"} 원본 선택을 먼저 해제해야 함`
-          : mergeEnabled
-            ? " · Ctrl+클릭하여 병합 원본으로 선택"
-            : "";
+  const selected = mergeSelection?.pages[side].includes(page);
+  const opposite = pair && mergeSelection?.pages[side === "existing" ? "incoming" : "existing"].includes(
+    side === "existing" ? pair.incomingSourcePage : pair.existingSourcePage);
+  const mergeState = selected ? "source" : opposite ? "target" : undefined;
+  const sideLocked = false;
+  const mergeLabel = selected ? " · 보존 선택됨" : opposite ? " · 반대쪽 선택됨"
+    : mergeEnabled ? " · Ctrl+클릭 선택 · Shift+클릭 범위 선택" : "";
   return (
     <GalleryThumbnail
-      className={`download-overlap-page-cell ${matched ? "is-matched" : "is-unique"}${mergeEnabled && pair && !mergeSourceBlocked ? " can-merge" : ""}${mergeEnabled && mergeSourceBlocked ? " is-merge-source-blocked" : ""}${sideLocked ? " is-merge-side-locked" : ""}${mergeState ? ` is-merge-${mergeState}` : ""}`}
+      className={`download-overlap-page-cell ${matched ? "is-matched" : "is-unique"}${mergeEnabled && !mergeSourceBlocked ? " can-merge" : ""}${mergeEnabled && mergeSourceBlocked ? " is-merge-source-blocked" : ""}${sideLocked ? " is-merge-side-locked" : ""}${mergeState ? ` is-merge-${mergeState}` : ""}`}
       thumbnailKey={thumbnailKey}
       consumer="review"
       priority={index < 6 ? "visible" : "prefetch"}
@@ -662,10 +616,10 @@ function PageCell({ entryId, page, side, pair, index, mergeEnabled, mergeDisable
       aria-label={`${sideLabel} ${page}페이지 · ${matchLabel}${mergeLabel}`}
       data-merge-state={mergeState}
       onClick={(event) => {
-        if (!event.ctrlKey || event.button !== 0 || !mergeEnabled || mergeDisabled) return;
+        if ((!event.ctrlKey && !event.shiftKey) || event.button !== 0 || !mergeEnabled || mergeDisabled) return;
         event.preventDefault();
         event.stopPropagation();
-        onMergeToggle?.(side, page, pair);
+        onMergeToggle?.(side, page, pair, event.shiftKey);
       }}
       onMouseEnter={(event) => {
         const portalHost = event.currentTarget.closest("dialog");
@@ -681,15 +635,16 @@ function PageCell({ entryId, page, side, pair, index, mergeEnabled, mergeDisable
       }}
       onMouseLeave={onPreviewClose}
     >
-      {mergeState ? <span className="download-overlap-page-merge-state">{mergeState === "source" ? "원본" : "교체"}</span> : null}
+      {mergeState ? <span className="download-overlap-page-merge-state">{mergeState === "source" ? "보존" : "미선택"}</span> : null}
       <span className="download-overlap-page-number">{sideLabel} {page}p</span>
       <span className="download-overlap-page-status">{matched ? "일치" : "추가"}</span>
     </GalleryThumbnail>
   );
 }
 
-function PageAlignment({ candidate, incoming, previewWidth, mergeEnabled = false, mergeDisabled = false, mergeSelection, mergeHint, thumbnailClient, onMergeToggle }: {
+function PageAlignment({ candidate, review, incoming, previewWidth, mergeEnabled = false, mergeDisabled = false, mergeSelection, mergeHint, thumbnailClient, onMergeToggle }: {
   candidate: DownloadOverlapCandidate;
+  review: ReviewImageContext;
   incoming: DownloadOverlapGalleryRef;
   previewWidth: number;
   mergeEnabled?: boolean;
@@ -697,7 +652,7 @@ function PageAlignment({ candidate, incoming, previewWidth, mergeEnabled = false
   mergeSelection?: PageMergeSelection | null;
   mergeHint?: string | null;
   thumbnailClient?: ThumbnailClient;
-  onMergeToggle?: (side: MergePageSide, page: number, pair?: DownloadOverlapPagePair) => void;
+  onMergeToggle?: (side: MergePageSide, page: number, pair?: DownloadOverlapPagePair, range?: boolean) => void;
 }) {
   const [hoverPreview, setHoverPreview] = useState<PageHoverPreview | null>(null);
   const columns = useMemo(
@@ -706,8 +661,6 @@ function PageAlignment({ candidate, incoming, previewWidth, mergeEnabled = false
   );
   const existingUnique = uniquePagesForSide(columns, "existing");
   const incomingUnique = uniquePagesForSide(columns, "incoming");
-  const existingSourceMapping = validateMergeSourceMapping(candidate, incoming, "existing");
-  const incomingSourceMapping = validateMergeSourceMapping(candidate, incoming, "incoming");
   const gridStyle = { "--overlap-page-columns": columns.length } as CSSProperties;
 
   useEffect(() => setHoverPreview(null), [candidate.candidateId, incoming.entryId]);
@@ -734,9 +687,7 @@ function PageAlignment({ candidate, incoming, previewWidth, mergeEnabled = false
           <div className={`download-overlap-merge-guide${mergeHint ? " has-message" : ""}`} role={mergeHint ? "alert" : "note"}>
             <FluentIcon glyph={mergeHint ? "\uE7BA" : "\uE946"} />
             <span>
-              {mergeHint ?? (mergeSelection
-                ? `${mergeSelection.sourceSide === "existing" ? "기존 A" : "신규 B"}가 병합 원본입니다. 반대쪽의 대응 페이지만 교체되고 대상의 추가 페이지는 유지됩니다. 성공하면 원본 앨범은 제외하되 파일은 보존합니다.`
-                : "교체에 사용할 원본 페이지를 Ctrl+클릭하세요. 모든 원본 페이지가 대응되는 판본만 병합할 수 있으며, 대응쌍이 없는 페이지의 순서는 임의로 정하지 않습니다.")}
+              {mergeHint ?? "Ctrl+클릭으로 보존할 페이지 선택 · Shift+클릭으로 범위 선택 · 대응 페이지는 A/B 중 하나만 선택"}
             </span>
           </div>
         ) : null}
@@ -744,11 +695,11 @@ function PageAlignment({ candidate, incoming, previewWidth, mergeEnabled = false
           <div className="download-overlap-alignment-grid" style={gridStyle}>
             <strong className="download-overlap-row-label">기존 A</strong>
             {columns.map((column, index) => (
-              <PageCell key={`existing:${column.key}`} entryId={candidate.existing.entryId} page={column.existingPage} side="existing" pair={column.pair} index={index} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSourceBlocked={!existingSourceMapping.valid || candidate.existingUniquePages > 0} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
+              <PageCell key={`existing:${column.key}`} review={review} candidateId={candidate.candidateId} entryId={candidate.existing.entryId} page={column.existingPage} side="existing" pair={column.pair} index={index} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
             ))}
             <strong className="download-overlap-row-label">신규 B</strong>
             {columns.map((column, index) => (
-              <PageCell key={`incoming:${column.key}`} entryId={incoming.entryId} page={column.incomingPage} side="incoming" pair={column.pair} index={index} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSourceBlocked={!incomingSourceMapping.valid || candidate.incomingUniquePages > 0} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
+              <PageCell key={`incoming:${column.key}`} review={review} candidateId={candidate.candidateId} entryId={incoming.entryId} page={column.incomingPage} side="incoming" pair={column.pair} index={index} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
             ))}
           </div>
         </div>
@@ -798,6 +749,8 @@ function ContainmentCandidateRow({ item, keeper, selected, processed, disabled, 
   const excludedPages = pairedPages(item, "excluded");
   const keeperPages = pairedPages(item, "keeper");
   const previewPage = excludedPages[0] ?? 1;
+  const thumbnailKey = useMemo(() => reviewPageKey(item.review, item.candidate.candidateId, item.keeperIsIncoming ? "existing" : "incoming", item.excluded.entryId, previewPage, Number(item.excluded.galleryId) % 6),
+    [item.review.reviewId, item.review.revision, item.candidate.candidateId, item.keeperIsIncoming, item.excluded.entryId, item.excluded.galleryId, previewPage]);
   const actionLabel = item.action === "remove_existing_continue"
     ? "기존 A 제외 · 완료본은 격리"
     : "신규 B 제외 · 검토 staging 취소";
@@ -816,7 +769,7 @@ function ContainmentCandidateRow({ item, keeper, selected, processed, disabled, 
       </label>
       <GalleryThumbnail
         className="download-overlap-containment-cover"
-        thumbnailKey={artifactPageThumbnailKey(item.excluded.entryId, previewPage, Number(item.excluded.galleryId) % 6)}
+        thumbnailKey={thumbnailKey}
         consumer="review"
         priority="visible"
         client={thumbnailClient}
@@ -848,6 +801,7 @@ function ContainmentCandidateRow({ item, keeper, selected, processed, disabled, 
       {evidenceOpen ? (
         <div className="download-overlap-containment-evidence">
           <PageAlignment
+            review={item.review}
             candidate={item.candidate}
             incoming={item.review.incoming}
             previewWidth={previewWidth}
@@ -1104,7 +1058,12 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
     && pageMergeSelection.candidateId === candidate?.candidateId
     ? pageMergeSelection
     : null;
-  const autoPlan = useMemo(() => review ? buildStrictOverlapPlan(review) : null, [review]);
+  const autoPlan = useMemo(() => {
+    if (!review) return null;
+    const merge = review.candidates.map((item) => automaticUncensoredMerge(review,item)).find(Boolean);
+    return merge ? {winner: merge.sourceSide === "incoming" ? "existing" : "incoming",
+      summary: `무검열 ${merge.sourcePages.length}장 → ${merge.sourceSide === "incoming" ? "A" : "B"}에 병합 · 원본 보관`} : buildStrictOverlapPlan(review);
+  }, [review]);
   const fallbackContainmentGroup = useMemo(
     () => review ? buildDownloadOverlapContainmentGroup(review.incoming.galleryId, [review]) ?? undefined : undefined,
     [review],
@@ -1132,9 +1091,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
   );
   const reviewPending = review?.state === "pending";
   const pageMergeAvailable = Boolean(reviewPending && candidate && !candidate.decision && onMergePages);
-  const pageMergeCount = activePageMergeSelection?.sourcePages.size ?? 0;
-  const mergeSourceLabel = activePageMergeSelection?.sourceSide === "existing" ? "기존 A" : "신규 B";
-  const mergeTargetLabel = activePageMergeSelection?.sourceSide === "existing" ? "신규 B" : "기존 A";
+  const pageMergeCount = activePageMergeSelection ? activePageMergeSelection.pages.existing.length + activePageMergeSelection.pages.incoming.length : 0;
   const remainingAfterCandidate = pendingCandidates.filter((item) =>
     item.candidateId !== candidate?.candidateId).length;
 
@@ -1188,68 +1145,38 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
     });
   };
 
-  const toggleMergePage = (side: MergePageSide, page: number, pair?: DownloadOverlapPagePair) => {
+  const toggleMergePage = (side: MergePageSide, page: number, _pair?: DownloadOverlapPagePair, range = false) => {
     if (!review || !candidate || !pageMergeAvailable || decisionPending) return;
-    if (!pair) {
-      setPageMergeHint("이 페이지는 반대 판본의 대응 위치가 없어 병합할 수 없습니다. 첫 버전에서는 순서를 임의로 정하지 않습니다.");
-      return;
+    try { mergeOutputPages(candidate, review.incoming.pageCount, {sourceSide: side, selectedPages: emptyMergeSelection()}); }
+    catch { setPageMergeHint("페이지 대응 개수나 순서가 달라졌습니다. 다시 대조해 주세요."); return; }
+    const pages = selectMergePages(candidate, activePageMergeSelection?.pages ?? emptyMergeSelection(),
+      side, page, activePageMergeSelection?.anchor, range);
+    if (pages.existing.length + pages.incoming.length > 4000) {
+      setPageMergeHint("한 번에 4,000장까지 선택할 수 있습니다."); return;
     }
-    const pairedSourcePage = side === "existing" ? pair.existingSourcePage : pair.incomingSourcePage;
-    if (pairedSourcePage !== page) {
-      setPageMergeHint("저장된 페이지 대응 정보가 달라졌습니다. 최신 검토를 다시 불러와 주세요.");
-      return;
-    }
-    if (activePageMergeSelection && activePageMergeSelection.sourceSide !== side) {
-      setPageMergeHint(`현재 ${mergeSourceLabel}를 병합 원본으로 선택 중입니다. 방향을 바꾸려면 먼저 전체 선택을 해제하세요.`);
-      return;
-    }
-    const sourceMapping = validateMergeSourceMapping(candidate, review.incoming, side);
-    if (!sourceMapping.valid) {
-      setPageMergeHint(mergeSourceMappingMessage(side, sourceMapping));
-      return;
-    }
-    const sourceUniquePages = side === "existing"
-      ? candidate.existingUniquePages
-      : candidate.incomingUniquePages;
-    if (sourceUniquePages > 0) {
-      setPageMergeHint(`${side === "existing" ? "기존 A" : "신규 B"}에만 있는 페이지가 ${sourceUniquePages}장 있어 자동 제외를 전제로 한 병합이 불가능합니다. 반대 판본을 원본으로 선택하거나 직접 검토해 주세요.`);
-      return;
-    }
-    const sourcePages = new Set(activePageMergeSelection?.sourcePages ?? []);
-    if (sourcePages.has(page)) sourcePages.delete(page);
-    else {
-      if (sourcePages.size >= MAX_PAGE_MERGE_SELECTION) {
-        setPageMergeHint(`한 번에 최대 ${MAX_PAGE_MERGE_SELECTION}장까지 병합할 수 있습니다. 일부를 해제한 뒤 다시 선택하세요.`);
-        return;
-      }
-      sourcePages.add(page);
-    }
-    setPageMergeSelection(sourcePages.size ? {
-      reviewId: review.reviewId,
-      reviewRevision: review.revision,
-      candidateId: candidate.candidateId,
-      sourceSide: side,
-      sourcePages,
+    setPageMergeSelection(pages.existing.length + pages.incoming.length ? {
+      reviewId: review.reviewId, reviewRevision: review.revision, candidateId: candidate.candidateId,
+      pages, anchor: range && activePageMergeSelection ? activePageMergeSelection.anchor : { side, page },
     } : null);
     setPageMergeHint(null);
   };
 
   const clearPageMergeSelection = () => {
     setPageMergeSelection(null);
-    setPageMergeHint("병합 페이지 선택을 모두 해제했습니다.");
+    setPageMergeHint(null);
   };
 
-  const applyPageMerge = () => {
+  const applyPageMerge = (targetSide: MergePageSide) => {
     if (!review || !candidate || !activePageMergeSelection || !onMergePages || decisionPending) return;
-    const sourcePages = [...activePageMergeSelection.sourcePages].sort((left, right) => left - right);
-    if (!sourcePages.length) return;
-    onMergePages({
-      reviewId: review.reviewId,
-      expectedRevision: review.revision,
-      candidateId: candidate.candidateId,
-      sourceSide: activePageMergeSelection.sourceSide,
-      sourcePages,
-    });
+    const sourceSide = targetSide === "existing" ? "incoming" : "existing";
+    const request: DownloadOverlapMergeRequest = {
+      reviewId: review.reviewId, expectedRevision: review.revision, candidateId: candidate.candidateId,
+      sourceSide, sourcePages: activePageMergeSelection.pages[sourceSide],
+      selectedPages: activePageMergeSelection.pages,
+    };
+    try { mergeOutputPages(candidate, review.incoming.pageCount, request); }
+    catch (error) { setPageMergeHint(error instanceof Error ? error.message : "페이지 대응을 확인해 주세요."); return; }
+    onMergePages(request);
   };
 
   if (!open && !review) return null;
@@ -1290,19 +1217,27 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
           <div className="review-scroll">
             {error ? <div className="inline-error review-inline-error" role="alert">{error}</div> : null}
             <div className="review-summary">
-              <span className="review-signal">{completedPair ? "완료 앨범 A/B 수동 대조" : reviewPending ? "완료 전 일시 정지" : review.state === "stale" ? "보유 목록 재검사 중" : "처리된 판본 검토"}</span>
+              <span className="review-signal">{completedPair ? "완료 앨범 A/B 수동 대조" : historyItem ? "자동 처리 기록" : reviewPending ? "완료 전 일시 정지" : review.state === "stale" ? "보유 목록 재검사 중" : "처리된 판본 검토"}</span>
               <strong>{relationLabel[candidate.relation]} · 신뢰도 {percent(candidate.confidence)}</strong>
               <span id={safetyId}>
+                {completedPair ? "제거한 앨범은 제외 폴더로 이동합니다. 영구 삭제하지 않습니다."
+                  : reviewPending ? "제거한 판본은 격리·취소 상태로 보존됩니다. 영구 삭제하지 않습니다."
+                    : "목록 복원은 격리된 실제 파일을 복원하지 않습니다."}
+              </span>
+              <details className="download-overlap-safety-detail">
+                <summary>파일 보존·복원 상세</summary>
+                <p>
                 {completedPair ? "A와 B 모두 이미 다운로드가 완료된 앨범입니다. 보존·오탐 판정은 재다운로드하지 않으며, 제거는 선택한 앨범만 목록에서 제외하고 파일을 제외 폴더로 이동합니다. 병합은 검증 후 제공 앨범을 제외합니다." : reviewPending
                   ? "신규 B 파일은 검증됐지만 아직 완료 manifest를 만들지 않았습니다. 제거는 영구 삭제가 아니며, 완료된 기존 A는 격리 영역으로 이동하고 검토 중 staging A와 신규 B는 취소 상태로 보존합니다."
                   : historyItem
                     ? "자동 분류 당시의 비교 근거입니다. 목록 복원은 격리된 실제 파일을 복원하지 않습니다."
                     : "이 화면은 판정 당시의 A/B 비교 근거와 선택을 읽기 전용으로 보여줍니다. 탐색·목록 제외는 활동 기록이나 설정에서 해제할 수 있지만, 격리된 실제 파일은 이 판정 기록에서 복원되지 않습니다."}
                 {browserFixture ? " · 브라우저 검토 fixture" : ""}
-              </span>
+                </p>
+              </details>
             </div>
 
-            {review.state === "stale" ? (
+            {review.state === "stale" && !historyItem ? (
               <div className="download-overlap-stale-note" role="status">
                 <FluentIcon glyph="\uE895" />
                 <div>
@@ -1362,9 +1297,10 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
             ) : null}
 
             <div className="download-overlap-artifacts">
-              <ArtifactSummary gallery={candidate.existing} label={completedPair ? "완료 앨범 A" : "기존 앨범 A"} page={candidate.pagePairs[0]?.existingSourcePage ?? 1} presentation={outcome?.existing} thumbnailClient={thumbnailClient} />
-              <ArtifactSummary gallery={review.incoming} label={completedPair ? "완료 앨범 B" : "신규 앨범 B"} page={candidate.pagePairs[0]?.incomingSourcePage ?? 1} presentation={outcome?.incoming} thumbnailClient={thumbnailClient} />
+              <ArtifactSummary review={review} candidateId={candidate.candidateId} side="existing" gallery={candidate.existing} label={completedPair ? "완료 앨범 A" : "기존 앨범 A"} page={candidate.pagePairs[0]?.existingSourcePage ?? 1} presentation={outcome?.existing} thumbnailClient={thumbnailClient} />
+              <ArtifactSummary review={review} candidateId={candidate.candidateId} side="incoming" gallery={review.incoming} label={completedPair ? "완료 앨범 B" : "신규 앨범 B"} page={candidate.pagePairs[0]?.incomingSourcePage ?? 1} presentation={outcome?.incoming} thumbnailClient={thumbnailClient} />
             </div>
+            {!completedPair && !reviewPending ? <p className="download-overlap-evidence-note">격리·제외된 원본도 복원 없이 비교합니다. 판정 당시 원본이 없거나 변경되었다면 미리보기에 표시합니다.</p> : null}
 
             <dl className="download-overlap-metrics">
               <div><dt>일치 페이지</dt><dd>{candidate.matchedPages}장</dd></div>
@@ -1376,6 +1312,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
             </dl>
 
             <PageAlignment
+              review={review}
               candidate={candidate}
               incoming={review.incoming}
               previewWidth={previewWidth}
@@ -1392,37 +1329,30 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
         {reviewPending ? (
           <div className="review-actions download-overlap-actions">
             <div className={`download-overlap-action-note${pageMergeCount ? " is-page-merge" : ""}`} role="note">
-              <FluentIcon glyph={pageMergeCount ? "\uE8B7" : "\uE946"} />
-              {pageMergeCount ? (
-                <>
-                  <span>
-                    <strong>{mergeSourceLabel} {pageMergeCount}장 → {mergeTargetLabel} 대응 {pageMergeCount}장 교체</strong>
-                    {' '}선택한 원본 페이지를 복사하며 {mergeTargetLabel}의 추가 페이지는 그대로 둡니다. 교체 전 대상 파일은 백업합니다. 병합 검증이 성공하면 {mergeSourceLabel} 앨범은 제외하되 원본 파일은 보존합니다.
-                    {decisionPending ? <span role="status"> 병합 중… 대상 앨범 전체의 백업과 무결성 검증을 진행합니다. 큰 합본은 선택한 장수보다 전체 용량에 따라 오래 걸릴 수 있습니다. 완료 후 바뀐 페이지만 해시를 갱신합니다.</span> : null}
-                  </span>
-                  <button type="button" className="text-button download-overlap-merge-clear" disabled={decisionPending} onClick={clearPageMergeSelection}>전체 선택 해제</button>
-                </>
-              ) : (
-                <span>
-                  <strong>현재 후보에만 적용됩니다.</strong>
-                  {' '}`둘 다 보존`은 기존 제외를 복구하지 않고 이 A/B를 유지로 확정합니다.
-                  {!candidate?.decision
-                    ? remainingAfterCandidate > 0
-                      ? ` 선택 후 남은 후보 ${remainingAfterCandidate}개를 계속 검토합니다.`
-                      : completedPair ? " 판정 후 두 앨범을 다시 다운로드하지 않습니다." : " 마지막 후보이면 검토를 완료하고 신규 B 다운로드를 재개합니다."
-                    : " 이 후보는 이미 처리됐으므로 미처리 후보 탭을 선택해 주세요."}
+              {pageMergeCount ? <>
+                <span><strong>A {activePageMergeSelection?.pages.existing.length}장 · B {activePageMergeSelection?.pages.incoming.length}장 선택</strong>
+                  {' '}미선택 대응 페이지는 대상 판본을 유지합니다. 다른 쪽의 고유 페이지는 선택한 것만 대응 구간 뒤에 추가합니다. 병합 성공 후 다른 앨범은 제외되며 원본은 보존됩니다.
+                  {decisionPending ? <span role="status"> 백업·병합·검증 중…</span> : null}
                 </span>
-              )}
+                <button type="button" className="text-button download-overlap-merge-clear" disabled={decisionPending} onClick={clearPageMergeSelection}>선택 해제</button>
+              </> : <span>현재 A/B에만 적용 · 제외해도 원본 파일은 보존됩니다.{remainingAfterCandidate ? ` 남은 후보 ${remainingAfterCandidate}개` : ""}</span>}
             </div>
-            {pageMergeCount ? (
-              <ReviewAction help={`선택한 ${mergeSourceLabel} ${pageMergeCount}장을 ${mergeTargetLabel}의 저장된 대응 페이지에 복사합니다. 대상의 추가 페이지는 유지하고 교체 전 파일은 백업합니다. 검증 성공 뒤 ${mergeSourceLabel} 앨범은 목록에서 제외하되 원본 파일은 보존합니다.`}>
-                <button type="button" className="primary-button download-overlap-merge-apply" disabled={decisionPending || !onMergePages} onClick={applyPageMerge}>선택한 {pageMergeCount}장 병합</button>
-              </ReviewAction>
-            ) : (
-              <ReviewAction help={autoMode === "strict_quarantine" ? "창을 닫으면 자동 기준을 충족한 검토가 재검증 후 처리될 수 있습니다. 자동 처리를 막으려면 설정에서 ‘추천만 표시’ 또는 ‘사용 안 함’을 선택하세요." : "아무 판정도 저장하지 않고 검토 창만 닫습니다. 다음에 같은 검토를 다시 열 수 있습니다."}><button type="button" className="text-button" onClick={onClose}>검토 미루기</button></ReviewAction>
-            )}
-            <ReviewAction help={completedPair ? "완료 앨범 A만 목록에서 제외하고 파일을 제외 폴더로 이동합니다. B는 완료 상태로 보존합니다." : `현재 후보의 기존 앨범 A를 제거 처리합니다. 완료본은 영구 삭제하지 않고 격리 영역으로 이동하며, 다른 중복 검토에 멈춘 staging이면 그 staging 다운로드와 자체 검토만 취소합니다. 남은 후보 검토 또는 신규 B 완료 절차는 계속됩니다.${candidate?.existingUniquePages ? ` A에만 있는 ${candidate.existingUniquePages}장도 해당 처리에 포함됩니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={!candidate || decisionPending || pageMergeCount > 0 || Boolean(candidate.decision)} onClick={() => candidate && decide("remove_existing_continue", candidate.candidateId)}>{completedPair ? "A 제외" : "기존 A 제거"}</button></ReviewAction>
-            <ReviewAction help={completedPair ? "완료 앨범 B만 목록에서 제외하고 파일을 제외 폴더로 이동합니다. A는 완료 상태로 보존합니다." : `신규 앨범 B 다운로드 전체를 취소합니다. 기존 A와 다른 보유 앨범은 변경하지 않습니다.${candidate?.incomingUniquePages ? ` B에만 있는 ${candidate.incomingUniquePages}장도 완료되지 않습니다.` : ""}`}><button type="button" className="text-button danger-button" disabled={decisionPending || pageMergeCount > 0} onClick={() => decide("remove_incoming")}>{completedPair ? "B 제외" : "신규 B 제거"}</button></ReviewAction>
+            <ReviewAction help="판정을 저장하지 않고 창을 닫습니다. 자동 모드에서는 자동 기준에 맞는 항목이 이후 처리될 수 있습니다.">
+              <button type="button" className="text-button" disabled={decisionPending} onClick={onClose}>검토 미루기</button>
+            </ReviewAction>
+            {(["existing", "incoming"] as const).map((side) => {
+              const label = side === "existing" ? "A" : "B";
+              return <ReviewAction key={side} help={pageMergeCount
+                ? `선택한 페이지를 반영해 ${label}에 병합합니다. 대상의 나머지 페이지는 유지하고, 성공 후 반대 앨범만 제외합니다. 교체 전 폴더는 백업에 보존됩니다.`
+                : `${label}만 제외합니다. 반대 앨범은 유지하며 영구 삭제하지 않습니다.`}>
+                <button type="button" className={`text-button overlap-destination-button ${pageMergeCount ? "is-merge download-overlap-merge-apply" : "danger-button"}`}
+                  disabled={!candidate || decisionPending || Boolean(candidate.decision)}
+                  onClick={() => pageMergeCount ? applyPageMerge(side)
+                    : decide(side === "existing" ? "remove_existing_continue" : "remove_incoming", side === "existing" ? candidate?.candidateId : undefined)}>
+                  <span key={pageMergeCount ? "merge" : "remove"}>{pageMergeCount ? `${label}에 병합` : completedPair ? `${label} 제외` : side === "existing" ? "기존 A 제거" : "신규 B 제거"}</span>
+                </button>
+              </ReviewAction>;
+            })}
             <ReviewAction help="현재 A/B 후보가 중복이 아니라고 기록하고 둘 다 보존합니다. 같은 판본 지문 쌍은 다음 탐지에서 제외되며, 기존 제외나 격리를 복구하지 않습니다."><button type="button" className="text-button" disabled={!candidate || decisionPending || pageMergeCount > 0 || Boolean(candidate.decision)} onClick={() => candidate && decide("false_positive_continue", candidate.candidateId)}>오탐 판정</button></ReviewAction>
             <ReviewAction help={completedPair ? "현재 A/B를 둘 다 보존으로 확정합니다. 완료 상태를 유지하며 다시 다운로드하거나 기존 제외를 복구하지 않습니다." : "현재 A/B 후보를 둘 다 보존으로 확정합니다. 기존에 제외·격리된 앨범을 복구하는 기능은 아닙니다. 남은 후보가 있으면 계속 검토하고, 마지막 후보이면 신규 B 완료 절차를 재개합니다."}><button type="button" className="primary-button" disabled={!candidate || decisionPending || pageMergeCount > 0 || Boolean(candidate.decision)} onClick={() => candidate && decide("keep_both_continue", candidate.candidateId)}>둘 다 보존</button></ReviewAction>
           </div>

@@ -1,6 +1,22 @@
+import type { DownloadState } from "../core/types";
+
 type GalleryStatusIconProps = {
-  kind: "warning" | "downloading" | "complete";
+  kind: DownloadState | "warning" | "complete" | "duplicate";
 };
+
+// Distinct line icons for processing stages, without idle-job animations.
+const stagePaths = {
+  queued: "M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M10 5v5l3 2",
+  resolving_metadata: "M4 2h8l4 4v12H4z M7 9h6 M7 12h6 M7 15h4",
+  hashing: "M8 3 6 17 M14 3l-2 14 M3 7h14 M3 13h14",
+  verifying: "M10 2 3 5v5c0 4 7 8 7 8s7-4 7-8V5z M6 10l3 3 5-6",
+  retry_wait: "M16 6a7 7 0 1 0 1 7 M16 2v5h-5",
+  interrupted: "M6 3v14 M14 3v14",
+  failed: "M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M7 7l6 6 M13 7l-6 6",
+  quarantined: "M3 4h14v4H3z M4 8v9h12V8 M8 11h4",
+  cancelled: "M4 4l12 12 M16 4 4 16",
+  duplicate: "M7 7h10v10H7z M4 13H2V2h11v2",
+} as const;
 
 // Exact 20px Regular geometry vendored from Microsoft Fluent UI System Icons (MIT).
 // https://github.com/microsoft/fluentui-system-icons/tree/1.1.328/assets
@@ -20,7 +36,14 @@ const statusIcon = {
 } as const;
 
 export function GalleryStatusIcon({ kind }: GalleryStatusIconProps) {
-  const icon = statusIcon[kind];
+  const normalized = kind === "completed" ? "complete" : kind === "review_required" ? "warning" : kind;
+  if (normalized in stagePaths) return (
+    <svg className="gallery-status-icon" data-status-icon={kind} viewBox="0 0 20 20" width="18" height="18"
+      fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+      <path d={stagePaths[normalized as keyof typeof stagePaths]} fill="none" stroke="currentColor" />
+    </svg>
+  );
+  const icon = statusIcon[normalized as keyof typeof statusIcon];
 
   return (
     <svg

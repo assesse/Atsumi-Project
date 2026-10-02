@@ -34,6 +34,7 @@ import { SideRail } from "./SideRail";
 type DanbooruView = "explore" | "downloads";
 
 type DanbooruWorkspaceProps = {
+  active?: boolean;
   navigationRequest?: import("../app/CommonNavigation").NavigationRequest | null;
   backend: DanbooruApi;
   railCollapsed: boolean;
@@ -162,6 +163,7 @@ const replaceActiveToken = (value: string, replacement: string): string => {
 };
 
 export function DanbooruWorkspace({
+  active = true,
   navigationRequest,
   backend,
   railCollapsed,
@@ -206,11 +208,34 @@ export function DanbooruWorkspace({
   const [gridColumns, setGridColumns] = useState(1);
   const [gridMeasured, setGridMeasured] = useState(false);
   const restoredPageLoaded = useRef(false);
+  const exploreCache = useRef(new Map<string, DanbooruSearchPage>());
+  const downloadsCache = useRef(new Map<string, DanbooruDownloadsPage>());
+  const scrollPositions = useRef({ explore: 0, downloads: 0 });
+  const history = useRef<Array<{
+    view: DanbooruView; draft: string; committed: string; page: number;
+    filters: DanbooruSearchFilters; result: DanbooruSearchPage | null; scroll: number;
+  }>>([]);
+  const [historySize, setHistorySize] = useState(0);
+  const [scrollRevision, setScrollRevision] = useState(0);
+  const handledNavigation = useRef(navigationRequest);
+  const committedPresentation = useRef({ draft: persisted.exploreDraft, filters: persisted.filters });
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+  useLayoutEffect(() => {
+    if (active && content.current) content.current.scrollTop = scrollPositions.current[view];
+  }, [active, view, searchPage, downloadsPage, scrollRevision]);
 
   const normalizedPageSize = Math.max(10, Math.min(100, pageSize));
   const alignedPageSize = alignPageSizeToColumns(normalizedPageSize, gridColumns, 100);
-  const loadExplore = useCallback(async (tags: string, page: number) => {
+  const loadExplore = useCallback(async (tags: string, page: number, force = false) => {
     const sequence = ++requestSequence.current;
+    const key = JSON.stringify([tags, page, alignedPageSize]);
+    const cached = !force && exploreCache.current.get(key);
+    if (cached) { setSearchPage(cached); setExplorePage(cached.page); setLoading(false); setError(null); return; }
     setLoading(true);
     setError(null);
     const result = await backend.danbooruSearch({ tags, page, pageSize: alignedPageSize }).catch(() => null);
@@ -226,10 +251,15 @@ export function DanbooruWorkspace({
     }
     setSearchPage(result.data);
     setExplorePage(result.data.page);
+    exploreCache.current.set(key, result.data);
+    if (exploreCache.current.size > 16) exploreCache.current.delete(exploreCache.current.keys().next().value!);
   }, [alignedPageSize, backend]);
 
-  const loadDownloads = useCallback(async (page: number, query: string) => {
+  const loadDownloads = useCallback(async (page: number, query: string, force = false) => {
     const sequence = ++requestSequence.current;
+    const key = JSON.stringify([query, page, alignedPageSize]);
+    const cached = !force && downloadsCache.current.get(key);
+    if (cached) { setDownloadsPage(cached); setDownloadsPageNumber(cached.page); setLoading(false); setError(null); return; }
     setLoading(true);
     setError(null);
     const result = await backend.danbooruDownloadsList({ page, pageSize: alignedPageSize, query }).catch(() => null);
@@ -245,12 +275,14 @@ export function DanbooruWorkspace({
     }
     setDownloadsPage(result.data);
     setDownloadsPageNumber(result.data.page);
+    downloadsCache.current.set(key, result.data);
+    if (downloadsCache.current.size > 8) downloadsCache.current.delete(downloadsCache.current.keys().next().value!);
     setDownloadedIds((current) => new Set([...current, ...result.data.items.map((item) => item.post.id)]));
   }, [alignedPageSize, backend]);
 
   useLayoutEffect(() => {
     const host = content.current;
-    if (!host) return;
+    if (!host || !active) return;
     let lastColumns = 0;
     const update = () => {
       const available = Math.max(0, host.clientWidth - 8);
@@ -265,7 +297,7 @@ export function DanbooruWorkspace({
     const observer = new ResizeObserver(update);
     observer.observe(host);
     return () => observer.disconnect();
-  }, [gridWidth]);
+  }, [gridWidth, active]);
 
   useEffect(() => {
     saveState({
@@ -289,14 +321,15 @@ export function DanbooruWorkspace({
   }, []);
 
   useEffect(() => {
-    if (!gridMeasured || restoredPageLoaded.current) return;
+    if (!active || !gridMeasured || restoredPageLoaded.current) return;
     restoredPageLoaded.current = true;
     if (view === "explore") void loadExplore(exploreCommitted, explorePage);
     else void loadDownloads(downloadsPageNumber, downloadsCommitted);
-  }, [downloadsCommitted, downloadsPageNumber, exploreCommitted, explorePage, gridMeasured, loadDownloads, loadExplore, view]);
+  }, [active, downloadsCommitted, downloadsPageNumber, exploreCommitted, explorePage, gridMeasured, loadDownloads, loadExplore, view]);
 
   useEffect(() => {
-    if (view !== "explore") {
+    const sequence = ++suggestionSequence.current;
+    if (!active || view !== "explore") {
       setSuggestions([]);
       return;
     }
@@ -305,7 +338,6 @@ export function DanbooruWorkspace({
       setSuggestions([]);
       return;
     }
-    const sequence = ++suggestionSequence.current;
     const timeout = window.setTimeout(() => {
       void backend.danbooruAutocomplete(token, 8).then((result) => {
         if (sequence === suggestionSequence.current) setSuggestions(result.ok ? result.data : []);
@@ -314,15 +346,43 @@ export function DanbooruWorkspace({
       });
     }, 220);
     return () => window.clearTimeout(timeout);
-  }, [backend, exploreDraft, view]);
+  }, [active, backend, exploreDraft, view]);
 
   const navigate = (next: ViewId) => {
     const nextView: DanbooruView = next === "downloads" ? "downloads" : "explore";
+    if (nextView === view) return;
+    scrollPositions.current[view] = content.current?.scrollTop ?? 0;
     setView(nextView);
     setError(null);
     setSuggestions([]);
     if (nextView === "explore") void loadExplore(exploreCommitted, explorePage);
     else void loadDownloads(downloadsPageNumber, downloadsCommitted);
+  };
+
+  useEffect(() => {
+    if (!active || navigationRequest?.source !== "danbooru" || navigationRequest === handledNavigation.current) return;
+    handledNavigation.current = navigationRequest;
+    navigate(navigationRequest.view as ViewId);
+  }, [active, navigationRequest]);
+
+  const rememberSearch = () => {
+    history.current = [...history.current.slice(-11), {
+      view, draft: committedPresentation.current.draft, committed: exploreCommitted, page: explorePage,
+      filters: committedPresentation.current.filters, result: searchPage, scroll: content.current?.scrollTop ?? 0,
+    }];
+    setHistorySize(history.current.length);
+  };
+  const restoreSearch = () => {
+    const previous = history.current.pop();
+    if (!previous) return;
+    ++requestSequence.current;
+    setLoading(false); setError(null); setDetail(null); setSuggestions([]);
+    setView(previous.view); setExploreDraft(previous.draft); setExploreCommitted(previous.committed);
+    setExplorePage(previous.page); setFilters(previous.filters); setSearchPage(previous.result);
+    committedPresentation.current = { draft: previous.draft, filters: previous.filters };
+    scrollPositions.current[previous.view] = previous.scroll;
+    setScrollRevision(value => value + 1);
+    setHistorySize(history.current.length);
   };
 
   const submit = (
@@ -338,14 +398,18 @@ export function DanbooruWorkspace({
         setError("현재 비로그인 검색은 제한 대상 조건을 2개까지 사용할 수 있습니다. 정렬을 사용하면 일반 태그는 1개까지 입력할 수 있습니다.");
         return;
       }
+      if (!loading && searchPage && composed !== exploreCommitted) rememberSearch();
+      committedPresentation.current = { draft: query, filters: nextFilters };
+      scrollPositions.current.explore = 0;
       setExploreCommitted(composed);
       setExplorePage(1);
-      void loadExplore(composed, 1);
+      void loadExplore(composed, 1, true);
     } else {
       setDownloadsDraft(query);
       setDownloadsCommitted(query);
       setDownloadsPageNumber(1);
-      void loadDownloads(1, query);
+      scrollPositions.current.downloads = 0;
+      void loadDownloads(1, query, true);
     }
   };
 
@@ -382,6 +446,7 @@ export function DanbooruWorkspace({
     setDownloadedIds((current) => new Set(current).add(post.id));
     onActivityRecord({ id: `${post.id}:${Date.now()}`, postId: post.id, title: postTitle(post), detail: "원본 저장 완료", occurredAt: Date.now(), state: "completed" });
     setNotice(`${result.data.fileName} 원본을 저장했습니다.`);
+    downloadsCache.current.clear();
     if (view === "downloads") void loadDownloads(downloadsPageNumber, downloadsCommitted);
   };
 
@@ -398,7 +463,7 @@ export function DanbooruWorkspace({
   const limitedTermCount = danbooruLimitedTermCount(buildDanbooruSearchQuery(exploreDraft, filters));
 
   return (
-    <div className={`app-shell danbooru-shell${railCollapsed ? " sidebar-collapsed" : ""}`}>
+    <div className={`app-shell danbooru-shell${railCollapsed ? " sidebar-collapsed" : ""}`} hidden={!active} inert={!active} style={active ? undefined : { display: "none" }}>
       <SideRail
         view={view}
         collapsed={railCollapsed}
@@ -456,6 +521,7 @@ export function DanbooruWorkspace({
         </header>
 
         <div className="danbooru-overview">
+          {historySize > 0 ? <div className="danbooru-search-history"><button type="button" className="text-button" onClick={restoreSearch}>← 이전 탐색</button><span>이전 결과와 스크롤로 돌아가기</span></div> : null}
           {view === "explore" ? <>
             <section className="danbooru-search-tools" aria-label="Danbooru 검색 조건과 정렬">
               <button
@@ -507,9 +573,9 @@ export function DanbooruWorkspace({
           </section>
         </div>
 
-        <section ref={content} className="danbooru-content" aria-busy={loading}>
+        <section ref={content} className="danbooru-content" aria-busy={loading} onScroll={event => { if (active && !loading) scrollPositions.current[view] = event.currentTarget.scrollTop; }}>
           {error ? (
-            <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>Danbooru 결과를 불러오지 못했습니다</h2><p>{error}</p><button type="button" className="text-button" onClick={() => view === "explore" ? void loadExplore(exploreCommitted, explorePage) : void loadDownloads(downloadsPageNumber, downloadsCommitted)}>다시 시도</button></div>
+            <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>Danbooru 결과를 불러오지 못했습니다</h2><p>{error}</p><button type="button" className="text-button" onClick={() => view === "explore" ? void loadExplore(exploreCommitted, explorePage, true) : void loadDownloads(downloadsPageNumber, downloadsCommitted, true)}>다시 시도</button></div>
           ) : loading && !posts.length ? (
             <div className="loading-state" role="status"><span className="spinner" /> Danbooru 결과를 불러오는 중</div>
           ) : posts.length ? (
@@ -531,11 +597,13 @@ export function DanbooruWorkspace({
           )}
           <div className="pager danbooru-pager">
             <button type="button" className="text-button" disabled={loading || (view === "explore" ? explorePage <= 1 : (downloadsPage?.page ?? 1) <= 1)} onClick={() => {
+              scrollPositions.current[view] = 0;
               if (view === "explore") void loadExplore(exploreCommitted, explorePage - 1);
               else void loadDownloads((downloadsPage?.page ?? 1) - 1, downloadsCommitted);
             }}>이전</button>
             <span>{view === "explore" ? `${explorePage} 페이지` : `${downloadsPage?.page ?? 1} / ${downloadsPage?.totalPages ?? 1}`}{loading ? " · 불러오는 중" : ""}</span>
             <button type="button" className="text-button" disabled={loading || (view === "explore" ? !searchPage?.hasMore : (downloadsPage?.page ?? 1) >= (downloadsPage?.totalPages ?? 1))} onClick={() => {
+              scrollPositions.current[view] = 0;
               if (view === "explore") void loadExplore(exploreCommitted, explorePage + 1);
               else void loadDownloads((downloadsPage?.page ?? 1) + 1, downloadsCommitted);
             }}>다음</button>
@@ -543,7 +611,7 @@ export function DanbooruWorkspace({
         </section>
       </main>
 
-      {detail ? (
+      {active && detail ? (
         <DanbooruDetail
           backend={backend}
           post={detail}
@@ -557,6 +625,9 @@ export function DanbooruWorkspace({
           favoriteMetadata={favoriteMetadata}
           onMetadataFavorite={onMetadataFavorite}
           onSearch={(tag) => {
+            rememberSearch();
+            committedPresentation.current = { draft: tag, filters };
+            scrollPositions.current.explore = 0;
             setDetail(null);
             setView("explore");
             setExploreDraft(tag);
@@ -567,7 +638,7 @@ export function DanbooruWorkspace({
           }}
         />
       ) : null}
-      {notice ? <div className="toast" role="status" onAnimationEnd={() => setNotice(null)}>{notice}</div> : null}
+      {active && notice ? <div className="toast" role="status">{notice}</div> : null}
     </div>
   );
 }

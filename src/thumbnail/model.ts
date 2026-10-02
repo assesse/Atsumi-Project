@@ -35,7 +35,17 @@ export type ArtifactPageThumbnailKey = {
   readonly fallback?: FixtureCellFallback;
 };
 
-export type ThumbnailKey = GalleryCoverThumbnailKey | SourcePageThumbnailKey | ArtifactPageThumbnailKey;
+export type OverlapReviewPageThumbnailKey = {
+  readonly kind: "overlap-review-page";
+  readonly reviewId: string;
+  readonly candidateId: string;
+  readonly reviewRevision: number;
+  readonly side: "existing" | "incoming";
+  readonly page: number;
+  readonly fallback?: FixtureCellFallback;
+};
+
+export type ThumbnailKey = GalleryCoverThumbnailKey | SourcePageThumbnailKey | ArtifactPageThumbnailKey | OverlapReviewPageThumbnailKey;
 
 export type ThumbnailRequest = {
   readonly key: ThumbnailKey;
@@ -109,7 +119,24 @@ export function artifactPageThumbnailKey(
 export function thumbnailKeyIdentity(key: ThumbnailKey): string {
   if (key.kind === "gallery-cover") return `gallery-cover:${key.galleryId}`;
   if (key.kind === "source-page") return `source-page:${key.galleryId}:${key.page}`;
+  if (key.kind === "overlap-review-page") return `overlap-review-page:${JSON.stringify([key.reviewId, key.candidateId, key.reviewRevision, key.side, key.page])}`;
   return `artifact-page:${key.entryId}:${key.page}`;
+}
+
+export function overlapReviewPageThumbnailKey(
+  reviewId: string,
+  candidateId: string,
+  reviewRevision: number,
+  side: "existing" | "incoming",
+  page: number,
+  fallbackIndex = page - 1,
+): OverlapReviewPageThumbnailKey {
+  if (!reviewId.trim() || !candidateId.trim() || !Number.isSafeInteger(reviewRevision) || reviewRevision < 0
+    || !Number.isInteger(page) || page < 1) throw new RangeError("Invalid overlap review page identity");
+  return {
+    kind: "overlap-review-page", reviewId, candidateId, reviewRevision, side, page,
+    fallback: { kind: "fixture-sheet-cell", index: normalizedFixtureCell(fallbackIndex) },
+  };
 }
 
 export function thumbnailConsumerForView(view: "explore" | "auto-find" | "downloads"): ThumbnailConsumer {

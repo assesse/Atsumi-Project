@@ -1,6 +1,6 @@
 use std::{
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, AtomicUsize, Ordering},
         Condvar, Mutex,
     },
     time::Duration,
@@ -8,12 +8,79 @@ use std::{
 
 use crate::thumbnail::CancellationToken;
 
-// Network workers may hold encoded responses while waiting, but only two
-// download stages may decode, transcode, or hash full images at a time.
+// All albums share one budget, including high-performance page fan-out. Never
+// multiply the decoder memory limit by the number of active albums.
 static FULL_IMAGE_WORK: ImageWorkBudget = ImageWorkBudget::new(2);
+static HASH_READS: ImageWorkBudget = ImageWorkBudget::new(1);
+static PARALLEL_WORKERS: AtomicUsize = AtomicUsize::new(1);
 static STORED_BYTES: AtomicU64 = AtomicU64::new(0);
 static STORED_PAGES: AtomicU64 = AtomicU64::new(0);
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// Opt-in CPU parallelism. Network limits and rotational-disk pacing are separate.
+pub(crate) fn configure(high_performance: bool) {
+    let logical = std::thread::available_parallelism().map_or(2, usize::from);
+    let limit = if high_performance {
+        performance_limit(logical, memory_bytes())
+    } else {
+        2
+    };
+    FULL_IMAGE_WORK.set_limit(limit);
+    PARALLEL_WORKERS.store(if high_performance { limit } else { 1 }, Ordering::Release);
+    tracing::info!(
+        high_performance,
+        logical_processors = logical,
+        image_slots = limit,
+        "image processing budget configured; HDD and network limits unchanged"
+    );
+}
+
+pub(crate) fn parallel_workers() -> usize {
+    PARALLEL_WORKERS.load(Ordering::Acquire)
+}
+
+/// Keep a high-CPU mode from creating simultaneous seek-heavy HDD reads.
+pub(crate) fn acquire_hdd_read(
+    cancellation: &CancellationToken,
+) -> Option<ImageWorkPermit<'static>> {
+    HASH_READS.acquire(Some(cancellation))
+}
+
+fn performance_limit(logical: usize, memory: Option<u64>) -> usize {
+    // Reserve two logical processors for UI/OS. Budget at most a quarter of
+    // physical RAM, conservatively allowing 512 MiB per image (encoded + decode
+    // + grayscale/resize scratch). Unknown RAM falls back to the normal limit.
+    let memory_slots = memory.map_or(2, |bytes| (bytes / (4 * 512 * 1024 * 1024)) as usize);
+    logical
+        .saturating_sub(2)
+        .max(1)
+        .min(memory_slots.max(1))
+        .min(16)
+}
+
+#[cfg(windows)]
+fn memory_bytes() -> Option<u64> {
+    use windows::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    let mut memory = MEMORYSTATUSEX {
+        dwLength: std::mem::size_of::<MEMORYSTATUSEX>() as u32,
+        ..Default::default()
+    };
+    unsafe {
+        GlobalMemoryStatusEx(&mut memory).ok()?;
+    }
+    // Also bound by currently available RAM so enabling this while other apps
+    // consume memory cannot immediately turn CPU work into paging work.
+    Some(
+        memory
+            .ullTotalPhys
+            .min(memory.ullAvailPhys.saturating_mul(2)),
+    )
+}
+
+#[cfg(not(windows))]
+fn memory_bytes() -> Option<u64> {
+    None
+}
 
 pub(crate) fn acquire(
     cancellation: Option<&CancellationToken>,
@@ -51,7 +118,7 @@ struct ImageWorkState {
 }
 
 struct ImageWorkBudget {
-    limit: usize,
+    limit: AtomicUsize,
     state: Mutex<ImageWorkState>,
     pressure_epoch: AtomicU64,
     wake: Condvar,
@@ -60,7 +127,7 @@ struct ImageWorkBudget {
 impl ImageWorkBudget {
     const fn new(limit: usize) -> Self {
         Self {
-            limit,
+            limit: AtomicUsize::new(limit),
             state: Mutex::new(ImageWorkState {
                 active: 0,
                 waiting: 0,
@@ -72,7 +139,13 @@ impl ImageWorkBudget {
 
     fn is_backlogged(&self) -> bool {
         let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.waiting > 0 || state.active >= self.limit
+        state.waiting > 0 || state.active >= self.limit.load(Ordering::Acquire)
+    }
+
+    fn set_limit(&self, limit: usize) {
+        let _state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        self.limit.store(limit.max(1), Ordering::Release);
+        self.wake.notify_all();
     }
 
     fn acquire(&self, cancellation: Option<&CancellationToken>) -> Option<ImageWorkPermit<'_>> {
@@ -85,7 +158,7 @@ impl ImageWorkBudget {
                 }
                 return None;
             }
-            if state.active < self.limit {
+            if state.active < self.limit.load(Ordering::Acquire) {
                 if waiting {
                     state.waiting -= 1;
                 }
@@ -225,8 +298,13 @@ mod tests {
     }
 
     #[test]
-    fn shared_full_image_budget_remains_two_slots() {
-        assert_eq!(FULL_IMAGE_WORK.limit, 2);
+    fn normal_budget_and_hardware_limits_are_conservative() {
+        assert_eq!(ImageWorkBudget::new(2).limit.load(Ordering::Relaxed), 2);
+        assert_eq!(performance_limit(16, Some(32 * 1024 * 1024 * 1024)), 14);
+        assert_eq!(performance_limit(64, Some(64 * 1024 * 1024 * 1024)), 16);
+        assert_eq!(performance_limit(16, Some(8 * 1024 * 1024 * 1024)), 4);
+        assert_eq!(performance_limit(16, None), 2);
+        assert_eq!(performance_limit(1, Some(0)), 1);
     }
 
     #[test]
@@ -241,5 +319,27 @@ mod tests {
         assert!(first.1 > before.1);
         assert!(second.0 >= first.0 + 1_024);
         assert!(second.1 > first.1);
+    }
+
+    #[test]
+    fn lowering_limit_drains_existing_work_and_raising_wakes_waiters() {
+        let budget = ImageWorkBudget::new(2);
+        let first = budget.acquire(None).unwrap();
+        let second = budget.acquire(None).unwrap();
+        budget.set_limit(1);
+        thread::scope(|scope| {
+            let (sent, received) = mpsc::channel();
+            let budget = &budget;
+            scope.spawn(move || {
+                let _permit = budget.acquire(None).unwrap();
+                sent.send(()).unwrap();
+            });
+            drop(first);
+            assert!(received.recv_timeout(Duration::from_millis(60)).is_err());
+            budget.set_limit(2);
+            received.recv_timeout(Duration::from_secs(1)).unwrap();
+            drop(second);
+        });
+        assert_eq!(budget.state.lock().unwrap().active, 0);
     }
 }

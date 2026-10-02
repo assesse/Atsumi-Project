@@ -20,7 +20,8 @@ export type PagePreviewFrame = Readonly<{
 export type PagePreviewOrientation = PagePreviewFrame["orientation"];
 
 const VIEWPORT_MARGIN = 24;
-const DIALOG_CHROME_HEIGHT = 126;
+// Controls overlay the image and must not reserve any reading space.
+const DIALOG_CHROME_HEIGHT = 0;
 const DIALOG_BORDER_SIZE = 2;
 const MIN_DIALOG_WIDTH = 320;
 const FALLBACK_WIDTH = 2;

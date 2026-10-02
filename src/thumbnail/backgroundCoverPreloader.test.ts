@@ -68,7 +68,8 @@ describe("GalleryCoverBackgroundPreloader", () => {
       return asset;
     });
     const client = new ThumbnailClient({ resolve });
-    const retainer = new GalleryCoverSessionRetainer(client, 10, 100);
+    const cost = asset.kind === "image" ? asset.width * asset.height * 4 + 60 : 0;
+    const retainer = new GalleryCoverSessionRetainer(client, 10, cost + 1);
     const loader = new GalleryCoverBackgroundPreloader(client, retainer);
     const items = [gallery(1), gallery(2), gallery(3), gallery(4)];
 
@@ -76,7 +77,7 @@ describe("GalleryCoverBackgroundPreloader", () => {
       loader.update(items);
       expect(resolve).toHaveBeenCalledTimes(4);
       expect(retainer.size).toBe(1);
-      expect(retainer.retainedBytes).toBe(60);
+      expect(retainer.retainedBytes).toBe(cost);
       // The loader has no completed subscriptions left to defeat LRU eviction.
       expect(client.clearRetainedCache()).toBe(2);
       expect(client.getSnapshot(galleryCoverThumbnailKey(items[0]!)).status).toBe("idle");

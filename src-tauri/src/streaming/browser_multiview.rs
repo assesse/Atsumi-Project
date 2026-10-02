@@ -823,6 +823,11 @@ impl OfficialBrowser {
             ""
         })
         .initialization_script(if pane.kind == PaneKind::Video {
+            include_str!("browser_quality.js")
+        } else {
+            ""
+        })
+        .initialization_script(if pane.kind == PaneKind::Video {
             include_str!("browser_capture.js")
         } else {
             ""
@@ -863,6 +868,7 @@ impl OfficialBrowser {
                 if page.capture.is_some() {
                     let _ = view.eval(include_str!("browser_page_chat.js"));
                     let _ = view.eval(include_str!("browser_encoded_capture.js"));
+                    let _ = view.eval(include_str!("browser_quality.js"));
                     let _ = view.eval(include_str!("browser_capture.js"));
                     let _ = view.eval(include_str!("browser_player_ui.js"));
                 }
@@ -1230,7 +1236,7 @@ impl OfficialBrowser {
             view.hide().map_err(|_| unavailable())?;
             return validation;
         }
-        let result = if viewport.occluded {
+        let result = if viewport.occluded || viewport.preserve_background {
             host_view::apply_pane_viewport(&view, &viewport, pane.revision.clone(), revision)
         } else {
             match pane.writes.try_lock() {

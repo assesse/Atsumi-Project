@@ -2164,6 +2164,186 @@ pub const MIGRATIONS: &[Migration] = &[
               );
         "#,
     },
+    Migration {
+        version: 47,
+        name: "auto_find_artist_and_group_targets",
+        sql: r#"
+            CREATE TABLE auto_find_candidate_matches (
+                run_id TEXT NOT NULL,
+                gallery_id INTEGER NOT NULL,
+                namespace TEXT NOT NULL CHECK (namespace IN ('artist', 'group')),
+                value TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(value)) BETWEEN 1 AND 200),
+                PRIMARY KEY (run_id, gallery_id, namespace, value),
+                FOREIGN KEY (run_id, gallery_id) REFERENCES auto_find_candidates(run_id, gallery_id) ON DELETE CASCADE
+            ) STRICT;
+            INSERT INTO auto_find_candidate_matches
+                SELECT run_id, gallery_id, favorite_namespace, favorite_value FROM auto_find_candidates
+                WHERE favorite_namespace IN ('artist', 'group');
+            -- Keep legacy artist column names, but key every target by namespace.
+            CREATE TABLE auto_find_artist_checkpoints_v47 (
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist' CHECK (favorite_namespace IN ('artist', 'group')),
+                artist TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                history_mode TEXT NOT NULL CHECK (history_mode IN ('include_all_history', 'newer_than_oldest_downloaded')),
+                policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                high_water_gallery_id INTEGER CHECK (high_water_gallery_id IS NULL OR high_water_gallery_id > 0),
+                history_floor_gallery_id INTEGER CHECK (history_floor_gallery_id IS NULL OR history_floor_gallery_id > 0),
+                incremental_runs_since_full INTEGER NOT NULL DEFAULT 0 CHECK (incremental_runs_since_full >= 0),
+                last_full_scan_at TEXT NOT NULL CHECK (length(last_full_scan_at) > 0),
+                updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+                PRIMARY KEY (favorite_namespace, artist, history_mode),
+                FOREIGN KEY (favorite_namespace, artist) REFERENCES favorites(namespace, value) ON DELETE CASCADE
+            ) STRICT;
+            INSERT INTO auto_find_artist_checkpoints_v47 SELECT * FROM auto_find_artist_checkpoints;
+            DROP TABLE auto_find_artist_checkpoints;
+            ALTER TABLE auto_find_artist_checkpoints_v47 RENAME TO auto_find_artist_checkpoints;
+
+            CREATE TABLE auto_find_run_artist_checkpoints_v47 (
+                run_id TEXT NOT NULL REFERENCES auto_find_runs(run_id) ON DELETE CASCADE,
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist' CHECK (favorite_namespace IN ('artist', 'group')),
+                artist TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                history_mode TEXT NOT NULL CHECK (history_mode IN ('include_all_history', 'newer_than_oldest_downloaded')),
+                policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                high_water_gallery_id INTEGER CHECK (high_water_gallery_id IS NULL OR high_water_gallery_id > 0),
+                history_floor_gallery_id INTEGER CHECK (history_floor_gallery_id IS NULL OR history_floor_gallery_id > 0),
+                performed_full_scan INTEGER NOT NULL CHECK (performed_full_scan IN (0, 1)),
+                PRIMARY KEY (run_id, favorite_namespace, artist)
+            ) STRICT;
+            INSERT INTO auto_find_run_artist_checkpoints_v47 SELECT run_id, 'artist', artist, history_mode, policy_version, high_water_gallery_id, history_floor_gallery_id, performed_full_scan FROM auto_find_run_artist_checkpoints;
+            DROP TABLE auto_find_run_artist_checkpoints;
+            ALTER TABLE auto_find_run_artist_checkpoints_v47 RENAME TO auto_find_run_artist_checkpoints;
+
+            CREATE TABLE auto_find_run_cutoffs_v47 (
+                run_id TEXT NOT NULL REFERENCES auto_find_runs(run_id) ON DELETE CASCADE,
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist' CHECK (favorite_namespace IN ('artist', 'group')),
+                artist TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                oldest_owned_gallery_id INTEGER CHECK (oldest_owned_gallery_id > 0),
+                qualified_owned_count INTEGER NOT NULL CHECK (qualified_owned_count >= 0),
+                cutoff_source TEXT NOT NULL CHECK (cutoff_source = 'verified_owned_artifact'),
+                policy_version INTEGER NOT NULL CHECK (policy_version = 1),
+                PRIMARY KEY (run_id, favorite_namespace, artist)
+            ) STRICT;
+            INSERT INTO auto_find_run_cutoffs_v47 SELECT run_id, 'artist', artist, oldest_owned_gallery_id, qualified_owned_count, cutoff_source, policy_version FROM auto_find_run_cutoffs;
+            DROP TABLE auto_find_run_cutoffs;
+            ALTER TABLE auto_find_run_cutoffs_v47 RENAME TO auto_find_run_cutoffs;
+
+            CREATE TABLE auto_find_run_truncations_v47 (
+                run_id TEXT NOT NULL REFERENCES auto_find_runs(run_id) ON DELETE CASCADE,
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist' CHECK (favorite_namespace IN ('artist', 'group')),
+                artist TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                reason TEXT NOT NULL CHECK (reason = 'candidate_limit_after_cutoff'),
+                eligible_count INTEGER NOT NULL CHECK (eligible_count >= 0),
+                candidate_limit INTEGER NOT NULL CHECK (candidate_limit > 0),
+                PRIMARY KEY (run_id, favorite_namespace, artist)
+            ) STRICT;
+            INSERT INTO auto_find_run_truncations_v47 SELECT run_id, 'artist', artist, reason, eligible_count, candidate_limit FROM auto_find_run_truncations;
+            DROP TABLE auto_find_run_truncations;
+            ALTER TABLE auto_find_run_truncations_v47 RENAME TO auto_find_run_truncations;
+        "#,
+    },
+    Migration {
+        version: 48,
+        name: "auto_find_latest_owned_cutoff",
+        sql: r#"
+            -- Replace only the policy column so unrelated settings are preserved.
+            ALTER TABLE settings ADD COLUMN auto_find_history_mode_v48 TEXT NOT NULL
+                DEFAULT 'newer_than_latest_owned'
+                CHECK (auto_find_history_mode_v48 IN ('include_all_history', 'newer_than_latest_owned'));
+            UPDATE settings SET auto_find_history_mode_v48 = CASE auto_find_history_mode
+                WHEN 'include_all_history' THEN 'include_all_history'
+                ELSE 'newer_than_latest_owned' END;
+            ALTER TABLE settings DROP COLUMN auto_find_history_mode;
+            ALTER TABLE settings RENAME COLUMN auto_find_history_mode_v48 TO auto_find_history_mode;
+
+            -- Keep historical run identities and child rows intact. Their old
+            -- policy remains old; the new mode is used only by subsequent runs.
+            ALTER TABLE auto_find_runs ADD COLUMN history_mode_v48 TEXT NOT NULL
+                DEFAULT 'include_all_history'
+                CHECK (history_mode_v48 IN ('include_all_history', 'newer_than_oldest_downloaded', 'newer_than_latest_owned'));
+            UPDATE auto_find_runs SET history_mode_v48 = history_mode;
+            ALTER TABLE auto_find_runs DROP COLUMN history_mode;
+            ALTER TABLE auto_find_runs RENAME COLUMN history_mode_v48 TO history_mode;
+
+            CREATE TABLE auto_find_artist_checkpoints_v48 (
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist' CHECK (favorite_namespace IN ('artist', 'group')),
+                artist TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                history_mode TEXT NOT NULL CHECK (history_mode IN ('include_all_history', 'newer_than_oldest_downloaded', 'newer_than_latest_owned')),
+                policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                high_water_gallery_id INTEGER CHECK (high_water_gallery_id IS NULL OR high_water_gallery_id > 0),
+                history_floor_gallery_id INTEGER CHECK (history_floor_gallery_id IS NULL OR history_floor_gallery_id > 0),
+                incremental_runs_since_full INTEGER NOT NULL DEFAULT 0 CHECK (incremental_runs_since_full >= 0),
+                last_full_scan_at TEXT NOT NULL CHECK (length(last_full_scan_at) > 0),
+                updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+                PRIMARY KEY (favorite_namespace, artist, history_mode),
+                FOREIGN KEY (favorite_namespace, artist) REFERENCES favorites(namespace, value) ON DELETE CASCADE
+            ) STRICT;
+            INSERT INTO auto_find_artist_checkpoints_v48 SELECT * FROM auto_find_artist_checkpoints;
+            DROP TABLE auto_find_artist_checkpoints;
+            ALTER TABLE auto_find_artist_checkpoints_v48 RENAME TO auto_find_artist_checkpoints;
+
+            CREATE TABLE auto_find_run_artist_checkpoints_v48 (
+                run_id TEXT NOT NULL REFERENCES auto_find_runs(run_id) ON DELETE CASCADE,
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist' CHECK (favorite_namespace IN ('artist', 'group')),
+                artist TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                history_mode TEXT NOT NULL CHECK (history_mode IN ('include_all_history', 'newer_than_oldest_downloaded', 'newer_than_latest_owned')),
+                policy_version INTEGER NOT NULL CHECK (policy_version > 0),
+                high_water_gallery_id INTEGER CHECK (high_water_gallery_id IS NULL OR high_water_gallery_id > 0),
+                history_floor_gallery_id INTEGER CHECK (history_floor_gallery_id IS NULL OR history_floor_gallery_id > 0),
+                performed_full_scan INTEGER NOT NULL CHECK (performed_full_scan IN (0, 1)),
+                PRIMARY KEY (run_id, favorite_namespace, artist)
+            ) STRICT;
+            INSERT INTO auto_find_run_artist_checkpoints_v48 SELECT * FROM auto_find_run_artist_checkpoints;
+            DROP TABLE auto_find_run_artist_checkpoints;
+            ALTER TABLE auto_find_run_artist_checkpoints_v48 RENAME TO auto_find_run_artist_checkpoints;
+
+            CREATE TABLE auto_find_run_cutoffs_v48 (
+                run_id TEXT NOT NULL REFERENCES auto_find_runs(run_id) ON DELETE CASCADE,
+                favorite_namespace TEXT NOT NULL DEFAULT 'artist' CHECK (favorite_namespace IN ('artist', 'group')),
+                artist TEXT NOT NULL COLLATE NOCASE CHECK (length(trim(artist)) BETWEEN 1 AND 200),
+                oldest_owned_gallery_id INTEGER CHECK (oldest_owned_gallery_id > 0),
+                qualified_owned_count INTEGER NOT NULL CHECK (qualified_owned_count >= 0),
+                cutoff_source TEXT NOT NULL CHECK (cutoff_source = 'verified_owned_artifact'),
+                policy_version INTEGER NOT NULL CHECK (policy_version IN (1, 2)),
+                latest_owned_gallery_id INTEGER CHECK (latest_owned_gallery_id > 0),
+                CHECK ((policy_version = 1 AND latest_owned_gallery_id IS NULL)
+                    OR (policy_version = 2 AND oldest_owned_gallery_id IS NULL)),
+                PRIMARY KEY (run_id, favorite_namespace, artist)
+            ) STRICT;
+            INSERT INTO auto_find_run_cutoffs_v48 (
+                run_id, favorite_namespace, artist, oldest_owned_gallery_id,
+                qualified_owned_count, cutoff_source, policy_version
+            ) SELECT * FROM auto_find_run_cutoffs;
+            DROP TABLE auto_find_run_cutoffs;
+            ALTER TABLE auto_find_run_cutoffs_v48 RENAME TO auto_find_run_cutoffs;
+        "#,
+    },
+    Migration {
+        version: 49,
+        name: "chzzk_ssd_recording_staging",
+        sql: "ALTER TABLE settings ADD COLUMN chzzk_ssd_staging INTEGER NOT NULL DEFAULT 0 CHECK (chzzk_ssd_staging IN (0, 1));",
+    },
+    Migration {
+        version: 50,
+        name: "high_performance_processing",
+        sql: "ALTER TABLE settings ADD COLUMN high_performance_processing INTEGER NOT NULL DEFAULT 0 CHECK (high_performance_processing IN (0, 1));",
+    },
+    Migration {
+        version: 51,
+        name: "startup_privacy_and_download_popularity",
+        sql: r#"
+            ALTER TABLE settings ADD COLUMN privacy_on_startup INTEGER NOT NULL DEFAULT 1 CHECK (privacy_on_startup IN (0, 1));
+            CREATE TABLE hitomi_popularity_snapshots (
+                period TEXT PRIMARY KEY CHECK (period IN ('today','week','month','year')),
+                ordered_ids BLOB NOT NULL,
+                fetched_at TEXT NOT NULL
+            );
+            CREATE TABLE download_popularity_ranks (
+                period TEXT NOT NULL REFERENCES hitomi_popularity_snapshots(period),
+                gallery_id INTEGER NOT NULL,
+                rank INTEGER CHECK (rank > 0),
+                PRIMARY KEY (period, gallery_id)
+            );
+        "#,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2220,6 +2400,14 @@ impl MigrationRunner {
 
             let transaction = connection.transaction()?;
             transaction.execute_batch(migration.sql)?;
+            if applied.is_empty() && migration.version == 48 {
+                // Only a new database gets the new default. Existing libraries
+                // retain an explicit include-all preference during migration 48.
+                transaction.execute(
+                    "UPDATE settings SET auto_find_history_mode = 'newer_than_latest_owned' WHERE singleton = 1",
+                    [],
+                )?;
+            }
             transaction.execute(
                 "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
                 params![migration.version, migration.name],
@@ -2319,6 +2507,240 @@ mod tests {
     use super::*;
 
     #[test]
+    fn latest_owned_migration_preserves_settings_and_historical_runs_from_schema_47() {
+        for previous_mode in ["newer_than_oldest_downloaded", "include_all_history"] {
+            let mut connection = migration_history(&[]);
+            for migration in MIGRATIONS
+                .iter()
+                .filter(|migration| migration.version <= 47)
+            {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            connection.execute(
+                "UPDATE settings SET auto_find_history_mode = ?1, revision = 19, download_root = 'D:/kept-library', preview_width = 280, request_start_interval_ms = 375 WHERE singleton = 1",
+                [previous_mode],
+            ).unwrap();
+            let unrelated_settings = |connection: &Connection| {
+                let mut statement = connection.prepare("SELECT * FROM settings").unwrap();
+                let columns = statement
+                    .column_names()
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, name)| *name != "auto_find_history_mode")
+                    .map(|(index, name)| (index, name.to_owned()))
+                    .collect::<Vec<_>>();
+                statement
+                    .query_row([], |row| {
+                        columns
+                            .iter()
+                            .map(|(index, name)| {
+                                row.get::<_, rusqlite::types::Value>(*index)
+                                    .map(|value| (name.clone(), value))
+                            })
+                            .collect::<rusqlite::Result<BTreeMap<_, _>>>()
+                    })
+                    .unwrap()
+            };
+            let settings_before = unrelated_settings(&connection);
+            connection.execute_batch(r#"
+                INSERT INTO favorites (namespace, value, revision, created_at, updated_at) VALUES
+                    ('artist', 'same', 0, 'now', 'now'), ('group', 'same', 0, 'now', 'now');
+                INSERT INTO auto_find_runs (run_id, revision, state, total_favorites, completed_favorites, candidates_found, started_at, updated_at, history_mode)
+                    VALUES ('historical', 3, 'completed', 2, 2, 1, 'now', 'now', 'newer_than_oldest_downloaded');
+                INSERT INTO auto_find_run_cutoffs VALUES
+                    ('historical', 'artist', 'same', 100, 2, 'verified_owned_artifact', 1),
+                    ('historical', 'group', 'same', 200, 3, 'verified_owned_artifact', 1);
+                INSERT INTO auto_find_artist_checkpoints (favorite_namespace, artist, history_mode, policy_version, high_water_gallery_id, history_floor_gallery_id, last_full_scan_at, updated_at)
+                    VALUES ('artist', 'same', 'newer_than_oldest_downloaded', 1, 50000, 100, 'now', 'now');
+                INSERT INTO auto_find_run_artist_checkpoints VALUES
+                    ('historical', 'artist', 'same', 'newer_than_oldest_downloaded', 1, 50000, 100, 1);
+                INSERT INTO auto_find_candidates (run_id, gallery_id, title, artist, pages, language, tags_json, published_rank, popularity, thumbnail_width, thumbnail_height, favorite_namespace, favorite_value, discovered_at)
+                    VALUES ('historical', 150, 'Preserved candidate', 'same', 10, 'korean', '[]', 150, 1, 100, 150, 'artist', 'same', 'now');
+                INSERT INTO auto_find_candidate_matches VALUES
+                    ('historical', 150, 'artist', 'same'), ('historical', 150, 'group', 'same');
+                INSERT INTO auto_find_exclusions VALUES (99, 'Preserved exclusion', 'now');
+            "#).unwrap();
+
+            assert_eq!(
+                MigrationRunner::run(&mut connection)
+                    .unwrap()
+                    .applied_versions,
+                vec![48, 49, 50, 51]
+            );
+            let mode: String = connection
+                .query_row("SELECT auto_find_history_mode FROM settings", [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(
+                mode,
+                if previous_mode == "include_all_history" {
+                    previous_mode
+                } else {
+                    "newer_than_latest_owned"
+                }
+            );
+            let mut after = unrelated_settings(&connection);
+            assert_eq!(
+                after.remove("chzzk_ssd_staging"),
+                Some(rusqlite::types::Value::Integer(0))
+            );
+            assert_eq!(
+                after.remove("high_performance_processing"),
+                Some(rusqlite::types::Value::Integer(0))
+            );
+            assert_eq!(
+                after.remove("privacy_on_startup"),
+                Some(rusqlite::types::Value::Integer(1))
+            );
+            assert_eq!(after, settings_before);
+            let old_run: (String, i64) = connection
+                .query_row(
+                    "SELECT history_mode, candidates_found FROM auto_find_runs",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .unwrap();
+            assert_eq!(old_run, ("newer_than_oldest_downloaded".into(), 1));
+            let old_evidence: (i64, Option<i64>, i64) = connection.query_row(
+                "SELECT oldest_owned_gallery_id, latest_owned_gallery_id, policy_version FROM auto_find_run_cutoffs WHERE favorite_namespace = 'artist'",
+                [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).unwrap();
+            assert_eq!(old_evidence, (100, None, 1));
+            for (table, count) in [
+                ("auto_find_candidates", 1),
+                ("auto_find_candidate_matches", 2),
+                ("auto_find_exclusions", 1),
+                ("auto_find_run_cutoffs", 2),
+            ] {
+                assert_eq!(
+                    connection
+                        .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row
+                            .get::<_, i64>(0))
+                        .unwrap(),
+                    count,
+                    "{table}"
+                );
+            }
+            let old_checkpoint: (String, i64, i64) = connection.query_row(
+                "SELECT history_mode, policy_version, history_floor_gallery_id FROM auto_find_artist_checkpoints", [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            ).unwrap();
+            assert_eq!(
+                old_checkpoint,
+                ("newer_than_oldest_downloaded".into(), 1, 100)
+            );
+            connection.execute_batch(r#"
+                INSERT INTO auto_find_runs (run_id, revision, state, total_favorites, completed_favorites, candidates_found, started_at, updated_at, history_mode)
+                    VALUES ('new', 0, 'completed', 1, 1, 0, 'now', 'now', 'newer_than_latest_owned');
+                INSERT INTO auto_find_run_cutoffs (run_id, favorite_namespace, artist, latest_owned_gallery_id, qualified_owned_count, cutoff_source, policy_version)
+                    VALUES ('new', 'group', 'same', 300, 3, 'verified_owned_artifact', 2);
+                INSERT INTO auto_find_artist_checkpoints (favorite_namespace, artist, history_mode, policy_version, high_water_gallery_id, history_floor_gallery_id, last_full_scan_at, updated_at)
+                    VALUES ('group', 'same', 'newer_than_latest_owned', 2, 50000, 300, 'now', 'now');
+            "#).unwrap();
+            assert!(connection
+                .prepare("PRAGMA foreign_key_check")
+                .unwrap()
+                .query([])
+                .unwrap()
+                .next()
+                .unwrap()
+                .is_none());
+            assert!(MigrationRunner::run(&mut connection)
+                .unwrap()
+                .applied_versions
+                .is_empty());
+        }
+    }
+
+    #[test]
+    fn a_fresh_database_defaults_to_latest_owned_history() {
+        let mut connection = migration_history(&[]);
+        MigrationRunner::run(&mut connection).unwrap();
+        let mode: String = connection
+            .query_row("SELECT auto_find_history_mode FROM settings", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(mode, "newer_than_latest_owned");
+    }
+
+    #[test]
+    fn auto_find_group_migration_preserves_artist_checkpoints_and_separates_same_named_targets() {
+        let mut connection = migration_history(&[]);
+        for migration in MIGRATIONS
+            .iter()
+            .filter(|migration| migration.version <= 46)
+        {
+            connection.execute_batch(migration.sql).unwrap();
+            connection
+                .execute(
+                    "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                    params![migration.version, migration.name],
+                )
+                .unwrap();
+        }
+        connection.execute_batch(r#"
+            INSERT INTO favorites (namespace, value, revision, created_at, updated_at) VALUES ('artist', 'same', 0, 'now', 'now');
+            INSERT INTO auto_find_artist_checkpoints (artist, history_mode, policy_version, high_water_gallery_id, incremental_runs_since_full, last_full_scan_at, updated_at)
+                VALUES ('same', 'include_all_history', 1, 50000, 2, 'now', 'now');
+            INSERT INTO auto_find_runs (run_id, revision, state, total_favorites, completed_favorites, candidates_found, started_at, updated_at)
+                VALUES ('old', 0, 'completed', 1, 1, 0, 'now', 'now');
+            INSERT INTO auto_find_run_cutoffs VALUES ('old', 'same', 100, 1, 'verified_owned_artifact', 1);
+            INSERT INTO auto_find_run_artist_checkpoints VALUES ('old', 'same', 'include_all_history', 1, 50000, NULL, 0);
+        "#).unwrap();
+        assert_eq!(
+            MigrationRunner::run(&mut connection)
+                .unwrap()
+                .applied_versions,
+            vec![47, 48, 49, 50, 51]
+        );
+        let checkpoint: (i64, i64) = connection.query_row("SELECT high_water_gallery_id, incremental_runs_since_full FROM auto_find_artist_checkpoints WHERE favorite_namespace='artist'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
+        assert_eq!(checkpoint, (50000, 2));
+        connection.execute_batch(r#"
+            INSERT INTO favorites (namespace, value, revision, created_at, updated_at) VALUES ('group', 'same', 0, 'now', 'now');
+            INSERT INTO auto_find_artist_checkpoints (favorite_namespace, artist, history_mode, policy_version, high_water_gallery_id, last_full_scan_at, updated_at)
+                VALUES ('group', 'same', 'include_all_history', 1, 60000, 'now', 'now');
+            INSERT INTO auto_find_run_cutoffs (run_id, favorite_namespace, artist, oldest_owned_gallery_id, qualified_owned_count, cutoff_source, policy_version)
+                VALUES ('old', 'group', 'same', 200, 1, 'verified_owned_artifact', 1);
+            INSERT INTO auto_find_run_artist_checkpoints VALUES ('old', 'group', 'same', 'include_all_history', 1, 60000, NULL, 1);
+        "#).unwrap();
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT COUNT(*) FROM auto_find_artist_checkpoints",
+                    [],
+                    |row| row.get::<_, i64>(0)
+                )
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM auto_find_run_cutoffs", [], |row| row
+                    .get::<_, i64>(
+                    0
+                ))
+                .unwrap(),
+            2
+        );
+        assert!(connection
+            .prepare("PRAGMA foreign_key_check")
+            .unwrap()
+            .query([])
+            .unwrap()
+            .next()
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn participating_artist_migration_backfills_only_valid_known_local_lists() {
         let mut connection = migration_history(&[]);
         for migration in MIGRATIONS
@@ -2413,7 +2835,7 @@ mod tests {
             )
             .unwrap();
         let report = MigrationRunner::run(&mut connection).unwrap();
-        assert_eq!(report.applied_versions, vec![46]);
+        assert_eq!(report.applied_versions, vec![46, 47, 48, 49, 50, 51]);
         for id in 1..=7 {
             let (first, json): (String, String) = connection
                 .query_row(
@@ -2460,7 +2882,7 @@ mod tests {
         ).expect("store explicit request settings");
 
         let report = MigrationRunner::run(&mut connection).expect("upgrade adaptive downloads");
-        assert_eq!(report.applied_versions, vec![45, 46]);
+        assert_eq!(report.applied_versions, vec![45, 46, 47, 48, 49, 50, 51]);
         let settings: (i64, i64, i64, bool, i64) = connection.query_row(
             "SELECT revision, concurrent_image_requests, request_start_interval_ms, download_adaptive_concurrency, download_adaptive_max_requests FROM settings WHERE singleton = 1",
             [],
@@ -2622,7 +3044,7 @@ mod tests {
             report.applied_versions,
             vec![
                 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-                36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+                36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
             ]
         );
         let historical_import_tables: i64 = connection
@@ -2722,10 +3144,10 @@ mod tests {
             report.applied_versions,
             vec![
                 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+                33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
             ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let favorite: String = connection
             .query_row(
                 "SELECT value FROM favorites WHERE namespace = 'artist'",
@@ -2782,7 +3204,7 @@ mod tests {
             report.applied_versions,
             vec![
                 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
-                43, 44, 45, 46,
+                43, 44, 45, 46, 47, 48, 49, 50, 51,
             ]
         );
         let columns = connection
@@ -2839,10 +3261,10 @@ mod tests {
             report.applied_versions,
             vec![
                 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-                44, 45, 46,
+                44, 45, 46, 47, 48, 49, 50, 51,
             ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let settings: (i64, i64) = connection
             .query_row(
                 "SELECT max_columns, privacy_mode FROM settings WHERE singleton = 1",
@@ -2918,10 +3340,10 @@ mod tests {
             report.applied_versions,
             vec![
                 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-                45, 46
+                45, 46, 47, 48, 49, 50, 51
             ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let preserved: (String, i64, i64, i64) = connection
             .query_row(
                 r#"SELECT e.canonical_token, s.revision, s.artist_count, s.group_count
@@ -3005,10 +3427,11 @@ mod tests {
         assert_eq!(
             report.applied_versions,
             vec![
-                26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46
+                26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+                47, 48, 49, 50, 51
             ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let preserved: String = connection
             .query_row(
                 "SELECT title FROM galleries WHERE gallery_id=42",
@@ -3074,9 +3497,12 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v26 to current");
         assert_eq!(
             report.applied_versions,
-            vec![27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![
+                27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+                48, 49, 50, 51
+            ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, search_include_tags_json, search_exclude_tags_json FROM settings WHERE singleton = 1",
@@ -3135,9 +3561,12 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v27 to v28");
         assert_eq!(
             report.applied_versions,
-            vec![28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![
+                28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
+                49, 50, 51
+            ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, auto_find_grouping, downloads_grouping FROM settings WHERE singleton = 1",
@@ -3223,9 +3652,12 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v29 to current");
         assert_eq!(
             report.applied_versions,
-            vec![30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![
+                30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
+                51
+            ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let hidden: (i64, String) = connection
             .query_row(
                 "SELECT gallery_id, decision_id FROM duplicate_hidden_galleries WHERE gallery_id=3668987",
@@ -3342,9 +3774,11 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v30 to current");
         assert_eq!(
             report.applied_versions,
-            vec![31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![
+                31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
+            ]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
 
         let hidden = connection
             .prepare(
@@ -3411,9 +3845,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v31 to current");
         assert_eq!(
             report.applied_versions,
-            vec![32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let settings: (i64, i64, String) = connection
             .query_row(
                 "SELECT max_columns, explore_page_size, download_overlap_auto_mode FROM settings WHERE singleton = 1",
@@ -3476,9 +3910,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v33 to current");
         assert_eq!(
             report.applied_versions,
-            vec![34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let modes: (String, String, String, i64) = connection
             .query_row(
                 "SELECT explore_display_mode, auto_find_display_mode, downloads_display_mode, max_columns FROM settings WHERE singleton = 1",
@@ -3558,9 +3992,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v34 to current");
         assert_eq!(
             report.applied_versions,
-            vec![35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let known: (Option<String>, Option<i64>) = connection
             .query_row(
                 "SELECT language, published_rank FROM galleries WHERE gallery_id = 701",
@@ -3616,9 +4050,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v35 to current");
         assert_eq!(
             report.applied_versions,
-            vec![36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
         let preferences: (i64, i64, i64, i64) = connection
             .query_row(
                 "SELECT explore_page_size, preview_width, danbooru_page_size, danbooru_preview_width FROM settings WHERE singleton = 1",
@@ -3757,9 +4191,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate legacy v37 to v38");
         assert_eq!(
             report.applied_versions,
-            vec![38, 39, 40, 41, 42, 43, 44, 45, 46]
+            vec![38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51]
         );
-        assert_eq!(report.current_version, 46);
+        assert_eq!(report.current_version, 51);
 
         let counts: (i64, i64, i64, i64, i64) = connection
             .query_row(
@@ -3853,6 +4287,6 @@ mod tests {
 
         let second = MigrationRunner::run(&mut connection).expect("migration remains idempotent");
         assert!(second.applied_versions.is_empty());
-        assert_eq!(second.current_version, 46);
+        assert_eq!(second.current_version, 51);
     }
 }

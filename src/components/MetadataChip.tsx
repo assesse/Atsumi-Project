@@ -2,6 +2,7 @@ import { forwardRef, useEffect, useId, useRef, useState, type ForwardedRef, type
 import { tagTooltip } from "../data/tagTranslations";
 import { metadataSearchToken } from "../search/searchTokens";
 import { TagTranslationTooltip } from "./TagTranslationTooltip";
+import type { BackgroundOpenOptions } from "../state/downloadStatus";
 
 type MetadataIconProps = {
   kind: "artist" | "group";
@@ -39,7 +40,7 @@ type MetadataChipProps = {
   favorite?: boolean;
   kind?: "meta-chip" | "tag" | "byline";
   onClickCapture?: MouseEventHandler<HTMLButtonElement>;
-  onSearch: (value: string) => void;
+  onSearch: (value: string, options?: BackgroundOpenOptions) => void;
   onToggleFavorite: (value: string) => void;
 };
 
@@ -123,11 +124,14 @@ export const MetadataChip = forwardRef<HTMLButtonElement, MetadataChipProps>(fun
       onFocus={() => showTooltip(false)}
       onBlur={hideTooltip}
       onKeyDown={(event) => {
-        if (event.key === "Escape") hideTooltip();
+        if (event.key === "Escape" && tooltipOpen) { event.preventDefault(); event.stopPropagation(); hideTooltip(); }
       }}
       onClick={(event) => {
         event.stopPropagation();
-        onSearch(kind === "tag" ? metadataSearchToken(value, searchValue).displayToken : (searchValue ?? value));
+        if (event.defaultPrevented || event.detail > 1) return;
+        const valueToSearch = kind === "tag" ? metadataSearchToken(value, searchValue).displayToken : (searchValue ?? value);
+        if (event.ctrlKey || event.metaKey) { event.preventDefault(); onSearch(valueToSearch, { background:true }); }
+        else onSearch(valueToSearch);
       }}
       onContextMenu={handleContextMenu}
     >

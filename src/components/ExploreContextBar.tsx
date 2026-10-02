@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { FluentIcon } from "./FluentIcon";
 
 export type ExploreContextTab = {
@@ -5,7 +6,6 @@ export type ExploreContextTab = {
   label: string;
   page?: number;
   totalPages?: number;
-  root: boolean;
   busy: boolean;
 };
 
@@ -24,12 +24,16 @@ export function ExploreContextBar({
   onBack,
   onClose,
 }: ExploreContextBarProps) {
+  const selectedTab = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    selectedTab.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [activeId]);
   const activeIndex = tabs.findIndex((tab) => tab.id === activeId);
-  if (tabs.length < 2 || activeIndex < 0) return null;
+  if (activeIndex < 0) return null;
 
   return (
     <section className="explore-context-bar" aria-label="열린 탐색">
-      <button
+      {tabs.length > 1 ? <button
         type="button"
         className="explore-context-back"
         disabled={activeIndex <= 0}
@@ -39,7 +43,7 @@ export function ExploreContextBar({
       >
         <FluentIcon glyph="\uE72B" />
         이전 탐색
-      </button>
+      </button> : null}
       <div className="explore-context-tabs" role="tablist" aria-label="탐색 세션">
         {tabs.map((tab) => {
           const active = tab.id === activeId;
@@ -55,6 +59,7 @@ export function ExploreContextBar({
                 type="button"
                 className="explore-context-tab"
                 role="tab"
+                ref={active ? selectedTab : undefined}
                 aria-selected={active}
                 aria-controls="gallery-viewport"
                 aria-busy={tab.busy || undefined}
@@ -65,17 +70,15 @@ export function ExploreContextBar({
                 <span>{tab.label}</span>
                 {tab.busy ? <small>불러오는 중</small> : null}
               </button>
-              {!tab.root ? (
-                <button
-                  type="button"
-                  className="explore-context-close"
-                  aria-label={`${tab.label} 탐색 닫기`}
-                  title="탐색 닫기"
-                  onClick={() => onClose(tab.id)}
-                >
-                  <FluentIcon glyph="\uE711" />
-                </button>
-              ) : null}
+              <button
+                type="button"
+                className="explore-context-close"
+                aria-label={`${tab.label} 탐색 닫기`}
+                title="탐색 닫기"
+                onClick={() => onClose(tab.id)}
+              >
+                <FluentIcon glyph="\uE711" />
+              </button>
             </div>
           );
         })}

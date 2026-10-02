@@ -31,7 +31,15 @@ export function recordingMergeLabel(recording: BrowserRecording): string {
   if (recording.mediaRemovedAt != null) return "영상 정리됨";
   if (recording.progressive && !hasCompletedMerge(recording) && (recording.status === "recording" || !recording.merge || recording.merge.status === "queued")) return recording.progressive.lastError ? "구간 병합 확인 필요" : `구간 병합 ${recording.progressive.partCount}개 완료`;
   if (recording.status === "recording") return "녹화 종료 후 병합";
-  if (hasCompletedMerge(recording)) return "병합 완료";
+  if (hasCompletedMerge(recording)) {
+    switch (recording.archive?.status) {
+      case "copying": return "보관 이동 중";
+      case "cleanup_pending": return "SSD 정리 대기";
+      case "pending": case "blocked": return "보관 이동 대기";
+      case "complete": return "보관 완료";
+      default: return "병합 완료";
+    }
+  }
   if (recording.segmentCount === 0) return "확정 조각 없음";
   switch (recording.merge?.status) {
     case "queued": return "병합 대기";
@@ -65,6 +73,11 @@ export function RecordingPlayback({ recording, disabled, privacyMode, retrying, 
   const retryCleanup = completed && cleanup?.status === "blocked";
   const failed = !active && (merge?.status === "blocked" || merge?.status === "failed" || merge?.status === "complete" && !completed);
   return <div className="official-browser-playback">
+    {recording.archive ? <p className={recording.archive.lastError ? "official-browser-warning" : "official-browser-note"} role="status" title={privacyMode ? undefined : `작업: ${recording.archive.sourceDir}\n보관: ${recording.archive.destinationRoot}`}>
+      {recording.archive.status === "complete" ? "보관 폴더 이동 완료" : recording.archive.status === "copying" ? "보관 폴더로 이동 중 · SSD 원본 유지" : recording.archive.status === "cleanup_pending" ? "보관 완료 · SSD 작업 파일 정리 대기" : recording.archive.status === "blocked" ? "보관 이동 대기 · SSD 저장본 유지" : "SSD에 저장 중 · 병합 후 자동 이동"}
+      {recording.archive.lastError ? ` · ${recording.archive.lastError}` : null}
+    </p> : null}
+    {recording.archive?.lastError ? <button type="button" disabled={disabled || retrying} onClick={() => onRetryMerge(recording.id)}>{retrying ? "요청 중…" : "보관 이동 다시 시도"}</button> : null}
     <p className={failed ? "official-browser-warning" : "official-browser-note"} role="status">
       <strong>{recordingMergeLabel(recording)}</strong>
       {active ? recording.progressive ? " · 약 3분 또는 48 MiB마다 확정된 구간을 병합합니다. 완료 구간부터 재생할 수 있습니다." : " · 녹화를 끝낸 뒤 확정된 조각을 하나의 파일로 병합합니다." : null}

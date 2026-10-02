@@ -22,6 +22,10 @@ pub(crate) mod deletion;
 #[path = "browser_parts.rs"]
 pub(crate) mod parts;
 pub use parts::ProgressiveSummary;
+#[path = "browser_archive.rs"]
+pub(crate) mod archive;
+#[path = "browser_ssd.rs"]
+pub(crate) mod ssd;
 #[path = "browser_startup_index.rs"]
 mod startup_index;
 
@@ -92,6 +96,8 @@ pub struct BrowserRecording {
     pub status: BrowserRecordingStatus,
     pub mime_type: String,
     pub output_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<archive::ArchiveTransfer>,
     pub segment_count: u64,
     /// Durably committed bytes only; unfinished bytes are reported in `partial`.
     pub bytes_written: u64,
@@ -230,6 +236,7 @@ impl CatalogEntry {
             status: BrowserRecordingStatus::Recording,
             mime_type: self.mime_type.clone(),
             output_dir: self.output_dir.clone(),
+            archive: None,
             segment_count: 0,
             bytes_written: 0,
             duration_seconds: 0.0,
@@ -276,11 +283,13 @@ struct Active {
 }
 
 struct State {
+    replay_leases: HashMap<String, Arc<()>>,
     catalog: Vec<CatalogEntry>,
     recordings: VecDeque<BrowserRecording>,
     active: HashMap<String, Active>,
     closing: bool,
     merge_job: Option<(String, String)>,
+    last_part_recording: Option<String>,
     deleting: HashMap<String, String>,
     unverified: HashSet<String>,
     indexed: HashSet<String>,
@@ -297,6 +306,7 @@ pub struct BrowserCaptureStore {
 /// An immutable, catalog-authorized completed recording. Handles remain local
 /// to the replay service; IPC never accepts or returns these filesystem paths.
 pub(crate) struct BrowserReplaySource {
+    pub storage_lease: Option<Arc<()>>,
     pub recording: BrowserRecording,
     pub media: File,
     pub chat: Option<File>,
@@ -359,11 +369,13 @@ impl BrowserCaptureStore {
         Ok(Self {
             catalog_root,
             state: Arc::new(Mutex::new(State {
+                replay_leases: HashMap::new(),
                 catalog,
                 recordings,
                 active: HashMap::new(),
                 closing: false,
                 merge_job: None,
+                last_part_recording: None,
                 deleting: HashMap::new(),
                 unverified,
                 indexed,
@@ -386,6 +398,25 @@ impl BrowserCaptureStore {
     fn begin_with_progressive(
         &self,
         download_root: &Path,
+        channel_id: &str,
+        title: &str,
+        mime_type: &str,
+        progressive: bool,
+    ) -> Result<BrowserRecording, StreamError> {
+        self.begin_with_storage(
+            download_root,
+            None,
+            channel_id,
+            title,
+            mime_type,
+            progressive,
+        )
+    }
+
+    pub(crate) fn begin_with_storage(
+        &self,
+        download_root: &Path,
+        archive_root: Option<&Path>,
         channel_id: &str,
         title: &str,
         mime_type: &str,
@@ -430,6 +461,9 @@ impl BrowserCaptureStore {
             media_removed_at: None,
         };
         let mut recording = entry.recording();
+        recording.archive =
+            archive_root.map(|destination| archive::ArchiveTransfer::new(&root, destination));
+        ssd::ensure_headroom(&state, &recording)?;
         recording.progressive = progressive.then(ProgressiveSummary::default);
         let journal = OpenOptions::new()
             .read(true)
@@ -468,6 +502,9 @@ impl BrowserCaptureStore {
         }
         let mut state = self.lock()?;
         let index = active_index(&state, recording_id)?;
+        if chunk_index == 0 {
+            ssd::ensure_headroom(&state, &state.recordings[index])?;
+        }
         let mut active = state.active.remove(recording_id).ok_or_else(inactive)?;
         let recording = &mut state.recordings[index];
         let result = append_chunk(&mut active, recording, segment_index, chunk_index, bytes);
@@ -784,9 +821,6 @@ impl BrowserCaptureStore {
             let Some(index) = state.recordings.iter().position(|r| {
                 r.status != BrowserRecordingStatus::Recording
                     && !state.unverified.contains(&r.id)
-                    && r.progressive
-                        .as_ref()
-                        .is_none_or(|p| p.segment_count == r.segment_count)
                     && !r.deletion_pending
                     && r.media_removed_at.is_none()
                     && r.segment_count > 0
@@ -890,11 +924,23 @@ impl BrowserCaptureStore {
             {
                 continue;
             }
-            if let Some(merge) = recording
+            if let Some(_merge) = recording
                 .merge
                 .as_mut()
                 .filter(|m| m.status == BrowserMergeStatus::Complete)
             {
+                if let Some(archive) = recording
+                    .archive
+                    .as_mut()
+                    .filter(|a| a.status != archive::ArchiveStatus::Complete)
+                {
+                    archive.retry_at = 0;
+                    archive.last_error = None;
+                    if save_metadata(recording).is_ok() {
+                        count += 1;
+                    }
+                }
+                let merge = recording.merge.as_mut().unwrap();
                 if let Some(cleanup) = merge
                     .source_cleanup
                     .as_mut()
@@ -967,7 +1013,14 @@ impl BrowserCaptureStore {
     pub(crate) fn replay_source(&self, id: &str) -> Result<BrowserReplaySource, StreamError> {
         validate_id(id)?;
         self.ensure_recovered(id)?;
-        let state = self.lock()?;
+        let mut state = self.lock()?;
+        let storage_lease = Some(
+            state
+                .replay_leases
+                .entry(id.to_owned())
+                .or_default()
+                .clone(),
+        );
         let recording = state
             .recordings
             .iter()
@@ -982,7 +1035,9 @@ impl BrowserCaptureStore {
                 .as_ref()
                 .is_none_or(|m| m.status != BrowserMergeStatus::Complete)
         {
-            return parts::replay_source(recording);
+            let mut source = parts::replay_source(recording)?;
+            source.storage_lease = storage_lease;
+            return Ok(source);
         }
         let merge = recording
             .merge
@@ -1020,6 +1075,7 @@ impl BrowserCaptureStore {
             Err(_) => return Err(storage()),
         };
         Ok(BrowserReplaySource {
+            storage_lease,
             recording: recording.clone(),
             media,
             chat,
@@ -1618,6 +1674,7 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
         recording.chat_count = metadata.chat_count;
         recording.merge = metadata.merge.clone();
         recording.progressive = metadata.progressive.clone();
+        recording.archive = metadata.archive.clone().filter(|a| a.valid(&recording.id));
         if !valid_merge(
             recording.merge.as_ref(),
             metadata.segment_count,
