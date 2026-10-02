@@ -40,6 +40,9 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $packageName = "ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0"
 $expectedHash = "40eec25b2f55dcad7e4d4e640919b920d29818b56fdaf9353ce1fd8adefc9d6b"
 $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-11-13-20/$packageName.zip"
+# Upstream daily assets expire. Preserve the exact approved archive, including
+# its license files, for reproducible clean builds; never fall back to latest.
+$mirrorUrl = "https://github.com/assesse/Atsumi-Project/releases/download/v2.0.0/$packageName.zip"
 $runtimeRoot = Join-Path $projectRoot ".runtime\media-tools"
 $archive = Join-Path $runtimeRoot "$packageName.zip"
 $packageRoot = Join-Path $runtimeRoot $packageName
@@ -50,7 +53,12 @@ Assert-MediaToolPath $runtimeRoot -AllowMissing
 New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 Assert-MediaToolPath $archive -AllowMissing
 if (-not (Test-Path -LiteralPath $archive)) {
-  Invoke-WebRequest -Uri $url -OutFile $archive
+  try {
+    Invoke-WebRequest -Uri $url -OutFile $archive
+  } catch {
+    Write-Warning "Upstream pinned media archive is unavailable; trying the byte-identical Atsumi release mirror."
+    Invoke-WebRequest -Uri $mirrorUrl -OutFile $archive
+  }
 }
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
   throw "Media tool archive checksum mismatch. The downloaded file was preserved; do not execute it."
