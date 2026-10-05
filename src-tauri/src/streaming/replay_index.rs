@@ -203,12 +203,7 @@ fn build_fresh(session: &Session) -> Result<IndexStatus, StreamError> {
                 continue;
             }
             if let Some(rich) = &message.rich {
-                for url in rich
-                    .badges
-                    .iter()
-                    .map(|badge| &badge.image_url)
-                    .chain(rich.emojis.iter().map(|emoji| &emoji.image_url))
-                {
+                for url in rich.asset_urls() {
                     if let Some(id) = super::super::replay_assets::asset_id(url) {
                         transaction
                             .execute("INSERT OR IGNORE INTO assets(id) VALUES (?1)", [id])
@@ -573,10 +568,7 @@ pub(super) fn page(
             .rich
             .as_ref()
             .map(|rich| {
-                rich.badges
-                    .iter()
-                    .map(|badge| &badge.image_url)
-                    .chain(rich.emojis.iter().map(|emoji| &emoji.image_url))
+                rich.asset_urls()
                     .filter_map(|url| {
                         super::super::replay_assets::asset_id(url).map(|id| (url.clone(), id))
                     })

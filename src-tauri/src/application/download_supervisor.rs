@@ -1343,6 +1343,8 @@ fn worker_loop(inner: Arc<SupervisorInner>) {
             cancellation.cancel();
         }
         let receiving_started = std::time::Instant::now();
+        let _diagnostic =
+            crate::diagnostics::operation("download_receive", Some(&descriptor.entry_id)).entered();
         let result = run_download(&inner, &descriptor, &cancellation).and_then(|layout| {
             tracing::info!(
                 gallery_id = descriptor.gallery_id.get(),
@@ -1360,6 +1362,11 @@ fn worker_loop(inner: Arc<SupervisorInner>) {
                 &cancellation,
             )
         });
+        tracing::info!(
+            diag_stage = "finished",
+            success = result.is_ok(),
+            cancelled = cancellation.is_cancelled()
+        );
         if let Err(error) = result {
             handle_download_error(&inner, &descriptor, &cancellation, error);
             workers::finish_job(&inner, &descriptor);
@@ -1600,6 +1607,9 @@ fn finalize_download(
     layout: &ArtifactLayout,
     cancellation: &CancellationToken,
 ) -> Result<(), RunError> {
+    let _diagnostic =
+        crate::diagnostics::operation("download_finalize", Some(&descriptor.entry_id)).entered();
+    tracing::info!(diag_stage = "load_bundle");
     check_cancelled(cancellation)?;
     let mut bundle = inner
         .repository
@@ -1623,6 +1633,7 @@ fn finalize_download(
             .collect::<Vec<_>>()
     };
     let waiting_started = std::time::Instant::now();
+    tracing::info!(diag_stage = "artist_lock_wait");
     let mut _finalization_guards = Vec::new();
     for lock in &finalization_locks {
         loop {
@@ -1642,16 +1653,21 @@ fn finalize_download(
             }
         }
     }
-    tracing::debug!(
+    tracing::info!(
+        diag_stage = "artist_lock_acquired",
+        wait_ms = waiting_started.elapsed().as_millis() as u64,
         gallery_id = descriptor.gallery_id.get(),
         artist_wait_ms = waiting_started.elapsed().as_millis() as u64,
         "download artist finalization locks acquired"
     );
     // Check once after the artist wait, including galleries without artists.
+    tracing::info!(diag_stage = "verify_files");
     verify_bundle_files(inner, layout, &bundle, Some(cancellation))?;
     check_cancelled(cancellation)?;
+    tracing::info!(diag_stage = "overlap_review");
     if let Some(projection) = run_overlap_review_gate(inner, descriptor, &bundle, cancellation)? {
         emit(inner, projection);
+        tracing::info!(diag_stage = "overlap_handled", success = true);
         return Ok(());
     }
 
@@ -1678,6 +1694,7 @@ fn finalize_download(
         .map_err(|error| RepositoryError::Other(error.to_string()))?;
     let manifest = ArtifactManifest::from_bundle(&bundle)
         .map_err(|error| RepositoryError::Other(error.to_string()))?;
+    tracing::info!(diag_stage = "write_manifest");
     inner.store.write_manifest(layout, &manifest)?;
     let persisted = inner.store.read_manifest(layout)?.ok_or_else(|| {
         DownloadPipelineError::new(
@@ -1706,6 +1723,7 @@ fn finalize_download(
     if let Some(handler) = handler {
         handler(descriptor.gallery_id);
     }
+    tracing::info!(diag_stage = "completed", success = true);
     Ok(())
 }
 

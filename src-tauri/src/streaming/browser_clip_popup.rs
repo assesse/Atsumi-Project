@@ -4,7 +4,7 @@
 use super::*;
 use tauri::{
     webview::{NewWindowFeatures, NewWindowResponse},
-    WebviewUrl, WebviewWindowBuilder,
+    WebviewWindowBuilder,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -97,15 +97,28 @@ pub(super) fn open(
     // Do not reserve an account window: doing so blocks a running recording.
     // window_features retains the official opener/close notifications. CHZZK
     // itself temporarily mutes that live player's audio while editing a clip.
-    let result = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+    let initial = service_popup::InitialNavigation::default();
+    let child_host = host.clone();
+    let child_app = app.clone();
+    let child_channel = channel.to_owned();
+    let child_label = label.clone();
+    let result = WebviewWindowBuilder::new(app, &label, service_popup::blank())
         .data_directory(host.inner.data_dir.join("chzzk-browser-profile"))
-        .browser_extensions_enabled(true)
+        .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
         .window_features(features)
         .title("CHZZK 클립 만들기")
         .inner_size(1020.0, 690.0)
         .min_inner_size(760.0, 540.0)
-        .on_navigation(move |next| target.allows(next))
-        .on_new_window(|_, _| NewWindowResponse::Deny)
+        .on_navigation(move |next| initial.allows(next, target.allows(next)))
+        .on_new_window(move |next, features| {
+            if !child_app
+                .get_webview_window(&child_label)
+                .is_some_and(|window| window.is_visible().unwrap_or(false))
+            {
+                return NewWindowResponse::Deny;
+            }
+            service_popup::open(&child_host, &child_app, next, features, &child_channel, 0)
+        })
         .build();
     match result {
         Ok(window) => NewWindowResponse::Create { window },
@@ -124,8 +137,9 @@ pub(super) fn sync_privacy(
     expected: u64,
 ) {
     let prefix = format!("chzzk-clip-{channel}-");
+    let service_prefix = format!("chzzk-service-{channel}-");
     for (label, window) in app.webview_windows() {
-        if !label.starts_with(&prefix) {
+        if !label.starts_with(&prefix) && !label.starts_with(&service_prefix) {
             continue;
         }
         let revision = revision.clone();

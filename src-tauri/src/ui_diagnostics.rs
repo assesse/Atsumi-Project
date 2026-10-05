@@ -170,6 +170,8 @@ impl UiDiagnostics {
         })
     }
     pub fn record(&self, kind: &'static str, data: Value) {
+        // The shared recorder retains the stage, never this diagnostic payload.
+        tracing::info!(diag_stage = kind);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -267,6 +269,9 @@ pub enum UiMark {
     F5Results,
     FrontendReady,
     ManualCapture,
+    FrontendError,
+    UnhandledRejection,
+    ReactError,
 }
 #[tauri::command]
 pub fn ui_diagnostics_mark(state: State<'_, Arc<UiDiagnostics>>, mark: UiMark) {
@@ -274,6 +279,9 @@ pub fn ui_diagnostics_mark(state: State<'_, Arc<UiDiagnostics>>, mark: UiMark) {
         UiMark::F5Results => "f5_results_refresh",
         UiMark::FrontendReady => "frontend_ready",
         UiMark::ManualCapture => "manual_capture",
+        UiMark::FrontendError => "frontend_error",
+        UiMark::UnhandledRejection => "unhandled_rejection",
+        UiMark::ReactError => "react_error",
     };
     state.record(kind, json!({"epoch":state.epoch()}));
 }
@@ -288,7 +296,7 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
     let app = app.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(5));
-        let Some(view) = app.get_webview_window("main") else {
+        let Some(view) = app.get_webview("main") else {
             break;
         };
         if app
@@ -297,9 +305,10 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
         {
             break;
         }
-        let foreground = view.is_visible().unwrap_or(false)
-            && view.is_focused().unwrap_or(false)
-            && !view.is_minimized().unwrap_or(true);
+        let window = view.window();
+        let foreground = window.is_visible().unwrap_or(false)
+            && window.is_focused().unwrap_or(false)
+            && !window.is_minimized().unwrap_or(true);
         let (stalled, epoch, pulse, silence) = {
             let mut health = recorder.health.lock().unwrap_or_else(|e| e.into_inner());
             (
@@ -316,6 +325,14 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
             .try_state::<Arc<crate::ui_download_events::DownloadEvents>>()
             .map(|s| s.stats());
         recorder.record("health",json!({"epoch":epoch,"foreground":foreground,"silenceMs":silence,"frontend":pulse,"images":transport,"downloads":downloads}));
+        tracing::info!(
+            diag_stage = "ui_health",
+            foreground,
+            lag_ms = pulse.lag_ms,
+            js_heap_bytes = pulse.js_heap_bytes.unwrap_or(0),
+            long_tasks = pulse.long_tasks,
+            renderer_private_bytes = recorder.renderer_private_bytes.load(Ordering::Relaxed)
+        );
         sample_native(&view, Arc::clone(&recorder));
         if pulse.js_heap_bytes.unwrap_or(0) > 256 * 1024 * 1024
             || recorder.renderer_private_bytes.load(Ordering::Relaxed) > 768 * 1024 * 1024
@@ -331,7 +348,7 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<()> {
 }
 
 #[cfg(windows)]
-fn sample_native(view: &tauri::WebviewWindow, recorder: Arc<UiDiagnostics>) {
+fn sample_native(view: &tauri::Webview, recorder: Arc<UiDiagnostics>) {
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2Environment8, ICoreWebView2_2, COREWEBVIEW2_PROCESS_KIND,
     };
@@ -376,7 +393,7 @@ fn sample_native(view: &tauri::WebviewWindow, recorder: Arc<UiDiagnostics>) {
     }).is_err() { pending.sample_pending.store(false,Ordering::Release); }
 }
 #[cfg(not(windows))]
-fn sample_native(_: &tauri::WebviewWindow, _: Arc<UiDiagnostics>) {}
+fn sample_native(_: &tauri::Webview, _: Arc<UiDiagnostics>) {}
 
 /// CDP remains private to the native app; no remote debugging port is opened.
 /// Only aggregate counts and capped sampled allocation call sites are written.
@@ -384,7 +401,7 @@ fn sample_native(_: &tauri::WebviewWindow, _: Arc<UiDiagnostics>) {}
 pub fn capture(app: &tauri::AppHandle, reason: &'static str) {
     use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
     use windows::core::HSTRING;
-    let Some(view) = app.get_webview_window("main") else {
+    let Some(view) = app.get_webview("main") else {
         return;
     };
     let Some(recorder) = app
@@ -474,7 +491,7 @@ fn sampled_sites(value: &Value) -> Value {
 }
 
 #[cfg(windows)]
-pub fn start_sampling(view: &tauri::WebviewWindow) {
+pub fn start_sampling(view: &tauri::Webview) {
     use webview2_com::CallDevToolsProtocolMethodCompletedHandler;
     use windows::core::HSTRING;
     // Debug diagnosis (or explicit release opt-in), not a release-wide profiler.
@@ -494,7 +511,7 @@ pub fn start_sampling(view: &tauri::WebviewWindow) {
     });
 }
 #[cfg(not(windows))]
-pub fn start_sampling(_: &tauri::WebviewWindow) {}
+pub fn start_sampling(_: &tauri::Webview) {}
 
 #[cfg(test)]
 mod tests {

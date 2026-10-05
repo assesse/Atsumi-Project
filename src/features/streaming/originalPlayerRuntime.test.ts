@@ -215,6 +215,11 @@ describe("original player runtime isolation and lifecycle", () => {
       { startSeconds: 0, viewerCount: 100, viewerCoverageSeconds: 2, uniqueSenderCount: null, chatCount: 7 },
       { startSeconds: 4, viewerCount: 200, viewerCoverageSeconds: 4, uniqueSenderCount: null, chatCount: 8 },
     ] });
+    const legend = f.document.querySelector<HTMLElement>('.atsumi-replay-metric-legend')!;
+    expect(legend.hidden).toBe(false);
+    expect(legend.querySelector('.viewers')?.textContent).toBe('시청자 0–200명');
+    expect(legend.querySelector('.chat')?.textContent).toBe('채팅 수 0–8개');
+    expect(f.document.querySelector('.metric-grid')?.getAttribute('d')).toContain('M0,18 L1000,18');
     const marks = f.document.querySelectorAll(".viewer-partial");
     expect(marks).toHaveLength(1);
     expect(marks[0]!.getAttribute("cx")).toBe("250");
@@ -228,5 +233,13 @@ describe("original player runtime isolation and lifecycle", () => {
     expect(tip.textContent).not.toContain("채팅 참여자");
     f.send("metrics", null);
     expect(f.document.querySelectorAll(".viewer-partial")).toHaveLength(0);
+    expect(legend.hidden).toBe(true);
+    expect(f.document.querySelector('.atsumi-replay-metrics')!.hasAttribute('hidden')).toBe(true);
+    expect(tip.hasAttribute('hidden')).toBe(true);
+    f.send("metrics", { bucketSeconds: 4, participantCounts: true, chatPaths: [], viewerPaths: [], buckets: [{ startSeconds: 0, viewerCount: null, uniqueSenderCount: 0, chatCount: 0 }] });
+    expect(legend.hidden).toBe(false);
+    expect(legend.querySelector('.viewers')?.textContent).toBe('시청자 · 기록 없음');
+    expect(legend.querySelector('.chat')?.textContent).toBe('채팅 참여자 0–0명');
+    expect(f.document.querySelector('.atsumi-replay-metrics')!.hasAttribute('hidden')).toBe(false);
   });
 });

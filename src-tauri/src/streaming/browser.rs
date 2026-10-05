@@ -46,6 +46,8 @@ pub mod multiview_commands;
 pub mod recording_profile;
 #[path = "browser_screenshot.rs"]
 mod screenshot;
+#[path = "browser_service_popup.rs"]
+mod service_popup;
 pub use host_view::{BrowserClip, BrowserViewport, InstallerBrowser};
 
 use super::{
@@ -256,7 +258,7 @@ impl Default for ViewState {
             recording: None,
             arm: None,
             accepted_arm: None,
-            extension: "not_connected".into(),
+            extension: super::browser_compat::STATUS.into(),
             chat_status: "disabled".into(),
             chat_count: 0,
             capture_chat: false,
@@ -521,6 +523,10 @@ fn sanitized_capture_diagnostics(value: Option<Value>) -> Option<Value> {
     }));
     Some(
         json!({"reason":reason, "installed":value["installed"].as_bool().unwrap_or(false),
+        "autoPreparation": match value["autoPreparation"].as_str() {
+            Some("disabled" | "waiting_player" | "standard_quality_selected" | "standard_quality_failed" | "standard_quality_ambiguous" | "video_ready") => value["autoPreparation"].as_str(),
+            _ => None,
+        },
         "lastTransportFault":fault,"queuedBytes":value["queuedBytes"].as_u64().unwrap_or(0).min(64*1024*1024),
         "maxAckMs":value["maxAckMs"].as_u64().unwrap_or(0).min(3_600_000),
         "appendCount":value["appendCount"].as_u64().unwrap_or(0).min(1_000_000_000),
@@ -981,14 +987,9 @@ impl OfficialBrowser {
         let replay_assets = super::replay_assets::ReplayAssetCache::new(&data_dir, tools.is_some())
             .unwrap_or_else(|_| super::replay_assets::ReplayAssetCache::disabled());
         let merges = super::browser_merge::BrowserMergeWorker::start(store.clone(), tools)?;
-        let mut view = ViewState::default();
-        match super::browser_extension::reconnect_choice(&data_dir) {
-            Ok(enabled) => view.extension_reconnect_enabled = enabled,
-            Err(_) => {
-                view.extension =
-                    "자동 연결 선택을 읽지 못했습니다 · 네이버 확장 연결을 다시 눌러 주세요".into()
-            }
-        }
+        // Preserve the old choice file, but never reconnect the grid on a new
+        // PC or silently replace the direct-playback identity with Edge/Chrome.
+        let view = ViewState::default();
         let host = Self {
             inner: Arc::new(Inner {
                 auto_record: Arc::new(auto_record::AutoRecorder::load(&data_dir)),
@@ -1132,7 +1133,10 @@ impl OfficialBrowser {
         rights: bool,
         capture_chat: bool,
     ) -> Result<(), StreamError> {
-        self.arm_checked(app, root, rights, capture_chat, None)
+        // Standalone integration hosts have no application settings/DB. The
+        // application always uses arm_checked; this entry point writes directly
+        // to its explicitly supplied destination, without SSD staging.
+        self.arm_with_staging(app, root, rights, capture_chat, None, false)
     }
     pub(crate) fn arm_checked(
         &self,
@@ -1141,6 +1145,25 @@ impl OfficialBrowser {
         rights: bool,
         capture_chat: bool,
         expected_channel: Option<&str>,
+    ) -> Result<(), StreamError> {
+        let enabled = app
+            .try_state::<AppState>()
+            .ok_or_else(unavailable)?
+            .settings_snapshot()
+            .map_err(|_| unavailable())?
+            .chzzk_ssd_staging;
+        self.arm_with_staging(app, root, rights, capture_chat, expected_channel, enabled)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn arm_with_staging(
+        &self,
+        app: &AppHandle,
+        root: PathBuf,
+        rights: bool,
+        capture_chat: bool,
+        expected_channel: Option<&str>,
+        enabled: bool,
     ) -> Result<(), StreamError> {
         if !rights {
             return Err(error(
@@ -1154,11 +1177,6 @@ impl OfficialBrowser {
                 "설정에서 다운로드 폴더를 지정해 주세요.",
             ));
         }
-        let enabled = app
-            .state::<AppState>()
-            .settings_snapshot()
-            .map_err(|_| unavailable())?
-            .chzzk_ssd_staging;
         let storage_plan = super::browser_store::ssd::plan(enabled, &self.inner.data_dir, &root)?;
         let window = app.get_webview(self.label()).ok_or_else(unavailable)?;
         // Query the dispatcher before locking state: navigation callbacks also
@@ -1549,6 +1567,27 @@ impl OfficialBrowser {
             state.video_paused = paused;
             state.page_recording = recording;
             let diagnostics = sanitized_capture_diagnostics(capture_diagnostics);
+            if diagnostics.as_ref().map(|d| &d["autoPreparation"])
+                != state
+                    .capture_diagnostics
+                    .as_ref()
+                    .map(|d| &d["autoPreparation"])
+            {
+                let stage = match diagnostics
+                    .as_ref()
+                    .and_then(|d| d["autoPreparation"].as_str())
+                {
+                    Some("waiting_player") => Some("auto_player_waiting"),
+                    Some("standard_quality_selected") => Some("auto_standard_quality_selected"),
+                    Some("standard_quality_failed") => Some("auto_standard_quality_failed"),
+                    Some("standard_quality_ambiguous") => Some("auto_standard_quality_ambiguous"),
+                    Some("video_ready") => Some("auto_player_ready"),
+                    _ => None,
+                };
+                if let Some(stage) = stage {
+                    tracing::info!(diag_stage = stage);
+                }
+            }
             if diagnostics.as_ref().map(|d| &d["lastTransportFault"])
                 != state
                     .capture_diagnostics
@@ -1853,7 +1892,7 @@ impl OfficialBrowser {
                                     .get("senderKey")
                                     .and_then(Value::as_str)
                                     .and_then(super::model::bounded_sender_key),
-                                rich,
+                                rich: rich.map(|rich| *rich),
                             };
                             chat.log.append_batched(&message)?;
                             self.inner
@@ -2448,6 +2487,7 @@ pub async fn chzzk_browser_open(
     window: Webview,
     input: String,
 ) -> ApiResult<BrowserSnapshot> {
+    let _diagnostic = crate::diagnostics::operation("chzzk_browser_open", None).entered();
     let result = (|| {
         require_main(&window)?;
         let host = host(&app)?;
@@ -2535,6 +2575,7 @@ pub async fn chzzk_browser_start(
     rights_acknowledged: bool,
     capture_chat: bool,
 ) -> ApiResult<BrowserSnapshot> {
+    let _diagnostic = crate::diagnostics::operation("chzzk_recording_start", None).entered();
     let result = (|| {
         require_main(&window)?;
         app.state::<AppState>()
@@ -2596,6 +2637,7 @@ pub async fn chzzk_browser_ack_ui_action(
 }
 #[tauri::command]
 pub async fn chzzk_browser_stop(app: AppHandle, window: Webview) -> ApiResult<BrowserSnapshot> {
+    let _diagnostic = crate::diagnostics::operation("chzzk_recording_stop", None).entered();
     let result = (|| {
         require_main(&window)?;
         let host = host(&app)?;
@@ -2789,12 +2831,18 @@ mod tests {
     use super::*;
     #[test]
     fn source_diagnostics_retain_only_bounded_nonsecret_facts() {
-        let value = json!({"reason":"ready", "installed":true, "cookie":"secret", "url":"https://example.invalid/secret",
+        let value = json!({"reason":"ready", "autoPreparation":"standard_quality_selected", "installed":true, "cookie":"secret", "url":"https://example.invalid/secret",
             "sources":[{"selected":true,"sourceId":"secret","tracks":[
                 {"mimeType":"video/mp4;codecs=mp4a.40.2,avc1.4D001F", "timestampOffset":-13745.920976833331,"initBytes":1225},
                 {"mimeType":"https://example.invalid/secret","timestampOffset":1e30,"init":"secret"}]}]});
         let clean = sanitized_capture_diagnostics(Some(value)).unwrap();
         assert!(!clean.to_string().contains("secret"));
+        assert_eq!(clean["autoPreparation"], "standard_quality_selected");
+        assert!(sanitized_capture_diagnostics(Some(
+            json!({"reason":"waiting_video", "autoPreparation":"private text"})
+        ))
+        .unwrap()["autoPreparation"]
+            .is_null());
         assert_eq!(
             clean["sources"][0]["tracks"][0]["timestampOffset"],
             -13745.920976833331

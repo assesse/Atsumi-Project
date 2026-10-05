@@ -207,6 +207,19 @@ describe("ActivityDrawer download controls", () => {
     container.remove();
   });
 
+  it.each(["hashing", "verifying"] as const)("does not present 100 percent received as finished while %s", async (state) => {
+    const host = document.createElement("div"), root = createRoot(host);
+    const gallery: Gallery = { ...failedGallery, download: { ...failedGallery.download!, state, progress: 100 } };
+    try {
+      await act(async () => root.render(<ActivityDrawer open galleries={[gallery]} sessionDownloads={[{galleryId:gallery.id,occurredAt:1}]}
+        onClose={vi.fn()} onReview={vi.fn()} onRetry={vi.fn()} onCancel={vi.fn()} />));
+      const progress = host.querySelector('[role="progressbar"]');
+      expect(progress).toHaveTextContent(state === "hashing" ? "중복 비교·검증" : "최종 저장·검증");
+      expect(progress).toHaveAttribute("aria-valuetext", expect.stringContaining("아직 완료되지 않았습니다"));
+      expect(progress).toHaveAttribute("aria-valuenow", "100");
+    } finally { await act(async () => root.unmount()); }
+  });
+
   it("shows persisted failure evidence and invokes retry/cancel once", async () => {
     const container = document.createElement("div");
     document.body.append(container);

@@ -263,6 +263,32 @@ describe("official page chat receive bridge", () => {
     expect(event.extras).toEqual({ emojis: { wave: "https://ssl.pstatic.net/wave.png" } });
   });
 
+  it("captures donation and mission display fields while removing anonymous identity and payment tokens", async () => {
+    const h = fixture(); const socket = h.socket(); h.begin();
+    socket.emit(JSON.stringify({ cmd: 93102, bdy: [
+      { ...message("응원합니다"), msgTypeCode: 10, profile: { nickname: "PRIVATE_NAME", userIdHash: "a".repeat(32), profileImageUrl: "https://ssl.pstatic.net/private.png" }, extras: { donationType: "CHAT", isAnonymous: true, nickname: "PRIVATE_NAME", payAmount: 1000, payToken: "SECRET", weeklyRankList: ["SECRET"] } },
+      { ...message("도전"), msgTypeCode: 10, extras: { donationType: "MISSION", payAmount: 5000, missionText: "승리하기", status: "OPEN", missionDonationId: "SECRET" } },
+      { ...message("구독"), msgTypeCode: 11, extras: { month: 29, accessToken: "SECRET" } },
+    ] }));
+    await h.api.stop(RECORDING);
+    const events = h.batches.flat();
+    expect(events).toHaveLength(3);
+    expect(events[0]).toMatchObject({ msgTypeCode: 10, profile: { nickname: "익명" }, extras: { donationType: "CHAT", payAmount: 1000, isAnonymous: true } });
+    expect(events[0]).not.toHaveProperty("senderKey");
+    expect(JSON.stringify(events)).not.toMatch(/PRIVATE_NAME|private.png|SECRET|missionDonationId|weeklyRankList|publicProfileUrl/);
+    expect(events[1]).toMatchObject({ extras: { missionText: "승리하기", status: "OPEN" } });
+    expect(events[2]).toMatchObject({ msgTypeCode: 11, extras: { month: 29 } });
+  });
+
+  it("captures only received portrait/subscription/follow fields and object-form emoji", async () => {
+    const h = fixture(); const socket = h.socket(); h.begin();
+    socket.emit(envelope([{ ...message("{:wave-1:}"), profile: { nickname: "viewer", profileImageUrl: "https://nng-phinf.pstatic.net/avatar.png", streamingProperty: { subscription: { accumulativeMonth: 29 }, following: { followDate: "2023-12-19 12:30:00", token: "SECRET" } } }, extras: { emojis: { "wave-1": { imageUrl: "https://ssl.pstatic.net/wave.png", token: "SECRET" } } } }]));
+    await h.api.stop(RECORDING);
+    const event = h.batches.flat()[0];
+    expect(event).toMatchObject({ profile: { profileImageUrl: "https://nng-phinf.pstatic.net/avatar.png", streamingProperty: { subscription: { accumulativeMonth: 29 }, following: { followDate: "2023-12-19" } } }, extras: { emojis: { "wave-1": "https://ssl.pstatic.net/wave.png" } } });
+    expect(JSON.stringify(event)).not.toContain("SECRET");
+  });
+
   it("streams more than 200 messages without a history cap and bounds each UTF-8 batch", async () => {
     const harness = fixture();
     const socket = harness.socket();

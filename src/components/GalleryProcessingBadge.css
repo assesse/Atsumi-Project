@@ -23,9 +23,7 @@ button.gallery-processing-badge { cursor: pointer; }
 .gallery-card.is-selected .card-select-toggle, .gallery-grid.is-selection-context .card-select-toggle { opacity: 1; }
 .gallery-card .card-select-toggle[aria-pressed="true"] { background: var(--primary); color: var(--canvas); border-color: var(--primary); }
 .gallery-card.is-compact .language-flag { left: 8px; z-index: 10; transform: translateX(0); transition: transform 160ms ease; }
-.gallery-card.is-compact:is(:hover, :focus-visible, .is-selected) .language-flag,
-.gallery-card.is-compact:has(:focus-visible) .language-flag,
-.gallery-grid.is-selection-context .gallery-card.is-compact .language-flag { transform: translateX(32px); }
+.gallery-card.is-compact:has(> .card-select-toggle) .language-flag { transform: translateX(32px); }
 .gallery-grid.is-selection-context .gallery-card.is-compact.has-compact-favorites .cover > .compact-favorite-count-badge { right: 8px; }
 
 /* Shared by Explore and related galleries. Soften usable completed work only;

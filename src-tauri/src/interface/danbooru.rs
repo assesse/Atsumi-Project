@@ -528,11 +528,13 @@ impl DanbooruClient {
         }
 
         self.wait_for_slot()?;
+        let http_started = Instant::now();
         let response = self
             .http
             .get(file_url)
             .send()
-            .map_err(|_| DanbooruError::Unavailable)?;
+            .map_err(|e| diagnostic_transport_error(e, http_started))?;
+        diagnostic_http_response(&response, http_started);
         map_http_status(response.status(), None)?;
         if response
             .content_length()
@@ -620,11 +622,13 @@ impl DanbooruClient {
     pub(crate) fn media(&self, token: &str) -> Result<DanbooruMedia, DanbooruError> {
         let remote_url = decode_media_proxy_token(token)?;
         let _permit = self.media_gate.acquire()?;
+        let http_started = Instant::now();
         let mut response = self
             .http
             .get(remote_url)
             .send()
-            .map_err(|_| DanbooruError::Unavailable)?;
+            .map_err(|e| diagnostic_transport_error(e, http_started))?;
+        diagnostic_http_response(&response, http_started);
         map_http_status(response.status(), None)?;
         if response
             .content_length()
@@ -670,13 +674,20 @@ impl DanbooruClient {
     }
 
     fn get_json<T: DeserializeOwned>(&self, url: Url) -> Result<T, DanbooruError> {
+        let _diagnostic = crate::diagnostics::operation("danbooru_http", None).entered();
         self.wait_for_slot()?;
+        let http_started = Instant::now();
         let response = self
             .http
             .get(url)
             .send()
-            .map_err(|_| DanbooruError::Unavailable)?;
+            .map_err(|e| diagnostic_transport_error(e, http_started))?;
+        diagnostic_http_response(&response, http_started);
         let status = response.status();
+        tracing::info!(
+            diag_stage = "http_response",
+            status = status.as_u16() as u64
+        );
         let body = response.text().map_err(|_| DanbooruError::Unavailable)?;
         map_http_status(status, Some(&body))?;
         serde_json::from_str(&body).map_err(|_| DanbooruError::Protocol)
@@ -694,6 +705,27 @@ impl DanbooruClient {
         *next = Instant::now() + API_START_INTERVAL;
         Ok(())
     }
+}
+
+fn diagnostic_transport_error(error: reqwest::Error, started: Instant) -> DanbooruError {
+    crate::diagnostics::http_error(&error);
+    crate::diagnostics::http_result(
+        crate::diagnostics::Provider::Danbooru,
+        false,
+        0,
+        started.elapsed(),
+        0,
+    );
+    DanbooruError::Unavailable
+}
+fn diagnostic_http_response(response: &reqwest::blocking::Response, started: Instant) {
+    crate::diagnostics::http_result(
+        crate::diagnostics::Provider::Danbooru,
+        response.status().is_success(),
+        response.status().as_u16(),
+        started.elapsed(),
+        0,
+    );
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -772,7 +804,15 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, DanbooruError> + Send + 'static,
 {
-    match tauri::async_runtime::spawn_blocking(operation).await {
+    let span = crate::diagnostics::operation(operation_id, None);
+    match tauri::async_runtime::spawn_blocking(move || {
+        let _span = span.enter();
+        let result = operation();
+        tracing::info!(diag_stage = "finished", success = result.is_ok());
+        result
+    })
+    .await
+    {
         Ok(Ok(value)) => ApiResult::success(value),
         Ok(Err(error)) => ApiResult::failure(api_error(error)),
         Err(error) => {

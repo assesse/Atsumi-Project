@@ -36,6 +36,8 @@ import type { AppUpdateCheckResult } from "../update/useAppUpdater";
 import { FluentIcon } from "./FluentIcon";
 import { DropdownSelect } from "./DropdownSelect";
 import { AutostartSetting } from "./AutostartSetting";
+import { useSettingsAutosave } from "../hooks/useSettingsAutosave";
+import "./SettingsDialog.css";
 
 type SettingsDialogProps = {
   open: boolean;
@@ -44,6 +46,9 @@ type SettingsDialogProps = {
   error: ApiError | null;
   onClose: () => void;
   onSave: (patch: SettingsPatch) => Promise<boolean>;
+  onReplayTutorial?: () => void;
+  tutorialSourceLabel?: string;
+  onChooseDownloadRoot?: () => Promise<ApiResult<string | null>>;
   onLoadStorageUsage: () => Promise<ApiResult<StorageUsageSnapshot>>;
   onPreviewLayout: (layout: { maxColumns: number; previewWidth: number } | null) => void;
   onPreviewFolderName: (template: string) => Promise<ApiResult<string>>;
@@ -216,6 +221,9 @@ export function SettingsDialog({
   error,
   onClose,
   onSave,
+  onReplayTutorial,
+  tutorialSourceLabel = "현재 서비스",
+  onChooseDownloadRoot,
   onLoadStorageUsage,
   onPreviewLayout,
   onPreviewFolderName,
@@ -233,7 +241,17 @@ export function SettingsDialog({
   const closingInternally = useRef(false);
   const wasOpen = useRef(false);
   const [draft, setDraft] = useState<SettingsSnapshot>(settings);
-  const [saving, setSaving] = useState(false);
+  const draftRef = useRef(draft);
+  const inputEdits = useRef<SettingsPatch>({});
+  const [validationError, setValidationError] = useState("");
+  const [danbooruSaveError, setDanbooruSaveError] = useState(false);
+  const autosave = useSettingsAutosave(onSave);
+  const saving = autosave.status === "saving" || autosave.status === "pending";
+  const commitInputsRef = useRef<() => boolean>(() => true);
+  const [folderChoosing, setFolderChoosing] = useState(false);
+  const [folderChoiceError, setFolderChoiceError] = useState("");
+  const folderChoiceRequest = useRef(0);
+  const folderChoiceBusy = useRef(false);
   const [folderPreview, setFolderPreview] = useState("");
   const [folderPreviewError, setFolderPreviewError] = useState("");
   const folderPreviewRequest = useRef(0);
@@ -266,7 +284,10 @@ export function SettingsDialog({
   useEffect(() => {
     if (open && !wasOpen.current) {
       opener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-      setDraft(settings);
+      const restored = { ...settings, ...autosave.unsaved(), ...inputEdits.current };
+      draftRef.current = restored;
+      setDraft(restored);
+      setFolderChoiceError("");
       setMaintenanceMessage("");
       setInformationMessage("");
       setUpdateMessage("");
@@ -280,12 +301,14 @@ export function SettingsDialog({
       setSelectedExclusionIds(new Set());
       setRestoringExclusions(false);
       setVisibleExclusionCount(EXCLUSION_RENDER_BATCH);
-      setIncludeTagInput(settings.searchIncludeTags.join("\n"));
-      setExcludeTagInput(settings.searchExcludeTags.join("\n"));
-      onPreviewLayout({ maxColumns: settings.maxColumns, previewWidth: settings.previewWidth });
+      setIncludeTagInput(restored.searchIncludeTags.join("\n"));
+      setExcludeTagInput(restored.searchExcludeTags.join("\n"));
+      onPreviewLayout({ maxColumns: restored.maxColumns, previewWidth: restored.previewWidth });
       if (!dialog.current?.open) dialog.current?.showModal();
       window.requestAnimationFrame(() => closeButton.current?.focus());
     } else if (!open && wasOpen.current && dialog.current?.open) {
+      commitInputsRef.current();
+      void autosave.flush();
       closingInternally.current = true;
       dialog.current.close();
       onPreviewLayout(null);
@@ -297,7 +320,29 @@ export function SettingsDialog({
       });
     }
     wasOpen.current = open;
-  }, [open, onPreviewLayout, settings]);
+  }, [open, onPreviewLayout, settings, autosave.flush, autosave.unsaved]);
+
+  useEffect(() => () => { folderChoiceRequest.current++; folderChoiceBusy.current = false; }, []);
+  useEffect(() => {
+    if (!open) { folderChoiceRequest.current++; folderChoiceBusy.current = false; setFolderChoosing(false); }
+  }, [open]);
+
+  const chooseDownloadRoot = async () => {
+    if (!onChooseDownloadRoot || folderChoiceBusy.current) return;
+    folderChoiceBusy.current = true; setFolderChoosing(true); setFolderChoiceError("");
+    const request = ++folderChoiceRequest.current;
+    try {
+      const result = await onChooseDownloadRoot();
+      if (request !== folderChoiceRequest.current) return;
+      if (result.ok) {
+        if (result.data !== null) patch("downloadRoot", result.data);
+      } else setFolderChoiceError(result.error.message);
+    } catch {
+      if (request === folderChoiceRequest.current) setFolderChoiceError("폴더 선택 창을 열지 못했습니다. 경로를 직접 입력하거나 다시 시도해 주세요.");
+    } finally {
+      if (request === folderChoiceRequest.current) { folderChoiceBusy.current = false; setFolderChoosing(false); }
+    }
+  };
 
   const loadStorageUsage = useCallback((force = false) => {
     if (storageUsageLoadingRef.current) return;
@@ -397,8 +442,50 @@ export function SettingsDialog({
     setVisibleExclusionCount(EXCLUSION_RENDER_BATCH);
   };
 
-  const patch = <K extends keyof SettingsSnapshot>(key: K, value: SettingsSnapshot[K]) => {
-    setDraft((current) => ({ ...current, [key]: value }));
+  const updateDraft = (changes: SettingsPatch) => {
+    draftRef.current = { ...draftRef.current, ...changes };
+    setDraft(draftRef.current);
+  };
+  const patch = <K extends keyof SettingsPatch>(key: K, value: SettingsSnapshot[K], deferred = false) => {
+    const changes = { [key]: value } as SettingsPatch;
+    updateDraft(changes);
+    if (deferred) inputEdits.current = { ...inputEdits.current, ...changes };
+    else {
+      delete inputEdits.current[key];
+      autosave.enqueue(changes, typeof value === "number" ? 180 : 0);
+    }
+  };
+  const commitInputs = () => {
+    const changes = { ...inputEdits.current };
+    const errors: string[] = [];
+    const reject = (key: keyof SettingsPatch, message: string) => { delete changes[key]; errors.push(message); };
+    if (changes.downloadRoot !== undefined && !changes.downloadRoot.trim()) reject("downloadRoot", "다운로드 폴더를 선택하거나 경로를 입력하세요.");
+    if (changes.folderNameTemplate !== undefined && !changes.folderNameTemplate.trim()) reject("folderNameTemplate", "폴더 이름을 입력하세요.");
+    const limits = { concurrentImageRequests: [1, 30, "동시 이미지 요청"], downloadAdaptiveMaxRequests: [1, 8, "자동 조절 최대 요청"], requestStartIntervalMs: [0, 5000, "요청 시작 간격"] } as const;
+    for (const key of Object.keys(limits) as (keyof typeof limits)[]) {
+      const value = changes[key], [min, max, label] = limits[key];
+      if (value !== undefined && (!Number.isInteger(value) || value < min || value > max)) reject(key, `${label}: ${min}~${max} 사이의 정수를 입력하세요.`);
+    }
+    if (changes.searchIncludeTags || changes.searchExcludeTags) {
+      const { searchIncludeTags, searchExcludeTags } = draftRef.current;
+      if (searchIncludeTags.some(tag => searchExcludeTags.includes(tag))) {
+        delete changes.searchIncludeTags; delete changes.searchExcludeTags;
+        errors.push("같은 태그를 포함·제외에 동시에 지정할 수 없습니다.");
+      } else {
+        // These two lists form one rule; never persist half of an edit.
+        changes.searchIncludeTags = searchIncludeTags;
+        changes.searchExcludeTags = searchExcludeTags;
+      }
+    }
+    for (const key of Object.keys(changes) as (keyof SettingsPatch)[]) delete inputEdits.current[key];
+    if (Object.keys(changes).length) autosave.enqueue(changes);
+    setValidationError(errors.join(" "));
+    return !errors.length;
+  };
+  commitInputsRef.current = commitInputs;
+  const changeDanbooru = (filters: DanbooruSearchFilters) => {
+    setDanbooruDraft(filters);
+    setDanbooruSaveError(!saveDanbooruSearchPreferences(filters));
   };
 
   const previewLayout = (maxColumns: number, previewWidth: number) => {
@@ -406,6 +493,8 @@ export function SettingsDialog({
   };
 
   const close = () => {
+    commitInputs();
+    void autosave.flush();
     onPreviewLayout(null);
     onClose();
   };
@@ -413,8 +502,7 @@ export function SettingsDialog({
   const restorePreferenceDefaults = () => {
     const maxColumns = 3;
     const previewWidth = 220;
-    setDraft((current) => ({
-      ...current,
+    const defaults: SettingsPatch = {
       autoFindHistoryMode: "newer_than_latest_owned",
       downloadOverlapAutoMode: "off",
       explorePageSize: 50,
@@ -429,13 +517,18 @@ export function SettingsDialog({
       highPerformanceProcessing: false,
       downloadAdaptiveMaxRequests: 8,
       requestStartIntervalMs: 25,
-    }));
+    };
+    updateDraft(defaults);
+    for (const key of Object.keys(defaults) as (keyof SettingsPatch)[]) delete inputEdits.current[key];
+    autosave.enqueue(defaults);
+    setValidationError("");
     previewLayout(maxColumns, previewWidth);
-    setMaintenanceMessage("화면·네트워크 설정을 기본값으로 되돌렸습니다. 저장을 눌러 적용하세요.");
+    setMaintenanceMessage("화면·미리보기·네트워크 설정을 기본값으로 되돌렸습니다.");
   };
 
   const runMaintenance = async (action: MaintenanceAction) => {
-    if (action.kind === "factoryReset" && !window.confirm("앱 데이터 전체를 초기화하고 앱을 다시 시작할까요? 외부 다운로드 원본 파일, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.")) return;
+    if (action.kind === "factoryReset" && !window.confirm("설정, 검색·다운로드 목록, 작가·그룹 즐겨찾기와 중복 판정 기록을 초기화할까요? 받은 파일, 앨범·페이지 즐겨찾기와 작성한 코멘트는 남습니다. 앱이 종료되며, 다시 열면 초기화가 적용됩니다.")) return;
+    if (!commitInputs() || !await autosave.flush()) return;
     setMaintenanceBusy(action.kind);
     const result = await onMaintenance(action);
     setMaintenanceBusy(null);
@@ -514,37 +607,6 @@ export function SettingsDialog({
     || tagCatalogStatus.artistCount === 0
     || tagCatalogStatus.groupCount === 0;
 
-  const save = async () => {
-    setSaving(true);
-    const success = await onSave({
-      downloadRoot: draft.downloadRoot,
-      chzzkSsdStaging: draft.chzzkSsdStaging ?? false,
-      folderNameTemplate: draft.folderNameTemplate,
-      autoFindHistoryMode: draft.autoFindHistoryMode,
-      downloadOverlapAutoMode: draft.downloadOverlapAutoMode,
-      explorePageSize: draft.explorePageSize,
-      danbooruPageSize: draft.danbooruPageSize,
-      maxColumns: draft.maxColumns,
-      previewWidth: draft.previewWidth,
-      danbooruPreviewWidth: draft.danbooruPreviewWidth,
-      relatedPreviewWidth: draft.relatedPreviewWidth,
-      privacyOnStartup: draft.privacyOnStartup ?? true,
-      cacheLimitGb: draft.cacheLimitGb,
-      concurrentImageRequests: draft.concurrentImageRequests,
-      downloadAdaptiveConcurrency: draft.downloadAdaptiveConcurrency,
-      highPerformanceProcessing: draft.highPerformanceProcessing ?? false,
-      downloadAdaptiveMaxRequests: draft.downloadAdaptiveMaxRequests,
-      requestStartIntervalMs: draft.requestStartIntervalMs,
-      searchIncludeTags: draft.searchIncludeTags,
-      searchExcludeTags: draft.searchExcludeTags,
-    });
-    setSaving(false);
-    if (success) {
-      saveDanbooruSearchPreferences(danbooruDraft);
-      close();
-    }
-  };
-
   return (
     <dialog
       className="settings-dialog"
@@ -562,17 +624,19 @@ export function SettingsDialog({
         onClose();
       }}
     >
-      <div className="settings-form">
+      <div className="settings-form" onBlur={commitInputs} onKeyDown={event => {
+        if (event.key === "Enter" && event.target instanceof HTMLInputElement && !["checkbox", "range"].includes(event.target.type)) {
+          event.preventDefault(); event.target.blur();
+        }
+      }}>
         <header className="dialog-header">
           <div>
             <span className="eyebrow">SETTINGS</span>
             <h2 id="settings-dialog-title">설정</h2>
           </div>
           <div className="dialog-header-actions">
-            <button type="button" className="text-button primary" disabled={loading || saving || overlappingSearchTags.length > 0} onClick={() => void save()}>
-              {saving ? "저장 중" : "저장"}
-            </button>
-            <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="닫기" onClick={close}>
+            <span className="settings-save-status" role="status" aria-live="polite">{validationError ? "입력 확인 필요" : autosave.status === "error" || danbooruSaveError ? "저장 실패" : saving ? "저장 중…" : autosave.status === "saved" ? "저장됨" : "자동 저장"}</span>
+            <button ref={closeButton} type="button" data-tour="settings-close" className="icon-button small" title="닫기" aria-label="닫기" onClick={close}>
               <FluentIcon glyph="\uE711" />
             </button>
           </div>
@@ -608,13 +672,33 @@ export function SettingsDialog({
           >치지직</button>
         </nav>
         <div className="settings-layout settings-layout-single">
+          {error || validationError || autosave.status === "error" || danbooruSaveError ? <div className="settings-feedback">
+            {error ? <div className="inline-error" role="alert">{error.message}</div> : null}
+            {validationError ? <p className="inline-error" role="alert">{validationError}</p> : null}
+            {autosave.status === "error" || danbooruSaveError ? <div className="settings-save-error" role="alert"><span>변경 내용을 저장하지 못했습니다.</span><button type="button" className="text-button" onClick={() => { void autosave.flush(); if (danbooruSaveError) changeDanbooru(danbooruDraft); }}>다시 시도</button></div> : null}
+          </div> : null}
           <section className="settings-content" data-settings-scroll-root="true">
-              {error ? <div className="inline-error" role="alert">{error.message}</div> : null}
               {activeTab !== "danbooru" ? <>
+                <div className="setting-row download-folder-setting" data-tour="download-folder" hidden={activeTab !== "general"}>
+                  <div><strong>다운로드 폴더</strong><span>앨범·이미지·녹화의 저장 위치</span></div>
+                  <div className="setting-path-field">
+                    <div className="setting-path-control">
+                      <input value={draft.downloadRoot} placeholder="폴더를 선택하세요" aria-label="다운로드 폴더" disabled={loading || folderChoosing} onChange={(event) => patch("downloadRoot", event.target.value, true)} />
+                      <button type="button" className="text-button" disabled={loading || saving || folderChoosing || !onChooseDownloadRoot} onClick={() => void chooseDownloadRoot()}><FluentIcon glyph="\uE8B7" />{folderChoosing ? "선택 중…" : "폴더 선택"}</button>
+                    </div>
+                    {folderChoiceError ? <span className="setting-validation-error" role="alert">{folderChoiceError}</span> : null}
+                  </div>
+                </div>
+                <hr className="settings-divider" hidden={activeTab !== "general"} />
                 <AutostartSetting active={open && activeTab === "general"} />
+                {onReplayTutorial ? <div className="setting-row" hidden={activeTab !== "general"}>
+                  <div><strong>튜토리얼</strong><span>{tutorialSourceLabel}</span></div>
+                  <button type="button" className="text-button" disabled={loading || saving || folderChoosing} onClick={() => { close(); onReplayTutorial(); }}>사용 안내</button>
+                </div> : null}
                 <div className="setting-row" hidden={activeTab !== "general"}>
                   <div>
                     <strong>프라이버시 모드 상태로 시작</strong>
+                    <span>Hitomi·Danbooru에 적용</span>
                   </div>
                   <label className="setting-checkbox">
                     <input
@@ -627,16 +711,12 @@ export function SettingsDialog({
                   </label>
                 </div>
                 <hr className="settings-divider" hidden={activeTab !== "general"} />
-                <div className="setting-row" hidden={activeTab !== "general"}>
-                  <div><strong>다운로드 폴더</strong><span>앨범·이미지·치지직 녹화를 저장할 공통 루트</span></div>
-                  <input value={draft.downloadRoot} placeholder="폴더를 선택하세요" aria-label="다운로드 폴더" onChange={(event) => patch("downloadRoot", event.target.value)} />
-                </div>
                 <section className="storage-usage-panel" aria-labelledby="storage-usage-title" hidden={activeTab !== "general"}>
                   <header className="storage-usage-header">
                     <div>
                       <span className="eyebrow">STORAGE</span>
                       <strong id="storage-usage-title">저장공간 사용량</strong>
-                      <p>현재 저장된 다운로드 경로를 기준으로 계산합니다. 큰 폴더는 확인에 시간이 걸릴 수 있습니다.</p>
+                      <p>파일이 많으면 계산에 시간이 걸릴 수 있습니다.</p>
                     </div>
                     <button
                       type="button"
@@ -714,7 +794,7 @@ export function SettingsDialog({
                 <div className="setting-row settings-reset-row" hidden={activeTab !== "general"}>
                   <div>
                     <strong>설정 초기화</strong>
-                    <span>화면·미리보기·네트워크 설정을 기본값으로 되돌립니다. 저장을 눌러야 적용됩니다.</span>
+                    <span>화면·미리보기·네트워크 설정만 되돌립니다.</span>
                   </div>
                   <button type="button" className="text-button" disabled={maintenanceBusy !== null} onClick={restorePreferenceDefaults}>설정 기본값</button>
                 </div>
@@ -722,7 +802,9 @@ export function SettingsDialog({
                 <article className="maintenance-item maintenance-item--factory-reset" hidden={activeTab !== "general"}>
                   <div className="maintenance-copy">
                     <strong>앱 데이터 완전 초기화</strong>
-                    <p>앱을 첫 실행 상태로 되돌립니다. 외부 다운로드 원본 파일과 quarantine/recovery 파일, 개인 앨범·페이지 즐겨찾기와 컬렉션, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.</p>
+                    <p>설정, 검색·다운로드 목록, 작가·그룹 즐겨찾기와 중복 판정 기록을 지웁니다.</p>
+                    <p>받은 파일, 앨범·페이지 즐겨찾기와 작성한 코멘트는 남습니다. 코멘트 작성 권한도 유지됩니다.</p>
+                    <p>앱이 종료되며, 다시 열면 초기화가 적용됩니다.</p>
                   </div>
                   <button type="button" className="text-button danger-button" disabled={maintenanceBusy !== null} onClick={() => void runMaintenance({ kind: "factoryReset", confirmation: "RESET_ALL_APP_DATA" })}>{maintenanceBusy === "factoryReset" ? "초기화 준비 중" : "앱 데이터 완전 초기화"}</button>
                 </article>
@@ -762,7 +844,7 @@ export function SettingsDialog({
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div>
                     <strong>Hitomi 페이지당 앨범 수</strong>
-                    <span>현재 열 수에 맞춰 마지막 행이 차도록 요청량을 가까운 열 배수로 자동 조정합니다.</span>
+                    <span>한 페이지에 맞춰 자동으로 더 추가될 수 있음.</span>
                   </div>
                   <div className="range-wrap">
                     <input
@@ -784,7 +866,7 @@ export function SettingsDialog({
                     <header>
                       <span className="eyebrow">GLOBAL SEARCH RULES</span>
                       <h3 id="search-rules-title">Explore·자동탐색에 적용할 태그</h3>
-                      <p>태그를 한 줄에 하나씩 입력하세요. 쉼표로도 구분할 수 있습니다. Explore의 새 검색과 자동탐색에 공통 적용되며, 저장된 자동탐색 후보도 즉시 필터링됩니다.</p>
+                      <p>한 줄에 하나씩 또는 쉼표로 구분. 새 검색과 자동탐색 후보에 적용됩니다.</p>
                     </header>
                     <div className="search-rule-fields">
                       <label>
@@ -796,7 +878,7 @@ export function SettingsDialog({
                           placeholder={"female:glasses\nwebtoon"}
                           onChange={(event) => {
                             setIncludeTagInput(event.target.value);
-                            patch("searchIncludeTags", parseGlobalSearchTagInput(event.target.value));
+                            patch("searchIncludeTags", parseGlobalSearchTagInput(event.target.value), true);
                           }}
                         />
                       </label>
@@ -809,7 +891,7 @@ export function SettingsDialog({
                           placeholder={"male:glasses\nfull_color"}
                           onChange={(event) => {
                             setExcludeTagInput(event.target.value);
-                            patch("searchExcludeTags", parseGlobalSearchTagInput(event.target.value));
+                            patch("searchExcludeTags", parseGlobalSearchTagInput(event.target.value), true);
                           }}
                         />
                       </label>
@@ -870,8 +952,7 @@ export function SettingsDialog({
                     <header className="exclusion-manager-header">
                       <div>
                         <span className="eyebrow">EXCLUDED ALBUMS</span>
-                        <h3 id="exclusion-manager-title">탐색 제외·중복 숨김 앨범</h3>
-                        <p>목록은 설정을 열 때 자동으로 불러오지 않습니다. 관리가 필요할 때만 열고, 화면에는 50개씩 나누어 표시합니다.</p>
+                        <h3 id="exclusion-manager-title">제외된 앨범</h3>
                       </div>
                       <div className="exclusion-manager-actions">
                         {exclusionManagerOpen ? (
@@ -972,7 +1053,7 @@ export function SettingsDialog({
                       value={draft.folderNameTemplate}
                       aria-label="갤러리 폴더 이름 템플릿"
                       maxLength={512}
-                      onChange={(event) => patch("folderNameTemplate", event.target.value)}
+                      onChange={(event) => patch("folderNameTemplate", event.target.value, true)}
                     />
                     <button
                       type="button"
@@ -1002,9 +1083,11 @@ export function SettingsDialog({
                     <FluentIcon glyph="\uE70D" />
                   </div>
                 </div>
-                <div className="setting-row" hidden={activeTab !== "hitomi"}>
+                <section className="settings-performance-group" aria-labelledby="settings-performance-title" hidden={activeTab !== "hitomi"}>
+                <h3 id="settings-performance-title">다운로드·처리 속도</h3>
+                <div className="setting-row">
                   <div><strong>동시 이미지 요청</strong><span>안정 기본값 5</span></div>
-                  <input type="number" min="1" max="30" value={draft.concurrentImageRequests} aria-label="동시 이미지 요청" onChange={(event) => patch("concurrentImageRequests", Number(event.target.value))} />
+                  <input type="number" min="1" max="30" value={Number.isNaN(draft.concurrentImageRequests) ? "" : draft.concurrentImageRequests} aria-label="동시 이미지 요청" onChange={(event) => patch("concurrentImageRequests", event.target.valueAsNumber, true)} />
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <SettingCopy
@@ -1020,11 +1103,11 @@ export function SettingsDialog({
                     summary="최대 8개 · 재시작 후 적용"
                     detail="자동 조절 중 다운로드에 허용할 동시 요청 수의 상한입니다. 메모리 사용량을 제한하기 위해 1~8개로 설정할 수 있습니다. 일반 이미지 요청은 기존 동시 이미지 요청 설정을 따릅니다."
                   />
-                  <input type="number" min="1" max="8" step="1" value={draft.downloadAdaptiveMaxRequests} disabled={!draft.downloadAdaptiveConcurrency} aria-label="자동 조절 최대 요청" onChange={(event) => patch("downloadAdaptiveMaxRequests", Number(event.target.value))} />
+                  <input type="number" min="1" max="8" step="1" value={Number.isNaN(draft.downloadAdaptiveMaxRequests) ? "" : draft.downloadAdaptiveMaxRequests} disabled={!draft.downloadAdaptiveConcurrency} aria-label="자동 조절 최대 요청" onChange={(event) => patch("downloadAdaptiveMaxRequests", event.target.valueAsNumber, true)} />
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>요청 시작 간격</strong><span>안정 기본값 25ms</span></div>
-                  <input type="number" min="0" max="5000" value={draft.requestStartIntervalMs} aria-label="요청 시작 간격" onChange={(event) => patch("requestStartIntervalMs", Number(event.target.value))} />
+                  <input type="number" min="0" max="5000" value={Number.isNaN(draft.requestStartIntervalMs) ? "" : draft.requestStartIntervalMs} aria-label="요청 시작 간격" onChange={(event) => patch("requestStartIntervalMs", event.target.valueAsNumber, true)} />
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <SettingCopy
@@ -1034,6 +1117,7 @@ export function SettingsDialog({
                   />
                   <label className="setting-checkbox"><input type="checkbox" role="switch" checked={draft.highPerformanceProcessing ?? false} aria-label="고성능 처리 모드" onChange={(event) => patch("highPerformanceProcessing", event.target.checked)} /></label>
                 </div>
+                </section>
                 <section className="maintenance-panel" aria-labelledby="maintenance-panel-title" hidden={activeTab !== "hitomi"}>
                   <header className="maintenance-panel-header">
                     <strong id="maintenance-panel-title">저장 데이터 관리</strong>
@@ -1072,10 +1156,10 @@ export function SettingsDialog({
                 <DanbooruSettingsPanel
                   filters={danbooruDraft}
                   settings={draft}
-                  onChange={setDanbooruDraft}
+                  onChange={changeDanbooru}
                   onSettingsChange={patch}
                   onReset={() => {
-                    setDanbooruDraft(defaultDanbooruSearchFilters());
+                    changeDanbooru(defaultDanbooruSearchFilters());
                     patch("danbooruPageSize", 60);
                     patch("danbooruPreviewWidth", 190);
                   }}
@@ -1098,7 +1182,7 @@ function DanbooruSettingsPanel({
   filters: DanbooruSearchFilters;
   settings: SettingsSnapshot;
   onChange: (filters: DanbooruSearchFilters) => void;
-  onSettingsChange: <K extends keyof SettingsSnapshot>(key: K, value: SettingsSnapshot[K]) => void;
+  onSettingsChange: <K extends keyof SettingsPatch>(key: K, value: SettingsSnapshot[K]) => void;
   onReset: () => void;
 }) {
   const toggleRating = (rating: DanbooruRating, checked: boolean) => onChange({
@@ -1123,11 +1207,11 @@ function DanbooruSettingsPanel({
         </div>
       </div>
       <div className="setting-row">
-        <div><strong>카드 이미지 품질</strong><span>카드는 최대 850px large/sample poster를 쓰고, MP4·WebM은 상세 화면에서 바로 재생합니다.</span></div>
+        <div><strong>카드 이미지 품질</strong><span>고화질 미리보기 · 영상은 상세보기에서 재생</span></div>
         <span className="settings-fixed-value">고화질 고정</span>
       </div>
       <div className="setting-row">
-        <div><strong>페이지당 post 수</strong><span>현재 열 수에 맞춰 마지막 행이 차도록 100개 이내의 가까운 열 배수로 조정합니다.</span></div>
+        <div><strong>페이지당 post 수</strong><span>마지막 행이 차도록 개수를 조정합니다. 최대 100개.</span></div>
         <div className="range-wrap">
           <input id="settings-danbooru-page-size" aria-label="Danbooru 페이지당 post 수" type="range" min="10" max="100" step="10" value={settings.danbooruPageSize} onChange={(event) => onSettingsChange("danbooruPageSize", Number(event.target.value))} />
           <output htmlFor="settings-danbooru-page-size">{settings.danbooruPageSize}개</output>

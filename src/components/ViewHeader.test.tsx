@@ -4,6 +4,29 @@ import { describe, expect, it, vi } from "vitest";
 import { ViewHeader } from "./ViewHeader";
 
 describe("ViewHeader language filter", () => {
+  it("keeps history removal separate from search and places sorting inside the search box", async () => {
+    const container = document.createElement("div"), root = createRoot(container);
+    document.body.append(container);
+    const onSelectSuggestion = vi.fn(), onCommit = vi.fn(), onRemoveHistory = vi.fn(), onClearHistory = vi.fn();
+    const suggestions = Array.from({ length: 10 }, (_, i) => ({ type: "HISTORY" as const, token: `query ${i}`, label: `query ${i}`, extra: "최근 검색", historyId: i + 1 }));
+    try {
+      await act(async () => root.render(<ViewHeader view="explore" search={{ draft: "", committed: "", languages: [], suggestionsOpen: true, activeSuggestion: null }} suggestions={suggestions}
+        searchEndControl={<select aria-label="검색 정렬"><option>최신순</option></select>}
+        onRemoveHistory={onRemoveHistory} onClearHistory={onClearHistory}
+        activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={onCommit} onSelectSuggestion={onSelectSuggestion} onCompleteSuggestion={vi.fn()} onLanguages={vi.fn()} onTagSuggestionQuery={vi.fn()} onRandomOpen={vi.fn()} randomOpenPending={false} randomOpenAvailable onActivity={vi.fn()} privacyMode={false} onPrivacyModeToggle={vi.fn()} onSettings={vi.fn()} />));
+      expect(container.querySelectorAll('[role="option"]')).toHaveLength(10);
+      expect(container.querySelector(".search-box select")).not.toBeNull();
+      expect(container.querySelector("button button")).toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="query 0 검색 기록 삭제"]')!.click());
+      expect(onRemoveHistory).toHaveBeenCalledExactlyOnceWith(1);
+      expect(onSelectSuggestion).not.toHaveBeenCalled(); expect(onCommit).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(container.querySelector("input"));
+      await act(async () => container.querySelector<HTMLButtonElement>(".search-history-footer button")!.click());
+      expect(onClearHistory).toHaveBeenCalledOnce(); expect(onCommit).not.toHaveBeenCalled();
+      await act(async () => container.querySelector<HTMLButtonElement>('[role="option"]')!.click());
+      expect(onSelectSuggestion).toHaveBeenCalledOnce();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
   it("uses an active state without a numeric badge and preserves the activity count", async () => {
     const container = document.createElement("div");
     document.body.append(container);

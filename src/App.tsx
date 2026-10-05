@@ -22,12 +22,13 @@ function Workspaces() {
   const [danbooruVisited, setDanbooruVisited] = useState(shell.source === "danbooru");
   useEffect(() => { if (shell.source === "danbooru") setDanbooruVisited(true); }, [shell.source]);
   const [communityOpen, setCommunityOpen] = useState(false);
+  useEffect(() => { if (shell.tutorialSource) setCommunityOpen(false); }, [shell.tutorialSource]);
   const [reviewWork, setReviewWork] = useState<WorkKey | null>(null);
   const [navigationRequest, setNavigationRequest] = useState<NavigationRequest | null>(null);
   const selectSource = (source: ContentSource) => { setCommunityOpen(false); setNavigationRequest(null); shell.selectSource(source); };
   const { settings, loading } = shell.settingsStore;
   return (
-    <CommonNavigationContext.Provider value={{ communityOpen, openCommunity: (work) => { setReviewWork(work ?? null); setCommunityOpen(true); } }}>
+    <CommonNavigationContext.Provider value={{ communityOpen, openCommunity: (work) => { if (!work && shell.source === "chzzk") return; if (work && work.source !== shell.source) shell.selectSource(work.source); setReviewWork(work ?? null); setCommunityOpen(true); } }}>
     <HitomiFeature active={shell.source === "hitomi" && !communityOpen} navigationRequest={navigationRequest}>
       {(gallery) => {
         const workspaces = {
@@ -56,15 +57,20 @@ function Workspaces() {
           ),
           chzzk: null,
         } satisfies Record<ContentSource, ReactNode>;
-        return <>{communityOpen ? <CommunityWorkspace
+        return <>{communityOpen && shell.source !== "chzzk" ? <CommunityWorkspace key={shell.source}
           initialReview={reviewWork}
+          privacyMode={shell.privacyMode}
+          privacyModePending={shell.privacyModePending || loading}
+          onPrivacyModeToggle={() => void shell.togglePrivacyMode()}
           source={shell.source} collapsed={shell.railCollapsed} attentionCount={gallery.activityCount}
           onToggleRail={shell.toggleRail} onSourceChange={selectSource}
           onNavigate={(view) => { setNavigationRequest((old) => ({ source: shell.source, view, sequence: (old?.sequence ?? 0) + 1 })); setCommunityOpen(false); }}
           onSettings={() => shell.setSettingsOpen(true)}
+          onOpenPersonalLibrary={shell.source === "hitomi" ? () => { gallery.onOpenPersonalLibrary(); setCommunityOpen(false); } : undefined}
         /> : shell.source === "hitomi" ? gallery.workspace : null}
         {(danbooruVisited || shell.source === "danbooru") ? workspaces.danbooru : null}
         <StreamingWorkspace
+          tutorialActive={shell.tutorialSource === "chzzk"}
           runtime={backend.runtime}
           active={shell.source === "chzzk" && !communityOpen}
           navigationRequest={navigationRequest}
@@ -72,7 +78,6 @@ function Workspaces() {
           onOpenSettings={() => shell.setSettingsOpen(true)}
           onToggleRail={shell.toggleRail}
           onSourceChange={selectSource}
-          privacyMode={shell.privacyMode}
 
         /></>;
       }}

@@ -42,16 +42,20 @@
 .recording-replay-seek::-webkit-slider-thumb { appearance: none; width: 11px; height: 11px; margin-top: -4px; border: 0; border-radius: 50%; background: #00ffa3; opacity: 0; transition: opacity .12s; }
 .recording-replay-seek::-moz-range-thumb { width: 11px; height: 11px; border: 0; border-radius: 50%; background: #00ffa3; }
 .recording-replay-timeline:hover .recording-replay-seek::-webkit-slider-thumb, .recording-replay-seek:focus-visible::-webkit-slider-thumb { opacity: 1; }
-.recording-replay-activity { position: absolute; left: 0; width: 100%; height: 32px; bottom: 10px; overflow: hidden; pointer-events: none; }
+.recording-replay-activity { position: absolute; left: 0; width: 100%; height: 64px; bottom: 10px; box-sizing: border-box; border: 1px solid #ffffff42; border-radius: 3px; background: #101214b8; overflow: hidden; pointer-events: none; }
+.replay-metric-grid { fill: none; stroke: #ffffff26; stroke-width: 1; stroke-dasharray: 3 4; vector-effect: non-scaling-stroke; }
 .replay-chat-curve { fill: #00ffa338; stroke: #63e5bda8; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .replay-viewer-curve { fill: #9da8ed29; stroke: #b5bff5b0; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .replay-viewer-partial { fill: #b5bff5b0; }
-.recording-replay-timeline-tooltip { position: absolute; z-index: 3; bottom: 49px; left: clamp(0px, calc(var(--preview-position) - 120px), calc(100% - 240px)); display: none; box-sizing: border-box; width: 240px; max-width: 100%; padding: 9px 12px; border: 1px solid #ffffff26; border-radius: 5px; background: #141517f5; color: #fff; box-shadow: 0 2px 12px #0007; pointer-events: none; font-size: 12px; line-height: 1.6; }
+.recording-replay-timeline-tooltip { position: absolute; z-index: 3; bottom: 81px; left: clamp(0px, calc(var(--preview-position) - 120px), calc(100% - 240px)); display: none; box-sizing: border-box; width: 240px; max-width: 100%; padding: 9px 12px; border: 1px solid #ffffff26; border-radius: 5px; background: #141517f5; color: #fff; box-shadow: 0 2px 12px #0007; pointer-events: none; font-size: 12px; line-height: 1.6; }
 .recording-replay-timeline:hover .recording-replay-timeline-tooltip, .recording-replay-timeline:focus-within .recording-replay-timeline-tooltip { display: grid; }
 .recording-replay-timeline-tooltip strong { font-variant-numeric: tabular-nums; margin-bottom: 3px; }
 .recording-replay-timeline-tooltip small { color: #aaa; margin-top: 4px; }
 .replay-chat-count { color: #63e5bd; }
 .replay-viewer-count { color: #b5bff5; }
+.recording-replay-legend { position: absolute; right: 0; bottom: 81px; max-width: 100%; box-sizing: border-box; display: flex; flex-wrap: wrap; gap: 4px 14px; padding: 4px 8px; border-radius: 4px; background: #101214d9; font-size: 12px; pointer-events: none; }
+.recording-replay-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.recording-replay-legend span::before { content: ""; width: 13px; border-top: 2px solid currentColor; }
 .recording-replay-control-row { display: flex; align-items: center; gap: 2px; height: 36px; }
 .recording-replay-control-row button { flex: 0 0 36px; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 0; color: #fff; background: transparent; filter: drop-shadow(0 1px 2px #0008); }
 .recording-replay-control-row button:hover:not(:disabled) { background: #ffffff12; color: #fff; }

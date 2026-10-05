@@ -68,7 +68,9 @@ pub enum ChatEvent {
         sender: String,
         text: String,
         server_time: Option<u64>,
-        rich: Option<ChatRich>,
+        // Keep transient status/message events small; the persisted ChatMessage
+        // retains its existing JSON representation and optional metadata.
+        rich: Option<Box<ChatRich>>,
     },
 }
 
@@ -99,6 +101,30 @@ pub struct ChatEmoji {
     pub image_url: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatNoticeKind {
+    Donation,
+    VideoDonation,
+    Mission,
+    Subscription,
+}
+
+/// Only public, displayed event fields. No payment/account IDs or raw extras.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatNotice {
+    pub kind: ChatNoticeKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub months: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mission_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+}
+
 /// Only display metadata received with a message. Never persist the raw profile,
 /// raw profiles or extras (which may include an extraToken). A canonical public
 /// profile link is optional and intentionally identifiable; it is not senderKey.
@@ -111,6 +137,14 @@ pub struct ChatRich {
     pub text_color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_image_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscription_months: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub following_since: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<ChatNotice>,
     #[serde(default)]
     pub badges: Vec<ChatBadge>,
     #[serde(default)]
@@ -132,6 +166,39 @@ impl ChatRich {
                 && color.bytes().skip(1).all(|byte| byte.is_ascii_hexdigit())
         });
         self.profile_url = self.profile_url.and_then(|url| public_profile_url(&url));
+        self.profile_image_url = self
+            .profile_image_url
+            .and_then(|url| super::chat_assets::sanitize_chat_asset_url(&url));
+        self.subscription_months = self.subscription_months.filter(|months| *months <= 1200);
+        self.following_since = self.following_since.and_then(|date| {
+            let day = date.get(..10)?;
+            chrono::NaiveDate::parse_from_str(day, "%Y-%m-%d")
+                .ok()
+                .map(|_| day.to_owned())
+        });
+        if let Some(notice) = &mut self.notice {
+            notice.amount = notice.amount.filter(|amount| *amount <= 1_000_000_000);
+            notice.months = notice.months.filter(|months| *months <= 1200);
+            notice.mission_text = notice
+                .mission_text
+                .take()
+                .map(|text| text.chars().take(512).collect());
+            notice.status = notice.status.take().filter(|status| {
+                matches!(
+                    status.as_str(),
+                    "PENDING"
+                        | "OPEN"
+                        | "ACCEPTED"
+                        | "REJECTED"
+                        | "COMPLETED"
+                        | "SUCCESS"
+                        | "FAILURE"
+                        | "FAILED"
+                        | "CANCELED"
+                        | "EXPIRED"
+                )
+            });
+        }
         let mut seen_badges = std::collections::HashSet::new();
         self.badges = self
             .badges
@@ -160,7 +227,7 @@ impl ChatRich {
                     || !emoji
                         .id
                         .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
                 {
                     return None;
                 }
@@ -172,6 +239,10 @@ impl ChatRich {
         if self.nickname_color.is_none()
             && self.text_color.is_none()
             && self.profile_url.is_none()
+            && self.profile_image_url.is_none()
+            && self.subscription_months.is_none()
+            && self.following_since.is_none()
+            && self.notice.is_none()
             && self.badges.is_empty()
             && self.emojis.is_empty()
         {
@@ -179,6 +250,14 @@ impl ChatRich {
         } else {
             Some(self)
         }
+    }
+
+    pub(crate) fn asset_urls(&self) -> impl Iterator<Item = &String> {
+        self.badges
+            .iter()
+            .map(|badge| &badge.image_url)
+            .chain(self.emojis.iter().map(|emoji| &emoji.image_url))
+            .chain(self.profile_image_url.iter())
     }
 }
 

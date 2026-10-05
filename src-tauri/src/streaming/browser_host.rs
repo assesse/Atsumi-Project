@@ -413,7 +413,7 @@ impl OfficialBrowser {
             s.extension_generation = s.extension_generation.wrapping_add(1);
             s.extension_connecting = false;
             s.loaded_extensions.clear();
-            s.extension = "not_connected".into();
+            s.extension = super::super::browser_compat::STATUS.into();
         }
         let profile = self.inner.data_dir.join("chzzk-browser-profile");
         std::fs::create_dir_all(&profile).map_err(|_| unavailable())?;
@@ -430,7 +430,7 @@ impl OfficialBrowser {
             WebviewUrl::External("about:blank".parse().map_err(|_| unavailable())?),
         )
         .data_directory(profile)
-        .browser_extensions_enabled(true)
+        .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
         .initialization_script(include_str!("browser_chat_enhancements.js"))
         .initialization_script(include_str!("browser_page_chat.js"))
         .initialization_script(include_str!("browser_encoded_capture.js"))
@@ -480,55 +480,20 @@ impl OfficialBrowser {
             true
         })
         .on_new_window(move |url, features| {
-            if chat_popup::is_chat(&url) || clip_popup::is_editor(&url) {
-                let channel = popup_host.inner.view.lock().ok().and_then(|state| {
-                    (!state.viewport.suspend_audio
-                        && (!clip_popup::is_editor(&url) || state.viewport.visible))
-                        .then(|| state.channel.clone())
-                        .flatten()
-                });
-                return match channel {
-                    Some(channel) => {
-                        chat_popup::open(&popup_host, &popup_app, url, features, &channel)
-                    }
-                    None => tauri::webview::NewWindowResponse::Deny,
-                };
-            }
             if let Some(browser) = installation_browser(&url) {
                 popup_host.install_from_page(browser);
                 return tauri::webview::NewWindowResponse::Deny;
             }
-            if !allowed_navigation(&url) {
-                return tauri::webview::NewWindowResponse::Deny;
-            }
-            if popup_host.account_window_open(&popup_app)
-                || popup_host.reserve_account_window().is_err()
-            {
-                return tauri::webview::NewWindowResponse::Deny;
-            }
-            let label = format!("{LOGIN_LABEL}-{}", uuid::Uuid::new_v4().simple());
-            let host = popup_host.clone();
-            let app = popup_app.clone();
-            let result = WebviewWindowBuilder::new(&popup_app, &label, WebviewUrl::External(url))
-                .data_directory(popup_host.inner.data_dir.join("chzzk-browser-profile"))
-                .browser_extensions_enabled(true)
-                .window_features(features)
-                .title("CHZZK 로그인·계정 관리")
-                .inner_size(700.0, 820.0)
-                .on_navigation(allowed_navigation)
-                .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-                .build();
-            popup_host.account_window_created(result.is_ok());
-            match result {
-                Ok(window) => {
-                    window.on_window_event(move |event| {
-                        if matches!(event, tauri::WindowEvent::Destroyed) {
-                            host.account_window_closed(&app, &label);
-                        }
-                    });
-                    tauri::webview::NewWindowResponse::Create { window }
-                }
-                Err(_) => tauri::webview::NewWindowResponse::Deny,
+            // Service popups are not account-management sessions. In particular,
+            // they must stay available while this receiver is recording.
+            let channel = popup_host.inner.view.lock().ok().and_then(|state| {
+                (!state.viewport.suspend_audio && state.viewport.visible)
+                    .then(|| state.channel.clone())
+                    .flatten()
+            });
+            match channel {
+                Some(channel) => chat_popup::open(&popup_host, &popup_app, url, features, &channel),
+                None => tauri::webview::NewWindowResponse::Deny,
             }
         })
         .on_page_load(move |view, payload| {
@@ -578,6 +543,7 @@ impl OfficialBrowser {
             )
             .map_err(|_| unavailable())?;
         view.hide().map_err(|_| unavailable())?;
+        super::super::browser_compat::configure(&view)?;
         if super::super::browser_video_ads::install(&view).is_err() {
             tracing::warn!("CHZZK video ad filter unavailable; requests remain unchanged");
         }
@@ -610,6 +576,12 @@ impl OfficialBrowser {
     /// The production command and isolated probe share this explicit opt-in.
     /// Success schedules loading; snapshot reports its asynchronous outcome.
     pub fn connect_extension(&self, app: &AppHandle) -> Result<(), StreamError> {
+        if super::super::browser_compat::GRID_FREE_PLAYBACK {
+            return Err(error(
+                "BROWSER_GRID_NOT_REQUIRED",
+                "그리드 없는 재생 모드에서는 확장 프로그램 연결이 필요하지 않습니다.",
+            ));
+        }
         self.begin_extension_connection(app, true)
     }
 
@@ -1060,7 +1032,7 @@ impl OfficialBrowser {
             .title("CHZZK 로그인·계정 관리")
             .inner_size(700.0, 820.0)
             .data_directory(profile)
-            .browser_extensions_enabled(true)
+            .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
             .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
             .on_navigation(move |url| {
                 if url.host_str() == Some("chzzk.naver.com") && allowed_navigation(url) {
@@ -1159,7 +1131,7 @@ impl OfficialBrowser {
                 WebviewUrl::External("about:blank".parse().unwrap()),
             )
             .data_directory(profile)
-            .browser_extensions_enabled(true)
+            .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
             .visible(false)
             .focused(false)
             .skip_taskbar(true)
@@ -2535,7 +2507,7 @@ mod tests {
         assert_eq!(host.inner.viewport_revision.load(Ordering::Acquire), 6);
     }
     #[test]
-    fn fresh_host_restores_only_the_explicit_reconnect_choice() {
+    fn fresh_host_ignores_legacy_grid_choice_without_deleting_it() {
         let root = tempfile::tempdir().unwrap();
         let fresh = OfficialBrowser::new(root.path().to_owned()).unwrap();
         let initial = fresh.inner.view.lock().unwrap();
@@ -2545,10 +2517,11 @@ mod tests {
         super::super::super::browser_extension::remember_connection(root.path()).unwrap();
         let reopened = OfficialBrowser::new(root.path().to_owned()).unwrap();
         let state = reopened.inner.view.lock().unwrap();
-        assert!(state.extension_reconnect_enabled);
+        assert!(!state.extension_reconnect_enabled);
         assert!(state.loaded_extensions.is_empty());
         assert!(!state.extension_connecting);
-        assert_eq!(state.extension, "not_connected");
+        assert_eq!(state.extension, super::super::super::browser_compat::STATUS);
+        assert!(super::super::super::browser_extension::reconnect_choice(root.path()).unwrap());
     }
     #[test]
     fn viewport_preserves_negative_origin_but_rejects_invalid_clip() {

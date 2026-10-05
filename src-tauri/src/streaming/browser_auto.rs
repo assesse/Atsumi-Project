@@ -371,6 +371,12 @@ impl AutoRecorder {
         message: Option<String>,
     ) {
         let mut core = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        if core.progress.get(id).is_none_or(|previous| {
+            previous.status != status || previous.recording_id != recording_id
+        }) {
+            let _diagnostic = crate::diagnostics::operation("auto_recording", Some(id)).entered();
+            tracing::info!(diag_stage = status);
+        }
         // Preparation/retries are not a successful start. Only an accepted
         // recording (including an existing receiver) retires the old failure.
         if status == "recording" && recording_id.as_ref().is_some_and(|id| !id.is_empty()) {
@@ -447,6 +453,11 @@ impl AutoRecorder {
 }
 
 fn preparation_problem(diagnostics: Option<&Value>) -> &'static str {
+    match diagnostics.and_then(|value| value["autoPreparation"].as_str()) {
+        Some("standard_quality_selected") => return "그리드 없이 일반 화질을 선택했지만 영상 수신이 시작되지 않았습니다. 공식 플레이어의 로그인·재생 안내를 확인해 주세요.",
+        Some("standard_quality_failed" | "standard_quality_ambiguous") => return "공식 플레이어의 일반 화질 선택을 완료하지 못했습니다. 라이브에서 안내를 한 번 확인해 주세요.",
+        _ => {}
+    }
     match diagnostics.and_then(|value| value["reason"].as_str()) {
         Some("waiting_video") => "재생 가능한 영상을 받지 못해 저장을 시작하지 못했습니다. 라이브에서 재생·로그인·연결 안내를 확인해 주세요.",
         Some("encrypted") => "보호된 영상이므로 원본 녹화를 시작하지 않았습니다.",
@@ -609,6 +620,13 @@ impl OfficialBrowser {
                 let automatic = host.label().starts_with("chzzk-auto-");
                 if automatic {
                     self.claim_auto_receiver(host.label());
+                    if let Some(view) = app.get_webview(host.label()) {
+                        // A previously opened live receiver may still be waiting
+                        // for the official standard-quality choice. It may only
+                        // act after returning to the background, never on top of
+                        // the user's active player controls.
+                        let _ = view.eval("window.__atsumiAutoReceiver?.prepareRecording();");
+                    }
                 }
                 return Ok((host, automatic, !active));
             }
@@ -627,6 +645,9 @@ impl OfficialBrowser {
     }
     #[cfg(windows)]
     pub(super) fn restore_auto_extensions(&self, view: &Webview) -> Result<(), StreamError> {
+        if super::super::browser_compat::GRID_FREE_PLAYBACK {
+            return Ok(());
+        }
         let root = self.capture_context(Some(WINDOW_LABEL))?;
         {
             let _gate = self.inner.contexts.gate.lock().map_err(|_| unavailable())?;
@@ -673,10 +694,21 @@ impl OfficialBrowser {
         result?;
         // A timeout does not release the profile reservation; the actual COM
         // callback does. Late profile mutations cannot race a login/recording.
-        receive
+        match receive
             .recv_timeout(Duration::from_secs(20))
-            .map_err(|_| unavailable())??;
-        Ok(())
+            .map_err(|_| unavailable())?
+        {
+            Ok(_) => Ok(()),
+            Err(cause) if can_continue_without_extension(&cause) => {
+                // An opt-in saved on another PC must not make an absent optional
+                // extension a prerequisite for opening the official player.
+                root.inner.view.lock().map_err(|_| unavailable())?.extension =
+                    "네이버 확장 없음 · 공식 일반 화질로 녹화를 시도합니다.".into();
+                tracing::info!(diag_stage = "auto_extension_missing", error_code = %cause.code);
+                Ok(())
+            }
+            Err(cause) => Err(cause),
+        }
     }
     fn run_auto_recording(&self, app: &AppHandle) {
         let auto = &self.inner.auto_record;
@@ -1061,6 +1093,12 @@ impl OfficialBrowser {
     }
 }
 
+fn can_continue_without_extension(cause: &StreamError) -> bool {
+    // Never continue a still-pending profile mutation, an invalid extension, or
+    // an identity/load error. Only a completed, unambiguous "not installed".
+    cause.code == "BROWSER_EXTENSION_NOT_FOUND"
+}
+
 /// A short recording may finish between scheduler ticks. Its accepted start
 /// token is durable in ViewState until a new start; do not call it a failed start.
 fn accepted_session_recording(state: &ViewState, request_id: Option<&str>) -> Option<String> {
@@ -1187,6 +1225,32 @@ mod tests {
         assert_eq!(start_retry_delay(u8::MAX, 30_000), 1_800_000);
     }
     const CHANNEL: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn optional_missing_extension_does_not_block_player_but_profile_faults_still_do() {
+        assert!(can_continue_without_extension(&error(
+            "BROWSER_EXTENSION_NOT_FOUND",
+            "missing"
+        )));
+        for code in [
+            "BROWSER_EXTENSION_INVALID",
+            "BROWSER_EXTENSION_LOAD_FAILED",
+            "BROWSER_EXTENSION_IDENTITY_FAILED",
+            "BROWSER_UNAVAILABLE",
+        ] {
+            assert!(!can_continue_without_extension(&error(code, "failed")));
+        }
+    }
+    #[test]
+    fn preparation_failure_distinguishes_standard_quality_from_missing_source() {
+        let selected =
+            json!({"reason":"waiting_video", "autoPreparation":"standard_quality_selected"});
+        assert!(preparation_problem(Some(&selected)).contains("일반 화질을 선택했지만"));
+        let ambiguous =
+            json!({"reason":"waiting_video", "autoPreparation":"standard_quality_ambiguous"});
+        assert!(preparation_problem(Some(&ambiguous)).contains("선택을 완료하지 못했습니다"));
+        let source = json!({"reason":"source_not_observed", "autoPreparation":"video_ready"});
+        assert!(preparation_problem(Some(&source)).contains("수신 경로"));
+    }
     fn live(id: &str, status: LiveStatus) -> LiveInfo {
         LiveInfo {
             channel_id: CHANNEL.into(),

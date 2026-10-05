@@ -38,12 +38,15 @@
 .streaming-workspace .recording-library-detail .official-browser-playback > button:not(.official-browser-primary) { margin: 0 4px 8px 0; }
 .streaming-workspace .recording-library-detail .official-browser-playback > .official-browser-muted { font-size: 11px; }
 .recording-library-detail .official-browser-originals { padding-top: 12px; margin-top: 16px; border-top: 1px solid var(--line); }
-.recording-library-folder { margin-top: 14px; }
+.recording-playback-problems { margin: 12px 0; font-size: 12px; color: var(--text-soft); overflow-wrap: anywhere; }
+.recording-playback-problems summary { cursor: pointer; color: var(--warning); }
+.recording-library-heading-actions > button[aria-busy] { min-width: 130px; }
 .recording-library-empty { padding: 42px 18px; text-align: center; color: var(--text-soft); border: 1px dashed var(--line); border-radius: 12px; }
 .recording-library-empty strong { font-size: 14px; }
 .recording-library-empty p { font-size: 12px; color: var(--muted); line-height: 1.7; }
 .recording-library-more { display: block; margin: 18px auto 0; }
 .recording-library-heading-actions, .recording-library-selection { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.recording-library-heading-actions > button[aria-pressed] { min-width: 88px; }
 .recording-library-selection { padding: 10px 12px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 12px; }
 .recording-library-selection > span { color: var(--text-soft); font-variant-numeric: tabular-nums; }
 .recording-library-selection > .recording-library-delete { margin-left: auto; }

@@ -129,6 +129,7 @@ export type Unsubscribe = () => void;
 export interface BackendClient {
   readonly runtime: "tauri" | "browser-mock";
   settingsGet(): Promise<ApiResult<SettingsSnapshot>>;
+  downloadRootChoose(): Promise<ApiResult<string | null>>;
   settingsUpdate(patch: SettingsPatch, expectedRevision: number): Promise<ApiResult<SettingsSnapshot>>;
   storageUsageGet(): Promise<ApiResult<StorageUsageSnapshot>>;
   danbooruSearch(request: DanbooruSearchRequest): Promise<ApiResult<DanbooruSearchPage>>;
@@ -154,6 +155,8 @@ export interface BackendClient {
   favoritesList(): Promise<ApiResult<FavoriteRecord[]>>;
   favoriteSet(key: FavoriteKey, enabled: boolean): Promise<ApiResult<FavoriteMutationResult>>;
   searchHistoryList(limit: number): Promise<ApiResult<SearchHistoryEntry[]>>;
+  searchHistoryRemove(historyId: number): Promise<ApiResult<number>>;
+  searchHistoryClear(): Promise<ApiResult<number>>;
   autoFindSnapshot(): Promise<ApiResult<AutoFindSnapshot>>;
   autoFindRefresh(): Promise<ApiResult<AutoFindRun>>;
   autoFindCancel(): Promise<ApiResult<AutoFindRun>>;
@@ -983,6 +986,10 @@ class BrowserMockBackend implements BackendClient {
     return ok({ ...this.settings });
   }
 
+  async downloadRootChoose(): Promise<ApiResult<string | null>> {
+    return validationError("downloadRoot", "폴더 선택은 데스크톱 앱에서 사용할 수 있습니다.");
+  }
+
   async settingsUpdate(patch: SettingsPatch, expectedRevision: number): Promise<ApiResult<SettingsSnapshot>> {
     if (expectedRevision !== this.settings.revision) return conflict("설정");
     const next = { ...this.settings, ...patch };
@@ -1390,6 +1397,24 @@ class BrowserMockBackend implements BackendClient {
       .sort((left, right) => right.lastUsedAt.localeCompare(left.lastUsedAt) || right.historyId - left.historyId)
       .slice(0, limit)
       .map(cloneSearchHistory));
+  }
+
+  async searchHistoryRemove(historyId: number): Promise<ApiResult<number>> {
+    if (!Number.isSafeInteger(historyId) || historyId <= 0) return validationError("historyId", "must be positive");
+    const selected = [...this.searchHistory.values()].find((entry) => entry.historyId === historyId);
+    if (!selected) return ok(0);
+    const key = (entry: SearchHistoryEntry) => JSON.stringify([entry.text, entry.includeTags, entry.excludeTags, entry.languages, entry.sort]);
+    let removed = 0;
+    for (const [fingerprint, entry] of this.searchHistory) {
+      if (key(entry) === key(selected)) { this.searchHistory.delete(fingerprint); removed++; }
+    }
+    return ok(removed);
+  }
+
+  async searchHistoryClear(): Promise<ApiResult<number>> {
+    const removed = this.searchHistory.size;
+    this.searchHistory.clear();
+    return ok(removed);
   }
 
   async autoFindSnapshot(): Promise<ApiResult<AutoFindSnapshot>> {
@@ -3403,6 +3428,10 @@ class TauriBackend implements BackendClient {
     return invoke("settings_get");
   }
 
+  downloadRootChoose(): Promise<ApiResult<string | null>> {
+    return invoke("download_root_choose");
+  }
+
   settingsUpdate(patch: SettingsPatch, expectedRevision: number): Promise<ApiResult<SettingsSnapshot>> {
     return invoke("settings_update", { patch, expectedRevision });
   }
@@ -3484,6 +3513,14 @@ class TauriBackend implements BackendClient {
 
   searchHistoryList(limit: number): Promise<ApiResult<SearchHistoryEntry[]>> {
     return invoke("search_history_list", { limit });
+  }
+
+  searchHistoryRemove(historyId: number): Promise<ApiResult<number>> {
+    return invoke("search_history_remove", { historyId });
+  }
+
+  searchHistoryClear(): Promise<ApiResult<number>> {
+    return invoke("search_history_clear");
   }
 
   autoFindSnapshot(): Promise<ApiResult<AutoFindSnapshot>> {

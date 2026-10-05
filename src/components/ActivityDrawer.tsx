@@ -293,6 +293,7 @@ export function ActivityDrawer({
         </section>
       )}
       {activeSection === "session" ? <div id="activity-session-panel" role="tabpanel" className="activity-list">
+        <p className="activity-history-note">이번 앱 실행에서 관찰한 작업입니다. 대기·실행뿐 아니라 완료·중단도 포함합니다.</p>
         {allSessionActivities.length > RECENT_ACTIVITY_LIMIT ? (
           <p className="activity-history-note" title="이전 작업은 다운로드 큐 또는 앨범 상세에서 확인·취소할 수 있습니다.">최근 {RECENT_ACTIVITY_LIMIT}개만 표시합니다.</p>
         ) : null}

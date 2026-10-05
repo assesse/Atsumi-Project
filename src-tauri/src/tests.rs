@@ -2127,6 +2127,67 @@ fn exploration_reset_is_explicit_atomic_and_preserves_download_records() {
 }
 
 #[test]
+fn search_history_remove_and_clear_preserve_other_searches_and_favorites() {
+    let repository = Arc::new(SqliteRepository::open_in_memory().unwrap());
+    let service =
+        ApplicationService::new(repository.clone()).with_automation_repository(repository.clone());
+    service
+        .favorite_set(
+            FavoriteKey {
+                namespace: FavoriteNamespace::Artist,
+                value: "history fixture".into(),
+            },
+            true,
+        )
+        .unwrap();
+    let request = SearchRequest {
+        text: "history fixture".into(),
+        include_tags: vec![],
+        exclude_tags: vec![],
+        languages: vec![Language::Korean],
+        sort: SearchSort::Recent,
+        page_size: 50,
+    };
+    let selected = repository.search_history_record(&request).unwrap();
+    repository
+        .search_history_record(&SearchRequest {
+            page_size: 100,
+            ..request.clone()
+        })
+        .unwrap();
+    let other = repository
+        .search_history_record(&SearchRequest {
+            languages: vec![Language::Japanese],
+            ..request.clone()
+        })
+        .unwrap();
+    assert!(service.search_history_remove(0).is_err());
+    assert_eq!(
+        service.search_history_remove(selected.history_id).unwrap(),
+        2
+    );
+    assert_eq!(
+        service.search_history_remove(selected.history_id).unwrap(),
+        0
+    );
+    assert_eq!(
+        service
+            .search_history_list(100)
+            .unwrap()
+            .iter()
+            .map(|row| row.history_id)
+            .collect::<Vec<_>>(),
+        vec![other.history_id]
+    );
+    assert_eq!(service.search_history_clear().unwrap(), 1);
+    assert!(service.search_history_list(100).unwrap().is_empty());
+    assert_eq!(service.favorites_list().unwrap().len(), 1);
+    // An intentional new submission can record the same query again.
+    repository.search_history_record(&request).unwrap();
+    assert_eq!(service.search_history_list(100).unwrap().len(), 1);
+}
+
+#[test]
 fn explicit_exploration_exclusions_are_listed_and_can_be_restored() {
     let repository = Arc::new(SqliteRepository::open_in_memory().expect("create repository"));
     let service =

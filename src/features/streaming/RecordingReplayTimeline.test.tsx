@@ -60,6 +60,9 @@ describe("replay activity overlay", () => {
       expect(element.querySelector('button')).toBeNull();
       expect(element).toHaveTextContent("채팅 참여자 7명"); expect(element).toHaveTextContent("시청자 기록 없음");
       expect(element.querySelectorAll('.replay-chat-curve')).toHaveLength(1);
+      expect(element.querySelector('[aria-label="그래프 범례"]')).toHaveTextContent('시청자 0–9명');
+      expect(element.querySelector('[aria-label="그래프 범례"]')).toHaveTextContent('채팅 참여자 0–9명');
+      expect(element.querySelector('.replay-metric-grid')).toHaveAttribute('d', 'M0,4 L1000,4 M0,11 L1000,11 M0,18 L1000,18 M0,25 L1000,25');
       await act(async () => root.render(<RecordingReplayTimeline timeline={timeline([null, null])} time={0} duration={4} onSeek={vi.fn()} />));
       expect(element.querySelector('svg')).toHaveAttribute('data-chat-metric', 'messages');
       expect(element).toHaveTextContent('곡선: 채팅 수');

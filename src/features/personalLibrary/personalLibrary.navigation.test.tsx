@@ -7,6 +7,7 @@ import type { GalleryDetail } from "../../api/contracts";
 import { galleryId } from "../../core/types";
 import { ThumbnailClient, ThumbnailProvider } from "../../thumbnail";
 import { createBrowserLibraryApi } from "./api";
+import { communityApi } from "../community/api";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 describe("personal library app navigation", () => {
@@ -25,6 +26,7 @@ describe("personal library app navigation", () => {
     const search = vi.spyOn(backend, "searchSubmit").mockResolvedValue({ ok: true, data: { queryId: "personal-retain", firstPage: { page: 1, totalPages: 1, items: [gallery] } } });
     vi.spyOn(backend, "galleryDetailGet").mockResolvedValue({ ok: true, data: gallery });
     const favorite = vi.spyOn(backend, "favoriteSet"), download = vi.spyOn(backend, "downloadQueueAdd");
+    vi.spyOn(communityApi, "feed").mockResolvedValue({ items: [], nextCursor: null });
     const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "offline fixture" }) });
     const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
     const click = async (selector: string) => act(async () => { const node = host.querySelector<HTMLButtonElement>(selector); expect(node).not.toBeNull(); node!.click(); await settle(); });
@@ -40,6 +42,9 @@ describe("personal library app navigation", () => {
       await click('[aria-label="페이지 미리보기 닫기"]');
       await click('[aria-label="내 즐겨찾기"]');
       expect(host.querySelector('[aria-label="내 즐겨찾기"][aria-current="page"]')).toBeInTheDocument();
+      // Navigation minimizes Floating Detail; let its next-frame focus restore
+      // finish before simulating the next user keyboard action.
+      await act(async () => { await settle(); });
       await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "f", ctrlKey: true, bubbles: true, cancelable: true })); });
       expect(document.activeElement).toBe(host.querySelector("#personal-library-search input"));
       expect(host.querySelectorAll("#gallery-search-form")).toHaveLength(1);
@@ -52,6 +57,7 @@ describe("personal library app navigation", () => {
       expect(viewport.scrollTop).toBe(150);
       expect(host.querySelector('.personal-library-controls button[aria-pressed="true"]')).toHaveTextContent("페이지 1");
       await act(async () => { host.querySelector(".saved-card-preview")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })); await settle(); });
+      await act(async () => { [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent === "앨범 상세 열기")!.click(); await settle(); });
       expect(host.querySelector(".detail-workspace")).toBeInTheDocument();
       expect(host.querySelector(".page-preview-dialog[open]")).toBeNull();
       expect(viewport.scrollTop).toBe(150);
@@ -60,6 +66,14 @@ describe("personal library app navigation", () => {
       await click('[aria-label="페이지 미리보기 닫기"]');
       await click('[aria-label="Explore"]');
       expect(host.querySelector('[data-gallery-id="9123457"]')).toHaveTextContent("다시 찾는 장면");
+      expect(search).toHaveBeenCalledTimes(initialSearches);
+      await click('[aria-label="커뮤니티"]');
+      expect(host.querySelector('.community-shell [aria-label="내 즐겨찾기"]')).not.toBeNull();
+      await click('.community-shell [aria-label="내 즐겨찾기"]');
+      expect(host.querySelector('.community-shell')).toBeNull();
+      expect(host.querySelector('[aria-label="내 즐겨찾기"]')).toHaveAttribute("aria-current", "page");
+      expect(host.querySelectorAll('.saved-card')).toHaveLength(1);
+      await click('[aria-label="Explore"]');
       expect(search).toHaveBeenCalledTimes(initialSearches);
       expect(favorite).not.toHaveBeenCalled(); expect(download).not.toHaveBeenCalled();
       expect((await createBrowserLibraryApi(localStorage)({ action: "summary" })).summary.keys.map((key) => key.page).sort()).toEqual([0, 2]);

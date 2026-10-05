@@ -8,7 +8,7 @@ const work: WorkKey = { source: "hitomi", workId: "1234567" };
 const writer: Writer = { profile: { id: "private-writer", nickname: "이용자-1234" }, mine: null };
 const review: Review = { ...work, id: "r1", nickname: "다른 독자", rating: 4, recommended: false, comment: "마지막 장면이 좋았어요.", createdAt: "2026-09-17T00:00:00Z", updatedAt: "2026-09-17T00:00:00Z" };
 const mockApi = () => ({ feed: vi.fn(), work: vi.fn().mockResolvedValue({ items: [review], nextCursor: null, summary: { ...work, reviewCount: 1, averageRating: 4, recommendationCount: 0 } }),
-  beginWriting: vi.fn().mockResolvedValue(writer), save: vi.fn().mockResolvedValue(undefined), delete: vi.fn(), report: vi.fn() });
+  beginWriting: vi.fn().mockResolvedValue(writer), myReviews: vi.fn(), save: vi.fn().mockResolvedValue(undefined), delete: vi.fn(), report: vi.fn() });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const panel = () => document.querySelector<HTMLElement>('[aria-label="앨범 코멘트"]')!;
 const trigger = (host: HTMLElement) => host.querySelector<HTMLButtonElement>('[aria-label="코멘트 남기기"]')!;
@@ -30,6 +30,21 @@ beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("in-place album comments", () => {
+  it("counts Unicode characters consistently and blocks comments over 100 characters", async () => {
+    const api = mockApi(); const ui = await mount(api);
+    try {
+      await click(trigger(ui.host));
+      await click(panel().querySelector<HTMLButtonElement>('[aria-label="4점"]')!);
+      await input("😀".repeat(101));
+      expect(panel()).toHaveTextContent("101/100");
+      expect(panel().querySelector('[type="submit"]')).toBeDisabled();
+      await submit(); expect(api.save).not.toHaveBeenCalled();
+      await input("😀".repeat(100));
+      expect(panel()).toHaveTextContent("100/100");
+      expect(panel().querySelector('[type="submit"]')).toBeEnabled();
+      await submit(); expect(api.save).toHaveBeenCalledWith(expect.objectContaining({ comment: "😀".repeat(100) }));
+    } finally { await ui.close(); }
+  });
   it("shows the requested tooltip, reads only after opening, and never issues a key just to read", async () => {
     const api = mockApi(); api.work.mockResolvedValue({ items: Array.from({ length: 5 }, (_, i) => ({ ...review, id: `r${i}` })), nextCursor: null });
     const ui = await mount(api);

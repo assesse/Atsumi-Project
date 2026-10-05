@@ -8,7 +8,13 @@
   if (!route() || window.top !== window || window.__atsumiQuality) return;
   const PREFERRED = 1080;
   // The official LIVE initializer reads this exact preference before playback.
-  try { window.localStorage.setItem("live-player-video-track", JSON.stringify({ label: "1080p", width: 1920, height: 1080 })); } catch { /* Storage denial must not prevent viewing. */ }
+  // All playback receivers use the same grid-free identity before navigation.
+  // This is only a preference: the official player's availability filter and
+  // cancellable quality event below still decide which tracks can be used.
+  {
+    try { window.localStorage.setItem("live-player-video-track", JSON.stringify({ label: "1080p", width: 1920, height: 1080 })); } catch { /* Storage denial must not prevent viewing. */ }
+  }
+  let standardQuality = false;
   let binding = null, pending = null, alive = true, preparing = null;
   let last = { status: "waiting", height: null }, lastAttempt = 0;
   const failed = new Map();
@@ -67,6 +73,10 @@
   const settled = (b, track) => b.video.readyState >= 2 && height({ width: b.video.videoWidth, height: b.video.videoHeight }) === height(track);
   const tick = () => {
     if (!alive || !route() || recording()) return;
+    if (standardQuality) {
+      last = { status: "native", height: video()?.videoHeight || null };
+      return;
+    }
     const b = find(video());
     if (!b) { last = { status: "native", height: null }; return; }
     if (pending) {
@@ -112,6 +122,12 @@
     return preparing;
   };
   Object.defineProperty(window, "__atsumiQuality", { value: Object.freeze({ prepare,
+    useStandardQuality: () => {
+      if (recording()) return;
+      // Do not reopen the grid prompt by trying 1080p after its official
+      // standard-quality button was selected. No track/entitlement is forced.
+      standardQuality = true; pending = null; last = { status: "native", height: null };
+    },
     canStart: () => !pending && last.status !== "selecting", getStatus: () => ({ ...last }) }) });
   const timer = setInterval(tick, 1000);
   window.addEventListener("pagehide", () => { alive = false; clearInterval(timer); pending = null; binding = null; });

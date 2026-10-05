@@ -109,7 +109,7 @@ pub(super) fn probe_profile(host: &OfficialBrowser, app: &AppHandle, generation:
         )
         .title("CHZZK 계정 상태 확인")
         .data_directory(profile)
-        .browser_extensions_enabled(true)
+        .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
         .visible(false)
         .focused(false)
         .skip_taskbar(true)

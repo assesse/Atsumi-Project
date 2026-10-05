@@ -338,6 +338,8 @@ select:focus-visible {
 }
 
 .search-box input {
+  min-width: 0;
+  flex: 1;
   width: 100%;
   height: 100%;
   padding: 0 16px 0 13px;
@@ -353,9 +355,11 @@ select:focus-visible {
   right: 0;
   left: 0;
   z-index: 50;
-  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+  max-height: min(520px, calc(100vh - 140px));
   padding: 6px;
-  overflow: auto;
+  overflow: hidden;
   background: #fff;
   border: 1px solid var(--line);
   border-radius: 7px;
@@ -998,6 +1002,23 @@ h2 {
   scrollbar-color: #93a9aa transparent;
   scrollbar-width: thin;
 }
+
+.suggestions > [role="listbox"] { overflow-y: auto; min-height: 0; }
+.suggestion-row { display: flex; align-items: center; }
+.suggestion-row .suggestion { flex: 1; min-width: 0; grid-template-columns: 60px minmax(0, 1fr); column-gap: 5px; }
+.suggestion-row .suggestion small { grid-column: 2; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.suggestion-remove { display: grid; place-items: center; flex: 0 0 30px; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer; }
+.suggestion-remove:hover, .suggestion-remove:focus-visible { color: var(--text); background: var(--surface-hover); }
+.search-history-footer { display: flex; justify-content: flex-end; flex-shrink: 0; padding: 6px 4px 0; border-top: 1px solid var(--line); }
+.search-history-footer button { padding: 6px 8px; border: 0; border-radius: 4px; color: var(--muted); background: transparent; font: inherit; font-size: 12px; cursor: pointer; }
+.search-history-footer button:hover, .search-history-footer button:focus-visible { color: var(--text); background: var(--surface-hover); }
+.search-history-footer button:disabled, .suggestion-remove:disabled { opacity: .5; cursor: wait; }
+.search-sort-control { position: relative; flex: 0 0 auto; height: 32px; margin-right: 8px; border-left: 1px solid var(--line); }
+.search-sort-control select { appearance: none; width: 116px; height: 100%; padding: 0 24px 0 12px; border: 0; border-radius: 4px; background: transparent; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.search-sort-control select:hover { background: var(--surface-hover); }
+.search-sort-control select:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+.search-sort-control select option { background: var(--surface); color: var(--text); }
+.search-sort-control > .fluent { position: absolute; top: 50%; right: 7px; transform: translateY(-50%); pointer-events: none; color: var(--muted); font-size: 10px; }
 
 .gallery-scroll-position-hint {
   position: fixed;
@@ -4734,6 +4755,11 @@ dialog::backdrop {
   min-width: 0;
 }
 
+.download-folder-setting .setting-path-field { flex: 1; min-width: 0; max-width: 520px; }
+.download-folder-setting .setting-path-control { display: flex; align-items: center; gap: 8px; }
+.download-folder-setting .setting-path-control input { min-width: 0; width: 100%; flex: 1; }
+.download-folder-setting .setting-path-control button { flex: 0 0 auto; width: auto; min-width: 96px; white-space: nowrap; }
+
 .settings-select-control select {
   width: 100%;
   height: 42px;
@@ -7734,13 +7760,13 @@ dialog::backdrop {
   border: 1px solid #2f4953;
   border-radius: 9px;
   box-shadow: 0 7px 20px rgba(0, 0, 0, 0.16);
-  transition: border-color 150ms ease, transform 150ms ease, box-shadow 150ms ease;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
 }
 
 .danbooru-card:hover {
   border-color: #4d7c87;
   box-shadow: 0 11px 26px rgba(0, 0, 0, 0.28);
-  transform: translateY(-2px);
+  transform: none;
 }
 
 .danbooru-card-preview {

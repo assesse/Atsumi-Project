@@ -25,7 +25,7 @@ describe("live channel selector", () => {
     await view.render();
     await act(async () => vi.advanceTimersByTimeAsync(250));
     expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2);
-    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("내 채널 준비 중");
+    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("저장한 채널 준비 중");
     expect(container.querySelector('[role="alert"]')).toBeNull();
     view.auto.snapshot.mockResolvedValue(ok({ channels: [recording], captureChat: true, error: null }));
     await act(async () => vi.advanceTimersByTimeAsync(3000));
@@ -43,12 +43,23 @@ describe("live channel selector", () => {
     expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2); expect(container).toHaveTextContent("녹화 중");
     expect(view.auto.update).not.toHaveBeenCalled();
   });
+  it("does not reshuffle a reservation when its favorite switch changes", async () => {
+    const view = setup();
+    view.auto.snapshot.mockResolvedValue(ok({ channels: [{ ...recording, status: "waiting" }], captureChat: true, error: null }));
+    await view.render();
+    const names = () => [...container.querySelectorAll('.live-channel-choice')].map(button => button.getAttribute('aria-label'));
+    const before = names();
+    await click("예약 방송 즐겨찾기 해제");
+    expect(names()).toEqual(before);
+    expect(container.querySelector('[aria-label="예약 방송 즐겨찾기 추가"]')).toHaveAttribute('aria-pressed', 'false');
+  });
+
   it("treats a favorite action during initialization as preparation, not a red error", async () => {
     const view = setup(); await view.render();
     view.api.set.mockResolvedValueOnce({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "준비 중", retryable: true } });
     await click("예약 방송 즐겨찾기 해제");
     await act(async () => vi.advanceTimersByTimeAsync(250));
-    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("내 채널 준비 중");
+    expect(container.querySelector(".recording-notice.is-loading")).toHaveTextContent("저장한 채널 준비 중");
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2);
   });

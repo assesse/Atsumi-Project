@@ -297,6 +297,7 @@ fn run_refresh(
     incremental_checkpoints: Vec<AutoFindIncrementalCheckpoint>,
     cancellation: CancellationToken,
 ) {
+    let _diagnostic = crate::diagnostics::operation("auto_find_refresh", Some(&run_id)).entered();
     let result = (|| -> Result<(), RepositoryError> {
         let cutoffs = cutoff_evidence
             .into_iter()
@@ -507,6 +508,11 @@ fn run_refresh(
         Ok(())
     })();
 
+    tracing::info!(
+        diag_stage = "finished",
+        success = result.is_ok(),
+        cancelled = cancellation.is_cancelled()
+    );
     if cancellation.is_cancelled() {
         if let Ok(true) = inner.repository.auto_find_is_running(&run_id) {
             if let Ok(Some(run)) = inner.repository.auto_find_finish(

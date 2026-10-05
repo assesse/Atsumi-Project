@@ -429,7 +429,19 @@ impl HttpTransport for ReqwestTransport {
         let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
         let started = Instant::now();
         for attempt in 0..=self.retry.max_retries {
+            let attempt_started = Instant::now();
             let result = self.execute_once(&request, &url, &host);
+            let (success, status, bytes) = match &result {
+                Ok(payload) => (true, Some(payload.status), payload.bytes.len()),
+                Err(error) => (false, error.http_status, 0),
+            };
+            crate::diagnostics::http_result(
+                crate::diagnostics::Provider::Hitomi,
+                success,
+                status.unwrap_or(0),
+                attempt_started.elapsed(),
+                bytes,
+            );
             match result {
                 Ok(payload) => {
                     tracing::debug!(
@@ -565,6 +577,7 @@ fn diagnostic_content_type(content_type: &str) -> Option<String> {
 }
 
 fn map_reqwest_error(error: reqwest::Error) -> SourceContractError {
+    crate::diagnostics::http_error(&error);
     if error.is_redirect() {
         return SourceContractError::protocol("source redirect policy rejected the response");
     }

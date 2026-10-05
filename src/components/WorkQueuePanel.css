@@ -1,7 +1,7 @@
 .work-queue-panel { display:flex; flex:1; flex-direction:column; gap:8px; min-height:0; padding:8px; }
 .activity-panel-content:has(> .work-queue-panel) { display:flex; flex:1; overflow:hidden; }
 .queue-summary { flex:none; margin:0; padding:6px 0; }
-.queue-progress-track { display:flex; height:5px; overflow:hidden; border-radius:0; background:var(--line); }
+.queue-progress-track { display:flex; height:10px; overflow:hidden; border-radius:0; background:var(--line); }
 .queue-progress-track>span { position:relative; height:100%; min-width:2px; overflow:hidden; }
 .queue-progress-track>.tone-complete { background:var(--success); }
 .queue-progress-track>.tone-waiting { background:#89949d; }
@@ -32,5 +32,5 @@
 .queue-actions button:not(:disabled):hover { border-color:var(--primary); background:var(--surface-hover); }
 .work-queue-panel input[type="checkbox"] { width:16px; height:16px; margin:0; accent-color:var(--primary); }
 .activity-button .queue-progress-ring { position:absolute; inset:1px; width:calc(100% - 2px); height:calc(100% - 2px); transform:rotate(-90deg); pointer-events:none; }
-.queue-progress-ring circle { fill:none; stroke:var(--success); stroke-width:2; }
+.queue-progress-ring circle { fill:none; stroke:var(--success); stroke-width:4; }
 .queue-progress-ring .queue-ring-track { stroke:var(--muted); opacity:.2; }

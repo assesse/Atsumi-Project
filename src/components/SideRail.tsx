@@ -49,6 +49,8 @@ export function SideRail<Source extends ContentSource>({
     };
     window.addEventListener("keydown", close);
     const pointerDown = (event: PointerEvent) => {
+      // The tour's Back/Next controls must not dismiss the menu they are explaining.
+      if (event.target instanceof Element && event.target.closest('[data-tutorial-active="true"]')) return;
       if (event.target instanceof Node && !railRef.current?.contains(event.target)) setSourceMenuOpen(false);
     };
     window.addEventListener("pointerdown", pointerDown);
@@ -65,6 +67,7 @@ export function SideRail<Source extends ContentSource>({
       <button
         type="button"
         className={`brand${sourceMenuOpen ? " is-open" : ""}`}
+        data-tour="source-menu"
         title="Atsumi 소스 전환"
         aria-label={`현재 ${workspace.label} 모드. 소스 전환`}
         aria-haspopup="menu"
@@ -85,6 +88,7 @@ export function SideRail<Source extends ContentSource>({
               key={option.id}
               type="button"
               role="menuitemradio"
+              data-tour={`source-${option.id}`}
               aria-checked={source === option.id}
               className={source === option.id ? "is-active" : ""}
               onClick={() => { onSourceChange(option.id); setSourceMenuOpen(false); }}
@@ -105,6 +109,7 @@ export function SideRail<Source extends ContentSource>({
               className={`nav-item${!personalLibraryOpen && !common?.communityOpen && view === item.view ? " is-active" : ""}`}
               aria-current={!personalLibraryOpen && !common?.communityOpen && view === item.view ? "page" : undefined}
               aria-label={item.label}
+              data-tour={`${source}-nav-${item.view}`}
               onClick={() => onNavigate(item.view)}
             >
               <FluentIcon glyph={item.icon} />
@@ -115,8 +120,8 @@ export function SideRail<Source extends ContentSource>({
             </button>
           );
         })}
-        {onOpenPersonalLibrary ? <button type="button" className={`nav-item${personalLibraryOpen ? " is-active" : ""}`} aria-label="내 즐겨찾기" aria-current={personalLibraryOpen ? "page" : undefined} onClick={onOpenPersonalLibrary}><FluentIcon glyph="\uE8A4" /><span className="nav-label">내 즐겨찾기</span></button> : null}
-        {common ? <button type="button" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
+        {onOpenPersonalLibrary ? <button type="button" data-tour={`${source}-favorites`} className={`nav-item${personalLibraryOpen ? " is-active" : ""}`} aria-label="내 즐겨찾기" aria-current={personalLibraryOpen ? "page" : undefined} onClick={onOpenPersonalLibrary}><FluentIcon glyph="\uE8A4" /><span className="nav-label">내 즐겨찾기</span></button> : null}
+        {common && source !== "chzzk" ? <button type="button" data-tour="community-nav" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
       </nav>
 
       <div className="sidebar-foot">

@@ -153,7 +153,8 @@
     const fields = { channelId: session?.channelId ?? channel(), requestId: lastCaptureRequestId, ready,
       recording: Boolean(session || encodedActive), detail, captureMode: ALLOW_REENCODED_CAPTURE && !encodedActive ? "reencoded" : "encoded" };
     const sourceStatus = window.__atsumiEncodedCapture?.getDiagnostics?.();
-    if (sourceStatus) fields.captureDiagnostics = sourceStatus;
+    if (sourceStatus) fields.captureDiagnostics = { ...sourceStatus,
+      autoPreparation: window.__atsumiAutoReceiver?.getPreparationStatus?.() };
     if (video) {
       if (Number.isInteger(video.videoWidth) && video.videoWidth >= 0 && video.videoWidth <= 16384) fields.videoWidth = video.videoWidth;
       if (Number.isInteger(video.videoHeight) && video.videoHeight >= 0 && video.videoHeight <= 16384) fields.videoHeight = video.videoHeight;

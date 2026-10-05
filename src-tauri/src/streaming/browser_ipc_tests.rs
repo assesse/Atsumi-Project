@@ -6,12 +6,118 @@ use tauri::{
     ipc::{CallbackFn, InvokeBody},
     test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime},
     webview::InvokeRequest,
-    App, WebviewWindow, WebviewWindowBuilder,
+    App, Manager, Webview, WebviewBuilder, WebviewWindow, WebviewWindowBuilder,
 };
 
 const FETCH_CHANNEL: &str = "plugin:__TAURI_CHANNEL__|fetch";
 const REMOTE_DENIED: &str = "Tauri IPC is disabled for remote content";
 const PING: &str = "browser_ipc_test_ping";
+
+#[tauri::command]
+fn main_document_probe<R: tauri::Runtime>(view: Webview<R>) -> Result<String, String> {
+    if view.label() != "main" {
+        return Err("main document required".into());
+    }
+    Ok(view.label().into())
+}
+
+#[tauri::command]
+fn legacy_single_view_probe<R: tauri::Runtime>(view: WebviewWindow<R>) -> String {
+    view.label().into()
+}
+
+struct TestWebview(Webview<MockRuntime>);
+impl AsRef<Webview<MockRuntime>> for TestWebview {
+    fn as_ref(&self) -> &Webview<MockRuntime> {
+        &self.0
+    }
+}
+
+#[test]
+fn main_document_commands_survive_background_recording_child_webviews() {
+    let app = mock_builder()
+        .invoke_handler(tauri::generate_handler![
+            main_document_probe,
+            legacy_single_view_probe
+        ])
+        .build(mock_context(noop_assets()))
+        .unwrap();
+    let main = WebviewWindowBuilder::new(&app, "main", Default::default())
+        .build()
+        .unwrap();
+    let origin = if cfg!(any(windows, target_os = "android")) {
+        "http://tauri.localhost/"
+    } else {
+        "tauri://localhost/"
+    };
+    assert!(get_ipc_response(&main, request(&app, "legacy_single_view_probe", origin)).is_ok());
+
+    let child = TestWebview(
+        app.get_window("main")
+            .unwrap()
+            .add_child(
+                WebviewBuilder::new(
+                    "chzzk-auto-test",
+                    tauri::WebviewUrl::External(
+                        "https://chzzk.naver.com/live/test".parse().unwrap(),
+                    ),
+                ),
+                tauri::LogicalPosition::new(-2560.0, 0.0),
+                tauri::LogicalSize::new(1280.0, 720.0),
+            )
+            .unwrap(),
+    );
+    // Reproduces the previous thumbnail failure without network, recording,
+    // extension, GPU or user data. The parent still exists; only its type changed.
+    assert!(app.get_webview_window("main").is_none());
+    assert!(app.get_webview("main").is_some());
+    assert_eq!(
+        get_ipc_response(&main, request(&app, "legacy_single_view_probe", origin)).err(),
+        Some(json!("current webview is not a WebviewWindow"))
+    );
+    assert_eq!(
+        get_ipc_response(&main, request(&app, "main_document_probe", origin))
+            .unwrap()
+            .deserialize::<String>()
+            .unwrap(),
+        "main"
+    );
+    // A child cannot impersonate the main document even with a trusted URL.
+    assert_eq!(
+        get_ipc_response(&child, request(&app, "main_document_probe", origin)).err(),
+        Some(json!("main document required"))
+    );
+    assert_eq!(
+        get_ipc_response(
+            &child,
+            request(
+                &app,
+                "main_document_probe",
+                "https://chzzk.naver.com/live/test"
+            )
+        )
+        .err(),
+        Some(json!(REMOTE_DENIED))
+    );
+}
+
+#[test]
+fn shared_main_services_do_not_require_a_single_webview_window() {
+    // Guard actual handlers as well as the runtime extraction test above.
+    for source in [
+        include_str!("../interface/commands.rs"),
+        include_str!("../community/mod.rs"),
+        include_str!("../ui_download_events.rs"),
+    ] {
+        assert!(!source.contains("window: tauri::WebviewWindow"));
+    }
+    for source in [
+        include_str!("../ui_diagnostics.rs"),
+        include_str!("../renderer_recovery.rs"),
+    ] {
+        assert!(!source.contains("get_webview_window(\"main\")"));
+    }
+}
 
 #[test]
 fn registered_original_player_scheme_never_receives_app_or_channel_ipc() {
@@ -106,6 +212,9 @@ fn remote_custom_commands_and_internal_channel_are_denied_for_every_label() {
         "chzzk-login-test",
         "chzzk-mado-7-video",
         "chzzk-mado-7-chat",
+        "chzzk-chat-test",
+        "chzzk-clip-test",
+        "chzzk-service-test",
     ] {
         let window = WebviewWindowBuilder::new(&app, label, Default::default())
             .build()
@@ -113,6 +222,8 @@ fn remote_custom_commands_and_internal_channel_are_denied_for_every_label() {
         for origin in [
             "https://chzzk.naver.com/live/test",
             "https://nid.naver.com/",
+            "https://order.pay.naver.com/",
+            "https://order.npay.com/",
             "https://tauri.localhost.evil.example/",
             "http://127.0.0.1:1420/",
             "data:text/html,test",

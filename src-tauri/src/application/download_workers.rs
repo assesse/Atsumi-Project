@@ -210,11 +210,19 @@ pub(super) fn download_pages(
 
 pub(super) fn finalization_worker(inner: Arc<SupervisorInner>) {
     while let Some(task) = inner.finalizing.pop() {
+        let _diagnostic = crate::diagnostics::operation(
+            "download_finalize_worker",
+            Some(&task.descriptor.entry_id),
+        )
+        .entered();
         let started = std::time::Instant::now();
         let result = guarded_work(|| {
             finalize_download(&inner, &task.descriptor, &task.layout, &task.cancellation)
         });
         tracing::info!(
+            diag_stage = "finished",
+            success = result.is_ok(),
+            wait_ms = started.duration_since(task.enqueued_at).as_millis() as u64,
             gallery_id = task.descriptor.gallery_id.get(),
             worker_attempt = task.descriptor.worker_attempt,
             queue_wait_ms = started.duration_since(task.enqueued_at).as_millis() as u64,

@@ -150,6 +150,11 @@ impl<T> ApiResult<T> {
     }
 
     pub fn failure(error: ApiError) -> Self {
+        tracing::warn!(
+            error_code = error.code.as_str(),
+            retryable = error.retryable,
+            diag_stage = "api_failed"
+        );
         Self::Failure(error)
     }
 }
@@ -161,7 +166,7 @@ where
     fn from(result: Result<T, E>) -> Self {
         match result {
             Ok(data) => Self::Success(data),
-            Err(error) => Self::Failure(error.into()),
+            Err(error) => Self::failure(error.into()),
         }
     }
 }

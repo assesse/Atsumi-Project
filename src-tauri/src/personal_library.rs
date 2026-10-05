@@ -519,9 +519,21 @@ fn execute(data_dir: &Path, request: Request) -> Result<Response, String> {
 #[tauri::command]
 pub async fn personal_library(app: AppHandle, request: Request) -> Result<Response, String> {
     let data_dir = app.path().app_data_dir().map_err(db_error)?;
-    tauri::async_runtime::spawn_blocking(move || execute(&data_dir, request))
-        .await
-        .map_err(db_error)?
+    tauri::async_runtime::spawn_blocking(move || {
+        let operation = match request {
+            Request::Summary {} => "bookmarks_summary",
+            Request::List { .. } => "bookmarks_list",
+            Request::Get { .. } => "bookmark_get",
+            Request::BookmarkSet { .. } => "bookmark_save",
+            _ => "bookmarks_legacy_collection",
+        };
+        let _diagnostic = crate::diagnostics::operation(operation, None).entered();
+        let result = execute(&data_dir, request);
+        tracing::info!(diag_stage = "finished", success = result.is_ok());
+        result
+    })
+    .await
+    .map_err(db_error)?
 }
 
 #[cfg(test)]

@@ -204,7 +204,7 @@ describe("App Phase 3A backend flow", () => {
     sessionStorage.clear();
     vi.spyOn(workConsole, "getQueueSnapshot").mockResolvedValue({ queriedAt: new Date().toISOString(), counts: {}, globalActive: 0,
       totalRows: 0, page: 1, pageSize: 100, items: [], batches: [], etaSeconds: null, recentCompleted: 0, lastProgressAt: null });
-    setTutorialDismissed(true);
+    for (const source of ["hitomi", "danbooru", "chzzk"] as const) setTutorialDismissed(true, source);
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     class TestResizeObserver {
       observe() {}
@@ -226,7 +226,7 @@ describe("App Phase 3A backend flow", () => {
     vi.unstubAllGlobals();
   });
 
-  it("shows the tutorial on first launch and persists the explicit do-not-show-again choice", async () => {
+  it("starts onboarding once and allows one-off replays from general settings", async () => {
     setTutorialDismissed(false);
     const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
     const previousClose = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "close");
@@ -247,19 +247,40 @@ describe("App Phase 3A backend flow", () => {
         root.render(<TestApp />);
         await settle();
       });
-      const tutorial = container.querySelector<HTMLDialogElement>(".tutorial-dialog");
-      expect(tutorial).toHaveAttribute("open");
-      expect(tutorial).toHaveTextContent("Atsumi 시작하기");
-
-      await act(async () => tutorial?.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click());
+      const tutorial = container.querySelector<HTMLElement>(".tutorial-tour");
+      expect(tutorial).not.toBeNull();
+      expect(tutorial).toHaveAttribute("data-tour-step", "settings");
+      expect(tutorial?.querySelector('input[type="checkbox"]')).toBeNull();
+      expect(isTutorialDismissed()).toBe(true);
       await act(async () => {
         [...(tutorial?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
-          .find((button) => button.textContent === "Atsumi 시작")?.click();
+          .find((button) => button.getAttribute("aria-label") === "튜토리얼 닫기")?.click();
         await settle();
       });
 
-      expect(tutorial).not.toHaveAttribute("open");
+      expect(container.querySelector(".tutorial-tour")).toBeNull();
       expect(isTutorialDismissed()).toBe(true);
+      const save = vi.spyOn(backend, "settingsUpdate");
+      for (let replay = 0; replay < 2; replay += 1) {
+        await act(async () => {
+          container.querySelector<HTMLButtonElement>('[data-tour="hitomi-settings"]')!.click();
+          await settle();
+        });
+        expect(container.querySelector(".settings-dialog")).toHaveAttribute("open");
+        const replayButton = [...container.querySelectorAll<HTMLButtonElement>(".settings-dialog button")]
+          .find(button => button.textContent === "사용 안내");
+        expect(replayButton).toBeVisible();
+        await act(async () => { replayButton!.click(); await settle(); });
+        expect(container.querySelector(".settings-dialog")).not.toHaveAttribute("open");
+        expect(container.querySelector(".tutorial-tour")).toHaveAttribute("data-tour-step", "settings");
+        expect(isTutorialDismissed()).toBe(true);
+        await act(async () => {
+          container.querySelector<HTMLButtonElement>('[aria-label="튜토리얼 닫기"]')!.click();
+          await settle();
+        });
+        expect(container.querySelector(".tutorial-tour")).toBeNull();
+      }
+      expect(save).not.toHaveBeenCalled();
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -383,6 +404,67 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it("preserves the server result order while changing the next Explore sort", async () => {
+    const page = selectionFixturePage();
+    page.items[0]!.publishedRank = 20200101; page.items[0]!.popularity = 1;
+    page.items[1]!.publishedRank = 20260101; page.items[1]!.popularity = 999;
+    const search = vi.spyOn(backend, "searchSubmit").mockImplementation(async request => ({ ok: true, data: { queryId: `sort-${request.sort}`, firstPage: page } }));
+    const host = document.createElement("div"), root = createRoot(host);
+    document.body.append(host);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(host);
+      const order = () => [...host.querySelectorAll<HTMLElement>(".gallery-grid .gallery-card")].map(card => Number(card.dataset.galleryId));
+      const expected = page.items.map(item => item.id);
+      expect(order()).toEqual(expected);
+      const select = host.querySelector<HTMLSelectElement>(".search-box #sort-select")!;
+      expect(select).not.toBeNull();
+      await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "popular_week"); select.dispatchEvent(new Event("change", { bubbles: true })); });
+      expect(search).toHaveBeenCalledOnce(); expect(order()).toEqual(expected);
+      await submitExploreSearch(host);
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(search.mock.calls.at(-1)?.[0].sort).toBe("popular_week");
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
+
+  it("restores cached Korean results after Korean → Japanese → Korean without borrowing draft languages", async () => {
+    const search = vi.spyOn(backend, "searchSubmit").mockImplementation(async (request) => {
+      const japanese = request.languages.includes("japanese");
+      const page = explorePage(japanese ? 2 : 1, 1);
+      page.items[0]!.language = japanese ? "japanese" : "korean";
+      return { ok: true, data: { queryId: japanese ? "language-ja" : "language-ko", firstPage: { ...page, page: 1 } } };
+    });
+    const host = document.createElement("div");
+    document.body.append(host);
+    const root = createRoot(host);
+    const selectLanguage = async (name: string) => {
+      if (!host.querySelector(".language-popover")) {
+        await act(async () => host.querySelector<HTMLButtonElement>('button[aria-label="언어 필터"]')!.click());
+      }
+      for (const label of host.querySelectorAll<HTMLLabelElement>(".language-popover label")) {
+        const checkbox = label.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+        if (checkbox.checked !== label.textContent!.includes(name)) await act(async () => checkbox.click());
+      }
+    };
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(host);
+      expect(host.querySelector('[data-gallery-id="9000001"]')).not.toBeNull();
+      await selectLanguage("일본어");
+      await submitExploreSearch(host);
+      expect(host.querySelector('[data-gallery-id="9000002"]')).not.toBeNull();
+      await selectLanguage("한국어");
+      await submitExploreSearch(host);
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(host.querySelector('[data-gallery-id="9000001"]')).not.toBeNull();
+      expect(host.querySelector('[data-gallery-id="9000002"]')).toBeNull();
+      await selectLanguage("일본어");
+      await submitExploreSearch(host);
+      expect(search).toHaveBeenCalledTimes(2);
+      expect(host.querySelector('[data-gallery-id="9000002"]')).not.toBeNull();
+    } finally { await act(async () => root.unmount()); host.remove(); }
+  });
+
   it("hydrates Explore after an explicit search and queues through the formal backend client", async () => {
     const search = vi.spyOn(backend, "searchSubmit").mockResolvedValue({
       ok: true,
@@ -416,9 +498,10 @@ describe("App Phase 3A backend flow", () => {
     });
     expect(firstCard).toHaveClass("is-selected");
     expect(firstCard.querySelector(".selection-indicator")).toBeNull();
+    expect(firstCard.querySelector(".card-select-toggle")).toBeNull();
     expect(container.querySelector(".selection-toolbar")).not.toHaveClass("is-visible");
     await act(async () => {
-      secondCard.querySelector<HTMLButtonElement>(".card-select-toggle")!.click();
+      secondCard.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 }));
     });
     const queueButton = container.querySelector<HTMLButtonElement>(".selection-toolbar .primary");
     expect(container.querySelector(".selection-toolbar")).toHaveClass("is-visible");
@@ -740,7 +823,7 @@ describe("App Phase 3A backend flow", () => {
       expect(grid).not.toHaveClass("is-selection-context");
       expect(first.querySelector(".selection-indicator")).toBeNull();
 
-      await act(async () => second.querySelector<HTMLButtonElement>(".card-select-toggle")!.click());
+      await act(async () => second.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 })));
       expect(first).toHaveClass("is-selected");
       expect(second).toHaveClass("is-selected");
       expect(toolbar).toHaveClass("is-visible");
@@ -757,7 +840,7 @@ describe("App Phase 3A backend flow", () => {
       expect(grid).not.toHaveClass("is-selection-context");
       expect(first.querySelector(".selection-indicator")).toBeNull();
 
-      await act(async () => second.querySelector<HTMLButtonElement>(".card-select-toggle")!.click());
+      await act(async () => second.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 })));
       await act(async () => first.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
       expect(first).toHaveClass("is-selected");
       expect(second).not.toHaveClass("is-selected");
@@ -1549,7 +1632,7 @@ describe("App Phase 3A backend flow", () => {
       expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
 
       await act(async () => {
-        container.querySelector<HTMLButtonElement>('[aria-label="이전 탐색으로 돌아가기"]')?.click();
+        findContextTab("새 탐색")?.click();
         await settle();
       });
       expect(container).toHaveTextContent("Root page 3");
@@ -2041,12 +2124,15 @@ describe("App Phase 3A backend flow", () => {
       await settle(10);
     });
     expect(refresh).toHaveBeenCalledTimes(1);
+    expect(container.querySelector('[data-tour="hitomi-auto-find-refresh"]')).toHaveAttribute("aria-busy", "true");
+    expect(container.querySelector('[data-tour="hitomi-auto-find-refresh"] .spinner')).not.toBeNull();
     await act(async () => {
       clickButtonContaining(container, "탐색 취소");
       await settle();
     });
     expect(cancel).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("탐색 취소됨");
+    expect(container.querySelector('[data-tour="hitomi-auto-find-refresh"]')).toHaveAttribute("aria-busy", "false");
 
     await act(async () => {
       clickButtonContaining(container, "즐겨찾기 작가·그룹 갱신");
@@ -2060,6 +2146,7 @@ describe("App Phase 3A backend flow", () => {
       await settle();
     });
     expect(container.textContent).toContain("탐색 완료");
+    expect(container.querySelector('[data-tour="hitomi-auto-find-refresh"] .spinner')).toBeNull();
     expect(container.textContent).toContain("The Last Tram");
     expect(container.textContent).toContain("Blue Lane");
 
@@ -2204,7 +2291,7 @@ describe("App Phase 3A backend flow", () => {
 
       await act(async () => {
         cards[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-        cards[1]?.querySelector<HTMLButtonElement>(".card-select-toggle")?.click();
+        cards[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 }));
         await settle();
       });
       const downloadSelected = container.querySelector<HTMLButtonElement>(".selection-toolbar .primary");
@@ -2713,7 +2800,7 @@ describe("App Phase 3A backend flow", () => {
       expect(scanStart).toHaveBeenLastCalledWith({ entryIds: ["selected-entry-a"] });
 
       await act(async () => {
-        second.querySelector<HTMLButtonElement>(".card-select-toggle")!.click();
+        second.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 }));
         await settle();
       });
       expect(scanButton).toHaveTextContent("선택 앨범 내부 페이지 검사 (2)");
@@ -4611,7 +4698,7 @@ describe("App Phase 3A backend flow", () => {
       await act(async () => {
         firstPageCards[0]?.focus();
         firstPageCards[0]?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 }));
-        firstPageCards[1]?.querySelector<HTMLButtonElement>(".card-select-toggle")?.click();
+        firstPageCards[1]?.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 }));
         await settle();
       });
       expect(container.querySelector(".selection-toolbar")).toHaveTextContent("2개 선택됨");

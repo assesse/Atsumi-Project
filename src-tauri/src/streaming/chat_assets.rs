@@ -22,6 +22,10 @@ use super::model::StreamError;
 
 const MAX_URL_BYTES: usize = 1024;
 const MAX_BODY_BYTES: usize = 1024 * 1024;
+// Public emoji uploads can be 2000px. Decode only a bounded static source, then
+// archive a small rendition; do not increase the limits of replayed images.
+const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_SOURCE_DIMENSION: u32 = 2048;
 const MAX_DIMENSION: u32 = 1024;
 const MAX_FRAMES: usize = 256;
 const MAX_ANIMATION_PIXELS: u64 = 16 * 1024 * 1024;
@@ -126,7 +130,7 @@ pub fn fetch_chat_asset(input: &str) -> Result<ChatAsset, StreamError> {
         .map_err(|_| invalid_asset())?;
     let content_length = response.content_length();
     let bytes = read_bounded(response, content_length)?;
-    let mime = validate_raster(&bytes, declared_type.as_deref())?;
+    let (bytes, mime) = prepare_raster(bytes, declared_type.as_deref())?;
     let asset = ChatAsset {
         data_url: format!("data:{mime};base64,{}", STANDARD.encode(bytes)),
     };
@@ -212,18 +216,67 @@ fn is_public_ip(ip: IpAddr) -> bool {
 }
 
 fn read_bounded(reader: impl Read, content_length: Option<u64>) -> Result<Vec<u8>, StreamError> {
-    if content_length.is_some_and(|length| length > MAX_BODY_BYTES as u64) {
+    if content_length.is_some_and(|length| length > MAX_SOURCE_BYTES as u64) {
         return Err(invalid_asset());
     }
     let mut bytes = Vec::new();
     reader
-        .take((MAX_BODY_BYTES + 1) as u64)
+        .take((MAX_SOURCE_BYTES + 1) as u64)
         .read_to_end(&mut bytes)
         .map_err(|_| unavailable())?;
-    if bytes.is_empty() || bytes.len() > MAX_BODY_BYTES {
+    if bytes.is_empty() || bytes.len() > MAX_SOURCE_BYTES {
         return Err(invalid_asset());
     }
     Ok(bytes)
+}
+
+fn prepare_raster(
+    bytes: Vec<u8>,
+    declared: Option<&str>,
+) -> Result<(Vec<u8>, &'static str), StreamError> {
+    if let Ok(mime) = validate_raster(&bytes, declared) {
+        return Ok((bytes, mime));
+    }
+    if bytes.is_empty() || bytes.len() > MAX_SOURCE_BYTES {
+        return Err(invalid_asset());
+    }
+    let format = image::guess_format(&bytes).map_err(|_| invalid_asset())?;
+    let mime = match format {
+        ImageFormat::Png => "image/png",
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::WebP => "image/webp",
+        _ => return Err(invalid_asset()),
+    };
+    if let Some(declared) = declared {
+        if declared.len() > 128 {
+            return Err(invalid_asset());
+        }
+        let declared = declared.split(';').next().unwrap_or_default().trim();
+        if !declared.eq_ignore_ascii_case(mime)
+            && !declared.eq_ignore_ascii_case("application/octet-stream")
+        {
+            return Err(invalid_asset());
+        }
+    }
+    let mut reader = ImageReader::with_format(Cursor::new(&bytes), format);
+    let mut limits = Limits::default();
+    limits.max_image_width = Some(MAX_SOURCE_DIMENSION);
+    limits.max_image_height = Some(MAX_SOURCE_DIMENSION);
+    limits.max_alloc = Some(32 * 1024 * 1024);
+    reader.limits(limits);
+    let decoded = reader.decode().map_err(|_| invalid_asset())?;
+    // Never silently flatten an animated emoji to its first frame.
+    if animation_frames(&bytes, format, decoded.width(), decoded.height())? != 0 {
+        return Err(invalid_asset());
+    }
+    let mut output = Cursor::new(Vec::new());
+    decoded
+        .thumbnail(256, 256)
+        .write_to(&mut output, ImageFormat::Png)
+        .map_err(|_| invalid_asset())?;
+    let bytes = output.into_inner();
+    validate_raster(&bytes, Some("image/png"))?;
+    Ok((bytes, "image/png"))
 }
 
 pub(crate) fn validate_raster(
@@ -290,10 +343,19 @@ fn validate_animation(
     width: u32,
     height: u32,
 ) -> Result<(), StreamError> {
+    animation_frames(bytes, format, width, height).map(|_| ())
+}
+
+fn animation_frames(
+    bytes: &[u8],
+    format: ImageFormat,
+    width: u32,
+    height: u32,
+) -> Result<usize, StreamError> {
     // Decode() validates only the initial animation frame. Also bound every
     // declared frame before giving the original APNG/WebP bytes to the webview.
     if !matches!(format, ImageFormat::Png | ImageFormat::WebP) {
-        return Ok(());
+        return Ok(0);
     }
     let png = format == ImageFormat::Png;
     let mut offset = if png { 8 } else { 12 };
@@ -361,7 +423,7 @@ fn validate_animation(
     if offset != bytes.len() || (png && declared_frames.unwrap_or(0) != frames) {
         return Err(invalid_asset());
     }
-    Ok(())
+    Ok(frames)
 }
 
 fn validate_gif(bytes: &[u8]) -> Result<(), StreamError> {
@@ -570,10 +632,34 @@ mod tests {
     fn body_limit_applies_even_when_content_length_is_missing_or_false() {
         assert_eq!(read_bounded(Cursor::new([1, 2]), None).unwrap(), vec![1, 2]);
         assert!(read_bounded(Cursor::new([]), None).is_err());
-        assert!(read_bounded(Cursor::new([1]), Some(MAX_BODY_BYTES as u64 + 1)).is_err());
-        let bytes = vec![0; MAX_BODY_BYTES + 2];
+        assert!(read_bounded(Cursor::new([1]), Some(MAX_SOURCE_BYTES as u64 + 1)).is_err());
+        let bytes = vec![0; MAX_SOURCE_BYTES + 2];
         assert!(read_bounded(Cursor::new(&bytes), None).is_err());
         assert!(read_bounded(Cursor::new(bytes), Some(1)).is_err());
+    }
+
+    #[test]
+    fn large_static_emoji_is_archived_as_a_small_bounded_rendition() {
+        let mut output = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(2000, 2000)
+            .write_to(&mut output, ImageFormat::Png)
+            .unwrap();
+        assert!(validate_raster(output.get_ref(), Some("image/png")).is_err());
+        assert!(prepare_raster(output.get_ref().clone(), Some("text/html")).is_err());
+        let (small, mime) = prepare_raster(output.into_inner(), Some("image/png")).unwrap();
+        assert_eq!(mime, "image/png");
+        assert_eq!(image::load_from_memory(&small).unwrap().width(), 256);
+        assert_eq!(validate_raster(&small, Some(mime)).unwrap(), mime);
+        let mut oversized = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(2049, 1)
+            .write_to(&mut oversized, ImageFormat::Png)
+            .unwrap();
+        assert!(prepare_raster(oversized.into_inner(), None).is_err());
+        assert!(prepare_raster(vec![0; MAX_SOURCE_BYTES + 1], None).is_err());
+        assert_eq!(
+            prepare_raster(GIF.to_vec(), Some("image/gif")).unwrap().0,
+            GIF
+        );
     }
 
     #[test]

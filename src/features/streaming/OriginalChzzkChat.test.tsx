@@ -89,10 +89,10 @@ describe("isolated original CHZZK archived chat", () => {
     expect(api.openProfile).not.toHaveBeenCalled();
   });
 
-  it("preserves validated nickname and body colors and opens a saved profile only by session and row identity", async () => {
-    const api = mockApi([message(7, { rich: { nicknameColor: "#11ee77", textColor: "#f0c080", profileUrl: `https://chzzk.naver.com/${"c".repeat(32)}`, badges: [], emojis: [] } })]);
+  it("shows the recorded user card instead of navigating away, with subscription and follow history", async () => {
+    const api = mockApi([message(7, { rich: { nicknameColor: "#11ee77", textColor: "#f0c080", profileUrl: `https://chzzk.naver.com/${"c".repeat(32)}`, subscriptionMonths: 29, followingSince: "2023-12-19", badges: [], emojis: [] } })]);
     await render(api);
-    const name = button("합성 이용자 7 프로필 열기");
+    const name = button("합성 이용자 7 사용자 정보");
     expect(name).toBeDefined();
     expect([...row(7).querySelectorAll<HTMLElement>("[style]")].some(item => item.style.color === "rgb(17, 238, 119)")).toBe(true);
     // The original nickname component prioritizes profile.title.color, so the
@@ -100,16 +100,51 @@ describe("isolated original CHZZK archived chat", () => {
     expect(row(7).style.getPropertyValue("--replay-text-color")).toBe("#f0c080");
     expect(api.openProfile).not.toHaveBeenCalled();
     await act(async () => name.click());
-    expect(api.openProfile).toHaveBeenCalledExactlyOnceWith(token, 7);
+    expect(api.openProfile).not.toHaveBeenCalled();
+    const popup = shadow().querySelector('[role="dialog"]')!;
+    expect(popup).toHaveTextContent("2년 5개월 구독 중");
+    expect(popup).toHaveTextContent("2023년 12월 19일부터 팔로우");
+    expect(popup).not.toHaveTextContent("구독권 선물");
+    expect(popup.querySelectorAll("button")).toHaveLength(1);
+    expect(name).toHaveAttribute("aria-expanded", "true");
+    await act(async () => button("사용자 정보 닫기").click());
+    expect(shadow().querySelector('[role="dialog"]')).toBeNull();
+    expect(shadow().activeElement).toBe(name);
     expect(row(7).querySelector('a[href^="https://"]')).toBeNull();
   });
 
   it.each(["javascript:alert(1)", `https://chzzk.naver.com.evil.example/${"c".repeat(32)}`, `https://chzzk.naver.com/${"c".repeat(32)}?auth=private`])("does not expose an active profile destination for %s", async profileUrl => {
     const api = mockApi([message(1, { rich: { profileUrl, badges: [], emojis: [] } })]); await render(api);
-    const name = button("합성 이용자 1 프로필 열기");
+    const name = button("합성 이용자 1 사용자 정보");
     if (name) await act(async () => name.click());
     expect(api.openProfile).not.toHaveBeenCalled();
     expect(row(1).querySelector("a[href]")).toBeNull();
+  });
+
+  it("keeps missing old profile metadata honest and closes via Escape/outside click", async () => {
+    const api = mockApi([message(1)]); await render(api);
+    const name = button("합성 이용자 1 사용자 정보");
+    await act(async () => name.click());
+    expect(shadow().querySelector('[role="dialog"]')).toHaveTextContent("저장된 구독·팔로우 정보 없음");
+    await act(async () => button("사용자 정보 닫기").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true })));
+    expect(shadow().querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => name.click());
+    await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+    expect(shadow().querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it("replays donation, mission and subscription notices without online actions", async () => {
+    const api = mockApi([
+      message(1, { rich: { badges: [], emojis: [], notice: { kind: "donation", amount: 1000 } } }),
+      message(2, { rich: { badges: [], emojis: [], notice: { kind: "mission", amount: 5000, missionText: "오늘 목표 달성", status: "SUCCESS" } } }),
+      message(3, { rich: { badges: [], emojis: [], notice: { kind: "subscription", months: 7 } } }),
+    ]); await render(api);
+    expect(row(1)).toHaveTextContent("후원1,000 치즈");
+    expect(row(2)).toHaveTextContent("미션5,000 치즈성공");
+    expect(row(2)).toHaveTextContent("오늘 목표 달성");
+    expect(row(3)).toHaveTextContent("구독7개월");
+    expect(shadow().querySelector('a[href], iframe')).toBeNull();
+    expect(api.openProfile).not.toHaveBeenCalled();
   });
 
   it("uses only archived asset tokens and keeps readable badge/emoji fallback after image failure", async () => {
@@ -127,6 +162,20 @@ describe("isolated original CHZZK archived chat", () => {
     expect(row(1).querySelector("img")).toBeNull();
     expect(row(1)).toHaveTextContent("구독 12개월");
     expect(row(1)).toHaveTextContent("{:wave:}");
+  });
+
+  it("keeps profile portraits offline and substitutes a readable avatar after failure", async () => {
+    const url = "https://nng-phinf.pstatic.net/portrait.png";
+    const api = mockApi([message(1, { assetIds: { [url]: asset }, rich: { profileImageUrl: url, badges: [], emojis: [] } })]);
+    api.mediaUrl.mockReturnValue(`/recording/${token}`);
+    await render(api);
+    await act(async () => button("합성 이용자 1 사용자 정보").click());
+    const portrait = shadow().querySelector<HTMLImageElement>('[role="dialog"] img')!;
+    expect(portrait).toHaveAttribute("src", `/recording/${token}/asset/${asset}`);
+    await act(async () => portrait.dispatchEvent(new Event("error")));
+    expect(shadow().querySelector('[role="dialog"] img')).toBeNull();
+    expect(shadow().querySelector('.recording-replay-user-avatar')).toHaveTextContent("합");
+    expect(api.openProfile).not.toHaveBeenCalled();
   });
 
   it("defaults to hidden timestamps and exposes optional recording/uptime labels in the chat menu", async () => {

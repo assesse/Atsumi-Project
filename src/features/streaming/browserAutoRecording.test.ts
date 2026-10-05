@@ -7,6 +7,74 @@ const { runInNewContext } = await import(vmName) as { runInNewContext(source: st
 beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.useRealTimers(); });
 describe("background receiver and recording notices", () => {
+  function standardFixture(markup = '<button>설치없이 일반 화질 시청</button>') {
+    const page = document.implementation.createHTMLDocument();
+    page.body.innerHTML = markup;
+    for (const node of page.querySelectorAll('button,a,[role="button"]')) {
+      Object.defineProperty(node, "getClientRects", { value: () => node.hasAttribute("hidden") ? [] : [{}] });
+    }
+    const useStandardQuality = vi.fn();
+    const pageWindow = Object.assign(new EventTarget(), {
+      getComputedStyle: (node: Element) => ({ display: node.hasAttribute("hidden") ? "none" : "block", visibility: "visible" }),
+      __atsumiQuality: { useStandardQuality },
+      __atsumiEncodedCapture: { getStatus: () => ({ active: false }) },
+      __atsumiAutoReceiver: undefined as undefined | { prepareRecording(): void; configure(value: { revision: number; viewing: boolean }): void; getPreparationStatus(): string },
+    });
+    runInNewContext(receiver, { document: page, window: pageWindow, location: new URL("https://chzzk.naver.com/live/" + "a".repeat(32)), setInterval, clearInterval });
+    const click = vi.fn(); page.addEventListener("click", click);
+    return { page, pageWindow, click, useStandardQuality, api: pageWindow.__atsumiAutoReceiver! };
+  }
+  it("starts install-free preparation without first opening live, once per receiver document", async () => {
+    const f = standardFixture();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(f.click).not.toHaveBeenCalled(); // Viewing-only creation is not an opt-in.
+    f.api.prepareRecording();
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(f.click).toHaveBeenCalledOnce(); expect(f.useStandardQuality).toHaveBeenCalledOnce();
+    expect(f.api.getPreparationStatus()).toBe("standard_quality_selected");
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(f.click).toHaveBeenCalledOnce();
+  });
+  it("leaves login, permissions, installation and ambiguous/invisible choices to the user", async () => {
+    for (const markup of [
+      '<button>로그인</button><button>설치</button><button>권한 허용</button><button>확인</button>',
+      '<button disabled>설치없이 일반 화질 시청</button>',
+      '<button aria-disabled="true">설치없이 일반 화질 시청</button>',
+      '<button hidden>설치없이 일반 화질 시청</button>',
+      '<button>설치없이 일반 화질 시청</button><button>설치없이 일반 화질 시청</button>',
+      '<a href="https://example.com/download">설치없이 일반 화질 시청</a>',
+    ]) {
+      const f = standardFixture(markup); f.api.prepareRecording();
+      await vi.advanceTimersByTimeAsync(6000);
+      expect(f.click).not.toHaveBeenCalled(); expect(f.useStandardQuality).not.toHaveBeenCalled();
+      f.pageWindow.dispatchEvent(new Event("pagehide"));
+    }
+  });
+  it("never downgrades playable video or changes quality during an active recording", async () => {
+    const f = standardFixture('<video></video><button>설치없이 일반 화질 시청</button>');
+    const video = f.page.querySelector("video")!;
+    Object.defineProperties(video, { readyState: { value: 4, configurable: true }, videoWidth: { value: 1920 } });
+    vi.spyOn(video, "play").mockResolvedValue();
+    f.api.prepareRecording(); await vi.advanceTimersByTimeAsync(3000);
+    expect(f.click).not.toHaveBeenCalled(); expect(f.api.getPreparationStatus()).toBe("video_ready");
+    Object.defineProperty(video, "readyState", { value: 0 });
+    f.pageWindow.__atsumiEncodedCapture.getStatus = () => ({ active: true });
+    await vi.advanceTimersByTimeAsync(3000); expect(f.click).not.toHaveBeenCalled();
+  });
+  it("does not click a quality choice while the receiver is being watched", async () => {
+    const f = standardFixture(); f.api.prepareRecording();
+    f.api.configure({ revision: 1, viewing: true });
+    await vi.advanceTimersByTimeAsync(6000); expect(f.click).not.toHaveBeenCalled();
+    f.api.configure({ revision: 2, viewing: false });
+    await vi.advanceTimersByTimeAsync(3000); expect(f.click).toHaveBeenCalledOnce();
+  });
+  it("records a failed choice without retrying it indefinitely", async () => {
+    const f = standardFixture(); f.api.prepareRecording();
+    const button = f.page.querySelector("button")!;
+    const click = vi.spyOn(button, "click").mockImplementation(() => { throw new Error("upstream changed"); });
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(f.api.getPreparationStatus()).toBe("standard_quality_failed"); expect(click).toHaveBeenCalledOnce();
+  });
   it("retains playback and user mute in a hidden tab or PiP while its watch remains attached", async () => {
     const page = document.implementation.createHTMLDocument(); page.body.innerHTML = '<video></video>';
     const video = page.querySelector("video")!;

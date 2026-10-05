@@ -70,6 +70,10 @@ import { ProgressiveGallerySlot } from "../../components/ProgressiveGallerySlot"
 import { KeyboardShortcutsDialog } from "../../components/KeyboardShortcutsDialog";
 import { SelectionToolbar } from "../../components/SelectionToolbar";
 import { SettingsDialog } from "../../components/SettingsDialog";
+import { TutorialDialog } from "../../components/TutorialDialog";
+import { beginTutorialAction } from "../../tutorial/tourActions";
+import { tutorialStepsBySource } from "../../tutorial/tourSteps";
+import { workspaceRegistry } from "../../app/workspaceRegistry";
 import { SideRail } from "../../components/SideRail";
 import { ViewHeader, type SearchSuggestion } from "../../components/ViewHeader";
 import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryDisplayMode, type GalleryId, type Language, type SearchSort, type ViewId } from "../../core/types";
@@ -279,6 +283,7 @@ export type GalleryWorkspaceBridge = {
   onActivity: () => void;
   onActivityRecord: (activity: DanbooruSessionActivity) => void;
   onMetadataFavorite: (token: string) => void;
+  onOpenPersonalLibrary: () => void;
 };
 
 type HitomiFeatureProps = {
@@ -303,7 +308,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   const [personalLibraryVisited, setPersonalLibraryVisited] = useState(false);
   const [savedPageRequest, setSavedPageRequest] = useState<{ galleryId: GalleryId; page: number; sequence: number } | null>(null);
   const {
-    showToast, privacyModePending, togglePrivacyMode, saveSettingsPatch,
+    showToast, privacyModePending, togglePrivacyMode,
     openExitConfirm, setActivityOpen, setSettingsOpen, toggleRail, selectSource,
   } = shell;
   const shellRef = useRef(shell);
@@ -338,6 +343,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   const [favoriteMetadata, setFavoriteMetadata] = useState<ReadonlySet<string>>(() => new Set());
   const [favoriteRecords, setFavoriteRecords] = useState<FavoriteRecord[]>([]);
   const [searchHistory, setSearchHistory] = useState<SearchHistoryEntry[]>([]);
+  const searchHistoryRequest = useRef(0);
+  const historyMutationBusy = useRef(false);
+  const [historyPending, setHistoryPending] = useState(false);
   const [tagCatalogStatus, setTagCatalogStatus] = useState<TagCatalogStatus | undefined>(undefined);
   const [tagCatalogRefreshing, setTagCatalogRefreshing] = useState(false);
   const [randomOpenPending, setRandomOpenPending] = useState(false);
@@ -728,9 +736,13 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     }
     context.query = currentQuery;
     context.exploreIds = [...exploreIdsRef.current];
-    context.displayValue = uiRef.current.search.explore.committed;
-    context.languages = [...uiRef.current.search.explore.languages];
-    context.sort = uiRef.current.exploreSort;
+    // Controls may contain the next search's draft, not the conditions that
+    // own these cached results. A submitted context keeps its original search.
+    if (!context.request) {
+      context.displayValue = uiRef.current.search.explore.committed;
+      context.languages = [...uiRef.current.search.explore.languages];
+      context.sort = uiRef.current.exploreSort;
+    }
     context.scrollTop = viewportScroll;
     if (uiRef.current.view === "explore") {
       context.keyboardFocusId = keyboardFocusIdRef.current;
@@ -806,8 +818,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     exploreIdsRef.current = [...context.exploreIds];
     keyboardFocusIdRef.current = context.keyboardFocusId;
     dispatch({ type: "navigate", view: "explore" });
-    dispatch({ type: "search.languages", view: "explore", languages: [...context.languages] });
-    dispatch({ type: "sort.set", sort: context.sort });
+    dispatch({ type: "search.languages", view: "explore", languages: [...(context.request?.languages ?? context.languages)] });
+    dispatch({ type: "sort.set", sort: context.request?.sort ?? context.sort });
     dispatch({ type: "search.commit", view: "explore", value: context.displayValue });
     dispatch({
       type: "selection.restore",
@@ -895,7 +907,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     const target = exploreContexts.current.get(id);
     if (!target) return;
     if (activeExploreContextIdRef.current === id) {
-      if (uiRef.current.view !== "explore") restoreExploreContext(target);
+      if (uiRef.current.view === "explore") snapshotActiveExploreContext(false);
+      restoreExploreContext(target);
       return;
     }
     exploreNavigationToken.current += 1;
@@ -1176,13 +1189,31 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   }, [showToast]);
 
   const hydrateSearchHistory = useCallback(async () => {
+    const request = ++searchHistoryRequest.current;
     try {
-      const result = await backend.searchHistoryList(20);
-      if (result.ok) setSearchHistory(result.data);
+      const result = await backend.searchHistoryList(100);
+      if (request === searchHistoryRequest.current && result.ok) setSearchHistory(result.data);
     } catch {
       // Search history is an enhancement; a transient failure must not block searching.
     }
   }, []);
+
+  const removeSearchHistory = useCallback(async (historyId?: number) => {
+    if (historyMutationBusy.current) return;
+    historyMutationBusy.current = true; setHistoryPending(true); searchHistoryRequest.current++;
+    try {
+      const result = historyId === undefined ? await backend.searchHistoryClear() : await backend.searchHistoryRemove(historyId);
+      if (!result.ok) { showToast(result.error.message); return; }
+      if (historyId === undefined) setSearchHistory([]);
+      else setSearchHistory((current) => {
+        const selected = current.find((item) => item.historyId === historyId);
+        const key = (item: SearchHistoryEntry) => JSON.stringify([item.text, item.includeTags, item.excludeTags, item.languages, item.sort]);
+        return selected ? current.filter((item) => key(item) !== key(selected)) : current;
+      });
+      await hydrateSearchHistory();
+    } catch { showToast("검색 기록을 지우지 못했습니다. 다시 시도해 주세요."); }
+    finally { historyMutationBusy.current = false; setHistoryPending(false); }
+  }, [hydrateSearchHistory, showToast]);
 
   const hydrateTagCatalogStatus = useCallback(async () => {
     try { const result = await backend.tagCatalogStatus(); if (result.ok) setTagCatalogStatus(result.data); } catch { /* catalog is optional until manually refreshed */ }
@@ -1767,7 +1798,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       return gallery ? [gallery] : [];
     });
   }, [displayGalleries, downloadIds, exploreIds, pendingAutoFindIds, ui.view]);
-  const visible = useMemo(() => visibleGalleries(ui, scopedGalleries, popularity.ranks), [ui, scopedGalleries, popularity.ranks]);
+  // Explore is a submitted server query. Draft language/sort controls must not
+  // filter or reorder the existing response before the next search is submitted.
+  const visible = useMemo(() => ui.view === "explore" ? scopedGalleries : visibleGalleries(ui, scopedGalleries, popularity.ranks), [ui, scopedGalleries, popularity.ranks]);
   const actionableVisibleIds = useMemo(
     () => visible
       .filter((gallery) => gallery.download?.state !== "quarantined"
@@ -3026,8 +3059,14 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     const token = normalizeMetadataToken(value);
     if (!token) return;
     const key = favoriteKeyFromToken(token);
+    const tutorialFollow = document.documentElement.dataset.tutorialOpen === "true" && document.documentElement.dataset.tutorialStep === "follow";
+    const finishTutorialAction = beginTutorialAction("follow");
+    if (tutorialFollow && pendingFavoriteTokens.current.has(token)) {
+      finishTutorialAction("이전 즐겨찾기 저장을 처리 중입니다. 잠시 후 다시 시도해 주세요.");
+      return;
+    }
     const currentIntent = pendingFavoriteIntents.current.get(token) ?? favoriteMetadata.has(token);
-    pendingFavoriteIntents.current.set(token, !currentIntent);
+    pendingFavoriteIntents.current.set(token, tutorialFollow || !currentIntent);
     if (pendingFavoriteTokens.current.has(token)) return;
     pendingFavoriteTokens.current.add(token);
     let persistedEnabled: boolean | undefined;
@@ -3037,6 +3076,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         if (enabled === undefined) break;
         const result = await backend.favoriteSet(key, enabled);
         if (!result.ok) {
+          finishTutorialAction(result.error.message);
           showToast(result.error.message);
           return;
         }
@@ -3055,9 +3095,11 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         if (pendingFavoriteIntents.current.get(token) === result.data.enabled) break;
       }
       if (persistedEnabled !== undefined) {
+        finishTutorialAction(persistedEnabled ? undefined : "작가·그룹을 즐겨찾기에 추가해 주세요.");
         showToast(`${value} 즐겨찾기를 ${persistedEnabled ? "추가" : "해제"}했습니다.`);
       }
     } catch {
+      finishTutorialAction("즐겨찾기 변경을 저장하지 못했습니다.");
       showToast("즐겨찾기 변경을 저장하지 못했습니다.");
     } finally {
       pendingFavoriteIntents.current.delete(token);
@@ -3319,19 +3361,25 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
 
   const refreshAutoFind = useCallback(async () => {
     if (autoFindPending || autoFindSnapshot.run?.state === "running") return;
+    const finishTutorialAction = beginTutorialAction("auto-find-refresh");
     setAutoFindPending(true);
     setAutoFindError(null);
     try {
       const result = await backend.autoFindRefresh();
       if (!result.ok) {
+        finishTutorialAction(result.error.message);
         setAutoFindError(result.error.message);
         showToast(result.error.message);
         return;
       }
       setAutoFindSnapshot((current) => ({ ...current, run: result.data }));
+      finishTutorialAction(result.data.state === "failed" || result.data.state === "cancelled"
+        ? result.data.errorMessage || "탐색이 시작되지 않았습니다. 다시 갱신해 주세요."
+        : undefined);
       await hydrateAutoFind();
     } catch {
       const message = "자동 탐색을 시작하지 못했습니다.";
+      finishTutorialAction(message);
       setAutoFindError(message);
       showToast(message);
     } finally {
@@ -3900,6 +3948,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   useEffect(() => {
     if (!active) return;
     const keyDown = (event: KeyboardEvent) => {
+      if (document.documentElement.dataset.tutorialOpen === "true") return;
       const target = event.target instanceof HTMLElement
         ? event.target
         : document.activeElement instanceof HTMLElement
@@ -4071,17 +4120,16 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       busy: contextQuery.phase === "submitting" || contextQuery.phase === "loading-page",
     }];
   }), [activeExploreContextId, exploreContextIds, query]);
-  const returnToPreviousExploreContext = useCallback(() => {
-    const current = exploreContexts.current.get(activeExploreContextIdRef.current ?? "");
-    if (current?.origin && returnToOrigin(current.origin)) return;
-    const activeIndex = exploreContextIdsRef.current.indexOf(activeExploreContextIdRef.current ?? "");
-    const previousId = activeIndex > 0 ? exploreContextIdsRef.current[activeIndex - 1] : undefined;
-    if (previousId) activateExploreContext(previousId);
-  }, [activateExploreContext, returnToOrigin]);
   // Switching presentation does not dispose the controller or its caches/jobs.
   useEffect(() => {
     dispatch({ type: "selection.clear" });
   }, [active]);
+  const queueGalleryFromMenu = useCallback((id: GalleryId) => { void queueGalleries([id]); }, [queueGalleries]);
+  const excludeGalleryFromMenu = useCallback((id: GalleryId) => {
+    if (ui.view === "downloads") void quarantineGalleries([id]);
+    else if (ui.view === "auto-find") void excludeAutoFindCandidates([id]);
+    else void excludeExploreGalleries([id]);
+  }, [ui.view, quarantineGalleries, excludeAutoFindCandidates, excludeExploreGalleries]);
   const renderGalleryGrid = (items: Gallery[], ariaLabel: string) => (
     <GalleryGrid
       columns={galleryColumns}
@@ -4126,6 +4174,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           onStatusDetail={openStatusDetail}
           onMetadataSearch={searchMetadata}
           onMetadataFavorite={toggleMetadataFavorite}
+          pendingAction={gallery.download ? pendingDownloadEntries.has(gallery.download.entryId) : false}
+          onQueue={queueGalleryFromMenu}
+          onExclude={excludeGalleryFromMenu}
         />;
         return ui.view === "downloads" ? (
           <ProgressiveGallerySlot
@@ -4173,6 +4224,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           <PersonalLibraryWorkspace previewWidth={previewWidth} pageSize={hitomiPageSize} privacyMode={shell.privacyMode}
             privacyModePending={privacyModePending || settingsLoading} activityOpen={shell.activityOpen}
             onActivity={() => shell.activityOpen ? closeActivity() : openActivity()} onSettings={() => setSettingsOpen(true)}
+            onQueue={(id) => void queueGalleries([id])} onExclude={(id) => excludeExploreGalleries([id])} onOpenFolder={openDownloadFolder}
             queueProgress={workQueue.snapshot && !workQueue.error ? queueProgress(workQueue.snapshot).percent : undefined} queueActiveCount={workQueue.snapshot?.globalActive}
             onPrivacyToggle={() => void togglePrivacyMode()} onOpen={openSavedItem} onBack={() => setPersonalLibraryOpen(false)} />
         </div> : null}
@@ -4193,6 +4245,16 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
             search={ui.search[ui.view]}
             searchPending={settingsLoading}
             suggestions={ui.view === "explore" ? searchSuggestions : []}
+            historyPending={historyPending}
+            onRemoveHistory={(historyId) => void removeSearchHistory(historyId)}
+            onClearHistory={() => void removeSearchHistory()}
+            searchEndControl={ui.view === "explore" ? <div className="search-sort-control" title="검색할 정렬 방식입니다. 검색을 실행하면 적용됩니다.">
+              <label className="sr-only" htmlFor="sort-select">검색 정렬</label>
+              <select id="sort-select" aria-description="검색 실행 시 적용" value={ui.exploreSort} disabled={settingsLoading}
+                onFocus={() => dispatch({ type: "search.suggestions", view: "explore", open: false, active: null })}
+                onChange={(event) => dispatch({ type: "sort.set", sort: event.target.value as SearchSort })}>{sortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+              <FluentIcon glyph="\uE70D" />
+            </div> : null}
             activityCount={activityBadgeCount}
             activityOpen={shell.activityOpen}
             onDraft={(value) => dispatch({ type: "search.draft", view: ui.view, value })}
@@ -4256,7 +4318,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
             <div className="heading-actions">
               {ui.view === "auto-find" ? (
                 <>
-                  <button type="button" className="text-button" disabled={autoFindPending || autoFindSnapshot.run?.state === "running"} onClick={() => void refreshAutoFind()}><FluentIcon glyph="\uE72C" /> {autoFindSnapshot.run?.state === "failed" ? "다시 탐색" : "즐겨찾기 작가·그룹 갱신"}</button>
+                  <button type="button" data-tour="hitomi-auto-find-refresh" data-running={autoFindSnapshot.run?.state === "running"} className="text-button" aria-busy={autoFindPending || autoFindSnapshot.run?.state === "running"} disabled={autoFindPending || autoFindSnapshot.run?.state === "running"} onClick={() => void refreshAutoFind()}>
+                    {autoFindPending || autoFindSnapshot.run?.state === "running" ? <><span className="spinner catalog-refresh-spinner" aria-hidden="true" /> 즐겨찾기 작가·그룹 탐색 중…</> : <><FluentIcon glyph="\uE72C" /> {autoFindSnapshot.run?.state === "failed" ? "다시 탐색" : "즐겨찾기 작가·그룹 갱신"}</>}
+                  </button>
                   {autoFindSnapshot.run?.state === "running" ? <button type="button" className="text-button danger-button" disabled={autoFindPending} onClick={() => void cancelAutoFind()}><FluentIcon glyph="\uE711" /> 탐색 취소</button> : null}
                 </>
               ) : ui.view === "downloads" ? (
@@ -4327,7 +4391,6 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
               tabs={exploreContextTabs}
               activeId={activeExploreContextId}
               onActivate={activateExploreContext}
-              onBack={returnToPreviousExploreContext}
               onClose={closeExploreContext}
             />
           ) : null}
@@ -4363,9 +4426,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                   ><FluentIcon glyph="\uE70D" /> {allVisibleGroupsCollapsed ? "전부 펼치기" : "전부 접기"}</button>
                 </div>
               ) : null}
-              {ui.view === "explore" ? (
-                <div className="select-control explore-sort-control"><label htmlFor="sort-select">정렬</label><select id="sort-select" value={ui.exploreSort} onChange={(event) => dispatch({ type: "sort.set", sort: event.target.value as SearchSort })}>{sortOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
-              ) : ui.view === "auto-find" ? (
+              {ui.view === "auto-find" ? (
                 <div className="auto-find-evidence">
                   <span className={`context-summary auto-find-status is-${autoFindSnapshot.run?.state ?? "idle"}`} role="status">{currentAutoFindStatus}</span>
                   {autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== settings.autoFindHistoryMode ? (
@@ -4452,7 +4513,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                 ? void excludeAutoFindCandidates(selectedIds)
                 : showToast("후보 제외는 Auto Find 화면에서 사용할 수 있습니다.")}
           />
-          <section id="gallery-viewport" ref={galleryViewport} className="gallery-viewport">
+          <section id="gallery-viewport" data-tour="hitomi-albums" ref={galleryViewport} className="gallery-viewport">
             {settingsLoading ? (
               <div className="loading-state" role="status"><span className="spinner" /> 저장된 화면 설정을 불러오는 중</div>
             ) : ((ui.view === "explore" && query.phase === "submitting" && !visible.length)
@@ -4559,6 +4620,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         onOpenRelated={openRelatedDetail}
         onQueue={(id) => void queueGalleries([id])}
         onCancelDownload={(id) => void cancelGalleries([id])}
+        onExclude={(id) => void excludeExploreGalleries([id])}
         pendingDownloadEntryIds={pendingDownloadEntries}
         cancellingDownloadEntryIds={cancellingDownloadEntries}
         onSetRepresentativePreview={setRepresentativePreview}
@@ -4573,6 +4635,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         onActivity: () => shell.activityOpen ? closeActivity() : openActivity(),
         onActivityRecord: recordDanbooruActivity,
         onMetadataFavorite: toggleMetadataFavorite,
+        onOpenPersonalLibrary: () => { setPersonalLibraryVisited(true); setPersonalLibraryOpen(true); dispatch({ type: "detail.minimize", minimized: true }); },
       })}
 
       <ActivityDrawer
@@ -4618,12 +4681,15 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       />
 
       <SettingsDialog
+        onChooseDownloadRoot={() => backend.downloadRootChoose()}
         open={shell.settingsOpen}
         settings={settings}
         loading={settingsLoading}
         error={settingsError}
         onClose={() => setSettingsOpen(false)}
-        onSave={saveSettingsPatch}
+        onSave={async patch => (await shell.settingsStore.save(patch)).ok}
+        onReplayTutorial={shell.replayTutorial}
+        tutorialSourceLabel={workspaceRegistry[shell.source].label}
         onLoadStorageUsage={loadStorageUsage}
         onPreviewLayout={setSettingsPreview}
         onPreviewFolderName={previewFolderNameTemplate}
@@ -4640,6 +4706,22 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         open={keyboardShortcutsOpen}
         onClose={() => setKeyboardShortcutsOpen(false)}
       />
+
+      {shell.tutorialSource ? <TutorialDialog key={shell.tutorialSource} open steps={tutorialStepsBySource[shell.tutorialSource]}
+        onStart={() => {
+          setSettingsOpen(false); closeActivity();
+          if (shell.tutorialSource === "hitomi") navigateView("explore");
+          dispatch({ type: "detail.minimize", minimized: true });
+        }}
+        onStepChange={(id) => {
+          // Each guide stays in its own service; Back must not switch sources.
+          if (shell.tutorialSource !== "hitomi") return;
+          setSettingsOpen(id === "folder");
+          dispatch({ type: "detail.minimize", minimized: !["detail", "follow"].includes(id) });
+          if (["settings", "search", "album"].includes(id)) navigateView("explore");
+          setActivityOpen(id === "activity-info");
+        }}
+        onClose={() => { setSettingsOpen(false); shell.closeTutorial(); }} /> : null}
 
       <DuplicateReviewDialog
         open={ui.overlays.reviewGalleryId !== null && duplicateReviewCandidateId !== null}

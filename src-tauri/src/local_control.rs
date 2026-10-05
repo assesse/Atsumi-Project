@@ -5,7 +5,7 @@ use std::{
     net::{TcpListener, TcpStream},
     path::PathBuf,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::Duration,
@@ -15,6 +15,65 @@ use tauri::{Manager, State};
 pub struct LocalControl {
     directory: PathBuf,
     checkpoint: Mutex<Option<Value>>,
+    closing: AtomicBool,
+}
+
+impl LocalControl {
+    fn save_checkpoint(&self, checkpoint: Value) -> Result<(), String> {
+        let mut current = self
+            .checkpoint
+            .lock()
+            .map_err(|_| "Checkpoint lock unavailable")?;
+        // A queued IPC write must not recreate recovery state after a clean exit.
+        if self.closing.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        if current
+            .as_ref()
+            .and_then(|v| v.get("savedAt"))
+            .and_then(Value::as_u64)
+            > checkpoint.get("savedAt").and_then(Value::as_u64)
+        {
+            return Ok(());
+        }
+        let temporary = self.directory.join("navigation-checkpoint.tmp");
+        std::fs::write(
+            &temporary,
+            serde_json::to_vec(&checkpoint).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::rename(temporary, self.directory.join("navigation-checkpoint.json"))
+            .map_err(|e| e.to_string())?;
+        *current = Some(checkpoint);
+        Ok(())
+    }
+
+    fn clear_for_clean_exit(&self) -> Result<(), String> {
+        self.closing.store(true, Ordering::Release);
+        let mut current = self
+            .checkpoint
+            .lock()
+            .map_err(|_| "Checkpoint lock unavailable")?;
+        for name in ["navigation-checkpoint.json", "navigation-checkpoint.tmp"] {
+            match std::fs::remove_file(self.directory.join(name)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        *current = None;
+        Ok(())
+    }
+}
+
+/// Called only after the native event loop has accepted a normal exit, never
+/// for hiding to tray, a cancelled close dialog, or a renderer reload/crash.
+pub fn finish_clean_shutdown(app: &tauri::AppHandle) {
+    if let Some(state) = app.try_state::<Arc<LocalControl>>() {
+        if let Err(error) = state.clear_for_clean_exit() {
+            eprintln!("Navigation checkpoint cleanup failed: {error}");
+        }
+    }
 }
 
 fn valid_checkpoint(value: &Value) -> bool {
@@ -46,35 +105,9 @@ pub async fn work_checkpoint_save(
         return Err("Invalid or oversized navigation checkpoint".into());
     }
     let state = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut current = state
-            .checkpoint
-            .lock()
-            .map_err(|_| "Checkpoint lock unavailable")?;
-        if current
-            .as_ref()
-            .and_then(|v| v.get("savedAt"))
-            .and_then(Value::as_u64)
-            > checkpoint.get("savedAt").and_then(Value::as_u64)
-        {
-            return Ok(());
-        }
-        let temporary = state.directory.join("navigation-checkpoint.tmp");
-        std::fs::write(
-            &temporary,
-            serde_json::to_vec(&checkpoint).map_err(|e| e.to_string())?,
-        )
-        .map_err(|e| e.to_string())?;
-        std::fs::rename(
-            temporary,
-            state.directory.join("navigation-checkpoint.json"),
-        )
-        .map_err(|e| e.to_string())?;
-        *current = Some(checkpoint);
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || state.save_checkpoint(checkpoint))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 pub fn install(app: &tauri::AppHandle) -> Result<(), String> {
@@ -94,6 +127,7 @@ pub fn install(app: &tauri::AppHandle) -> Result<(), String> {
     app.manage(Arc::new(LocalControl {
         directory: directory.clone(),
         checkpoint: Mutex::new(checkpoint),
+        closing: AtomicBool::new(false),
     }));
     let listener =
         TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).map_err(|e| e.to_string())?;
@@ -425,5 +459,54 @@ mod tests {
         assert!(!valid_checkpoint(
             &json!({"version":1,"savedAt":1,"tabs":[],"x":"a".repeat(128*1024)})
         ));
+    }
+
+    #[test]
+    fn clean_exit_clears_only_navigation_and_rejects_delayed_saves() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = LocalControl {
+            directory: temp.path().into(),
+            checkpoint: Mutex::new(None),
+            closing: AtomicBool::new(false),
+        };
+        std::fs::write(temp.path().join("keep.log"), b"diagnostics").unwrap();
+        state
+            .save_checkpoint(json!({"version":1,"savedAt":1,"tabs":[]}))
+            .unwrap();
+        assert!(temp.path().join("navigation-checkpoint.json").exists());
+        std::fs::write(temp.path().join("navigation-checkpoint.tmp"), b"partial").unwrap();
+        state.clear_for_clean_exit().unwrap();
+        state
+            .save_checkpoint(json!({"version":1,"savedAt":2,"tabs":[]}))
+            .unwrap();
+        state.clear_for_clean_exit().unwrap();
+        assert!(state.checkpoint.lock().unwrap().is_none());
+        assert!(!temp.path().join("navigation-checkpoint.json").exists());
+        assert!(!temp.path().join("navigation-checkpoint.tmp").exists());
+        assert_eq!(
+            std::fs::read(temp.path().join("keep.log")).unwrap(),
+            b"diagnostics"
+        );
+    }
+
+    #[test]
+    fn without_clean_exit_checkpoint_survives_and_older_saves_do_not_replace_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = LocalControl {
+            directory: temp.path().into(),
+            checkpoint: Mutex::new(None),
+            closing: AtomicBool::new(false),
+        };
+        let latest = json!({"version":1,"savedAt":2,"tabs":[]});
+        state.save_checkpoint(latest.clone()).unwrap();
+        state
+            .save_checkpoint(json!({"version":1,"savedAt":1,"tabs":[]}))
+            .unwrap();
+        drop(state); // No accepted clean-exit callback (renderer crash/forced termination).
+        let saved: Value = serde_json::from_slice(
+            &std::fs::read(temp.path().join("navigation-checkpoint.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(saved, latest);
     }
 }

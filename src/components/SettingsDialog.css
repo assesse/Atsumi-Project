@@ -1,0 +1,62 @@
+/* 70% of the former 880px dialog; controls keep their own compact layout. */
+dialog.settings-dialog { width: min(616px, calc(100vw - 32px)); }
+.settings-dialog .settings-nav { padding-inline: 20px; }
+.settings-dialog .settings-nav button { min-width: 0; flex: 1; }
+.settings-dialog .settings-layout { position: relative; }
+.settings-dialog .settings-feedback { position: absolute; inset: 8px 12px auto; z-index: 5; padding: 12px; max-height: 40%; overflow: auto; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 4px 16px #0008; }
+.settings-dialog .settings-feedback .inline-error { margin: 0; }
+.settings-dialog .settings-content { padding: 8px 20px 20px; }
+.settings-dialog .setting-row { grid-template-columns: minmax(0, 1fr) minmax(180px, .85fr); gap: 14px; min-height: 76px; padding-block: 14px; }
+.settings-dialog .setting-row > * { min-width: 0; }
+.settings-dialog .setting-row > div:first-child { overflow-wrap: anywhere; }
+.settings-dialog .setting-row:has(> .setting-checkbox),
+.settings-dialog .setting-row:has(> .text-button) { grid-template-columns: minmax(0, 1fr) auto; }
+.settings-dialog .setting-row .setting-checkbox {
+  /* The hit target stays at the right edge even as the status text changes. */
+  display: grid; grid-template-columns: minmax(0, 1fr) 18px;
+  width: 150px; max-width: 150px; grid-template-rows: 38px; min-height: 38px; align-content: center;
+}
+.settings-dialog .setting-row .setting-checkbox input { grid-column: 2; grid-row: 1; margin: 0; }
+.settings-dialog .setting-checkbox > span { grid-column: 1; grid-row: 1; text-align: right; }
+.settings-dialog .setting-row .setting-checkbox:not(:has(> span)) { width: 18px; grid-template-columns: 0 18px; gap: 0; }
+.settings-dialog .settings-save-status { min-width: 84px; text-align: right; }
+.settings-dialog .autostart-setting { position: relative; }
+.settings-dialog .autostart-feedback { position: absolute; top: calc(100% - 6px); inset-inline: 0; z-index: 4; padding: 12px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 4px 16px #0008; }
+.settings-dialog .download-folder-setting { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.settings-dialog .download-folder-setting .setting-path-field { max-width: none; }
+.settings-dialog .range-wrap { grid-template-columns: minmax(0, 1fr) 54px; gap: 8px; }
+.settings-dialog .range-wrap input { min-width: 0; width: 100%; }
+.settings-dialog .settings-select-control select { padding-right: 28px; }
+.settings-dialog .search-rule-fields { gap: 12px; }
+.settings-dialog .search-rule-fields label { grid-template-rows: auto minmax(34px, auto) 1fr; }
+.settings-dialog .search-rule-fields textarea { min-height: 104px; }
+.settings-dialog .setting-row:has(.danbooru-settings-checks) { grid-template-columns: minmax(0, 1fr); }
+.settings-dialog .danbooru-settings-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: none; }
+.settings-dialog .danbooru-settings-checks input[type="checkbox"] { flex: 0 0 16px; width: 16px; height: 16px; margin: 0; padding: 0; }
+.settings-dialog .exclusion-manager-header { align-items: flex-start; gap: 12px; }
+.settings-dialog .exclusion-manager-actions { min-width: 0; }
+.settings-dialog .exclusion-item { grid-template-columns: auto minmax(0, 1fr); }
+.settings-dialog .exclusion-item > button { grid-column: 2; justify-self: end; }
+.settings-dialog .maintenance-item { grid-template-columns: minmax(0, 1fr); grid-template-areas: "copy" "options" "action"; gap: 10px; padding: 14px; }
+.settings-dialog .maintenance-item:not(:has(.maintenance-options)) { grid-template-areas: "copy" "action"; }
+.settings-dialog .maintenance-copy p { line-height: 1.6; }
+.settings-dialog .settings-about-details dd { min-width: 0; overflow-wrap: anywhere; }
+.settings-dialog .settings-save-status { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.settings-dialog .settings-save-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--danger); font-size: 13px; }
+.settings-dialog .settings-save-error button { flex-shrink: 0; }
+.settings-dialog .settings-performance-group { margin-top: 20px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; }
+.settings-dialog .settings-performance-group h3 { margin: 16px 0 4px; font-size: 14px; }
+.settings-dialog .settings-performance-group .setting-row:last-child { border-bottom: 0; }
+@media (max-width: 560px) {
+  .settings-dialog .dialog-header { padding-inline: 16px; }
+  .settings-dialog .settings-content { padding-inline: 16px; }
+  .settings-dialog .settings-nav { padding-inline: 12px; }
+  .settings-dialog .setting-row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .settings-dialog .setting-row:has(> .text-button) { grid-template-columns: minmax(0, 1fr); }
+  .settings-dialog .setting-row > .text-button { justify-self: end; }
+  .settings-dialog .search-rule-fields,
+  .settings-dialog .maintenance-options { grid-template-columns: minmax(0, 1fr); }
+  .settings-dialog .storage-usage-header,
+  .settings-dialog .search-catalog-panel > header,
+  .settings-dialog .exclusion-manager-header { flex-wrap: wrap; }
+}

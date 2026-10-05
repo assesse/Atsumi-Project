@@ -37,6 +37,7 @@
 .album-comments-compose-footer { display: flex; align-items: center; gap: 10px; margin-top: 9px; }
 .album-comments-compose-footer > span { color: var(--muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .album-comments-submit { margin-left: auto; flex-shrink: 0; border: 1px solid var(--primary); border-radius: 7px; padding: 5px 14px; color: var(--primary-strong); background: var(--primary-soft); }
+.album-comments-compose-footer > .album-comments-charcount { flex-shrink: 0; overflow: visible; font-variant-numeric: tabular-nums; }
 .album-comments-submit:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 20%, var(--surface)); }
 .album-comments-disclosure { margin: 8px 0 0; color: var(--muted); font-size: 10px; }
 .album-comments-error, .album-comments-notice { font-size: 12px; margin: 8px 0 0; overflow-wrap: anywhere; }

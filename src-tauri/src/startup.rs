@@ -270,6 +270,7 @@ pub(crate) fn init_metrics() {
 }
 
 pub(crate) fn mark(stage: &'static str) {
+    crate::diagnostics::startup(stage, elapsed_ms());
     if let Some(metrics) = METRICS.get() {
         let _ = metrics.events.try_send(MetricEvent {
             stage,

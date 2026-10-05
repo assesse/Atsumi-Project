@@ -26,8 +26,10 @@ function Show-AtsumiLaunchFailure {
   param([string]$Detail)
   # This launcher has no console. A failed dev server must be actionable,
   # not look like a desktop shortcut that did nothing. Never kill its owner.
-  $hint = if ($Detail -match 'Port 1420 is already in use') {
-    "Port 1420 is already in use. Close the preview/development server and try again. No existing app or recording was stopped."
+  $hint = if ($Detail -match 'EACCES|permission denied|No available Atsumi development port') {
+    "Windows blocked the development server port. See the endpoint and error in the launch logs. No existing app or recording was stopped."
+  } elseif ($Detail -match 'Port \d+ is already in use|EADDRINUSE') {
+    "Another server took the development port during launch. Try again to select an available port. No existing app or recording was stopped."
   } else {
     "The development app could not start. See the launch logs for details."
   }
@@ -67,6 +69,23 @@ if ($CheckOnly) {
 
 $runningApp = Get-Process -Name "atsumi" -ErrorAction SilentlyContinue
 if ($runningApp) {
+  $expectedDebugExecutable = Join-Path $projectRoot "src-tauri\target\debug\atsumi.exe"
+  $differentBuild = @($runningApp | Where-Object {
+    # Missing executable information is also a reason not to start another
+    # worker against the same database. Do not silently open the release UI.
+    $_.Path -ine $expectedDebugExecutable
+  })
+  if ($differentBuild.Count -gt 0) {
+    "A different Atsumi build is running. Debug launch was not redirected and no process was stopped." |
+      Add-Content -LiteralPath $logPath -Encoding UTF8
+    Add-Type -AssemblyName System.Windows.Forms
+    [void][System.Windows.Forms.MessageBox]::Show(
+      "A release or another Atsumi build is already running. Close it from its tray menu, then open Atsumi (Debug) again. Your downloads and recordings have not been stopped.",
+      "Atsumi - debug launch", [System.Windows.Forms.MessageBoxButtons]::OK,
+      [System.Windows.Forms.MessageBoxIcon]::Information
+    )
+    exit 75
+  }
   # A desktop shortcut is also a way to bring a minimized/tray window back.
   # Never silently exit, spawn another watcher, or kill a recording here.
   Add-Type -TypeDefinition @'
@@ -110,10 +129,6 @@ public static class AtsumiLauncherWindow {
   public static extern bool SetForegroundWindow(IntPtr hwnd);
 }
 
-if (-not (Test-Path -LiteralPath $developmentRunner -PathType Leaf)) {
-  "Missing tools\run_tauri_dev.ps1" | Add-Content -LiteralPath $logPath -Encoding UTF8
-  exit 1
-}
 '@
   foreach ($existingApp in $runningApp) {
     # Process.MainWindowHandle can pick the visible 16px single-instance helper
@@ -156,6 +171,13 @@ if (-not $createdNew) {
   exit 73
 }
 $ownsLauncherMutex = $true
+
+if (-not (Test-Path -LiteralPath $developmentRunner -PathType Leaf)) {
+  "Missing tools\run_tauri_dev.ps1" | Add-Content -LiteralPath $logPath -Encoding UTF8
+  $launcherMutex.ReleaseMutex()
+  $launcherMutex.Dispose()
+  exit 1
+}
 
 Remove-Item -LiteralPath $standardOutput, $standardError -Force -ErrorAction SilentlyContinue
 

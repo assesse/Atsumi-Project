@@ -1,4 +1,5 @@
 pub mod browser;
+mod browser_compat;
 pub mod browser_extension;
 #[cfg(test)]
 mod browser_ipc_tests;

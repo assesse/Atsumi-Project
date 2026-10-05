@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { AlbumCommentsState } from "./useAlbumComments";
+import { REVIEW_COMMENT_LIMIT, reviewCommentLength } from "./api";
 import "./AlbumCommentsPopover.css";
 
 export function AlbumCommentsPopover({ id, trigger, state, onClose }: {
@@ -54,6 +55,7 @@ export function AlbumCommentsPopover({ id, trigger, state, onClose }: {
     return () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("focusin", outside); window.removeEventListener("keydown", escape, true); };
   }, [onClose, trigger]);
   const { page, loading, writer, draft, saving, preparing } = state;
+  const commentLength = reviewCommentLength(draft.comment);
   return createPortal(<div ref={panel} id={id} role="dialog" aria-label="앨범 코멘트" tabIndex={-1}
     popover={nativePopover ? "manual" : undefined} className={`album-comments-panel${nativePopover ? "" : " is-fallback"}`}
     data-gallery-shortcuts-suspended data-placement={placement.up ? "above" : "below"}
@@ -79,13 +81,15 @@ export function AlbumCommentsPopover({ id, trigger, state, onClose }: {
           className={rating <= draft.rating ? "is-filled" : ""} onClick={() => state.setRating(rating)}>★</button>)}
         <span aria-live="polite">{draft.rating ? `${draft.rating}점` : "선택"}</span>
       </fieldset>
-      <textarea aria-label="앨범에 한마디" placeholder="보고 느낀 점을 한마디…" rows={2} maxLength={500} disabled={saving}
+      <textarea aria-label="앨범에 한마디" placeholder="100자 이내로 한마디…" rows={2} disabled={saving} aria-invalid={commentLength > REVIEW_COMMENT_LIMIT || undefined}
         value={draft.comment} onFocus={state.beginWriting} onChange={(event) => state.setComment(event.target.value)} />
       <div className="album-comments-compose-footer"><span title={writer ? `작성자: ${writer.profile.nickname}` : undefined}>
         {preparing ? "작성 준비 중…" : writer ? writer.profile.nickname : "첫 작성 시 익명 키 발급"}</span>
-        <button type="submit" className="album-comments-submit" disabled={saving || preparing || !writer || !draft.rating}>
+        <span className="album-comments-charcount">{commentLength}/{REVIEW_COMMENT_LIMIT}</span>
+        <button type="submit" className="album-comments-submit" disabled={saving || preparing || !writer || !draft.rating || commentLength > REVIEW_COMMENT_LIMIT}>
           {saving ? "저장 중…" : writer?.mine || state.saved ? "수정" : "남기기"}</button>
       </div>
+      {commentLength > REVIEW_COMMENT_LIMIT ? <p className="album-comments-error" role="alert">100자 이내로 줄여 주세요. 기존 내용은 유지됩니다.</p> : null}
       <p className="album-comments-disclosure">별점만 남겨도 좋아요 · 작성한 내용은 공개됩니다.</p>
       {writer?.mine?.hidden ? <p className="album-comments-error">운영자가 숨긴 코멘트입니다. 수정해도 공개되지 않습니다.</p> : null}
       {state.writeError ? <p className="album-comments-error" role="alert">{state.writeError}{!writer ? <button type="button" disabled={preparing} onClick={state.beginWriting}>다시 시도</button> : null}</p> : null}

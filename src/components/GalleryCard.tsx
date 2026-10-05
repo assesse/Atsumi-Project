@@ -28,6 +28,8 @@ import { MetadataChip } from "./MetadataChip";
 import { GalleryProcessingBadge, processingSurfaceAttributes } from "./GalleryProcessingBadge";
 import type { BackgroundOpenOptions } from "../state/downloadStatus";
 import { fitTagChips, sortGalleryTags, splitGalleryTitle, type TagFitResult } from "./galleryCardLayout";
+import { isCardControl, useCardContextMenu } from "./CardContextMenu";
+import { AlbumContextMenu } from "./AlbumContextMenu";
 
 type GalleryCardProps = {
   gallery: Gallery;
@@ -55,6 +57,9 @@ type GalleryCardProps = {
   onStatusDetail: (id: GalleryId) => void;
   onMetadataSearch: (value: string, options?: BackgroundOpenOptions) => void;
   onMetadataFavorite: (value: string) => void;
+  onQueue?: (id: GalleryId) => void;
+  onExclude?: (id: GalleryId) => void;
+  pendingAction?: boolean;
 };
 
 const workLabel: Partial<Record<NonNullable<Gallery["download"]>["state"], string>> = {
@@ -108,17 +113,17 @@ function GalleryCardComponent({
   onStatusDetail,
   onMetadataSearch,
   onMetadataFavorite,
+  onQueue,
+  onExclude,
+  pendingAction,
 }: GalleryCardProps) {
+  const menu = useCardContextMenu();
   const download = useGalleryDownload(gallery.id, gallery.download);
   const isExplorationBlind = view === "explore"
     && (download?.state === "quarantined" || explorationExcluded);
   const explorationBlindLabel = download?.state === "quarantined"
     ? "격리된 앨범"
     : explorationExcludedLabel;
-  const gestureSelectionContext = useRef(selectionContext);
-  useEffect(() => {
-    gestureSelectionContext.current = selectionContext;
-  }, [selectionContext]);
   const progress = Math.min(
     100,
     Math.max(0, download?.state === "completed" ? 100 : download?.progress ?? 0),
@@ -264,9 +269,6 @@ function GalleryCardComponent({
     };
   }, [displayMode, invalidateTagLayout, sortedTags.length]);
 
-  const selectsInsteadOfActivating = (event: Pick<MouseEvent<HTMLElement>, "ctrlKey" | "shiftKey">) =>
-    selectionContext || event.ctrlKey || event.shiftKey;
-
   const selectFromInteractiveTarget = (event: MouseEvent<HTMLElement>) => {
     if (isExplorationBlind) {
       event.preventDefault();
@@ -308,11 +310,27 @@ function GalleryCardComponent({
     }
   };
 
+  const menuActions = {
+    open: () => onOpenDetail(gallery.id),
+    background: () => onOpenDetail(gallery.id, { background: true }),
+    queue: onQueue ? () => onQueue(gallery.id) : undefined,
+    folder: onOpenDownloadFolder && download ? () => onOpenDownloadFolder(download.entryId) : undefined,
+    artifact: () => onOpenArtifact(gallery.id),
+    review: hasDuplicateCandidates || isDownloadOverlapReview ? () => onOpenReview(gallery.id) : undefined,
+    internalReview: hasInternalDuplicateResult && download && onOpenInternalReview ? () => onOpenInternalReview(download.entryId) : undefined,
+    status: () => onStatusDetail(gallery.id),
+    exclude: onExclude ? () => onExclude(gallery.id) : undefined,
+    excludeLabel: view === "downloads" ? download?.state === "quarantined" ? "격리 해제·복원" : "목록에서 제외·격리…" : "앞으로 탐색에서 제외",
+    excludeDisabled: view === "downloads" && download?.state !== "completed" && download?.state !== "quarantined",
+    pending: pendingAction,
+  };
   return (
+    <>
     <article
       className={`gallery-card${displayMode === "compact" ? " is-compact" : ""}${compactFavoriteTagCount ? " has-compact-favorites" : ""}${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
       ref={cardRef}
       data-gallery-id={gallery.id}
+      data-tour="hitomi-album"
       {...processingSurfaceAttributes(download, view === "explore")}
       data-display-mode={displayMode}
       style={{ "--download-progress": `${progress}%` } as CSSProperties}
@@ -327,43 +345,36 @@ function GalleryCardComponent({
         isExplorationBlind ? `${explorationBlindLabel}, 내용 가림` : null,
         selected ? "선택됨" : "선택 안 됨",
       ].filter(Boolean).join(", ")}
-      onKeyDown={selectFromKeyboard}
+      onKeyDown={(event) => { if (!isExplorationBlind && !menu.onKeyDown(event)) selectFromKeyboard(event); }}
       onKeyDownCapture={() => { pointerFocus.current = false; }}
       onPointerDownCapture={() => { pointerFocus.current = true; }}
       onFocus={() => onKeyboardFocus?.(gallery.id)}
       onClick={(event) => {
         if (isExplorationBlind) return;
-        if ((event.target as Element).closest("button")) return;
+        if (isCardControl(event.target)) return;
         if (event.detail > 1) return;
         const modifiers = { ctrlKey: event.ctrlKey || event.metaKey, shiftKey: event.shiftKey };
-        gestureSelectionContext.current = selectsInsteadOfActivating(modifiers);
         onSelect(gallery.id, modifiers);
       }}
       onDoubleClick={(event) => {
         if (isExplorationBlind) return;
-        if ((event.target as Element).closest("button")) return;
-        if (gestureSelectionContext.current || event.ctrlKey || event.metaKey || event.shiftKey) {
-          gestureSelectionContext.current = false;
-          return;
-        }
-        gestureSelectionContext.current = false;
+        if (isCardControl(event.target)) return;
+        if (event.ctrlKey || event.metaKey || event.shiftKey) return;
         event.currentTarget.focus();
-        if (view === "downloads") onOpenArtifact(gallery.id);
-        else onOpenDetail(gallery.id);
+        onOpenDetail(gallery.id);
       }}
       onContextMenu={(event) => {
         if (isExplorationBlind) {
           event.preventDefault();
           return;
         }
-        if ((event.target as Element).closest("button")) return;
-        event.preventDefault();
-        event.currentTarget.focus();
-        if (view === "downloads" && (hasDuplicateCandidates || isDownloadOverlapReview)) onOpenReview(gallery.id);
-        else onOpenDetail(gallery.id);
+        if (isCardControl(event.target)) return;
+        menu.open(event);
       }}
     >
-      {!isExplorationBlind ? <button type="button" className="card-select-toggle"
+      {/* Both card layouts use the same rule: a single selection is a focus
+          highlight; checkboxes only appear in a multi-selection context. */}
+      {!isExplorationBlind && selectionContext ? <button type="button" className="card-select-toggle"
         aria-label={`${gallery.title} 선택 전환`} aria-pressed={selected}
         onClick={(event) => { event.stopPropagation(); onSelect(gallery.id, { ctrlKey:true, shiftKey:event.shiftKey }); }}>
         {selected ? "✓" : ""}
@@ -583,6 +594,8 @@ function GalleryCardComponent({
         </div>
       ) : null}
     </article>
+    {menu.anchor && !isExplorationBlind ? <AlbumContextMenu anchor={menu.anchor} close={menu.close} label={displayTitle} gallery={{ ...gallery, download }} actions={menuActions} /> : null}
+    </>
   );
 }
 

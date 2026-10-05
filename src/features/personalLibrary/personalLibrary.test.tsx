@@ -63,19 +63,16 @@ describe("private favorites and collections", () => {
     expect((await api(list("pages", b))).total).toBe(1);
     expect((await api({ action: "summary" })).summary.keys).toHaveLength(2);
   });
-  it("saves in place with one click and creates/assigns a collection without navigating", async () => {
+  it("saves in place with one button and no collection menu or navigation", async () => {
     const parentClick = vi.fn();
     await render(<div onClick={parentClick}><BookmarkButton gallery={gallery} /></div>);
     await click("앨범 즐겨찾기 저장");
     expect(button("앨범 즐겨찾기 해제")).toHaveAttribute("aria-pressed", "true");
     expect(parentClick).not.toHaveBeenCalled();
     expect(document.querySelector('[aria-label="즐겨찾기 컬렉션"]')).toBeNull();
-    await click("앨범 컬렉션에 정리"); await input("새 컬렉션 이름", "다시 보기"); await click("만들어 담기");
-    const saved = (await api({ action: "summary" })).summary;
-    expect(saved.keys[0]!.collectionIds).toEqual([saved.collections[0]!.id]);
-    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
-    expect(document.querySelector('[aria-label="즐겨찾기 컬렉션"]')).toBeNull();
-    expect(document.activeElement).toBe(button("앨범 컬렉션에 정리"));
+    expect(container.querySelectorAll("button")).toHaveLength(1);
+    expect(container.querySelector(".bookmark-actions")).not.toHaveClass("is-split");
+    expect((await api({ action: "summary" })).summary.keys).toHaveLength(1);
   });
   it("does not show a successful save on storage failure and permits retry", async () => {
     let fail = true;
@@ -84,18 +81,19 @@ describe("private favorites and collections", () => {
     await click("앨범 즐겨찾기 저장"); expect(button("앨범 즐겨찾기 저장")).toHaveAttribute("aria-pressed", "false");
     fail = false; await click("앨범 즐겨찾기 저장"); expect(button("앨범 즐겨찾기 해제")).toHaveAttribute("aria-pressed", "true");
   });
-  it("opens and dismisses the collection arrow without saving; only choosing a collection saves", async () => {
+  it("shows legacy collected and unfiled items together in exactly two categories", async () => {
     const collectionId = (await api({ action: "collection_save", id: null, name: "장면 모음" })).collectionId!;
+    await api(save()); await api(save(7)); await api(save(8));
+    await api({ action: "membership_set", target: targetFor(gallery, 7), collectionId, enabled: true });
     const calls = vi.fn(api);
-    await render(<BookmarkButton gallery={gallery} />, calls);
-    await click("앨범 컬렉션에 정리");
-    expect((await api({ action: "summary" })).summary.keys).toHaveLength(0);
-    expect(button("앨범 즐겨찾기 저장")).toHaveAttribute("aria-pressed", "false");
-    await click("컬렉션 메뉴 닫기");
-    expect(calls.mock.calls.some(([request]) => request.action === "bookmark_set")).toBe(false);
-    await click("앨범 컬렉션에 정리");
-    await act(async () => { document.querySelector<HTMLInputElement>('.bookmark-picker input[type="checkbox"]')!.click(); await settle(); });
-    expect((await api({ action: "summary" })).summary.keys[0]?.collectionIds).toEqual([collectionId]);
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={vi.fn()} />, calls);
+    expect(container.querySelectorAll('[aria-label="즐겨찾기 종류"] button')).toHaveLength(2);
+    expect(container.textContent).not.toMatch(/컬렉션|미분류|장면 모음/);
+    expect(container.querySelectorAll(".saved-card")).toHaveLength(1);
+    await click("페이지 2");
+    expect(container.querySelectorAll(".saved-card")).toHaveLength(2);
+    expect(calls.mock.calls.filter(([r]) => r.action === "list").every(([r]) => r.action === "list" && r.collectionId === null)).toBe(true);
+    expect((await api({ action: "summary" })).summary.keys).toHaveLength(3);
   });
   it("keeps the compact card control centered and single-purpose with a saved-state marker", async () => {
     await render(<BookmarkButton gallery={gallery} compact />);
@@ -109,12 +107,13 @@ describe("private favorites and collections", () => {
     await api(save());
     const onActivity = vi.fn(), onSettings = vi.fn(), onPrivacyToggle = vi.fn();
     await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={onPrivacyToggle} onBack={vi.fn()} onOpen={vi.fn()} onActivity={onActivity} onSettings={onSettings} />);
+    expect(container).not.toHaveTextContent("탐색으로 돌아가기");
     const header = container.querySelector(".view-header")!;
     expect(header.querySelector(".search-box input")).toHaveAccessibleName("즐겨찾기 검색");
     expect(header.querySelector('button[type="submit"]')).toHaveAttribute("form", "personal-library-search");
     await click("활동 기록", header); await click("프라이버시 모드", header); await click("설정", header);
     expect(onActivity).toHaveBeenCalledOnce(); expect(onPrivacyToggle).toHaveBeenCalledOnce(); expect(onSettings).toHaveBeenCalledOnce();
-    await click("컬렉션 목록", header); expect(container.querySelector(".personal-collections")).toHaveAttribute("hidden");
+    expect(container.querySelector(".personal-collections")).toBeNull();
     await input("즐겨찾기 검색", "없는 작품");
     await act(async () => { header.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await settle(); });
     expect(container.querySelectorAll(".saved-card")).toHaveLength(0);
@@ -128,7 +127,7 @@ describe("private favorites and collections", () => {
     await act(async () => { resolve(await api(save())); });
     expect(button("앨범 즐겨찾기 해제")).toBeEnabled();
   });
-  it("overlays bookmark/collection controls and date on the cover, with the Korean title first", async () => {
+  it("overlays a single bookmark control and date on the cover, with the Korean title first", async () => {
     const saved = { ...gallery, title: "Original title | 한글 제목" };
     await api({ ...save(), action: "bookmark_set", target: targetFor(saved), enabled: true, snapshot: snapshotFor(saved) });
     const onOpen = vi.fn();
@@ -139,17 +138,14 @@ describe("private favorites and collections", () => {
     expect(card.querySelector("footer")).toBeNull();
     expect(card.querySelector(".saved-card-cover .saved-card-bookmark .bookmark-actions")).toHaveAttribute("data-saved", "true");
     expect(card.querySelector(".saved-card-cover time")).toBeInTheDocument();
-    // Siblings, not nested buttons: collection clicks must not open the gallery.
+    // Siblings, not nested buttons: bookmark clicks must not open the gallery.
     expect(card.querySelector(".saved-card-preview button")).toBeNull();
-    await click("앨범 컬렉션에 정리", card);
-    expect(onOpen).not.toHaveBeenCalled();
-    expect(document.querySelector('[aria-label="즐겨찾기 컬렉션"]')).toBeInTheDocument();
-    await click("컬렉션 메뉴 닫기");
+    expect(card.querySelectorAll(".saved-card-bookmark button")).toHaveLength(1);
     await click("앨범 즐겨찾기 해제", card);
     expect(onOpen).not.toHaveBeenCalled();
     expect(container.querySelector(".saved-card")).toBeNull();
   });
-  it.each([0, 7])("opens album details on right-click for saved page %i, but Enter opens the saved target", async (page) => {
+  it.each([0, 7])("offers a menu on right-click for saved page %i, while Enter opens the saved target", async (page) => {
     await api(save(page)); const onOpen = vi.fn(), calls = vi.fn(api);
     await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={onOpen} />, calls);
     if (page) await click("페이지 1");
@@ -158,7 +154,9 @@ describe("private favorites and collections", () => {
       const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 });
       await act(async () => { target.dispatchEvent(event); await settle(); });
       expect(event.defaultPrevented).toBe(true);
-      expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ galleryId: gallery.id, page }), { detailOnly: true });
+      expect(document.body.querySelector('[role="menu"]')).not.toBeNull();
+      await act(async () => { [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent === (page ? "앨범 상세 열기" : "상세 열기"))!.click(); await settle(); });
+      expect(onOpen).toHaveBeenLastCalledWith(expect.objectContaining({ galleryId: gallery.id, page }), page ? { detailOnly: true } : undefined);
       expect(document.activeElement).toBe(card);
     }
     expect(calls.mock.calls.filter(([request]) => request.action === "get")).toHaveLength(2);
@@ -167,7 +165,7 @@ describe("private favorites and collections", () => {
     await act(async () => { card.querySelector(".saved-card-info")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 })); await settle(); });
     expect(onOpen).toHaveBeenCalledTimes(4);
     // The bookmark controls have their own keyboard and context-menu scope.
-    await act(async () => { card.querySelector(".bookmark-collections")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, button: 2 })); });
+    await act(async () => { card.querySelector(".bookmark-toggle")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, button: 2 })); });
     expect(onOpen).toHaveBeenCalledTimes(4);
   });
   it("loads a bounded list, opens the precise page and checks its state again before opening", async () => {
@@ -223,9 +221,7 @@ describe("private favorites and collections", () => {
     expect(container.querySelector("#page-preview-title")?.textContent).toContain("7페이지");
     await click("두쪽 보기"); await click("8페이지 즐겨찾기 저장");
     expect((await api({ action: "summary" })).summary.keys.map((key) => key.page)).toEqual([7, 8]);
-    await click("8페이지 컬렉션에 정리");
-    expect(container.querySelector('.page-preview-dialog [aria-label="즐겨찾기 컬렉션"]')).toBeInTheDocument();
-    await act(async () => { window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(container.querySelector(".page-preview-dialog .bookmark-collections")).toBeNull();
     expect(container.querySelector(".page-preview-dialog")).toHaveAttribute("open");
   });
 });

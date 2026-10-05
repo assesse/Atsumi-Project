@@ -2,8 +2,23 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { SideRail } from "./SideRail";
+import { CommonNavigationContext } from "../app/CommonNavigation";
 
 describe("SideRail source switcher", () => {
+  it("keeps community for album sources only and places auto recording before recordings", async () => {
+    const host = document.createElement("div"), root = createRoot(host);
+    const openCommunity = vi.fn();
+    try {
+      for (const source of ["chzzk", "hitomi", "danbooru"] as const) {
+        await act(async () => root.render(<CommonNavigationContext.Provider value={{ communityOpen: false, openCommunity }}><SideRail source={source} view={source === "chzzk" ? "live" : "explore"} collapsed={false} autoFindCount={0} attentionCount={0} sourceLabel={source} onNavigate={vi.fn()} onSourceChange={vi.fn()} onToggle={vi.fn()} /></CommonNavigationContext.Provider>));
+        const community = host.querySelector('[aria-label="커뮤니티"]');
+        if (source === "chzzk") {
+          expect(community).toBeNull();
+          expect([...host.querySelectorAll('.main-nav button')].map(button => button.getAttribute('aria-label'))).toEqual(["라이브", "자동 녹화", "녹화 목록"]);
+        } else expect(community).not.toBeNull();
+      }
+    } finally { await act(async () => root.unmount()); }
+  });
   it("exposes shared settings directly from CHZZK without navigating away", async () => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -120,6 +135,12 @@ describe("SideRail source switcher", () => {
       await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
       expect(container.querySelector('[role="menu"]')).not.toBeInTheDocument();
       await act(async () => banner?.click());
+      const tourControl = document.createElement("button");
+      tourControl.dataset.tutorialActive = "true";
+      container.append(tourControl);
+      await act(async () => tourControl.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+      expect(container.querySelector('[role="menu"]')).toBeInTheDocument();
+      tourControl.remove();
       await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true })));
       expect(container.querySelector('[role="menu"]')).not.toBeInTheDocument();
       expect(onSourceChange).not.toHaveBeenCalled();

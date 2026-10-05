@@ -53,6 +53,9 @@ function sanitize(value: unknown): NavigationCheckpoint | null {
 export function readNavigationCheckpoint(storage: Pick<Storage,"getItem">=sessionStorage): NavigationCheckpoint | null {
   try { const raw=storage.getItem(KEY); return raw && raw.length<=LIMIT ? sanitize(JSON.parse(raw)) : null; } catch { return null; }
 }
+export function clearNavigationCheckpoint(storage: Pick<Storage,"removeItem">=sessionStorage): void {
+  try { storage.removeItem(KEY); } catch { /* Unavailable browser storage must not block startup. */ }
+}
 export function writeNavigationCheckpoint(value:NavigationCheckpoint, storage:Pick<Storage,"setItem">=sessionStorage): void {
   try {
     const clean=sanitize(value); if (!clean) return;

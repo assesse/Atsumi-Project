@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { communityError, type CommunityApi, type Cursor, type ReviewPage, type WorkKey, type Writer } from "./api";
+import { communityError, REVIEW_COMMENT_LIMIT, reviewCommentLength, type CommunityApi, type Cursor, type ReviewPage, type WorkKey, type Writer } from "./api";
 
 /** Local to one work/button. Closing the popover keeps its draft, not an auth
  * token. Only an explicit writing gesture asks native code for an identity. */
@@ -58,6 +58,7 @@ export function useAlbumComments(work: WorkKey, open: boolean, api: CommunityApi
   };
   const submit = async () => {
     if (savePending.current || !writer || draft.rating < 1 || draft.rating > 5) return;
+    if (reviewCommentLength(draft.comment) > REVIEW_COMMENT_LIMIT) { setWriteError("코멘트는 100자 이내로 입력해 주세요."); return; }
     savePending.current = true; setSaving(true); setWriteError(null); setNotice(null);
     try {
       await api.save({ ...key, nickname: writer.profile.nickname, rating: draft.rating,

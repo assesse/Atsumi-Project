@@ -30,6 +30,9 @@ import { FluentIcon } from "./FluentIcon";
 import type { DanbooruSessionActivity } from "./ActivityDrawer";
 import { DropdownSelect } from "./DropdownSelect";
 import { SideRail } from "./SideRail";
+import { tutorialStepEvent, tutorialFinishedEvent } from "../tutorial/tourActions";
+import { CardContextMenu, isCardControl, useCardContextMenu } from "./CardContextMenu";
+import { WindowMotion } from "./WindowMotion";
 
 type DanbooruView = "explore" | "downloads";
 
@@ -197,6 +200,21 @@ export function DanbooruWorkspace({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<DanbooruPost | null>(null);
+  useEffect(() => {
+    // Replay exposes the targets; completing the guide returns to exploration.
+    const prepare = () => {
+      const step = document.documentElement.dataset.tutorialStep;
+      if (document.documentElement.dataset.tutorialOpen === "true" && (step === "danbooru-explore" || step === "danbooru-post")) setDetail(null);
+    };
+    prepare();
+    window.addEventListener(tutorialStepEvent, prepare);
+    const finish = (event: Event) => { if ((event as CustomEvent<string>).detail === "danbooru-detail") setDetail(null); };
+    window.addEventListener(tutorialFinishedEvent, finish);
+    return () => {
+      window.removeEventListener(tutorialStepEvent, prepare);
+      window.removeEventListener(tutorialFinishedEvent, finish);
+    };
+  }, []);
   const [suggestions, setSuggestions] = useState<DanbooruAutocompleteItem[]>([]);
   const [downloadedIds, setDownloadedIds] = useState<Set<number>>(new Set());
   const [pendingDownloads, setPendingDownloads] = useState<Set<number>>(new Set());
@@ -486,7 +504,7 @@ export function DanbooruWorkspace({
               placeholder={view === "explore" ? "태그 최대 2개 또는 post ID" : "저장한 post ID·작가·태그 검색"}
               onChange={(event) => view === "explore" ? setExploreDraft(event.target.value) : setDownloadsDraft(event.target.value)}
             />
-            <button type="submit" className="icon-button primary-soft" aria-label="검색" title="검색"><FluentIcon glyph="\uE721" /></button>
+            <button type="submit" data-tour="danbooru-search" className="icon-button primary-soft" aria-label="검색" title="검색"><FluentIcon glyph="\uE721" /></button>
             {suggestions.length ? (
               <div className="danbooru-suggestions" role="listbox" aria-label="Danbooru 태그 제안">
                 {suggestions.map((suggestion) => (
@@ -611,6 +629,7 @@ export function DanbooruWorkspace({
         </section>
       </main>
 
+      <WindowMotion show={active && detail !== null} target=".danbooru-detail">
       {active && detail ? (
         <DanbooruDetail
           backend={backend}
@@ -638,6 +657,7 @@ export function DanbooruWorkspace({
           }}
         />
       ) : null}
+      </WindowMotion>
       {active && notice ? <div className="toast" role="status">{notice}</div> : null}
     </div>
   );
@@ -756,9 +776,13 @@ function DanbooruCard({
   onDownload: () => void;
 }) {
   const mediaUrl = cardMediaUrl(post);
+  const menu = useCardContextMenu();
   return (
-    <article className="danbooru-card" data-post-id={post.id}>
-      <button type="button" className="danbooru-card-preview" onClick={onOpen} aria-label={`${postTitle(post)} 상세 열기`}>
+    <>
+    <article className="danbooru-card" data-post-id={post.id} tabIndex={0} onContextMenu={menu.open}
+      onDoubleClick={(event) => { if (!isCardControl(event.target) && !event.ctrlKey && !event.metaKey && !event.shiftKey) onOpen(); }}
+      onKeyDown={(event) => { if (!menu.onKeyDown(event) && event.target === event.currentTarget && event.key === "Enter") { event.preventDefault(); onOpen(); } }}>
+      <button type="button" data-tour="danbooru-post" className="danbooru-card-preview" onClick={onOpen} aria-label={`${postTitle(post)} 상세 열기`}>
         {mediaUrl ? <img src={mediaUrl} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" /> : <span className="danbooru-media-missing"><FluentIcon glyph="\uEB9F" /> 미리보기 없음</span>}
         <span className={`danbooru-rating is-${post.rating}`}>{ratingLabel[post.rating] ?? post.rating.toUpperCase()}</span>
         {downloaded ? <span className="danbooru-downloaded"><FluentIcon glyph="\uE73E" /> 저장됨</span> : null}
@@ -773,6 +797,11 @@ function DanbooruCard({
         <FluentIcon glyph={downloaded ? "\uE73E" : pending ? "\uE895" : "\uE896"} /> {downloaded ? "저장 완료" : pending ? "저장 중" : "원본 저장"}
       </button>
     </article>
+    <CardContextMenu anchor={menu.anchor} close={menu.close} label={postTitle(post)} items={[
+      { id: "open", label: "상세 열기", action: onOpen },
+      { id: "download", label: downloaded ? "원본 저장 완료" : pending ? "원본 저장 중" : "원본 다운로드", disabled: downloaded || pending || !post.fileUrl, action: onDownload },
+    ]} />
+    </>
   );
 }
 
@@ -812,14 +841,16 @@ function DanbooruDetail({
   const [relatedRevision, setRelatedRevision] = useState(0);
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const node = dialog.current;
     const frame = window.requestAnimationFrame(() => dialog.current?.focus({ preventScroll: true }));
     return () => {
       window.cancelAnimationFrame(frame);
-      if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      if (previousFocus?.isConnected && (document.activeElement === document.body || node?.contains(document.activeElement))) previousFocus.focus({ preventScroll: true });
     };
   }, []);
   useEffect(() => {
     const keyDown = (event: KeyboardEvent) => {
+      if (document.documentElement.dataset.tutorialOpen === "true" || document.querySelector("[data-card-context-menu]") || dialog.current?.closest("[inert]")) return;
       if (event.defaultPrevented || event.isComposing || document.querySelector("dialog[open]")) return;
       if (event.key === "Escape") {
         event.preventDefault();
@@ -870,11 +901,11 @@ function DanbooruDetail({
   }, [backend, post.hasChildren, post.id, post.parentId, relatedRevision]);
   return (
     <div className="modal-backdrop danbooru-detail-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <section ref={dialog} className="danbooru-detail" role="dialog" aria-modal="true" aria-labelledby="danbooru-detail-title" aria-describedby="danbooru-detail-shortcuts" tabIndex={-1}>
+      <section ref={dialog} data-tour="danbooru-detail" className="danbooru-detail" role="dialog" aria-modal="true" aria-labelledby="danbooru-detail-title" aria-describedby="danbooru-detail-shortcuts" tabIndex={-1}>
         <header>
           <div><span className="eyebrow">FLOATING DETAIL · DANBOORU POST #{post.id}</span><h2 id="danbooru-detail-title">{postTitle(post)}</h2></div>
           <span id="danbooru-detail-shortcuts" className="sr-only">A, D 또는 왼쪽, 오른쪽 방향키로 현재 결과의 이전과 다음 post로 이동</span>
-          <button type="button" className="icon-button" aria-label="닫기" title="닫기" onClick={onClose}><FluentIcon glyph="\uE711" /></button>
+          <button type="button" data-tour="danbooru-close" className="icon-button" aria-label="닫기" title="닫기" onClick={onClose}><FluentIcon glyph="\uE711" /></button>
         </header>
         <div className="danbooru-detail-body">
           <div key={`media-${post.id}`} className="danbooru-detail-media">

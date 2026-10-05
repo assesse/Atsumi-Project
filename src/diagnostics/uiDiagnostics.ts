@@ -16,17 +16,30 @@ export function imageReleased(url: string): void {
   blobSizes.delete(url); uiCounters.thumbnailLiveCount = blobSizes.size;
 }
 type Invoke = typeof invoke;
-let nativeEnabled = false;
-export function markUi(mark: "f5_results" | "frontend_ready"): void {
-  if (nativeEnabled) void invoke("ui_diagnostics_mark", { mark }).catch(() => undefined);
-}
+type UiMark = "f5_results" | "frontend_ready" | "frontend_error" | "unhandled_rejection" | "react_error";
+let emitMark: ((mark: UiMark) => void) | undefined;
+export function markUi(mark: UiMark): void { emitMark?.(mark); }
 
 /** Only one heartbeat may be in flight. A blocked bridge cannot create its
  * own unbounded queue. The native foreground watchdog owns recovery. */
 export function installUiDiagnostics(enabled: boolean, call: Invoke = invoke): () => void {
-  nativeEnabled = enabled;
   if (!enabled) return () => undefined;
   let disposed = false, pending = false, epoch = "", inputCount = 0;
+  let markPending = false;
+  const lastError = new Map<UiMark, number>();
+  const sendMark = (mark: UiMark) => {
+    if (disposed || markPending) return;
+    const now = performance.now();
+    if (now - (lastError.get(mark) ?? -Infinity) < 1000) return;
+    lastError.set(mark, now); markPending = true;
+    // No Error.message/stack, event filename, URL or rejection reason crosses IPC.
+    void call("ui_diagnostics_mark", { mark }).catch(() => undefined).finally(() => { markPending = false; });
+  };
+  emitMark = sendMark;
+  const onError = () => sendMark("frontend_error");
+  const onRejection = () => sendMark("unhandled_rejection");
+  window.addEventListener("error", onError, true);
+  window.addEventListener("unhandledrejection", onRejection);
   let longTasks = 0, longestTaskMs = 0, expected = performance.now() + 2000;
   const input = () => { inputCount++; };
   window.addEventListener("pointerdown", input, true);
@@ -61,7 +74,9 @@ export function installUiDiagnostics(enabled: boolean, call: Invoke = invoke): (
   const timer = window.setInterval(() => { void tick(); }, 2000);
   void call("ui_diagnostics_mark", { mark: "frontend_ready" }).catch(() => undefined);
   return () => {
-    disposed = true; nativeEnabled = false; window.clearInterval(timer); observer?.disconnect();
+    disposed = true; if (emitMark === sendMark) emitMark = undefined;
+    window.clearInterval(timer); observer?.disconnect();
     window.removeEventListener("pointerdown", input, true); window.removeEventListener("keydown", input, true);
+    window.removeEventListener("error", onError, true); window.removeEventListener("unhandledrejection", onRejection);
   };
 }

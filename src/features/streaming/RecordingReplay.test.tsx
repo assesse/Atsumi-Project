@@ -215,21 +215,23 @@ describe("offline recording replay", () => {
     expect(metrics).toMatchObject({ participantCounts: false, buckets: [{ chatCount: 7 }] });
   });
 
-  it("preserves safe body and nickname colors and opens only the saved profile after a click", async () => {
+  it("preserves safe colors and opens a local user card, never an external profile", async () => {
     const api = mockApi();
     api.chatAt.mockImplementation(async (_token, _time, generation) => ok(page(generation, [message(1, { rich: { nicknameColor: "#11ee77", textColor: "#f0c080", profileUrl: `https://chzzk.naver.com/${"b".repeat(32)}`, badges: [], emojis: [] } })])));
     await render(api);
-    const name = button("시청자 1 프로필 열기");
+    const name = button("시청자 1 사용자 정보");
     expect([...name.querySelectorAll<HTMLElement>("[style]")].some(item => item.style.color === "rgb(17, 238, 119)")).toBe(true);
     expect(chatShadow().querySelector<HTMLElement>('[data-sequence="1"]')!.style.getPropertyValue("--replay-text-color")).toBe("#f0c080");
     expect(api.openProfile).not.toHaveBeenCalled();
     await act(async () => name.click());
-    expect(api.openProfile).toHaveBeenCalledExactlyOnceWith(session.token, 1);
+    expect(api.openProfile).not.toHaveBeenCalled();
+    expect(chatShadow().querySelector('[role="dialog"]')).toHaveTextContent("시청자 1");
+    await act(async () => button("사용자 정보 닫기").click());
     api.chatAt.mockImplementation(async (_token, _time, generation) => ok(page(generation, [message(2, { rich: { textColor: "url(https://bad.test)", profileUrl: `https://chzzk.naver.com.evil.test/${"b".repeat(32)}`, badges: [], emojis: [] } })])));
     await moveVideo(2);
-    expect(button("시청자 2 프로필 열기")).toBeUndefined();
+    expect(button("시청자 2 사용자 정보")).toBeDefined();
     expect(chatShadow().querySelector<HTMLElement>('[data-sequence="2"]')!.style.getPropertyValue("--replay-text-color")).toBe("");
-    expect(api.openProfile).toHaveBeenCalledTimes(1);
+    expect(api.openProfile).not.toHaveBeenCalled();
   });
   it("opens the actual isolated player with a token-local source and right chat, preserving live activity", async () => {
     const api = mockApi(); await render(api);

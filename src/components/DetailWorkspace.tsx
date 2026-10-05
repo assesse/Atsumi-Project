@@ -29,6 +29,9 @@ import { ProgressiveDetailHero } from "./ProgressiveDetailHero";
 import { MetadataChip } from "./MetadataChip";
 import { detailPreviewLayout, type DetailPreviewLayout } from "./detailPreviewLayout";
 import "./DetailWorkspace.css";
+import { MovingTabs, WindowMotion, animateWindowClose } from "./WindowMotion";
+import { CardContextMenu, isCardControl, useCardContextMenu } from "./CardContextMenu";
+import { useAlbumMenuItems } from "./albumMenuItems";
 import { attachDetailScrollSnap } from "./detailScrollSnap";
 import "./PagePreviewOverlay.css";
 import { nextPagePreviewAnchor, pagePreviewSlots } from "./pagePreviewNavigation";
@@ -78,6 +81,7 @@ type DetailWorkspaceProps = {
     options?: { activate?: boolean },
   ) => void;
   onQueue: (id: GalleryId) => void;
+  onExclude?: (id: GalleryId) => void;
   onCancelDownload?: (id: GalleryId) => void;
   pendingDownloadEntryIds?: ReadonlySet<string>;
   cancellingDownloadEntryIds?: ReadonlySet<string>;
@@ -121,6 +125,10 @@ type PreviewResizeSession = Readonly<{
 const galleryPageCount = (pages: number): number =>
   Number.isFinite(pages) ? Math.max(0, Math.floor(pages)) : 0;
 
+const selectedDetailTab = (workspace: HTMLElement | null) =>
+  [...(workspace?.querySelectorAll<HTMLElement>("[role='tab'][aria-selected='true']") ?? [])]
+    .find((tab) => !tab.closest("[inert]"));
+
 const previewDimensionKey = (galleryId: GalleryId, page: number): string =>
   `${galleryId}:${page}`;
 
@@ -139,7 +147,7 @@ const relatedCoverAspectRatio = (gallery: Gallery): string => {
 
 function MetadataBox({ label, values, type, favorite, favoriteMetadata, onSearch, onFavorite }: MetadataBoxProps) {
   return (
-    <div className="metadata-box">
+    <div className="metadata-box" data-tour-follow-kind={type === "group" ? "group" : undefined}>
       <span>{label}</span>
       <div className="metadata-value">
         {values.map((value) => (
@@ -185,6 +193,16 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     onMetadataFavorite,
   } = props;
   const sharedThumbnailClient = useThumbnailClient(thumbnailClient);
+  const relatedMenu = useCardContextMenu();
+  const [relatedMenuId, setRelatedMenuId] = useState<GalleryId | null>(null);
+  const relatedMenuGallery = relatedMenuId === null ? undefined : galleries.get(relatedMenuId);
+  const relatedMenuItems = useAlbumMenuItems(relatedMenuGallery, {
+    open: () => { if (relatedMenuId !== null && activeId !== null) onOpenRelated(relatedMenuId, activeId); },
+    background: () => { if (relatedMenuId !== null && activeId !== null) onOpenRelated(relatedMenuId, activeId, { activate: false }); },
+    queue: () => { if (relatedMenuId !== null) onQueue(relatedMenuId); },
+    exclude: props.onExclude ? () => { if (relatedMenuId !== null) props.onExclude?.(relatedMenuId); } : undefined,
+    pending: relatedMenuGallery?.download ? pendingDownloadEntryIds?.has(relatedMenuGallery.download.entryId) : false,
+  });
   const [closeRequest, setCloseRequest] = useState<GalleryId | "all" | null>(null);
   const closeDialog = useRef<HTMLDialogElement>(null);
   const closeCancelButton = useRef<HTMLButtonElement>(null);
@@ -214,6 +232,18 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   const representativeSaveInFlight = useRef(false);
   const [representativeSave, setRepresentativeSave] = useState<{ galleryId: GalleryId; status: "busy" | "error" } | null>(null);
   const [previewPage, setPreviewPage] = useState<number | null>(null);
+  const cancelPreviewExit = useRef<(() => void) | null>(null);
+  const requestPreviewClose = useCallback(() => {
+    if (previewDialog.current?.dataset.windowClosing === "true") return;
+    if (previewDialog.current) previewDialog.current.dataset.windowClosing = "true";
+    cancelPreviewExit.current = animateWindowClose(previewDialog.current, () => setPreviewPage(null));
+  }, []);
+  useLayoutEffect(() => {
+    cancelPreviewExit.current?.();
+    cancelPreviewExit.current = null;
+    if (previewDialog.current) delete previewDialog.current.dataset.windowClosing;
+    return () => { cancelPreviewExit.current?.(); };
+  }, [activeId, previewPage]);
   const [twoPageView, setTwoPageView] = useState(false);
   const [readingDirection, setReadingDirection] = useState<"ltr" | "rtl">(() => {
     try { return localStorage.getItem("atsumi.pagePreview.readingDirection") === "rtl" ? "rtl" : "ltr"; }
@@ -274,7 +304,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     }
     if (visible && !previousVisible.current) {
       window.requestAnimationFrame(() => {
-        workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus();
+        selectedDetailTab(workspace.current)?.focus();
       });
     } else if (!visible && minimized && previousVisible.current) {
       window.requestAnimationFrame(() => restoreButton.current?.focus());
@@ -302,13 +332,17 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
 
   useLayoutEffect(() => {
     const body = workspace.current?.querySelector<HTMLElement>(".detail-body");
+    const panel = body?.querySelector<HTMLElement>(".detail-layout");
+    const motion = !minimized && panel?.animate && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+      ? panel.animate([{ opacity: .65, translate: "0 4px" }, { opacity: 1, translate: "0 0" }], { duration: 130, easing: "ease-out" }) : null;
     if (body && activeId !== null) body.scrollTop = readDetailPositions().get(activeId)?.scrollTop ?? 0;
     if (!minimized && activeId !== null) {
       window.requestAnimationFrame(() => {
-        workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus();
+        selectedDetailTab(workspace.current)?.focus();
       });
     }
     return () => {
+      motion?.cancel();
       clearTimeout(scrollSaveTimer.current);
       if (body && activeId !== null && !minimized) saveDetailPosition(activeId, { scrollTop: body.scrollTop });
     };
@@ -330,7 +364,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
       }
       if (document.querySelector('dialog[open], .activity-panel, [role="dialog"][data-gallery-shortcuts-suspended]')) return;
       if (!workspace.current?.contains(document.activeElement)) {
-        workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus({ preventScroll: true });
+        selectedDetailTab(workspace.current)?.focus({ preventScroll: true });
       }
     };
     window.addEventListener("focus", focusForeground);
@@ -645,6 +679,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   };
 
   const navigateDetailWorkspace = (event: KeyboardEvent<HTMLElement>) => {
+    if (document.documentElement.dataset.tutorialOpen === "true") return;
     if (
       event.defaultPrevented
       || event.nativeEvent.isComposing
@@ -674,6 +709,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   useEffect(() => {
     if (minimized || !gallery || !previewPageCount || previewPage !== null) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (document.documentElement.dataset.tutorialOpen === "true" || document.querySelector("[data-card-context-menu]")) return;
       if (
         event.defaultPrevented
         || event.isComposing
@@ -726,7 +762,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
       previewOpener.current = null;
       window.requestAnimationFrame(() => {
         if (target?.isConnected) target.focus();
-        else workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus();
+        else selectedDetailTab(workspace.current)?.focus();
       });
     }
   }, [gallery, previewPage, totalPageCount]);
@@ -734,6 +770,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   useEffect(() => {
     if (previewPage === null || !gallery) return;
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (document.documentElement.dataset.tutorialOpen === "true" || document.querySelector("[data-card-context-menu], [data-window-closing='true']")) return;
       if (event.defaultPrevented || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return;
       const preview = previewDialog.current;
       if (!preview?.open || [...document.querySelectorAll("dialog[open]")].some((dialog) => dialog !== preview)) return;
@@ -752,21 +789,22 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [gallery, previewPage, readingDirection, navigatePreviewPage]);
 
-  if (!tabs.length) return null;
-
   return (
     <>
-      {minimized ? (
-        <button ref={restoreButton} type="button" className="detail-restore" onClick={onRestore}>
+      {tabs.length ? (
+        <button ref={restoreButton} type="button" className="detail-restore detail-restore-dock" data-minimized={minimized}
+          inert={!minimized} aria-hidden={!minimized || undefined} tabIndex={minimized ? 0 : -1} title="최소화한 상세 탭 다시 열기" onClick={onRestore}>
           <FluentIcon glyph="\uE8A7" />
           <span>상세 탭 {tabs.length}</span>
+          <small>다시 열기</small>
         </button>
       ) : null}
-      {!minimized && gallery ? (
+      <WindowMotion show={!minimized && Boolean(gallery) && tabs.length > 0} anchor={restoreButton} travel={minimized}>
+      {!minimized && gallery && tabs.length > 0 ? (
         <section ref={workspace} className="detail-workspace" aria-label={`${gallery.title} 상세`} onKeyDown={navigateDetailWorkspace}>
           <div className="detail-tabbar">
             <div className="detail-tabs" role="tablist">
-              {tabs.map((id, index) => {
+              <MovingTabs>{tabs.map((id, index) => {
                 const tab = galleries.get(id);
                 if (!tab) return null;
                 return (
@@ -792,7 +830,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                         event.stopPropagation();
                         requestClose(id);
                         window.requestAnimationFrame(() => {
-                          workspace.current?.querySelector<HTMLElement>("[role='tab'][aria-selected='true']")?.focus();
+                          selectedDetailTab(workspace.current)?.focus();
                         });
                       }}
                     >
@@ -800,7 +838,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                     </button>
                   </div>
                 );
-              })}
+              })}</MovingTabs>
             </div>
             <button type="button" className="icon-button small" title="상세 최소화" aria-label="상세 최소화" onClick={onMinimize}>
               <FluentIcon glyph="\uE921" />
@@ -946,7 +984,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                     <p>#{gallery.id} · {gallery.pages} pages</p>
                     {gallery.download?.state !== "completed" ? <GalleryProcessingBadge gallery={gallery} /> : null}
                   </div>
-                  <div className="detail-title-actions">
+                  <div className="detail-title-actions" data-tour="hitomi-detail-actions">
                     <BookmarkButton gallery={gallery} />
                     <CommunityReviewButton work={{ source: "hitomi", workId: String(gallery.id) }} />
                     {gallery.download && onCancelDownload && (runningDownloadStates.has(gallery.download.state) || cancellingDownloadEntryIds?.has(gallery.download.entryId)) ? (
@@ -979,9 +1017,9 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                     ) : null}
                   </div>
                 </div>
-                <div className="detail-metadata-layout">
+                <div className="detail-metadata-layout" data-tour="hitomi-detail-follow">
                   <div className="detail-metadata-primary">
-                    <div className="metadata-box detail-participating-artists" aria-label="참여 작가">
+                    <div className="metadata-box detail-participating-artists" data-tour-follow-kind="artist" aria-label="참여 작가">
                       <span>작가{participatingArtists.length > 1 ? ` · ${participatingArtists.length}명` : ""}</span>
                       <div className="metadata-value">
                         {participatingArtists.map((artist) => (
@@ -1045,10 +1083,14 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                             onOpenRelated(item.id, gallery.id);
                           }}
                           onKeyDown={(event) => {
+                            if (!isCardControl(event.target) && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
+                              setRelatedMenuId(item.id); relatedMenu.onKeyDown(event); return;
+                            }
                             if (event.key !== "Enter" || event.target !== event.currentTarget) return;
                             event.preventDefault();
                             onOpenRelated(item.id, gallery.id);
                           }}
+                          onContextMenu={(event) => { if (!isCardControl(event.target)) { setRelatedMenuId(item.id); relatedMenu.open(event); } }}
                         >
                           <GalleryThumbnail
                             className="related-cover"
@@ -1084,6 +1126,8 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
           </div>
         </section>
       ) : null}
+      </WindowMotion>
+      <CardContextMenu anchor={minimized || !gallery ? null : relatedMenu.anchor} close={relatedMenu.close} label={relatedMenuGallery?.title ?? "연관 앨범"} items={relatedMenuItems} />
       <dialog ref={closeDialog} className="detail-close-dialog" aria-labelledby="detail-close-title" aria-describedby="detail-close-description" onCancel={() => setCloseRequest(null)}>
         <div className="detail-close-copy">
           <h2 id="detail-close-title">{closeRequest === "all" ? `탭 ${tabs.length}개를 닫을까요?` : "탭을 닫을까요?"}</h2>
@@ -1129,7 +1173,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
         } as CSSProperties}
         onCancel={(event) => {
           event.preventDefault();
-          setPreviewPage(null);
+          requestPreviewClose();
         }}
         onClose={() => {
           if (previewClosingInternally.current) {
@@ -1190,7 +1234,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                     ) : null}
                   </>
                 ) : null}
-                <button ref={previewCloseButton} type="button" className="icon-button small" title="페이지 미리보기 닫기" aria-label="페이지 미리보기 닫기" onClick={() => setPreviewPage(null)}>
+                <button ref={previewCloseButton} type="button" className="icon-button small" title="페이지 미리보기 닫기" aria-label="페이지 미리보기 닫기" onClick={requestPreviewClose}>
                   <FluentIcon glyph="\uE711" />
                 </button>
               </div>

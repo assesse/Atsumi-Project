@@ -71,7 +71,18 @@ describe("automatic recording registration", () => {
     const input = container.querySelector("input")!;
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, ` https://chzzk.naver.com/live/${ID} `); input.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => button("등록").click());
-    expect(api.add).toHaveBeenCalledExactlyOnceWith(`https://chzzk.naver.com/live/${ID}`); expect(input.value).toBe("");
+    expect(api.add).toHaveBeenCalledExactlyOnceWith(ID); expect(input.value).toBe("");
+  });
+  it.each([`https://chzzk.naver.com/live/${ID}`, `https://chzzk.naver.com/${ID}/`, ID.toUpperCase()])("pastes %s as one canonical channel ID", async (value) => {
+    const api = fake();
+    await act(async () => root.render(<AutoRecordingPanel runtime="tauri" api={api} />));
+    const input = container.querySelector("input")!;
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: { getData: () => ` ${value} ` } });
+    await act(async () => input.dispatchEvent(event));
+    expect(event.defaultPrevented).toBe(true);
+    expect(input.value).toBe(ID);
+    expect(api.add).not.toHaveBeenCalled();
   });
   it("distinguishes preparation from saved recording and lets the user cancel it", async () => {
     const api = fake();

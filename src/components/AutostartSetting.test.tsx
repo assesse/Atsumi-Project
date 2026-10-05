@@ -131,7 +131,8 @@ describe("AutostartSetting", () => {
     expect(setEnabled).not.toHaveBeenCalled();
     expect(toggle()).toBeChecked();
     expect(toggle()).toHaveAttribute("title", expect.stringContaining("껐다 켜면"));
-    expect(container.textContent).toContain("재설정 필요");
+    expect(container.textContent).toContain("연결 갱신 필요");
+    expect(container.querySelector('.setting-checkbox > span')).toHaveAttribute("title", expect.stringContaining("재부팅은 필요 없습니다"));
     expect(container.querySelectorAll("button")).toHaveLength(0);
     await act(async () => toggle().click());
     expect(setEnabled).toHaveBeenLastCalledWith(false);
@@ -141,7 +142,7 @@ describe("AutostartSetting", () => {
     expect(toggle()).toBeChecked();
     expect(container.textContent).toContain("사용 중");
     expect(container.textContent).not.toContain("다시 연결");
-    expect(container.textContent).not.toContain("재설정 필요");
+    expect(container.textContent).not.toContain("연결 갱신 필요");
   });
 
   it("explains Windows startup-app blocking without claiming the app will auto-run", async () => {

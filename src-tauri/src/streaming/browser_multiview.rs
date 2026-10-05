@@ -600,7 +600,7 @@ impl OfficialBrowser {
                         .map_err(|_| unavailable())?
                         .panes
                         .push(pane.clone());
-                    self.create_multiview_pane(app, pane, loaded_ids.clone(), lifecycle)?;
+                    self.create_multiview_pane(app, pane, loaded_ids.clone(), lifecycle, false)?;
                 }
             }
             if self.inner.multiview.lifecycle.load(Ordering::Acquire) != lifecycle {
@@ -724,7 +724,9 @@ impl OfficialBrowser {
             .map_err(|_| unavailable())?
             .loaded_extensions
             .clone();
-        if let Err(cause) = capture.create_multiview_pane(app, pane.clone(), ids, 0) {
+        if let Err(cause) =
+            capture.create_multiview_pane(app, pane.clone(), ids, 0, !presentation_owned)
+        {
             capture.close_auto_view(app);
             return Err(cause);
         }
@@ -782,6 +784,7 @@ impl OfficialBrowser {
         pane: Arc<Pane>,
         loaded_ids: Vec<String>,
         lifecycle: u64,
+        prepare_recording: bool,
     ) -> Result<(), StreamError> {
         if self.inner.multiview.lifecycle.load(Ordering::Acquire) != lifecycle {
             return Err(busy());
@@ -803,9 +806,14 @@ impl OfficialBrowser {
         // Background recording must not MoveFocus on a minimized/hidden parent.
         // WebView2 rejects that focus operation with E_INVALIDARG at creation.
         .focused(!pane.id.starts_with("chzzk-auto-"))
-        .browser_extensions_enabled(true)
+        .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
         .initialization_script(if pane.id.starts_with("chzzk-auto-") {
             include_str!("browser_auto_view.js")
+        } else {
+            ""
+        })
+        .initialization_script(if prepare_recording {
+            "window.__atsumiAutoReceiver?.prepareRecording();"
         } else {
             ""
         })
@@ -848,9 +856,10 @@ impl OfficialBrowser {
         })
         .on_new_window(move |url, features| {
             if popup.dead.load(Ordering::Acquire)
-                || popup.viewport.lock().map_or(true, |v| {
-                    v.suspend_audio || (clip_popup::is_editor(&url) && !v.visible)
-                })
+                || popup
+                    .viewport
+                    .lock()
+                    .map_or(true, |v| v.suspend_audio || !v.visible)
             {
                 return tauri::webview::NewWindowResponse::Deny;
             }
@@ -915,6 +924,7 @@ impl OfficialBrowser {
             )
             .map_err(|_| unavailable())?;
         view.hide().map_err(|_| unavailable())?;
+        super::super::browser_compat::configure(&view)?;
         initialize_native_pane(&view, pane.clone(), loaded_ids)?;
         #[cfg(windows)]
         if pane.id.starts_with("chzzk-auto-") {
@@ -1492,7 +1502,7 @@ fn initialize_native_pane(
                 let _ = audio.SetIsMuted(true);
                 return Err(unavailable());
             }
-            if !loaded_ids.is_empty() {
+            if !super::super::browser_compat::GRID_FREE_PLAYBACK && !loaded_ids.is_empty() {
                 let settings = core
                     .Settings()
                     .and_then(|s| s.cast::<ICoreWebView2Settings2>())

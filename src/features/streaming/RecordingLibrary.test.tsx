@@ -10,7 +10,7 @@ const merged = (id: string) => item(id, { merge: { status: "complete", segmentCo
 let root: Root, container: HTMLDivElement;
 const callbacks = { onSelect: vi.fn(), onFolder: vi.fn(), onReplay: vi.fn(), onOpenMerged: vi.fn(), onRetryMerge: vi.fn(), onOpenSegment: vi.fn(), onDelete: vi.fn<Parameters<typeof RecordingLibrary>[0]["onDelete"]>() };
 const render = async (recordings: BrowserRecording[], selectedId: string | null = null, privacy = false, disabled = false) => {
-  await act(async () => root.render(<RecordingLibrary recordings={recordings} selectedId={selectedId} privacy={privacy} disabled={disabled} retrying={false} opening={false} {...callbacks} />));
+  await act(async () => root.render(<RecordingLibrary recordings={recordings} selectedId={selectedId} privacy={privacy} disabled={disabled} retrying={false} openingFolder={false} {...callbacks} />));
 };
 const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(element => element.textContent === text)!;
 const cards = () => [...container.querySelectorAll<HTMLButtonElement>(".recording-library-card")];
@@ -23,12 +23,12 @@ describe("recording library", () => {
     const removed = { ...merged("removed"), mediaRemovedAt: 1234, lastError: "original gap evidence" };
     await render([removed, merged("kept")], "removed");
     expect(container).toHaveTextContent("저장 영상 1개");
-    expect(container).toHaveTextContent("영상 정리 기록 1개 · 로그 보존");
+    expect(container).toHaveTextContent("영상 삭제 기록 1개");
     expect(container).toHaveTextContent("original gap evidence");
     expect(cards()).toHaveLength(1);
-    expect(button("앱에서 다시보기")).toBeUndefined();
+    expect(button("재생")).toBeUndefined();
     expect(button("병합 다시 시도")).toBeUndefined();
-    expect(button("녹화 폴더 열기")).toBeEnabled();
+    expect(button("저장 폴더 열기")).toBeEnabled();
     expect(callbacks.onDelete).not.toHaveBeenCalled();
   });
   it("labels cached history honestly and does not hide an unchecked summary as an empty failure", async () => {
@@ -37,9 +37,9 @@ describe("recording library", () => {
       item("pending", { status: "interrupted", segmentCount: 0, bytesWritten: 0, durationSeconds: 0, storageCheckPending: true, summaryPending: true }),
     ]);
     expect(container).toHaveTextContent("마지막 저장 상태 · 저장 완료");
-    expect(container).toHaveTextContent("녹화 기록 확인 대기 중");
+    expect(container).toHaveTextContent("확인 중");
     expect(container.querySelector(".recording-library-attempts")).toBeNull();
-    expect(cards()[1]!.querySelector(".recording-library-state.is-waiting")).toHaveTextContent("녹화 기록 확인 대기");
+    expect(cards()[1]!.querySelector(".recording-library-state.is-waiting")).toHaveTextContent("확인 중");
     expect(cards()[0]!.querySelector(".recording-library-state.is-success")).toBeNull();
     await act(async () => button("확인 필요").click());
     expect(cards()).toHaveLength(0);
@@ -53,7 +53,7 @@ describe("recording library", () => {
       item("failed", { status: "failed" }),
     ]);
     expect(container.querySelector(".recording-library-state.is-recording")).toHaveTextContent("●녹화 중");
-    expect(container.querySelector(".recording-library-state.is-processing")).toHaveTextContent("↻병합 중");
+    expect(container.querySelector(".recording-library-state.is-processing")).toHaveTextContent("↻재생 준비 중");
     expect(container.querySelector(".recording-library-state.is-success")).toHaveTextContent("✓재생 가능");
     expect(container.querySelector(".recording-library-state.is-warning")).toHaveTextContent("!확인 필요");
     expect(container.querySelector(".recording-library-state.is-error")).toHaveTextContent("×녹화 실패");
@@ -63,12 +63,13 @@ describe("recording library", () => {
     expect(container).toHaveTextContent("저장 영상 1개");
     const attempts = container.querySelector<HTMLDetailsElement>(".recording-library-attempts")!;
     expect(attempts.open).toBe(false);
-    expect(attempts).toHaveTextContent("시작 실패 · 영상 저장 없음");
+    expect(attempts).toHaveTextContent("시작 실패 1개");
     expect(callbacks.onDelete).not.toHaveBeenCalled();
   });
   it("shows confirmed broadcast completion separately from manual stopping", async () => {
     await render([item("ended", { ending: { reason: "broadcast_ended", trigger: "video_ended", stoppedAt: 1, confirmedAt: 2 } }), item("manual", { ending: { reason: "user_stopped", trigger: "user_stop", stoppedAt: 1, confirmedAt: null } })]);
     expect(container).toHaveTextContent("방송 종료 · 저장 완료");
+    await render([item("manual", { ending: { reason: "user_stopped", trigger: "user_stop", stoppedAt: 1, confirmedAt: null } })], "manual");
     expect(container).toHaveTextContent("직접 중지 · 저장 완료");
   });
   it("allows explicit selection of an empty attempt without including hidden attempts in select-all", async () => {
@@ -84,7 +85,7 @@ describe("recording library", () => {
     await render([item("ranges", { progressive: { partCount: 1, segmentCount: 1, durationSeconds: 15, lastError: null } }), item("waiting")]);
     await act(async () => button("재생 가능").click());
     expect(cards()).toHaveLength(1); expect(cards()[0]).toHaveTextContent("방송 ranges");
-    expect(button("앱에서 다시보기")).toBeEnabled();
+    expect(button("재생")).toBeEnabled();
   });
   it("selects multiple saved recordings, confirms exact IDs, and never deletes on cancel", async () => {
     await render([item("live", { status: "recording" }), merged("a"), merged("b")]);
@@ -164,7 +165,7 @@ describe("recording library", () => {
   it("offers retry deletion, not playback or merge, for interrupted deletion", async () => {
     await render([item("a", { deletionPending: true })]);
     expect(container).toHaveTextContent("삭제 미완료");
-    expect(button("앱에서 다시보기")).toBeUndefined();
+    expect(button("재생")).toBeUndefined();
     await act(async () => button("선택").click());
     await act(async () => button("전체 선택").click());
     expect(container).toHaveTextContent("1개 선택");
@@ -176,7 +177,7 @@ describe("recording library", () => {
     expect(container.querySelector('.recording-library-detail')).toHaveTextContent("방송 ready");
     expect(container.querySelector("video,iframe,img")).toBeNull();
     expect(callbacks.onReplay).not.toHaveBeenCalled();
-    await act(async () => button("앱에서 다시보기").click());
+    await act(async () => button("재생").click());
     expect(callbacks.onReplay).toHaveBeenCalledExactlyOnceWith("ready");
     await act(async () => cards()[0]!.click());
     expect(callbacks.onSelect).toHaveBeenCalledExactlyOnceWith("live");
@@ -214,12 +215,14 @@ describe("recording library", () => {
     expect(cards()[1]).toHaveAttribute("aria-pressed", "true");
     await render([merged("new"), merged("a"), merged("b")], "b");
     expect(container.querySelector('.recording-library-detail')).toHaveTextContent("방송 b");
-    await act(async () => button("녹화 폴더 열기").click());
-    await act(async () => button("외부 플레이어로 열기").click());
+    await act(async () => button("저장 폴더 열기").click());
+    await act(async () => button("재생").click());
+    expect(button("외부 플레이어로 열기")).toBeUndefined();
+    expect(container.querySelector(".recording-library-heading-actions")).toContainElement(button("저장 폴더 열기"));
     expect(callbacks.onFolder).toHaveBeenCalledExactlyOnceWith("b");
-    expect(callbacks.onOpenMerged).toHaveBeenCalledExactlyOnceWith("b");
+    expect(callbacks.onReplay).toHaveBeenCalledExactlyOnceWith("b");
     await render([merged("b")], "b", false, true);
-    expect(button("녹화 폴더 열기")).toBeDisabled(); expect(button("앱에서 다시보기")).toBeDisabled();
+    expect(button("저장 폴더 열기")).toBeDisabled(); expect(button("재생")).toBeDisabled();
   });
 
   it("clears private queries and hides broadcast titles, paths and filenames", async () => {

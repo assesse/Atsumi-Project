@@ -1,0 +1,43 @@
+.card-context-menu {
+  position: fixed;
+  z-index: 15000;
+  box-sizing: border-box;
+  width: 250px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  color: var(--text);
+  background: var(--surface-raised, var(--surface));
+  box-shadow: 0 12px 38px #0008;
+  animation: card-menu-in 120ms ease-out;
+}
+.card-context-menu-title { padding: 7px 9px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.card-context-menu > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.card-context-menu > button:focus, .card-context-menu > button:hover:not(:disabled) { outline: none; background: var(--surface-hover); }
+.card-context-menu > button:focus-visible { box-shadow: inset 0 0 0 1px var(--primary); }
+.card-context-menu > button:disabled { opacity: .45; cursor: default; }
+.card-context-menu > button.is-danger { color: var(--danger, #e89595); }
+.card-context-menu > button.has-separator { margin-top: 5px; border-top: 1px solid var(--line); border-top-left-radius: 0; border-top-right-radius: 0; }
+.card-context-menu kbd { color: var(--muted); font: inherit; font-size: 11px; white-space: nowrap; }
+@keyframes card-menu-in { from { opacity: 0; translate: 0 -4px; } to { opacity: 1; translate: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .card-context-menu { animation: none; } }

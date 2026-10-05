@@ -24,17 +24,22 @@ afterEach(() => {
 });
 
 describe("TutorialDialog", () => {
-  it("returns the explicit do-not-show-again choice", async () => {
+  it("starts at the first step without an opt-in screen or replay preference", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
     const onClose = vi.fn();
     await act(async () => root.render(<TutorialDialog open onClose={onClose} />));
-    expect(container.querySelector("dialog")).toHaveAttribute("open");
-    expect(container).toHaveTextContent("artist:healthyman female:ahegao");
-    await act(async () => container.querySelector<HTMLInputElement>('input[type="checkbox"]')?.click());
-    await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "Atsumi 시작")?.click());
-    expect(onClose).toHaveBeenCalledWith(true);
+    expect(container.querySelector('[role="dialog"]')).toHaveAttribute("aria-modal", "true");
+    expect(container.querySelector("#tutorial-title")).toHaveTextContent("1. 저장 위치 설정");
+    expect(container.querySelector(".tutorial-progress")).toBeNull();
+    expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+    expect(container).not.toHaveTextContent("함께 둘러보기");
+    expect(container.querySelector("[data-tour-next]")).toBeNull();
+    expect(container.querySelectorAll("button")).toHaveLength(1);
+    expect(container).not.toHaveTextContent(/안내 종료|이전|조작 대기/);
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="튜토리얼 닫기"]')?.click());
+    expect(onClose).toHaveBeenCalledWith();
     await act(async () => root.unmount());
     container.remove();
   });

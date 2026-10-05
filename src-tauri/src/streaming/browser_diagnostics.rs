@@ -1,55 +1,45 @@
 //! Bounded, local-only capture evidence. No media, chat text, URLs or credentials.
 use super::*;
-use std::io::Write;
-use std::sync::{mpsc, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-static WRITER: OnceLock<Option<mpsc::SyncSender<Value>>> = OnceLock::new();
-
-pub(super) fn record(host: &OfficialBrowser, event: &str, fields: Value) {
-    if cfg!(test) {
+pub(super) fn record(_: &OfficialBrowser, event: &str, fields: Value) {
+    // Old per-session capture files are left intact. New evidence uses the
+    // shared ring instead of adding another permanent 32 MiB file each run.
+    static PACKETS: AtomicU64 = AtomicU64::new(0);
+    let count = PACKETS.fetch_add(1, Ordering::Relaxed) + 1;
+    let queued = fields["queuedMs"].as_u64().unwrap_or(0);
+    let processing = fields["processMs"].as_u64().unwrap_or(0);
+    let packet = fields.get("packet").unwrap_or(&fields);
+    let kind = packet["kind"].as_str().unwrap_or("unknown");
+    // Routine packets are sampled, not written once per video/chat chunk.
+    if event == "bridge_processed"
+        && fields["errorCode"].is_null()
+        && queued < 1000
+        && processing < 1000
+        && !matches!(kind, "encoded_begin" | "encoded_finish")
+        && !count.is_multiple_of(128)
+    {
         return;
     }
-    let sender = WRITER.get_or_init(|| {
-        let root = host
-            .inner
-            .data_dir
-            .join("streaming")
-            .join("browser")
-            .join("diagnostics");
-        std::fs::create_dir_all(&root).ok()?;
-        let path = root.join(format!("capture-{}-{}.jsonl", now_ms(), std::process::id()));
-        let mut file = std::fs::OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(path)
-            .ok()?;
-        let (sender, receiver) = mpsc::sync_channel::<Value>(256);
-        thread::Builder::new()
-            .name("chzzk-capture-diagnostics".into())
-            .spawn(move || {
-                let mut written = 0usize;
-                while let Ok(value) = receiver.recv() {
-                    let Ok(mut bytes) = serde_json::to_vec(&value) else {
-                        continue;
-                    };
-                    bytes.push(b'\n');
-                    // Keep existing sessions forever; stop this session's diagnostics
-                    // at 32 MiB instead of deleting evidence or blocking recording.
-                    if written + bytes.len() > 32 * 1024 * 1024 {
-                        break;
-                    }
-                    if file.write_all(&bytes).and_then(|_| file.flush()).is_err() {
-                        break;
-                    }
-                    written += bytes.len();
-                }
-            })
-            .ok()?;
-        Some(sender)
-    });
-    if let Some(sender) = sender {
-        let _ = sender
-            .try_send(json!({"at":now_ms(),"webview":host.label(),"event":event,"fields":fields}));
+    let stage = match event {
+        "bridge_processed" => "capture_bridge_processed",
+        "bridge_state_busy" => "capture_state_busy",
+        "bridge_busy" => "capture_bridge_busy",
+        "capture_transport" => "capture_transport",
+        _ => return,
+    };
+    let recording = packet["recordingId"].as_str().and_then(safe_id);
+    let _diagnostic = crate::diagnostics::operation("capture_bridge", recording).entered();
+    tracing::info!(
+        diag_stage = stage,
+        count,
+        wait_ms = queued,
+        elapsed_ms = processing,
+        bytes = packet["encodedBytes"].as_u64().unwrap_or(0),
+        success = fields["errorCode"].is_null()
+    );
+    if let Some(code) = fields["errorCode"].as_str() {
+        tracing::warn!(error_code = code, diag_stage = "capture_failed");
     }
 }
 

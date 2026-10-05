@@ -1,5 +1,6 @@
 import type { SearchHistoryEntry, SearchRequest, TagSuggestion } from "../api/contracts";
 import { canonicalSearchToken, searchTokenKind } from "./searchTokens";
+import { languagePresentation } from "../data/languages";
 
 export type SearchSuggestion = Readonly<{
   type: "HISTORY" | "ARTIST" | "GROUP" | "TAG" | "FEMALE" | "MALE";
@@ -9,6 +10,7 @@ export type SearchSuggestion = Readonly<{
   favorite?: boolean;
   galleryCount?: number;
   historyUseCount?: number;
+  historyId?: number;
   lastUsedAt?: string;
   request?: SearchRequest;
 }>;
@@ -27,13 +29,15 @@ export function historyDisplayToken(entry: SearchHistoryEntry): string {
 export function buildSearchSuggestionCatalog(history: readonly SearchHistoryEntry[]): SearchSuggestion[] {
   const entries = new Map<string, SearchSuggestion>();
   for (const entry of history) {
-    const token = historyDisplayToken(entry); if (!token) continue;
+    const token = historyDisplayToken(entry);
     const key = JSON.stringify([entry.text, entry.includeTags, entry.excludeTags, entry.languages, entry.sort]);
-    const existing = entries.get(key); if (existing && (existing.historyUseCount ?? 0) >= entry.useCount) continue;
+    const existing = entries.get(key); if (existing && ((existing.lastUsedAt ?? "") > entry.lastUsedAt || (existing.lastUsedAt === entry.lastUsedAt && (existing.historyId ?? 0) >= entry.historyId))) continue;
     const conditions = entry.includeTags.length + entry.excludeTags.length;
-    entries.set(key, { type: "HISTORY", token, label: token, extra: `최근 검색 · ${entry.useCount}회${conditions ? ` · 태그 조건 ${conditions}개` : ""}`, historyUseCount: entry.useCount, lastUsedAt: entry.lastUsedAt, request: { text: entry.text, includeTags: [...entry.includeTags], excludeTags: [...entry.excludeTags], languages: [...entry.languages], sort: entry.sort, pageSize: entry.pageSize } });
+    const languages = entry.languages.map((language) => languagePresentation[language].label).join("·");
+    const sortLabel = { recent: "최신순", popular_today: "일간 인기", popular_week: "주간 인기", popular_month: "월간 인기", popular_year: "연간 인기", random: "랜덤" }[entry.sort];
+    entries.set(key, { type: "HISTORY", historyId: entry.historyId, token, label: token || "전체 탐색", extra: [languages || "모든 언어", sortLabel, conditions ? `태그 ${conditions}개` : ""].filter(Boolean).join(" · "), historyUseCount: entry.useCount, lastUsedAt: entry.lastUsedAt, request: { text: entry.text, includeTags: [...entry.includeTags], excludeTags: [...entry.excludeTags], languages: [...entry.languages], sort: entry.sort, pageSize: entry.pageSize } });
   }
-  return [...entries.values()].sort((a,b) => (b.historyUseCount ?? 0) - (a.historyUseCount ?? 0) || (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "")).slice(0,4);
+  return [...entries.values()].sort((a,b) => (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? "") || (b.historyId ?? 0) - (a.historyId ?? 0)).slice(0,10);
 }
 
 export function catalogSuggestion(entry: TagSuggestion): SearchSuggestion {

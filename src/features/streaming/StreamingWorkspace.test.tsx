@@ -8,7 +8,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: calls.invoke }));
 vi.mock("./OfficialBrowserPanel", () => ({ OfficialBrowserPanel: (props: { view: string }) => { calls.panel(props); return <section aria-label="archive" data-view={props.view} />; } }));
 vi.mock("./MadoWorkspace", () => ({ MadoWorkspace: (props: { unifiedLive: boolean }) => { calls.live(props); return <section aria-label="unified live" data-unified={props.unifiedLive} />; } }));
 vi.mock("./AutoRecordingPanel", () => ({ AutoRecordingPanel: (props: unknown) => { calls.reservations(props); return <section aria-label="reservations" />; } }));
-const base: StreamingWorkspaceProps = { runtime: "tauri", active: true, railCollapsed: false, onToggleRail: vi.fn(), onSourceChange: vi.fn(), privacyMode: false };
+const base: StreamingWorkspaceProps = { runtime: "tauri", active: true, railCollapsed: false, onToggleRail: vi.fn(), onSourceChange: vi.fn() };
 const fixture = () => {
   const container = document.createElement("div"), root = createRoot(container);
   return { container, render: (props: Partial<StreamingWorkspaceProps> = {}) => act(async () => root.render(<StreamingWorkspace {...base} {...props} />)), close: () => act(async () => root.unmount()),
@@ -34,13 +34,14 @@ describe("one live entry", () => {
       expect(calls.invoke).not.toHaveBeenCalled();
     } finally { await view.close(); }
   });
-  it("passes privacy/runtime and unmounts hidden presentation, retaining the selected tab", async () => {
+  it("never applies gallery privacy to CHZZK and retains the selected section", async () => {
     const view = fixture();
     try {
-      await view.render({ runtime: "browser-mock", privacyMode: true, railCollapsed: true });
-      expect(calls.live).toHaveBeenLastCalledWith(expect.objectContaining({ runtime: "browser-mock", privacy: true, unifiedLive: true }));
+      await view.render({ runtime: "browser-mock", railCollapsed: true });
+      expect(calls.live).toHaveBeenLastCalledWith(expect.objectContaining({ runtime: "browser-mock", privacy: false, unifiedLive: true }));
       expect(view.container.querySelector(".streaming-shell")).toHaveClass("sidebar-collapsed");
       await view.navigate("녹화 목록");
+      expect(calls.panel).toHaveBeenLastCalledWith(expect.objectContaining({ privacyMode: false }));
       await view.render({ active: false }); expect(view.container).toBeEmptyDOMElement();
       await view.render(); expect(view.container.querySelector('[aria-label="archive"]')).toHaveAttribute("data-view", "recordings");
     } finally { await view.close(); }

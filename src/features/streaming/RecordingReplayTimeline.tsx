@@ -60,6 +60,13 @@ export const RecordingReplayTimeline = memo(function RecordingReplayTimeline({ t
 }) {
   const [hoverTime, setHoverTime] = useState<number | null>(null);
   const participantCountsAvailable = timeline?.buckets.some(bucket => finiteCount(bucket.uniqueSenderCount)) ?? false;
+  const scales = useMemo(() => {
+    const label = (metric: Metric) => {
+      const values = timeline?.buckets.slice(0, 2000).map(bucket => bucket[metric]).filter((value): value is number => finiteCount(value));
+      return values?.length ? `0–${Math.round(Math.max(...values)).toLocaleString("ko-KR")}${metric === "chatCount" ? "개" : "명"}` : "기록 없음";
+    };
+    return { viewers: label("viewerCount"), chat: label(participantCountsAvailable ? "uniqueSenderCount" : "chatCount") };
+  }, [timeline, participantCountsAvailable]);
   const paths = useMemo(() => timeline ? {
     chat: replayMetricPaths(timeline, duration, participantCountsAvailable ? "uniqueSenderCount" : "chatCount"), viewers: replayMetricPaths(timeline, duration, "viewerCount"),
   } : { chat: [], viewers: [] }, [timeline, duration, participantCountsAvailable]);
@@ -81,7 +88,9 @@ export const RecordingReplayTimeline = memo(function RecordingReplayTimeline({ t
   const count = (value: number | null | undefined) => value == null ? "기록 없음" : `${Math.round(value).toLocaleString("ko-KR")}명`;
   const percentage = duration > 0 ? Math.max(0, Math.min(100, time / duration * 100)) : 0;
   return <div className="recording-replay-timeline" onPointerMove={pointer} onPointerLeave={() => setHoverTime(null)}>
-    <svg className="recording-replay-activity" data-chat-metric={participantCountsAvailable ? "participants" : "messages"} viewBox="0 0 1000 32" preserveAspectRatio="none" aria-hidden="true">
+    {timeline ? <div className="recording-replay-legend" role="group" aria-label="그래프 범례"><span className="replay-viewer-count">시청자 {scales.viewers}</span><span className="replay-chat-count">{participantCountsAvailable ? "채팅 참여자" : "채팅 수"} {scales.chat}</span></div> : null}
+    <svg className="recording-replay-activity" data-chat-metric={participantCountsAvailable ? "participants" : "messages"} style={!timeline ? { display: "none" } : undefined} viewBox="0 0 1000 32" preserveAspectRatio="none" aria-hidden="true">
+      <path className="replay-metric-grid" d="M0,4 L1000,4 M0,11 L1000,11 M0,18 L1000,18 M0,25 L1000,25" />
       {paths.viewers.map((path, index) => <path className="replay-viewer-curve" key={`v${index}`} d={path} />)}
       {paths.chat.map((path, index) => <path className="replay-chat-curve" key={`c${index}`} d={path} />)}
       {partialViewers.map((point, index) => <circle className="replay-viewer-partial" key={`p${index}`} cx={point.x} cy={point.y} r="2" />)}

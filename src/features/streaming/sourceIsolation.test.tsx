@@ -38,11 +38,12 @@ afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 describe("CHZZK App composition", () => {
   it("keeps recording and gallery work independent across all three modes", async () => {
     const sourceKey = "atsumi.content-source.v1";
-    const tutorialKey = "atsumi.tutorial.dismissed.v1";
+    const tutorialKeys = ["atsumi.tutorial.dismissed.v1", "atsumi.tutorial.danbooru.dismissed.v1", "atsumi.tutorial.chzzk.dismissed.v1"];
     const previousSource = localStorage.getItem(sourceKey);
-    const previousTutorial = localStorage.getItem(tutorialKey);
+    const previousTutorial = tutorialKeys.map((key) => localStorage.getItem(key));
     localStorage.setItem(sourceKey, "hitomi");
-    localStorage.setItem(tutorialKey, "true");
+    // This exercises source isolation, not the first-visit guided actions.
+    tutorialKeys.forEach((key) => localStorage.setItem(key, "true"));
     const search = vi.spyOn(backend, "searchSubmit").mockResolvedValue(success({ queryId: "retained-hitomi", firstPage: { page: 1, totalPages: 1, items: [{ id: galleryId(9_123_000), title: "유지되는 갤러리", artist: "fixture artist", pages: 1, language: "korean", tags: [], series: [], characters: [], publishedRank: 20260910, popularity: 1, thumbnailWidth: 512, thumbnailHeight: 768 }] } }));
     const subscriptions = vi.spyOn(backend, "on");
     const cancel = vi.spyOn(backend, "downloadCancel");
@@ -87,7 +88,8 @@ describe("CHZZK App composition", () => {
       await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="녹화 목록"]')!.click());
       expect(container.querySelector(".recording-library")).toHaveTextContent("유지되는 공식 녹화");
       expect(container.querySelector(".recording-library")).toHaveTextContent("녹화 중");
-      expect(container.querySelector(".recording-library")).toHaveTextContent("segment-000000.webm");
+      expect(container.querySelector(".recording-library")).not.toHaveTextContent("segment-000000.webm");
+      expect(container.querySelector(".recording-library")).toHaveTextContent("저장 폴더 열기");
       expect(container.querySelector(".official-browser-stage")).toBeNull();
       expect(container.querySelector("video,.streaming-chat")).toBeNull();
       await switchMode("Hitomi");
@@ -107,7 +109,7 @@ describe("CHZZK App composition", () => {
       thumbnails.dispose();
       container.remove();
       if (previousSource === null) localStorage.removeItem(sourceKey); else localStorage.setItem(sourceKey, previousSource);
-      if (previousTutorial === null) localStorage.removeItem(tutorialKey); else localStorage.setItem(tutorialKey, previousTutorial);
+      tutorialKeys.forEach((key, index) => { const value = previousTutorial[index]; if (value == null) localStorage.removeItem(key); else localStorage.setItem(key, value); });
     }
   });
 });

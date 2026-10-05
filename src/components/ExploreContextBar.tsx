@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { FluentIcon } from "./FluentIcon";
+import { MovingTabs } from "./WindowMotion";
 
 export type ExploreContextTab = {
   id: string;
@@ -13,7 +14,6 @@ type ExploreContextBarProps = {
   tabs: ExploreContextTab[];
   activeId: string;
   onActivate: (id: string) => void;
-  onBack: () => void;
   onClose: (id: string) => void;
 };
 
@@ -21,31 +21,20 @@ export function ExploreContextBar({
   tabs,
   activeId,
   onActivate,
-  onBack,
   onClose,
 }: ExploreContextBarProps) {
-  const selectedTab = useRef<HTMLButtonElement>(null);
+  const tabList = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    selectedTab.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    [...(tabList.current?.querySelectorAll<HTMLElement>('[aria-selected="true"]') ?? [])]
+      .find((tab) => !tab.closest("[inert]"))?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   }, [activeId]);
   const activeIndex = tabs.findIndex((tab) => tab.id === activeId);
   if (activeIndex < 0) return null;
 
   return (
     <section className="explore-context-bar" aria-label="열린 탐색">
-      {tabs.length > 1 ? <button
-        type="button"
-        className="explore-context-back"
-        disabled={activeIndex <= 0}
-        aria-label="이전 탐색으로 돌아가기"
-        title="이전 탐색으로 돌아가기"
-        onClick={onBack}
-      >
-        <FluentIcon glyph="\uE72B" />
-        이전 탐색
-      </button> : null}
-      <div className="explore-context-tabs" role="tablist" aria-label="탐색 세션">
-        {tabs.map((tab) => {
+      <div ref={tabList} className="explore-context-tabs" role="tablist" aria-label="탐색 세션">
+        <MovingTabs>{tabs.map((tab) => {
           const active = tab.id === activeId;
           const pageDescription = tab.page === undefined
             ? null
@@ -59,7 +48,6 @@ export function ExploreContextBar({
                 type="button"
                 className="explore-context-tab"
                 role="tab"
-                ref={active ? selectedTab : undefined}
                 aria-selected={active}
                 aria-controls="gallery-viewport"
                 aria-busy={tab.busy || undefined}
@@ -81,7 +69,7 @@ export function ExploreContextBar({
               </button>
             </div>
           );
-        })}
+        })}</MovingTabs>
       </div>
     </section>
   );

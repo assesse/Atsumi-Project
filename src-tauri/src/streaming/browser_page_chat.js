@@ -52,6 +52,7 @@
   };
   const color = (value) => typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : undefined;
   const senderKey = async (current, message) => {
+    if (object(message.extras)?.isAnonymous === true) return undefined;
     // Only an opaque ID actually delivered with this ordinary message qualifies.
     // The random salt lives for this recording (including socket reconnects).
     const id = object(message.profile)?.userIdHash;
@@ -104,15 +105,21 @@
     } catch { return undefined; }
   };
   const normalize = (message) => {
+    const kind = message?.msgTypeCode ?? message?.messageTypeCode;
     if (!message || typeof message !== "object" || Array.isArray(message) ||
         (message.msgStatusType ?? message.messageStatusType) === "HIDDEN" ||
-        (message.msgTypeCode ?? message.messageTypeCode) !== 1) return null;
-    const rawText = message.msg ?? message.content;
+        ![1, 10, 11].includes(kind)) return null;
+    const suppliedExtras = object(message.extras) ?? {};
+    if (kind === 10 && !["CHAT", "VIDEO", "MISSION"].includes(suppliedExtras.donationType)) return null;
+    const anonymous = kind === 10 && suppliedExtras.isAnonymous === true;
+    const rawText = message.msg ?? message.content ?? (kind !== 1 ? "" : undefined);
     if (typeof rawText !== "string") return null;
     const msg = text(rawText, 4096);
-    const supplied = object(message.profile) ?? {};
+    const supplied = anonymous ? {} : object(message.profile) ?? {};
     const property = object(supplied.streamingProperty) ?? {};
-    const profile = { nickname: text(supplied.nickname, 128) ?? "알 수 없음" };
+    const profile = { nickname: anonymous ? "익명" : text(supplied.nickname ?? (kind !== 1 ? suppliedExtras.nickname : undefined), 128) ?? "알 수 없음" };
+    const portrait = image(supplied.profileImageUrl);
+    if (portrait) profile.profileImageUrl = portrait;
     // Official public profile-card and ranking links use /${userIdHash}. Store
     // only this canonical public destination, never the raw profile/token.
     if (typeof supplied.userIdHash === "string" && /^[a-f0-9]{32}$/i.test(supplied.userIdHash))
@@ -135,11 +142,13 @@
     const nicknameColor = color(code) ?? (paletteIndex >= 0 && paletteIndex < palette.length ? palette[paletteIndex] : undefined);
     if (nicknameColor) display.nicknameColor = { colorCode: nicknameColor };
     const subscription = badge(property.subscription?.badge);
-    if (subscription) {
-      display.subscription = { badge: subscription };
-      const months = property.subscription.accumulativeMonth;
-      if (Number.isSafeInteger(months) && months >= 0 && months <= 1200) display.subscription.accumulativeMonth = months;
-    }
+    const months = property.subscription?.accumulativeMonth;
+    if (subscription || Number.isSafeInteger(months) && months >= 0 && months <= 1200) display.subscription = {
+      ...(subscription ? { badge: subscription } : {}),
+      ...(Number.isSafeInteger(months) && months >= 0 && months <= 1200 ? { accumulativeMonth: months } : {}),
+    };
+    const followDate = property.following?.followDate;
+    if (typeof followDate === "string" && /^\d{4}-\d{2}-\d{2}(?:[ T]|$)/.test(followDate)) display.following = { followDate: followDate.slice(0, 10) };
     const donation = badge(property.realTimeDonationRanking?.badge);
     if (donation) display.realTimeDonationRanking = { badge: donation };
     if (Object.keys(display).length) profile.streamingProperty = display;
@@ -152,16 +161,27 @@
       return value ? { type: text(item.type, 128), badge: value } : null;
     }).filter(Boolean);
     const emojis = {};
-    const suppliedEmojis = object(object(message.extras)?.emojis);
+    const suppliedEmojis = object(suppliedExtras.emojis);
     if (suppliedEmojis) {
       for (const [id, source] of Object.entries(suppliedEmojis)) {
         if (Object.keys(emojis).length >= 32) break;
         if (!/^[a-z0-9_-]{1,64}$/i.test(id) || !msg.includes(`{:${id}:}`)) continue;
-        const url = image(source);
+        const url = image(typeof source === "string" ? source : source?.imageUrl);
         if (url) emojis[id] = url;
       }
     }
-    const normalized = { msgTypeCode: 1, msg, profile, extras: { emojis } };
+    const extras = { emojis };
+    if (kind === 10) {
+      extras.donationType = suppliedExtras.donationType;
+      extras.isAnonymous = anonymous;
+      if (Number.isSafeInteger(suppliedExtras.payAmount) && suppliedExtras.payAmount >= 0 && suppliedExtras.payAmount <= 1e9) extras.payAmount = suppliedExtras.payAmount;
+      if (extras.donationType === "MISSION") {
+        extras.missionText = text(suppliedExtras.missionText, 512);
+        if (["PENDING", "OPEN", "ACCEPTED", "REJECTED", "COMPLETED", "SUCCESS", "FAILURE", "FAILED", "CANCELED", "EXPIRED"].includes(suppliedExtras.status)) extras.status = suppliedExtras.status;
+      }
+    }
+    if (kind === 11 && Number.isSafeInteger(suppliedExtras.month) && suppliedExtras.month >= 0 && suppliedExtras.month <= 1200) extras.month = suppliedExtras.month;
+    const normalized = { msgTypeCode: kind, msg, profile, extras };
     const timestamp = message.msgTime ?? message.messageTime;
     const time = typeof timestamp === "string" && /^\d{1,16}$/.test(timestamp) ? Number(timestamp) : timestamp;
     if (Number.isSafeInteger(time) && time >= 0) normalized.msgTime = time;
@@ -245,9 +265,9 @@
         if (encoder.encode(raw).byteLength > MAX_FRAME) { fail(current, "frame_too_large", 1); return; }
         let document;
         try { document = JSON.parse(raw); } catch { current.gap = true; notify(current, "invalid_frame"); return; }
-        // Authentication, heartbeats, donations and history envelopes are never
-        // exported. This observes only ordinary live messages already received.
-        if (document?.cmd !== 93101) return;
+        // Receive-only public chat/donation events. Authentication, heartbeat,
+        // history and raw payment/ranking extras are never exported.
+        if (![93101, 93102].includes(document?.cmd)) return;
         const body = document.bdy;
         const messages = Array.isArray(body) ? body : body?.messageList;
         if (!Array.isArray(messages)) { current.gap = true; notify(current, "invalid_frame"); return; }

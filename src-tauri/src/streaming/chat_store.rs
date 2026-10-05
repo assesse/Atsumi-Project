@@ -365,6 +365,16 @@ mod tests {
             nickname_color: Some("#FFFFFF".into()),
             text_color: Some("#FFFFFF".into()),
             profile_url: Some(format!("https://chzzk.naver.com/{}", "f".repeat(32))),
+            profile_image_url: Some(long_url(99)),
+            subscription_months: Some(1200),
+            following_since: Some("2023-12-19".into()),
+            notice: Some(super::super::model::ChatNotice {
+                kind: super::super::model::ChatNoticeKind::Mission,
+                amount: Some(1_000_000_000),
+                months: Some(1200),
+                mission_text: Some("\0".repeat(512)),
+                status: Some("SUCCESS".into()),
+            }),
             badges: (0..12)
                 .map(|index| ChatBadge {
                     kind: ChatBadgeKind::Subscription,

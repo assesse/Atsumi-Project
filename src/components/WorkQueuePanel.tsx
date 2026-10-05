@@ -16,7 +16,10 @@ export function queueProgress(snapshot: QueueSnapshot | null) {
   const review = counts.review_required ?? 0;
   const failed = (counts.failed ?? 0) + (counts.interrupted ?? 0);
   const cancelled = (counts.cancelled ?? 0) + (counts.quarantined ?? 0);
-  return { total, active, completed, review, failed, cancelled, percent: total ? Math.round(completed / total * 100) : 0 };
+  // Processing can settle without a successful download. Preserve outcome
+  // colors, but don't leave the overall indicator unfinished after a stop.
+  const settled = Math.max(0, total - active);
+  return { total, active, completed, review, failed, cancelled, percent: total ? Math.floor(settled / total * 100) : 0 };
 }
 
 /** The bar is the entire summary; each segment explains itself on hover/focus. */
@@ -31,7 +34,7 @@ export function QueueSummary({ snapshot, error }: { snapshot: QueueSnapshot | nu
     ["review", "검토 필요", p.review], ["error", "실패·중단", p.failed], ["muted", "취소·격리", p.cancelled],
   ] as const;
   return <section className={"queue-summary" + (error ? " is-stale" : "")} aria-label="다운로드 진행 요약">
-    <div className="queue-progress-track" role="group" aria-label={snapshot ? "현재 작업 완료 " + p.percent + "%" : "큐 확인 중"} aria-busy={!snapshot}>
+    <div className="queue-progress-track" role="group" aria-label={snapshot ? "자동 처리 종료 " + p.percent + "% (완료·검토 대기·중단 포함)" : "큐 확인 중"} aria-busy={!snapshot}>
       {segments.filter(([, , n]) => n > 0).map(([tone, label, n]) => <span key={tone}
         className={"tone-" + tone + (p.active > 0 && ["metadata", "active", "hashing", "verifying"].includes(tone) ? " is-running" : "")}
         style={{ width: (p.total ? n / p.total * 100 : 0) + "%" }} title={label + " " + n + "개"} aria-label={label + " " + n + "개"} role="img" tabIndex={0} />)}
@@ -85,6 +88,7 @@ export function WorkQueuePanel({ snapshot, query, error, onQuery, onRefresh, onC
 
   return <section className="work-queue-panel" aria-label="다운로드 큐 관리">
     <QueueSummary snapshot={snapshot} error={error} />
+    <p className="queue-empty">현재 대기·다운로드·검증·재시도 중인 작업입니다. 검토 대기·종료된 작업은 빠집니다.</p>
     <div className="queue-actions"><button type="button" disabled={!selected.size || busy || Boolean(error)} onClick={() => void cancelSelected()}>
       {busy ? "취소 중…" : "선택 " + selected.size + "개 취소"}
     </button></div>

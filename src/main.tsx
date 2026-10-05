@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { backend } from "./api/backend";
-import { installUiDiagnostics } from "./diagnostics/uiDiagnostics";
+import { installUiDiagnostics, markUi } from "./diagnostics/uiDiagnostics";
 import { restoreNativeCheckpoint } from "./api/workConsole";
 import {
   BackendThumbnailAdapter,
@@ -31,7 +31,11 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   stopDiagnostics(); thumbnailClient.dispose(); backendThumbnailAdapter?.dispose();
 });
 
-void restoreNativeCheckpoint().then(() => createRoot(root).render(
+void restoreNativeCheckpoint().then(() => createRoot(root, {
+  onCaughtError: (error) => { markUi("react_error"); console.error(error); },
+  onUncaughtError: (error) => { markUi("react_error"); console.error(error); },
+  onRecoverableError: (error) => { markUi("react_error"); console.error(error); },
+}).render(
   <StrictMode>
     <ThumbnailProvider client={thumbnailClient}>
       <App />

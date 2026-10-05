@@ -39,6 +39,7 @@
 .mado-connection-inline{display:grid;justify-items:center;gap:12px;margin:16px 0}
 .mado-connection-intro{max-width:720px;margin:0;color:var(--text-soft);font-size:13px;line-height:1.7}
 .official-browser-dialog-backdrop.mado-connection-panel{pointer-events:none}
+.official-browser-dialog-backdrop.mado-connection-panel[data-native-preserve-video=true]{align-items:start}
 .mado-connection-panel>.connection-setup{pointer-events:auto;max-height:calc(100dvh - 48px);overflow:auto}
 .streaming-watch-modes{display:flex;gap:5px;margin-bottom:8px}.streaming-watch-modes button{padding:5px 12px;font-size:12px}.streaming-watch-modes [aria-pressed=true]{color:var(--primary);border-color:var(--primary)}
 @container(max-width:1100px){.mado-surfaces.is-paired{grid-template-columns:minmax(0,1fr)}}

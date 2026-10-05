@@ -15,7 +15,10 @@ export type ReplayMessage = {
   offsetSeconds: number; broadcastOffsetSeconds: number | null; mediaTimeSeconds: number;
   syncQuality: ReplaySyncQuality; senderKey?: string | null;
   assetIds?: Record<string, string>;
-  rich?: { nicknameColor?: string | null; textColor?: string | null; profileUrl?: string | null; badges: { kind: string; title?: string | null; imageUrl: string }[]; emojis: { id: string; imageUrl: string }[] } | null;
+  rich?: { nicknameColor?: string | null; textColor?: string | null; profileUrl?: string | null;
+    profileImageUrl?: string | null; subscriptionMonths?: number | null; followingSince?: string | null;
+    notice?: { kind: "donation" | "video_donation" | "mission" | "subscription"; amount?: number | null; months?: number | null; missionText?: string | null; status?: string | null } | null;
+    badges: { kind: string; title?: string | null; imageUrl: string }[]; emojis: { id: string; imageUrl: string }[] } | null;
 };
 export type ReplayPage = {
   generation: number; items: ReplayMessage[]; previousCursor?: string | null; nextCursor?: string | null;

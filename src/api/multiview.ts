@@ -54,8 +54,14 @@ export function normalizeMultiviewChannel(input: string): string | null {
   try {
     const url = new URL(text);
     if (url.origin !== "https://chzzk.naver.com" || url.username || url.password || url.search || url.hash) return null;
-    return /^\/live\/([a-f\d]{32})(?:\/chat)?\/?$/i.exec(url.pathname)?.[1]?.toLowerCase() ?? null;
+    const match = /^\/(?:live\/([a-f\d]{32})(?:\/chat)?|([a-f\d]{32}))\/?$/i.exec(url.pathname);
+    return (match?.[1] ?? match?.[2])?.toLowerCase() ?? null;
   } catch { return null; }
+}
+
+/** Preserve partial/invalid input for editing; canonicalize only exact channel IDs. */
+export function normalizeChannelDraft(input: string): string {
+  return normalizeMultiviewChannel(input) ?? input;
 }
 
 export function multiviewEntries(inputs: string[], mode: "paired" | "chats", lead: number): MultiviewEntry[] | string {

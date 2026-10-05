@@ -3,16 +3,24 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 export type CommunitySource = "hitomi" | "danbooru";
 export type WorkKey = { source: CommunitySource; workId: string };
 export type Cursor = { createdAt: string; id: string };
-export type Review = WorkKey & { id: string; nickname: string; rating: number; recommended: boolean; comment: string; createdAt: string; updatedAt: string };
+export type FeedOrder = "popular" | "latest" | "worst";
+export type FeedCursor = (Cursor | { score: string; reviewCount: number; source: CommunitySource; workId: string }) & { order?: FeedOrder; scope?: CommunitySource | null };
+export type Review = WorkKey & { id: string; nickname: string; rating: number; recommended: boolean; comment: string; createdAt: string; updatedAt: string; workSummary?: Pick<Summary, "reviewCount" | "averageRating"> };
 export type Mine = Pick<Review, "id" | "rating" | "recommended" | "comment"> & { hidden: boolean };
 export type Summary = WorkKey & { reviewCount: number; averageRating: number | null; recommendationCount: number };
 export type ReviewPage = { items: Review[]; nextCursor: Cursor | null; summary?: Summary };
+export type FeedPage = { items: Review[]; nextCursor: FeedCursor | null };
 export type Writer = { profile: { id: string; nickname: string }; mine: Mine | null };
+export type OwnReview = Review & { hidden: boolean };
+export type MyReviewPage = { profile: Writer["profile"] | null; identityIssued: boolean; items: OwnReview[]; nextCursor: Cursor | null };
 export type ReviewInput = WorkKey & Pick<Review, "nickname" | "rating" | "recommended" | "comment">;
+export const REVIEW_COMMENT_LIMIT = 100;
+export const reviewCommentLength = (comment: string) => Array.from(comment).length;
 export interface CommunityApi {
-  feed(source: CommunitySource | null, cursor?: Cursor | null): Promise<ReviewPage>;
+  feed(source: CommunitySource | null, cursor?: FeedCursor | null, order?: FeedOrder): Promise<FeedPage>;
   work(key: WorkKey, cursor?: Cursor | null): Promise<ReviewPage>;
   beginWriting(key: WorkKey): Promise<Writer>;
+  myReviews(cursor?: Cursor | null): Promise<MyReviewPage>;
   save(input: ReviewInput): Promise<void>;
   delete(key: WorkKey): Promise<void>;
   report(reviewId: string, reason: string): Promise<void>;
@@ -38,9 +46,9 @@ const write = <T,>(request: unknown): Promise<T> => {
   return invoke<T>("community_write", { request });
 };
 export const communityApi: CommunityApi = {
-  feed: (source, cursor = null) => isTauri()
-    ? invoke("community_read", { request: { kind: "feed", source, cursor } })
-    : publicRpc("feed", { p_source: source, p_cursor: cursor }),
+  feed: (source, cursor = null, order = "latest") => isTauri()
+    ? invoke("community_read", { request: { kind: "feed", source, cursor, order } })
+    : publicRpc("ranked_feed", { p_source: source, p_cursor: cursor, p_order: order }),
   work: async (key, cursor = null) => {
     if (isTauri()) return invoke("community_read", { request: { kind: "work", ...key, cursor } });
     const [page, summaries] = await Promise.all([
@@ -50,6 +58,8 @@ export const communityApi: CommunityApi = {
     return { ...page, summary: summaries[0] };
   },
   beginWriting: (key) => write({ kind: "beginWriting", ...key }),
+  // Native code may refresh an existing credential, but never issues one here.
+  myReviews: (cursor = null) => write({ kind: "myReviews", cursor }),
   save: (input) => write({ kind: "save", ...input }),
   delete: (key) => write({ kind: "delete", ...key }),
   report: (reviewId, reason) => write({ kind: "report", reviewId, reason }),

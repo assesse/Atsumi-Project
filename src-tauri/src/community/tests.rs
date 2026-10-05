@@ -1,4 +1,40 @@
 use super::*;
+
+#[test]
+fn community_comments_allow_100_unicode_characters_but_reject_101_before_network() {
+    let store = MemoryStore::new();
+    let http = FakeTransport::new();
+    ensure_session(&store, &http, now_seconds(), true).unwrap();
+    for length in [100, 101] {
+        http.routes.borrow_mut().clear();
+        let result = write_request(
+            &store,
+            &http,
+            WriteRequest::Save {
+                source: "hitomi".into(),
+                work_id: "123".into(),
+                rating: 4,
+                recommended: false,
+                comment: "😀".repeat(length),
+                nickname: "이용자".into(),
+            },
+        );
+        assert_eq!(result.is_ok(), length == 100);
+        assert_eq!(
+            http.routes.borrow().len(),
+            if length == 100 { 1 } else { 0 }
+        );
+    }
+}
+
+fn trusted_main(label: &str, url: &tauri::Url, development: bool) -> bool {
+    crate::frontend_origin::trusted_main(
+        label,
+        url,
+        development,
+        Some(&"http://127.0.0.1:1420".parse().unwrap()),
+    )
+}
 use std::cell::{Cell, RefCell};
 
 struct MemoryStore {
@@ -32,6 +68,7 @@ impl IdentityStore for MemoryStore {
 }
 struct FakeTransport {
     routes: RefCell<Vec<(String, bool)>>,
+    bodies: RefCell<Vec<Value>>,
     fail: Cell<bool>,
     reject: Cell<bool>,
     other_user: Cell<bool>,
@@ -40,6 +77,7 @@ impl FakeTransport {
     fn new() -> Self {
         Self {
             routes: RefCell::new(vec![]),
+            bodies: RefCell::new(vec![]),
             fail: Cell::new(false),
             reject: Cell::new(false),
             other_user: Cell::new(false),
@@ -47,7 +85,8 @@ impl FakeTransport {
     }
 }
 impl Transport for FakeTransport {
-    fn post(&self, route: &str, _: Value, token: Option<&str>) -> Result<Value, RequestFailure> {
+    fn post(&self, route: &str, body: Value, token: Option<&str>) -> Result<Value, RequestFailure> {
+        self.bodies.borrow_mut().push(body);
         self.routes
             .borrow_mut()
             .push((route.into(), token.is_some()));
@@ -62,6 +101,11 @@ impl Transport for FakeTransport {
                 json!({"access_token":"secret-access","refresh_token":"secret-refresh","expires_in":3600,"user":{"id": if self.other_user.get() { "22222222-2222-4222-8222-222222222222" } else { "11111111-1111-4111-8111-111111111111" }}}),
             );
         }
+        if route.ends_with("community_v1_my_reviews") {
+            return Ok(
+                json!({"profile": {"id":"member-id", "nickname":"tester"}, "identityIssued":true, "items": [], "nextCursor": null}),
+            );
+        }
         Ok(json!({"items": [], "nextCursor": null}))
     }
 }
@@ -74,6 +118,7 @@ fn community_public_reads_never_issue_identity_or_send_user_token() {
         ReadRequest::Feed {
             source: None,
             cursor: None,
+            order: FeedOrder::Latest,
         },
     )
     .unwrap();
@@ -92,6 +137,93 @@ fn community_public_reads_never_issue_identity_or_send_user_token() {
         .borrow()
         .iter()
         .all(|(route, token)| !*token && !route.starts_with("auth/")));
+}
+
+#[test]
+fn community_ranked_feed_preserves_order_and_cursor_without_authentication() {
+    for order in ["popular", "latest", "worst"] {
+        let http = FakeTransport::new();
+        let cursor = json!({"order":order,"score":"3.66666667","reviewCount":10,"source":"hitomi","workId":"123","scope":"hitomi"});
+        let request = serde_json::from_value(
+            json!({"kind":"feed","source":"hitomi","cursor":cursor,"order":order}),
+        )
+        .unwrap();
+        read_request(&http, request).unwrap();
+        assert_eq!(
+            http.routes.borrow()[0],
+            ("rest/v1/rpc/community_v1_ranked_feed".into(), false)
+        );
+        assert_eq!(
+            http.bodies.borrow()[0],
+            json!({"p_source":"hitomi","p_order":order,"p_cursor":cursor})
+        );
+    }
+    assert!(
+        serde_json::from_value::<ReadRequest>(json!({"kind":"feed","order":"invalid"})).is_err()
+    );
+    let http = FakeTransport::new();
+    read_request(
+        &http,
+        serde_json::from_value(json!({"kind":"feed"})).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(http.bodies.borrow()[0]["p_order"], "latest");
+}
+
+#[test]
+fn community_own_history_does_not_issue_or_contact_server_without_identity() {
+    let store = MemoryStore::new();
+    let http = FakeTransport::new();
+    let result = write_request(&store, &http, WriteRequest::MyReviews { cursor: None }).unwrap();
+    assert_eq!(
+        result,
+        json!({"profile":null,"identityIssued":false,"items":[],"nextCursor":null})
+    );
+    assert!(http.routes.borrow().is_empty());
+    assert!(matches!(store.load().unwrap(), Identity::Unissued));
+}
+
+#[test]
+fn community_own_history_authenticates_existing_owner_without_exposing_credentials() {
+    let store = MemoryStore::new();
+    let http = FakeTransport::new();
+    ensure_session(&store, &http, now_seconds(), true).unwrap();
+    http.routes.borrow_mut().clear();
+    let request: WriteRequest =
+        serde_json::from_value(json!({"kind":"myReviews","cursor":null})).unwrap();
+    let result = write_request(&store, &http, request).unwrap();
+    assert_eq!(result["profile"]["id"], "member-id");
+    assert_eq!(
+        *http.routes.borrow(),
+        vec![("rest/v1/rpc/community_v1_my_reviews".into(), true)]
+    );
+    assert!(!result.to_string().contains("secret-"));
+    assert!(!result
+        .to_string()
+        .contains("11111111-1111-4111-8111-111111111111"));
+}
+
+#[test]
+fn community_own_history_refreshes_expired_identity_but_never_replaces_failed_identity() {
+    let store = MemoryStore::new();
+    let http = FakeTransport::new();
+    ensure_session(&store, &http, 0, true).unwrap();
+    http.routes.borrow_mut().clear();
+    write_request(&store, &http, WriteRequest::MyReviews { cursor: None }).unwrap();
+    assert_eq!(
+        *http.routes.borrow(),
+        vec![
+            ("auth/v1/token?grant_type=refresh_token".into(), false),
+            ("rest/v1/rpc/community_v1_my_reviews".into(), true)
+        ]
+    );
+    http.routes.borrow_mut().clear();
+    store.fail_read.set(true);
+    assert!(write_request(&store, &http, WriteRequest::MyReviews { cursor: None }).is_err());
+    store.fail_read.set(false);
+    store.save(&Identity::Issuing).unwrap();
+    assert!(write_request(&store, &http, WriteRequest::MyReviews { cursor: None }).is_err());
+    assert!(http.routes.borrow().is_empty());
 }
 #[test]
 fn community_issues_once_and_reuses_identity_after_reopening_store() {

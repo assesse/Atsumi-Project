@@ -829,6 +829,24 @@ describe("browser backend search contract", () => {
 });
 
 describe("browser backend favorites and automation contract", () => {
+  it("deletes one grouped history without changing favorites, and clears only history", async () => {
+    const before = await backend.favoritesList();
+    await backend.searchSubmit(searchRequest({ text: "history-remove-fixture", pageSize: 10 }));
+    await backend.searchSubmit(searchRequest({ text: "history-remove-fixture", pageSize: 20 }));
+    await backend.searchSubmit(searchRequest({ text: "history-keep-fixture" }));
+    const history = await backend.searchHistoryList(100);
+    if (!history.ok) throw new Error("history unavailable");
+    const entry = history.data.find(row => row.text === "history-remove-fixture")!;
+    expect(await backend.searchHistoryRemove(entry.historyId)).toEqual({ ok: true, data: 2 });
+    expect(await backend.searchHistoryRemove(entry.historyId)).toEqual({ ok: true, data: 0 });
+    expect(await backend.searchHistoryRemove(-1)).toMatchObject({ ok: false });
+    const remaining = await backend.searchHistoryList(100);
+    expect(remaining.ok && remaining.data.some(row => row.text === "history-keep-fixture")).toBe(true);
+    expect(remaining.ok && remaining.data.some(row => row.text === "history-remove-fixture")).toBe(false);
+    await backend.searchHistoryClear();
+    expect(await backend.searchHistoryList(100)).toEqual({ ok: true, data: [] });
+    expect(await backend.favoritesList()).toEqual(before);
+  });
   it("persists normalized favorites and only records submitted non-empty searches", async () => {
     const enabled = await backend.favoriteSet({ namespace: "artist", value: "  History Artist  " }, true);
     await backend.favoriteSet({ namespace: "series", value: " Rain Archives " }, true);

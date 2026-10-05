@@ -29,9 +29,13 @@ type ViewHeaderProps = {
   searchFormId?: string;
   searchLabel?: string;
   filterControl?: ReactNode;
+  searchEndControl?: ReactNode;
   search: SearchUi;
   searchPending?: boolean;
   suggestions: SearchSuggestion[];
+  historyPending?: boolean;
+  onRemoveHistory?: (historyId: number) => void;
+  onClearHistory?: () => void;
   activityCount: number;
   activityOpen: boolean;
   onDraft: (value: string) => void;
@@ -59,9 +63,13 @@ export function ViewHeader({
   searchFormId = "gallery-search-form",
   searchLabel = "검색",
   filterControl,
+  searchEndControl,
   search,
   searchPending = false,
   suggestions,
+  historyPending = false,
+  onRemoveHistory,
+  onClearHistory,
   activityOpen,
   onDraft,
   onSuggestions,
@@ -99,6 +107,12 @@ export function ViewHeader({
       onSuggestions(search.suggestionsOpen, null);
     }
   }, [onSuggestions, search.activeSuggestion, search.suggestionsOpen, visibleSuggestions.length]);
+
+  useEffect(() => {
+    if (search.suggestionsOpen && search.activeSuggestion !== null) {
+      host.current?.querySelector(`#search-suggestion-${search.activeSuggestion}`)?.scrollIntoView?.({ block: "nearest" });
+    }
+  }, [search.activeSuggestion, search.suggestionsOpen]);
 
   useEffect(() => {
     const closeTransient = (event: PointerEvent) => {
@@ -230,11 +244,13 @@ export function ViewHeader({
           onCompositionEnd={(event) => { composing.current = false; setSelection({ start: event.currentTarget.selectionStart ?? 0, end: event.currentTarget.selectionEnd ?? 0 }); }}
           onKeyDown={keyDown}
         />
+        {searchEndControl}
         {search.suggestionsOpen && visibleSuggestions.length ? (
-          <div className="suggestions" id={suggestionsId} role="listbox" aria-label="검색 제안">
+          <div className="suggestions">
+          <div id={suggestionsId} role="listbox" aria-label="검색 제안">
             {visibleSuggestions.map((item, index) => (
+              <div className="suggestion-row" role="presentation" key={item.historyId !== undefined ? `history-${item.historyId}` : `${item.type}-${item.token}`}>
               <button
-                key={`${item.type}-${item.token}`}
                 id={`search-suggestion-${index}`}
                 type="button"
                 role="option"
@@ -252,11 +268,17 @@ export function ViewHeader({
                 <strong>{item.favorite ? `★ ${item.label}` : item.label}</strong>
                 <small>{item.extra}</small>
               </button>
+              {item.type === "HISTORY" && item.historyId !== undefined && onRemoveHistory ? <button type="button" className="suggestion-remove" aria-label={`${item.label} 검색 기록 삭제`} title="이 검색 기록 삭제" disabled={historyPending}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => { onSuggestions(true, null); onRemoveHistory(item.historyId!); input.current?.focus(); }}><FluentIcon glyph="\uE711" /></button> : null}
+              </div>
             ))}
+          </div>
+          {onClearHistory && visibleSuggestions.some((item) => item.type === "HISTORY") ? <footer className="search-history-footer"><button type="button" disabled={historyPending} onMouseDown={(event) => event.preventDefault()} onClick={() => { onSuggestions(true, null); onClearHistory(); input.current?.focus(); }}>기록 모두 지우기</button></footer> : null}
           </div>
         ) : null}
       </form>
-      <button type="submit" form={searchFormId} className="icon-button primary-soft" title="검색" aria-label="검색" disabled={searchPending}>
+      <button type="submit" form={searchFormId} data-tour="hitomi-search" className="icon-button primary-soft" title="검색" aria-label="검색" disabled={searchPending}>
         <FluentIcon glyph="\uE721" />
       </button>
       {filterControl ?? <div className="menu-anchor">
@@ -306,8 +328,9 @@ export function ViewHeader({
       <button
         type="button"
         className="icon-button activity-button"
+        data-tour="hitomi-activity"
         aria-label="활동 기록"
-        aria-description={queueProgress === undefined ? undefined : `완료 ${queueProgress}% · 대기·실행 ${queueActiveCount ?? 0}개`}
+        aria-description={queueProgress === undefined ? undefined : `자동 처리 종료 ${queueProgress}% (완료·검토 대기·중단 포함) · 대기·실행 ${queueActiveCount ?? 0}개`}
         aria-controls="activity-panel"
         aria-expanded={activityOpen}
         onClick={onActivity}
@@ -320,6 +343,7 @@ export function ViewHeader({
         className={`icon-button${privacyMode ? " is-active" : ""}`}
         title={privacyMode ? "미리보기 표시" : "미리보기 가리기"}
         aria-label="프라이버시 모드"
+        data-tour="privacy-mode"
         aria-pressed={privacyMode}
         aria-busy={privacyModePending || undefined}
         disabled={privacyModePending}
@@ -327,7 +351,7 @@ export function ViewHeader({
       >
         <FluentIcon glyph="\uE890" />
       </button>
-      <button type="button" className="icon-button" title="설정" aria-label="설정" onClick={onSettings}>
+      <button type="button" className="icon-button" data-tour="hitomi-settings" title="설정" aria-label="설정" onClick={onSettings}>
         <FluentIcon glyph="\uE713" />
       </button>
     </header>

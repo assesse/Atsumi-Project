@@ -28,6 +28,30 @@ const callbacks = {
 describe("GalleryCard event projection", () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it.each([
+    ["explore", "detail"], ["auto-find", "detail"], ["downloads", "detail"],
+    ["explore", "compact"], ["auto-find", "compact"], ["downloads", "compact"],
+  ] as const)("never checks a single card in %s/%s, including the first click of a double click", async (view, displayMode) => {
+    const host = document.createElement("div"), root = createRoot(host);
+    const gallery = { ...mockGalleries[0]!, download: undefined };
+    const render = (selected: boolean, selectionContext: boolean) => root.render(<GalleryCard gallery={gallery} view={view} displayMode={displayMode}
+      selected={selected} selectionContext={selectionContext} favoriteMetadata={new Set()} {...callbacks} />);
+    try {
+      await act(async () => render(false, false));
+      await act(async () => host.querySelector("article")!.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+      expect(callbacks.onSelect).toHaveBeenCalledOnce();
+      await act(async () => render(true, false));
+      expect(host.querySelector(".card-select-toggle")).toBeNull();
+      await act(async () => host.querySelector("article")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 })));
+      expect(callbacks.onOpenDetail).toHaveBeenCalledOnce();
+      expect(host.querySelector(".card-select-toggle")).toBeNull();
+      await act(async () => render(true, true));
+      expect(host.querySelector(".card-select-toggle")).toHaveAttribute("aria-pressed", "true");
+      await act(async () => render(true, false));
+      expect(host.querySelector(".card-select-toggle")).toBeNull();
+    } finally { await act(async () => root.unmount()); }
+  });
+
   it.each(["detail", "compact"] as const)("shows favorite collaborators first with independent actions in %s cards", async (displayMode) => {
     const container = document.createElement("div");
     document.body.append(container);
@@ -181,7 +205,7 @@ describe("GalleryCard event projection", () => {
       await act(async () => card?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })));
       expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, { ctrlKey: true, shiftKey: false });
       await act(async () => card?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 })));
-      expect(callbacks.onOpenArtifact).toHaveBeenCalledWith(gallery.id);
+      expect(callbacks.onOpenDetail).toHaveBeenCalledWith(gallery.id);
     } finally {
       await act(async () => root.unmount());
     }
@@ -429,7 +453,7 @@ describe("GalleryCard event projection", () => {
     container.remove();
   });
 
-  it("uses the artifact action for every Downloads double click", async () => {
+  it("opens detail from a Downloads double click too", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -452,8 +476,8 @@ describe("GalleryCard event projection", () => {
       article?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
     });
 
-    expect(callbacks.onOpenArtifact).toHaveBeenCalledWith(gallery.id);
-    expect(callbacks.onOpenDetail).not.toHaveBeenCalled();
+    expect(callbacks.onOpenDetail).toHaveBeenCalledWith(gallery.id);
+    expect(callbacks.onOpenArtifact).not.toHaveBeenCalled();
     await act(async () => root.unmount());
     container.remove();
   });
@@ -572,6 +596,8 @@ describe("GalleryCard event projection", () => {
 
     callbacks.onOpenReview.mockClear();
     await act(async () => article?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    expect(callbacks.onOpenReview).not.toHaveBeenCalled();
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent === "중복 판본 검토")!.click());
     expect(callbacks.onOpenReview).toHaveBeenCalledWith(gallery.id);
 
     callbacks.onOpenReview.mockClear();
@@ -581,7 +607,8 @@ describe("GalleryCard event projection", () => {
       article?.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 }));
       article?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
     });
-    expect(callbacks.onOpenArtifact).toHaveBeenCalledWith(gallery.id);
+    expect(callbacks.onOpenDetail).toHaveBeenCalledWith(gallery.id);
+    expect(callbacks.onOpenArtifact).not.toHaveBeenCalled();
     expect(callbacks.onOpenReview).not.toHaveBeenCalled();
 
     await act(async () => root.unmount());
@@ -627,6 +654,8 @@ describe("GalleryCard event projection", () => {
 
     callbacks.onOpenReview.mockClear();
     await act(async () => article?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    expect(callbacks.onOpenReview).not.toHaveBeenCalled();
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent === "중복 판본 검토")!.click());
     expect(callbacks.onOpenReview).toHaveBeenCalledWith(gallery.id);
 
     await act(async () => root.unmount());
@@ -692,8 +721,8 @@ describe("GalleryCard event projection", () => {
     callbacks.onOpenDetail.mockClear();
     await act(async () => render("downloads"));
     await act(async () => container.querySelector<HTMLElement>("article")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 })));
-    expect(callbacks.onOpenArtifact).toHaveBeenCalledWith(gallery.id);
-    expect(callbacks.onOpenDetail).not.toHaveBeenCalled();
+    expect(callbacks.onOpenDetail).toHaveBeenCalledWith(gallery.id);
+    expect(callbacks.onOpenArtifact).not.toHaveBeenCalled();
 
     await act(async () => root.unmount());
     container.remove();
@@ -1027,6 +1056,7 @@ describe("GalleryCard event projection", () => {
     const article = container.querySelector("article");
     expect(article).toHaveAccessibleName(expect.stringContaining("선택됨"));
     expect(article?.querySelector(".selection-indicator")).toBeNull();
+    expect(article?.querySelector(".card-select-toggle")).toBeNull();
     await act(async () => root.unmount());
     container.remove();
   });
@@ -1087,10 +1117,9 @@ describe("GalleryCard event projection", () => {
     try {
       await act(async () => render(true));
       const card = container.querySelector<HTMLElement>(".gallery-card")!;
-      const toggle = container.querySelector<HTMLButtonElement>(".card-select-toggle")!;
       await act(async () => {
-        toggle.dispatchEvent(new Event("pointerdown", { bubbles: true })); toggle.focus();
-        if (input === "keyboard") toggle.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true }));
+        card.dispatchEvent(new Event("pointerdown", { bubbles: true })); card.focus();
+        if (input === "keyboard") card.dispatchEvent(new KeyboardEvent("keydown", { key: "Shift", bubbles: true }));
       });
       expect(card.contains(document.activeElement)).toBe(true);
       await act(async () => render(false));
@@ -1426,7 +1455,7 @@ describe("GalleryCard event projection", () => {
     container.remove();
   });
 
-  it("suppresses the double-click action when the gesture started in selection context", async () => {
+  it("opens detail on a plain double click even when a previous multi-selection existed", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -1450,7 +1479,7 @@ describe("GalleryCard event projection", () => {
     });
 
     expect(callbacks.onSelect).toHaveBeenCalledWith(gallery.id, expect.anything());
-    expect(callbacks.onOpenDetail).not.toHaveBeenCalled();
+    expect(callbacks.onOpenDetail).toHaveBeenCalledWith(gallery.id);
     await act(async () => root.unmount());
     container.remove();
   });

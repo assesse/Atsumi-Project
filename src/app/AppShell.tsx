@@ -2,7 +2,6 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import type { BackendClient } from "../api/backend";
 import type { SettingsPatch } from "../api/contracts";
 import { ExitConfirmDialog } from "../components/ExitConfirmDialog";
-import { TutorialDialog } from "../components/TutorialDialog";
 import { UpdateDialog } from "../components/UpdateDialog";
 import { useSettings, type SettingsApi } from "../hooks/useSettings";
 import { useWindowPlacement } from "../hooks/useWindowPlacement";
@@ -34,6 +33,10 @@ type AppShellServices = ShellState & {
   exitConfirmOpen: boolean;
   openExitConfirm: () => void;
   backgroundReady: boolean;
+  tutorialOpen: boolean;
+  tutorialSource: ContentSource | null;
+  replayTutorial: () => void;
+  closeTutorial: () => void;
 };
 
 const AppShellContext = createContext<AppShellServices | null>(null);
@@ -51,7 +54,15 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   const { settings, save: saveSettings } = settingsStore;
   const startup = useStartup(api.runtime, settingsStore.hasSnapshot);
   const updater = useAppUpdater(api.runtime, updateGuard);
-  const [tutorialOpen, setTutorialOpen] = useState(() => !isTutorialDismissed());
+  const [tutorialSource, setTutorialSource] = useState<ContentSource | null>(() => isTutorialDismissed(state.source) ? null : state.source);
+  const tutorialOpen = tutorialSource !== null;
+  const shownTutorials = useRef(new Set<ContentSource>());
+  // Remember first display, not completion: skipping or closing the app must not replay it.
+  useEffect(() => {
+    if (!tutorialSource) return;
+    shownTutorials.current.add(tutorialSource);
+    setTutorialDismissed(true, tutorialSource);
+  }, [tutorialSource]);
   const [toast, setToast] = useState<{ id: number; message: string } | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
   const toastSequence = useRef(0);
@@ -75,18 +86,25 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   useRecordingNotifications(api.runtime, showToast);
 
   const exit = useAppExit(api, showToast);
+  // A native close request takes priority; the tour must never trap the exit dialog.
+  useEffect(() => { if (exit.open) setTutorialSource(null); }, [exit.open]);
   const preferenceQueue = usePreferenceQueue(api, showToast);
   const selectSource = useCallback((source: ContentSource) => {
     saveContentSource(source);
     dispatch({ type: "source.select", source });
-  }, []);
+    setTutorialSource(current => {
+      if (exit.open) return null;
+      if (current === source) return current;
+      return shownTutorials.current.has(source) || isTutorialDismissed(source) ? null : source;
+    });
+  }, [exit.open]);
   const toggleRail = useCallback(() => dispatch({ type: "rail.toggle" }), []);
   const setSettingsOpen = useCallback((open: boolean) => dispatch({ type: "settings.set", open }), []);
   const setActivityOpen = useCallback((open: boolean) => dispatch({ type: "activity.set", open }), []);
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.privacyMode = privacyMode ? "on" : "off";
-  }, [privacyMode]);
+    document.documentElement.dataset.privacyMode = privacyMode && state.source !== "chzzk" ? "on" : "off";
+  }, [privacyMode, state.source]);
 
   const saveSettingsPatch = useCallback(async (patch: SettingsPatch) => {
     const result = await saveSettings(patch);
@@ -99,9 +117,13 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
     setPrivacyMode((current) => !current);
   }, [privacyModePending]);
 
-  const closeTutorial = useCallback((doNotShowAgain: boolean) => {
-    if (doNotShowAgain) setTutorialDismissed(true);
-    setTutorialOpen(false);
+  const replayTutorial = useCallback(() => {
+    // This opens only the current session; never clear the first-display marker.
+    setSettingsOpen(false);
+    if (!exit.open) setTutorialSource(state.source);
+  }, [setSettingsOpen, state.source, exit.open]);
+  const closeTutorial = useCallback(() => {
+    setTutorialSource(null);
   }, []);
 
   const value = useMemo<AppShellServices>(() => ({
@@ -110,8 +132,9 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
     checkForUpdates: updater.checkForUpdates,
     exitConfirmOpen: exit.open, openExitConfirm: exit.openExitConfirm,
     backgroundReady: startup.backgroundReady,
+    tutorialOpen, tutorialSource, replayTutorial, closeTutorial,
   }), [state, selectSource, toggleRail, setSettingsOpen, setActivityOpen, showToast, settingsStore, preferenceQueue,
-    saveSettingsPatch, privacyMode, privacyModePending, togglePrivacyMode, updater.checkForUpdates, exit.open, exit.openExitConfirm, startup.backgroundReady]);
+    saveSettingsPatch, privacyMode, privacyModePending, togglePrivacyMode, updater.checkForUpdates, exit.open, exit.openExitConfirm, startup.backgroundReady, tutorialOpen, tutorialSource, replayTutorial, closeTutorial]);
 
   return (
     <AppShellContext.Provider value={value}>
@@ -130,7 +153,6 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
         onLater={updater.dismissUpdate}
         onInstall={() => void updater.installUpdate()}
       />
-      <TutorialDialog open={tutorialOpen} onClose={closeTutorial} />
       <ExitConfirmDialog {...exit.dialogProps} />
       {toast ? <div key={toast.id} className="toast" role="status">{toast.message}</div> : null}
     </AppShellContext.Provider>

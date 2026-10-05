@@ -1,0 +1,50 @@
+.window-motion { display: contents; }
+.window-motion[inert] > * { pointer-events: none; }
+/* Independent transform properties preserve the window's centering transform. */
+.page-preview-dialog[open], .detail-close-dialog[open] { animation: album-window-enter 170ms cubic-bezier(.2,.75,.25,1); }
+.detail-body > .detail-layout { animation: album-panel-enter 130ms ease-out; }
+.detail-workspace .detail-tab.is-active, .explore-context-tab-shell.is-active { transition: background-color 140ms, color 140ms; }
+.detail-restore.detail-restore-dock {
+  inset: auto 24px 24px auto;
+  transform: none;
+  z-index: 85;
+  max-width: calc(100vw - 48px);
+  min-height: 44px;
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--primary);
+  box-shadow: 0 6px 24px #0005;
+  transition: opacity 150ms, translate 180ms, box-shadow 150ms;
+}
+.detail-restore-dock[data-minimized="false"] { opacity: 0; pointer-events: none; translate: 0 8px; }
+.detail-restore-dock[data-minimized="true"] { animation: detail-dock-arrive 320ms ease-out; }
+.detail-restore-dock:hover { box-shadow: 0 0 0 2px var(--primary-soft), 0 8px 26px #0006; }
+.detail-restore-dock small { color: var(--muted); font-size: 11px; }
+.window-motion .danbooru-detail { animation: none; }
+/* Native dialogs stay in the top layer during the fade; their save/close logic
+   remains immediate. Page Preview has its own cancellable exit animation. */
+@supports (transition-behavior: allow-discrete) {
+  dialog:not(.page-preview-dialog) {
+    opacity: 0;
+    scale: .985;
+    transition: opacity 150ms ease-out, scale 150ms ease-out, display 150ms allow-discrete, overlay 150ms allow-discrete;
+  }
+  dialog[open]:not(.page-preview-dialog) { opacity: 1; scale: none; }
+  dialog:not(.page-preview-dialog)::backdrop {
+    opacity: 0;
+    transition: opacity 150ms ease-out, display 150ms allow-discrete, overlay 150ms allow-discrete;
+  }
+  dialog[open]:not(.page-preview-dialog)::backdrop { opacity: 1; }
+  @starting-style {
+    dialog[open]:not(.page-preview-dialog) { opacity: 0; scale: .985; }
+    dialog[open]:not(.page-preview-dialog)::backdrop { opacity: 0; }
+  }
+}
+@keyframes album-window-enter { from { opacity: 0; scale: .975; } to { opacity: 1; scale: 1; } }
+@keyframes album-panel-enter { from { opacity: .65; translate: 0 4px; } to { opacity: 1; translate: 0 0; } }
+@keyframes detail-dock-arrive { from { opacity: .2; translate: 0 6px; box-shadow: 0 0 0 5px var(--primary-soft); } to { opacity: 1; translate: 0 0; box-shadow: 0 6px 24px #0005; } }
+@media (prefers-reduced-motion: reduce) {
+  .page-preview-dialog[open], .detail-close-dialog[open], .detail-body > .detail-layout, .detail-restore-dock[data-minimized="true"] { animation: none; }
+  .detail-restore.detail-restore-dock { transition: none; }
+  dialog:not(.page-preview-dialog), dialog:not(.page-preview-dialog)::backdrop { transition: none; }
+}

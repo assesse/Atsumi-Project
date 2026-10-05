@@ -66,12 +66,21 @@ function partialViewer(bucket,duration){return bucket?.viewerCount!=null&&finite
 function attachMetrics(){
  const slider=document.querySelector('.pzp-pc__progress-slider');if(!slider)return;
  const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('class','atsumi-replay-metrics');svg.setAttribute('viewBox','0 0 1000 32');svg.setAttribute('preserveAspectRatio','none');svg.setAttribute('aria-hidden','true');slider.prepend(svg);
+ const legend=document.createElement('div');legend.className='atsumi-replay-metric-legend';legend.setAttribute('role','group');legend.setAttribute('aria-label','그래프 범례');legend.hidden=true;slider.append(legend);
  const tip=document.createElement('div');tip.className='atsumi-replay-metric-tip';tip.hidden=true;slider.append(tip);
  slider.addEventListener('pointermove',event=>{if(!metrics||!player||!finite(player.duration,.001,604800))return;const rect=slider.getBoundingClientRect();if(rect.width<=0)return;const fraction=Math.min(1,Math.max(0,(event.clientX-rect.left)/rect.width));const seconds=Math.min(player.duration-.001,fraction*player.duration);const bucket=metrics.buckets.find(b=>seconds>=b.startSeconds&&seconds<b.startSeconds+metrics.bucketSeconds);const count=(v,unit='명')=>!finite(v,0,Number.MAX_SAFE_INTEGER)?'기록 없음':Math.round(v).toLocaleString('ko-KR')+unit;const chat=metrics.participantCounts?`채팅 참여자 ${count(bucket?.uniqueSenderCount)}`:`채팅 수 ${count(bucket?.chatCount,'개')}`;tip.textContent=`${chat}\n평균 시청자 ${count(bucket?.viewerCount)}${partialViewer(bucket,player.duration)?' · 일부 기록':''}\n${metrics.bucketSeconds}초 구간 · 각 곡선은 자체 최대값 기준`;tip.style.left=Math.max(0,Math.min(rect.width-220,event.clientX-rect.left-110))+'px';tip.hidden=false;});
  slider.addEventListener('pointerleave',()=>{tip.hidden=true;});drawMetrics();
 }
 function drawMetrics(){
- const svg=document.querySelector('.atsumi-replay-metrics');if(!svg)return;svg.replaceChildren();if(!metrics)return;
+ const svg=document.querySelector('.atsumi-replay-metrics');if(!svg)return;svg.replaceChildren();
+ const legend=document.querySelector('.atsumi-replay-metric-legend'),tip=document.querySelector('.atsumi-replay-metric-tip');
+ svg.toggleAttribute('hidden',!metrics);
+ if(legend){legend.replaceChildren();legend.hidden=!metrics;if(metrics){for(const [cls,label,metric] of [['viewers','시청자','viewerCount'],['chat',metrics.participantCounts?'채팅 참여자':'채팅 수',metrics.participantCounts?'uniqueSenderCount':'chatCount']]){const values=metrics.buckets.map(b=>b[metric]).filter(value=>finite(value,0,Number.MAX_SAFE_INTEGER));const entry=document.createElement('span');entry.className=cls;entry.textContent=label+(values.length?` 0–${Math.round(Math.max(...values)).toLocaleString('ko-KR')}${metric==='chatCount'?'개':'명'}`:' · 기록 없음');legend.append(entry);}}}
+ if(tip)tip.hidden=true;
+ if(!metrics)return;
+ // Shared zero baseline with quarter-height guides; never exaggerate small
+ // changes by truncating the participant axis. Paths retain their 32-unit scale.
+ const grid=document.createElementNS('http://www.w3.org/2000/svg','path');grid.setAttribute('class','metric-grid');grid.setAttribute('d','M0,4 L1000,4 M0,11 L1000,11 M0,18 L1000,18 M0,25 L1000,25');svg.append(grid);
  for(const [key,cls]of[['viewerPaths','viewers'],['chatPaths','chat']])for(const d of metrics[key]||[]){if(typeof d!=='string'||d.length>250000||!/^[MLCZ0-9., \-]+$/.test(d))continue;const path=document.createElementNS('http://www.w3.org/2000/svg','path');path.setAttribute('d',d);path.setAttribute('class',cls);svg.append(path);}
  const duration=player?.duration;if(!finite(duration,.001,604800))return;
  const buckets=metrics.buckets.filter(b=>finite(b.startSeconds,0,duration)&&b.startSeconds<duration&&finite(b.viewerCount,0,Number.MAX_SAFE_INTEGER));

@@ -59,6 +59,15 @@ describe("GalleryArtists", () => {
     expect(more()).toBeNull();
   });
 
+  it("keeps visible names in place while their favorite state changes", async () => {
+    await render();
+    const names = () => [...host.querySelectorAll('button.gallery-artists-name .gallery-artists-label')].map(node => node.textContent);
+    const before = names();
+    await render({ ...props, favoriteMetadata: new Set(["artist:alpha"]) });
+    expect(names()).toEqual(before);
+    expect(host.querySelectorAll('button.gallery-artists-name .gallery-artists-star')).toHaveLength(before.length);
+  });
+
   it("fits up to three names and reserves the real overflow count width", () => {
     expect(fitGalleryArtistCount([60, 70, 50], 250, [32, 32, 32], 4)).toBe(3);
     expect(fitGalleryArtistCount([60, 70, 50], 180, [32, 32, 32], 4)).toBe(2);

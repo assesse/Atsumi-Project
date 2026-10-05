@@ -148,7 +148,7 @@ export function RecordingReplay({ recordingId, runtime, privacyMode, liveRecordi
       {error ? <p className="recording-replay-error" role="alert">{error}</p> : null}
       {visibleReplayWarnings(session?.warnings).length ? <p className="recording-replay-warning" role="status">{visibleReplayWarnings(session?.warnings).join(" · ")}</p> : null}
       </div>
-      {!session ? <div className="recording-replay-loading">{error ? "녹화 목록에서 외부 플레이어로 열기를 사용할 수 있습니다." : "저장 영상을 준비하고 있습니다…"}</div> : <>
+      {!session ? <div className="recording-replay-loading">{error ? "녹화 목록의 ‘저장 폴더 열기’에서 파일을 확인해 주세요." : "저장 영상을 준비하고 있습니다…"}</div> : <>
         {privacyMode ? <div className="recording-replay-loading">프라이버시 모드에서 영상과 채팅을 가렸습니다.</div> : null}
         <div className="recording-replay-body" data-layout={layout.stacked ? "stacked" : "side"} hidden={privacyMode}>
           <section className="recording-replay-player" aria-label="저장 영상 플레이어"><div className="recording-replay-stage"><div className="recording-replay-visual" style={{ "--video-aspect": mediaAspect } as CSSProperties}>

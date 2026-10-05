@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { backend } from "./backend";
 import type { DownloadState, GalleryId } from "../core/types";
 import { runningDownloadStates } from "../state/downloadCancellation";
-import { readNavigationCheckpoint, writeNavigationCheckpoint, type NavigationCheckpoint } from "../state/navigationCheckpoint";
+import { clearNavigationCheckpoint, readNavigationCheckpoint, writeNavigationCheckpoint, type NavigationCheckpoint } from "../state/navigationCheckpoint";
 
 export type QueueQuery = { sequence?: number; after?: boolean; page?: number; offset?: number; includeSettled?: boolean; cancellationPreview?: boolean; observedSince?: string };
 export type QueueRow = { entryId: string; galleryId: GalleryId; title: string; artist: string; state: DownloadState; progress: number; sequence: number | null; updatedAt: string; errorCode: string | null };
@@ -62,10 +62,18 @@ export async function restoreNativeCheckpoint(): Promise<void> {
   try {
     const checkpoint = await Promise.race([
       invoke<NavigationCheckpoint | null>("work_checkpoint_get"),
-      new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), 1500); }),
+      new Promise<undefined>((resolve) => { timeout = setTimeout(() => resolve(undefined), 1500); }),
     ]);
     const current = readNavigationCheckpoint();
-    if (checkpoint && (!current || checkpoint.savedAt > current.savedAt)) writeNavigationCheckpoint(checkpoint);
+    // A confirmed empty native checkpoint means the previous session ended
+    // normally. A timeout/error is not evidence of a clean exit.
+    if (checkpoint === null) {
+      clearNavigationCheckpoint();
+      // These keys contain open browsing state, not search history or Settings.
+      try { sessionStorage.removeItem("atsumi.detail-positions.v1"); } catch { /* Optional recovery. */ }
+      try { localStorage.removeItem("atsumi.danbooru-state.v1"); } catch { /* Optional recovery. */ }
+    }
+    else if (checkpoint && (!current || checkpoint.savedAt > current.savedAt)) writeNavigationCheckpoint(checkpoint);
   } catch { /* Session-only restore remains available. */ }
   finally { clearTimeout(timeout); }
 }

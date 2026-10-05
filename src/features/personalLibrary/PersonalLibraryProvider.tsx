@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Gallery } from "../../core/types";
-import { libraryApi, snapshotFor, targetFor, targetKey, type LibraryApi, type Request, type Response, type Summary, type Target } from "./api";
+import { libraryApi, snapshotFor, targetFor, targetKey, type LibraryApi, type Request, type Response, type Summary } from "./api";
 import "./personalLibrary.css";
 
 type LibraryState = {
@@ -8,7 +8,6 @@ type LibraryState = {
   pending: boolean; error: string | null; reload(): Promise<void>;
   mutate(request: Request): Promise<Response | null>;
   save(gallery: Gallery, page: number, enabled: boolean): Promise<boolean>;
-  membership(target: Target, collectionId: string, enabled: boolean): Promise<boolean>;
 };
 const LibraryContext = createContext<LibraryState | null>(null);
 export const usePersonalLibrary = () => useContext(LibraryContext);
@@ -40,7 +39,6 @@ export function PersonalLibraryProvider({ children, api = libraryApi, notify }: 
     if (response) notify?.(`${page ? `${page}페이지를` : "앨범을"} 즐겨찾기${enabled ? "에 저장" : "에서 해제"}했습니다.`);
     return Boolean(response);
   }, [mutate, notify]);
-  const membership = useCallback(async (target: Target, collectionId: string, enabled: boolean) => Boolean(await mutate({ action: "membership_set", target, collectionId, enabled })), [mutate]);
   const index = useMemo(() => new Map(summary?.keys.map((key) => [targetKey(key), key]) ?? []), [summary]);
-  return <LibraryContext.Provider value={{ api, summary, index, pending, error, reload, mutate, save, membership }}>{children}</LibraryContext.Provider>;
+  return <LibraryContext.Provider value={{ api, summary, index, pending, error, reload, mutate, save }}>{children}</LibraryContext.Provider>;
 }

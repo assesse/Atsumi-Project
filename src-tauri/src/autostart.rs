@@ -3,6 +3,7 @@
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tauri::Manager;
 
 const LINK_NAME: &str = "Atsumi.Autostart.lnk";
 const OWNER_DESCRIPTION: &str = "Atsumi login startup [local.atsumi.next.autostart.v1]";
@@ -38,24 +39,16 @@ struct LaunchSpec {
     hidden: bool,
 }
 
-fn trusted_main(label: &str, url: &tauri::Url, development: bool) -> bool {
-    label == "main"
-        && url.username().is_empty()
-        && url.password().is_none()
-        && (matches!(
-            (url.scheme(), url.host_str(), url.port()),
-            ("tauri", Some("localhost"), None) | ("http" | "https", Some("tauri.localhost"), None)
-        ) || development
-            && url.scheme() == "http"
-            && url.host_str() == Some("127.0.0.1")
-            && url.port() == Some(1420))
-}
-
 fn require_main(window: &tauri::Webview) -> Result<(), String> {
     let url = window
         .url()
         .map_err(|_| "앱 창의 주소를 확인하지 못했습니다.")?;
-    if !trusted_main(window.label(), &url, cfg!(debug_assertions)) {
+    if !crate::frontend_origin::trusted_main(
+        window.label(),
+        &url,
+        cfg!(debug_assertions),
+        window.app_handle().config().build.dev_url.as_ref(),
+    ) {
         return Err("자동 실행 설정은 Atsumi 기본 창에서만 변경할 수 있습니다.".into());
     }
     Ok(())
@@ -642,6 +635,15 @@ mod platform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn trusted_main(label: &str, url: &tauri::Url, development: bool) -> bool {
+        crate::frontend_origin::trusted_main(
+            label,
+            url,
+            development,
+            Some(&"http://127.0.0.1:1420".parse().unwrap()),
+        )
+    }
 
     #[test]
     fn approval_missing_known_disabled_and_malformed_records() {

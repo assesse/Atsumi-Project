@@ -823,6 +823,8 @@ fn merge_recording(
     tools: Option<&MediaTools>,
     cancel: &AtomicBool,
 ) -> Result<BrowserMergedOutput, StreamError> {
+    let _diagnostic =
+        crate::diagnostics::operation("recording_merge", Some(&job.recording.id)).entered();
     let started = Instant::now();
     check_cancel(cancel)?;
     let tools = tools_available(tools)?;

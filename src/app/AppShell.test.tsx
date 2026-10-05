@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApiResult, AppExitRequestedEvent, SettingsSnapshot } from "../api/contracts";
 import { AppShell, useAppShell, type AppShellApi } from "./AppShell";
+import { isTutorialDismissed, setTutorialDismissed } from "../tutorial/tutorialPreference";
 
 const initialSettings: SettingsSnapshot = {
   revision: 42,
@@ -82,7 +83,7 @@ function Probe({ onReady }: { onReady: (shell: Shell) => void }) {
 }
 
 const disposers: Array<() => Promise<void>> = [];
-const storageKeys = ["atsumi.content-source.v1", "atsumi.tutorial.dismissed.v1"];
+const storageKeys = ["atsumi.content-source.v1", "atsumi.tutorial.dismissed.v1", "atsumi.tutorial.danbooru.dismissed.v1", "atsumi.tutorial.chzzk.dismissed.v1"];
 const previousStorage = new Map<string, string | null>();
 const originalShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
 
@@ -111,7 +112,7 @@ beforeEach(() => {
   vi.stubGlobal("cancelAnimationFrame", (id: number) => window.clearTimeout(id));
   storageKeys.forEach((key) => previousStorage.set(key, window.localStorage.getItem(key)));
   window.localStorage.removeItem("atsumi.content-source.v1");
-  window.localStorage.setItem("atsumi.tutorial.dismissed.v1", "true");
+  for (const source of ["hitomi", "danbooru", "chzzk"] as const) setTutorialDismissed(true, source);
   Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
     configurable: true,
     value(this: HTMLDialogElement) { this.setAttribute("open", ""); },
@@ -131,6 +132,110 @@ afterEach(async () => {
 });
 
 describe("AppShell without feature workspaces", () => {
+  it("shows onboarding only on the first launch, even when skipped", async () => {
+    window.localStorage.removeItem("atsumi.tutorial.dismissed.v1");
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current).toMatchObject({ tutorialOpen: true, settingsOpen: false });
+    expect(localStorage.getItem("atsumi.tutorial.dismissed.v1")).toBe("true");
+    await act(async () => shell.current.closeTutorial());
+    expect(shell.current.tutorialOpen).toBe(false);
+    await shell.unmount();
+    const next = await mountShell(fake.api);
+    expect(next.current.tutorialOpen).toBe(false);
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it("replays on request without enabling onboarding on the next launch", async () => {
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current.tutorialOpen).toBe(false);
+    await act(async () => shell.current.setSettingsOpen(true));
+    await act(async () => shell.current.replayTutorial());
+    expect(shell.current).toMatchObject({ tutorialOpen: true, settingsOpen: false });
+    expect(localStorage.getItem("atsumi.tutorial.dismissed.v1")).toBe("true");
+    // Even exiting the app during a manual replay must not trigger a replay at startup.
+    await shell.unmount();
+    const next = await mountShell(fake.api);
+    expect(next.current.tutorialOpen).toBe(false);
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it("never repeats an interrupted first-launch tutorial and yields to an exit request", async () => {
+    window.localStorage.removeItem("atsumi.tutorial.dismissed.v1");
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current.tutorialOpen).toBe(true);
+    await act(async () => fake.requestExit());
+    expect(shell.current).toMatchObject({ tutorialOpen: false, exitConfirmOpen: true });
+    expect(localStorage.getItem("atsumi.tutorial.dismissed.v1")).toBe("true");
+    await shell.unmount();
+    const next = await mountShell(fake.api);
+    expect(next.current.tutorialOpen).toBe(false);
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it("never repeats a tutorial previously dismissed by an older version", async () => {
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current.tutorialOpen).toBe(false);
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it("starts a service guide only on its first entry, independently of the other guides", async () => {
+    setTutorialDismissed(false, "danbooru");
+    setTutorialDismissed(false, "chzzk");
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current).toMatchObject({ source: "hitomi", tutorialSource: null });
+    expect(isTutorialDismissed("danbooru")).toBe(false);
+    expect(isTutorialDismissed("chzzk")).toBe(false);
+    await act(async () => shell.current.selectSource("danbooru"));
+    expect(shell.current).toMatchObject({ source: "danbooru", tutorialSource: "danbooru", tutorialOpen: true });
+    expect(isTutorialDismissed("danbooru")).toBe(true);
+    expect(isTutorialDismissed("chzzk")).toBe(false);
+    await act(async () => shell.current.closeTutorial());
+    await act(async () => shell.current.selectSource("hitomi"));
+    await act(async () => shell.current.selectSource("danbooru"));
+    expect(shell.current.tutorialSource).toBeNull();
+    await shell.unmount();
+    const next = await mountShell(fake.api);
+    expect(next.current).toMatchObject({ source: "danbooru", tutorialOpen: false });
+    await act(async () => next.current.selectSource("chzzk"));
+    expect(next.current).toMatchObject({ source: "chzzk", tutorialSource: "chzzk" });
+    expect(isTutorialDismissed("chzzk")).toBe(true);
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it.each(["danbooru", "chzzk"] as const)("starts only %s when it is the initially restored service", async source => {
+    window.localStorage.setItem("atsumi.content-source.v1", source);
+    setTutorialDismissed(false, source);
+    setTutorialDismissed(false, "hitomi");
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current).toMatchObject({ source, tutorialSource: source, tutorialOpen: true });
+    expect(isTutorialDismissed(source)).toBe(true);
+    expect(isTutorialDismissed("hitomi")).toBe(false);
+    await shell.unmount();
+    const next = await mountShell(fake.api);
+    expect(next.current).toMatchObject({ source, tutorialSource: null, tutorialOpen: false });
+  });
+  it.each(["hitomi", "danbooru", "chzzk"] as const)("replays only the current %s guide without resetting any marker", async source => {
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    await act(async () => shell.current.selectSource(source));
+    expect(shell.current.tutorialSource).toBeNull();
+    await act(async () => shell.current.replayTutorial());
+    expect(shell.current).toMatchObject({ source, tutorialSource: source });
+    for (const candidate of ["hitomi", "danbooru", "chzzk"] as const) expect(isTutorialDismissed(candidate)).toBe(true);
+    await act(async () => shell.current.closeTutorial());
+    expect(shell.current.tutorialSource).toBeNull();
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it("keeps first-entry memory within the session when storage is unavailable", async () => {
+    const read = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("storage blocked"); });
+    const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage blocked"); });
+    try {
+      const shell = await mountShell(fakeShellApi().api);
+      expect(shell.current.tutorialSource).toBe("hitomi");
+      await act(async () => shell.current.closeTutorial());
+      await act(async () => shell.current.selectSource("danbooru"));
+      expect(shell.current.tutorialSource).toBe("danbooru");
+      await act(async () => shell.current.closeTutorial());
+      await act(async () => shell.current.selectSource("hitomi"));
+      expect(shell.current.tutorialSource).toBeNull();
+      await act(async () => shell.current.selectSource("danbooru"));
+      expect(shell.current.tutorialSource).toBeNull();
+    } finally { read.mockRestore(); write.mockRestore(); }
+  });
   it("preserves shared state and one settings/exit subscription across mode changes", async () => {
     const fake = fakeShellApi();
     const shell = await mountShell(fake.api);
@@ -191,6 +296,17 @@ describe("AppShell without feature workspaces", () => {
     await shell.unmount();
     const next=await mountShell(fake.api);
     expect(next.current.privacyMode).toBe(true);
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it("does not mask CHZZK but restores gallery privacy when switching back", async () => {
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    expect(shell.current.privacyMode).toBe(true);
+    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "on");
+    await act(async () => shell.current.selectSource("chzzk"));
+    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "off");
+    expect(shell.current.privacyMode).toBe(true);
+    await act(async () => shell.current.selectSource("danbooru"));
+    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "on");
     expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
   });
   it("honors an explicitly disabled startup mask", async () => {

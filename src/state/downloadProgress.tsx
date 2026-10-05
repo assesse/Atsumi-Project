@@ -78,5 +78,11 @@ export function DownloadProgressLabel({ gallery }: { gallery: Gallery }) {
   const download = useGalleryDownload(gallery.id, gallery.download);
   const raw = download?.state === "completed" ? 100 : download?.progress ?? 0;
   const progress = Number.isFinite(raw) ? Math.floor(Math.min(100, Math.max(0, raw))) : 0;
-  return <b role="progressbar" aria-label={`${gallery.title} 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>{progress}%</b>;
+  const phase = download?.state === "hashing" ? "중복 비교·검증"
+    : download?.state === "verifying" ? "최종 저장·검증" : null;
+  const description = phase ? `파일 수신 ${progress}% · ${phase} 중이며 아직 완료되지 않았습니다.` : `파일 수신 ${progress}%`;
+  return <b role="progressbar" aria-label={`${gallery.title} 파일 수신 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}
+    aria-valuetext={description} title={description}>
+    {phase ? <>{phase}<small>수신 {progress}%</small></> : <>수신 {progress}%</>}
+  </b>;
 }

@@ -2,9 +2,7 @@
 //! separate clip editor module owns its narrow URL policy and video preview.
 //! Neither popup receives capture bridges, account reservations or main IPC.
 use super::*;
-use tauri::{
-    webview::NewWindowFeatures, webview::NewWindowResponse, WebviewUrl, WebviewWindowBuilder,
-};
+use tauri::{webview::NewWindowFeatures, webview::NewWindowResponse, WebviewWindowBuilder};
 
 fn chat_channel(url: &tauri::Url) -> Option<String> {
     if url.scheme() != "https"
@@ -42,7 +40,11 @@ pub(super) fn open(
         return clip_popup::open(host, app, url, features, channel);
     }
     if !same_chat(&url, channel) {
-        return NewWindowResponse::Deny;
+        return if is_chat(&url) {
+            NewWindowResponse::Deny
+        } else {
+            service_popup::open(host, app, url, features, channel, 0)
+        };
     }
     let label = format!("chzzk-chat-{channel}");
     if let Some(window) = app.get_webview_window(&label) {
@@ -53,9 +55,14 @@ pub(super) fn open(
     // Same WebView2 environment/profile as the opener, so the existing login
     // works without copying/exposing cookies or creating a second login flow.
     let expected = channel.to_owned();
-    let result = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+    let child_host = host.clone();
+    let child_app = app.clone();
+    let child_channel = channel.to_owned();
+    let child_label = label.clone();
+    let initial = service_popup::InitialNavigation::default();
+    let result = WebviewWindowBuilder::new(app, &label, service_popup::blank())
         .data_directory(host.inner.data_dir.join("chzzk-browser-profile"))
-        .browser_extensions_enabled(true)
+        .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
         .window_features(features)
         .title("CHZZK 채팅")
         .inner_size(420.0, 720.0)
@@ -64,8 +71,16 @@ pub(super) fn open(
         // This script detects /chat and only augments the header and silences
         // accidental media; it does not receive the recorder's native bridge.
         .initialization_script(include_str!("browser_multiview.js"))
-        .on_navigation(move |next| same_chat(next, &expected))
-        .on_new_window(|_, _| NewWindowResponse::Deny)
+        .on_navigation(move |next| initial.allows(next, same_chat(next, &expected)))
+        .on_new_window(move |next, features| {
+            if !child_app
+                .get_webview_window(&child_label)
+                .is_some_and(|window| window.is_visible().unwrap_or(false))
+            {
+                return NewWindowResponse::Deny;
+            }
+            service_popup::open(&child_host, &child_app, next, features, &child_channel, 0)
+        })
         .build();
     match result {
         Ok(window) => NewWindowResponse::Create { window },
@@ -106,7 +121,10 @@ pub(super) fn sync_privacy(
 
 pub(super) fn close_all(app: &AppHandle) {
     for (label, window) in app.webview_windows() {
-        if label.starts_with("chzzk-chat-") || label.starts_with("chzzk-clip-") {
+        if label.starts_with("chzzk-chat-")
+            || label.starts_with("chzzk-clip-")
+            || label.starts_with("chzzk-service-")
+        {
             let _ = window.destroy();
         }
     }

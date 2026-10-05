@@ -784,6 +784,55 @@ pub async fn search_history_list(
     Ok(state.service.search_history_list(limit).into())
 }
 
+#[tauri::command(rename_all = "camelCase")]
+pub async fn search_history_remove(
+    state: State<'_, AppState>,
+    history_id: i64,
+) -> Result<ApiResult<u64>, ApiError> {
+    let service = state.service.clone();
+    Ok(run_application_blocking("search_history_remove", move || {
+        service.search_history_remove(history_id)
+    })
+    .await)
+}
+
+#[tauri::command]
+pub async fn search_history_clear(state: State<'_, AppState>) -> Result<ApiResult<u64>, ApiError> {
+    let service = state.service.clone();
+    Ok(run_application_blocking("search_history_clear", move || {
+        service.search_history_clear()
+    })
+    .await)
+}
+
+#[tauri::command]
+pub async fn download_root_choose(
+    window: tauri::Webview,
+    state: State<'_, AppState>,
+) -> Result<ApiResult<Option<String>>, ApiError> {
+    if window.label() != "main" {
+        return Ok(ApiResult::failure(
+            ApplicationError::from(ValidationError::new("window", "main window required")).into(),
+        ));
+    }
+    let picker = Arc::clone(&state.download_root_picker);
+    // Choose only: settings are not persisted until the user presses Save.
+    Ok(run_application_blocking("download_root_choose", move || {
+        picker
+            .pick_download_root()?
+            .map(|path| {
+                path.into_os_string().into_string().map_err(|_| {
+                    ApplicationError::from(ValidationError::new(
+                        "downloadRoot",
+                        "invalid path encoding",
+                    ))
+                })
+            })
+            .transpose()
+    })
+    .await)
+}
+
 #[tauri::command]
 pub async fn tag_catalog_status(
     state: State<'_, AppState>,
@@ -1494,11 +1543,14 @@ pub async fn download_library_page_list(
 #[tauri::command(rename_all = "camelCase")]
 pub fn thumbnail_request(
     state: State<'_, AppState>,
-    window: tauri::WebviewWindow,
+    window: tauri::Webview,
     request: ThumbnailRequestDto,
     epoch: String,
 ) -> Result<ApiResult<ThumbnailRequestTokenDto>, ApiError> {
     use tauri::Emitter;
+    // CHZZK receivers are child webviews of the same native window. Request
+    // the calling document, not WebviewWindow (which rejects multi-webview
+    // windows before this handler can run).
     if window.label() != "main" || state.thumbnail_transport.epoch() != epoch {
         return Ok(ApiResult::failure(ApiError {
             code: "THUMBNAIL_STALE_DOCUMENT".into(),
@@ -1532,7 +1584,7 @@ pub fn thumbnail_session(state: State<'_, AppState>) -> ApiResult<String> {
 
 #[tauri::command]
 pub fn thumbnail_read(
-    window: tauri::WebviewWindow,
+    window: tauri::Webview,
     state: State<'_, AppState>,
     token: String,
 ) -> Result<tauri::ipc::Response, String> {
@@ -1548,7 +1600,7 @@ pub fn thumbnail_read(
 
 #[tauri::command]
 pub fn thumbnail_release(
-    window: tauri::WebviewWindow,
+    window: tauri::Webview,
     state: State<'_, AppState>,
     token: String,
 ) -> ApiResult<bool> {
@@ -2182,7 +2234,21 @@ where
     T: Send + 'static,
     F: FnOnce() -> Result<T, ApplicationError> + Send + 'static,
 {
-    match tauri::async_runtime::spawn_blocking(operation).await {
+    let span = tracing::info_span!("diagnostic_operation", diag_operation = operation_id);
+    match tauri::async_runtime::spawn_blocking(move || {
+        let _span = span.enter();
+        let result = operation().map_err(ApiError::from);
+        tracing::info!(diag_stage = "finished", success = result.is_ok());
+        if let Err(error) = &result {
+            tracing::warn!(
+                error_code = error.code.as_str(),
+                retryable = error.retryable
+            );
+        }
+        result
+    })
+    .await
+    {
         Ok(result) => result.into(),
         Err(error) => {
             let (cancelled, panicked) = match &error {

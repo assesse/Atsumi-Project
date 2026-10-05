@@ -20,6 +20,7 @@ async fn blocking<T: serde::Serialize + Send + 'static>(
 #[tauri::command]
 pub async fn streaming_update_reserve(app: AppHandle) -> ApiResult<()> {
     blocking(move || {
+        crate::portable::ensure_installer_allowed()?;
         let state = app.state::<AppState>();
         state.official_browser()?.reserve_update()
     })

@@ -67,9 +67,17 @@ function observeArtistWidth(element: Element, update: () => void) {
 }
 
 export function GalleryArtists({ artist, artists, favoriteMetadata, compact = false, disabled = false, onSearch, onToggleFavorite, onClickCapture }: GalleryArtistsProps) {
-  const ordered = useMemo(() => orderGalleryArtists(artist, artists, favoriteMetadata), [artist, artists, favoriteMetadata]);
   const sourceKey = JSON.stringify([artist, artists]);
-  const layoutKey = JSON.stringify(ordered.map(({ key, favorite }) => [key, favorite]));
+  const initialOrder = useRef<{ source: string; keys: string[] } | null>(null);
+  const ordered = useMemo(() => {
+    const items = orderGalleryArtists(artist, artists, favoriteMetadata);
+    if (initialOrder.current?.source !== sourceKey) initialOrder.current = { source: sourceKey, keys: items.map(item => item.key) };
+    const ranks = new Map(initialOrder.current.keys.map((key, index) => [key, index]));
+    // Keep favorite-first presentation on first mount, but never move a clicked
+    // name under the pointer when its star changes in the currently open card.
+    return items.sort((a, b) => (ranks.get(a.key) ?? 0) - (ranks.get(b.key) ?? 0));
+  }, [artist, artists, favoriteMetadata, sourceKey]);
+  const layoutKey = JSON.stringify(ordered.map(({ key }) => key));
   const [fit, setFit] = useState<{ key: string; count: number } | null>(null);
   const visibleCount = compact ? Math.min(1, ordered.length) : fit?.key === layoutKey ? fit.count : Math.min(2, ordered.length);
   const hiddenCount = ordered.length - visibleCount;
@@ -178,10 +186,10 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
     <div
       ref={lineRef}
       className={`gallery-artists${compact ? " is-compact" : ""}`}
-      onClick={(event) => event.stopPropagation()}
-      onDoubleClick={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
+      onClick={(event) => { if ((event.target as Element).closest("button")) event.stopPropagation(); }}
+      onDoubleClick={(event) => { if ((event.target as Element).closest("button")) event.stopPropagation(); }}
+      onContextMenu={(event) => { if ((event.target as Element).closest("button")) event.stopPropagation(); }}
+      onKeyDown={(event) => { if ((event.target as Element).closest("button")) event.stopPropagation(); }}
       onMouseLeave={scheduleClose}
       onMouseEnter={cancelClose}
       onBlur={(event) => {
@@ -201,7 +209,7 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
           onClick={(event) => { if (!event.defaultPrevented && event.detail <= 1) search(item.token, event.ctrlKey || event.metaKey ? { background:true } : undefined); }}
           onContextMenu={(event) => { event.preventDefault(); if (!disabled) onToggleFavorite(item.token); }}
         >
-          {item.favorite ? <span className="gallery-artists-star" aria-hidden="true">★</span> : null}
+          <span className={`gallery-artists-star${item.favorite ? "" : " is-placeholder"}`} aria-hidden="true">{item.favorite ? "★" : ""}</span>
           <span className="gallery-artists-label">{item.name}</span>
         </button>
       ))}
@@ -239,7 +247,7 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
         <span className="gallery-artists-measure" ref={measureRef} aria-hidden="true">
           {ordered.slice(0, 3).map((item) => (
             <span className="byline artist gallery-artists-name" data-measure-artist key={item.key}>
-              {item.favorite ? <span className="gallery-artists-star">★</span> : null}<span>{item.name}</span>
+              <span className="gallery-artists-star">★</span><span>{item.name}</span>
             </span>
           ))}
           {ordered.slice(0, 3).map((item, index) => <span className="gallery-artists-more" data-measure-overflow key={item.key}>+{ordered.length - index - 1}명</span>)}
@@ -256,6 +264,10 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
           onMouseEnter={cancelClose}
           onMouseLeave={scheduleClose}
           onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onDoubleClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
           onBlur={(event) => {
             if (event.relatedTarget instanceof Node && (event.currentTarget.contains(event.relatedTarget) || lineRef.current?.contains(event.relatedTarget))) return;
             close();

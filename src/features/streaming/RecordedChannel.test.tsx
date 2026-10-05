@@ -23,7 +23,8 @@ it("renders the archived identity and opens only the stored channel on an explic
 it("never loads remote profile images and respects privacy", async () => {
   await act(async () => root.render(<RecordedChannel id="recording-1" name="name" image="https://example.invalid/private" />));
   expect(container.querySelector("img")).toBeNull();
-  expect(container).toHaveTextContent("당시 프로필 이미지 없음");
+  expect(container.querySelector('.recorded-channel-placeholder')).not.toBeNull();
+  expect(container.textContent).toBe("◯name");
   await act(async () => root.render(<RecordedChannel id="recording-2" privacy />));
   expect(container).toBeEmptyDOMElement(); expect(recordingProfile).not.toHaveBeenCalled();
 });

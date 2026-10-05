@@ -2,7 +2,8 @@ import * as React from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { ReplayApi, ReplayMessage, ReplayPage, ReplaySession, ReplaySyncQuality } from "../../api/replay";
-import { boundedReplayMessages, formatReplayTime, replayAssetToken, replayMessageTime, replayVirtualRange, safeNicknameColor, safeReplayProfile, visibleReplayWarnings, type ReplayTimeLabel } from "./RecordingReplayModel";
+import { boundedReplayMessages, formatReplayTime, replayAssetToken, replayMessageTime, replayVirtualRange, safeNicknameColor, visibleReplayWarnings, type ReplayTimeLabel } from "./RecordingReplayModel";
+import { ReplayNoticeHeading, ReplayUserCard } from "./ReplayUserCard";
 import { OriginalChzzkChatSurface } from "./OriginalChzzkChatSurface";
 import { createOriginalChatPresentation, type OriginalChatMessage } from "./generated/originalChatPresentation.js";
 import { createSurfaces } from "./generated/accepted/original-surfaces.js";
@@ -15,26 +16,19 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
   const rich = item.rich;
   const row = useRef<HTMLDivElement>(null);
   const [failedAssets, setFailedAssets] = useState<Set<string>>(new Set());
-  const [profileError, setProfileError] = useState<string | null>(null);
-  const [openingProfile, setOpeningProfile] = useState(false);
-  const hasProfile = !!api.openProfile && safeReplayProfile(rich?.profileUrl);
-  const openProfile = async () => {
-    if (!api.openProfile || openingProfile || !safeReplayProfile(rich?.profileUrl)) return;
-    setOpeningProfile(true); setProfileError(null);
-    try { const result = await api.openProfile(sessionToken, item.sequence); if (!result.ok) setProfileError(result.error.message); }
-    catch { setProfileError("프로필을 열지 못했습니다."); }
-    finally { setOpeningProfile(false); }
-  };
+  const [profileAnchor, setProfileAnchor] = useState<HTMLButtonElement | null>(null);
+  const closeProfile = useCallback(() => setProfileAnchor(null), []);
+  const openProfile = () => setProfileAnchor(previous => previous ? null : row.current?.querySelector<HTMLButtonElement>('button[class*="_nickname_"]') ?? null);
   const normalized = useMemo(() => {
     const localAsset = (url: string) => {
       const token = replayAssetToken(item.assetIds?.[url]);
       const src = token ? `${api.mediaUrl(sessionToken)}/asset/${token}` : null;
-      return src && !failedAssets.has(src) ? src : null;
+      return src && !failedAssets.has(new URL(src, document.baseURI).href) ? src : null;
     };
     const badges = (rich?.badges ?? []).slice(0, 8).map((badge) => ({ src: localAsset(badge.imageUrl), label: badge.title || badgeLabels[badge.kind] || "배지" }));
     // Only literal React text and token-local images enter the original renderer.
     // Its original replay branch supplies the 24px disabled emoji button.
-    const content = rich?.emojis?.length ? item.text.split(/(\{:[a-zA-Z0-9_]+:\})/g).map((part, index) => {
+    const content = rich?.emojis?.length ? item.text.split(/(\{:[a-zA-Z0-9_-]+:\})/g).map((part, index) => {
       const emoji = rich.emojis.find((entry) => part === `{:${entry.id}:}`);
       const src = emoji && localAsset(emoji.imageUrl);
       return src ? <img key={index} src={src} alt={part} title={emoji.id} /> : part;
@@ -45,27 +39,29 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
     const message: OriginalChatMessage = { key: String(item.sequence), user: profile.userIdHash, time: item.receivedAt, type: 1, status: "NORMAL", content, profile,
       displayBadgeList: badges.flatMap((badge) => badge.src ? [{ type: "ACTIVITY", imageSource: badge.src, title: badge.label, description: "" }] : []),
       displayNicknameColor: { light: nicknameColor, dark: nicknameColor } };
-    return { message, missing: badges.filter(badge => !badge.src) };
+    return { message, badges, portrait: rich?.profileImageUrl ? localAsset(rich.profileImageUrl) : null, missing: badges.filter(badge => !badge.src) };
   }, [item, rich, api, sessionToken, failedAssets]);
   useLayoutEffect(() => {
     row.current?.querySelectorAll("img").forEach(image => { image.referrerPolicy = "no-referrer"; });
     const button = row.current?.querySelector<HTMLButtonElement>('button[class*="_nickname_"]');
     if (!button) return;
-    // The original online profile popup is replaced by the token-scoped local action.
-    button.removeAttribute("aria-haspopup"); button.removeAttribute("aria-expanded");
-    button.disabled = !hasProfile || openingProfile;
-    button.setAttribute("aria-label", hasProfile ? `${item.sender} 프로필 열기` : item.sender);
-    button.title = hasProfile ? `${item.sender} 프로필 열기` : "저장된 프로필 링크 없음";
-  }, [hasProfile, openingProfile, item.sender, normalized]);
+    // Always show the recorded info card first, never navigate out of replay.
+    button.setAttribute("aria-haspopup", "dialog"); button.setAttribute("aria-expanded", String(!!profileAnchor));
+    button.disabled = false;
+    button.setAttribute("aria-label", `${item.sender} 사용자 정보`);
+    button.title = "사용자 정보";
+  }, [profileAnchor, item.sender, normalized]);
   const tooltip = `${item.serverTime == null ? "서버 시각 확인되지 않음" : `서버 ${new Date(item.serverTime).toLocaleString("ko-KR")}`} · 수신 ${new Date(item.receivedAt).toLocaleString("ko-KR")} · ${item.syncQuality === "observed_media" ? "관측 영상 기준" : "수신 시각 기준·동기화 근사"}`;
   const { ChatRow } = presentation;
-  return <div ref={row} className="recording-replay-message" data-sequence={item.sequence} title={tooltip} style={{ "--replay-text-color": safeNicknameColor(rich?.textColor) } as CSSProperties} onErrorCapture={(event) => {
+  return <div ref={row} className={`recording-replay-message${rich?.notice ? " recording-replay-notice" : ""}`} data-sequence={item.sequence} data-notice={rich?.notice?.kind} title={tooltip} style={{ "--replay-text-color": safeNicknameColor(rich?.textColor) } as CSSProperties} onErrorCapture={(event) => {
     if (event.target instanceof HTMLImageElement) { const src = event.target.src; setFailedAssets(previous => new Set([...previous, src])); }
   }}>
     {stamp !== null ? <span className="recording-replay-chat-time">{stamp}</span> : null}
+    <ReplayNoticeHeading item={item} />
     {normalized.missing.map((badge, index) => <span key={index} className="recording-replay-missing-badge" title="오프라인 이미지 없음">{badge.label}</span>)}
-    <ChatRow chatMessage={normalized.message} onNicknameClick={() => void openProfile()} isCleanBotWorking={false} />
-    {profileError ? <small className="recording-replay-profile-error" role="status">{profileError}</small> : null}
+    <ChatRow chatMessage={normalized.message} onNicknameClick={openProfile} isCleanBotWorking={false} theme="dark" />
+    {rich?.notice?.kind === "mission" && rich.notice.missionText && rich.notice.missionText !== item.text && <p className="recording-replay-mission-text">{rich.notice.missionText}</p>}
+    {profileAnchor && <ReplayUserCard item={item} anchor={profileAnchor} portrait={normalized.portrait} badges={normalized.badges} onClose={closeProfile} />}
     <button className="recording-replay-row-seek" type="button" aria-label={`${formatReplayTime(item.mediaTimeSeconds)} 영상 위치로 이동`} onClick={() => onSeek(item.mediaTimeSeconds)}>↗</button>
   </div>;
 }

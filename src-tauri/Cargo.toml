@@ -1,6 +1,6 @@
 [package]
 name = "atsumi"
-version = "2.0.0"
+version = "2.1.0"
 description = "Atsumi desktop backend"
 authors = ["Atsumi contributors"]
 edition = "2021"
@@ -25,7 +25,7 @@ httpdate = "1"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 md-5 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
-rusqlite = { version = "0.32", features = ["backup", "bundled", "hooks"] }
+rusqlite = { version = "0.32", features = ["backup", "bundled", "hooks", "trace"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

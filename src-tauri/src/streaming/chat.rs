@@ -19,7 +19,10 @@ use serde_json::{json, Value};
 use tungstenite::{client_tls_with_config, protocol::WebSocketConfig, Message};
 
 use super::{
-    model::{ChatBadge, ChatBadgeKind, ChatEmoji, ChatEvent, ChatRich, ChatState, StreamError},
+    model::{
+        ChatBadge, ChatBadgeKind, ChatEmoji, ChatEvent, ChatNotice, ChatNoticeKind, ChatRich,
+        ChatState, StreamError,
+    },
     provider::ChzzkProvider,
 };
 
@@ -234,7 +237,7 @@ fn connect_and_read(
                     ))
                     .map_err(|_| network_error())?;
             }
-            Some(93101) if connected => {
+            Some(93101 | 93102) if connected => {
                 if let Some(messages) = chat_messages(&document) {
                     for message in messages.iter().take(1000) {
                         if stop.load(Ordering::Acquire) {
@@ -290,24 +293,40 @@ pub(super) fn parse_message_with_chat_channel(
         .get("msgTypeCode")
         .or_else(|| message.get("messageTypeCode"))
         .and_then(Value::as_u64)?;
-    if kind != 1 {
+    if !matches!(kind, 1 | 10 | 11) {
+        return None;
+    }
+    let extras = metadata_object(message.get("extras")).unwrap_or(Value::Null);
+    let notice = parse_notice(kind, &extras);
+    if kind != 1 && notice.is_none() {
         return None;
     }
     let text: String = message
         .get("msg")
         .or_else(|| message.get("content"))
-        .and_then(Value::as_str)?
+        .and_then(Value::as_str)
+        .or_else(|| (kind != 1).then_some(""))?
         .chars()
         .take(4096)
         .collect();
-    let profile = metadata_object(message.get("profile")).unwrap_or(Value::Null);
-    let sender = profile
-        .get("nickname")
-        .and_then(Value::as_str)
-        .unwrap_or("알 수 없음")
-        .chars()
-        .take(128)
-        .collect();
+    let anonymous = kind == 10 && extras["isAnonymous"].as_bool() == Some(true);
+    let profile = if anonymous {
+        Value::Null
+    } else {
+        metadata_object(message.get("profile")).unwrap_or(Value::Null)
+    };
+    let sender = if anonymous {
+        "익명"
+    } else {
+        profile
+            .get("nickname")
+            .and_then(Value::as_str)
+            .or_else(|| (kind != 1).then(|| extras["nickname"].as_str()).flatten())
+            .unwrap_or("알 수 없음")
+    }
+    .chars()
+    .take(128)
+    .collect();
     let server_time = message
         .get("msgTime")
         .or_else(|| message.get("messageTime"))
@@ -317,6 +336,10 @@ pub(super) fn parse_message_with_chat_channel(
                 .or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()))
         });
     let mut rich = parse_rich(&profile, message.get("extras"), &text);
+    if let Some(notice) = notice {
+        rich.get_or_insert_with(ChatRich::default).notice = Some(notice);
+        rich = rich.and_then(ChatRich::bounded);
+    }
     if rich
         .as_ref()
         .is_none_or(|rich| rich.nickname_color.is_none())
@@ -328,8 +351,25 @@ pub(super) fn parse_message_with_chat_channel(
     Some(ChatEvent::Message {
         sender,
         server_time,
-        rich,
+        rich: rich.map(Box::new),
         text,
+    })
+}
+
+fn parse_notice(kind: u64, extras: &Value) -> Option<ChatNotice> {
+    let notice_kind = match (kind, extras["donationType"].as_str()) {
+        (10, Some("CHAT")) => ChatNoticeKind::Donation,
+        (10, Some("VIDEO")) => ChatNoticeKind::VideoDonation,
+        (10, Some("MISSION")) => ChatNoticeKind::Mission,
+        (11, _) => ChatNoticeKind::Subscription,
+        _ => return None,
+    };
+    Some(ChatNotice {
+        kind: notice_kind,
+        amount: extras["payAmount"].as_u64(),
+        months: extras["month"].as_u64(),
+        mission_text: supplied_string(extras.get("missionText")),
+        status: supplied_string(extras.get("status")),
     })
 }
 
@@ -476,7 +516,10 @@ fn parse_rich(profile: &Value, extras: Option<&Value>, text: &str) -> Option<Cha
         .filter_map(|(id, url)| {
             Some(ChatEmoji {
                 id: id.clone(),
-                image_url: url.as_str()?.to_owned(),
+                image_url: url
+                    .as_str()
+                    .or_else(|| url.get("imageUrl")?.as_str())?
+                    .to_owned(),
             })
         })
         .take(32)
@@ -485,8 +528,12 @@ fn parse_rich(profile: &Value, extras: Option<&Value>, text: &str) -> Option<Cha
         nickname_color,
         text_color: supplied_string(profile["title"].get("color")),
         profile_url: supplied_string(profile.get("publicProfileUrl")),
+        profile_image_url: supplied_string(profile.get("profileImageUrl")),
+        subscription_months: subscription["accumulativeMonth"].as_u64(),
+        following_since: supplied_string(property["following"].get("followDate")),
         badges,
         emojis,
+        ..Default::default()
     }
     .bounded()
 }
@@ -560,6 +607,103 @@ impl Drop for ConnectionGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn optional_chat_decorations_do_not_inflate_transient_events() {
+        assert!(std::mem::size_of::<ChatEvent>() <= 128);
+    }
+
+    #[test]
+    fn captures_notice_and_received_profile_fields_without_raw_payment_or_private_data() {
+        for (kind, extras, expected) in [
+            (
+                10,
+                json!({"donationType":"CHAT","payAmount":1000,"extraToken":"SECRET"}),
+                ChatNoticeKind::Donation,
+            ),
+            (
+                10,
+                json!({"donationType":"VIDEO","payAmount":2000}),
+                ChatNoticeKind::VideoDonation,
+            ),
+            (
+                10,
+                json!({"donationType":"MISSION","payAmount":5000,"missionText":"목표","status":"SUCCESS","missionDonationId":"SECRET"}),
+                ChatNoticeKind::Mission,
+            ),
+            (11, json!({"month":29}), ChatNoticeKind::Subscription),
+        ] {
+            let event = parse_message(&json!({"msgTypeCode":kind,"msg":"응원", "profile": {
+                "nickname":"viewer", "profileImageUrl":"https://nng-phinf.pstatic.net/avatar.png", "accessToken":"SECRET",
+                "streamingProperty":{"subscription":{"accumulativeMonth":29},"following":{"followDate":"2023-12-19 12:30:00"}}
+            },"extras":extras})).unwrap();
+            let ChatEvent::Message {
+                rich: Some(rich), ..
+            } = event
+            else {
+                panic!("missing notice")
+            };
+            assert_eq!(rich.notice.as_ref().unwrap().kind, expected);
+            assert_eq!(rich.subscription_months, Some(29));
+            assert_eq!(rich.following_since.as_deref(), Some("2023-12-19"));
+            assert!(rich.asset_urls().any(|url| url.ends_with("avatar.png")));
+            let encoded = serde_json::to_string(&rich).unwrap();
+            assert!(!encoded.contains("SECRET") && !encoded.contains("missionDonationId"));
+            let restored: ChatRich = serde_json::from_str(&encoded).unwrap();
+            assert_eq!(restored.bounded().unwrap(), *rich);
+        }
+    }
+
+    #[test]
+    fn anonymous_notices_never_keep_sender_profile_and_unknown_events_stay_ignored() {
+        let event = parse_message(&json!({"msgTypeCode":10,"msg":"응원", "profile": {
+            "nickname":"PRIVATE_NAME", "publicProfileUrl":format!("https://chzzk.naver.com/{}", "a".repeat(32)),
+            "profileImageUrl":"https://nng-phinf.pstatic.net/private.png", "streamingProperty":{"subscription":{"accumulativeMonth":29}}
+        },"extras":{"donationType":"CHAT","isAnonymous":true,"nickname":"PRIVATE_NAME","payAmount":1000}})).unwrap();
+        let ChatEvent::Message {
+            sender,
+            rich: Some(rich),
+            ..
+        } = event
+        else {
+            panic!("missing anonymous notice")
+        };
+        assert_eq!(sender, "익명");
+        assert_eq!(rich.profile_url, None);
+        assert_eq!(rich.profile_image_url, None);
+        assert_eq!(rich.subscription_months, None);
+        assert!(!serde_json::to_string(&rich).unwrap().contains("private"));
+        assert!(parse_message(&json!({"msgTypeCode":30,"msg":"system"})).is_none());
+        assert!(
+            parse_message(&json!({"msgTypeCode":10,"extras":{"donationType":"UNKNOWN"}})).is_none()
+        );
+        assert!(parse_message(
+            &json!({"msgTypeCode":10,"msgStatusType":"HIDDEN","extras":{"donationType":"MISSION"}})
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn bounds_optional_profile_and_notice_metadata_and_accepts_literal_emoji_objects() {
+        let event = parse_message(&json!({"msgTypeCode":10,"msg":"{:wave-1:}","profile":{
+            "nickname":"viewer", "profileImageUrl":"https://localhost/private", "streamingProperty":{"subscription":{"accumulativeMonth":999999},"following":{"followDate":"2023-02-31"}}
+        },"extras":{"donationType":"MISSION","payAmount":999999999999_u64,"missionText":"a".repeat(1000),"status":"<script>","emojis":{"wave-1":{"imageUrl":"https://ssl.pstatic.net/wave.png"}}}})).unwrap();
+        let ChatEvent::Message {
+            rich: Some(rich), ..
+        } = event
+        else {
+            panic!("missing metadata")
+        };
+        assert!(
+            rich.profile_image_url.is_none()
+                && rich.subscription_months.is_none()
+                && rich.following_since.is_none()
+        );
+        assert_eq!(rich.emojis[0].id, "wave-1");
+        let notice = rich.notice.unwrap();
+        assert!(notice.amount.is_none() && notice.status.is_none());
+        assert_eq!(notice.mission_text.unwrap().len(), 512);
+    }
+
     #[test]
     fn default_nickname_color_uses_only_verified_chat_context_and_bounded_seed() {
         let row = json!({"msgTypeCode":1,"msg":"ordinary","profile":{"nickname":"viewer","nicknameColorSeed":39}});

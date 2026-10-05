@@ -388,7 +388,7 @@ textarea:focus-visible {
   border: 1px solid var(--card-border);
   border-radius: 10px;
   box-shadow: 0 5px 14px rgba(0, 0, 0, 0.24);
-  transition: transform 160ms ease-out, background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
+  transition: background-color 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
 }
 
 .gallery-card:hover,
@@ -397,7 +397,8 @@ textarea:focus-visible {
   background: color-mix(in srgb, var(--surface) 78%, var(--surface-hover));
   border-color: var(--card-border-hover);
   box-shadow: 0 11px 26px rgba(0, 0, 0, 0.36);
-  transform: translateY(-2px);
+  /* Keep the first row inside its scrolling viewport when hovered. */
+  transform: none;
 }
 
 .gallery-card:focus-visible,
@@ -816,13 +817,13 @@ dialog::backdrop {
 .danbooru-card {
   border-radius: 10px;
   box-shadow: 0 7px 20px rgba(0, 0, 0, 0.24);
-  transition: transform 160ms ease-out, border-color 160ms ease-out, box-shadow 160ms ease-out;
+  transition: border-color 160ms ease-out, box-shadow 160ms ease-out;
 }
 
 .danbooru-card:hover {
   border-color: color-mix(in srgb, var(--source-teal) 46%, var(--line-strong));
   box-shadow: 0 11px 26px rgba(0, 0, 0, 0.36);
-  transform: translateY(-2px);
+  transform: none;
 }
 
 .danbooru-card-preview {

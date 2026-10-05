@@ -12,6 +12,7 @@ const STARTUP_FAILURE_EXIT_CODE: i32 = 1;
 
 fn main() {
     atsumi_lib::initialize_startup_metrics();
+    configure_taskbar_identity();
     if let Err(error) = atsumi_lib::run() {
         let diagnostic = redact_startup_diagnostic(&error.to_string());
         eprintln!("Atsumi could not be started: {diagnostic}");
@@ -21,6 +22,24 @@ fn main() {
         std::process::exit(STARTUP_FAILURE_EXIT_CODE);
     }
 }
+
+// Only separate Windows taskbar grouping. Keep Tauri's identifier, user data
+// paths and single-instance protection shared with the release build.
+#[cfg(all(windows, debug_assertions))]
+fn configure_taskbar_identity() {
+    // SAFETY: The static, NUL-terminated AppID is valid for this synchronous call.
+    // Set it before Tauri creates any windows, matching the debug shortcut.
+    if let Err(error) = unsafe {
+        windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(windows::core::w!(
+            "local.atsumi.next.debug"
+        ))
+    } {
+        eprintln!("Could not set the development taskbar identity: {error}");
+    }
+}
+
+#[cfg(not(all(windows, debug_assertions)))]
+fn configure_taskbar_identity() {}
 
 fn redact_startup_diagnostic(value: &str) -> String {
     let profile = std::env::var("USERPROFILE").ok();
@@ -116,6 +135,25 @@ fn show_startup_failure(_message: &str) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(all(windows, debug_assertions))]
+    #[test]
+    fn debug_taskbar_identity_is_separate_without_changing_the_data_identifier() {
+        configure_taskbar_identity();
+        // SAFETY: The API returns an allocated NUL-terminated string. Read it
+        // while alive and release it with the matching COM allocator.
+        let identity = unsafe {
+            let value = windows::Win32::UI::Shell::GetCurrentProcessExplicitAppUserModelID()
+                .expect("debug process has an explicit taskbar identity");
+            let identity = value.to_string().expect("valid AppID");
+            windows::Win32::System::Com::CoTaskMemFree(Some(value.0.cast()));
+            identity
+        };
+        assert_eq!(identity, "local.atsumi.next.debug");
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], "local.atsumi.next");
+    }
 
     #[test]
     fn startup_failure_is_nonzero_and_points_to_a_log() {

@@ -385,9 +385,7 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
       acceptSnapshot(next);
     });
   };
-  const openFolder = (id: string) => void runAction("folder", () => api.openFolder(id), () => setMessage("녹화 폴더를 열었습니다."));
-  const openSegment = (id: string, index: number) => void runAction("segment", () => api.openSegment(id, index));
-  const openMerged = (id: string) => void runAction("merged", () => api.openMerged(id));
+  const openFolder = (id: string) => void runAction("folder", () => api.openFolder(id));
   const retryMerge = (id: string) => void runAction("merge", () => api.retryMerge(id), acceptSnapshot);
   const deleteRecordings = async (ids: string[]) => {
     if (!active || !desktop || actionInFlight.current) throw new Error("다른 작업이 끝난 뒤 다시 시도해 주세요.");
@@ -480,11 +478,12 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     {view === "live" ? <div ref={stage} className="official-browser-stage" role="region" aria-label="공식 CHZZK 플레이어와 채팅" data-native-visible={nativeVisible}>
       {(!snapshot.windowOpen || settingsOpen) && !privacyMode ? <div className={`official-browser-setup${settingsOpen ? " is-modal" : ""}`} role={settingsOpen ? "dialog" : undefined} aria-modal={settingsOpen ? "true" : undefined} aria-label={settingsOpen ? "시청 설정" : "채널 연결"} data-native-overlay={settingsOpen} data-native-preserve-video={settingsOpen} hidden={!!control} onKeyDown={settingsKeys}>
         <ConnectionSetup mode={connectionMode} onMode={(mode) => { setConnectionMode(mode); if (mode === "mado" && !madoInputs.some(Boolean)) setMadoInputs([input || snapshot.channelId || "", "", "", ""]); }} modeDisabled={pending !== null || hasRecording || extensionBusy || !onMadoMode}
+          runtime={runtime} privacy={privacyMode}
           inputs={connectionMode === "mado" ? madoInputs : [input]} onInput={(index, value) => connectionMode === "mado" ? setMadoInputs((rows) => rows.map((row, i) => i === index ? value : row)) : setInput(value)}
           disabled={!desktop || pending !== null || hasRecording || extensionBusy || connectionLocked} pending={pending === "open" || pending === "mado"} onConnect={open} onClose={settingsOpen ? () => setSettingsOpen(false) : undefined} closeRef={settingsClose}
           auth={pollError ? "unknown" : accountStatus(snapshot)} accountDisabled={!desktop || pending !== null || hasRecording || snapshot.accountBusy === true} accountReason={hasRecording ? "녹화를 중지한 뒤 방송·모드·계정을 변경할 수 있습니다." : undefined}
-          authChecking={pending === "auth-refresh" || snapshot.authChecking} authError={snapshot.authError} refreshDisabled={!desktop || pending !== null || snapshot.accountBusy === true}
-          onLogin={() => void runAction("login", () => api.login(), acceptSnapshot)} onLogout={logout} onRefresh={() => void runAction("auth-refresh", () => api.snapshot(true), acceptSnapshot)}
+          authChecking={snapshot.authChecking} authError={snapshot.authError}
+          onLogin={() => void runAction("login", () => api.login(), acceptSnapshot)} onLogout={logout}
           onGrid={() => void runAction("extension", () => api.connectExtension(), acceptSnapshot)} gridDisabled={!desktop || pending !== null || hasRecording || extensionBusy || !snapshot.windowOpen || connectionLocked} gridStatus={extensionSummary}
           onInstaller={(browser) => void runAction("installer", () => api.openInstaller(browser))} installerDisabled={!desktop || pending !== null || hasRecording}
           helpDetails={`${recordingDetails}${screenshotDetails} 버튼을 눌러야 녹화가 시작됩니다. 다른 메뉴로 이동하거나 창을 최소화해도 녹화는 계속됩니다.`}
@@ -506,8 +505,8 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     {view === "live" && snapshot.windowOpen && focusError && focusError !== dismissedFocusError && !control && !settingsOpen ? <div className="official-browser-focus-alert" role="alert" data-native-overlay="true"><span>{focusError}</span><button type="button" onClick={() => setDismissedFocusError(focusError)}>확인</button></div> : null}
 
     {view === "recordings" && (hasSnapshot || !desktop) ? <RecordingLibrary recordings={recordings} selectedId={selectedId} onSelect={setSelectedId}
-      disabled={!desktop || pending !== null} privacy={privacyMode} retrying={pending === "merge"} opening={pending === "merged"}
-      onFolder={openFolder} onReplay={setReplayId} onOpenMerged={openMerged} onRetryMerge={retryMerge} onOpenSegment={openSegment} onDelete={deleteRecordings}
+      disabled={!desktop || pending !== null} privacy={privacyMode} retrying={pending === "merge"} openingFolder={pending === "folder"}
+      onFolder={openFolder} onReplay={setReplayId} onRetryMerge={retryMerge} onDelete={deleteRecordings}
       stopControl={hasRecording ? <button type="button" className="official-browser-stop" disabled={!desktop || pending !== null || snapshot.status === "stopping"} onClick={stop}>{pending === "stop" || snapshot.status === "stopping" ? "저장 중…" : "녹화 중지"}</button> : undefined}
     /> : null}
     {control ? <div className="official-browser-dialog-backdrop" role="alertdialog" aria-modal="true" data-native-preserve-video="true" aria-labelledby="official-browser-control-title" aria-describedby="official-browser-control-description" onKeyDown={controlKeys}>

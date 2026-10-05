@@ -113,13 +113,15 @@ export const loadDanbooruSearchPreferences = (): DanbooruSearchFilters => {
   }
 };
 
-export const saveDanbooruSearchPreferences = (filters: DanbooruSearchFilters): void => {
+export const saveDanbooruSearchPreferences = (filters: DanbooruSearchFilters): boolean => {
   const sanitized = sanitizeDanbooruSearchFilters(filters);
   try {
     window.localStorage.setItem(preferenceKey, JSON.stringify(sanitized));
     window.dispatchEvent(new CustomEvent(DANBOORU_SEARCH_PREFERENCES_CHANGED, { detail: sanitized }));
+    return true;
   } catch {
     // Search remains usable when local preferences cannot be persisted.
+    return false;
   }
 };
 

@@ -12,7 +12,7 @@
 .auto-record-panel form button {background:#17624d;border-color:#237b63;}
 .auto-record-panel button[aria-pressed=true] {color:#75e3b7;border-color:#32644f;}
 .auto-record-channels {display:grid;gap:10px;}
-.auto-record-channel {display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid #39343f;background:#222027;border-radius:12px;}
+.auto-record-channel {display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px;border:1px solid #39343f;background:#222027;border-radius:12px;}
 .auto-record-channel.is-recording {border-color:#4f7466;}
 .auto-record-identity {display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;}
 .auto-record-identity strong {max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;}
@@ -29,7 +29,10 @@
 .auto-record-actions .auto-record-stop {color:#edb1b7;}
 .auto-record-actions .auto-record-watch {color:#8be7c6;border-color:#367962;background:#183c32;}
 .auto-record-actions .auto-record-watch:hover:not(:disabled) {background:#23533f;border-color:#6fcba3;}
-.auto-record-actions {flex-wrap:wrap;justify-content:flex-end;}
+.auto-record-actions {display:grid;grid-template-columns:88px 60px 60px;justify-content:end;}
+.auto-record-actions .auto-record-stop {grid-column:1;grid-row:1;}
+.auto-record-actions [aria-pressed] {grid-column:2;grid-row:1;}
+.auto-record-actions button:last-child {grid-column:3;grid-row:1;}
 .auto-record-panel .auto-record-error {color:#edb1b7;margin-bottom:16px;}
 .auto-record-empty {padding:64px 16px;text-align:center;color:#aaa5b3;border:1px dashed #49424f;border-radius:12px;}
-@media(max-width:780px) {.auto-record-panel{padding:16px;}.auto-record-channel{align-items:flex-start;flex-direction:column;}.auto-record-actions{align-self:flex-end;}.auto-record-identity strong{max-width:100%;}}
+@media(max-width:780px) {.auto-record-panel{padding:16px;}.auto-record-channel{align-items:flex-start;flex-direction:column;}.auto-record-actions{align-self:flex-end;order:-1;}.auto-record-identity strong{max-width:100%;}}

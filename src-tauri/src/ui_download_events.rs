@@ -81,7 +81,7 @@ impl DownloadEvents {
 }
 #[tauri::command]
 pub fn download_events_take(
-    window: tauri::WebviewWindow,
+    window: tauri::Webview,
     state: State<'_, Arc<DownloadEvents>>,
     epoch: String,
 ) -> Result<Batch, String> {

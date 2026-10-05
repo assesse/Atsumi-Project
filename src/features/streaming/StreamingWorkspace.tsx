@@ -19,17 +19,17 @@ function readStreamingView(): StreamingView {
 }
 
 export type StreamingWorkspaceProps = {
+  tutorialActive?: boolean;
   navigationRequest?: import("../../app/CommonNavigation").NavigationRequest | null;
   runtime: OfficialBrowserApi["runtime"];
   active: boolean;
   railCollapsed: boolean;
   onToggleRail: () => void;
   onSourceChange: (source: ContentSource) => void;
-  privacyMode: boolean;
   onOpenSettings?: () => void;
 };
 
-export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRail, onSourceChange, privacyMode, navigationRequest, onOpenSettings }: StreamingWorkspaceProps) {
+export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRail, onSourceChange, navigationRequest, onOpenSettings, tutorialActive = false }: StreamingWorkspaceProps) {
   const requestedView = navigationRequest?.source === "chzzk" && isStreamingView(navigationRequest.view) ? navigationRequest.view : null;
   const [view, setView] = useState<StreamingView>(() => requestedView ?? readStreamingView());
   // Live is the only presentation entry. Bookmarks and scheduled recordings
@@ -47,9 +47,9 @@ export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRai
   return <div className={`app-shell streaming-shell${railCollapsed ? " sidebar-collapsed" : ""}`} hidden={!active} style={active ? undefined : { display: "none" }}>
     <SideRail source="chzzk" view={view} collapsed={railCollapsed} autoFindCount={0} attentionCount={0} sourceLabel="CHZZK" onNavigate={navigate} onSourceChange={onSourceChange} onToggle={onToggleRail} onSettings={onOpenSettings} />
     <main className={`streaming-workspace${view === "live" ? " is-official-view" : ""}`}>
-      {view === "auto-record" ? <AutoRecordingPanel runtime={runtime} privacy={privacyMode} />
-        : view === "live" ? <MadoWorkspace runtime={runtime} privacy={privacyMode} unifiedLive onLeave={() => {}} />
-        : <OfficialBrowserPanel runtime={runtime} active={active} view="recordings" privacyMode={privacyMode} />}
+      {view === "auto-record" ? <AutoRecordingPanel runtime={runtime} privacy={false} />
+        : view === "live" ? <MadoWorkspace runtime={runtime} privacy={false} tutorialActive={tutorialActive} unifiedLive onLeave={() => {}} />
+        : <OfficialBrowserPanel runtime={runtime} active={active} view="recordings" privacyMode={false} />}
     </main>
   </div>;
 }

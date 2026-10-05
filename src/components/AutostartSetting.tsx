@@ -90,20 +90,20 @@ export function AutostartSetting({ active }: { active: boolean }) {
   const stateLabel = changing ? "변경 중…" : reading ? "확인 중…"
     : !status ? "확인 필요" : !status.supported ? "지원되지 않음"
       : status.disabledByWindows ? "등록됨 · Windows에서 중지"
-        : status.needsRepair ? "재설정 필요" : status.enabled ? "사용 중" : "사용 안 함";
+        : status.needsRepair ? "연결 갱신 필요" : status.enabled ? "사용 중" : "사용 안 함";
 
   return (
-    <div className="setting-row" aria-busy={busy}>
+    <div className="setting-row autostart-setting" aria-busy={busy}>
       <div>
         <strong>Windows 로그인 시 자동 실행</strong>
         {failure && (
-          <>
+          <div className="autostart-feedback">
             <span className="setting-validation-error" role="alert">{failure.message}</span>
             <button type="button" className="text-button" disabled={busy} onClick={() => {
               if (failure.retryEnabled === undefined) void refresh();
               else void change(failure.retryEnabled);
             }}>다시 시도</button>
-          </>
+          </div>
         )}
       </div>
       <label className="setting-checkbox">
@@ -117,7 +117,7 @@ export function AutostartSetting({ active }: { active: boolean }) {
           disabled={!status?.supported || busy}
           onChange={(event) => { void change(event.target.checked); }}
         />
-        <span aria-live="polite">{stateLabel}</span>
+        <span aria-live="polite" title={status?.needsRepair ? "앱 위치나 실행 방식이 변경됐습니다. 껐다 켜면 현재 앱으로 연결됩니다. 재부팅은 필요 없습니다." : undefined}>{stateLabel}</span>
       </label>
     </div>
   );

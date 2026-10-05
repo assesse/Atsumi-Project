@@ -239,6 +239,10 @@ pub trait AutomationRepository: Send + Sync {
 
     fn search_history_list(&self, limit: u32) -> Result<Vec<SearchHistoryEntry>, RepositoryError>;
 
+    fn search_history_remove(&self, history_id: i64) -> Result<u64, RepositoryError>;
+
+    fn search_history_clear(&self) -> Result<u64, RepositoryError>;
+
     fn auto_find_recover_interrupted(&self) -> Result<usize, RepositoryError>;
 
     fn auto_find_owned_cutoffs(

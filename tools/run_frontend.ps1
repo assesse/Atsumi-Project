@@ -55,7 +55,9 @@ if (($env:Path -split ";") -notcontains $nodeDirectory) {
 }
 
 if ($Action -eq "tauri") {
+  $mediaTimer = [Diagnostics.Stopwatch]::StartNew()
   & (Join-Path $PSScriptRoot "prepare_media_tools.ps1")
+  Write-Output "Media verification: $($mediaTimer.ElapsedMilliseconds) ms."
   $systemCargo = Get-Command cargo -ErrorAction SilentlyContinue
   $rustupCargo = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"
 
@@ -94,7 +96,9 @@ Push-Location $projectRoot
 try {
   switch ($Action) {
     "dev" {
-      Invoke-NodeScript "node_modules\vite\bin\vite.js" @("--host", "127.0.0.1", "--port", "1420")
+      . (Join-Path $PSScriptRoot 'development_port.ps1')
+      $devPort = Get-AtsumiConfiguredDevelopmentPort
+      Invoke-NodeScript "node_modules\vite\bin\vite.js" (@("--host", "127.0.0.1", "--port", [string]$devPort) + $ExtraArgs)
     }
     "build" {
       Invoke-NodeScript "node_modules\typescript\bin\tsc" @("-b", "--pretty", "false")

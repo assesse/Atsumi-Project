@@ -54,13 +54,15 @@ export default defineConfig({
   },
   server: {
     host: host || "127.0.0.1",
-    port: 1420,
+    port: Number(environment.ATSUMI_DEV_PORT || 1420),
     strictPort: true,
+    // Transform the first screen while WebView2 starts, not after it requests it.
+    warmup: { clientFiles: ["./index.html", "./src/main.tsx"] },
     hmr: host
       ? {
           protocol: "ws",
           host,
-          port: 1421,
+          port: Number(environment.ATSUMI_DEV_PORT || 1420),
         }
       : undefined,
     watch: {

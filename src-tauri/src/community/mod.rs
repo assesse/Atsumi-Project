@@ -14,6 +14,19 @@ const PROJECT_URL: &str = "https://yfpgshvflnawmrimyfzo.supabase.co";
 // Public application identifier, not a service-role/secret key.
 const PUBLISHABLE_KEY: &str = "sb_publishable_oRRDkcQgUf1LMzM6pe9blQ_0AGjcS7z";
 const MAX_RESPONSE: u64 = 1_048_576;
+const REVIEW_COMMENT_LIMIT: usize = 100;
+// Wait asynchronously before taking the cross-process vault lock. Concurrent
+// views must not race a refresh or report a spurious first-open failure.
+static IDENTITY_REQUESTS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+#[derive(Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum FeedOrder {
+    Popular,
+    #[default]
+    Latest,
+    Worst,
+}
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
@@ -21,6 +34,8 @@ pub enum ReadRequest {
     Feed {
         source: Option<String>,
         cursor: Option<Value>,
+        #[serde(default)]
+        order: FeedOrder,
     },
     Work {
         source: String,
@@ -33,6 +48,10 @@ pub enum ReadRequest {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum WriteRequest {
+    // Private read: use an existing identity, never create one on inspection.
+    MyReviews {
+        cursor: Option<Value>,
+    },
     BeginWriting {
         source: String,
         #[serde(rename = "workId")]
@@ -117,7 +136,7 @@ fn safe_server_error(status: u16, value: &Value) -> String {
             "작성자 권한을 확인할 수 없습니다. 기존 키는 보존했습니다."
         }
         "COMMUNITY_INVALID_REVIEW" => {
-            "별점(1~5), 닉네임(2~24자), 후기(500자 이하)를 확인해 주세요."
+            "별점(1~5), 닉네임(2~24자), 후기(100자 이하)를 확인해 주세요."
         }
         "COMMUNITY_REVIEW_NOT_REPORTABLE" => {
             "삭제·숨김 처리되었거나 본인이 작성한 후기는 신고할 수 없습니다."
@@ -138,6 +157,7 @@ fn safe_server_error(status: u16, value: &Value) -> String {
 
 impl Transport for SupabaseTransport {
     fn post(&self, route: &str, body: Value, token: Option<&str>) -> Result<Value, RequestFailure> {
+        let started = std::time::Instant::now();
         let uncertain = || RequestFailure {
             message: "커뮤니티 연결이 지연되거나 끊어졌습니다. 기존 키와 작성 내용은 유지됩니다."
                 .into(),
@@ -152,8 +172,25 @@ impl Transport for SupabaseTransport {
         if let Some(token) = token {
             request = request.bearer_auth(token);
         }
-        let response = request.send().map_err(|_| uncertain())?;
+        let response = request.send().map_err(|error| {
+            crate::diagnostics::http_error(&error);
+            crate::diagnostics::http_result(
+                crate::diagnostics::Provider::Community,
+                false,
+                0,
+                started.elapsed(),
+                0,
+            );
+            uncertain()
+        })?;
         let status = response.status();
+        crate::diagnostics::http_result(
+            crate::diagnostics::Provider::Community,
+            status.is_success(),
+            status.as_u16(),
+            started.elapsed(),
+            0,
+        );
         let mut bytes = Vec::new();
         response
             .take(MAX_RESPONSE + 1)
@@ -263,14 +300,18 @@ fn validate_work(source: &str, id: &str) -> Result<(), String> {
 
 fn read_request(transport: &impl Transport, request: ReadRequest) -> Result<Value, String> {
     match request {
-        ReadRequest::Feed { source, cursor } => {
+        ReadRequest::Feed {
+            source,
+            cursor,
+            order,
+        } => {
             if let Some(ref source) = source {
                 validate_work(source, "1")?;
             }
             transport
                 .post(
-                    "rest/v1/rpc/community_v1_feed",
-                    json!({"p_source": source, "p_cursor": cursor}),
+                    "rest/v1/rpc/community_v1_ranked_feed",
+                    json!({"p_source": source, "p_cursor": cursor, "p_order": order}),
                     None,
                 )
                 .map_err(|e| e.message)
@@ -307,6 +348,13 @@ fn write_request(
     request: WriteRequest,
 ) -> Result<Value, String> {
     match &request {
+        WriteRequest::MyReviews { .. } => {
+            if matches!(store.load()?, Identity::Unissued) {
+                return Ok(
+                    json!({"profile": null, "identityIssued": false, "items": [], "nextCursor": null}),
+                );
+            }
+        }
         WriteRequest::BeginWriting { source, work_id }
         | WriteRequest::Save {
             source, work_id, ..
@@ -328,7 +376,7 @@ fn write_request(
     } = &request
     {
         if !(1..=5).contains(rating)
-            || comment.chars().count() > 500
+            || comment.chars().count() > REVIEW_COMMENT_LIMIT
             || !(2..=24).contains(&nickname.trim().chars().count())
         {
             return Err("별점, 닉네임, 후기 길이를 확인해 주세요.".into());
@@ -350,6 +398,7 @@ fn write_request(
             .map_err(|e| e.message)
     };
     match request {
+        WriteRequest::MyReviews { cursor } => post("my_reviews", json!({"p_cursor": cursor})),
         WriteRequest::BeginWriting { source, work_id } => {
             let profile = post("profile", json!({}))?;
             let page = post(
@@ -380,41 +429,36 @@ fn write_request(
     }
 }
 
-fn trusted_main(label: &str, url: &tauri::Url, development: bool) -> bool {
-    label == "main"
-        && url.username().is_empty()
-        && url.password().is_none()
-        && (matches!(
-            (url.scheme(), url.host_str(), url.port()),
-            ("tauri", Some("localhost"), None) | ("http" | "https", Some("tauri.localhost"), None)
-        ) || development
-            && url.scheme() == "http"
-            && url.host_str() == Some("127.0.0.1")
-            && url.port() == Some(1420))
-}
-
-fn require_main(window: &tauri::WebviewWindow) -> Result<(), String> {
+fn require_main(window: &tauri::Webview) -> Result<(), String> {
     let url = window.url().map_err(|_| "앱 창을 확인하지 못했습니다.")?;
-    if !trusted_main(window.label(), &url, cfg!(debug_assertions)) {
+    if !crate::frontend_origin::trusted_main(
+        window.label(),
+        &url,
+        cfg!(debug_assertions),
+        window.app_handle().config().build.dev_url.as_ref(),
+    ) {
         return Err("커뮤니티는 Atsumi 기본 창에서만 사용할 수 있습니다.".into());
     }
     Ok(())
 }
 
 #[tauri::command]
-pub async fn community_read(
-    window: tauri::WebviewWindow,
-    request: ReadRequest,
-) -> Result<Value, String> {
+pub async fn community_read(window: tauri::Webview, request: ReadRequest) -> Result<Value, String> {
     require_main(&window)?;
-    tauri::async_runtime::spawn_blocking(move || read_request(&SupabaseTransport::new()?, request))
-        .await
-        .map_err(|_| "후기 조회 작업을 완료하지 못했습니다.")?
+    tauri::async_runtime::spawn_blocking(move || {
+        let _diagnostic = crate::diagnostics::operation("community_read", None).entered();
+        let result =
+            SupabaseTransport::new().and_then(|transport| read_request(&transport, request));
+        tracing::info!(diag_stage = "finished", success = result.is_ok());
+        result
+    })
+    .await
+    .map_err(|_| "후기 조회 작업을 완료하지 못했습니다.")?
 }
 
 #[tauri::command]
 pub async fn community_write(
-    window: tauri::WebviewWindow,
+    window: tauri::Webview,
     request: WriteRequest,
 ) -> Result<Value, String> {
     require_main(&window)?;
@@ -428,9 +472,17 @@ pub async fn community_write(
         .map_err(|_| "작성자 키 저장 위치를 확인하지 못했습니다.")?
         .join("community-identity")
         .join("yfpgshvflnawmrimyfzo.v1.dpapi");
+    let guard = IDENTITY_REQUESTS.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
-        let store = vault::FileVault::open(path)?;
-        write_request(&store, &SupabaseTransport::new()?, request)
+        // Closing a UI does not cancel this task; retain the guard until done.
+        let _guard = guard;
+        let _diagnostic = crate::diagnostics::operation("community_write", None).entered();
+        let result = (|| {
+            let store = vault::FileVault::open(path)?;
+            write_request(&store, &SupabaseTransport::new()?, request)
+        })();
+        tracing::info!(diag_stage = "finished", success = result.is_ok());
+        result
     })
     .await
     .map_err(|_| "후기 작성 작업을 완료하지 못했습니다.")?

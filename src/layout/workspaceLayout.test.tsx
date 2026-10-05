@@ -61,7 +61,6 @@ describe("workspace result viewport layout", () => {
                 tabs={tabs}
                 activeId={extraPanel ? "artist" : "root"}
                 onActivate={vi.fn()}
-                onBack={vi.fn()}
                 onClose={vi.fn()}
               />
             ) : null}

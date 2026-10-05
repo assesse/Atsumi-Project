@@ -11,6 +11,8 @@ aside.activity-panel { display: flex; flex-direction: column; overflow: hidden; 
 .activity-item-details p { margin: 4px 0; overflow-wrap: anywhere; }
 .activity-item .gallery-processing-badge { align-self: start; margin-top: 3px; color: var(--state-color); }
 .activity-item .activity-actions { flex-wrap: wrap; max-width: 112px; }
+.activity-item .activity-actions b[role="progressbar"] { text-align: right; font-size: 11px; }
+.activity-item .activity-actions b[role="progressbar"] small { display: block; font-weight: 400; color: var(--muted); }
 .activity-item .activity-actions .mini-command { font-size: 11px; padding: 0 7px; }
 .activity-panel .activity-history-note { padding: 6px 8px; font-size: 11px; }
 

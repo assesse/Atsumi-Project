@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import type {
   ApiResult,
   ExplorationExclusion,
@@ -12,6 +12,9 @@ import type {
 } from "../api/contracts";
 import { galleryId, type GalleryId } from "../core/types";
 import { SettingsDialog } from "./SettingsDialog";
+
+beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
+afterEach(() => vi.unstubAllGlobals());
 
 const settings: SettingsSnapshot = {
   revision: 1,
@@ -60,7 +63,11 @@ describe("SettingsDialog operational boundaries", () => {
     document.body.append(container);
     const root = createRoot(container);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const onSave = vi.fn(async () => false);
+    const onSave = vi.fn(async (_patch: import("../api/contracts").SettingsPatch) => true);
+    const onChooseDownloadRoot = vi.fn<() => Promise<ApiResult<string | null>>>()
+      .mockResolvedValueOnce({ ok: true, data: "D:\\Selected Albums" })
+      .mockResolvedValueOnce({ ok: true, data: null })
+      .mockRejectedValueOnce(new Error("picker unavailable"));
     const onPreviewFolderName = vi.fn(async () => ({
       ok: true,
       data: "[작가] 작품 제목 [그룹] 4113714",
@@ -118,6 +125,7 @@ describe("SettingsDialog operational boundaries", () => {
           error={null}
           onClose={vi.fn()}
           onSave={onSave}
+          onChooseDownloadRoot={onChooseDownloadRoot}
           onLoadStorageUsage={onLoadStorageUsage}
           onPreviewLayout={vi.fn()}
           onPreviewFolderName={onPreviewFolderName}
@@ -135,6 +143,17 @@ describe("SettingsDialog operational boundaries", () => {
       });
 
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+      const folder = container.querySelector<HTMLInputElement>('[aria-label="다운로드 폴더"]')!;
+      const chooseFolder = container.querySelector<HTMLButtonElement>(".setting-path-control button")!;
+      await act(async () => chooseFolder.click());
+      expect(folder.value).toBe("D:\\Selected Albums");
+      expect(onSave).toHaveBeenCalledWith({ downloadRoot: "D:\\Selected Albums" });
+      await act(async () => chooseFolder.click());
+      expect(folder.value).toBe("D:\\Selected Albums"); // Cancelling does not clear the draft.
+      await act(async () => chooseFolder.click());
+      expect(container.querySelector(".download-folder-setting")).toHaveTextContent("폴더 선택 창을 열지 못했습니다");
+      expect(folder.value).toBe("D:\\Selected Albums");
+      expect(chooseFolder).toBeEnabled();
       await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "Danbooru")!.click());
       expect(container.querySelector("details.danbooru-metatag-guide")).not.toHaveAttribute("open");
       await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "일반")!.click());
@@ -156,7 +175,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(autostart).not.toBeChecked();
       expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru", "치지직"]);
       expect(container.querySelector(".settings-scope-intro")).toBeNull();
-      expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "다운로드 폴더", "설정 초기화"]);
+      expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["다운로드 폴더", "Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "설정 초기화"]);
       expect(container.textContent).not.toContain("다음 단계");
       expect(container.querySelectorAll('[data-settings-scroll-root="true"]')).toHaveLength(1);
       expect(container.querySelector(".settings-dialog > .settings-form")).not.toBeNull();
@@ -197,9 +216,15 @@ describe("SettingsDialog operational boundaries", () => {
       const factoryReset = container.querySelector<HTMLElement>(".maintenance-item--factory-reset");
       expect(factoryReset).toBeVisible();
       await act(async () => factoryReset?.querySelector<HTMLButtonElement>("button")?.click());
-      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("외부 다운로드 원본 파일, 커뮤니티 작성자 키와 서버 후기는 유지"));
+      expect(confirm).toHaveBeenCalledWith(expect.stringContaining("받은 파일, 앨범·페이지 즐겨찾기와 작성한 코멘트는 남습니다"));
       await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "Hitomi")!.click());
       expect(factoryReset).not.toBeVisible();
+      expect(container.querySelector(".settings-performance-group")).toBeVisible();
+      expect(container.querySelector(".settings-performance-group")?.querySelectorAll(".setting-row")).toHaveLength(5);
+      expect(container.querySelector(".settings-performance-group")).toHaveTextContent("다운로드·처리 속도");
+      expect(container.querySelector(".exclusion-manager")).toHaveTextContent("제외된 앨범");
+      expect(container).not.toHaveTextContent("관리를 열면 50개씩 표시합니다.");
+      expect(container).toHaveTextContent("한 페이지에 맞춰 자동으로 더 추가될 수 있음.");
       expect(container.querySelector(".settings-scope-intro")).toBeNull();
       const maintenanceItems = [...container.querySelectorAll<HTMLElement>(".maintenance-panel .maintenance-item")];
       expect(maintenanceItems).toHaveLength(2);
@@ -214,7 +239,8 @@ describe("SettingsDialog operational boundaries", () => {
       expect(rebuild?.querySelectorAll('input[type="checkbox"]')).toHaveLength(4);
       expect([...rebuild?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []].map((input) => input.checked)).toEqual([true, false, false, false]);
       expect(factoryReset).toHaveTextContent("앱 데이터 완전 초기화");
-      expect(factoryReset).toHaveTextContent("외부 다운로드 원본 파일과 quarantine/recovery 파일, 개인 앨범·페이지 즐겨찾기와 컬렉션, 커뮤니티 작성자 키와 서버 후기는 유지됩니다.");
+      expect(factoryReset).toHaveTextContent("받은 파일, 앨범·페이지 즐겨찾기와 작성한 코멘트는 남습니다.");
+      expect(factoryReset).toHaveTextContent("앱이 종료되며, 다시 열면 초기화가 적용됩니다.");
       expect(factoryReset).toHaveClass("maintenance-item--factory-reset");
       const maintenance = [...container.querySelectorAll<HTMLButtonElement>(".maintenance-panel .maintenance-item > button")];
       expect(maintenance.map((button) => button.textContent)).toEqual(["빠른 복구", "라이브러리 검사 및 재구축"]);
@@ -414,14 +440,10 @@ describe("SettingsDialog operational boundaries", () => {
       const danbooruPreviewWidth = danbooruSettings?.querySelector<HTMLInputElement>('[aria-label="Danbooru 카드 미리보기 크기"]');
       expect(danbooruPageSize).toHaveValue("60");
       expect(danbooruPreviewWidth).toHaveValue("1");
-      await act(async () => {
-        [...container.querySelectorAll<HTMLButtonElement>("button")]
-          .find((button) => button.textContent === "저장")
-          ?.click();
-      });
-      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({
+      expect([...container.querySelectorAll<HTMLButtonElement>("button")].some(button => button.textContent === "저장")).toBe(false);
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-tour="settings-close"]')!.click());
+      expect(Object.assign({}, ...onSave.mock.calls.map(([patch]) => patch))).toMatchObject({
         chzzkSsdStaging: true,
-        folderNameTemplate: "[{artist}] {title} [{group}] {id}",
         autoFindHistoryMode: "newer_than_latest_owned",
         explorePageSize: 50,
         danbooruPageSize: 60,
@@ -433,7 +455,7 @@ describe("SettingsDialog operational boundaries", () => {
         downloadAdaptiveMaxRequests: 6,
         searchIncludeTags: ["female:glasses", "webtoon"],
         searchExcludeTags: ["male:glasses"],
-      }));
+      });
     } finally {
       await act(async () => root.unmount());
       container.remove();

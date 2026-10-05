@@ -98,6 +98,7 @@ impl SqliteRepository {
         mut connection: Connection,
         file_database: Option<FileDatabase<'_>>,
     ) -> Result<Self, RepositoryError> {
+        connection.profile(Some(crate::diagnostics::database_profile));
         connection
             .busy_timeout(Duration::from_secs(5))
             .map_err(map_sqlite_error)?;
@@ -132,9 +133,19 @@ impl SqliteRepository {
     }
 
     pub(crate) fn connection(&self) -> Result<MutexGuard<'_, Connection>, RepositoryError> {
-        self.connection
+        let started = std::time::Instant::now();
+        let result = self
+            .connection
             .lock()
-            .map_err(|_| RepositoryError::Other("database mutex was poisoned".into()))
+            .map_err(|_| RepositoryError::Other("database mutex was poisoned".into()));
+        if started.elapsed() >= Duration::from_millis(50) || result.is_err() {
+            tracing::info!(
+                diag_stage = "database_lock",
+                wait_ms = started.elapsed().as_millis() as u64,
+                success = result.is_ok()
+            );
+        }
+        result
     }
 }
 
@@ -631,6 +642,23 @@ impl AutomationRepository for SqliteRepository {
             .map_err(map_sqlite_error)?;
         rows.map(|row| row.map_err(map_sqlite_error)?.try_into_domain())
             .collect()
+    }
+
+    fn search_history_remove(&self, history_id: i64) -> Result<u64, RepositoryError> {
+        // The UI groups page-size variants into one history row. Remove every
+        // variant of that exact search, but preserve other languages/sorts.
+        self.connection()?.execute(
+            "DELETE FROM search_history WHERE (text, include_tags_json, exclude_tags_json, languages_json, sort) IN
+             (SELECT text, include_tags_json, exclude_tags_json, languages_json, sort FROM search_history WHERE history_id = ?1)",
+            [history_id],
+        ).map(|removed| removed as u64).map_err(map_sqlite_error)
+    }
+
+    fn search_history_clear(&self) -> Result<u64, RepositoryError> {
+        self.connection()?
+            .execute("DELETE FROM search_history", [])
+            .map(|removed| removed as u64)
+            .map_err(map_sqlite_error)
     }
 
     fn auto_find_recover_interrupted(&self) -> Result<usize, RepositoryError> {

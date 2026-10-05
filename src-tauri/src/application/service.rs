@@ -458,6 +458,19 @@ impl ApplicationService {
         Ok(self.tag_catalog_repository()?.tag_catalog_status()?)
     }
 
+    pub fn search_history_remove(&self, history_id: i64) -> Result<u64, ApplicationError> {
+        if history_id <= 0 {
+            return Err(ValidationError::new("historyId", "must be positive").into());
+        }
+        Ok(self
+            .automation_repository()?
+            .search_history_remove(history_id)?)
+    }
+
+    pub fn search_history_clear(&self) -> Result<u64, ApplicationError> {
+        Ok(self.automation_repository()?.search_history_clear()?)
+    }
+
     pub fn tag_suggestions_search(
         &self,
         request: TagSuggestionRequest,

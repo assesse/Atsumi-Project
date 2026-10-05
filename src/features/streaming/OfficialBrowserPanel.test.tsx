@@ -197,7 +197,7 @@ describe("OfficialBrowserPanel", () => {
     else api.snapshot.mockResolvedValue({ ok: false, error: { code: "UNAVAILABLE", message: "상태 확인 실패", retryable: true } });
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(button("로그인")).toBeEnabled(); expect(button("로그아웃")).toBeEnabled();
-    expect(container).toHaveTextContent("계정 상태 확인 필요");
+    expect(container).toHaveTextContent("계정 상태 확인 대기");
     api.snapshot.mockResolvedValue(success(ready({ authStatus: "signed_out" })));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(button("로그인")).toBeEnabled(); expect(button("로그아웃")).toBeDisabled();
@@ -212,7 +212,7 @@ describe("OfficialBrowserPanel", () => {
     else account.snapshot.mockResolvedValue({ ok: false, error: { code: "UNAVAILABLE", message: "상태 확인 실패", retryable: true } });
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(button("로그인")).toBeEnabled(); expect(button("로그아웃")).toBeEnabled();
-    expect(container).toHaveTextContent("계정 상태 확인 필요");
+    expect(container).toHaveTextContent("계정 상태 확인 대기");
     account.snapshot.mockResolvedValue(success(ready({ authStatus: "signed_out" })));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(button("로그인")).toBeEnabled(); expect(button("로그아웃")).toBeDisabled();
@@ -225,13 +225,13 @@ describe("OfficialBrowserPanel", () => {
     await render(api);
     const fresh = deferred<ApiResult<OfficialBrowserSnapshot>>();
     api.snapshot.mockReturnValueOnce(fresh.promise);
-    await act(async () => button("상태 확인").click());
-    expect(api.snapshot).toHaveBeenLastCalledWith(true);
-    expect(button("확인 중…")).toBeDisabled();
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(api.snapshot).toHaveBeenLastCalledWith();
+    expect(button("상태 확인")).toBeUndefined();
     await act(async () => fresh.resolve(success({ ...emptyOfficialBrowserSnapshot("tauri"), authStatus: "signed_in", authChecking: false })));
     expect(button("로그인")).toBeDisabled();
     expect(button("로그아웃")).toBeEnabled();
-    expect(button("상태 확인")).toBeEnabled();
+    expect(button("상태 확인")).toBeUndefined();
     expect(container).toHaveTextContent("로그인됨");
     expect(api.open).not.toHaveBeenCalled();
     expect(api.login).not.toHaveBeenCalled();
@@ -243,11 +243,11 @@ describe("OfficialBrowserPanel", () => {
     await render(api);
     expect(container).toHaveTextContent("연결을 확인하고 다시 시도해 주세요.");
     expect(container).not.toHaveTextContent("로그아웃됨");
-    expect(button("상태 확인")).toBeEnabled();
+    expect(button("상태 확인")).toBeUndefined();
     api.snapshot.mockResolvedValue(success({ ...emptyOfficialBrowserSnapshot("tauri"), authStatus: "signed_in", authChecking: true }));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(button("로그인")).toBeDisabled();
-    expect(button("확인 중…")).toBeDisabled();
+    expect(container.querySelector('.official-browser-account [role="status"]')).toHaveAttribute("aria-busy", "true");
     expect(container).toHaveTextContent("로그인됨");
   });
 
@@ -306,7 +306,7 @@ describe("OfficialBrowserPanel", () => {
     unknown.remove();
   });
 
-  it("explains the site's first-view quality choice without starting playback or recording", async () => {
+  it("explains direct playback without claiming readiness or starting recording", async () => {
     const api = fakeApi();
     api.snapshot.mockResolvedValue(success(ready({ ready: false, status: "waiting" })));
     await render(api);
@@ -314,7 +314,7 @@ describe("OfficialBrowserPanel", () => {
     await openSettings(api, ready({ ready: false, status: "waiting" }));
     expect(container.querySelector('.connection-help-reveal')).toHaveAttribute("aria-hidden", "true");
     await act(async () => help("시청 시작").focus());
-    expect(container.querySelector('.connection-help-content')).toHaveTextContent("설치없이 일반 화질 시청");
+    expect(container.querySelector('.connection-help-content')).toHaveTextContent("그리드 없이 직접 재생");
     await consent();
     expect(button("녹화 시작")).toBeDisabled();
     expect(api.start).not.toHaveBeenCalled();
@@ -334,19 +334,18 @@ describe("OfficialBrowserPanel", () => {
     expect(button("시청 시작")).toBeDisabled();
     await enterChannel();
     await act(async () => button("시청 시작").click());
-    expect(api.open).toHaveBeenCalledExactlyOnceWith("https://chzzk.naver.com/live/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    expect(api.open).toHaveBeenCalledExactlyOnceWith("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
     expectNoLiveToolbar();
     api.snapshot.mockResolvedValue(success(ready()));
     await openSettings(api);
-    expect(button("그리드 연결").closest("details")).toBeNull();
+    expect(button("그리드 연결")).toBeUndefined();
     expect(container).toHaveTextContent("녹화 준비됨");
     expect(api.start).not.toHaveBeenCalled();
     expect(button("녹화 시작")).toBeEnabled();
-    await act(async () => button("그리드 연결").click());
-    expect(api.connectExtension).toHaveBeenCalledTimes(1);
-    expect(container).toHaveTextContent("확장 · 연결됨");
+    expect(api.connectExtension).not.toHaveBeenCalled();
+    expect(container).toHaveTextContent("그리드 없이 직접 재생");
     await act(async () => help("고화질 연결").focus());
-    expect(container.querySelector('.connection-help-content')).toHaveTextContent("설치만으로 연결되지는 않습니다.");
+    expect(container.querySelector('.connection-help-content')).toHaveTextContent("따로 설치할 필요가 없습니다.");
   });
 
   it("requires rights, locks duplicate start/stop requests, and shows file finalization", async () => {
@@ -447,7 +446,7 @@ describe("OfficialBrowserPanel", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("lists recovered recordings separately and opens only selected completed files by id/index", async () => {
+  it("keeps recovered recordings concise and opens the selected folder by ID", async () => {
     const api = fakeApi();
     api.snapshot.mockResolvedValue(success(ready({ recordings: [recordingFixture({
       status: "interrupted", lastError: "이전 실행 중 녹화가 중단되었습니다.", segmentCount: 300,
@@ -455,39 +454,38 @@ describe("OfficialBrowserPanel", () => {
     })] })));
     await render(api, { view: "recordings", privacyMode: true });
     expect(container.querySelector('.recording-library')).toHaveTextContent("녹화 보관함");
-    expect(container).toHaveTextContent("마무리되지 않은 파일은 폴더에 보존");
-    expect(container).toHaveTextContent("최신 1개 파일");
+    expect(container).toHaveTextContent("영상 일부가 저장되지 않았을 수 있습니다.");
+    expect(container).not.toHaveTextContent("최신 1개 파일");
     expect(container).not.toHaveTextContent("공식 방송 테스트");
     expect(container).not.toHaveTextContent("segment-000000.webm");
     expect(container).not.toHaveTextContent("C:\\Recordings");
-    expect(container.querySelector(".official-browser-originals")).not.toHaveAttribute("open");
-    await act(async () => container.querySelector<HTMLElement>(".official-browser-originals summary")!.click());
-    await act(async () => button("파일 열기").click());
-    expect(api.openSegment).toHaveBeenCalledExactlyOnceWith("official-recording-1", 0);
-    await act(async () => button("녹화 폴더 열기").click());
+    expect(container.querySelector(".official-browser-originals")).toBeNull();
+    expect(button("파일 열기")).toBeUndefined();
+    expect(api.openSegment).not.toHaveBeenCalled();
+    await act(async () => button("저장 폴더 열기").click());
     expect(api.openFolder).toHaveBeenCalledExactlyOnceWith("official-recording-1");
     expect(api.start).not.toHaveBeenCalled();
     expect(api.stop).not.toHaveBeenCalled();
   });
-  it("opens a merged archive once by ID while preserving its interrupted recording and chat warning", async () => {
+  it("opens the selected folder once while preserving interruption and chat warnings", async () => {
     const api = fakeApi();
     const opening = deferred<ApiResult<void>>();
     const token = "a".repeat(32);
     const recorded = recordingFixture({ status: "interrupted", captureChat: true, chatStatus: "partial", lastError: "마지막 조각은 미완성입니다.", merge: { status: "complete", segmentCount: 1, updatedAt: 10, file: `merged-${token}.webm`, timelineFile: `merged-${token}.timeline.jsonl`, bytes: 1024, durationSeconds: 30 } });
     api.snapshot.mockResolvedValue(success(ready({ recordings: [recorded] })));
-    api.openMerged.mockReturnValueOnce(opening.promise);
+    api.openFolder.mockReturnValueOnce(opening.promise);
     await render(api, { view: "recordings" });
-    expect(button("외부 플레이어로 열기")).toBeEnabled();
+    expect(button("재생")).toBeEnabled();
     expect(api.openMerged).not.toHaveBeenCalled();
     expect(container.querySelector(".official-browser-files")).toHaveTextContent("마지막 조각은 미완성입니다.");
     expect(container.querySelector(".official-browser-saved-chat-warning")).not.toBeNull();
-    expect(container.querySelector(".official-browser-originals")).not.toHaveAttribute("open");
-    await act(async () => { const open = button("외부 플레이어로 열기"); open.click(); open.click(); });
-    expect(api.openMerged).toHaveBeenCalledExactlyOnceWith(recorded.id);
+    expect(container.querySelector(".official-browser-originals")).toBeNull();
+    await act(async () => { const open = button("저장 폴더 열기"); open.click(); open.click(); });
+    expect(api.openFolder).toHaveBeenCalledExactlyOnceWith(recorded.id);
     expect(button("여는 중…")).toBeDisabled();
-    expect(button("파일 열기")).toBeDisabled();
+    expect(button("재생")).toBeDisabled();
     await act(async () => opening.resolve(success(undefined)));
-    expect(button("외부 플레이어로 열기")).toBeEnabled();
+    expect(button("재생")).toBeEnabled();
     expect(api.start).not.toHaveBeenCalled();
     expect(api.stop).not.toHaveBeenCalled();
   });
@@ -506,8 +504,8 @@ describe("OfficialBrowserPanel", () => {
     };
     await render(api, { view: "recordings", replayApi });
     await act(async () => [...container.querySelectorAll<HTMLButtonElement>(".official-browser-recording-select")].find((entry) => entry.textContent?.includes(saved.title))!.click());
-    expect(button("앱에서 다시보기")).toHaveClass("official-browser-primary");
-    await act(async () => button("앱에서 다시보기").click());
+    expect(button("재생")).toHaveClass("official-browser-primary");
+    await act(async () => button("재생").click());
     await act(async () => { await import("./RecordingReplay"); });
     expect(replayApi.open).toHaveBeenCalledExactlyOnceWith(saved.id);
     expect(document.body).toHaveTextContent("다른 녹화가 진행 중입니다");
@@ -526,18 +524,18 @@ describe("OfficialBrowserPanel", () => {
     api.retryMerge.mockReturnValueOnce(retry.promise);
     await render(api, { view: "recordings" });
     expect(container).toHaveTextContent("병합 도구가 없습니다.");
-    await act(async () => { const retryButton = button("병합 다시 시도"); retryButton.click(); retryButton.click(); });
+    await act(async () => { const retryButton = button("다시 시도"); retryButton.click(); retryButton.click(); });
     expect(api.retryMerge).toHaveBeenCalledExactlyOnceWith(recorded.id);
     expect(button("요청 중…")).toBeDisabled();
     const queued = { ...recorded, merge: { status: "queued" as const, segmentCount: 1, updatedAt: 2 } };
     await act(async () => retry.resolve(success(ready({ recordings: [queued] }))));
-    expect(container.querySelector(".official-browser-playback")).toHaveTextContent("병합 대기");
+    expect(container.querySelector(".official-browser-playback")).toHaveTextContent("재생 준비 중…");
     expect(container).not.toHaveTextContent("병합 도구가 없습니다.");
     expect(button("외부 플레이어로 열기")).toBeUndefined();
     const token = "b".repeat(32);
     api.snapshot.mockResolvedValue(success(ready({ recordings: [{ ...recorded, merge: { status: "complete", segmentCount: 1, updatedAt: 3, file: `merged-${token}.webm`, timelineFile: `merged-${token}.timeline.jsonl`, bytes: 1024, durationSeconds: 30 } }] })));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(button("외부 플레이어로 열기")).toBeEnabled();
+    expect(button("재생")).toBeEnabled();
     expect(api.openMerged).not.toHaveBeenCalled();
   });
 
@@ -547,14 +545,14 @@ describe("OfficialBrowserPanel", () => {
     api.snapshot.mockResolvedValue(success(ready({ recordings: [recorded] })));
     api.retryMerge.mockResolvedValueOnce({ ok: false, error: { code: "MERGE", message: "재시도 요청을 처리하지 못했습니다.", retryable: true } });
     await render(api, { view: "recordings" });
-    await act(async () => button("병합 다시 시도").click());
+    await act(async () => button("다시 시도").click());
     expect(container).toHaveTextContent("재시도 요청을 처리하지 못했습니다.");
     expect(container).toHaveTextContent("조각 형식이 다릅니다.");
     expect(button("외부 플레이어로 열기")).toBeUndefined();
-    expect(button("병합 다시 시도")).toBeEnabled();
+    expect(button("다시 시도")).toBeEnabled();
     const late = deferred<ApiResult<OfficialBrowserSnapshot>>();
     api.retryMerge.mockReturnValueOnce(late.promise);
-    await act(async () => button("병합 다시 시도").click());
+    await act(async () => button("다시 시도").click());
     await render(api, { active: false, view: "recordings" });
     await act(async () => late.resolve(success(ready({ recordings: [] }))));
     expect(container).toBeEmptyDOMElement();
@@ -648,23 +646,22 @@ describe("OfficialBrowserPanel", () => {
     expect(button("로그인")).toBeDisabled(); expect(button("로그아웃")).toBeDisabled();
   });
 
-  it("blocks account changes during recording and opens only an explicit installer guide", async () => {
+  it("blocks account changes during recording without exposing a grid installer", async () => {
     const api = fakeApi();
     await render(api);
     await openSettings(api);
     expect(button("전체 보기")).toBeUndefined();
     expect(button("간단히 보기")).toBeUndefined();
     await act(async () => help("연결").focus());
-    await act(async () => button("Chrome").click());
-    expect(api.openInstaller).toHaveBeenCalledWith("chrome");
-    await act(async () => button("Edge").click());
-    expect(api.openInstaller).toHaveBeenCalledWith("edge");
+    expect(button("Chrome")).toBeUndefined();
+    expect(button("Edge")).toBeUndefined();
+    expect(api.openInstaller).not.toHaveBeenCalled();
     await consent();
     await act(async () => button("녹화 시작").click());
     expect(button("로그인")).toBeDisabled();
     expect(button("로그아웃")).toBeDisabled();
-    expect(button("Chrome")).toBeDisabled();
-    expect(button("Edge")).toBeDisabled();
+    expect(button("Chrome")).toBeUndefined();
+    expect(button("Edge")).toBeUndefined();
     expect(api.login).not.toHaveBeenCalled();
     expect(api.logout).not.toHaveBeenCalled();
   });
@@ -675,7 +672,7 @@ describe("OfficialBrowserPanel", () => {
     expectNoLiveToolbar();
     expect(container.querySelector('[role="dialog"],[role="alertdialog"]')).toBeNull();
     await openSettings(api);
-    expect(button("그리드 연결").closest('[aria-modal="true"]')).not.toBeNull();
+    expect(button("그리드 연결")).toBeUndefined();
     expect(container.querySelector('.official-browser-extension-status')?.closest('[aria-modal="true"]')).not.toBeNull();
     expect(container).not.toHaveTextContent("독립적인 보안 검증을 마친 브라우저와 같다고 보장하지 않습니다.");
     await act(async () => help("로그인").focus());
@@ -824,18 +821,18 @@ describe("OfficialBrowserPanel", () => {
     await render(api);
     expectNoLiveToolbar();
     await openSettings(api, ready({ loginStatus: "브라우저 세션 유지 · 로그인 여부는 공식 화면에서 확인", videoWidth: 1920, videoHeight: 1080, videoPaused: false, extensionStatus: "미연결" }));
-    expect(container).toHaveTextContent("계정 상태 확인 필요");
+    expect(container).toHaveTextContent("계정 상태 확인 대기");
     expect(container).toHaveTextContent("1920×1080");
-    expect(container).toHaveTextContent("확장 · 미연결");
+    expect(container).toHaveTextContent("그리드 없이 직접 재생");
     expect(container).not.toHaveTextContent("그리드 연결됨");
     api.snapshot.mockResolvedValue(success(ready({ loginStatus: "가".repeat(201), videoWidth: -1, videoHeight: 1080 })));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(container).toHaveTextContent("계정 상태 확인 필요");
+    expect(container).toHaveTextContent("계정 상태 확인 대기");
     expect(container).toHaveTextContent("영상 확인 전");
     expect(container).not.toHaveTextContent("가".repeat(201));
   });
 
-  it("keeps visual readiness equal to real start permission through extension connection and recovery", async () => {
+  it("does not make a stale extension status a manual setup step for direct recording", async () => {
     const api = fakeApi();
     await render(api);
     await openSettings(api);
@@ -847,15 +844,8 @@ describe("OfficialBrowserPanel", () => {
     await consent();
     expect(start).toBeEnabled();
     expect(start).toHaveAttribute("data-ready", "true");
-    const extension = deferred<ApiResult<OfficialBrowserSnapshot>>();
-    api.connectExtension.mockReturnValue(extension.promise);
-    await act(async () => button("그리드 연결").click());
-    expect(start).toBeDisabled();
-    expect(start).toHaveAttribute("data-ready", "false");
-    await act(async () => extension.resolve(success(ready({ extensionStatus: "연결 중" }))));
-    expect(start).toBeDisabled();
-    await act(async () => start.click());
-    expect(api.start).not.toHaveBeenCalled();
+    expect(button("그리드 연결")).toBeUndefined();
+    expect(api.connectExtension).not.toHaveBeenCalled();
     api.snapshot.mockResolvedValue(success(ready({ extensionStatus: "확장 로드 완료 · 공식 페이지 감지 확인 중", error: "고화질은 실제 수신 해상도를 확인해 주세요." })));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(start).toBeEnabled();
@@ -875,7 +865,7 @@ describe("OfficialBrowserPanel", () => {
     await act(async () => help("연결").dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
     expect(container.querySelector(".connection-help-content")).not.toBeNull();
     await act(async () => help("연결").focus());
-    expect(help("연결")).toHaveAccessibleDescription(/그리드 연결은 설치된 네이버 확장/);
+    expect(help("연결")).toHaveAccessibleDescription(/그리드 없이 직접 재생/);
     await act(async () => help("연결").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
     expect(container.querySelector(".connection-help-reveal")).toHaveAttribute("aria-hidden", "true");
     expect(document.activeElement).toBe(help("연결"));

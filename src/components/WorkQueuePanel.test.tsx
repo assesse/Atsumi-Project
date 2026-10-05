@@ -7,8 +7,14 @@ import { queueProgress, QueueSummary, WorkQueuePanel } from "./WorkQueuePanel";
 const row=(id:number):QueueRow=>({entryId:`entry-${id}`,galleryId:galleryId(id),title:`앨범 ${id}`,artist:"fixture",state:"hashing",progress:80,sequence:7,updatedAt:"",errorCode:null});
 const snapshot=():QueueSnapshot=>({queriedAt:"",counts:{completed:4,review_required:2,failed:1,hashing:2,cancelled:1},globalActive:2,totalRows:2,page:1,pageSize:100,offset:0,items:[row(1),row(2)],batches:[],etaSeconds:null,recentCompleted:0,lastProgressAt:null});
 describe("minimal download queue",()=>{
+ it("settles the indicator for review, interrupted and excluded work without calling them successful",()=>{
+  const settled = {...snapshot(), counts:{completed:4, review_required:2, interrupted:1, failed:1, cancelled:1, quarantined:1}, globalActive:0};
+  expect(queueProgress(settled)).toMatchObject({percent:100,completed:4,review:2,failed:2,cancelled:2});
+  expect(queueProgress({...settled,counts:{completed:1000,verifying:1}}).percent).toBe(99);
+  expect(queueProgress(null).percent).toBe(0);
+ });
  it("shows only the stage bar with concise hover labels and preserves completion semantics",async()=>{
-  expect(queueProgress(snapshot())).toEqual({total:10,active:2,completed:4,review:2,failed:1,cancelled:1,percent:40});
+  expect(queueProgress(snapshot())).toEqual({total:10,active:2,completed:4,review:2,failed:1,cancelled:1,percent:80});
   const host=document.createElement("div"),root=createRoot(host);
   try {
    await act(async()=>root.render(<QueueSummary snapshot={snapshot()}/>));

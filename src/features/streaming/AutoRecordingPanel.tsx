@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createAutoRecordingApi, type AutoRecordingApi, type AutoRecordingSnapshot } from "../../api/autoRecording";
 import type { ApiError, ApiResult } from "../../api/contracts";
 import { RecordingLoadStatus } from "./RecordingLoadStatus";
+import { normalizeChannelDraft, normalizeMultiviewChannel } from "../../api/multiview";
 import "./AutoRecordingPanel.css";
 
 const statuses: Record<string, string> = {
@@ -55,9 +56,13 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
   const disabled = pending || runtime !== "tauri";
   return <section className="auto-record-panel" aria-label="자동 녹화">
     <header><div><h2>자동 녹화</h2><p>방송이 시작되면 녹화합니다.</p></div>
-      <span className="auto-record-help" tabIndex={0} aria-label="자동 녹화 도움말" title="앱 실행 중(트레이 포함) 약 30초마다 확인합니다. 등록 시 이미 방송 중이면 녹화를 시작합니다. 최대 4개 동시 녹화, 초과 채널은 대기합니다. 직접 중지한 회차는 다시 녹화하지 않습니다. 로그인·그리드는 라이브에서 먼저 연결하세요.">?</span></header>
-    <form onSubmit={(event) => { event.preventDefault(); if (input.trim()) void mutate(() => api.add(input.trim()), true); }}>
-      <input aria-label="자동 녹화 채널 주소" placeholder="채널 주소 또는 ID" maxLength={300} value={input} disabled={disabled} onChange={(event) => setInput(event.target.value)} />
+      <span className="auto-record-help" tabIndex={0} aria-label="자동 녹화 도움말" title="앱 실행 중(트레이 포함) 약 30초마다 확인합니다. 등록 시 이미 방송 중이면 녹화를 시작합니다. 최대 4개 동시 녹화, 초과 채널은 대기합니다. 직접 중지한 회차는 다시 녹화하지 않습니다. 그리드·브라우저 확장 없이 직접 재생하며, 제공되는 화질을 녹화합니다. 로그인·권한 확인이 필요한 방송은 라이브에서 먼저 확인하세요.">?</span></header>
+    <form data-tour="chzzk-auto-register" onSubmit={(event) => { event.preventDefault(); if (input.trim()) void mutate(() => api.add(input.trim()), true); }}>
+      <input aria-label="자동 녹화 채널 주소" placeholder="방송·채널 주소 또는 ID" maxLength={300} value={input} disabled={disabled} onChange={(event) => setInput(normalizeChannelDraft(event.target.value))}
+        onPaste={(event) => {
+          const channel = normalizeMultiviewChannel(event.clipboardData.getData("text"));
+          if (channel) { event.preventDefault(); setInput(channel); }
+        }} />
       <button type="submit" disabled={disabled || !input.trim() || snapshot.channels.length >= 32}>등록</button>
     </form>
     <RecordingLoadStatus error={pollError} hasSnapshot={hasSnapshot} subject="자동 녹화 목록" />

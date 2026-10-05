@@ -42,3 +42,30 @@
 button:disabled { cursor: default; }
 .recording-replay-chat-options button:disabled, .recording-replay-log-nav button:disabled { opacity: .45; }
 :focus-visible { outline: 2px solid var(--color-content-04); outline-offset: 2px; }
+/* Original badge tooltips portal directly to the shadow surface, outside the
+   theme wrapper. Supply an explicit dark pair, including the nested title. */
+._tooltip_1nwpy_6 { background:#292b2e; color:#f1f2f4; border:1px solid #484b50; }
+._tooltip_1nwpy_6 ._title_1nwpy_98, ._tooltip_1nwpy_6 ._description_1nwpy_65 { color:inherit; }
+._tooltip_1nwpy_6 ._tail_1nwpy_24 { color:#292b2e; fill:#292b2e; }
+.recording-replay-user-card { position:absolute; z-index:150; box-sizing:border-box; overflow:auto; padding:18px 14px 12px; border:1px solid #3b3d41; border-radius:12px; background:#202123; color:#eef0f5; box-shadow:0 8px 30px #0008; font-size:13px; line-height:1.5; animation:replay-card-open .14s ease-out; }
+.recording-replay-user-close { position:absolute; top:5px; right:8px; width:24px; height:24px; color:#a4acb9; font-size:21px; }
+.recording-replay-user-close:hover { color:#fff; }
+.recording-replay-user-heading { display:flex; align-items:center; gap:10px; padding-right:12px; }
+.recording-replay-user-heading > div { min-width:0; }
+.recording-replay-user-heading strong { display:block; overflow-wrap:anywhere; font-size:15px; }
+.recording-replay-user-avatar { display:grid; place-items:center; flex:none; width:50px; height:50px; object-fit:cover; border-radius:50%; background:#36383c; color:#cdd3dc; font-size:22px; }
+.recording-replay-user-badges { display:flex; align-items:center; flex-wrap:wrap; gap:4px; margin-top:5px; }
+.recording-replay-user-badges img { width:18px; height:18px; object-fit:contain; }
+.recording-replay-user-badges small { color:#adb7c7; font-size:10px; }
+.recording-replay-user-history { margin-top:12px; padding-top:8px; border-top:1px solid #33363b; }
+.recording-replay-user-history p { display:flex; align-items:center; gap:8px; margin:4px 0; }
+.recording-replay-user-history p > span { color:#a0acc0; }
+.recording-replay-user-history > small, .recording-replay-user-unknown { color:#a4acb9; font-size:11px; }
+.recording-replay-notice { margin:6px 0; padding:9px 10px; border:1px solid #326354; border-radius:8px; background:#142b25; }
+.recording-replay-notice[data-notice=mission] { background:#25223b; border-color:#625688; }
+.recording-replay-notice-heading { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-bottom:4px; padding-right:10px; color:#9de3c8; font-size:12px; }
+.recording-replay-notice[data-notice=mission] .recording-replay-notice-heading { color:#cfbaf4; }
+.recording-replay-mission-status { margin-left:auto; font-size:11px; }
+.recording-replay-mission-text { margin:5px 0 0; overflow-wrap:anywhere; color:#e2d8f6; font-size:13px; }
+@keyframes replay-card-open { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+@media (prefers-reduced-motion:reduce) { .recording-replay-user-card { animation:none; } }

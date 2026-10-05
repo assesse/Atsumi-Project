@@ -1,13 +1,16 @@
 pub mod application;
 mod autostart;
 mod community;
+mod diagnostics;
 pub mod domain;
 pub mod download_popularity;
+mod frontend_origin;
 pub mod infrastructure;
 pub mod interface;
 mod local_control;
 mod native_focus;
 mod personal_library;
+mod portable;
 mod renderer_recovery;
 pub mod source;
 mod startup;
@@ -956,6 +959,7 @@ pub fn initialize_startup_metrics() {
 #[inline(never)]
 pub fn run() -> tauri::Result<()> {
     startup::init_metrics();
+    diagnostics::init();
     startup::mark("process_entry");
     infrastructure::telemetry::init();
 
@@ -1107,9 +1111,7 @@ pub fn run() -> tauri::Result<()> {
                 if let Some(diagnostics) = view.app_handle().try_state::<Arc<ui_diagnostics::UiDiagnostics>>() {
                     diagnostics.record("document_loaded",serde_json::json!({"epoch":diagnostics.epoch()}));
                 }
-                if let Some(window) = view.app_handle().get_webview_window("main") {
-                    ui_diagnostics::start_sampling(&window);
-                }
+                ui_diagnostics::start_sampling(view);
             }
             if view.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                 if let Some(diagnostics) = view.app_handle().try_state::<Arc<ui_diagnostics::UiDiagnostics>>() { diagnostics.document_started(); }
@@ -1182,7 +1184,7 @@ pub fn run() -> tauri::Result<()> {
                     if let Some(diagnostics) = app.try_state::<Arc<ui_diagnostics::UiDiagnostics>>() {
                         diagnostics.record("manual_tray_reload",serde_json::json!({"epoch":diagnostics.epoch()}));
                     }
-                    if let Some(view) = app.get_webview_window("main") {
+                    if let Some(view) = app.get_webview("main") {
                         if let Err(error) = view.reload() {
                             tracing::warn!(%error, "manual main renderer reload failed");
                         }
@@ -1313,6 +1315,9 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::favorites_list,
             interface::commands::favorite_set,
             interface::commands::search_history_list,
+            interface::commands::search_history_remove,
+            interface::commands::search_history_clear,
+            interface::commands::download_root_choose,
             interface::commands::tag_catalog_status,
             interface::commands::tag_catalog_refresh,
             interface::commands::tag_suggestions_search,
@@ -1372,11 +1377,23 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::app_active_work_snapshot,
             interface::commands::app_quit,
         ]))
-        .run(tauri::generate_context!());
+        .build(tauri::generate_context!())
+        .map(|app| {
+            let mut normal_exit = true;
+            app.run(move |handle, event| match event {
+                tauri::RunEvent::ExitRequested { code, .. } => {
+                    normal_exit = code.is_none_or(|code| code == 0);
+                }
+                tauri::RunEvent::Exit if normal_exit => local_control::finish_clean_shutdown(handle),
+                _ => {}
+            });
+        });
 
     if let Err(ref error) = result {
         tracing::error!(error_type = %std::any::type_name_of_val(error), "Atsumi exited with an error");
     }
+    tracing::info!(diag_stage = "process_exited", success = result.is_ok());
+    diagnostics::flush();
     result
 }
 

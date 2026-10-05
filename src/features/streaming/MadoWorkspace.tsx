@@ -6,6 +6,7 @@ import { ConnectionSetup, accountStatus, type ConnectionMode } from "./Connectio
 import { FluentIcon } from "../../components/FluentIcon";
 import { hasBlockingNativeOverlay, observeNativeOverlayGeometry } from "./nativeOverlayGeometry";
 import { LiveChannelPicker } from "./LiveChannelPicker";
+import { tutorialStepEvent } from "../../tutorial/tourActions";
 import "./MadoWorkspace.css";
 
 type MadoLayout = { version: 1; direction: "horizontal" | "vertical"; horizontal: number; vertical: number };
@@ -113,11 +114,10 @@ export function NativeStreamingPane({ pane, epoch, api, privacy, suspended = fal
   </div>;
 }
 
-export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, api: suppliedApi, officialApi: suppliedOfficialApi }: { runtime: MultiviewApi["runtime"]; privacy: boolean; onLeave(): void; unifiedLive?: boolean; api?: MultiviewApi; officialApi?: OfficialBrowserApi }) {
+export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, tutorialActive = false, api: suppliedApi, officialApi: suppliedOfficialApi }: { runtime: MultiviewApi["runtime"]; privacy: boolean; onLeave(): void; unifiedLive?: boolean; tutorialActive?: boolean; api?: MultiviewApi; officialApi?: OfficialBrowserApi }) {
   const api = useMemo(() => suppliedApi ?? createMultiviewApi(runtime), [runtime, suppliedApi]);
   const officialApi = useMemo(() => suppliedOfficialApi ?? createOfficialBrowserApi(runtime), [runtime, suppliedOfficialApi]);
   const [account, setAccount] = useState(() => emptyOfficialBrowserSnapshot(runtime));
-  const [authRefreshing, setAuthRefreshing] = useState(false);
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>(unifiedLive ? "general" : "mado");
   const [inputs, setInputs] = useState(["", "", "", ""]);
   const [mode, setMode] = useState<"paired" | "chats">("paired");
@@ -152,7 +152,8 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     && requestedControl.id !== expiredControl && requestedControl.id !== dismissedControl && Number.isFinite(requestedControl.expiresAt) && requestedControl.expiresAt > Date.now() ? requestedControl : null;
   const canApprove = !!control && !pending && (control.action === "record_stop" ? isRecording(controlPane!) && controlPane!.recordingStatus !== "stopping"
     : !pollError && controlPane!.ready === true && (control.action !== "record_start" || !isRecording(controlPane!)));
-  const showingConnection = !privacy && !control && (settings || inlineDraft || !snapshot.active);
+  // The guide may explain connection controls without revealing or starting video/chat.
+  const showingConnection = (!privacy || (tutorialActive && settings)) && !control && (settings || inlineDraft || !snapshot.active);
   const editDraft = () => { edited.current = true; if (!settings) setInlineDraft(true); };
   const openSettings = () => {
     if (!unifiedLive) setConnectionMode("mado");
@@ -167,6 +168,16 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     setInlineDraft(false);
     setSettings(false);
   };
+  useEffect(() => {
+    const advanceGuide = () => {
+      if (document.documentElement.dataset.tutorialStep !== "chzzk-auto") return;
+      focusSettings.current = false;
+      setInlineDraft(false);
+      setSettings(false);
+    };
+    window.addEventListener(tutorialStepEvent, advanceGuide);
+    return () => window.removeEventListener(tutorialStepEvent, advanceGuide);
+  }, []);
   useEffect(() => {
     if (settings && !privacy && !control && focusSettings.current) {
       settingsClose.current?.focus();
@@ -357,6 +368,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     return message ? [{ paneId: pane.paneId, label: label(pane.channelId), message }] : [];
   });
   const connectionSetup = <ConnectionSetup mode={connectionMode} onMode={value => { editDraft(); setConnectionMode(value); }} modeDisabled={pending || layoutLocked}
+      runtime={runtime} privacy={privacy}
       receiverBacked={unifiedLive}
       channelPicker={unifiedLive ? <LiveChannelPicker runtime={runtime} inputs={inputs} multiple={connectionMode === "mado"} privacy={privacy} disabled={pending || layoutLocked || runtime !== "tauri"} onInputs={next => { editDraft(); setInputs(next); }} /> : undefined}
       inputs={inputs} onInput={(index, value) => { editDraft(); setInputs((rows) => rows.map((row, i) => i === index ? value : row)); }} disabled={pending || layoutLocked || runtime !== "tauri"} pending={pending} onConnect={apply} onClose={settings ? closeSettings : undefined} closeRef={settingsClose}
@@ -364,8 +376,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
       accountReason={activeRecording ? layoutLocked ? "녹화를 중지한 뒤 방송·모드·계정을 변경할 수 있습니다." : "녹화 중에는 계정을 변경할 수 없습니다. 방송 배치는 바꿀 수 있습니다." : undefined}
       onLogin={() => void run(async () => { const result = await officialApi.login(); if (result.ok) setAccount(result.data); else setError(result.error.message); })}
       onLogout={() => void run(async () => { const result = await officialApi.logout(); if (result.ok) setAccount(result.data); else setError(result.error.message); })}
-      authChecking={authRefreshing || account.authChecking} authError={account.authError} refreshDisabled={pending || account.accountBusy === true || runtime !== "tauri"}
-      onRefresh={() => void run(async () => { setAuthRefreshing(true); try { const result = await officialApi.snapshot(true); if (result.ok) setAccount(result.data); else setError(result.error.message); } finally { setAuthRefreshing(false); } })}
+      authChecking={account.authChecking} authError={account.authError}
       onGrid={() => void run(async () => { const result = await officialApi.connectExtension(); if (result.ok) setAccount(result.data); else setError(result.error.message); })}
       gridDisabled={pending || activeRecording || runtime !== "tauri" || (!account.windowOpen && !snapshot.active)} gridStatus={account.extensionStatus === "not_connected" ? "미연결" : account.extensionStatus ?? "상태 확인 전"}
       onInstaller={(browser) => void run(async () => { const result = await officialApi.openInstaller(browser); if (!result.ok) setError(result.error.message); })} installerDisabled={pending || activeRecording || runtime !== "tauri"}
@@ -379,7 +390,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     />;
   return <section className="mado-workspace" aria-label={unifiedLive ? "라이브 시청" : "마도 모드"}>
     <header className="mado-toolbar"><strong title="최대 네 방송의 영상과 채팅을 배치합니다">{unifiedLive ? "라이브" : "마도"}</strong>
-      <button type="button" onClick={openSettings}>{unifiedLive ? "내 채널" : "연결 설정"}</button>
+      <button type="button" data-tour="chzzk-channels" onClick={openSettings}>{unifiedLive ? "방송 보기" : "연결 설정"}</button>
       {unifiedLive && snapshot.active ? <button type="button" disabled={pending || layoutLocked} title="화면과 소리만 닫습니다. 녹화는 계속됩니다." onClick={leave}>시청 종료</button> : null}
       {appliedMode === "chats" && snapshot.active ? <button type="button" onClick={() => setLayout((current) => ({ ...current, direction: current.direction === "horizontal" ? "vertical" : "horizontal" }))} title="영상과 채팅의 배치 방향을 바꿉니다. 분할선은 끌거나 방향키로 조절할 수 있습니다.">{layout.direction === "horizontal" ? "위아래 배치" : "좌우 배치"}</button> : null}
       {!privacy && warnings.length ? <div className="mado-notices">{warnings.map(warning => <span key={warning.paneId} className="mado-chat-warning" role="alert" tabIndex={0} title={`${warning.label} · ${warning.message}`} aria-label={`${warning.label} · ${warning.message}`}>⚠ {warning.label} · 확인 필요</span>)}</div> : null}
@@ -387,7 +398,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     {showingConnection ? settings ? <div ref={settingsPanel} className="official-browser-dialog-backdrop mado-connection-panel" role="dialog" aria-modal="false" data-native-overlay="true" data-native-preserve-video="true" data-native-interactive-background="true" aria-label="연결 설정" onKeyDown={(event) => {
       if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); closeSettings(); }
     }}>{connectionSetup}</div> : <div className="mado-connection-inline">
-      <p className="mado-connection-intro">{unifiedLive ? "내 채널을 선택하거나 방송 주소를 입력해 시청을 시작하세요. 저장한 영상은 녹화 목록에서 볼 수 있습니다." : "방송 주소를 입력하고 원하는 배치로 시청을 시작하세요."}</p>
+      <p className="mado-connection-intro">{unifiedLive ? "저장한 채널을 선택하거나 방송 주소를 입력해 시청을 시작하세요. 저장한 영상은 녹화 목록에서 볼 수 있습니다." : "방송 주소를 입력하고 원하는 배치로 시청을 시작하세요."}</p>
       {connectionSetup}
     </div> : null}
     {(error || pollError) && !control ? <div className="mado-error" role="alert" data-native-overlay="true"><span>{error || pollError}</span>{error ? <button type="button" aria-label="오류 닫기" onClick={() => setError(null)}>×</button> : null}</div> : null}

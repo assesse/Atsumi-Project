@@ -72,6 +72,7 @@ describe("album cancellation without session activity", () => {
       await explore(container);
       const card = container.querySelector<HTMLElement>(`[data-gallery-id="${items[0]!.id}"]`)!;
       await act(async () => { card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })); await settle(); });
+      await act(async () => { [...document.body.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find((item) => item.textContent === "상세 열기")!.click(); await settle(); });
       const button = container.querySelector<HTMLButtonElement>('.detail-title-actions [aria-label="다운로드 취소"]')!;
       expect(button).toBeEnabled();
       await act(async () => button.click());
@@ -95,7 +96,7 @@ describe("album cancellation without session activity", () => {
       for (let index = 0; index < items.length; index++) {
         const card = container.querySelector<HTMLElement>(`[data-gallery-id="${items[index]!.id}"]`)!;
         expect(card).not.toBeNull();
-        await act(async () => card.querySelector<HTMLButtonElement>(".card-select-toggle")!.click());
+        await act(async () => card.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 })));
       }
       const button = [...container.querySelectorAll<HTMLButtonElement>(".selection-toolbar button")].find((item) => item.textContent?.includes("다운로드 취소"))!;
       expect(button).toHaveTextContent("다운로드 취소 · 2개");

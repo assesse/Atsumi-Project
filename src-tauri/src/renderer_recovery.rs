@@ -33,13 +33,14 @@ pub(crate) fn request_reload(
         if !recorder.may_reload(&epoch, hung) {
             return;
         }
-        let Some(view) = app.get_webview_window("main") else {
+        let Some(view) = app.get_webview("main") else {
             return;
         };
+        let window = view.window();
         if hung
-            && (!view.is_focused().unwrap_or(false)
-                || !view.is_visible().unwrap_or(false)
-                || view.is_minimized().unwrap_or(true))
+            && (!window.is_focused().unwrap_or(false)
+                || !window.is_visible().unwrap_or(false)
+                || window.is_minimized().unwrap_or(true))
         {
             recorder.cancel_reload(&epoch, "lost_foreground");
             return;

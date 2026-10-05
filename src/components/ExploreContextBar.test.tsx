@@ -11,7 +11,7 @@ describe("ExploreContextBar", () => {
     try {
       await act(async () => root.render(<ExploreContextBar
         tabs={[{ id: "first", label: "artist:alpha", busy: true }]}
-        activeId="first" onActivate={vi.fn()} onBack={vi.fn()} onClose={onClose}
+        activeId="first" onActivate={vi.fn()} onClose={onClose}
       />));
       expect(container.querySelectorAll('[role="tab"]')).toHaveLength(1);
       expect(container).not.toHaveTextContent("전체 탐색");
@@ -33,12 +33,12 @@ describe("ExploreContextBar", () => {
           ]}
           activeId="artist"
           onActivate={onActivate}
-          onBack={vi.fn()}
           onClose={vi.fn()}
         />,
       ));
 
       const tabs = container.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+      expect(container.querySelector('[aria-label="이전 탐색으로 돌아가기"]')).toBeNull();
       expect(tabs).toHaveLength(2);
       expect(tabs[0]).toHaveAccessibleName("첫 검색, 1 / 17 페이지");
       expect(tabs[1]).toHaveAccessibleName("Kindatsu, 1 / 1 페이지");
@@ -68,7 +68,6 @@ describe("ExploreContextBar", () => {
           ]}
           activeId="root"
           onActivate={vi.fn()}
-          onBack={vi.fn()}
           onClose={vi.fn()}
         />,
       ));

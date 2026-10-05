@@ -340,25 +340,28 @@ impl ReplayAssetCache {
                             continue;
                         }
                         let mut fetched = fetch(&url);
-                        if profile_capture {
-                            for _ in 0..2 {
-                                if fetched.is_ok() || run.cancel.load(Ordering::Acquire) {
-                                    break;
-                                }
-                                fetched = fetch(&url);
+                        for attempt in 0..2 {
+                            if fetched.is_ok() || fetched.as_ref().err().is_some_and(|error| error.code == "CHAT_ASSET_INVALID") || run.cancel.load(Ordering::Acquire) {
+                                break;
                             }
+                            // Bounded, cancellable backoff on this image worker only.
+                            for _ in 0..(2 << attempt) {
+                                if run.cancel.load(Ordering::Acquire) { break; }
+                                thread::sleep(Duration::from_millis(50));
+                            }
+                            if run.cancel.load(Ordering::Acquire) { break; }
+                            fetched = fetch(&url);
                         }
-                        let Ok(data) = fetched else {
-                            if profile_capture {
-                                tracing::warn!(
-                                    "recording channel image unavailable after bounded retries"
-                                );
+                        let data = match fetched {
+                            Ok(data) => data,
+                            Err(error) => {
+                                tracing::warn!(asset_id = %id, code = %error.code, profile_capture, "recording chat image unavailable after bounded retries");
+                                continue;
                             }
-                            continue;
                         };
-                        if let Ok(size) = store_data(&run.root, &id, &data) {
-                            used = used.saturating_add(size);
-                            count += 1;
+                        match store_data(&run.root, &id, &data) {
+                            Ok(size) => { used = used.saturating_add(size); count += 1; }
+                            Err(error) => tracing::warn!(asset_id = %id, code = %error.code, "recording chat image shared cache write failed"),
                         }
                         data
                     };
@@ -366,8 +369,8 @@ impl ReplayAssetCache {
                         break;
                     }
                     if let Some(root) = recording {
-                        if mirror_recording(&root, &id, &data, &mut recording_budgets).is_err() && profile_capture {
-                            tracing::warn!(asset_id = %id, "recording channel image could not be preserved locally");
+                        if mirror_recording(&root, &id, &data, &mut recording_budgets).is_err() {
+                            tracing::warn!(asset_id = %id, profile_capture, "recording chat image could not be preserved locally");
                         }
                     }
                 }
@@ -425,13 +428,7 @@ impl ReplayAssetCache {
         let Ok(mut seen) = self.state.seen.try_lock() else {
             return;
         };
-        for url in rich
-            .badges
-            .iter()
-            .map(|badge| &badge.image_url)
-            .chain(rich.emojis.iter().map(|emoji| &emoji.image_url))
-            .take(24)
-        {
+        for url in rich.asset_urls().take(25) {
             if seen.len() >= MAX_FILES {
                 break;
             }
@@ -678,6 +675,71 @@ mod tests {
         let disabled = ReplayAssetCache::new(dir.path(), false).unwrap();
         disabled.submit(Some(&rich));
         disabled.shutdown_and_wait();
+    }
+
+    #[test]
+    fn emoji_retries_are_bounded_and_profile_assets_are_mirrored_offline() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = calls.clone();
+        let cache = ReplayAssetCache::with_fetch(
+            dir.path(),
+            true,
+            Arc::new(move |_| {
+                if count.fetch_add(1, Ordering::SeqCst) < 2 {
+                    Err(unavailable())
+                } else {
+                    Ok(data())
+                }
+            }),
+        )
+        .unwrap();
+        let rich = ChatRich {
+            profile_image_url: Some("https://ssl.pstatic.net/portrait.png".into()),
+            emojis: vec![super::super::model::ChatEmoji {
+                id: "wave".into(),
+                image_url: "https://ssl.pstatic.net/emoji.png".into(),
+            }],
+            ..Default::default()
+        };
+        for _ in 0..50 {
+            cache.submit_recording(&root, Some(&rich));
+        }
+        let id = asset_id(rich.profile_image_url.as_ref().unwrap()).unwrap();
+        let emoji = asset_id(&rich.emojis[0].image_url).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while read_recording(&root, &id).is_err() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        cache.shutdown_and_wait();
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        assert!(read_recording(&root, &id).is_ok() && read_recording(&root, &emoji).is_ok());
+
+        let failed_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let failed = failed_calls.clone();
+        let other = tempfile::tempdir().unwrap();
+        let cache = ReplayAssetCache::with_fetch(
+            other.path(),
+            true,
+            Arc::new(move |_| {
+                failed.fetch_add(1, Ordering::SeqCst);
+                Err(unavailable())
+            }),
+        )
+        .unwrap();
+        for _ in 0..100 {
+            cache.submit(Some(&ChatRich {
+                profile_image_url: rich.profile_image_url.clone(),
+                ..Default::default()
+            }));
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while failed_calls.load(Ordering::SeqCst) < 3 && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        cache.shutdown_and_wait();
+        assert_eq!(failed_calls.load(Ordering::SeqCst), 3);
     }
 
     #[test]
