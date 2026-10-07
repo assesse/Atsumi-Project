@@ -487,8 +487,11 @@ export function DanbooruWorkspace({
         collapsed={railCollapsed}
         autoFindCount={0}
         attentionCount={downloadsPage?.total ?? downloadedIds.size}
-        sourceLabel={backend.runtime === "tauri" ? "Danbooru live" : "Danbooru fixture"}
         source="danbooru"
+        privacyMode={privacyMode}
+        privacyModePending={privacyModePending}
+        onPrivacyModeToggle={onPrivacyModeToggle}
+        onSettings={onOpenSettings}
         onNavigate={navigate}
         onSourceChange={onSourceChange}
         onToggle={onToggleRail}
@@ -533,8 +536,6 @@ export function DanbooruWorkspace({
               <FluentIcon glyph="\uE9D9" />
               {activityCount > 0 ? <span className="activity-count">{activityCount}</span> : null}
             </button>
-            <button type="button" className={`icon-button${privacyMode ? " is-active" : ""}`} title={privacyMode ? "미리보기 표시" : "미리보기 가리기"} aria-label="프라이버시 모드" aria-pressed={privacyMode} aria-busy={privacyModePending || undefined} disabled={privacyModePending} onClick={onPrivacyModeToggle}><FluentIcon glyph="\uE890" /></button>
-            <button type="button" className="icon-button" title="설정" aria-label="설정" onClick={onOpenSettings}><FluentIcon glyph="\uE713" /></button>
           </div>
         </header>
 

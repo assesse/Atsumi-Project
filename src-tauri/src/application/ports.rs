@@ -326,6 +326,11 @@ pub trait AutomationRepository: Send + Sync {
 
     fn exploration_exclusions_list(&self) -> Result<Vec<ExplorationExclusion>, RepositoryError>;
 
+    fn exploration_exclusion_context(
+        &self,
+        gallery_id: GalleryId,
+    ) -> Result<crate::domain::ExplorationExclusionContext, RepositoryError>;
+
     fn exploration_exclusions_restore(
         &self,
         gallery_ids: &[GalleryId],

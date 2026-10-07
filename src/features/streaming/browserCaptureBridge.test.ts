@@ -191,11 +191,11 @@ describe("encoded capture integration", () => {
   it("uses an approved encoded session without creating a second MediaRecorder and drains chat before finish", async () => {
     const h = fixture({ originalOnly: true }); const order: string[] = [];
     const state = { active: false, starting: false, stopping: false, recordingId: RECORDING, channelId: CHANNEL, detail: "recording" };
-    let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void } | undefined;
+    let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void; onStarted(response: unknown, video: unknown): void } | undefined;
     const encoded = {
       canStart: (video: unknown) => video === h.video,
       getStatus: () => state,
-      start: vi.fn(async (_command: unknown, supplied: typeof hooks) => { hooks = supplied; state.active = true; return { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true }; }),
+      start: vi.fn(async (_command: unknown, supplied: typeof hooks) => { hooks = supplied; state.active = true; const response = { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true }; hooks!.onStarted(response, h.video); return response; }),
       stop: vi.fn(async () => { state.stopping = true; await hooks!.beforeFinish(RECORDING); order.push("finish"); state.active = false; hooks!.onStatus("saved"); return { stopped: true }; }),
     };
     h.window.__atsumiEncodedCapture = encoded;
@@ -232,10 +232,10 @@ describe("encoded capture integration", () => {
   });
   it("still finalizes encoded video when chat drain throws synchronously", async () => {
     const h = fixture(); const state = { active: false, stopping: false, recordingId: RECORDING, channelId: CHANNEL, detail: "encoded_recording" };
-    let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void };
+    let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void; onStarted(response: unknown, video: unknown): void };
     const finish = vi.fn();
     h.window.__atsumiEncodedCapture = { canStart: () => true, getStatus: () => state,
-      start: async (_command: unknown, supplied: typeof hooks) => { hooks = supplied; state.active = true; return { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true }; },
+      start: async (_command: unknown, supplied: typeof hooks) => { hooks = supplied; state.active = true; const response = { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true }; hooks.onStarted(response, h.video); return response; },
       stop: async () => { state.stopping = true; await hooks.beforeFinish(RECORDING); finish(); state.active = false; hooks.onStatus("encoded_saved"); } };
     h.window.__atsumiPageChat = { start: () => true, stop: () => { throw new Error("chat failure"); } };
     h.command("start"); await flush();
@@ -247,10 +247,10 @@ describe("encoded capture integration", () => {
   });
   it("bounds a stuck encoded chat drain so native exit can still finish the video", async () => {
     const h = fixture(); const state = { active: false, recordingId: RECORDING, channelId: CHANNEL, detail: "encoded_recording" };
-    let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void };
+    let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void; onStarted(response: unknown, video: unknown): void };
     const finish = vi.fn();
     h.window.__atsumiEncodedCapture = { canStart: () => true, getStatus: () => state,
-      start: async (_command: unknown, supplied: typeof hooks) => { hooks = supplied; state.active = true; return { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true }; },
+      start: async (_command: unknown, supplied: typeof hooks) => { hooks = supplied; state.active = true; const response = { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true }; hooks.onStarted(response, h.video); return response; },
       stop: async () => { await hooks.beforeFinish(RECORDING); finish(); state.active = false; hooks.onStatus("encoded_saved"); } };
     h.window.__atsumiPageChat = { start: () => true, stop: () => new Promise(() => {}) };
     h.command("start"); await flush(); h.command("stop"); await flush();

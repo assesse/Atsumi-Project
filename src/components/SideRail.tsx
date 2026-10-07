@@ -15,12 +15,14 @@ type SideRailProps<Source extends ContentSource> = {
   collapsed: boolean;
   autoFindCount: number;
   attentionCount: number;
-  sourceLabel: string;
   source: Source;
   onNavigate: (view: WorkspaceViewId<Source>) => void;
   onSourceChange: (source: ContentSource) => void;
   onToggle: () => void;
   onSettings?: () => void;
+  privacyMode?: boolean;
+  privacyModePending?: boolean;
+  onPrivacyModeToggle?: () => void;
   personalLibraryOpen?: boolean;
   onOpenPersonalLibrary?: () => void;
 };
@@ -30,12 +32,14 @@ export function SideRail<Source extends ContentSource>({
   collapsed,
   autoFindCount,
   attentionCount,
-  sourceLabel,
   source,
   onNavigate,
   onSourceChange,
   onToggle,
   onSettings,
+  privacyMode = false,
+  privacyModePending = false,
+  onPrivacyModeToggle,
   personalLibraryOpen = false,
   onOpenPersonalLibrary,
 }: SideRailProps<Source>) {
@@ -63,7 +67,7 @@ export function SideRail<Source extends ContentSource>({
   const visibleItems = workspace.navigation as readonly WorkspaceNavigationItem<WorkspaceViewId<Source>>[];
   const badgeCounts = { autoFindCount, attentionCount };
   return (
-    <aside ref={railRef} className="sidebar" aria-label="주 메뉴">
+    <aside ref={railRef} className="sidebar" aria-label="주 메뉴" data-collapsed={collapsed}>
       <button
         type="button"
         className={`brand${sourceMenuOpen ? " is-open" : ""}`}
@@ -125,21 +129,20 @@ export function SideRail<Source extends ContentSource>({
       </nav>
 
       <div className="sidebar-foot">
-        {onSettings ? <button type="button" className="icon-button" title="설정" aria-label="설정" onClick={onSettings}><FluentIcon glyph="\uE713" /></button> : null}
-        <span className="live-indicator">
-          <i />
-          <span className="nav-label">{sourceLabel}</span>
-        </span>
-        <button
-          type="button"
-          className="icon-button sidebar-toggle"
-          title={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
-          aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
-          onClick={onToggle}
-        >
-          <FluentIcon glyph={collapsed ? "\uE76C" : "\uE76B"} />
-        </button>
+        {source !== "chzzk" && onPrivacyModeToggle ? <button
+          type="button" className={`nav-item sidebar-privacy${privacyMode ? " is-active" : ""}`}
+          title={`프라이버시 모드 ${privacyMode ? "켜짐" : "꺼짐"}`}
+          aria-label="프라이버시 모드" data-tour="privacy-mode" aria-pressed={privacyMode}
+          aria-busy={privacyModePending || undefined} disabled={privacyModePending} onClick={onPrivacyModeToggle}
+        ><FluentIcon glyph="\uE890" /><span className="nav-label">프라이버시 모드</span></button> : null}
+        {onSettings ? <button type="button" className="nav-item" data-tour="hitomi-settings" title="설정" aria-label="설정" onClick={onSettings}><FluentIcon glyph="\uE713" /><span className="nav-label">설정</span></button> : null}
       </div>
+      <button
+        type="button" className="sidebar-boundary"
+        title={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
+        aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"} aria-expanded={!collapsed}
+        onClick={onToggle}
+      ><FluentIcon glyph={collapsed ? "\uE76C" : "\uE76B"} /></button>
     </aside>
   );
 }

@@ -91,13 +91,14 @@ export function UpdateDialog({ open, state, onLater, onInstall }: UpdateDialogPr
         ) : null}
 
         <p className="update-security-note">
-          Windows 게시자 인증서는 사용하지 않지만, 업데이트 파일은 Atsumi 전용 업데이트 키로 검증한 뒤 설치합니다.
+          Windows 게시자 인증서는 사용하지 않지만, 업데이트 파일은 Atsumi 전용 업데이트 키로 검증한 뒤 적용합니다.
+          {state.info?.portable ? " 무설치판은 현재 폴더의 프로그램만 교체하며 설정·다운로드·녹화는 유지합니다." : ""}
         </p>
 
         {busy ? (
           <div className="update-progress" role="status" aria-live="polite">
             <div>
-              <strong>{state.phase === "installing" ? "설치 중" : "다운로드 중"}</strong>
+              <strong>{state.phase === "installing" ? "업데이트 적용 중" : "다운로드 중"}</strong>
               <span>
                 {state.phase === "installing"
                   ? "완료되면 앱을 다시 시작합니다."
@@ -115,7 +116,7 @@ export function UpdateDialog({ open, state, onLater, onInstall }: UpdateDialogPr
         <footer className="update-dialog-actions">
           <button type="button" className="text-button" disabled={busy} onClick={onLater}>나중에</button>
           <button ref={installButton} type="button" className="text-button primary" disabled={busy || !state.info} onClick={onInstall}>
-            {state.phase === "error" ? "다시 시도" : state.phase === "installing" ? "설치 중" : state.phase === "downloading" ? "다운로드 중" : "다운로드 및 설치"}
+            {state.phase === "error" ? "다시 시도" : state.phase === "installing" ? "업데이트 적용 중" : state.phase === "downloading" ? "다운로드 중" : state.info?.portable ? "다운로드 및 적용" : "다운로드 및 설치"}
           </button>
         </footer>
       </div>

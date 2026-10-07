@@ -6,10 +6,12 @@ import { useAppUpdater, type UpdateInstallGuard } from "./useAppUpdater";
 const pluginMocks = vi.hoisted(() => ({
   check: vi.fn(),
   relaunch: vi.fn(),
+  invoke: vi.fn(async (_command: string) => "installed"),
 }));
 
 vi.mock("@tauri-apps/plugin-updater", () => ({ check: pluginMocks.check }));
 vi.mock("@tauri-apps/plugin-process", () => ({ relaunch: pluginMocks.relaunch }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: pluginMocks.invoke, Channel: class { onmessage?: (value: unknown) => void } }));
 
 type HarnessProps = {
   runtime: "tauri" | "browser-mock";
@@ -26,9 +28,38 @@ function Harness({ runtime, onReady, guard }: HarnessProps) {
 afterEach(() => {
   pluginMocks.check.mockReset();
   pluginMocks.relaunch.mockReset();
+  pluginMocks.invoke.mockReset().mockResolvedValue("installed");
 });
 
 describe("useAppUpdater", () => {
+  it("uses a portable-only target and native helper, never the installer or old-app relaunch", async () => {
+    pluginMocks.invoke.mockImplementation(async (command: string) => command === "app_update_mode" ? "portable" : "");
+    const downloadAndInstall = vi.fn();
+    pluginMocks.check.mockResolvedValue({ currentVersion: "2.1.1", version: "2.1.2", downloadAndInstall, close: vi.fn(async () => undefined) });
+    const container = document.createElement("div"); const root = createRoot(container);
+    let updater!: ReturnType<typeof useAppUpdater>;
+    const guard = { acquire: vi.fn(async () => undefined), release: vi.fn(async () => undefined) };
+    try {
+      await act(async () => root.render(<Harness runtime="tauri" guard={guard} onReady={value => { updater = value; }} />));
+      expect(pluginMocks.check).toHaveBeenCalledWith({ timeout: 10_000, target: "windows-x86_64-portable" });
+      expect(updater.state.info?.portable).toBe(true);
+      await act(async () => updater.installUpdate());
+      expect(guard.acquire).toHaveBeenCalledOnce();
+      expect(pluginMocks.invoke).toHaveBeenCalledWith("app_update_portable", expect.objectContaining({ version: "2.1.2" }));
+      expect(downloadAndInstall).not.toHaveBeenCalled(); expect(pluginMocks.relaunch).not.toHaveBeenCalled();
+    } finally { await act(async () => root.unmount()); }
+  });
+  it("does not offer installer updates to a development build or an unknown distribution", async () => {
+    for (const mode of ["development", "unknown"]) {
+      pluginMocks.invoke.mockResolvedValue(mode);
+      const container = document.createElement("div"); const root = createRoot(container);
+      let updater!: ReturnType<typeof useAppUpdater>;
+      try {
+        await act(async () => root.render(<Harness runtime="tauri" onReady={value => { updater = value; }} />));
+        expect(updater.state.phase).toBe("idle"); expect(pluginMocks.check).not.toHaveBeenCalled();
+      } finally { await act(async () => root.unmount()); }
+    }
+  });
   it("does not install or relaunch while a recording holds the backend reservation", async () => {
     const downloadAndInstall = vi.fn();
     const guard = { acquire: vi.fn(async () => { throw new Error("녹화를 중지한 후 업데이트해 주세요."); }), release: vi.fn(async () => undefined) };

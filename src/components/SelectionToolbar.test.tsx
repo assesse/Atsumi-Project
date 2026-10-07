@@ -11,6 +11,21 @@ const callbacks = {
 };
 
 describe("SelectionToolbar", () => {
+  it("offers direct comparison only in download multi-selection and requires exactly two items", async () => {
+    const container = document.createElement("div"); const root = createRoot(container); const compare = vi.fn();
+    try {
+      await act(async () => root.render(<SelectionToolbar active count={3} downloadsView onCompare={compare} {...callbacks} />));
+      const find = () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "직접 대조");
+      expect(find()).toBeDisabled();
+      await act(async () => root.render(<SelectionToolbar active count={2} downloadsView onCompare={compare} {...callbacks} />));
+      expect(find()).toBeEnabled();
+      await act(async () => find()!.click()); expect(compare).toHaveBeenCalledOnce();
+      await act(async () => root.render(<SelectionToolbar active count={2} downloadsView={false} onCompare={compare} {...callbacks} />));
+      expect(find()).toBeUndefined();
+      await act(async () => root.render(<SelectionToolbar active={false} count={1} downloadsView onCompare={compare} {...callbacks} />));
+      expect(find()).toBeUndefined();
+    } finally { await act(async () => root.unmount()); }
+  });
   it("offers cancellation only for eligible items and locks actions while pending", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);

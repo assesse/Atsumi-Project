@@ -55,6 +55,7 @@ type PreviewOverlayPosition = {
 };
 
 const PREVIEW_GAP = 12;
+const folderType = (group: GalleryGroup) => group.key.startsWith("artist\u001fgroup\u001f") ? "그룹 폴더" : "작가 폴더";
 
 const expectedRatio = (gallery: Gallery): { width: number; height: number } | undefined => (
   gallery.thumbnailWidth && gallery.thumbnailHeight
@@ -257,7 +258,7 @@ export function DownloadArtistFolderGrid({
                       className="download-artist-folder-button"
                       aria-expanded={!collapsed}
                       aria-controls={collapsed ? undefined : `${headingId}-contents`}
-                      aria-label={`${group.label} 작가 폴더, ${group.items.length}개 작품, ${collapsed ? "열기" : "접기"}`}
+                      aria-label={`${group.label} ${folderType(group)}, ${group.items.length}개 작품, ${collapsed ? "열기" : "접기"}`}
                       onFocus={(event) => {
                         const anchor = event.currentTarget.querySelector<HTMLElement>(".download-artist-folder-preview-stack");
                         if (collapsed && anchor && event.currentTarget.matches(":focus-visible")) {
@@ -299,7 +300,7 @@ export function DownloadArtistFolderGrid({
                           />
                         ) : null}
                         <i className="download-artist-folder-tab" aria-hidden="true" />
-                        <span className="download-artist-folder-type">작가 폴더</span>
+                        <span className="download-artist-folder-type">{folderType(group)}</span>
                       </span>
                       <span className="download-artist-folder-copy">
                         <strong className="download-artist-folder-name">{group.label}</strong>
@@ -345,7 +346,7 @@ export function DownloadArtistFolderGrid({
                 >
                   <header>
                     <div>
-                      <span>작가 폴더</span>
+                      <span>{folderType(group)}</span>
                       <strong>{group.label}</strong>
                       <small>{group.items.length.toLocaleString()}개 작품</small>
                     </div>

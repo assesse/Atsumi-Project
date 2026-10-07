@@ -380,7 +380,7 @@ describe("OfficialBrowserPanel", () => {
     expect(button("저장 중…")).toBeDisabled();
     await act(async () => stopped.resolve(success(ready({ recordings: [recordingFixture({ status: "stopped" })] }))));
     await act(async () => help("녹화 상태").focus());
-    expect(container).toHaveTextContent("저장 완료");
+    expect(container).toHaveTextContent("재생 준비 중");
     await act(async () => help("녹화 상태").blur());
     expect(button("녹화 중지")).toBeUndefined();
     await act(async () => help("녹화").focus());

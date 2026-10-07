@@ -69,28 +69,34 @@ jobs:
       - name: Prepare pinned recording merge tools
         run: ./tools/prepare_media_tools.ps1
 
-      - name: Build draft release and updater metadata
-        uses: tauri-apps/tauri-action@v0.6.2
+      - name: Build signed installer and portable packages
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        with:
-          tagName: v__VERSION__
-          releaseName: Atsumi v__VERSION__
-          releaseBody: |
-            Atsumi Windows update.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          pnpm exec tauri build --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw 'Tauri build failed' }
+          ./tools/prepare_portable.ps1
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          pnpm exec tauri signer sign --password= ".runtime/portable-v$version/Atsumi-Portable.zip"
+          if ($LASTEXITCODE -ne 0) { throw 'Portable signing failed' }
+          node tools/prepare_release.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Release verification failed' }
 
-            This build is unsigned for Windows Authenticode. The in-app updater
-            still verifies the artifact with the Atsumi updater key.
-          releaseDraft: true
-          prerelease: false
-          includeUpdaterJson: true
-          updaterJsonPreferNsis: true
-          assetNamePattern: Atsumi-Setup[ext]
-
-      - name: Remove standalone updater signature asset
+      - name: Upload verified draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
-          gh release delete-asset "v$packageVersion" "Atsumi-Setup.exe.sig" --repo "$env:GITHUB_REPOSITORY" --yes
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $existing = gh release view "v$version" --repo "$env:GITHUB_REPOSITORY" --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if (-not ($existing | ConvertFrom-Json).isDraft) {
+              Write-Output 'Release already published; immutable public assets were not changed.'
+              exit 0
+            }
+          } else {
+            gh release create "v$version" --verify-tag --draft --title "Atsumi v$version" --notes-file "docs/releases/v$version.md" --repo "$env:GITHUB_REPOSITORY"
+            if ($LASTEXITCODE -ne 0) { throw 'Draft creation failed' }
+          }
+          gh release upload "v$version" ".runtime/release-v$version/Atsumi-Setup.exe" ".runtime/release-v$version/Atsumi-Portable.zip" ".runtime/release-v$version/latest.json" --clobber --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw 'Draft upload failed' }

@@ -51,6 +51,7 @@ import type {
   ExplorationDataResetRequest,
   ExplorationDataResetResult,
   ExplorationExclusion,
+  ExplorationExclusionContext,
   ExplorationExclusionRestoreResult,
   FavoriteKey,
   FavoriteMutationResult,
@@ -162,6 +163,7 @@ export interface BackendClient {
   autoFindCancel(): Promise<ApiResult<AutoFindRun>>;
   autoFindExclude(galleryIds: GalleryId[], reason: string): Promise<ApiResult<AutoFindExclusionResult>>;
   explorationExclusionsList(): Promise<ApiResult<ExplorationExclusion[]>>;
+  explorationExclusionContext(galleryId: GalleryId): Promise<ApiResult<ExplorationExclusionContext>>;
   explorationExclusionsRestore(galleryIds: GalleryId[]): Promise<ApiResult<ExplorationExclusionRestoreResult>>;
   duplicateSnapshot(): Promise<ApiResult<DuplicateSnapshot>>;
   duplicateScanStart(galleryIds?: GalleryId[]): Promise<ApiResult<DuplicateScanRun>>;
@@ -1616,6 +1618,37 @@ class BrowserMockBackend implements BackendClient {
     return ok([...grouped.values()]
       .map((item) => ({ ...item, reasons: item.reasons.map((reason) => ({ ...reason })) }))
       .sort((left, right) => right.galleryId - left.galleryId));
+  }
+
+  async explorationExclusionContext(id: GalleryId): Promise<ApiResult<ExplorationExclusionContext>> {
+    if (!Number.isSafeInteger(id) || id <= 0) return validationError("galleryId", "must be a positive integer");
+    const exclusions = await this.explorationExclusionsList();
+    if (!exclusions.ok) return exclusions;
+    const context: ExplorationExclusionContext = {
+      galleryId: id, reasons: exclusions.data.find((item) => item.galleryId === id)?.reasons ?? [],
+      quarantined: [...this.downloadEntries.values()].some((entry) => entry.galleryId === id && entry.state === "quarantined"),
+      quarantineEntryId: [...this.downloadEntries.values()].find((entry) => entry.galleryId === id && entry.state === "quarantined")?.entryId ?? null,
+      reviewId: null, reviewGalleryId: null, legacyCandidateId: null, retainedGallery: null,
+    };
+    if (!this.isDuplicateExplorationExcluded(id)) return ok(context);
+    const decisions = [...this.downloadOverlapReviews.values()].flatMap((review) => (review.decisions ?? []).flatMap((decision) => {
+      const candidate = review.candidates.find((item) => item.candidateId === decision.candidateId)
+        ?? (!decision.candidateId && review.candidates.length === 1 ? review.candidates[0] : undefined);
+      if (!candidate) return [];
+      const source = decision.action === "remove_incoming" ? review.incoming
+        : decision.action === "remove_existing_continue" ? candidate.existing : undefined;
+      const target = decision.action === "remove_incoming" ? candidate.existing : review.incoming;
+      return source?.galleryId === id ? [{ review, target, at: decision.createdAt }] : [];
+    })).sort((left, right) => right.at.localeCompare(left.at));
+    const decision = decisions[0];
+    if (decision) {
+      context.reviewId = decision.review.reviewId;
+      context.reviewGalleryId = decision.review.incoming.galleryId;
+      const target = decision.target;
+      if (this.downloadEntries.get(target.entryId)?.state === "completed" && !this.isDuplicateExplorationExcluded(target.galleryId)
+        && !this.autoFindExclusions.has(target.galleryId)) context.retainedGallery = { galleryId: target.galleryId, title: target.title };
+    }
+    return ok(context);
   }
 
   async explorationExclusionsRestore(
@@ -3544,6 +3577,10 @@ class TauriBackend implements BackendClient {
 
   explorationExclusionsList(): Promise<ApiResult<ExplorationExclusion[]>> {
     return invoke("exploration_exclusions_list");
+  }
+
+  explorationExclusionContext(galleryId: GalleryId): Promise<ApiResult<ExplorationExclusionContext>> {
+    return invoke("exploration_exclusion_context", { galleryId });
   }
 
   explorationExclusionsRestore(

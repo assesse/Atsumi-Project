@@ -1212,6 +1212,14 @@ impl AutomationRepository for SqliteRepository {
         read_exploration_exclusions(&connection)
     }
 
+    fn exploration_exclusion_context(
+        &self,
+        gallery_id: GalleryId,
+    ) -> Result<crate::domain::ExplorationExclusionContext, RepositoryError> {
+        let connection = self.connection()?;
+        read_exploration_exclusion_context(&connection, gallery_id)
+    }
+
     fn exploration_exclusions_restore(
         &self,
         gallery_ids: &[GalleryId],
@@ -8716,6 +8724,150 @@ fn stored_auto_find_run(row: &Row<'_>) -> rusqlite::Result<StoredAutoFindRun> {
     })
 }
 
+#[derive(Default)]
+struct ExclusionDecisionLink {
+    review_id: Option<String>,
+    incoming_id: Option<i64>,
+    legacy_id: Option<String>,
+    retained_id: Option<i64>,
+}
+
+// Follow the precise decision referenced by the active exclusion, never all
+// candidates that happened to be compared together in the same review.
+fn read_exclusion_decision_link(
+    connection: &Connection,
+    gallery_id: i64,
+) -> Result<ExclusionDecisionLink, RepositoryError> {
+    let decision_id: Option<String> = connection.query_row(
+        "SELECT decision_id FROM duplicate_hidden_galleries h WHERE gallery_id=?1
+         AND NOT EXISTS(SELECT 1 FROM exploration_restored_galleries r WHERE r.gallery_id=h.gallery_id)",
+        [gallery_id], |row| row.get(0),
+    ).optional().map_err(map_sqlite_error)?;
+    let Some(decision_id) = decision_id else {
+        return Ok(ExclusionDecisionLink::default());
+    };
+    let merged = connection.query_row(
+        "SELECT m.review_id, r.incoming_gallery_id, target.gallery_id
+         FROM overlap_page_merges m JOIN download_entries source ON source.entry_id=m.source_entry_id
+         JOIN download_entries target ON target.entry_id=m.target_entry_id
+         JOIN download_overlap_reviews r ON r.review_id=m.review_id
+         WHERE m.merge_id=?1 AND source.gallery_id=?2 AND m.state='applied'
+           AND json_extract(m.journal_json,'$.exclude_source')=1",
+        params![decision_id, gallery_id], |row| Ok(ExclusionDecisionLink {
+            review_id: Some(row.get(0)?), incoming_id: Some(row.get(1)?),
+            retained_id: Some(row.get(2)?), ..Default::default()
+        }),
+    ).optional().map_err(map_sqlite_error)?;
+    if let Some(merged) = merged {
+        return Ok(merged);
+    }
+    let overlap = connection.query_row(
+        "SELECT r.review_id, r.incoming_gallery_id,
+                CASE WHEN d.action='remove_existing_continue' THEN r.incoming_gallery_id ELSE c.existing_gallery_id END
+         FROM download_overlap_decisions d JOIN download_overlap_reviews r ON r.review_id=d.review_id
+         LEFT JOIN download_overlap_candidates c ON c.review_id=r.review_id
+           AND (c.candidate_id=d.candidate_id OR (d.candidate_id IS NULL
+             AND (SELECT COUNT(*) FROM download_overlap_candidates single WHERE single.review_id=r.review_id)=1))
+         WHERE d.decision_id=?1 AND (
+           (d.action='remove_existing_continue' AND c.existing_gallery_id=?2)
+           OR (d.action IN ('remove_incoming','cancel_incoming') AND r.incoming_gallery_id=?2))",
+        params![decision_id, gallery_id], |row| Ok(ExclusionDecisionLink {
+            review_id: Some(row.get(0)?), incoming_id: Some(row.get(1)?),
+            retained_id: row.get(2)?, ..Default::default()
+        }),
+    ).optional().map_err(map_sqlite_error)?;
+    if let Some(overlap) = overlap {
+        return Ok(overlap);
+    }
+    connection.query_row(
+        "SELECT c.candidate_id, CASE WHEN d.action='hide_parent' THEN c.candidate_gallery_id ELSE c.parent_gallery_id END
+         FROM duplicate_decisions d JOIN duplicate_candidates c ON c.candidate_id=d.candidate_id
+         WHERE d.decision_id=?1 AND ((d.action='hide_parent' AND c.parent_gallery_id=?2)
+           OR (d.action='hide_candidate' AND c.candidate_gallery_id=?2))",
+        params![decision_id, gallery_id], |row| Ok(ExclusionDecisionLink {
+            legacy_id: Some(row.get(0)?), retained_id: Some(row.get(1)?), ..Default::default()
+        }),
+    ).optional().map(|value| value.unwrap_or_default()).map_err(map_sqlite_error)
+}
+
+fn read_exploration_exclusion_context(
+    connection: &Connection,
+    gallery_id: GalleryId,
+) -> Result<crate::domain::ExplorationExclusionContext, RepositoryError> {
+    let mut statement = connection.prepare(
+        "SELECT 'manual', reason, created_at FROM auto_find_exclusions WHERE gallery_id=?1
+         UNION ALL SELECT 'duplicate_hidden','중복 판정에서 제외',h.created_at FROM duplicate_hidden_galleries h
+         WHERE h.gallery_id=?1 AND NOT EXISTS(SELECT 1 FROM exploration_restored_galleries r WHERE r.gallery_id=h.gallery_id)
+         UNION ALL SELECT 'manual',q.reason,q.created_at FROM quarantine_records q
+         JOIN download_entries d ON d.entry_id=q.entry_id
+         WHERE d.gallery_id=?1 AND d.state='quarantined' AND q.state='quarantined'",
+    ).map_err(map_sqlite_error)?;
+    let reasons = statement
+        .query_map([gallery_id.get()], |row| {
+            Ok(ExplorationExclusionReason {
+                kind: if row.get::<_, String>(0)? == "duplicate_hidden" {
+                    ExplorationExclusionKind::DuplicateHidden
+                } else {
+                    ExplorationExclusionKind::Manual
+                },
+                detail: row.get(1)?,
+                excluded_at: row.get(2)?,
+            })
+        })
+        .map_err(map_sqlite_error)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(map_sqlite_error)?;
+    let quarantine_entry_id: Option<String> = connection.query_row(
+        "SELECT CASE WHEN state='quarantined' THEN entry_id END FROM download_entries WHERE gallery_id=?1
+           ORDER BY created_at DESC,entry_id DESC LIMIT 1",
+        [gallery_id.get()], |row| row.get(0),
+    ).optional().map_err(map_sqlite_error)?.flatten();
+    let link = read_exclusion_decision_link(connection, gallery_id.get())?;
+    let mut retained = None;
+    let mut next_id = link.retained_id;
+    let mut visited = std::collections::HashSet::from([gallery_id.get()]);
+    // A -> B -> C exclusions can accumulate over time. Bound the walk and
+    // expose only a currently completed, non-excluded survivor; stop on cycles.
+    for _ in 0..16 {
+        let Some(id) = next_id else {
+            break;
+        };
+        if !visited.insert(id) {
+            break;
+        }
+        let title: Option<String> = connection.query_row(
+            "SELECT title FROM galleries g WHERE gallery_id=?1
+             AND (SELECT state FROM download_entries WHERE gallery_id=g.gallery_id ORDER BY created_at DESC,entry_id DESC LIMIT 1)='completed'
+             AND NOT EXISTS(SELECT 1 FROM auto_find_exclusions a WHERE a.gallery_id=g.gallery_id)
+             AND NOT EXISTS(SELECT 1 FROM duplicate_hidden_galleries h WHERE h.gallery_id=g.gallery_id
+               AND NOT EXISTS(SELECT 1 FROM exploration_restored_galleries r WHERE r.gallery_id=h.gallery_id))",
+            [id], |row| row.get(0),
+        ).optional().map_err(map_sqlite_error)?;
+        if let Some(title) = title {
+            retained = Some(crate::domain::ExplorationRetainedGallery {
+                gallery_id: GalleryId::new(id).map_err(domain_corruption)?,
+                title,
+            });
+            break;
+        }
+        next_id = read_exclusion_decision_link(connection, id)?.retained_id;
+    }
+    Ok(crate::domain::ExplorationExclusionContext {
+        gallery_id,
+        reasons,
+        quarantined: quarantine_entry_id.is_some(),
+        quarantine_entry_id,
+        review_id: link.review_id,
+        review_gallery_id: link
+            .incoming_id
+            .map(GalleryId::new)
+            .transpose()
+            .map_err(domain_corruption)?,
+        legacy_candidate_id: link.legacy_id,
+        retained_gallery: retained,
+    })
+}
+
 fn read_exploration_exclusions(
     connection: &Connection,
 ) -> Result<Vec<ExplorationExclusion>, RepositoryError> {
@@ -8807,6 +8959,10 @@ fn read_exploration_exclusions(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "exclusion_context_tests.rs"]
+mod exclusion_context_tests;
 
 fn record_auto_find_match(
     connection: &Connection,

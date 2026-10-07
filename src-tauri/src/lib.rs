@@ -10,7 +10,9 @@ pub mod interface;
 mod local_control;
 mod native_focus;
 mod personal_library;
+#[path = "portable_update.rs"]
 mod portable;
+pub use portable::run_helper as run_portable_update_helper;
 mod renderer_recovery;
 pub mod source;
 mod startup;
@@ -1326,6 +1328,7 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::auto_find_cancel,
             interface::commands::auto_find_exclude,
             interface::commands::exploration_exclusions_list,
+            interface::commands::exploration_exclusion_context,
             interface::commands::exploration_exclusions_restore,
             interface::commands::exploration_data_reset,
             interface::commands::maintenance_preview,
@@ -1376,6 +1379,8 @@ pub fn run() -> tauri::Result<()> {
             interface::commands::app_minimize_to_tray,
             interface::commands::app_active_work_snapshot,
             interface::commands::app_quit,
+            portable::app_update_mode,
+            portable::app_update_portable,
         ]))
         .build(tauri::generate_context!())
         .map(|app| {

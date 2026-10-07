@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export type AppUpdateInfo = {
   currentVersion: string;
   version: string;
   date?: string;
   notes?: string;
+  portable?: boolean;
 };
 
 export type AppUpdateCheckResult =
@@ -46,6 +48,7 @@ const INSTALL_FAILED_MESSAGE = "업데이트를 설치하지 못했습니다. �
 export function useAppUpdater(runtime: UpdateRuntime, installGuard?: UpdateInstallGuard) {
   const [state, setState] = useState<AppUpdateState>(initialState);
   const updateRef = useRef<Update | null>(null);
+  const portableRef = useRef(false);
   const checkInFlight = useRef<Promise<AppUpdateCheckResult> | null>(null);
   const startupAttempted = useRef(false);
   const mounted = useRef(true);
@@ -74,7 +77,11 @@ export function useAppUpdater(runtime: UpdateRuntime, installGuard?: UpdateInsta
         }));
       }
       try {
-        const availableUpdate = await check({ timeout: 10_000 });
+        const mode = await invoke<string>("app_update_mode");
+        if (mode === "development") { if (mounted.current) setState(initialState); return { status: "unavailable" }; }
+        if (mode !== "portable" && mode !== "installed") throw new Error("Unknown distribution");
+        portableRef.current = mode === "portable";
+        const availableUpdate = await check({ timeout: 10_000, ...(portableRef.current ? { target: "windows-x86_64-portable" } : {}) });
         if (!availableUpdate) {
           if (mounted.current) setState(initialState);
           return { status: "current" };
@@ -85,7 +92,7 @@ export function useAppUpdater(runtime: UpdateRuntime, installGuard?: UpdateInsta
         if (previousUpdate && previousUpdate !== availableUpdate) {
           void previousUpdate.close().catch(() => undefined);
         }
-        const info = updateInfo(availableUpdate);
+        const info = { ...updateInfo(availableUpdate), ...(portableRef.current ? { portable: true } : {}) };
         if (mounted.current) {
           setState({
             phase: "available",
@@ -143,6 +150,17 @@ export function useAppUpdater(runtime: UpdateRuntime, installGuard?: UpdateInsta
           guardFailure = error instanceof Error ? error.message : "녹화 상태를 확인하지 못해 업데이트를 보류했습니다.";
           throw error;
         }
+      }
+      if (portableRef.current) {
+        const progress = new Channel<{ downloaded: number; total?: number; installing: boolean }>();
+        progress.onmessage = (event) => {
+          if (mounted.current) setState((current) => ({ ...current,
+            phase: event.installing ? "installing" : "downloading", downloadedBytes: event.downloaded, totalBytes: event.total }));
+        };
+        await invoke("app_update_portable", { version: activeUpdate.version, progress });
+        // The native helper waits for graceful shutdown, replaces only program
+        // files, then restarts. Never run NSIS or relaunch the old executable.
+        return;
       }
       await activeUpdate.downloadAndInstall((event: DownloadEvent) => {
         if (!mounted.current) return;

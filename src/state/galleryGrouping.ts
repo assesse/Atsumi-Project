@@ -1,4 +1,6 @@
 import type { Gallery } from "../core/types";
+import { galleryCreator } from "./galleryCreator";
+import { normalizeTokenValue } from "../search/searchTokens";
 
 export type GalleryGrouping = "all" | "day" | "artist";
 export type GalleryAccordionGrouping = Exclude<GalleryGrouping, "all">;
@@ -15,7 +17,6 @@ export type ArtistFolderTag = {
   favorite: boolean;
 };
 
-const UNKNOWN_ARTIST = "작가 정보 없음";
 const UNKNOWN_DAY = "날짜 정보 없음";
 
 const dateKey = (value: string | undefined): string => {
@@ -45,10 +46,13 @@ export function groupGalleries(
   const groups = new Map<string, GalleryGroup>();
 
   for (const gallery of galleries) {
-    const identity = grouping === "artist"
-      ? gallery.artist.trim() || UNKNOWN_ARTIST
-      : dateKey(dateForGallery(gallery));
-    const key = groupKey(grouping, identity);
+    const creator = galleryCreator(gallery);
+    const identity = grouping === "artist" ? creator.label : dateKey(dateForGallery(gallery));
+    // Preserve existing artist keys. Groups have their own namespace so an
+    // identically named artist and circle never share a folder.
+    const key = grouping === "artist" && creator.kind !== "artist"
+      ? `artist\u001f${creator.kind}\u001f${normalizeTokenValue(creator.value)}`
+      : groupKey(grouping, identity);
     const current = groups.get(key);
     if (current) {
       current.items.push(gallery);

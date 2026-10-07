@@ -50,10 +50,6 @@ type ViewHeaderProps = {
   randomOpenPending: boolean;
   randomOpenAvailable: boolean;
   onActivity: () => void;
-  privacyMode: boolean;
-  privacyModePending?: boolean;
-  onPrivacyModeToggle: () => void;
-  onSettings: () => void;
 };
 
 export function ViewHeader({
@@ -83,10 +79,6 @@ export function ViewHeader({
   randomOpenPending,
   randomOpenAvailable,
   onActivity,
-  privacyMode,
-  privacyModePending = false,
-  onPrivacyModeToggle,
-  onSettings,
 }: ViewHeaderProps) {
   const host = useRef<HTMLElement>(null);
   const languageButton = useRef<HTMLButtonElement>(null);
@@ -337,22 +329,6 @@ export function ViewHeader({
       >
         <FluentIcon glyph="\uE9D9" />
         {queueProgress !== undefined ? <svg className="queue-progress-ring" viewBox="0 0 36 36" aria-hidden="true"><circle className="queue-ring-track" cx="18" cy="18" r="16" /><circle cx="18" cy="18" r="16" pathLength="100" strokeDasharray={`${queueProgress} 100`} /></svg> : null}
-      </button>
-      <button
-        type="button"
-        className={`icon-button${privacyMode ? " is-active" : ""}`}
-        title={privacyMode ? "미리보기 표시" : "미리보기 가리기"}
-        aria-label="프라이버시 모드"
-        data-tour="privacy-mode"
-        aria-pressed={privacyMode}
-        aria-busy={privacyModePending || undefined}
-        disabled={privacyModePending}
-        onClick={onPrivacyModeToggle}
-      >
-        <FluentIcon glyph="\uE890" />
-      </button>
-      <button type="button" className="icon-button" data-tour="hitomi-settings" title="설정" aria-label="설정" onClick={onSettings}>
-        <FluentIcon glyph="\uE713" />
       </button>
     </header>
   );

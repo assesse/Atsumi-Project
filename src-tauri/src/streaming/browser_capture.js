@@ -377,6 +377,19 @@
         const response = await window.__atsumiEncodedCapture.start(command, {
           request, post,
           onStatus: (detail) => { lastDetail = encodedDetail(detail); status(); },
+          onStarted: (response, capturedVideo) => {
+            if (response.captureChat !== true) return;
+            const reportChat = (detail, droppedMessages) => {
+              try { post("chat_status", { recordingId: response.id, detail, droppedMessages }); } catch { /* Separate from video persistence. */ }
+            };
+            try {
+              const started = window.__atsumiPageChat?.start({ recordingId: response.id, channelId,
+                getVideo: () => capturedVideo,
+                sendBatch: (events, batchId) => request("chat_batch", { recordingId: response.id, events, batchId }), onStatus: reportChat }) === true;
+              if (started) encodedChat = { recordingId: response.id, drain: null };
+              else reportChat("observer_unavailable", 0);
+            } catch { reportChat("observer_unavailable", 0); }
+          },
           beforeFinish: async (recordingId) => {
             const chat = encodedChat;
             if (!chat || chat.recordingId !== recordingId) return;
@@ -387,18 +400,6 @@
         });
         if (!response || !recordingIdIsValid(response.id) || response.mode !== "encoded" || response.nativeApproved !== true) throw new Error("native_rejected");
         encodedStarting = false;
-        if (response.captureChat === true && encodedState()?.active && !encodedState()?.stopping) {
-          const reportChat = (detail, droppedMessages) => {
-            try { post("chat_status", { recordingId: response.id, detail, droppedMessages }); } catch { /* Separate from video persistence. */ }
-          };
-          try {
-            const started = window.__atsumiPageChat?.start({ recordingId: response.id, channelId,
-              getVideo: () => video,
-              sendBatch: (events, batchId) => request("chat_batch", { recordingId: response.id, events, batchId }), onStatus: reportChat }) === true;
-            if (started) encodedChat = { recordingId: response.id, drain: null };
-            else reportChat("observer_unavailable", 0);
-          } catch { reportChat("observer_unavailable", 0); }
-        }
       } catch (error) {
         // An attempted encoded begin must never silently arm a second legacy
         // recorder after a lost ACK. Native ownership/recovery resolves it.

@@ -23,17 +23,20 @@ const feedOrders: { value: FeedOrder; label: string; description: string }[] = [
   { value: "worst", label: "최악의 작품", description: "작품 평균 별점이 낮은 순 · 작품당 최근 후기" },
 ];
 
-export function CommunityWorkspace({ source, collapsed, autoFindCount = 0, attentionCount, onToggleRail, onSourceChange, onNavigate, onSettings, onOpenPersonalLibrary, privacyMode = false, privacyModePending = false, onPrivacyModeToggle, initialReview = null, api = communityApi }: Props) {
-  const [order, setOrder] = useState<FeedOrder>("popular");
+function CommunityFeed({ source, order, expanded, hidden, revision, api, privacyMode, onExpand }: {
+  source: CommunitySource; order: FeedOrder; expanded: boolean; hidden: boolean; revision: number;
+  api: CommunityApi; privacyMode: boolean; onExpand: () => void;
+}) {
+  const label = feedOrders.find(option => option.value === order)!.label;
   const [page, setPage] = useState<FeedPage>({ items: [], nextCursor: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [mineOpen, setMineOpen] = useState(!!initialReview);
-  const [writingShortcut, setWritingShortcut] = useState(initialReview);
   const loadSequence = useRef(0);
+  const pending = useRef(false);
   const load = useCallback(async (cursor: FeedCursor | null = null) => {
     const sequence = ++loadSequence.current;
+    pending.current = true;
     setLoading(true); setError(null);
     try {
       const result = await api.feed(source, cursor, order);
@@ -41,35 +44,56 @@ export function CommunityWorkspace({ source, collapsed, autoFindCount = 0, atten
       const items = result.items.filter((item) => item.source === source);
       setPage((previous) => ({ ...result, items: cursor ? [...previous.items, ...items.filter((item) => !previous.items.some((old) => order === "latest" ? old.id === item.id : old.workId === item.workId))] : items }));
     } catch (error) { if (sequence === loadSequence.current) setError(communityError(error)); }
-    finally { if (sequence === loadSequence.current) setLoading(false); }
+    finally { if (sequence === loadSequence.current) { pending.current = false; setLoading(false); } }
   }, [api, source, order]);
-  useEffect(() => { setPage({ items: [], nextCursor: null }); setNotice(null); void load(); return () => { ++loadSequence.current; }; }, [load]);
+  useEffect(() => { setPage({ items: [], nextCursor: null }); setNotice(null); void load(); return () => { ++loadSequence.current; }; }, [load, revision]);
+  const gridClass = expanded ? "community-review-grid" : "community-review-row";
+  return <section className="community-feed" aria-label={`${label} 목록`} aria-busy={loading} hidden={hidden}>
+    <header className="community-feed-heading"><h2>{label}</h2><div className="community-feed-actions">
+      <button type="button" className="icon-button" title="새로고침" aria-label={`${label} 새로고침`} aria-busy={loading} disabled={loading} onClick={() => { if (!pending.current) void load(); }}>
+        {loading ? <span className="spinner catalog-refresh-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE72C" />}
+      </button>
+      {!expanded ? <button type="button" className="text-button" aria-label={`${label} 더 보기`} onClick={onExpand}>더 보기</button> : null}
+    </div></header>
+    {error ? <p className="community-error" role="alert">{error}</p> : null}
+    {notice ? <p className="community-notice" role="status">{notice}</p> : null}
+    {loading && !page.items.length ? <div className={`community-loading ${gridClass}`} role="status" aria-label={`${label} 불러오는 중`}>{[1, 2, 3, 4].map(key => <div key={key} />)}</div> : null}
+    {!loading && !error && !page.items.length ? <div className="community-empty">아직 등록된 후기가 없습니다.</div> : null}
+    <div className={gridClass}>{page.items.filter(review => review.source === source).slice(0, expanded ? undefined : 6).map(review =>
+      <ReviewCard key={review.id} review={review} privacyMode={privacyMode} onReport={async reason => { await api.report(review.id, reason); setNotice("신고가 접수되었습니다. 운영자가 확인합니다."); }} />
+    )}</div>
+    {expanded && page.nextCursor ? <button type="button" className="text-button community-more" disabled={loading} onClick={() => { if (!pending.current) void load(page.nextCursor); }}>{loading ? "불러오는 중…" : "후기 더 보기"}</button> : null}
+  </section>;
+}
+
+export function CommunityWorkspace({ source, collapsed, autoFindCount = 0, attentionCount, onToggleRail, onSourceChange, onNavigate, onSettings, onOpenPersonalLibrary, privacyMode = false, privacyModePending = false, onPrivacyModeToggle, initialReview = null, api = communityApi }: Props) {
+  const [dedicatedOrder, setDedicatedOrder] = useState<FeedOrder | null>(null);
+  const [revision, setRevision] = useState(0);
+  const [mineOpen, setMineOpen] = useState(!!initialReview);
+  const [writingShortcut, setWritingShortcut] = useState(initialReview);
+  const workspace = useRef<HTMLElement>(null);
+  useEffect(() => { setDedicatedOrder(null); }, [source]);
+  const openFeed = (order: FeedOrder | null) => { setDedicatedOrder(order); if (workspace.current) workspace.current.scrollTop = 0; };
   return <div className={`app-shell community-shell${collapsed ? " sidebar-collapsed" : ""}`}>
-    <SideRail source={source} view={workspaceRegistry[source].navigation[0].view} collapsed={collapsed} autoFindCount={autoFindCount} attentionCount={attentionCount} sourceLabel={`${workspaceRegistry[source].label} · Community`} onNavigate={onNavigate} onSourceChange={onSourceChange} onToggle={onToggleRail} onOpenPersonalLibrary={onOpenPersonalLibrary} />
-    <main className="community-workspace">
+    <SideRail source={source} view={workspaceRegistry[source].navigation[0].view} collapsed={collapsed} autoFindCount={autoFindCount} attentionCount={attentionCount} onNavigate={onNavigate} onSourceChange={onSourceChange} onToggle={onToggleRail} onOpenPersonalLibrary={onOpenPersonalLibrary} onSettings={onSettings} privacyMode={privacyMode} privacyModePending={privacyModePending} onPrivacyModeToggle={onPrivacyModeToggle} />
+    <main className="community-workspace" ref={workspace}>
       <header className="community-header"><div><span className="eyebrow">ATSUMI COMMUNITY</span><h1>커뮤니티</h1><p>작품과 함께 보는 한마디.</p></div><div className="community-header-actions">
-        {onPrivacyModeToggle ? <button type="button" className="icon-button" aria-label="프라이버시 모드" aria-pressed={privacyMode} disabled={privacyModePending} onClick={onPrivacyModeToggle}><FluentIcon glyph={privacyMode ? "\uED1A" : "\uE890"} /></button> : null}
-        <button type="button" className="text-button" onClick={onSettings}>설정</button>
+        <button className="icon-button" type="button" aria-label="내 후기" title="내 후기" onClick={() => { setWritingShortcut(null); setMineOpen(true); }}><FluentIcon glyph="\uE77B" /></button>
       </div></header>
       <div className="community-content">
-        <div className="community-toolbar" data-tour="community-toolbar">
-          <span className="community-source-label">{workspaceRegistry[source].label} 후기</span>
-          <button className="text-button primary" type="button" onClick={() => { setWritingShortcut(null); setMineOpen(true); }}>내 후기 보기</button>
-        </div>
-        <p className="community-privacy">열람은 인증 없이 · 코멘트는 앨범에서 바로 작성</p>
-        <section className="community-feed" aria-label="공개 후기 목록" aria-busy={loading}>
-          <header className="community-feed-heading"><div className="community-feed-orders" role="group" aria-label="후기 정렬">{feedOrders.map(option => <button key={option.value} type="button" aria-pressed={order === option.value} title={option.value === "popular" ? "평균 3점인 후기 5개를 기준값으로 더해, 후기가 적은 작품의 순위를 보정합니다." : option.description} onClick={() => setOrder(option.value)}>{option.label}</button>)}</div><button type="button" className="text-button community-feed-refresh" aria-busy={loading} disabled={loading} onClick={() => void load()}>{loading ? <><span className="spinner catalog-refresh-spinner" aria-hidden="true" /> 불러오는 중…</> : "새로고침"}</button></header>
-          <p className="community-feed-description">{feedOrders.find(option => option.value === order)!.description}</p>
-          {error ? <p className="community-error" role="alert">{error}</p> : null}
-          {notice ? <p className="community-notice" role="status">{notice}</p> : null}
-          {loading && !page.items.length ? <div className="community-loading community-review-grid" role="status" aria-label="후기 불러오는 중">{[1, 2, 3, 4].map((key) => <div key={key} />)}</div> : null}
-          {!loading && !error && !page.items.length ? <div className="community-empty"><strong>아직 등록된 후기가 없습니다.</strong><p>앨범 상세보기나 페이지 프리뷰에서 코멘트를 남겨보세요.</p></div> : null}
-          <div className="community-review-grid">{page.items.filter(review => review.source === source).map((review) => <ReviewCard key={review.id} review={review} privacyMode={privacyMode} onReport={async (reason) => { await api.report(review.id, reason); setNotice("신고가 접수되었습니다. 운영자가 확인합니다."); }} />)}</div>
-          {page.nextCursor ? <button type="button" className="text-button community-more" disabled={loading} onClick={() => void load(page.nextCursor)}>{loading ? "불러오는 중…" : "후기 더 보기"}</button> : null}
-        </section>
+        {dedicatedOrder ? <div className="community-dedicated-toolbar">
+          <button type="button" className="text-button" aria-label="돌아가기" onClick={() => openFeed(null)}><FluentIcon glyph="\uE72B" /> 돌아가기</button>
+          <select aria-label="후기 목록" value={dedicatedOrder} onChange={event => openFeed(event.target.value as FeedOrder)}>
+            {feedOrders.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </div> : null}
+        {feedOrders.filter(option => option.value !== "worst" || dedicatedOrder === "worst").map(option => <CommunityFeed
+          key={`${source}:${option.value}`} source={source} order={option.value} expanded={dedicatedOrder === option.value}
+          hidden={dedicatedOrder !== null && dedicatedOrder !== option.value} revision={revision}
+          api={api} privacyMode={privacyMode} onExpand={() => openFeed(option.value)} />)}
         <details className="community-help"><summary>익명 키와 공개 범위 안내</summary><p>공개되는 정보는 사이트·작품번호·닉네임·후기·별점·추천 여부입니다. 다운로드 내역, 기기 식별 정보, 이미지, 파일 경로는 커뮤니티 서버에 전송하지 않습니다. 미리보기는 원본 사이트에서 불러옵니다. Supabase는 서비스 운영에 필요한 접속 정보(IP 등)를 처리할 수 있습니다.</p><p>작성자 키는 Windows 사용자 계정으로 암호화해 앱 설정·캐시와 별도로 보관합니다. 앱 초기화는 키와 서버 후기를 지우지 않습니다. Windows 재설치 또는 보관 파일을 직접 삭제하면 이전 후기의 수정·삭제 권한을 잃을 수 있습니다. 현재 다른 PC로 옮기거나 분실한 키를 복구하는 기능은 없습니다.</p><p>닉네임은 중복될 수 있으며 본인 인증을 의미하지 않습니다. 작품마다 이 앱의 작성자 키로 후기 한 개를 남길 수 있습니다. 개인정보·불법 콘텐츠·도배는 게시하지 마세요.</p></details>
       </div>
     </main>
-    {mineOpen ? <MyReviewsDialog key={source} source={source} api={api} privacyMode={privacyMode} initialWork={writingShortcut?.source === source ? writingShortcut : null} onClose={() => { setMineOpen(false); setWritingShortcut(null); }} onChanged={() => void load()} /> : null}
+    {mineOpen ? <MyReviewsDialog key={source} source={source} api={api} privacyMode={privacyMode} initialWork={writingShortcut?.source === source ? writingShortcut : null} onClose={() => { setMineOpen(false); setWritingShortcut(null); }} onChanged={() => setRevision(value => value + 1)} /> : null}
   </div>;
 }

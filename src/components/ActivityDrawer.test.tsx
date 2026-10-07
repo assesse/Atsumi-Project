@@ -34,17 +34,20 @@ describe("ActivityDrawer download controls", () => {
       await act(async () => root.render(<ActivityDrawer open galleries={[failedGallery]} sessionDownloads={[{galleryId:failedGallery.id,occurredAt:1}]}
         queuePanel={<section>queue body</section>} queueSummary={<section>queue summary</section>} {...actions} />));
       const nav = container.querySelector(".activity-section-tabs")!;
-      expect(nav.previousElementSibling?.tagName).toBe("HEADER");
+      const summary = nav.previousElementSibling!;
+      expect(summary).toHaveTextContent("queue summary");
+      expect(summary.previousElementSibling?.tagName).toBe("HEADER");
       expect(nav.nextElementSibling).toHaveClass("activity-panel-content");
       const buttons = [...nav.querySelectorAll<HTMLButtonElement>("button")];
-      expect(buttons.map(b => b.textContent)).toEqual(["다운로드 큐", "실시간 실행", "자동분류 검토"]);
+      expect(buttons.map(b => b.textContent)).toEqual(["대기 큐", "작업 중", "자동분류 검토"]);
       const details = container.querySelector(".activity-item-details")!;
       expect(details).not.toHaveAttribute("open");
       expect(details).toHaveTextContent("SOURCE_TIMEOUT");
       for (const button of buttons) {
         await act(async () => button.click());
         expect(container.querySelector(".activity-section-tabs")).toBe(nav);
-        expect(nav.previousElementSibling?.tagName).toBe("HEADER");
+        expect(nav.previousElementSibling).toBe(summary);
+        expect(summary.parentElement).toBe(nav.parentElement);
         expect(nav.nextElementSibling).toHaveClass("activity-panel-content");
         expect(button).toHaveAttribute("aria-selected", "true");
       }
@@ -61,6 +64,23 @@ describe("ActivityDrawer download controls", () => {
     download: { entryId: `entry-${id}`, state },
   });
   const actions = { onClose: vi.fn(), onReview: vi.fn(), onRetry: vi.fn(), onCancel: vi.fn() };
+
+  it("keeps cancel above the status in the same fixed action column across processing stages", async () => {
+    const host = document.createElement("div"), root = createRoot(host);
+    try {
+      let previousColumn: Element | null = null;
+      for (const state of ["downloading", "hashing", "verifying"] as const) {
+        const gallery = { ...activityGallery(state, 1), download: { entryId: "entry-1", state, progress: 75 } };
+        await act(async () => root.render(<ActivityDrawer open galleries={[gallery]} sessionDownloads={[{ galleryId: gallery.id, occurredAt: 1 }]} {...actions} />));
+        const column = host.querySelector(".activity-download-actions")!;
+        expect(column.children[0]).toHaveClass("activity-command-buttons");
+        expect(column.children[0]).toHaveTextContent("취소");
+        expect(column.children[1]).toHaveAttribute("role", "progressbar");
+        if (previousColumn) expect(column.className).toBe(previousColumn.className);
+        previousColumn = column;
+      }
+    } finally { await act(async () => root.unmount()); }
+  });
 
   it("keeps only the latest 50 activities without pinning old queued jobs or restoring the whole queue", async () => {
     const galleries = Array.from({ length: 70 }, (_, index) => activityGallery(index === 0 ? "queued" : "completed", index + 1));
@@ -93,12 +113,12 @@ describe("ActivityDrawer download controls", () => {
       await act(async () => root.render(
         <ActivityDrawer open galleries={galleries} sessionDownloads={sessionDownloads} {...actions} />,
       ));
-      expect(container.querySelector('[role="tab"][aria-controls="activity-session-panel"]')).toHaveTextContent("실시간 실행");
+      expect(container.querySelector('[role="tab"][aria-controls="activity-session-panel"]')).toHaveTextContent("작업 중");
       expect(container).not.toHaveTextContent("이번 실행");
-      expect(sessionGroups(container)).toEqual(["검토", "해시 · 검증", "다운로드", "실패 · 중단 · 취소", "완료"]);
+      expect(sessionGroups(container)).toEqual(["검토", "해시 · 검증", "다운로드", "실패 · 중단", "완료"]);
       expect(sessionTitles(container)).toEqual([
         "review_required-13", "review_required-7", "verifying-5", "hashing-4", "retry_wait-6", "downloading-3", "resolving_metadata-2", "queued-1",
-        "cancelled-12", "failed-9", "interrupted-8", "quarantined-11", "completed-10",
+        "failed-9", "interrupted-8", "cancelled-12", "quarantined-11", "completed-10",
       ]);
       expect(sessionDownloads.map((activity) => activity.occurredAt)).toEqual(states.map((_, index) => index + 1));
     } finally {
@@ -163,7 +183,7 @@ describe("ActivityDrawer download controls", () => {
       expect(sessionTitles(container)).toEqual([
         gallery.title, "Danbooru failure", "Automatic failure", "Danbooru completed", "Automatic completed",
       ]);
-      expect(sessionGroups(container)).toEqual(["해시 · 검증", "실패 · 중단 · 취소", "완료"]);
+      expect(sessionGroups(container)).toEqual(["해시 · 검증", "실패 · 중단", "완료"]);
       const automationTab = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!;
       await act(async () => automationTab.click());
       expect([...container.querySelectorAll(".activity-item strong")].map((item) => item.textContent))

@@ -14,6 +14,7 @@ const source = path.join(root, `src-tauri/target/release/bundle/nsis/Atsumi_${ve
 const bytes = fs.readFileSync(source);
 assert.ok(bytes.length > 1_000_000);
 const signature = fs.readFileSync(source + '.sig', 'utf8').trim();
+function verifyArtifact(bytes, signature) {
 const lines = Buffer.from(signature, 'base64').toString('utf8').trim().split(/\r?\n/);
 assert.equal(lines.length, 4);
 assert.ok(lines[2].startsWith('trusted comment: '));
@@ -27,24 +28,34 @@ assert.deepEqual(publicRecord.subarray(2, 10), signatureRecord.subarray(2, 10));
 const key = createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), publicRecord.subarray(10)]), format: 'der', type: 'spki' });
 const primarySignature = signatureRecord.subarray(10);
 const digest = createHash('blake2b512').update(bytes).digest();
-assert.ok(verify(null, digest, key, primarySignature), 'Installer signature verification failed');
+assert.ok(verify(null, digest, key, primarySignature), 'Artifact signature verification failed');
 assert.ok(verify(null, Buffer.concat([primarySignature, Buffer.from(lines[2].slice('trusted comment: '.length))]), key, Buffer.from(lines[3], 'base64')), 'Trusted comment signature verification failed');
 const tamperedDigest = Buffer.from(digest);
 tamperedDigest[0] ^= 1;
 assert.equal(verify(null, tamperedDigest, key, primarySignature), false);
+}
+verifyArtifact(bytes, signature);
 const output = path.join(root, `.runtime/release-v${version}`);
 fs.mkdirSync(output, { recursive: true });
 const asset = path.join(output, 'Atsumi-Setup.exe');
 if (fs.existsSync(asset)) assert.ok(fs.readFileSync(asset).equals(bytes), 'Existing staged installer differs; do not overwrite a published artifact');
 else fs.copyFileSync(source, asset);
 const platform = { signature, url: `https://github.com/assesse/Atsumi-Project/releases/download/v${version}/Atsumi-Setup.exe` };
+const portableSource = path.join(root, `.runtime/portable-v${version}/Atsumi-Portable.zip`);
+const portableBytes = fs.readFileSync(portableSource);
+const portableSignature = fs.readFileSync(portableSource + '.sig', 'utf8').trim();
+verifyArtifact(portableBytes, portableSignature);
+const portableAsset = path.join(output, 'Atsumi-Portable.zip');
+if (fs.existsSync(portableAsset)) assert.ok(fs.readFileSync(portableAsset).equals(portableBytes), 'Existing portable artifact differs');
+else fs.copyFileSync(portableSource, portableAsset);
+const portablePlatform = { signature: portableSignature, url: `https://github.com/assesse/Atsumi-Project/releases/download/v${version}/Atsumi-Portable.zip` };
 const metadata = {
   version,
   notes: fs.readFileSync(`docs/releases/v${version}.md`, 'utf8').trim(),
   pub_date: new Date().toISOString(),
-  platforms: { 'windows-x86_64': platform, 'windows-x86_64-nsis': platform },
+  platforms: { 'windows-x86_64': platform, 'windows-x86_64-nsis': platform, 'windows-x86_64-portable': portablePlatform },
 };
 fs.writeFileSync(path.join(output, 'latest.json'), JSON.stringify(metadata, null, 2) + '\n');
-const result = { version, signatureVerified: true, tamperingRejected: true, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), assets: ['Atsumi-Setup.exe', 'latest.json'] };
+const result = { version, signatureVerified: true, tamperingRejected: true, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), portable: { bytes: portableBytes.length, sha256: createHash('sha256').update(portableBytes).digest('hex'), signatureVerified: true }, assets: ['Atsumi-Setup.exe', 'Atsumi-Portable.zip', 'latest.json'] };
 fs.writeFileSync(path.join(output, 'verification.json'), JSON.stringify(result, null, 2) + '\n');
 console.log(JSON.stringify(result));

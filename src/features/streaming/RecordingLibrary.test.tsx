@@ -19,6 +19,55 @@ beforeEach(() => { vi.clearAllMocks(); callbacks.onDelete.mockResolvedValue({ de
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
 
 describe("recording library", () => {
+  it("groups a broadcast across a restart without combining files or changing replay IDs", async () => {
+    const old = { ...merged("old"), channelId: "channel", broadcastKey: "id:42", startedAt: 1 };
+    const latest = { ...merged("latest"), channelId: "channel", broadcastKey: "id:42", startedAt: 2, title: "변경된 제목" };
+    await render([latest, old], "old");
+    expect(container.querySelectorAll(".recording-broadcast-group")).toHaveLength(1);
+    expect(container.querySelector(".recording-broadcast-heading")).toHaveTextContent("변경된 제목파일 2개");
+    expect(cards().map(card => card.querySelector("strong")!.textContent)).toEqual(["파일 1", "파일 2"]);
+    await act(async () => cards()[1]!.click()); expect(callbacks.onSelect).toHaveBeenCalledWith("latest");
+    await act(async () => button("재생").click()); expect(callbacks.onReplay).toHaveBeenCalledWith("old");
+    expect(callbacks.onDelete).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>(".recording-broadcast-heading")!.click());
+    expect(cards()).toHaveLength(0);
+    await act(async () => button("선택").click()); expect(cards()).toHaveLength(2);
+    await act(async () => cards()[0]!.click());
+    await act(async () => button("선택 삭제").click());
+    callbacks.onDelete.mockResolvedValueOnce({ deletedIds: ["old"], failures: [] });
+    await act(async () => button("삭제").click());
+    expect(callbacks.onDelete).toHaveBeenCalledExactlyOnceWith(["old"]);
+  });
+  it("keeps active and stopped files of the same broadcast in one group and protects the active file", async () => {
+    const old = { ...merged("old"), channelId: "channel", broadcastKey: "id:42", startedAt: 1 };
+    const live = item("live", { channelId: "channel", broadcastKey: "id:42", status: "recording", startedAt: 2 });
+    await render([live, old]);
+    expect(container.querySelectorAll(".recording-broadcast-group")).toHaveLength(1);
+    expect(container.querySelector(".recording-library-active .recording-broadcast-group")).not.toBeNull();
+    expect(container.querySelector(".recording-library-browse .recording-broadcast-group")).toBeNull();
+    await act(async () => button("선택").click());
+    await act(async () => button("전체 선택").click());
+    expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(1);
+    expect(container).toHaveTextContent("1개 선택");
+    await act(async () => button("선택 삭제").click());
+    callbacks.onDelete.mockResolvedValueOnce({ deletedIds: ["old"], failures: [] });
+    await act(async () => button("삭제").click());
+    expect(callbacks.onDelete).toHaveBeenCalledExactlyOnceWith(["old"]);
+  });
+  it("filters individual files before grouping so a hidden sibling cannot be selected for deletion", async () => {
+    const a = { ...merged("a"), channelId: "channel", broadcastKey: "id:42", title: "일치" };
+    const b = { ...merged("b"), channelId: "channel", broadcastKey: "id:42", title: "숨긴 제목" };
+    await render([a, b]);
+    await act(async () => button("선택").click());
+    await act(async () => button("전체 선택").click()); expect(container).toHaveTextContent("2개 선택");
+    await search("일치"); expect(container).toHaveTextContent("0개 선택");
+    expect(cards()).toHaveLength(1);
+    await act(async () => button("전체 선택").click());
+    await act(async () => button("선택 삭제").click());
+    callbacks.onDelete.mockResolvedValueOnce({ deletedIds: ["a"], failures: [] });
+    await act(async () => button("삭제").click());
+    expect(callbacks.onDelete).toHaveBeenCalledExactlyOnceWith(["a"]);
+  });
   it("keeps media-only cleanup in collapsed diagnostics without replay or merge controls", async () => {
     const removed = { ...merged("removed"), mediaRemovedAt: 1234, lastError: "original gap evidence" };
     await render([removed, merged("kept")], "removed");
@@ -36,7 +85,7 @@ describe("recording library", () => {
       { ...merged("cached"), storageCheckPending: true },
       item("pending", { status: "interrupted", segmentCount: 0, bytesWritten: 0, durationSeconds: 0, storageCheckPending: true, summaryPending: true }),
     ]);
-    expect(container).toHaveTextContent("마지막 저장 상태 · 저장 완료");
+    expect(container).not.toHaveTextContent("마지막 저장 상태");
     expect(container).toHaveTextContent("확인 중");
     expect(container.querySelector(".recording-library-attempts")).toBeNull();
     expect(cards()[1]!.querySelector(".recording-library-state.is-waiting")).toHaveTextContent("확인 중");
@@ -54,9 +103,9 @@ describe("recording library", () => {
     ]);
     expect(container.querySelector(".recording-library-state.is-recording")).toHaveTextContent("●녹화 중");
     expect(container.querySelector(".recording-library-state.is-processing")).toHaveTextContent("↻재생 준비 중");
-    expect(container.querySelector(".recording-library-state.is-success")).toHaveTextContent("✓재생 가능");
-    expect(container.querySelector(".recording-library-state.is-warning")).toHaveTextContent("!확인 필요");
-    expect(container.querySelector(".recording-library-state.is-error")).toHaveTextContent("×녹화 실패");
+    expect(container.querySelector(".recording-library-state.is-success")).toHaveTextContent("✓정상 파일");
+    expect(container.querySelector(".recording-library-state.is-warning")).toHaveTextContent("!중단된 파일");
+    expect(container.querySelector(".recording-library-state.is-error")).toHaveTextContent("×저장 오류");
   });
   it("separates empty startup failures from saved broadcasts without deleting their diagnostics", async () => {
     await render([item("retry", { segmentCount: 0, bytesWritten: 0, durationSeconds: 0, status: "interrupted" }), merged("success")]);
@@ -68,9 +117,10 @@ describe("recording library", () => {
   });
   it("shows confirmed broadcast completion separately from manual stopping", async () => {
     await render([item("ended", { ending: { reason: "broadcast_ended", trigger: "video_ended", stoppedAt: 1, confirmedAt: 2 } }), item("manual", { ending: { reason: "user_stopped", trigger: "user_stop", stoppedAt: 1, confirmedAt: null } })]);
-    expect(container).toHaveTextContent("방송 종료 · 저장 완료");
+    expect(container.querySelector(".recording-playback-problems")).not.toHaveAttribute("open");
+    expect(container.querySelector(".recording-playback-problems")).toHaveTextContent("방송 종료");
     await render([item("manual", { ending: { reason: "user_stopped", trigger: "user_stop", stoppedAt: 1, confirmedAt: null } })], "manual");
-    expect(container).toHaveTextContent("직접 중지 · 저장 완료");
+    expect(container.querySelector(".recording-playback-problems")).toHaveTextContent("직접 중지");
   });
   it("allows explicit selection of an empty attempt without including hidden attempts in select-all", async () => {
     await render([item("empty", { segmentCount: 0, bytesWritten: 0, durationSeconds: 0, status: "interrupted" })]);

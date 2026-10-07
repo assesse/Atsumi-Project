@@ -37,6 +37,9 @@ foreach ($resource in $resources) {
   Get-ChildItem -LiteralPath $source -Force | Copy-Item -Destination $destination -Recurse
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portable/atsumi-portable.json') -Destination $payload
+$marker = Get-Content -LiteralPath (Join-Path $payload 'atsumi-portable.json') -Raw | ConvertFrom-Json
+$marker | Add-Member -NotePropertyName version -NotePropertyValue $configuration.version
+[IO.File]::WriteAllText((Join-Path $payload 'atsumi-portable.json'), ($marker | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portable/Start-Atsumi.cmd') -Destination $payload
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'portable/Readme.txt') -Destination $payload
 if ($WebView2RuntimeDirectory) { Copy-Item -LiteralPath $runtime -Destination (Join-Path $payload 'WebView2') -Recurse }

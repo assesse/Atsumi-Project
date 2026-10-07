@@ -48,8 +48,7 @@ export function ReviewEditor({ work, api, initialWriter, onClose, onSaved, onBus
       <label className="community-recommend-input"><input type="checkbox" checked={input.recommended} disabled={busy} onChange={(e) => setInput((old) => ({ ...old, recommended: e.target.checked }))} />추천</label>
       <label>한마디<textarea aria-label="짧은 후기" placeholder="100자 이내 · 별점만 남겨도 됩니다." rows={3} disabled={busy} aria-invalid={commentLength > REVIEW_COMMENT_LIMIT || undefined} value={input.comment} onChange={(e) => setInput((old) => ({ ...old, comment: e.target.value }))} /><span className="community-charcount">{commentLength} / {REVIEW_COMMENT_LIMIT}</span></label>
       {commentLength > REVIEW_COMMENT_LIMIT ? <p className="community-error" role="alert">기존 내용은 유지했습니다. 저장하려면 100자 이내로 줄여 주세요.</p> : null}
-      <p className="community-editor-note">등록한 내용은 공개됩니다. 닉네임 변경은 이전 후기에도 적용됩니다.</p>
-      <div className="community-editor-actions">{writer.mine ? <button type="button" className="text-button danger-button" disabled={busy} onClick={() => void submit(true)}>내 후기 삭제</button> : null}<button className="text-button primary" aria-busy={busy} disabled={busy || commentLength > REVIEW_COMMENT_LIMIT || Array.from(input.nickname.trim()).length < 2}>{busy ? <><span className="spinner catalog-refresh-spinner" aria-hidden="true" /> 처리 중…</> : writer.mine ? "후기 수정" : "후기 등록"}</button></div>
+      <div className="community-editor-actions">{writer.mine ? <button type="button" className="text-button danger-button" disabled={busy} onClick={() => void submit(true)}>삭제</button> : null}<button className="text-button primary" aria-busy={busy} disabled={busy || commentLength > REVIEW_COMMENT_LIMIT || Array.from(input.nickname.trim()).length < 2}>{busy ? <><span className="spinner catalog-refresh-spinner" aria-hidden="true" /> 처리 중…</> : writer.mine ? "수정" : "등록"}</button></div>
     </form> : null}
   </section>;
 }

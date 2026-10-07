@@ -486,7 +486,7 @@ describe("App Phase 3A backend flow", () => {
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ text: "", sort: "recent" }));
     expect(downloadList).toHaveBeenCalledWith({ page: 1, pageSize: 200 });
     expect(container.textContent).toContain("Archive of Rain");
-    expect(container.textContent).toContain("브라우저 fixture");
+    expect(container.querySelector(".context-row")).not.toHaveTextContent("브라우저 fixture");
     expect(container.textContent).not.toContain("backend fixture");
 
     const [firstCard, secondCard] = [...container.querySelectorAll<HTMLElement>(".gallery-grid > .gallery-card")];
@@ -582,7 +582,7 @@ describe("App Phase 3A backend flow", () => {
         `[data-gallery-id="${Number(mockGalleries[2]!.id)}"]`,
       );
       await vi.waitFor(() => expect(quarantinedCard).toHaveClass("is-quarantined-blind"));
-      expect(quarantinedCard).toHaveAttribute("aria-disabled", "true");
+      expect(quarantinedCard).not.toHaveAttribute("aria-disabled");
       expect(quarantinedCard).toHaveTextContent("격리된 앨범");
     } finally {
       await act(async () => root.unmount());
@@ -634,12 +634,52 @@ describe("App Phase 3A backend flow", () => {
 
       const card = container.querySelector<HTMLElement>(`[data-gallery-id="${Number(hidden.id)}"]`);
       await vi.waitFor(() => expect(card).toHaveClass("is-exploration-blind"));
-      expect(card).toHaveAttribute("aria-disabled", "true");
+      expect(card).not.toHaveAttribute("aria-disabled");
       expect(card).toHaveTextContent("중복 판정으로 제외");
     } finally {
       await act(async () => root.unmount());
       container.remove();
     }
+  });
+
+  it.each([false, true])("restores an excluded card through its context menu without starting another download (quarantined=%s)", async (quarantined) => {
+    const page = selectionFixturePage(), gallery = page.items[0]!;
+    let hidden = true;
+    let entry: DownloadEntry = { entryId: "menu-restore", galleryId: gallery.id, revision: 1, state: quarantined ? "quarantined" : "cancelled", progress: 100 };
+    const reasons = [{ kind: "duplicate_hidden" as const, detail: "중복 판정에서 제외", excludedAt: "2026-10-06T00:00:00Z" }];
+    vi.spyOn(backend, "searchSubmit").mockResolvedValue({ ok: true, data: { queryId: "menu-restore", firstPage: page } });
+    vi.spyOn(backend, "downloadEntriesList").mockImplementation(async () => ({ ok: true, data: { page: 1, totalItems: 1, entries: [entry] } }));
+    vi.spyOn(backend, "explorationExclusionsList").mockImplementation(async () => ({ ok: true, data: hidden ? [{ galleryId: gallery.id, title: gallery.title, artist: gallery.artist, reasons }] : [] }));
+    const read = vi.spyOn(backend, "explorationExclusionContext").mockImplementation(async () => ({ ok: true, data: {
+      galleryId: gallery.id, reasons, quarantined: entry.state === "quarantined", quarantineEntryId: entry.state === "quarantined" ? entry.entryId : null,
+      reviewId: null, reviewGalleryId: null, legacyCandidateId: null, retainedGallery: null,
+    } }));
+    const undo = vi.spyOn(backend, "downloadQuarantineUndo").mockImplementation(async () => {
+      entry = { ...entry, revision: 2, state: "completed" }; return { ok: true, data: [entry] };
+    });
+    const restore = vi.spyOn(backend, "explorationExclusionsRestore").mockImplementation(async ids => {
+      hidden = false; return { ok: true, data: { restoredGalleryIds: ids, snapshot: { candidates: [], cutoffEvidence: [], truncations: [] } } };
+    });
+    const queue = vi.spyOn(backend, "downloadQueueAdd"), retry = vi.spyOn(backend, "downloadRetry");
+    const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(60); });
+      await submitExploreSearch(container);
+      const card = container.querySelector<HTMLElement>(`[data-gallery-id="${gallery.id}"]`)!;
+      await vi.waitFor(() => expect(card).toHaveClass("is-exploration-blind"));
+      expect(read).not.toHaveBeenCalled();
+      await act(async () => card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 100, clientY: 100 })));
+      const button = [...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(item => item.textContent === "제외 해제·복원")!;
+      await act(async () => { button.click(); await settle(); });
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(restore).toHaveBeenCalledExactlyOnceWith([gallery.id]);
+      if (quarantined) {
+        expect(undo).toHaveBeenCalledExactlyOnceWith(["menu-restore"]);
+        expect(undo.mock.invocationCallOrder[0]).toBeLessThan(restore.mock.invocationCallOrder[0]!);
+      } else expect(undo).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(card).not.toHaveClass("is-exploration-blind"));
+      expect(queue).not.toHaveBeenCalled(); expect(retry).not.toHaveBeenCalled();
+    } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
   it("excludes an Explore card with Delete without moving files and restores its original slot with Ctrl+Z", async () => {
@@ -691,7 +731,7 @@ describe("App Phase 3A backend flow", () => {
       await vi.waitFor(() => expect(cards()[0]).toHaveClass("is-exploration-blind"));
       expect(cards().map((item) => item.dataset.galleryId)).toEqual(originalIds);
       expect(cards()[0]).toHaveTextContent("탐색에서 제외");
-      expect(cards()[0]).toHaveAttribute("aria-disabled", "true");
+      expect(cards()[0]).not.toHaveAttribute("aria-disabled");
       expect(quarantine).not.toHaveBeenCalled();
       await act(async () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "z", code: "KeyZ", ctrlKey: true }));
@@ -2775,7 +2815,7 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
 
-      const scanButton = clickButtonContaining(container, "선택 앨범 내부 페이지 검사");
+      const scanButton = clickButtonContaining(container, "내부 중복 검사");
       expect(scanButton).toBeDisabled();
       expect(scanStart).not.toHaveBeenCalled();
 
@@ -2792,7 +2832,7 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       expect(scanButton).toBeEnabled();
-      expect(scanButton).toHaveTextContent("선택 앨범 내부 페이지 검사 (1)");
+      expect(scanButton).toHaveTextContent("내부 중복 검사");
       await act(async () => {
         scanButton.click();
         await settle();
@@ -2803,7 +2843,7 @@ describe("App Phase 3A backend flow", () => {
         second.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 }));
         await settle();
       });
-      expect(scanButton).toHaveTextContent("선택 앨범 내부 페이지 검사 (2)");
+      expect(scanButton).toHaveTextContent("내부 중복 검사");
       await act(async () => {
         scanButton.click();
         await settle();
@@ -4194,7 +4234,34 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it("keeps scan evidence out of Explore and folds it behind the results count in other views", async () => {
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      expect(container.querySelector(".context-row")).not.toHaveTextContent("검사");
+      expect(container.querySelector(".result-details")).toBeNull();
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expect([...container.querySelectorAll(".heading-actions button")].map(button => button.textContent?.replace(/[\uE000-\uF8FF]/g, "").trim()))
+        .toEqual(["무결성 검사", "작가 내 검사", "내부 중복 검사", "전체 다운로드"]);
+      expect(container.querySelector(".context-left")).not.toHaveTextContent("검사");
+      expect(container.querySelector<HTMLDetailsElement>(".result-details")!.open).toBe(false);
+      expect(container.querySelector(".result-details-popover")).toHaveTextContent("검사");
+      expect(container.querySelector(".context-row")).not.toHaveTextContent("fixture");
+      expect(container.querySelector(".context-row")).not.toHaveTextContent("실데이터");
+      await act(async () => { clickButtonContaining(container, "Auto Find"); await settle(); });
+      expect(container.querySelector(".context-left")).not.toHaveTextContent("확인된 항목");
+      expect(container.querySelector<HTMLDetailsElement>(".result-details")!.open).toBe(false);
+      await act(async () => { clickButtonContaining(container, "Explore"); await settle(); });
+      expect(container.querySelector(".result-details")).toBeNull();
+      expect(container.querySelector(".context-row")).not.toHaveTextContent("검사");
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
   it("submits only the two manually entered album IDs without starting a library scan", async () => {
+    vi.spyOn(backend, "downloadEntriesList").mockResolvedValue({ ok: true, data: { page: 1, totalItems: 2, entries: [
+      { entryId: "pair-select-a", galleryId: galleryId(4051038), revision: 1, state: "completed", progress: 100 },
+      { entryId: "pair-select-b", galleryId: galleryId(4050754), revision: 1, state: "completed", progress: 100 },
+    ] } });
     const run = { runId: "selected-only", revision: 1, state: "completed" as const, totalArtifacts: 2, hashedArtifacts: 2, totalPairs: 1, comparedPairs: 1, candidatesFound: 0, startedAt: "now", updatedAt: "now" };
     const scan = vi.spyOn(backend, "duplicateScanStart").mockResolvedValue({ ok: true, data: run });
     vi.spyOn(backend, "duplicateSnapshot").mockResolvedValue({ ok: true, data: { profile: { profileVersion: 1, dHashBits: 1024, pHashBits: 64 } as never, candidates: [] } });
@@ -4203,7 +4270,11 @@ describe("App Phase 3A backend flow", () => {
     try {
       await act(async () => { root.render(<TestApp />); await settle(); });
       await act(async () => { clickButtonContaining(container,"Downloads"); await settle(); });
-      await act(async () => clickButtonContaining(container,"두 앨범 직접 대조"));
+      expect(container.querySelector(".heading-actions")).not.toHaveTextContent("직접 대조");
+      const cards = [...container.querySelectorAll<HTMLElement>(".gallery-card[data-gallery-id]")].slice(0, 2);
+      expect(cards).toHaveLength(2);
+      for (const card of cards) await act(async () => { card.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, ctrlKey: true })); await settle(); });
+      await act(async () => clickButtonContaining(container.querySelector(".selection-toolbar")!, "직접 대조"));
       const inputs=container.querySelectorAll<HTMLInputElement>(".pair-compare-panel input");
       for (const [index,value] of ["1012753","1011663"].entries()) {
         await act(async () => {
@@ -4263,7 +4334,7 @@ describe("App Phase 3A backend flow", () => {
     expect(container.textContent).toContain("initial duplicate snapshot unavailable");
 
     await act(async () => {
-      clickButtonContaining(container, "같은 작가 작품 중복 검사");
+      clickButtonContaining(container, "작가 내 검사");
       await settle(15);
     });
     expect(scanStart).toHaveBeenCalledTimes(1);
@@ -4277,7 +4348,7 @@ describe("App Phase 3A backend flow", () => {
     expect(container.textContent).toContain("중복 검사 취소됨");
 
     await act(async () => {
-      clickButtonContaining(container, "같은 작가 작품 중복 검사");
+      clickButtonContaining(container, "작가 내 검사");
       await settle(130);
     });
     expect(container.textContent).toContain("중복 검사 완료");

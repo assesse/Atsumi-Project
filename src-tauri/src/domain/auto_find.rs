@@ -264,3 +264,23 @@ pub struct ExplorationExclusionRestoreResult {
     pub restored_gallery_ids: Vec<GalleryId>,
     pub snapshot: AutoFindSnapshot,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplorationRetainedGallery {
+    pub gallery_id: GalleryId,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplorationExclusionContext {
+    pub gallery_id: GalleryId,
+    pub reasons: Vec<ExplorationExclusionReason>,
+    pub quarantined: bool,
+    pub quarantine_entry_id: Option<String>,
+    pub review_id: Option<String>,
+    pub review_gallery_id: Option<GalleryId>,
+    pub legacy_candidate_id: Option<String>,
+    pub retained_gallery: Option<ExplorationRetainedGallery>,
+}

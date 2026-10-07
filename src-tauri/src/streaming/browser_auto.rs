@@ -755,7 +755,16 @@ impl OfficialBrowser {
                             && key != session.live_key
                     });
                 let should_stop = !auto.allowed(id, &session.live_key) || ended;
-                let (ready, active, current_id, status, problem, request_id, accepted_id) = {
+                let (
+                    ready,
+                    active,
+                    current_id,
+                    status,
+                    problem,
+                    request_id,
+                    accepted_id,
+                    same_capture,
+                ) = {
                     let mut s = session
                         .host
                         .inner
@@ -780,6 +789,7 @@ impl OfficialBrowser {
                             .map(|a| a.id.clone())
                             .or_else(|| s.accepted_arm.as_ref().map(|a| a.0.clone())),
                         accepted_session_recording(&s, session.request_id.as_deref()),
+                        session.request_id.is_some() && session.request_id == s.capture_origin,
                     )
                 };
                 let same_channel = session
@@ -795,13 +805,15 @@ impl OfficialBrowser {
                 }
                 // A user can stop then immediately start a NEW recording in a
                 // borrowed player. Never stop/adopt that replacement session.
-                if session_replaced(
-                    session.recording_id.as_deref(),
-                    current_id.as_deref(),
-                    session.request_id.as_deref(),
-                    request_id.as_deref(),
-                    active,
-                ) {
+                if !same_capture
+                    && session_replaced(
+                        session.recording_id.as_deref(),
+                        current_id.as_deref(),
+                        session.request_id.as_deref(),
+                        request_id.as_deref(),
+                        active,
+                    )
+                {
                     completed.push(id.clone());
                     continue;
                 }
@@ -813,6 +825,11 @@ impl OfficialBrowser {
                 }
                 if should_stop || session.stop_at.is_some() {
                     if session.owns_recording && active && session.stop_at.is_none() {
+                        if let Ok(mut state) = session.host.inner.view.lock() {
+                            state.continuation = None;
+                            state.continuation_origin = None;
+                            state.arm = None;
+                        }
                         if let Some(view) = app.get_webview(session.host.label()) {
                             let reason = if ended {
                                 if observed.offline_count >= 2 {
@@ -1103,7 +1120,10 @@ fn can_continue_without_extension(cause: &StreamError) -> bool {
 /// token is durable in ViewState until a new start; do not call it a failed start.
 fn accepted_session_recording(state: &ViewState, request_id: Option<&str>) -> Option<String> {
     let (nonce, id, generation) = state.accepted_arm.as_ref()?;
-    (request_id == Some(nonce.as_str()) && *generation == state.page_generation).then(|| id.clone())
+    ((request_id == Some(nonce.as_str())
+        || request_id.is_some() && request_id == state.capture_origin.as_deref())
+        && *generation == state.page_generation)
+        .then(|| id.clone())
 }
 
 fn session_replaced(

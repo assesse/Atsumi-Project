@@ -45,7 +45,7 @@ export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRai
   }, [view]);
   if (!active) return null;
   return <div className={`app-shell streaming-shell${railCollapsed ? " sidebar-collapsed" : ""}`} hidden={!active} style={active ? undefined : { display: "none" }}>
-    <SideRail source="chzzk" view={view} collapsed={railCollapsed} autoFindCount={0} attentionCount={0} sourceLabel="CHZZK" onNavigate={navigate} onSourceChange={onSourceChange} onToggle={onToggleRail} onSettings={onOpenSettings} />
+    <SideRail source="chzzk" view={view} collapsed={railCollapsed} autoFindCount={0} attentionCount={0} onNavigate={navigate} onSourceChange={onSourceChange} onToggle={onToggleRail} onSettings={onOpenSettings} />
     <main className={`streaming-workspace${view === "live" ? " is-official-view" : ""}`}>
       {view === "auto-record" ? <AutoRecordingPanel runtime={runtime} privacy={false} />
         : view === "live" ? <MadoWorkspace runtime={runtime} privacy={false} tutorialActive={tutorialActive} unifiedLive onLeave={() => {}} />

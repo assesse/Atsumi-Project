@@ -11,7 +11,7 @@ import {
   type MouseEvent,
 } from "react";
 import type { Gallery, GalleryDisplayMode, GalleryId, ViewId } from "../core/types";
-import type { InternalArtifactScanProgress } from "../api/contracts";
+import type { ExplorationExclusionContext, InternalArtifactScanProgress } from "../api/contracts";
 import { languagePresentation } from "../data/languages";
 import {
   galleryCoverThumbnailKey,
@@ -30,6 +30,8 @@ import type { BackgroundOpenOptions } from "../state/downloadStatus";
 import { fitTagChips, sortGalleryTags, splitGalleryTitle, type TagFitResult } from "./galleryCardLayout";
 import { isCardControl, useCardContextMenu } from "./CardContextMenu";
 import { AlbumContextMenu } from "./AlbumContextMenu";
+import { galleryCreator } from "../state/galleryCreator";
+import { ExcludedAlbumMenu } from "./ExcludedAlbumMenu";
 
 type GalleryCardProps = {
   gallery: Gallery;
@@ -59,6 +61,8 @@ type GalleryCardProps = {
   onMetadataFavorite: (value: string) => void;
   onQueue?: (id: GalleryId) => void;
   onExclude?: (id: GalleryId) => void;
+  onInspectExclusion?: (id: GalleryId, context: ExplorationExclusionContext) => void;
+  onRestoreExclusion?: (id: GalleryId) => void;
   pendingAction?: boolean;
 };
 
@@ -115,12 +119,13 @@ function GalleryCardComponent({
   onMetadataFavorite,
   onQueue,
   onExclude,
+  onInspectExclusion,
+  onRestoreExclusion,
   pendingAction,
 }: GalleryCardProps) {
   const menu = useCardContextMenu();
   const download = useGalleryDownload(gallery.id, gallery.download);
-  const isExplorationBlind = view === "explore"
-    && (download?.state === "quarantined" || explorationExcluded);
+  const isExplorationBlind = download?.state === "quarantined" || explorationExcluded;
   const explorationBlindLabel = download?.state === "quarantined"
     ? "격리된 앨범"
     : explorationExcludedLabel;
@@ -199,8 +204,12 @@ function GalleryCardComponent({
   }, []);
 
   useLayoutEffect(() => {
-    if (cardRef.current) cardRef.current.inert = isExplorationBlind;
-  }, [isExplorationBlind]);
+    // Keep the card itself available to context-menu/keyboard interaction,
+    // while its ordinary download, bookmark and metadata controls stay inert.
+    for (const child of Array.from(cardRef.current?.children ?? [])) {
+      if (child instanceof HTMLElement) child.inert = isExplorationBlind;
+    }
+  }, [isExplorationBlind, displayMode, selectionContext]);
 
   useLayoutEffect(() => {
     if (wasSelected.current && !selected && pointerFocus.current) {
@@ -327,7 +336,7 @@ function GalleryCardComponent({
   return (
     <>
     <article
-      className={`gallery-card${displayMode === "compact" ? " is-compact" : ""}${compactFavoriteTagCount ? " has-compact-favorites" : ""}${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}`}
+      className={`gallery-card${displayMode === "compact" ? " is-compact" : ""}${compactFavoriteTagCount ? " has-compact-favorites" : ""}${selected ? " is-selected" : ""}${gallery.favorite ? " is-favorite" : ""}${cardStatusClass}${visibleInternalDuplicateProgress ? " is-internal-scanning" : ""}${isExplorationBlind ? " is-quarantined-blind is-exploration-blind" : ""}${isExplorationBlind && menu.anchor ? " is-exclusion-menu-open" : ""}`}
       ref={cardRef}
       data-gallery-id={gallery.id}
       data-tour="hitomi-album"
@@ -335,17 +344,16 @@ function GalleryCardComponent({
       data-display-mode={displayMode}
       style={{ "--download-progress": `${progress}%` } as CSSProperties}
       role="listitem"
-      tabIndex={keyboardFocusable && !isExplorationBlind ? 0 : -1}
-      aria-disabled={isExplorationBlind || undefined}
+      tabIndex={keyboardFocusable || isExplorationBlind ? 0 : -1}
       aria-label={[
         gallery.title,
         subtitle || null,
         download?.state === "completed" ? "다운로드 완료" : null,
         visibleInternalDuplicateProgress ? `내부 중복 검사 ${internalScanPercent}%` : null,
-        isExplorationBlind ? `${explorationBlindLabel}, 내용 가림` : null,
+        isExplorationBlind ? `${explorationBlindLabel}, 호버 미리보기·우클릭 관리` : null,
         selected ? "선택됨" : "선택 안 됨",
       ].filter(Boolean).join(", ")}
-      onKeyDown={(event) => { if (!isExplorationBlind && !menu.onKeyDown(event)) selectFromKeyboard(event); }}
+      onKeyDown={(event) => { if (!menu.onKeyDown(event)) selectFromKeyboard(event); }}
       onKeyDownCapture={() => { pointerFocus.current = false; }}
       onPointerDownCapture={() => { pointerFocus.current = true; }}
       onFocus={() => onKeyboardFocus?.(gallery.id)}
@@ -364,11 +372,7 @@ function GalleryCardComponent({
         onOpenDetail(gallery.id);
       }}
       onContextMenu={(event) => {
-        if (isExplorationBlind) {
-          event.preventDefault();
-          return;
-        }
-        if (isCardControl(event.target)) return;
+        if (!isExplorationBlind && isCardControl(event.target)) return;
         menu.open(event);
       }}
     >
@@ -454,6 +458,7 @@ function GalleryCardComponent({
               key={gallery.id}
               artist={gallery.artist}
               artists={gallery.artists}
+              group={gallery.group ?? ""}
               compact
               disabled={isExplorationBlind}
               favoriteMetadata={favoriteMetadata}
@@ -495,13 +500,14 @@ function GalleryCardComponent({
             key={gallery.id}
             artist={gallery.artist}
             artists={gallery.artists}
+            group={gallery.group ?? ""}
             disabled={isExplorationBlind}
             favoriteMetadata={favoriteMetadata}
             onClickCapture={selectFromInteractiveTarget}
             onSearch={onMetadataSearch}
             onToggleFavorite={onMetadataFavorite}
           />
-          {gallery.group ? (
+          {gallery.group && galleryCreator(gallery).kind === "artist" ? (
             <>
               <span className="byline-separator" aria-hidden="true">·</span>
               <MetadataChip
@@ -590,11 +596,14 @@ function GalleryCardComponent({
         <div className="quarantined-blind-overlay" aria-hidden="true">
           <GalleryStatusIcon kind="warning" />
           <strong>{explorationBlindLabel}</strong>
-          <span>검색 결과 위치만 유지됩니다</span>
+          <span>호버로 미리보기 · 우클릭으로 관리</span>
         </div>
       ) : null}
     </article>
     {menu.anchor && !isExplorationBlind ? <AlbumContextMenu anchor={menu.anchor} close={menu.close} label={displayTitle} gallery={{ ...gallery, download }} actions={menuActions} /> : null}
+    {menu.anchor && isExplorationBlind && onInspectExclusion && onRestoreExclusion ? <ExcludedAlbumMenu
+      anchor={menu.anchor} close={menu.close} label={displayTitle} galleryId={gallery.id} pending={pendingAction}
+      onInspect={onInspectExclusion} onRestore={onRestoreExclusion} onOpenRetained={(id) => onOpenDetail(id)} /> : null}
     </>
   );
 }

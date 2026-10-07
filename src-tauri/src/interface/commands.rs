@@ -71,6 +71,7 @@ struct ManagedWorkGateInner {
 #[derive(Default)]
 struct ManagedWorkGateState {
     accepted_quit: Option<AppQuitResult>,
+    updating: bool,
 }
 
 impl Default for ManagedWorkGate {
@@ -94,7 +95,7 @@ impl ManagedWorkGate {
                 "managed work gate mutex was poisoned".into(),
             )
         })?;
-        if self.inner.quitting.load(Ordering::Acquire) {
+        if self.inner.quitting.load(Ordering::Acquire) || _control.updating {
             return Err(ApplicationError::AppQuitInProgress);
         }
         operation()
@@ -470,7 +471,7 @@ impl AppState {
                 true,
             )
         })?;
-        if self.managed_work.inner.quitting.load(Ordering::Acquire) {
+        if self.managed_work.inner.quitting.load(Ordering::Acquire) || _control.updating {
             return Err(StreamError::new(
                 "APP_QUITTING",
                 "앱 종료 중에는 녹화를 시작할 수 없습니다.",
@@ -504,6 +505,79 @@ impl AppState {
             )
         })?;
         self.active_work_snapshot_locked()
+    }
+
+    pub(crate) fn reserve_update(&self) -> Result<(), crate::streaming::model::StreamError> {
+        use crate::streaming::model::StreamError;
+        let fail = || {
+            StreamError::new(
+                "UPDATE_BUSY",
+                "작업 상태를 확인하지 못해 업데이트를 보류했습니다.",
+                true,
+            )
+        };
+        let mut control = self.managed_work.inner.control.lock().map_err(|_| fail())?;
+        if control.updating || self.is_quitting() {
+            return Err(fail());
+        }
+        if self
+            .active_work_snapshot_locked()
+            .map_err(|_| fail())?
+            .has_active_work()
+        {
+            return Err(StreamError::new(
+                "UPDATE_WORK_ACTIVE",
+                "다운로드·검사·탐색·녹화를 마친 뒤 업데이트해 주세요.",
+                true,
+            ));
+        }
+        self.official_browser()?.reserve_update()?;
+        control.updating = true;
+        Ok(())
+    }
+
+    pub(crate) fn release_update(&self) {
+        if let Ok(mut control) = self.managed_work.inner.control.lock() {
+            if !self.is_quitting() {
+                control.updating = false;
+                if let Ok(browser) = self.official_browser() {
+                    browser.release_update();
+                }
+            }
+        }
+    }
+
+    pub(crate) fn update_reserved(&self) -> bool {
+        self.managed_work
+            .inner
+            .control
+            .lock()
+            .is_ok_and(|control| control.updating && !self.is_quitting())
+    }
+
+    pub(crate) fn finish_portable_update(&self, app: AppHandle) -> Result<(), String> {
+        let control = self
+            .managed_work
+            .inner
+            .control
+            .lock()
+            .map_err(|_| "업데이트 잠금을 확인하지 못했습니다.")?;
+        if !control.updating
+            || self.is_quitting()
+            || self
+                .active_work_snapshot_locked()
+                .map_err(|_| "작업 상태 확인 실패")?
+                .has_active_work()
+        {
+            return Err("진행 중인 작업 때문에 업데이트를 보류했습니다.".into());
+        }
+        self.managed_work
+            .inner
+            .quitting
+            .store(true, Ordering::Release);
+        drop(control);
+        self.spawn_graceful_shutdown(app);
+        Ok(())
     }
 
     fn active_work_snapshot_locked(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
@@ -923,6 +997,20 @@ pub async fn exploration_exclusions_list(
     Ok(
         run_application_blocking("exploration_exclusions_list", move || {
             service.exploration_exclusions_list()
+        })
+        .await,
+    )
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn exploration_exclusion_context(
+    state: State<'_, AppState>,
+    gallery_id: i64,
+) -> Result<ApiResult<crate::domain::ExplorationExclusionContext>, ApiError> {
+    let service = state.service.clone();
+    Ok(
+        run_application_blocking("exploration_exclusion_context", move || {
+            service.exploration_exclusion_context(gallery_id)
         })
         .await,
     )
@@ -2616,6 +2704,15 @@ mod tests {
             gate.run(|| Ok::<_, ApplicationError>(8)),
             Err(ApplicationError::AppQuitInProgress)
         ));
+    }
+
+    #[test]
+    fn update_reservation_blocks_new_work_and_releases_after_failure() {
+        let gate = ManagedWorkGate::default();
+        gate.inner.control.lock().unwrap().updating = true;
+        assert!(gate.run(|| Ok::<_, ApplicationError>(7)).is_err());
+        gate.inner.control.lock().unwrap().updating = false;
+        assert_eq!(gate.run(|| Ok(8)).unwrap(), 8);
     }
 
     #[test]

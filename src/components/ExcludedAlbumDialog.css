@@ -1,0 +1,13 @@
+.excluded-album-dialog { width:min(480px,calc(100vw - 40px)); max-height:calc(100dvh - 48px); box-sizing:border-box; padding:20px; overflow:auto; color:var(--text); background:var(--surface-raised,var(--surface)); border:1px solid var(--line); border-radius:10px; box-shadow:0 18px 70px #0008; animation:exclusion-enter 160ms ease-out; }
+.excluded-album-dialog::backdrop { background:#0008; }
+.excluded-album-dialog header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; }
+.excluded-album-dialog h2 { margin:0; font-size:17px; }
+.excluded-album-title { display:block; overflow-wrap:anywhere; }
+.excluded-album-dialog small,.excluded-album-dialog p { font-size:12px; color:var(--muted); }
+.excluded-album-dialog ul { list-style:none; margin:16px 0; padding:0; }
+.excluded-album-dialog li { display:grid; gap:5px; padding:10px 0; border-bottom:1px solid var(--line); font-size:13px; }
+.excluded-album-dialog footer { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+.excluded-retained { display:grid; width:100%; gap:6px; padding:12px; border:1px solid var(--success); background:color-mix(in srgb,var(--success) 8%,transparent); color:var(--text); text-align:left; border-radius:5px; cursor:pointer; }
+.excluded-retained span { color:var(--success); font-size:12px; }
+@keyframes exclusion-enter { from { opacity:0; transform:translateY(8px) scale(.98); } to { opacity:1; transform:none; } }
+@media(prefers-reduced-motion:reduce) { .excluded-album-dialog { animation:none; } }

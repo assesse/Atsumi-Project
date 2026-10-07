@@ -26,8 +26,9 @@ pub use artifact_path::{
 pub use auto_find::{
     AutoFindCandidate, AutoFindCandidateRecord, AutoFindCutoffEvidence, AutoFindExclusionResult,
     AutoFindRun, AutoFindRunState, AutoFindSnapshot, AutoFindTruncation, ExplorationExclusion,
-    ExplorationExclusionKind, ExplorationExclusionReason, ExplorationExclusionRestoreResult,
-    FavoriteKey, FavoriteMutationResult, FavoriteNamespace, FavoriteRecord, SearchHistoryEntry,
+    ExplorationExclusionContext, ExplorationExclusionKind, ExplorationExclusionReason,
+    ExplorationExclusionRestoreResult, ExplorationRetainedGallery, FavoriteKey,
+    FavoriteMutationResult, FavoriteNamespace, FavoriteRecord, SearchHistoryEntry,
 };
 pub use download::{
     DownloadEntry, DownloadLibraryGallery, DownloadLibraryItem, DownloadLibraryPage,

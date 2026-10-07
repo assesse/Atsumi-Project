@@ -10,13 +10,15 @@ type SelectionToolbarProps = {
   cancelPending?: boolean;
   downloadPending?: boolean;
   onCancelDownloads?: () => void;
+  onCompare?: () => void;
+  compareDisabled?: boolean;
   onAll: () => void;
   onClear: () => void;
   onPrimary: () => void;
   onDelete: () => void;
 };
 
-export function SelectionToolbar({ active, count, downloadsView, restoreMode = false, cancelCount = 0, cancelPending = false, downloadPending = false, onCancelDownloads, onAll, onClear, onPrimary, onDelete }: SelectionToolbarProps) {
+export function SelectionToolbar({ active, count, downloadsView, restoreMode = false, cancelCount = 0, cancelPending = false, downloadPending = false, onCancelDownloads, onCompare, compareDisabled = false, onAll, onClear, onPrimary, onDelete }: SelectionToolbarProps) {
   return (
     <div className="selection-slot">
       <div className={`selection-toolbar${active ? " is-visible" : ""}`} aria-live={active ? "polite" : "off"}>
@@ -32,6 +34,8 @@ export function SelectionToolbar({ active, count, downloadsView, restoreMode = f
             <button type="button" className="text-button primary" disabled={downloadPending} onClick={onPrimary}>
               <FluentIcon glyph="\uE896" /> {downloadsView ? "선택 파일 다운로드" : "다운로드"}
             </button>
+            {downloadsView && onCompare ? <button type="button" className="text-button" disabled={count !== 2 || compareDisabled}
+              title={count === 2 ? "선택한 두 앨범을 직접 대조합니다." : "앨범 두 개를 선택하세요."} onClick={onCompare}>직접 대조</button> : null}
             {onCancelDownloads && (cancelCount > 0 || cancelPending) ? (
               <button type="button" className="text-button danger-button" disabled={cancelPending || downloadPending} onClick={onCancelDownloads}
                 title="선택한 진행 중 작업만 중단합니다. 완료된 앨범이나 이미 받은 파일은 삭제하지 않습니다.">

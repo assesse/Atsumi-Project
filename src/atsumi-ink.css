@@ -185,15 +185,6 @@ textarea:focus-visible {
   border-color: color-mix(in srgb, var(--warning) 38%, transparent);
 }
 
-.live-indicator {
-  color: var(--muted);
-}
-
-.live-indicator i {
-  background: var(--source-teal);
-  box-shadow: 0 0 0 3px var(--source-teal-soft);
-}
-
 .source-switcher {
   color: var(--text);
   background: var(--surface-raised);
@@ -230,7 +221,7 @@ textarea:focus-visible {
 /* Main search and action hierarchy */
 
 .view-header {
-  grid-template-columns: minmax(220px, 1fr) repeat(6, 48px);
+  grid-template-columns: minmax(220px, 1fr) repeat(4, 48px);
 }
 
 .search-box,
@@ -926,13 +917,13 @@ dialog::backdrop {
   }
 
   .view-header {
-    grid-template-columns: minmax(220px, 1fr) repeat(6, 48px);
+    grid-template-columns: minmax(220px, 1fr) repeat(4, 48px);
   }
 }
 
 @media (max-width: 940px) {
   .view-header {
-    grid-template-columns: minmax(220px, 1fr) repeat(6, 48px);
+    grid-template-columns: minmax(220px, 1fr) repeat(4, 48px);
   }
 
   .random-open-button {

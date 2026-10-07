@@ -151,6 +151,7 @@ struct ChatWorker {
     cancel: Arc<AtomicBool>,
     handle: thread::JoinHandle<()>,
 }
+#[derive(Clone)]
 struct Arm {
     id: String,
     root: PathBuf,
@@ -215,6 +216,11 @@ struct ViewState {
     error: Option<String>,
     recording: Option<String>,
     arm: Option<Arm>,
+    continuation: Option<Arm>,
+    continuation_broadcast: Option<String>,
+    capture_origin: Option<String>,
+    continuation_origin: Option<String>,
+    rollover_attempts: Vec<Instant>,
     accepted_arm: Option<(String, String, u64)>,
     extension: String,
     chat_status: String,
@@ -257,6 +263,11 @@ impl Default for ViewState {
             error: None,
             recording: None,
             arm: None,
+            continuation: None,
+            continuation_broadcast: None,
+            capture_origin: None,
+            continuation_origin: None,
+            rollover_attempts: Vec::new(),
             accepted_arm: None,
             extension: super::browser_compat::STATUS.into(),
             chat_status: "disabled".into(),
@@ -571,7 +582,7 @@ fn bridge_reason(reason: &str) -> &'static str {
         "seek" => "타임머신 또는 재생 위치 이동으로 녹화를 중단했습니다.",
         "rate_change" => "재생 배속이 변경되어 녹화를 중단했습니다.",
         "video_changed" | "channel_changed" | "source_changed" => "방송 또는 영상 소스가 변경되어 녹화를 중단했습니다.",
-        "codec_changed" | "track_changed" | "init_changed" => "영상·음성 형식이 변경되어 원본 녹화를 중단했습니다. 저장된 조각은 보존됩니다.",
+        "codec_changed" | "track_changed" | "init_changed" => "영상 형식이 변경되었습니다. 저장된 파일은 보존되며, 지원되는 새 형식이면 별도 파일로 이어 저장합니다.",
         "observer_changed" | "observer_failed" => "플레이어의 수신 경로가 변경되어 원본 녹화를 중단했습니다. 방송을 다시 연결해 주세요.",
         "encrypted" => "암호화된 영상으로 변경되어 원본 녹화를 중단했습니다.",
         "timeline_changed" | "container_unsupported" | "init_unsupported" | "append_unsupported" | "source_buffer_error" => "수신 영상의 형식 또는 시간축을 안전하게 저장할 수 없어 녹화를 중단했습니다. 저장된 조각은 보존됩니다.",
@@ -1279,6 +1290,11 @@ impl OfficialBrowser {
                 created: Instant::now(),
                 generation: state.page_generation,
             });
+            state.continuation = None;
+            state.continuation_broadcast = None;
+            state.continuation_origin = None;
+            state.capture_origin = None;
+            state.rollover_attempts.clear();
             state.status = "starting".into();
             state.error = None;
             channel
@@ -1310,6 +1326,9 @@ impl OfficialBrowser {
             if approved.is_some_and(|p| !p.matches(&state)) {
                 return Err(control_stale());
             }
+            state.continuation = None;
+            state.continuation_broadcast = None;
+            state.continuation_origin = None;
             if state.recording.is_none() && state.arm.is_none() {
                 return Ok(());
             }
@@ -1741,6 +1760,12 @@ impl OfficialBrowser {
                     true,
                 )?;
             state.recording = Some(session.id.clone());
+            state.continuation = Some(arm.clone());
+            state.capture_origin = state
+                .continuation_origin
+                .take()
+                .or_else(|| Some(request_id.clone()));
+            let inherited_broadcast = state.continuation_broadcast.take();
             self.inner.contexts.notice("녹화를 시작했습니다.");
             state.accepted_arm = Some((request_id, session.id.clone(), state.page_generation));
             state.status = "recording".into();
@@ -1754,7 +1779,9 @@ impl OfficialBrowser {
             }
             .into();
             drop(state);
-            if let Some(key) = self.inner.auto_record.observed_live_key(channel) {
+            if let Some(key) =
+                inherited_broadcast.or_else(|| self.inner.auto_record.observed_live_key(channel))
+            {
                 let _ = self
                     .inner
                     .store
@@ -2048,15 +2075,45 @@ impl OfficialBrowser {
                     .submit_channel(Path::new(&finished.output_dir), &finished.channel_id);
                 let interrupted = finished.status != BrowserRecordingStatus::Stopped;
                 let ending = self.finish_reason(&finished, reason.as_deref().unwrap_or("unknown"));
-                {
+                let continuation = {
                     let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
+                    let can_continue = matches!(
+                        reason.as_deref(),
+                        Some("track_changed" | "codec_changed" | "init_changed")
+                    ) && finished.segment_count > 0
+                        && !interrupted
+                        && state.status != "stopping"
+                        && !state.account_busy
+                        && !self.inner.closing.load(Ordering::Acquire)
+                        && !self.inner.reserved.load(Ordering::Acquire);
+                    state
+                        .rollover_attempts
+                        .retain(|at| at.elapsed() < Duration::from_secs(60));
+                    let continuation = state.continuation.take().filter(|arm| {
+                        can_continue
+                            && arm.generation == state.page_generation
+                            && state.rollover_attempts.len() < 3
+                    });
                     state.recording = None;
                     state.ready = false;
                     state.status = if interrupted { "error" } else { "ready" }.into();
                     state.error = finished.last_error.clone();
-                }
+                    continuation.map(|mut arm| {
+                        arm.id = uuid::Uuid::new_v4().to_string();
+                        arm.created = Instant::now();
+                        let command = json!({"requestId":arm.id,"channelId":channel,"rightsAcknowledged":true});
+                        state.rollover_attempts.push(Instant::now());
+                        state.continuation_broadcast = finished.broadcast_key.clone();
+                        state.continuation_origin = state.capture_origin.clone();
+                        state.arm = Some(arm);
+                        state.status = "starting".into();
+                        command
+                    })
+                };
                 self.stop_chat();
-                self.inner.contexts.notice(if ending == "checking" {
+                self.inner.contexts.notice(if continuation.is_some() {
+                    "영상 형식이 변경되어 새 파일로 이어 저장합니다."
+                } else if ending == "checking" {
                     "영상 수신이 끝나 방송 종료 여부를 확인합니다. 녹화 파일은 보존됩니다."
                 } else if ending == "broadcast_ended" {
                     "방송이 종료되어 녹화를 저장했습니다."
@@ -2065,7 +2122,9 @@ impl OfficialBrowser {
                 } else {
                     "녹화를 종료했습니다."
                 });
-                Ok(json!({"stopped":true,"interrupted":interrupted,"status":finished.status}))
+                Ok(
+                    json!({"stopped":true,"interrupted":interrupted,"status":finished.status,"continuation":continuation}),
+                )
             }
             _ => Err(unavailable()),
         }

@@ -11,16 +11,16 @@
 .auto-record-panel button:disabled {opacity:.45;cursor:default;}
 .auto-record-panel form button {background:#17624d;border-color:#237b63;}
 .auto-record-panel button[aria-pressed=true] {color:#75e3b7;border-color:#32644f;}
-.auto-record-channels {display:grid;gap:10px;}
-.auto-record-channel {display:flex;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px;border:1px solid #39343f;background:#222027;border-radius:12px;}
+.auto-record-channels {display:grid;grid-template-columns:minmax(0,1fr);gap:10px;}
+.auto-record-channel {display:flex;min-width:0;align-items:flex-start;justify-content:space-between;gap:16px;padding:18px;border:1px solid #39343f;background:#222027;border-radius:12px;}
 .auto-record-channel.is-recording {border-color:#4f7466;}
-.auto-record-identity {display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;}
-.auto-record-identity strong {max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;}
+.auto-record-identity {display:flex;flex:1;flex-wrap:wrap;align-items:center;gap:8px 12px;min-width:0;}
+.auto-record-identity strong {min-width:0;max-width:min(100%,420px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:15px;}
 .auto-record-status {font-size:12px;color:#b7b1bf;}
 .is-recording .auto-record-status {color:#75e3b7;}
 .is-recording .auto-record-status::before {content:"";display:inline-block;width:6px;height:6px;margin-right:5px;border-radius:50%;background:currentColor;}
 .auto-record-problem {width:100%;color:#d7b98b;font-size:12px;display:flex;gap:6px;min-width:0;}
-.auto-record-problem span {overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:560px;}
+.auto-record-problem span {min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:560px;}
 .auto-record-not-started {width:100%;font-size:12px;color:#b7b1bf;}
 .auto-record-last-failure {width:100%;padding-top:6px;}
 .auto-record-last-failure strong {display:block;font-size:12px;color:#e0bc87;white-space:normal;}

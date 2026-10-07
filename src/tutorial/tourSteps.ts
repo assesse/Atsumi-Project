@@ -32,7 +32,7 @@ export const hitomiTourSteps: readonly TourStep[] = [
   { id: "auto-find-refresh", section: "Hitomi", target: '[data-tour="hitomi-auto-find-refresh"]', title: "자동 탐색 갱신", description: "갱신을 눌러야 탐색이 시작됩니다. 다운로드는 별도로 선택.", action: "click", waitForResult: true, satisfiedSelector: ':scope[data-running="true"]', hint: "즐겨찾기 작가·그룹 갱신 클릭", satisfiedHint: "탐색 진행 중 · 다음으로 진행" },
   { id: "downloads", section: "Hitomi", target: '[data-tour="hitomi-nav-downloads"]', title: "Downloads", description: "전체 · 작가 · 기간별 분류", action: "click", hint: "Downloads 클릭" },
   { id: "favorites", section: "Hitomi", target: '[data-tour="hitomi-favorites"]', title: "내 즐겨찾기", description: "앨범 · 페이지. 작가·그룹 즐겨찾기와는 별개.", action: "click", hint: "내 즐겨찾기 클릭" },
-  { id: "activity", section: "공통", target: '[data-tour="hitomi-activity"]', title: "활동 기록", description: "다운로드 큐 · 실행 상태 · 판본 검토", action: "click", hint: "활동 기록 클릭" },
+  { id: "activity", section: "공통", target: '[data-tour="hitomi-activity"]', title: "활동 기록", description: "대기 큐 · 작업 중 · 판본 검토", action: "click", hint: "활동 기록 클릭" },
   { id: "activity-info", section: "공통", target: '#activity-panel', title: "작업 상태", description: "탐색·다운로드는 화면을 바꿔도 계속 진행됩니다." },
   { id: "community", section: "공통", target: '[data-tour="community-nav"]', title: "커뮤니티", description: "작품 미리보기와 후기·별점. 내 후기는 따로 모아볼 수 있습니다.", action: "click", hint: "커뮤니티 클릭" },
   { id: "finish", section: "공통", target: '[data-tour="source-menu"]', title: "서비스 전환", description: "Danbooru·CHZZK 안내는 각 서비스 첫 방문 시 표시. 다시보기는 설정 → 일반." },

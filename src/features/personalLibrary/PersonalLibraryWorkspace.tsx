@@ -16,10 +16,10 @@ const canOpen = (item: Bookmark) => item.reference.status === "local" || item.re
 export type SavedItemOpenOptions = { detailOnly?: boolean };
 
 const noop = () => {};
-export function PersonalLibraryWorkspace({ previewWidth, pageSize, privacyMode, onPrivacyToggle, onOpen,
-  privacyModePending = false, activityOpen = false, onActivity = noop, onSettings = noop, queueProgress, queueActiveCount, onQueue, onExclude, onOpenFolder }: {
-  previewWidth: number; pageSize: number; privacyMode: boolean; onPrivacyToggle(): void; onOpen(item: Bookmark, options?: SavedItemOpenOptions): void; onBack(): void;
-  privacyModePending?: boolean; activityOpen?: boolean; onActivity?(): void; onSettings?(): void; queueProgress?: number; queueActiveCount?: number;
+export function PersonalLibraryWorkspace({ previewWidth, pageSize, privacyMode, onOpen,
+  activityOpen = false, onActivity = noop, queueProgress, queueActiveCount, onQueue, onExclude, onOpenFolder }: {
+  previewWidth: number; pageSize: number; privacyMode: boolean; onOpen(item: Bookmark, options?: SavedItemOpenOptions): void; onBack(): void;
+  activityOpen?: boolean; onActivity?(): void; queueProgress?: number; queueActiveCount?: number;
   onQueue?(id: GalleryId): void; onExclude?(id: GalleryId): Promise<void>; onOpenFolder?(entryId: string): void;
 }) {
   const library = usePersonalLibrary()!;
@@ -89,7 +89,6 @@ export function PersonalLibraryWorkspace({ previewWidth, pageSize, privacyMode, 
       search={{ draft: search, committed: query, languages: [], suggestionsOpen: false, activeSuggestion: null }} suggestions={[]}
       onDraft={setSearch} onCommit={(value) => setQuery((value ?? search).trim())} onSuggestions={noop} onSelectSuggestion={noop} onCompleteSuggestion={setSearch} onLanguages={noop} onTagSuggestionQuery={noop}
       activityCount={0} activityOpen={activityOpen} onActivity={onActivity} queueProgress={queueProgress} queueActiveCount={queueActiveCount}
-      privacyMode={privacyMode} privacyModePending={privacyModePending} onPrivacyModeToggle={onPrivacyToggle} onSettings={onSettings}
       randomOpenPending={opening !== null} randomOpenAvailable={!loading && availableItems.length > 0} onRandomOpen={() => { const item = availableItems[Math.floor(Math.random() * availableItems.length)]; if (item) void open(item); }} />
     <section className="page-heading"><div><span className="eyebrow">MY FAVORITES</span><h1>내 즐겨찾기</h1></div></section>
     <div className="context-row personal-library-controls">

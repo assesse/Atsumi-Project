@@ -1,6 +1,6 @@
 [package]
 name = "atsumi"
-version = "2.1.0"
+version = "2.1.1"
 description = "Atsumi desktop backend"
 authors = ["Atsumi contributors"]
 edition = "2021"
@@ -24,6 +24,7 @@ fs2 = "0.4"
 httpdate = "1"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 md-5 = "0.10"
+minisign-verify = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 rusqlite = { version = "0.32", features = ["backup", "bundled", "hooks", "trace"] }
 serde = { version = "1", features = ["derive"] }
@@ -40,6 +41,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"]
 tungstenite = { version = "0.28", features = ["rustls-tls-native-roots"] }
 unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4"] }
+zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 windows = { version = "0.61.3", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

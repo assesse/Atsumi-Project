@@ -9,6 +9,7 @@ export type CardMenuItem = {
   disabled?: boolean;
   danger?: boolean;
   separator?: boolean;
+  keepOpen?: boolean;
   action(): void;
 };
 type Anchor = { owner: HTMLElement; x: number; y: number };
@@ -61,8 +62,10 @@ function OpenCardMenu({ anchor, close, label, items }: {
     if (!node) return;
     const rect = node.getBoundingClientRect();
     setPosition({ left: Math.max(8, Math.min(anchor.x, window.innerWidth - rect.width - 8)), top: Math.max(8, Math.min(anchor.y, window.innerHeight - rect.height - 8)) });
-    node.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
-  }, [anchor]);
+    if (document.activeElement === anchor.owner || document.activeElement === document.body) {
+      node.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true });
+    }
+  }, [anchor, items]);
   useEffect(() => {
     const outside = (event: Event) => { if (!(event.target instanceof Node) || !menu.current?.contains(event.target)) close(); };
     const dismiss = () => close();
@@ -102,6 +105,6 @@ function OpenCardMenu({ anchor, close, label, items }: {
     <div className="card-context-menu-title" title={label}>{label}</div>
     {items.map((item) => <button type="button" key={item.id} role="menuitem" tabIndex={-1} disabled={item.disabled}
       className={`${item.danger ? "is-danger" : ""}${item.separator ? " has-separator" : ""}`}
-      onClick={() => { close(true); item.action(); }}><span>{item.label}</span>{item.shortcut ? <kbd>{item.shortcut}</kbd> : null}</button>)}
+      onClick={() => { if (!item.keepOpen) close(true); item.action(); }}><span>{item.label}</span>{item.shortcut ? <kbd>{item.shortcut}</kbd> : null}</button>)}
   </div>, anchor.owner.closest("dialog[open]") ?? document.body);
 }

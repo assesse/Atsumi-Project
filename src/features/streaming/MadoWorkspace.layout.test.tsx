@@ -9,6 +9,7 @@ import appCss from "../../styles.css?raw";
 import workspaceCss from "./StreamingWorkspace.css?raw";
 import madoCss from "./MadoWorkspace.css?raw";
 import officialCss from "./OfficialBrowserPanel.css?raw";
+import { auditLayouts } from "../../test/offlineLayoutBrowser";
 
 const fsName = "node:fs", pathName = "node:path", osName = "node:os", childName = "node:child_process", urlName = "node:url";
 const fs = await import(fsName) as { existsSync(path: string): boolean; mkdtempSync(prefix: string): string; writeFileSync(path: string, contents: string): void; realpathSync(path: string): string; rmSync(path: string, options: { recursive: boolean; force: boolean; maxRetries: number; retryDelay: number }): void };
@@ -80,8 +81,10 @@ async function measure(frames: Frame[], width: number, height: number): Promise<
 }
 
 describe.skipIf(!edge)("Mado real layout", () => {
-  it.each([[960, 640], [1440, 900], [1920, 1080]])("keeps all video/chat panes reachable and unclipped at %ix%i", async (width, height) => {
+  it.each([[960, 640], [1440, 900], [1920, 1080], [1920, 1000], [1536, 780], [1280, 640]])("keeps all video/chat panes reachable and unclipped at %ix%i", async (width, height) => {
     const frames = await snapshots(), results = await measure(frames, width, height);
+    const controls = await auditLayouts(frames.map((frame, index) => ({ name: `mado-${frame.mode}-${index}`, html: `<div id="root"><div class="app-shell streaming-shell"><aside></aside><main class="streaming-workspace is-official-view">${frame.html}</main></div></div>` })), [appCss, workspaceCss, officialCss, madoCss].join("\n"), width, height, "mado");
+    expect(controls.flatMap(result => result.issues.map(issue => `${result.name}: ${issue}`))).toEqual([]);
     for (const [index, result] of results.entries()) {
       const frame = frames[index]!;
       expect(result.videos).toBe(frame.videos); expect(result.chats).toBe(frame.chats);
@@ -107,5 +110,5 @@ describe.skipIf(!edge)("Mado real layout", () => {
         expect(result.slots.map((slot) => slot.box)).toEqual(visible.slots.map((slot) => slot.box));
       }
     }
-  }, 30000);
+  }, 90000);
 });

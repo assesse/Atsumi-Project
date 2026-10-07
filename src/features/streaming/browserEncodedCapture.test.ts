@@ -27,7 +27,7 @@ const init = () => concat(box("ftyp", new Uint8Array([1,2,3,4])), box("moov", ne
 const media = (size = 16) => concat(box("moof", new Uint8Array([1,2,3,4])), box("mdat", new Uint8Array(size).fill(9)));
 const flush = async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); };
 
-function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number; supported?: boolean } = {}) {
+function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number; supported?: boolean; rollover?: boolean } = {}) {
   const nativeCalls: unknown[] = [];
   class Buffer extends Target {
     mode = "segments"; timestampOffset = 0; appendWindowStart = 0; appendWindowEnd = Infinity;
@@ -62,7 +62,8 @@ function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number;
   const messages: Message[] = []; const pending: Array<{ message: Message; resolve(value: unknown): void; reject(error: Error): void }> = [];
   const hold = new Set<string>(); const reject = new Set<string>(); const notices: string[] = [];
   const response = (message: Message) => message.kind === "encoded_begin" ? { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true } :
-    message.kind === "encoded_finish" ? { stopped: true, interrupted: message.interrupted } : {};
+    message.kind === "encoded_finish" ? { stopped: true, interrupted: message.interrupted,
+      ...(options.rollover ? { continuation: { requestId: REQUEST, channelId: CHANNEL, rightsAcknowledged: true } } : {}) } : {};
   const request = (kind: string, fields: Record<string, unknown>) => {
     const message = { kind, ...fields }; messages.push(message);
     if (reject.has(kind)) return Promise.reject(new Error("native failure"));
@@ -205,11 +206,47 @@ describe("already-received encoded MSE capture", () => {
     for (const message of f.ofKind("encoded_append")) expect(atob(message.data as string)).toBe(String.fromCharCode(...media()));
     await f.bridge().stop(); expect(f.ofKind("encoded_finish")[0]?.interrupted).toBe(false);
   });
-  it("accepts identical init repetitions but rejects changed codec headers", async () => {
+  it("accepts identical init repetitions but rejects any changed init byte, not only codec changes", async () => {
     const f = fixture(); f.load(); await f.start(); f.v.appendBuffer(init()); f.v.appendBuffer(media()); await flush();
     expect(f.bridge().getStatus().active).toBe(true); expect(f.ofKind("encoded_append")).toHaveLength(1);
     const changed = init(); changed[changed.length - 1] = 42; f.v.appendBuffer(changed); await flush();
     expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true, reason: "init_changed" });
+  });
+  it("finishes the old file on track removal without forwarding replacement bytes to it", async () => {
+    const f = fixture(); f.load(); await f.start(); f.v.appendBuffer(media()); await flush();
+    f.ms.removeSourceBuffer(f.a); await flush();
+    expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true, reason: "track_changed" });
+    expect(f.video.paused).toBe(false); expect(f.video.ended).toBe(false);
+    expect(f.v.appendBuffer(media())).toBe("native-result"); await flush();
+    expect(f.ofKind("encoded_append")).toHaveLength(1);
+    expect(f.bridge().canStart(f.video)).toBe(false);
+  });
+  it("does not interrupt a same-MIME changeType call", async () => {
+    const f = fixture(); f.load(); await f.start();
+    f.v.changeType('video/mp4; codecs="avc1.42E01E"'); await flush();
+    expect(f.ofKind("encoded_finish")).toHaveLength(0);
+    expect(f.bridge().getStatus().active).toBe(true);
+  });
+  it("resumes a replacement track only with a native continuation and restarts chat via onStarted", async () => {
+    const f = fixture({ rollover: true }); const onStarted = vi.fn(); f.load(); await f.start({}, { onStarted });
+    f.ms.removeSourceBuffer(f.a); await flush();
+    const audio = f.ms.addSourceBuffer('audio/mp4;codecs="mp4a.40.2"'); audio.appendBuffer(init());
+    await vi.advanceTimersByTimeAsync(250); await flush();
+    expect(f.ofKind("encoded_begin")).toHaveLength(2);
+    expect(onStarted).toHaveBeenCalledTimes(2);
+    expect(f.bridge().canStart(f.video)).toBe(true);
+    audio.appendBuffer(media()); await flush();
+    expect(f.ofKind("encoded_append").at(-1)).toMatchObject({ trackIndex: 1, appendIndex: 0 });
+  });
+  it.each(["stop", "timeout", "pagehide"])("does not resume after %s while waiting for replacement init", async action => {
+    const f = fixture({ rollover: true }); f.load(); await f.start(); f.ms.removeSourceBuffer(f.a); await flush();
+    if (action === "stop") await f.bridge().stop();
+    if (action === "timeout") await vi.advanceTimersByTimeAsync(15_250);
+    if (action === "pagehide") f.window.dispatch("pagehide");
+    f.ms.addSourceBuffer('audio/mp4;codecs="mp4a.40.2"').appendBuffer(init());
+    await vi.advanceTimersByTimeAsync(500); await flush();
+    expect(f.ofKind("encoded_begin")).toHaveLength(1);
+    expect(f.bridge().getStatus().active).toBe(false);
   });
   it("reports bounded source facts without URLs, cookies or source identifiers", () => {
     const f = fixture(); f.v.timestampOffset = -13745.920976833331; f.load();

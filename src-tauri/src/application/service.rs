@@ -543,6 +543,15 @@ impl ApplicationService {
             .map_err(Into::into)
     }
 
+    pub fn exploration_exclusion_context(
+        &self,
+        gallery_id: i64,
+    ) -> Result<crate::domain::ExplorationExclusionContext, ApplicationError> {
+        self.automation_repository()?
+            .exploration_exclusion_context(GalleryId::new(gallery_id)?)
+            .map_err(Into::into)
+    }
+
     pub fn exploration_exclusions_restore(
         &self,
         gallery_ids: Vec<i64>,

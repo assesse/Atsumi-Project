@@ -296,7 +296,7 @@ describe("GalleryCard event projection", () => {
     } finally { await act(async () => root.unmount()); }
   });
 
-  it("blinds a quarantined Explore result in place and blocks every card interaction", async () => {
+  it("blinds a quarantined Explore result and blocks ordinary actions but leaves the menu surface focusable", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -317,9 +317,9 @@ describe("GalleryCard event projection", () => {
       ));
       const article = container.querySelector<HTMLElement>("article")!;
       expect(article).toHaveClass("is-quarantined-blind");
-      expect(article).toHaveAttribute("aria-disabled", "true");
-      expect(article).toHaveAttribute("tabindex", "-1");
-      expect(article).toHaveAccessibleName(expect.stringContaining("격리된 앨범, 내용 가림"));
+      expect(article).not.toHaveAttribute("aria-disabled");
+      expect(article).toHaveAttribute("tabindex", "0");
+      expect(article).toHaveAccessibleName(expect.stringContaining("격리된 앨범, 호버 미리보기·우클릭 관리"));
       expect(container.querySelector(".quarantined-blind-overlay")).toHaveTextContent("격리된 앨범");
 
       await act(async () => {
@@ -365,8 +365,8 @@ describe("GalleryCard event projection", () => {
       ));
       const article = container.querySelector<HTMLElement>("article")!;
       expect(article).toHaveClass("is-exploration-blind");
-      expect(article).toHaveAttribute("aria-disabled", "true");
-      expect(article).toHaveAccessibleName(expect.stringContaining("중복 판정으로 제외, 내용 가림"));
+      expect(article).not.toHaveAttribute("aria-disabled");
+      expect(article).toHaveAccessibleName(expect.stringContaining("중복 판정으로 제외, 호버 미리보기·우클릭 관리"));
       expect(container.querySelector(".quarantined-blind-overlay")).toHaveTextContent("중복 판정으로 제외");
     } finally {
       await act(async () => root.unmount());

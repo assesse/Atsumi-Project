@@ -1,8 +1,9 @@
 import { useEffect } from "react";
 import { PhysicalPosition, PhysicalSize } from "@tauri-apps/api/dpi";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { availableMonitors, currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { backend } from "../api/backend";
 import type { WindowPlacement, WindowPlacementSnapshot } from "../api/contracts";
+import { fitWindowToWorkArea } from "../layout/windowWorkArea";
 
 export function useWindowPlacement(): void {
   useEffect(() => {
@@ -23,10 +24,11 @@ export function useWindowPlacement(): void {
           appWindow.isMaximized(),
         ]);
         const next: WindowPlacement = {
-          x: position.x,
-          y: position.y,
-          width: size.width,
-          height: size.height,
+          // Maximized bounds are not the user's normal restore rectangle.
+          x: maximized ? placement.x : position.x,
+          y: maximized ? placement.y : position.y,
+          width: maximized ? placement.width : size.width,
+          height: maximized ? placement.height : size.height,
           maximized,
         };
         const result = await backend.windowPlacementUpdate(next, placement.revision);
@@ -49,13 +51,24 @@ export function useWindowPlacement(): void {
       const result = await backend.windowPlacementGet();
       if (!result.ok || disposed) return;
       placement = result.data;
-      if (placement.x !== null && placement.y !== null) {
-        await appWindow.setPosition(new PhysicalPosition(placement.x, placement.y));
-      }
-      await appWindow.setSize(new PhysicalSize(placement.width, placement.height));
+      const [monitors, current, outer, inner] = await Promise.all([
+        availableMonitors(), currentMonitor(), appWindow.outerSize(), appWindow.innerSize(),
+      ]);
+      const fallback = current ?? monitors[0];
+      if (!fallback || disposed) return;
+      const fitted = fitWindowToWorkArea(placement, monitors, fallback, {
+        width: outer.width - inner.width, height: outer.height - inner.height,
+      });
+      // Lower the native minimum when DPI scaling leaves a smaller work area.
+      await appWindow.setMinSize(new PhysicalSize(fitted.minimum.width, fitted.minimum.height));
+      await appWindow.setSize(new PhysicalSize(fitted.inner.width, fitted.inner.height));
+      await appWindow.setPosition(new PhysicalPosition(fitted.position.x, fitted.position.y));
+      placement = { ...placement, ...fitted.position, ...fitted.outer };
       if (placement.maximized) await appWindow.maximize();
-      unlisteners.push(await appWindow.onMoved(schedule));
-      unlisteners.push(await appWindow.onResized(schedule));
+      for (const listen of [appWindow.onMoved.bind(appWindow), appWindow.onResized.bind(appWindow)]) {
+        const unlisten = await listen(schedule);
+        if (disposed) unlisten(); else unlisteners.push(unlisten);
+      }
     })().catch(() => {
       // Keep the default Tauri placement when restore is unavailable.
     });

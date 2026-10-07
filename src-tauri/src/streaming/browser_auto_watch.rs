@@ -11,6 +11,7 @@ pub(super) struct WatchState {
 struct WatchLease {
     id: String,
     recording_id: String,
+    capture_origin: Option<String>,
     pane: Arc<Pane>,
     epoch: u64,
     active: AtomicBool,
@@ -80,11 +81,16 @@ impl WatchLease {
     }
     fn recording(&self) -> bool {
         !self.pane.dead.load(Ordering::Acquire)
-            && self
-                .pane
-                .capture
-                .as_ref()
-                .is_some_and(|host| recording_matches(host, &self.pane.channel, &self.recording_id))
+            && self.pane.capture.as_ref().is_some_and(|host| {
+                recording_matches(host, &self.pane.channel, &self.recording_id)
+                    || self.capture_origin.is_some()
+                        && host.inner.view.lock().is_ok_and(|state| {
+                            state.channel.as_deref() == Some(self.pane.channel.as_str())
+                                && state.page_generation == self.generation
+                                && state.capture_origin == self.capture_origin
+                                && (state.recording.is_some() || state.arm.is_some())
+                        })
+            })
     }
     fn invalidate(&self) -> u64 {
         self.active.store(false, Ordering::Release);
@@ -526,6 +532,13 @@ impl OfficialBrowser {
         let lease = Arc::new(WatchLease {
             id: uuid::Uuid::new_v4().to_string(),
             recording_id: recording.into(),
+            capture_origin: capture
+                .inner
+                .view
+                .lock()
+                .map_err(|_| unavailable())?
+                .capture_origin
+                .clone(),
             pane,
             epoch,
             active: AtomicBool::new(true),
@@ -911,6 +924,7 @@ mod tests {
         Arc::new(WatchLease {
             id: id.into(),
             recording_id: "original-recording".into(),
+            capture_origin: None,
             pane,
             epoch: 7,
             active: AtomicBool::new(true),

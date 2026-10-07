@@ -8,6 +8,7 @@ import { OfficialBrowserPanel } from "./OfficialBrowserPanel";
 import appCss from "../../styles.css?raw";
 import panelCss from "./OfficialBrowserPanel.css?raw";
 import workspaceCss from "./StreamingWorkspace.css?raw";
+import { auditLayouts } from "../../test/offlineLayoutBrowser";
 
 const fsName = "node:fs", pathName = "node:path", osName = "node:os", childName = "node:child_process", urlName = "node:url";
 const fs = await import(fsName) as { existsSync(path: string): boolean; mkdtempSync(prefix: string): string; writeFileSync(path: string, contents: string): void; realpathSync(path: string): string; rmSync(path: string, options: { recursive: boolean; force: boolean; maxRetries: number; retryDelay: number }): void };
@@ -68,8 +69,11 @@ async function measure(frames: Frame[], width: number, height: number): Promise<
 }
 
 describe.skipIf(!edge)("official panel stable real layout", () => {
-  it.each([[960, 640], [1440, 900]])("keeps video/chat bounds stable at %ix%i across recording and error states", async (width, height) => {
-    const results = await measure(await snapshots(), width, height);
+  it.each([[960, 640], [1440, 900], [1920, 1080], [1920, 1000], [1536, 780], [1280, 640]])("keeps video/chat bounds stable at %ix%i across recording and error states", async (width, height) => {
+    const frames = await snapshots();
+    const results = await measure(frames, width, height);
+    const controls = await auditLayouts(frames.map(frame => ({ name: `official-${frame.name}`, html: `<div id="root"><div class="app-shell streaming-shell"><aside></aside><main class="streaming-workspace is-official-view">${frame.html}</main></div></div>` })), [appCss, panelCss, workspaceCss].join("\n"), width, height, "official");
+    expect(controls.flatMap(result => result.issues.map(issue => `${result.name}: ${issue}`))).toEqual([]);
     {
       const states = results;
       const first = states[0]!;
@@ -93,5 +97,5 @@ describe.skipIf(!edge)("official panel stable real layout", () => {
         expect(state.stage.height).toBeGreaterThanOrEqual(360);
       }
     }
-  }, 30000);
+  }, 90000);
 });

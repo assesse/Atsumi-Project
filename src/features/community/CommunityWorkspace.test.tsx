@@ -14,7 +14,7 @@ const ownPage = { profile: writer.profile, identityIssued: true, items: [own], n
 const apiMock = () => ({ feed: vi.fn().mockResolvedValue({ items: [review], nextCursor: null }), work: vi.fn(), beginWriting: vi.fn().mockResolvedValue(writer),
   myReviews: vi.fn().mockResolvedValue(ownPage), save: vi.fn().mockResolvedValue(undefined), delete: vi.fn().mockResolvedValue(undefined), report: vi.fn().mockResolvedValue(undefined) });
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-const button = (host: HTMLElement, text: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === text)!;
+const button = (host: HTMLElement, text: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.getAttribute("aria-label") === text || item.textContent?.trim() === text)!;
 const click = (node: HTMLElement) => act(async () => { node.click(); await settle(); });
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
 const originalShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
@@ -45,14 +45,14 @@ describe("CommunityWorkspace", () => {
     api.myReviews.mockReturnValue(pending.promise);
     const ui = await mount(api);
     try {
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       expect(api.myReviews).toHaveBeenCalledTimes(1);
       expect(ui.host.querySelector('dialog [role="alert"]')).toBeNull();
       await act(async () => pending.resolve(ownPage));
       expect(ui.host.querySelector("dialog")).toHaveTextContent("내 이전 후기");
       await click(ui.host.querySelector<HTMLButtonElement>('[aria-label="내 후기 닫기"]')!);
       api.myReviews.mockResolvedValue({ ...ownPage, items: [] });
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       expect(api.myReviews).toHaveBeenCalledTimes(2);
       expect(ui.host.querySelector("dialog")).toHaveTextContent("아직 작성한 후기가 없습니다.");
     } finally { await ui.close(); }
@@ -62,11 +62,12 @@ describe("CommunityWorkspace", () => {
     api.myReviews.mockResolvedValue({ ...ownPage, items: [{ ...own, comment: "가".repeat(101) }] });
     const ui = await mount(api);
     try {
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       await click(button(ui.host.querySelector("dialog")!, "수정"));
       expect(ui.host.querySelector('[aria-label="짧은 후기"]')).toHaveValue("가".repeat(101));
-      expect(button(ui.host, "후기 수정")).toBeDisabled();
-      expect(button(ui.host, "내 후기 삭제")).toBeEnabled();
+      expect(ui.host.querySelector(".community-editor")).not.toHaveTextContent("등록한 내용은 공개됩니다");
+      expect(button(ui.host, "수정")).toBeDisabled();
+      expect(button(ui.host, "삭제")).toBeEnabled();
       expect(api.save).not.toHaveBeenCalled();
     } finally { await ui.close(); }
   });
@@ -77,10 +78,11 @@ describe("CommunityWorkspace", () => {
     api.myReviews.mockImplementation(async after => after ? { ...ownPage, items: [{ ...own, source }] } : { ...ownPage, items: [{ ...own, source: source === "hitomi" ? "danbooru" : "hitomi" }], nextCursor: cursor });
     const ui = await mount(api, undefined, false, source);
     try {
-      expect(api.feed).toHaveBeenLastCalledWith(source, null, "popular");
-      expect(ui.host.querySelectorAll(".community-review")).toHaveLength(1);
+      expect(api.feed).toHaveBeenCalledWith(source, null, "popular");
+      expect(api.feed).toHaveBeenCalledWith(source, null, "latest");
+      expect(ui.host.querySelectorAll(".community-review")).toHaveLength(2);
       expect(ui.host.querySelector('[aria-label="후기 사이트"]')).toBeNull();
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       expect(api.myReviews).toHaveBeenLastCalledWith(cursor);
       expect(ui.host.querySelectorAll("dialog .community-review")).toHaveLength(1);
       expect(ui.host.querySelector("dialog .community-work-label")).toHaveTextContent(source === "hitomi" ? "Hitomi" : "Danbooru");
@@ -96,8 +98,13 @@ describe("CommunityWorkspace", () => {
       expect(ui.host.textContent).not.toContain("후기 작성 / 수정");
       expect(api.myReviews).not.toHaveBeenCalled(); expect(api.beginWriting).not.toHaveBeenCalled();
       expect(ui.host.querySelector('[aria-label="커뮤니티"]')).toHaveAttribute("aria-current", "page");
-      expect(api.feed).toHaveBeenLastCalledWith("hitomi", null, "popular");
-      expect(ui.host.querySelector(".community-review-grid > .community-review .community-review-cover")).not.toBeNull();
+      expect(api.feed).toHaveBeenCalledWith("hitomi", null, "popular");
+      expect(api.feed).toHaveBeenCalledWith("hitomi", null, "latest");
+      expect(ui.host.querySelector(".community-review-row > .community-review .community-review-cover")).not.toBeNull();
+      expect(ui.host).not.toHaveTextContent("Hitomi 후기");
+      expect(ui.host).not.toHaveTextContent("내 후기 보기");
+      expect(ui.host).not.toHaveTextContent("열람은 인증 없이");
+      expect(ui.host.querySelector('[aria-label="후기 정렬"]')).toBeNull();
       const favorites = ui.host.querySelector<HTMLButtonElement>('[aria-label="내 즐겨찾기"]')!;
       expect(favorites).not.toHaveAttribute("aria-current");
       await click(favorites); expect(ui.openFavorites).toHaveBeenCalledOnce();
@@ -108,7 +115,7 @@ describe("CommunityWorkspace", () => {
   it("opens own reviews in a floating dialog, shows the non-secret ID, and edits without issuing a key", async () => {
     const api = apiMock(); const ui = await mount(api);
     try {
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       const dialog = ui.host.querySelector("dialog")!;
       expect(dialog).toHaveAttribute("open"); expect(dialog.textContent).toContain("내 이전 후기");
       expect(dialog.querySelector(".community-identity code")).toHaveTextContent("member-1");
@@ -124,7 +131,7 @@ describe("CommunityWorkspace", () => {
   it("does not issue an identity just to inspect an empty own-history", async () => {
     const api = apiMock(); api.myReviews.mockResolvedValue({ profile: null, identityIssued: false, items: [], nextCursor: null }); const ui = await mount(api);
     try {
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       expect(ui.host.textContent).toContain("아직 익명 키가 발급되지 않았습니다.");
       expect(ui.host.querySelector(".community-identity")).toBeNull();
       expect(api.beginWriting).not.toHaveBeenCalled(); expect(api.save).not.toHaveBeenCalled();
@@ -133,7 +140,7 @@ describe("CommunityWorkspace", () => {
   it("keeps identity errors visible without silently creating a replacement", async () => {
     const api = apiMock(); api.myReviews.mockRejectedValue("기존 키 읽기 실패"); const ui = await mount(api);
     try {
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       expect(ui.host.querySelector('dialog [role="alert"]')).toHaveTextContent("기존 키 읽기 실패");
       expect(ui.host.querySelector("dialog form")).toBeNull();
       expect(api.beginWriting).not.toHaveBeenCalled();
@@ -145,12 +152,12 @@ describe("CommunityWorkspace", () => {
   it("includes hidden own reviews and retains moderation when editing or deleting", async () => {
     const api = apiMock(); api.myReviews.mockResolvedValue({ ...ownPage, items: [{ ...own, hidden: true }] }); const ui = await mount(api);
     try {
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       expect(ui.host.querySelector("dialog")).toHaveTextContent("비공개 처리됨");
       await click(button(ui.host.querySelector("dialog")!, "수정"));
       expect(ui.host.textContent).toContain("수정해도 공개 상태로 바뀌지 않습니다.");
       vi.spyOn(window, "confirm").mockReturnValue(true);
-      await click(button(ui.host, "내 후기 삭제"));
+      await click(button(ui.host, "삭제"));
       expect(api.delete).toHaveBeenCalledWith({ source: "hitomi", workId: "3657124" });
       expect(ui.host.textContent).toContain("작성자 키는 그대로 유지됩니다.");
       expect(api.beginWriting).not.toHaveBeenCalled();
@@ -161,7 +168,7 @@ describe("CommunityWorkspace", () => {
     api.myReviews.mockImplementation(async (after) => after ? { ...ownPage, items: [own, { ...own, id: "mine-2", workId: "123" }, { ...own, source: "danbooru", id: "mine-foreign", workId: "456", comment: "다른 사이트 내 후기" }] } : { ...ownPage, nextCursor: cursor });
     const ui = await mount(api);
     try {
-      await click(button(ui.host, "내 후기 보기")); await click(button(ui.host, "내 후기 더 보기"));
+      await click(button(ui.host, "내 후기")); await click(button(ui.host, "내 후기 더 보기"));
       const dialog = ui.host.querySelector("dialog")!;
       expect(dialog.querySelectorAll(".community-review")).toHaveLength(2);
       expect(dialog).toHaveTextContent("Hitomi #123"); expect(dialog).not.toHaveTextContent("다른 사이트 내 후기"); expect(dialog).not.toHaveTextContent("짧은 감상");
@@ -173,18 +180,18 @@ describe("CommunityWorkspace", () => {
     try {
       const pending = deferred<Awaited<ReturnType<CommunityApi["feed"]>>>();
       api.feed.mockReturnValue(pending.promise);
-      await click(button(ui.host, "새로고침"));
-      expect(ui.host.querySelector(".community-feed-refresh")).toHaveAttribute("aria-busy", "true");
+      await click(button(ui.host, "인기 후기 새로고침"));
+      expect(button(ui.host, "인기 후기 새로고침")).toHaveAttribute("aria-busy", "true");
       expect(ui.host.querySelector(".community-feed-heading .spinner")).not.toBeNull();
-      expect(ui.host.querySelectorAll(".community-review")).toHaveLength(1);
+      expect(ui.host.querySelectorAll(".community-review")).toHaveLength(2);
       await act(async () => pending.resolve({ items: [], nextCursor: null }));
-      expect(button(ui.host, "새로고침")).toBeEnabled();
+      expect(button(ui.host, "인기 후기 새로고침")).toBeEnabled();
     } finally { await ui.close(); }
   });
   it("hides previews in privacy mode, including own-history", async () => {
     const ui = await mount(apiMock(), undefined, true);
     try {
-      await click(button(ui.host, "내 후기 보기"));
+      await click(button(ui.host, "내 후기"));
       expect(ui.host.querySelector(".community-work-preview.is-private")).not.toBeNull();
       expect(ui.host.querySelector(".community-review img")).toBeNull();
     } finally { await ui.close(); }
@@ -194,9 +201,10 @@ describe("CommunityWorkspace", () => {
     api.feed.mockImplementation(async (_source, after) => after ? { items: [review, { ...review, id: "review-2", workId: "123", comment: "다음 후기" }], nextCursor: null } : { items: [review], nextCursor: cursor });
     const ui = await mount(api);
     try {
+      await click(button(ui.host, "인기 후기 더 보기"));
       await click(button(ui.host, "후기 더 보기"));
       expect(api.feed).toHaveBeenLastCalledWith("hitomi", cursor, "popular");
-      expect(ui.host.querySelectorAll(".community-review")).toHaveLength(2); expect(api.beginWriting).not.toHaveBeenCalled();
+      expect(ui.host.querySelectorAll(".community-feed:not([hidden]) .community-review")).toHaveLength(2); expect(api.beginWriting).not.toHaveBeenCalled();
     } finally { await ui.close(); }
   });
   it.each(["hitomi", "danbooru"] as const)("preserves the explicit %s writing shortcut with one issuance attempt", async (source) => {
@@ -215,23 +223,51 @@ describe("CommunityWorkspace", () => {
     try { expect(ui.host.querySelector(".community-comment img")).toBeNull(); expect(ui.host.querySelector(".community-comment")?.textContent).toContain("<img"); }
     finally { await ui.close(); }
   });
-  it("resets pagination and ignores late responses when changing server-side ranking", async () => {
+  it("limits overview rows to six reviews, keeps the full page in dedicated view and separates feed failures", async () => {
+    const api = apiMock();
+    api.feed.mockImplementation(async (_source, _cursor, order) => {
+      if (order === "latest") throw new Error("최신 목록 연결 실패");
+      return { items: Array.from({ length: 9 }, (_, index) => ({ ...review, id: `item-${index}`, workId: String(index + 1) })), nextCursor: null };
+    });
+    const ui = await mount(api);
+    try {
+      expect(ui.host.querySelectorAll('[aria-label="인기 후기 목록"] .community-review')).toHaveLength(6);
+      expect(ui.host.querySelector('[aria-label="최신 후기 목록"] [role="alert"]')).toHaveTextContent("최신 목록 연결 실패");
+      const before = api.feed.mock.calls.length;
+      await click(button(ui.host, "인기 후기 더 보기"));
+      expect(api.feed).toHaveBeenCalledTimes(before);
+      expect(ui.host.querySelectorAll('.community-feed:not([hidden]) .community-review')).toHaveLength(9);
+      await click(button(ui.host, "돌아가기"));
+      expect(ui.host.querySelectorAll('[aria-label="인기 후기 목록"] .community-review')).toHaveLength(6);
+    } finally { await ui.close(); }
+  });
+  it("shows both rows, expands one without refetching and isolates late responses between rankings", async () => {
     const api = apiMock(); const ui = await mount(api);
     try {
-      expect(button(ui.host, "인기 후기")).toHaveAttribute("aria-pressed", "true");
+      expect(ui.host.querySelectorAll(".community-feed:not([hidden])")).toHaveLength(2);
+      const before = api.feed.mock.calls.length;
+      await click(button(ui.host, "최신 후기 더 보기"));
+      expect(api.feed).toHaveBeenCalledTimes(before);
+      expect(ui.host.querySelectorAll(".community-feed:not([hidden])")).toHaveLength(1);
       const pending = deferred<Awaited<ReturnType<CommunityApi["feed"]>>>();
       api.feed.mockReturnValueOnce(pending.promise);
-      await click(button(ui.host, "최신 후기"));
+      await click(button(ui.host, "최신 후기 새로고침"));
       expect(api.feed).toHaveBeenLastCalledWith("hitomi", null, "latest");
-      expect(ui.host.querySelectorAll(".community-review")).toHaveLength(0);
+      expect(ui.host.querySelectorAll(".community-feed:not([hidden]) .community-review")).toHaveLength(1);
       api.feed.mockResolvedValue({ items: [{ ...review, id: "worst", comment: "최저 평균 작품", workSummary: { averageRating: 1.5, reviewCount: 8 } }], nextCursor: null });
-      await click(button(ui.host, "최악의 작품"));
+      await act(async () => {
+        const select = ui.host.querySelector<HTMLSelectElement>('[aria-label="후기 목록"]')!;
+        select.value = "worst"; select.dispatchEvent(new Event("change", { bubbles: true })); await settle();
+      });
       expect(api.feed).toHaveBeenLastCalledWith("hitomi", null, "worst");
       await act(async () => pending.resolve({ items: [{ ...review, comment: "늦게 도착한 최신 후기" }], nextCursor: null }));
       expect(ui.host).toHaveTextContent("최저 평균 작품");
       expect(ui.host).toHaveTextContent("작품 평균 1.5 · 후기 8개");
-      expect(ui.host).not.toHaveTextContent("늦게 도착한 최신 후기");
-      expect(button(ui.host, "최악의 작품")).toHaveAttribute("aria-pressed", "true");
+      expect(ui.host.querySelector(".community-feed:not([hidden])")).not.toHaveTextContent("늦게 도착한 최신 후기");
+      expect(ui.host.querySelector('[aria-label="후기 목록"]')).toHaveValue("worst");
+      await click(button(ui.host, "돌아가기"));
+      expect(ui.host.querySelectorAll(".community-feed:not([hidden])")).toHaveLength(2);
+      expect(ui.host.querySelector('[aria-label="최신 후기 목록"]')).toHaveTextContent("늦게 도착한 최신 후기");
       expect(api.beginWriting).not.toHaveBeenCalled();
     } finally { await ui.close(); }
   });

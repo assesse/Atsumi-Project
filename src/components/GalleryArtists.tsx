@@ -3,10 +3,12 @@ import { createPortal } from "react-dom";
 import { normalizeTokenValue } from "../search/searchTokens";
 import "./GalleryArtists.css";
 import type { BackgroundOpenOptions } from "../state/downloadStatus";
+import { isKnownArtist } from "../state/galleryCreator";
 
 export type GalleryArtistsProps = {
   artist: string;
   artists?: readonly string[];
+  group?: string;
   favoriteMetadata: ReadonlySet<string>;
   compact?: boolean;
   disabled?: boolean;
@@ -26,8 +28,9 @@ export function orderGalleryArtists(artist: string, artists: readonly string[] |
     normalizedFavoriteCache.set(favoriteMetadata, favorites);
   }
   const unique = new Map<string, { key: string; name: string; token: string; favorite: boolean; sourceIndex: number }>();
-  const known = artists?.some((name) => name.trim()) ? artists : [artist];
+  const known = artists?.some(isKnownArtist) ? artists : [artist];
   for (const value of known) {
+    if (!isKnownArtist(value)) continue;
     const name = value.trim();
     const key = normalizeTokenValue(name);
     if (key && !unique.has(key)) unique.set(key, { key, name: name.replaceAll("_", " "), token: `artist:${name}`, favorite: favorites.has(key), sourceIndex: unique.size });
@@ -66,7 +69,7 @@ function observeArtistWidth(element: Element, update: () => void) {
   };
 }
 
-export function GalleryArtists({ artist, artists, favoriteMetadata, compact = false, disabled = false, onSearch, onToggleFavorite, onClickCapture }: GalleryArtistsProps) {
+export function GalleryArtists({ artist, artists, group, favoriteMetadata, compact = false, disabled = false, onSearch, onToggleFavorite, onClickCapture }: GalleryArtistsProps) {
   const sourceKey = JSON.stringify([artist, artists]);
   const initialOrder = useRef<{ source: string; keys: string[] } | null>(null);
   const ordered = useMemo(() => {
@@ -171,9 +174,27 @@ export function GalleryArtists({ artist, artists, favoriteMetadata, compact = fa
     };
   }, [open, close, layoutKey]);
 
+  const fallbackGroup = group?.trim();
+  const groupFavorite = !ordered.length && fallbackGroup ? [...favoriteMetadata].some((token) =>
+    normalizeTokenValue(token) === `group:${normalizeTokenValue(fallbackGroup)}`) : false;
   if (!ordered.length) return (
     <div className={`gallery-artists${compact ? " is-compact" : ""}`}>
-      <span className="gallery-artists-label">작가 정보 없음</span>
+      {fallbackGroup ? <button type="button" disabled={disabled}
+        className={`byline group gallery-artists-name${groupFavorite ? " favorite" : ""}`}
+        aria-label={`그룹 ${fallbackGroup}${groupFavorite ? ", 즐겨찾기" : ""}, 좌클릭 검색, 우클릭 즐겨찾기 변경`}
+        title={`그룹 · ${fallbackGroup} · 좌클릭 검색 / 우클릭 즐겨찾기`}
+        onClickCapture={onClickCapture}
+        onDoubleClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}
+        onClick={(event) => {
+          event.stopPropagation();
+          if (event.defaultPrevented || event.detail > 1) return;
+          if (event.ctrlKey || event.metaKey) onSearch(`group:${fallbackGroup}`, { background: true });
+          else onSearch(`group:${fallbackGroup}`);
+        }}
+        onContextMenu={(event) => { event.preventDefault(); event.stopPropagation(); if (!disabled) onToggleFavorite(`group:${fallbackGroup}`); }}>
+        <span className={`gallery-artists-star${groupFavorite ? "" : " is-placeholder"}`} aria-hidden="true">{groupFavorite ? "★" : ""}</span>
+        <span className="gallery-artists-label">그룹 · {fallbackGroup.replaceAll("_", " ")}</span>
+      </button> : <span className="gallery-artists-label">{group === undefined ? "작가 정보 없음" : "작가·그룹 정보 없음"}</span>}
     </div>
   );
   const search = (token: string, options?: BackgroundOpenOptions) => {

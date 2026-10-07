@@ -5,7 +5,7 @@ aside.activity-panel { display: flex; flex-direction: column; overflow: hidden; 
 .activity-section-tabs > button { position: relative; min-width: 0; white-space: nowrap; font-size: 12px; padding: 0 4px; }
 .activity-tab-count { position: absolute; right: 2px; top: -6px; background: var(--surface-raised); color: var(--warning); border: 1px solid var(--line); border-radius: 8px; padding: 0 3px; font-size: 10px; font-variant-numeric: tabular-nums; }
 .activity-panel-content { min-height: 0; overflow: auto; scrollbar-gutter: stable; }
-.activity-panel-content > .queue-summary { margin: 8px; }
+.activity-panel > .queue-summary { flex: none; margin: 4px 8px 8px; }
 .activity-item-details { font-size: 11px; color: var(--muted); }
 .activity-item-details summary { cursor: pointer; width: fit-content; }
 .activity-item-details p { margin: 4px 0; overflow-wrap: anywhere; }
@@ -14,6 +14,13 @@ aside.activity-panel { display: flex; flex-direction: column; overflow: hidden; 
 .activity-item .activity-actions b[role="progressbar"] { text-align: right; font-size: 11px; }
 .activity-item .activity-actions b[role="progressbar"] small { display: block; font-weight: 400; color: var(--muted); }
 .activity-item .activity-actions .mini-command { font-size: 11px; padding: 0 7px; }
+.activity-item .activity-download-actions { flex-direction: column; align-items: stretch; flex-wrap: nowrap; width: 104px; gap: 4px !important; }
+.activity-download-actions .activity-command-buttons { display: flex; justify-content: flex-end; align-items: center; gap: 4px; min-height: 30px; }
+.activity-download-actions .activity-command-buttons .mini-command { min-height: 30px; }
+.activity-item .activity-download-actions b[role="progressbar"],
+.activity-download-actions .activity-outcome { display: block; min-height: 30px; margin: 0; text-align: right; line-height: 15px; font-variant-numeric: tabular-nums; }
+.activity-download-actions .activity-outcome { font-size: 11px; color: var(--muted); }
+.activity-item.complete .activity-outcome { color: var(--success); }
 .activity-panel .activity-history-note { padding: 6px 8px; font-size: 11px; }
 
 .activity-state-group {

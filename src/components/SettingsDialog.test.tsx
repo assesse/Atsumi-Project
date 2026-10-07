@@ -143,6 +143,13 @@ describe("SettingsDialog operational boundaries", () => {
       });
 
       expect(container.querySelector(".settings-nav")).not.toBeNull();
+      const settingsScroll = container.querySelector<HTMLElement>('[data-settings-scroll-root="true"]')!;
+      for (const category of ["Hitomi", "Danbooru", "치지직", "일반"]) {
+        settingsScroll.scrollTop = 300;
+        await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+          .find(tab => tab.textContent === category)!.click());
+        expect(settingsScroll.scrollTop).toBe(0);
+      }
       const folder = container.querySelector<HTMLInputElement>('[aria-label="다운로드 폴더"]')!;
       const chooseFolder = container.querySelector<HTMLButtonElement>(".setting-path-control button")!;
       await act(async () => chooseFolder.click());

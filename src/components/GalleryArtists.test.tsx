@@ -68,6 +68,22 @@ describe("GalleryArtists", () => {
     expect(host.querySelectorAll('button.gallery-artists-name .gallery-artists-star')).toHaveLength(before.length);
   });
 
+  it("shows and interacts with a group favorite when no actual artist is known", async () => {
+    await render({ ...props, artist: "Unknown artist", artists: [], group: "toropucchi", favoriteMetadata: new Set(["group:toropucchi"]), compact: true });
+    const group = host.querySelector<HTMLButtonElement>("button.gallery-artists-name")!;
+    expect(group).toHaveClass("favorite");
+    expect(group).toHaveTextContent("그룹 · toropucchi");
+    await click(group);
+    expect(props.onSearch).toHaveBeenLastCalledWith("group:toropucchi");
+    await act(async () => group.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    expect(props.onSearch).toHaveBeenLastCalledWith("group:toropucchi", { background: true });
+    await act(async () => group.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true })));
+    expect(props.onToggleFavorite).toHaveBeenCalledExactlyOnceWith("group:toropucchi");
+    expect(cardClick).not.toHaveBeenCalled();
+    await render({ ...props, artist: "Known artist", artists: ["Unknown artist"], group: "toropucchi" });
+    expect(host.querySelector(".gallery-artists-label")).toHaveTextContent("Known artist");
+  });
+
   it("fits up to three names and reserves the real overflow count width", () => {
     expect(fitGalleryArtistCount([60, 70, 50], 250, [32, 32, 32], 4)).toBe(3);
     expect(fitGalleryArtistCount([60, 70, 50], 180, [32, 32, 32], 4)).toBe(2);

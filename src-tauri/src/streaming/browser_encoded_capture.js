@@ -22,6 +22,7 @@
   const hooks = [];
   let installed = false;
   let active = null;
+  let recovering = null;
   let lastDetail = "encoded_unavailable";
   let appendCount = 0;
   let appendBytes = 0;
@@ -98,9 +99,9 @@
   const status = () => {
     const video = active?.video ?? selectedVideo();
     const ready = Boolean(candidate(video));
-    return { active: Boolean(active), recording: Boolean(active), starting: Boolean(active && !active.recordingId),
+    return { active: Boolean(active || recovering), recording: Boolean(active || recovering), starting: Boolean(recovering || active && !active.recordingId),
       stopping: Boolean(active?.stopping), recordingId: active?.recordingId ?? null, channelId: active?.channelId ?? channel() ?? null,
-      detail: active ? active.stopping ? "encoded_saving" : active.recordingId ? active.source.lastAppendAt !== null && Date.now() - active.source.lastAppendAt > 15_000 ? "encoded_waiting" : "encoded_recording" : "encoded_starting" : ready ? "encoded_ready" : lastDetail,
+      detail: recovering ? "encoded_starting" : active ? active.stopping ? "encoded_saving" : active.recordingId ? active.source.lastAppendAt !== null && Date.now() - active.source.lastAppendAt > 15_000 ? "encoded_waiting" : "encoded_recording" : "encoded_starting" : ready ? "encoded_ready" : lastDetail,
       ready, captureChat: active?.captureChat === true, captureMode: "encoded", rateControlAllowed: canChangePlaybackRate(video) };
   };
   const canChangePlaybackRate = (video) => Boolean(active && active.video === video && active.nativeApproved && active.accepting && !active.transportFailed && !active.stopping &&
@@ -190,14 +191,15 @@
     let bytes;
     try { bytes = new Uint8Array(byteLength); let at = 0; for (const part of parts) { bytes.set(part, at); at += part.byteLength; } }
     catch { current.queuedBytes -= byteLength; failure(current, "queue_overflow"); return; }
-    const appendIndex = current.appendIndexes[state.trackIndex]++;
+    const trackIndex = state.trackIndex;
+    const appendIndex = current.appendIndexes[trackIndex]++;
     current.queue = current.queue.then(async () => {
       await current.begin;
       if (current.transportFailed) return;
       let chunkIndex = 0;
       for (let at = 0; at < bytes.length; at += CHUNK) {
         const end = Math.min(bytes.length, at + CHUNK);
-        await appendWithRetry(current, { recordingId: current.recordingId, trackIndex: state.trackIndex,
+        await appendWithRetry(current, { recordingId: current.recordingId, trackIndex,
           appendIndex, chunkIndex: chunkIndex++, finalChunk: end === bytes.length, data: base64(bytes.subarray(at, end)) });
       }
     }).catch((error) => { current.transportFailed = true;
@@ -252,7 +254,10 @@
         if (state.kind === "ftyp") { state.ftyp = complete; }
         else {
           const next = new Uint8Array(state.ftyp.length + complete.length); next.set(state.ftyp); next.set(complete, state.ftyp.length);
-          if (current && state.init && (state.init.length !== next.length || state.init.some((value, index) => value !== next[index]))) { block(state, "init_changed"); return; }
+          if (current && state.init && (state.init.length !== next.length || state.init.some((value, index) => value !== next[index]))) {
+            failure(current, "init_changed");
+            state.forwarding = false;
+          }
           state.init = next;
           state.awaitingInit = false;
         }
@@ -285,12 +290,28 @@
       try { const state = buffers.get(this); if (state) observeAppend(state, value); } catch { const state = buffers.get(this); if (state) block(state, "observer_failed"); }
       return result;
     });
-    for (const name of ["changeType"]) if (typeof NativeSourceBuffer.prototype[name] === "function") hook(NativeSourceBuffer.prototype, name, (original) => function () {
+    for (const name of ["changeType"]) if (typeof NativeSourceBuffer.prototype[name] === "function") hook(NativeSourceBuffer.prototype, name, (original) => function (mimeType) {
       const result = Reflect.apply(original, this, arguments);
-      const state = buffers.get(this); if (state) block(state, name === "changeType" ? "codec_changed" : "source_buffer_error"); return result;
+      const state = buffers.get(this);
+      if (state && String(mimeType).toLowerCase().replace(/[\s"]/g, "") !== state.mimeType.toLowerCase().replace(/[\s"]/g, "")) {
+        if (!supportedMime(mimeType)) block(state, "codec_unsupported");
+        else {
+          if (active?.source === state.source) failure(active, "codec_changed");
+          state.mimeType = mimeType; state.init = null; state.ftyp = null; state.awaitingInit = true;
+          state.initParts = []; state.initSize = 0; state.headerBytes = 0; state.remaining = 0; state.forwarding = false;
+        }
+      }
+      return result;
     });
     if (typeof NativeMediaSource.prototype.removeSourceBuffer === "function") hook(NativeMediaSource.prototype, "removeSourceBuffer", (original) => function removeSourceBuffer(buffer) {
-      const result = Reflect.apply(original, this, arguments); const state = buffers.get(buffer); if (state) block(state, "track_changed"); return result;
+      const result = Reflect.apply(original, this, arguments); const state = buffers.get(buffer);
+      if (state) {
+        if (active?.source === state.source) failure(active, "track_changed");
+        state.blocked = true; buffers.delete(buffer);
+        state.source.buffers = state.source.buffers.filter(item => item !== state);
+        state.source.buffers.forEach((item, index) => { item.trackIndex = index; });
+      }
+      return result;
     });
     installed = true;
   } catch {
@@ -310,6 +331,24 @@
     for (const state of current.source.buffers) state.forwarding = false;
     if (active === current) active = null;
   };
+  const continueRecording = (current, command) => {
+    if (!command || !UUID.test(command.requestId ?? "") || command.channelId !== current.channelId || current.cancelContinuation) return false;
+    const recovery = { current, command, expires: Date.now() + 15_000, timer: null };
+    recovering = recovery;
+    safeNotify(current, "encoded_starting");
+    recovery.timer = setInterval(() => {
+      if (recovering !== recovery) { clearInterval(recovery.timer); return; }
+      if (Date.now() >= recovery.expires || channel() !== current.channelId || current.video.ended || current.video.mediaKeys || !integrity()) {
+        clearInterval(recovery.timer); recovering = null; safeNotify(current, "encoded_interrupted"); return;
+      }
+      // Stay on the approved document/player. No reconnect, alternate URL or
+      // legacy decoder fallback. A fresh native arm validates the new init.
+      if (candidate(current.video) !== current.source) return;
+      clearInterval(recovery.timer); recovering = null;
+      void start({ ...command, video: current.video }, current.options).catch(() => undefined);
+    }, 250);
+    return true;
+  };
   const finish = (current) => {
     if (current.finishPromise) return current.finishPromise;
     current.accepting = false; current.stopping = true; safeNotify(current, "encoded_saving");
@@ -319,17 +358,20 @@
         await current.queue;
         await current.options.beforeFinish?.(current.recordingId);
         const response = await current.options.request("encoded_finish", { recordingId: current.recordingId,
-          interrupted: current.interrupted || current.transportFailed, reason: current.reason ?? "user_stop" });
+          interrupted: current.interrupted || current.transportFailed,
+          reason: current.transportFailed && ["track_changed", "codec_changed", "init_changed"].includes(current.reason) ? "native_rejected" : current.reason ?? "user_stop" });
         if (!response || response.stopped !== true) throw new Error("native_rejected");
         cleanUp(current);
-        safeNotify(current, response.interrupted || current.interrupted || current.transportFailed ? "encoded_interrupted" : "encoded_saved");
+        if (current.transportFailed || !continueRecording(current, response.continuation)) {
+          safeNotify(current, response.interrupted || current.interrupted || current.transportFailed ? "encoded_interrupted" : "encoded_saved");
+        }
         return response;
       } catch (cause) { cleanUp(current); safeNotify(current, "native_rejected"); throw cause; }
     })();
     return current.finishPromise;
   };
   const start = (command, options) => {
-    if (active) return Promise.reject(new Error("recording_active"));
+    if (active || recovering) return Promise.reject(new Error("recording_active"));
     const video = command?.video ?? selectedVideo(); const source = candidate(video);
     if (!source || command?.channelId !== channel() || command.rightsAcknowledged !== true || !UUID.test(command.requestId ?? "") || typeof options?.request !== "function") {
       return Promise.reject(new Error("encoded_unavailable"));
@@ -352,7 +394,9 @@
         if (!response || !recordingID(response.id) || response.mode !== "encoded" || response.nativeApproved !== true) throw new Error("encoded_not_approved");
         current.recordingId = response.id; current.captureChat = response.captureChat === true; current.nativeApproved = true; current.starting = false;
         const reason = safetyReason(current); if (reason && !current.stopping) failure(current, reason);
-        safeNotify(current, current.stopping ? "encoded_saving" : "encoded_recording"); return response;
+        safeNotify(current, current.stopping ? "encoded_saving" : "encoded_recording");
+        if (!current.stopping) options.onStarted?.(response, video);
+        return response;
       }).catch((cause) => {
         current.transportFailed = true; current.accepting = false; cleanUp(current); safeNotify(current, "native_rejected");
         const error = new Error(cause?.message ?? "native_rejected"); error.nativeAttempted = true; error.code = cause?.code;
@@ -364,12 +408,14 @@
       });
     return current.begin;
   };
-  window.addEventListener("pagehide", () => { if (active) failure(active, "page_hidden"); });
+  window.addEventListener("pagehide", () => { if (recovering) { clearInterval(recovering.timer); recovering = null; } if (active) { active.cancelContinuation = true; failure(active, "page_hidden"); } });
   Object.defineProperty(window, "__atsumiEncodedCapture", { value: Object.freeze({
     canStart: (video) => Boolean(candidate(video)), supports: (video) => Boolean(candidate(video)), getDiagnostics: diagnostics,
     canChangePlaybackRate, getReplayClock, getStatus: status, start,
     stop(reason = "user_stop", interrupted = false) {
+      if (recovering) { clearInterval(recovering.timer); recovering = null; }
       if (!active) return Promise.resolve({ stopped: true, interrupted: false });
+      active.cancelContinuation = true;
       if (!active.interrupted) active.reason = reason;
       active.interrupted ||= interrupted; return finish(active);
     },

@@ -236,6 +236,7 @@ export function SettingsDialog({
   onRestoreExplorationExclusions,
 }: SettingsDialogProps) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const scrollRoot = useRef<HTMLElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const closingInternally = useRef(false);
@@ -280,6 +281,11 @@ export function SettingsDialog({
   const storageUsageLoadingRef = useRef(false);
   const storageUsagePath = useRef<string | null>(null);
   const storageUsageLoadedAt = useRef(0);
+
+  useLayoutEffect(() => {
+    // Each category starts at its first option; a different tab's offset is unrelated.
+    if (open && scrollRoot.current) scrollRoot.current.scrollTop = 0;
+  }, [activeTab, open]);
 
   useEffect(() => {
     if (open && !wasOpen.current) {
@@ -677,7 +683,7 @@ export function SettingsDialog({
             {validationError ? <p className="inline-error" role="alert">{validationError}</p> : null}
             {autosave.status === "error" || danbooruSaveError ? <div className="settings-save-error" role="alert"><span>변경 내용을 저장하지 못했습니다.</span><button type="button" className="text-button" onClick={() => { void autosave.flush(); if (danbooruSaveError) changeDanbooru(danbooruDraft); }}>다시 시도</button></div> : null}
           </div> : null}
-          <section className="settings-content" data-settings-scroll-root="true">
+          <section ref={scrollRoot} className="settings-content" data-settings-scroll-root="true">
               {activeTab !== "danbooru" ? <>
                 <div className="setting-row download-folder-setting" data-tour="download-folder" hidden={activeTab !== "general"}>
                   <div><strong>다운로드 폴더</strong><span>앨범·이미지·녹화의 저장 위치</span></div>

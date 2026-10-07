@@ -591,6 +591,17 @@ export type ExplorationExclusionRestoreResult = {
   snapshot: AutoFindSnapshot;
 };
 
+export type ExplorationExclusionContext = {
+  galleryId: GalleryId;
+  reasons: ExplorationExclusionReason[];
+  quarantined: boolean;
+  quarantineEntryId: string | null;
+  reviewId: string | null;
+  reviewGalleryId: GalleryId | null;
+  legacyCandidateId: string | null;
+  retainedGallery: { galleryId: GalleryId; title: string } | null;
+};
+
 export type HashProfile = {
   profileVersion: number;
   algorithmVersion: number;

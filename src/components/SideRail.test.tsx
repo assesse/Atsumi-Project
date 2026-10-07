@@ -5,12 +5,41 @@ import { SideRail } from "./SideRail";
 import { CommonNavigationContext } from "../app/CommonNavigation";
 
 describe("SideRail source switcher", () => {
+  it("uses the boundary to fold the rail and keeps privacy/settings stacked at the bottom", async () => {
+    const host = document.createElement("div"), root = createRoot(host);
+    const toggle = vi.fn(), privacy = vi.fn(), settings = vi.fn();
+    const render = async (collapsed: boolean, pending = false) => {
+      await act(async () => root.render(<SideRail source="hitomi" view="explore" collapsed={collapsed} autoFindCount={0} attentionCount={0} onNavigate={vi.fn()} onSourceChange={vi.fn()} onToggle={toggle} onSettings={settings} privacyMode privacyModePending={pending} onPrivacyModeToggle={privacy} />));
+    };
+    try {
+      await render(false);
+      const foot = host.querySelector(".sidebar-foot")!;
+      expect([...foot.querySelectorAll("button")].map(node => node.getAttribute("aria-label"))).toEqual(["프라이버시 모드", "설정"]);
+      expect(host.querySelector(".live-indicator, .sidebar-toggle")).toBeNull();
+      expect(host.textContent).not.toMatch(/live|fixture|Community/);
+      expect(foot.querySelector('[data-tour="privacy-mode"]')).toHaveAttribute("aria-pressed", "true");
+      await act(async () => foot.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]')!.click());
+      expect(privacy).toHaveBeenCalledOnce();
+      const edge = host.querySelector<HTMLButtonElement>(".sidebar-boundary")!;
+      expect(edge).toHaveAttribute("aria-expanded", "true");
+      expect(foot.contains(edge)).toBe(false);
+      await act(async () => edge.click()); expect(toggle).toHaveBeenCalledOnce();
+      await render(true, true);
+      expect(edge).toHaveAccessibleName("메뉴 펼치기");
+      expect(edge).toHaveAttribute("aria-expanded", "false");
+      const pending = foot.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]')!;
+      expect(pending).toBeDisabled(); expect(pending).toHaveAttribute("aria-busy", "true");
+      await act(async () => pending.click()); expect(privacy).toHaveBeenCalledOnce();
+      await act(async () => foot.querySelector<HTMLButtonElement>('[data-tour="hitomi-settings"]')!.click());
+      expect(settings).toHaveBeenCalledOnce();
+    } finally { await act(async () => root.unmount()); }
+  });
   it("keeps community for album sources only and places auto recording before recordings", async () => {
     const host = document.createElement("div"), root = createRoot(host);
     const openCommunity = vi.fn();
     try {
       for (const source of ["chzzk", "hitomi", "danbooru"] as const) {
-        await act(async () => root.render(<CommonNavigationContext.Provider value={{ communityOpen: false, openCommunity }}><SideRail source={source} view={source === "chzzk" ? "live" : "explore"} collapsed={false} autoFindCount={0} attentionCount={0} sourceLabel={source} onNavigate={vi.fn()} onSourceChange={vi.fn()} onToggle={vi.fn()} /></CommonNavigationContext.Provider>));
+        await act(async () => root.render(<CommonNavigationContext.Provider value={{ communityOpen: false, openCommunity }}><SideRail source={source} view={source === "chzzk" ? "live" : "explore"} collapsed={false} autoFindCount={0} attentionCount={0} onNavigate={vi.fn()} onSourceChange={vi.fn()} onToggle={vi.fn()} /></CommonNavigationContext.Provider>));
         const community = host.querySelector('[aria-label="커뮤니티"]');
         if (source === "chzzk") {
           expect(community).toBeNull();
@@ -26,7 +55,8 @@ describe("SideRail source switcher", () => {
     const onSettings = vi.fn();
     const onNavigate = vi.fn();
     try {
-      await act(async () => root.render(<SideRail source="chzzk" view="recordings" collapsed={false} autoFindCount={0} attentionCount={0} sourceLabel="CHZZK" onNavigate={onNavigate} onSourceChange={vi.fn()} onToggle={vi.fn()} onSettings={onSettings} />));
+      await act(async () => root.render(<SideRail source="chzzk" view="recordings" collapsed={false} autoFindCount={0} attentionCount={0} onNavigate={onNavigate} onSourceChange={vi.fn()} onToggle={vi.fn()} onSettings={onSettings} onPrivacyModeToggle={vi.fn()} />));
+      expect(container.querySelector('[aria-label="프라이버시 모드"]')).toBeNull();
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="설정"]')!.click());
       expect(onSettings).toHaveBeenCalledOnce();
       expect(onNavigate).not.toHaveBeenCalled();
@@ -44,7 +74,6 @@ describe("SideRail source switcher", () => {
           collapsed={false}
           autoFindCount={0}
           attentionCount={2}
-          sourceLabel="Danbooru fixture"
           source="danbooru"
           onNavigate={vi.fn()}
           onSourceChange={onSourceChange}
@@ -78,7 +107,6 @@ describe("SideRail source switcher", () => {
           collapsed={false}
           autoFindCount={3}
           attentionCount={2}
-          sourceLabel="Browser fixture"
           source="hitomi"
           onNavigate={onNavigate}
           onSourceChange={vi.fn()}
@@ -113,7 +141,6 @@ describe("SideRail source switcher", () => {
           collapsed={false}
           autoFindCount={0}
           attentionCount={0}
-          sourceLabel="Danbooru fixture"
           source="danbooru"
           onNavigate={(view: "explore" | "downloads") => { expect(view).toBeDefined(); }}
           onSourceChange={onSourceChange}

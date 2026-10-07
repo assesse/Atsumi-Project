@@ -3,13 +3,15 @@ import type { BrowserDeleteReport, BrowserRecording } from "../../api/officialBr
 import { hasCompletedMerge, hasReplayableRanges, RecordingPlayback } from "./RecordingPlayback";
 import "./RecordingLibrary.css";
 import { RecordedChannel } from "./RecordedChannel";
-import { emptyRecordingAttempt, recordingStatus } from "./recordingStatus";
+import { emptyRecordingAttempt, recordingEndDetail, recordingStatus } from "./recordingStatus";
+import { groupRecordings, type RecordingGroup } from "./recordingGroups";
+import { FluentIcon } from "../../components/FluentIcon";
 
 const duration = (value: number) => {
   const seconds = Math.max(0, Math.floor(value));
   return `${Math.floor(seconds / 3600).toString().padStart(2, "0")}:${Math.floor(seconds / 60 % 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
 };
-const bytes = (value: number) => value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(2)} GiB` : `${(value / 1024 ** 2).toFixed(1)} MiB`;
+const bytes = (value: number) => value >= 1000 ** 3 ? `${(value / 1000 ** 3).toFixed(2)} GB` : `${(value / 1000 ** 2).toFixed(1)} MB`;
 const date = (value: number) => new Date(value).toLocaleString("ko-KR", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
 const dateTime = (value: number) => { const instant = new Date(value); return Number.isFinite(instant.getTime()) ? instant.toISOString() : undefined; };
 export function recordingChatNote(recording: BrowserRecording): { text: string; warning: boolean } {
@@ -25,19 +27,42 @@ function ChatWarning({ recording }: { recording: BrowserRecording }) {
 }
 const needsAttention = (recording: BrowserRecording) => !recording.summaryPending && recording.mediaRemovedAt == null && (recording.archive?.lastError || recording.deletionPending || recording.status === "failed" || recording.status === "interrupted" && recording.ending?.reason !== "checking" || recording.progressive?.lastError || recording.merge?.status === "failed" || recording.merge?.status === "blocked" || recording.merge?.sourceCleanup?.status === "blocked" || recordingChatNote(recording).warning);
 function cardState(item: BrowserRecording): { tone: string; icon: string; label: string } {
-  if (item.mediaRemovedAt != null) return { tone: "waiting", icon: "–", label: "영상 정리됨" };
+  const label = recordingStatus(item);
+  if (item.mediaRemovedAt != null) return { tone: "waiting", icon: "–", label };
   if (item.summaryPending || item.storageCheckPending) return { tone: "waiting", icon: "…", label: "확인 중" };
   if (item.deletionPending) return { tone: "error", icon: "×", label: "삭제 미완료" };
-  if (item.status === "failed") return { tone: "error", icon: "×", label: "녹화 실패" };
-  if (item.merge?.status === "failed") return { tone: "error", icon: "×", label: "재생 준비 실패" };
-  if (needsAttention(item)) return { tone: "warning", icon: "!", label: item.status === "recording" ? "녹화 중 · 확인 필요" : "확인 필요" };
-  if (item.status === "recording") return { tone: "recording", icon: "●", label: "녹화 중" };
-  if (item.ending?.reason === "checking") return { tone: "processing", icon: "↻", label: "방송 종료 확인 중" };
-  if (hasCompletedMerge(item) || hasReplayableRanges(item)) return { tone: "success", icon: "✓", label: "재생 가능" };
-  if (item.merge?.status === "merging") return { tone: "processing", icon: "↻", label: "재생 준비 중" };
-  return { tone: "waiting", icon: "…", label: emptyRecordingAttempt(item) ? "저장 영상 없음" : "재생 준비 중" };
+  if (item.status === "failed" || item.partial || item.merge?.status === "failed") return { tone: "error", icon: "×", label };
+  if (needsAttention(item)) return { tone: "warning", icon: "!", label };
+  if (item.status === "recording") return { tone: "recording", icon: "●", label };
+  if (item.ending?.reason === "checking" || item.merge?.status === "merging") return { tone: "processing", icon: "↻", label };
+  if (hasCompletedMerge(item)) return { tone: "success", icon: "✓", label };
+  return { tone: "waiting", icon: "…", label };
 }
 const canDelete = (item: BrowserRecording) => item.status !== "recording" && item.archive?.status !== "copying" && (item.deletionPending || item.merge?.status !== "merging" && item.merge?.sourceCleanup?.status !== "pending");
+
+function BroadcastGroup({ group, selectedId, selecting, privacy, card }: {
+  group: RecordingGroup; selectedId?: string; selecting: boolean; privacy: boolean;
+  card(item: BrowserRecording, part?: number): ReactNode;
+}) {
+  const containsSelection = group.recordings.some(item => item.id === selectedId);
+  const [open, setOpen] = useState(containsSelection || group.active);
+  const contentId = useId();
+  useEffect(() => { if (containsSelection) setOpen(true); }, [selectedId, containsSelection]);
+  if (group.recordings.length === 1) return card(group.recordings[0]!);
+  const expanded = open || selecting;
+  return <section className="recording-broadcast-group" aria-label={privacy ? "방송 녹화 묶음" : `${group.latest.title || group.latest.channelId} 녹화 묶음`}>
+    <RecordedChannel id={group.latest.id} privacy={privacy} />
+    <button type="button" className="recording-broadcast-heading" aria-expanded={expanded} aria-controls={contentId}
+      title={privacy ? undefined : `방송 ${group.broadcastKey?.replace(/^id:/, "")}`} onClick={() => setOpen(value => !value)} disabled={selecting}>
+      <span><strong>{privacy ? "녹화 영상" : group.latest.title || group.latest.channelId}</strong>
+        <small>{group.active ? "녹화 중 · " : ""}파일 {group.recordings.length}개</small></span>
+      <FluentIcon glyph="\uE70D" />
+    </button>
+    <div id={contentId} className="recording-broadcast-files" hidden={!expanded}>
+      {expanded ? group.recordings.map((item, index) => card(item, index + 1)) : null}
+    </div>
+  </section>;
+}
 type Props = {
   recordings: BrowserRecording[]; selectedId: string | null; onSelect: (id: string) => void;
   disabled: boolean; privacy: boolean; retrying: boolean; openingFolder: boolean;
@@ -74,6 +99,10 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
   const saved = recordings.filter(item => item.mediaRemovedAt == null && item.status !== "recording" && !emptyRecordingAttempt(item));
   const filtered = useMemo(() => saved.filter(item => (privacy || !query.trim() || `${item.title} ${item.channelId}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
     && (filter === "all" || filter === "ready" && (hasCompletedMerge(item) || hasReplayableRanges(item)) || filter === "attention" && needsAttention(item))), [recordings, query, filter, privacy]);
+  // Include in-progress files before grouping, so an active broadcast never appears twice.
+  const groups = groupRecordings([...active, ...filtered]);
+  const activeGroups = groups.filter(group => group.active);
+  const savedGroups = groups.filter(group => !group.active);
   useEffect(() => setLimit(24), [query, filter]);
   // Filter changes never leave invisible recordings selected for deletion.
   useEffect(() => setChecked([]), [query, filter, privacy]);
@@ -107,37 +136,38 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       setDeleteError(error instanceof Error ? error.message : "삭제 결과를 확인하지 못했습니다. 목록을 확인한 뒤 다시 시도해 주세요.");
     } finally { deleteInFlight.current = false; setDeleting(false); }
   };
-  const card = (item: BrowserRecording) => {
+  const card = (item: BrowserRecording, part?: number) => {
     const state = cardState(item);
     return <div key={item.id} className={`recording-library-card-wrap${selecting && item.status !== "recording" ? " is-selecting" : ""}`}>
-    <RecordedChannel id={item.id} privacy={privacy} />
+    {part === undefined ? <RecordedChannel id={item.id} privacy={privacy} /> : null}
     <button type="button" className={`recording-library-card official-browser-recording-select${item.status === "recording" ? " is-recording" : ""}`} aria-pressed={selecting && item.status !== "recording" ? checked.includes(item.id) : selected?.id === item.id} disabled={selecting && item.status !== "recording" && (!canDelete(item) || disabled || deleting)} title={selecting && !canDelete(item) ? "녹화·병합·파일 정리가 끝난 뒤 삭제할 수 있습니다." : recordingChatNote(item).text} aria-description={recordingChatNote(item).text} onClick={() => selecting && item.status !== "recording" ? toggle(item.id) : onSelect(item.id)}>
     <span className="recording-library-card-top"><span className={`recording-library-state is-${state.tone}`}><i aria-hidden>{state.icon}</i>{state.label}</span><span className="recording-library-length">{duration(item.durationSeconds)}</span></span>
-    <strong>{title(item)}</strong>
+    <strong>{part === undefined ? title(item) : `파일 ${part}`}</strong>
     <span className="recording-library-card-bottom"><time dateTime={dateTime(item.startedAt)}>{date(item.startedAt)}</time><span>{item.mediaRemovedAt != null ? "영상 없음" : bytes(hasCompletedMerge(item) ? item.merge!.bytes! : item.bytesWritten)} <ChatWarning recording={item} /></span></span>
     </button>
     {selecting && item.status !== "recording" ? <input className="recording-library-check" type="checkbox" aria-label={`${title(item)} 삭제 선택`} checked={checked.includes(item.id)} disabled={!canDelete(item) || disabled || deleting} onChange={() => toggle(item.id)} /> : null}
   </div>;
   };
+  const broadcast = (group: RecordingGroup) => <BroadcastGroup key={group.key} group={group} selectedId={selected?.id} selecting={selecting} privacy={privacy} card={card} />;
   return <section className="recording-library" aria-label="녹화 보관함">
     <header className="recording-library-heading"><div><h2>녹화 보관함</h2><p>저장 영상 {saved.length.toLocaleString("ko-KR")}개{active.length ? ` · 녹화 중 ${active.length}개` : ""}</p></div><div className="recording-library-heading-actions">{stopControl}<button type="button" disabled={disabled || deleting || !selected} title="선택한 녹화의 저장 폴더 열기" aria-busy={openingFolder} onClick={() => selected && onFolder(selected.id)}>{openingFolder ? "여는 중…" : "저장 폴더 열기"}</button><button ref={selectionToggle} type="button" disabled={disabled || deleting || !saved.length && !attempts.length && !selecting} aria-pressed={selecting} onClick={() => { setSelecting(value => !value); setChecked([]); }}>{selecting ? "선택 취소" : "선택"}</button></div></header>
-    {active.length ? <section className="recording-library-active" aria-label="진행 중인 녹화"><h3>지금 녹화 중</h3><div>{active.map(card)}</div></section> : null}
+    {activeGroups.length ? <section className="recording-library-active" aria-label="진행 중인 녹화"><h3>지금 녹화 중</h3><div>{activeGroups.map(broadcast)}</div></section> : null}
     <div className="recording-library-toolbar"><div className="recording-library-filters" aria-label="녹화 필터">{([ ["all", "전체"], ["ready", "재생 가능"], ["attention", "확인 필요"] ] as const).map(([value, label]) => <button type="button" key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div><input type="search" aria-label="녹화 검색" placeholder="제목·채널 검색" value={query} disabled={privacy} onChange={event => setQuery(event.target.value)} /></div>
     {selecting ? <div className="recording-library-selection"><button type="button" disabled={disabled || deleting || !eligible.length} onClick={() => setChecked(allChecked ? [] : eligible)} title="현재 검색·필터에 맞는 삭제 가능한 녹화를 모두 선택합니다. 아직 펼치지 않은 항목도 포함됩니다.">{allChecked ? "전체 해제" : "전체 선택"}</button><span>{checked.length}개 선택</span><button ref={deleteTrigger} type="button" className="recording-library-delete" disabled={disabled || deleting || !checked.length} onClick={() => { setDeleteError(""); setConfirmIds([...checked]); }}>선택 삭제</button></div> : null}
     {deleteNotice ? <p role="status" className="recording-library-delete-notice">{deleteNotice}</p> : null}
     {deleteFailures.length ? <div role="alert" className="recording-library-delete-errors"><strong>{deleteFailures.length}개는 삭제하지 못했습니다.</strong><ul>{deleteFailures.map(failure => <li key={failure.id}><b>{recordings.find(item => item.id === failure.id) ? title(recordings.find(item => item.id === failure.id)!) : "녹화 영상"}</b> — {failure.error.message}</li>)}</ul></div> : null}
     <div className="recording-library-layout"><div className="recording-library-browse">
-      <div className="recording-library-grid">{filtered.slice(0, limit).map(card)}</div>
-      {attempts.length ? <details className="recording-library-attempts"><summary>시작 실패 {attempts.length}개</summary><div className="recording-library-grid">{attempts.map(card)}</div></details> : null}
-      {diagnostics.length ? <details className="recording-library-attempts" onToggle={event => setShowDiagnostics(event.currentTarget.open)}><summary>영상 삭제 기록 {diagnostics.length}개</summary>{showDiagnostics ? <><div className="recording-library-grid">{diagnostics.slice(0, diagnosticLimit).map(card)}</div>{diagnostics.length > diagnosticLimit ? <button type="button" onClick={() => setDiagnosticLimit(value => value + 24)}>기록 더 보기</button> : null}</> : null}</details> : null}
-      {!filtered.length ? <div className="recording-library-empty"><strong>{saved.length ? "조건에 맞는 녹화가 없습니다" : "아직 저장한 영상이 없습니다"}</strong><p>{saved.length ? "검색어나 필터를 바꿔 보세요." : "녹화를 마치면 이곳에서 영상과 채팅을 함께 볼 수 있습니다."}</p></div> : null}
-      {filtered.length > limit ? <button type="button" className="recording-library-more" onClick={() => setLimit(value => value + 24)}>더 보기 · {filtered.length - limit}개</button> : null}
+      <div className="recording-library-grid">{savedGroups.slice(0, limit).map(broadcast)}</div>
+      {attempts.length ? <details className="recording-library-attempts"><summary>시작 실패 {attempts.length}개</summary><div className="recording-library-grid">{attempts.map(item => card(item))}</div></details> : null}
+      {diagnostics.length ? <details className="recording-library-attempts" onToggle={event => setShowDiagnostics(event.currentTarget.open)}><summary>영상 삭제 기록 {diagnostics.length}개</summary>{showDiagnostics ? <><div className="recording-library-grid">{diagnostics.slice(0, diagnosticLimit).map(item => card(item))}</div>{diagnostics.length > diagnosticLimit ? <button type="button" onClick={() => setDiagnosticLimit(value => value + 24)}>기록 더 보기</button> : null}</> : null}</details> : null}
+      {!filtered.length && (saved.length > 0 || !activeGroups.length) ? <div className="recording-library-empty"><strong>{saved.length ? "조건에 맞는 녹화가 없습니다" : "아직 저장한 영상이 없습니다"}</strong><p>{saved.length ? "검색어나 필터를 바꿔 보세요." : "녹화를 마치면 이곳에서 영상과 채팅을 함께 볼 수 있습니다."}</p></div> : null}
+      {savedGroups.length > limit ? <button type="button" className="recording-library-more" onClick={() => setLimit(value => value + 24)}>더 보기 · {savedGroups.length - limit}개</button> : null}
     </div>
     {selected ? <section className="recording-library-detail official-browser-files" aria-label="공식 녹화 파일">
       <div className="recording-library-detail-heading"><span>선택한 녹화</span><h3>{title(selected)}</h3><p>{date(selected.startedAt)}</p></div>
       <RecordedChannel id={selected.id} privacy={privacy} />
       <p className="official-browser-muted" title={recordingChatNote(selected).text}>{recordingStatus(selected)} · {duration(selected.durationSeconds)} · {selected.mediaRemovedAt != null ? "영상 없음" : bytes(hasCompletedMerge(selected) ? selected.merge!.bytes! : selected.bytesWritten)} <ChatWarning recording={selected} /></p>
-      {selected.lastError && selected.ending?.reason !== "checking" ? <details className="recording-playback-problems"><summary>녹화 문제 확인</summary><p className="official-browser-error">{privacy ? "녹화 중 문제가 발생했습니다." : selected.lastError}</p></details> : null}
+      {recordingEndDetail(selected) || selected.lastError ? <details className="recording-playback-problems"><summary>종료 정보</summary><p>{recordingEndDetail(selected)}</p>{selected.lastError && selected.ending?.reason !== "checking" ? <p className="official-browser-error">{privacy ? "녹화 중 문제가 발생했습니다." : selected.lastError}</p> : null}</details> : null}
       {selected.partial && selected.mediaRemovedAt == null ? <p className="official-browser-note">영상 일부가 저장되지 않았을 수 있습니다.</p> : null}
       {selected.deletionPending ? <p className="official-browser-note">삭제 미완료 · 선택 삭제로 다시 시도해 주세요.</p> : <RecordingPlayback key={selected.id} recording={selected} disabled={disabled || deleting} privacyMode={privacy} retrying={retrying} onReplay={onReplay} onRetryMerge={onRetryMerge} />}
     </section> : null}

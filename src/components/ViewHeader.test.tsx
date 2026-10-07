@@ -13,7 +13,7 @@ describe("ViewHeader language filter", () => {
       await act(async () => root.render(<ViewHeader view="explore" search={{ draft: "", committed: "", languages: [], suggestionsOpen: true, activeSuggestion: null }} suggestions={suggestions}
         searchEndControl={<select aria-label="검색 정렬"><option>최신순</option></select>}
         onRemoveHistory={onRemoveHistory} onClearHistory={onClearHistory}
-        activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={onCommit} onSelectSuggestion={onSelectSuggestion} onCompleteSuggestion={vi.fn()} onLanguages={vi.fn()} onTagSuggestionQuery={vi.fn()} onRandomOpen={vi.fn()} randomOpenPending={false} randomOpenAvailable onActivity={vi.fn()} privacyMode={false} onPrivacyModeToggle={vi.fn()} onSettings={vi.fn()} />));
+        activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={onCommit} onSelectSuggestion={onSelectSuggestion} onCompleteSuggestion={vi.fn()} onLanguages={vi.fn()} onTagSuggestionQuery={vi.fn()} onRandomOpen={vi.fn()} randomOpenPending={false} randomOpenAvailable onActivity={vi.fn()} />));
       expect(container.querySelectorAll('[role="option"]')).toHaveLength(10);
       expect(container.querySelector(".search-box select")).not.toBeNull();
       expect(container.querySelector("button button")).toBeNull();
@@ -52,9 +52,6 @@ describe("ViewHeader language filter", () => {
           randomOpenPending={false}
           randomOpenAvailable
           onActivity={vi.fn()}
-          privacyMode={false}
-          onPrivacyModeToggle={vi.fn()}
-          onSettings={vi.fn()}
         />,
       ));
       const languageButton = container.querySelector('button[aria-label="언어 필터"]');
@@ -97,9 +94,6 @@ describe("ViewHeader language filter", () => {
           randomOpenPending
           randomOpenAvailable
           onActivity={vi.fn()}
-          privacyMode={false}
-          onPrivacyModeToggle={vi.fn()}
-          onSettings={vi.fn()}
         />,
       ));
       const button = container.querySelector<HTMLButtonElement>('button[aria-label="랜덤 열기 중"]');
@@ -124,7 +118,7 @@ describe("ViewHeader language filter", () => {
     const suggestion = { type: "TAG" as const, token: "tag:full_color", label: "full color", extra: "태그" };
     try {
       await act(async () => root.render(
-        <ViewHeader view="explore" search={{ draft: "artist:mizuno tag:full", committed: "", languages: [], suggestionsOpen: true, activeSuggestion: 0 }} suggestions={[suggestion]} activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={vi.fn()} onSelectSuggestion={onSelectSuggestion} onCompleteSuggestion={onCompleteSuggestion} onLanguages={vi.fn()} tagCatalogRevision={1} onTagSuggestionQuery={vi.fn()} onRandomOpen={vi.fn()} randomOpenPending={false} randomOpenAvailable onActivity={vi.fn()} privacyMode={false} onPrivacyModeToggle={vi.fn()} onSettings={vi.fn()} />,
+        <ViewHeader view="explore" search={{ draft: "artist:mizuno tag:full", committed: "", languages: [], suggestionsOpen: true, activeSuggestion: 0 }} suggestions={[suggestion]} activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={vi.fn()} onSelectSuggestion={onSelectSuggestion} onCompleteSuggestion={onCompleteSuggestion} onLanguages={vi.fn()} tagCatalogRevision={1} onTagSuggestionQuery={vi.fn()} onRandomOpen={vi.fn()} randomOpenPending={false} randomOpenAvailable onActivity={vi.fn()} />,
       ));
       const input = container.querySelector<HTMLInputElement>('input[aria-label="검색"]');
       if (!input) throw new Error("search input missing");
@@ -168,9 +162,6 @@ describe("ViewHeader language filter", () => {
           randomOpenPending={false}
           randomOpenAvailable
           onActivity={vi.fn()}
-          privacyMode={false}
-          onPrivacyModeToggle={vi.fn()}
-          onSettings={vi.fn()}
         />,
       ));
       const input = container.querySelector<HTMLInputElement>('input[aria-label="검색"]');
@@ -196,73 +187,12 @@ describe("ViewHeader language filter", () => {
     }
   });
 
-  it("exposes the persistent privacy toggle as a pressed, busy-aware button", async () => {
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const onPrivacyModeToggle = vi.fn();
+  it("leaves privacy and settings exclusively in the side rail", async () => {
+    const container = document.createElement("div"), root = createRoot(container);
     try {
-      await act(async () => root.render(
-        <ViewHeader
-          view="downloads"
-          search={{ draft: "", committed: "", languages: [], suggestionsOpen: false, activeSuggestion: null }}
-          suggestions={[]}
-          activityCount={0}
-          activityOpen={false}
-          onDraft={vi.fn()}
-          onSuggestions={vi.fn()}
-          onCommit={vi.fn()}
-          onSelectSuggestion={vi.fn()}
-          onCompleteSuggestion={vi.fn()}
-          onLanguages={vi.fn()}
-          tagCatalogRevision={1}
-          onTagSuggestionQuery={vi.fn()}
-          onRandomOpen={vi.fn()}
-          randomOpenPending={false}
-          randomOpenAvailable
-          onActivity={vi.fn()}
-          privacyMode
-          onPrivacyModeToggle={onPrivacyModeToggle}
-          onSettings={vi.fn()}
-        />,
-      ));
-      const toggle = container.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]');
-      expect(toggle).toHaveAttribute("aria-pressed", "true");
-      expect(toggle).toHaveClass("is-active");
-      await act(async () => toggle?.click());
-      expect(onPrivacyModeToggle).toHaveBeenCalledOnce();
-
-      await act(async () => root.render(
-        <ViewHeader
-          view="downloads"
-          search={{ draft: "", committed: "", languages: [], suggestionsOpen: false, activeSuggestion: null }}
-          suggestions={[]}
-          activityCount={0}
-          activityOpen={false}
-          onDraft={vi.fn()}
-          onSuggestions={vi.fn()}
-          onCommit={vi.fn()}
-          onSelectSuggestion={vi.fn()}
-          onCompleteSuggestion={vi.fn()}
-          onLanguages={vi.fn()}
-          tagCatalogRevision={1}
-          onTagSuggestionQuery={vi.fn()}
-          onRandomOpen={vi.fn()}
-          randomOpenPending={false}
-          randomOpenAvailable
-          onActivity={vi.fn()}
-          privacyMode
-          privacyModePending
-          onPrivacyModeToggle={onPrivacyModeToggle}
-          onSettings={vi.fn()}
-        />,
-      ));
-      const pendingToggle = container.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]');
-      expect(pendingToggle).toBeDisabled();
-      expect(pendingToggle).toHaveAttribute("aria-busy", "true");
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-    }
+      await act(async () => root.render(<ViewHeader view="downloads" search={{ draft: "", committed: "", languages: [], suggestionsOpen: false, activeSuggestion: null }} suggestions={[]} activityCount={0} activityOpen={false} onDraft={vi.fn()} onSuggestions={vi.fn()} onCommit={vi.fn()} onSelectSuggestion={vi.fn()} onCompleteSuggestion={vi.fn()} onLanguages={vi.fn()} onTagSuggestionQuery={vi.fn()} onRandomOpen={vi.fn()} randomOpenPending={false} randomOpenAvailable onActivity={vi.fn()} />));
+      expect(container.querySelector('[aria-label="프라이버시 모드"]')).toBeNull();
+      expect(container.querySelector('[aria-label="설정"]')).toBeNull();
+    } finally { await act(async () => root.unmount()); }
   });
 });

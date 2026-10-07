@@ -15,10 +15,20 @@ This is installation-free, not an all-data-on-USB mode. Settings, login and
 community identity stay in the existing AppData location. Downloads and
 recordings stay in the folder selected in Settings.
 
-To update, extract the new portable ZIP into a NEW folder. Finish current
-work, fully quit Atsumi, then run the new copy. Do not run two versions at
-once or extract over a running executable. The installer updater is blocked
-for this package to keep it portable. No user data is deleted on update.
+From 2.1.1, the in-app updater downloads a signed portable ZIP. After you
+accept the update and finish downloads/scans/recordings, it verifies the ZIP,
+closes normally, replaces only application files and restarts. No installer
+is run and no user data is deleted. A writable, local, non-linked folder is
+required. An optional WebView2/ runtime is preserved as-is.
+
+Older portable versions need one manual migration: extract this ZIP into a
+NEW folder, fully quit the old Atsumi and start the new copy. Later updates
+can be applied in-app. Do not run both copies at once.
+
+Updates keep rollback files and result.txt under .atsumi-update/<id>/.
+If replacement fails the old files are restored. After a power loss during
+replacement, close Atsumi and recover application files from that backup
+folder, or extract a fresh ZIP into a new folder; AppData is unaffected.
 
 Playback compatibility depends on the upstream site. Available quality,
 login and age/entitlement requirements still apply. Only record content

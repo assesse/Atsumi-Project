@@ -13,7 +13,20 @@
 .recording-library-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 400px); gap: 20px; align-items: start; }
 .recording-library-layout:not(:has(.recording-library-detail)) { grid-template-columns: 1fr; }
 .recording-library-browse { min-width: 0; }
-.recording-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; }
+.recording-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; align-items: start; }
+.recording-broadcast-group { min-width: 0; align-self: start; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--workspace); }
+.recording-broadcast-group > .recorded-channel { padding: 12px 12px 0; }
+.streaming-workspace .recording-broadcast-heading { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.recording-broadcast-heading > span:first-child { flex: 1; min-width: 0; }
+.recording-broadcast-heading strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.recording-broadcast-heading small { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+.recording-broadcast-heading > .fluent { flex: none; font-size: 12px; transition: transform 160ms ease; }
+.recording-broadcast-heading[aria-expanded=true] > .fluent { transform: rotate(180deg); }
+.recording-broadcast-files { display: grid; gap: 6px; padding: 0 8px 8px; }
+.recording-broadcast-files[hidden] { display: none; }
+.streaming-workspace .recording-library .recording-broadcast-files .recording-library-card { padding: 10px; gap: 8px; background: var(--surface); }
+.recording-library .recording-broadcast-files .recording-library-card > strong { min-height: 0; font-size: 12px; color: var(--text-soft); }
+.recording-broadcast-files .recording-library-check { top: 10px; right: 10px; }
 .streaming-workspace .recording-library .recording-library-card { position: relative; display: flex; flex-direction: column; gap: 16px; width: 100%; min-width: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--workspace); text-align: left; transition: border-color .16s, background-color .16s; }
 .streaming-workspace .recording-library .recording-library-card:hover { border-color: var(--line-strong); background: var(--surface-hover); }
 .streaming-workspace .recording-library .recording-library-card[aria-pressed=true] { border-color: var(--primary); background: var(--primary-soft); box-shadow: inset 3px 0 var(--primary); }
@@ -68,7 +81,7 @@
 .recording-library-delete-dialog ul { padding-left: 20px; max-height: 160px; overflow: auto; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
 .recording-library-delete-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 @container (max-width: 860px) { .recording-library-layout { grid-template-columns: minmax(0, 1fr); } .recording-library-detail { order: -1; } }
-@media (prefers-reduced-motion: reduce) { .streaming-workspace .recording-library .recording-library-card { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .streaming-workspace .recording-library .recording-library-card, .recording-broadcast-heading > .fluent { transition: none; } }
 .recording-library-end-reason { color: var(--text-soft); font-size: 11px; }
 .recording-library-attempts { margin-top: 18px; color: var(--text-soft); font-size: 12px; }
 .recording-library-attempts > summary { cursor: pointer; padding: 10px 0; }

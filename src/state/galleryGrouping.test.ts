@@ -24,6 +24,19 @@ const gallery = (id: number, artist: string, publishedAt: string): Gallery => ({
 });
 
 describe("groupGalleries", () => {
+  it("groups artist-less albums by their real group, without mixing a same-named artist or rewriting source metadata", () => {
+    const items = [4210586, 3295979, 2779132].map(id => ({ ...gallery(id, "Unknown artist", "2026-10-06"), group: "toropucchi" }));
+    const groups = groupGalleries([
+      ...items, gallery(4, "toropucchi", "2026-10-06"), gallery(5, "알 수 없는 작가", "2026-10-06"),
+      { ...gallery(6, "Unknown artist", "2026-10-06"), artists: ["", "Known"], group: "another" },
+    ], "artist", item => item.publishedAt);
+    expect(groups.find(group => group.label === "그룹 · toropucchi")?.items).toEqual(items);
+    expect(groups.find(group => group.label === "toropucchi")?.items.map(item => item.id)).toEqual([galleryId(4)]);
+    expect(groups.find(group => group.label === "작가·그룹 정보 없음")?.items.map(item => item.id)).toEqual([galleryId(5)]);
+    expect(groups.find(group => group.label === "Known")?.items.map(item => item.id)).toEqual([galleryId(6)]);
+    expect(items.every(item => item.artist === "Unknown artist")).toBe(true);
+    expect(new Set(groups.map(group => group.key)).size).toBe(4);
+  });
   it("groups artists using a stable persistence key while retaining a readable label", () => {
     const groups = groupGalleries([
       gallery(1, "Mizuno", "2026-08-24"),

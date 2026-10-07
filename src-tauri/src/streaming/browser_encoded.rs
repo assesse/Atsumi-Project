@@ -282,6 +282,10 @@ impl OfficialBrowser {
                 interrupted,
                 reason,
             } => {
+                let rollover = matches!(
+                    reason.as_deref(),
+                    Some("track_changed" | "codec_changed" | "init_changed")
+                );
                 let wrote_any = {
                     let _write = self.inner.writes.lock().map_err(|_| unavailable())?;
                     self.validate_encoded_owner(channel, &recording_id)?;
@@ -293,7 +297,14 @@ impl OfficialBrowser {
                     if current.partial.is_some() {
                         return Err(invalid());
                     }
-                    let segments = current.muxer.finish()?;
+                    let segments = if rollover {
+                        current.muxer.finish_discontinuity().unwrap_or_else(|cause| {
+                            tracing::warn!(recording_id = %recording_id, code = %cause.code, "format rollover discarded an incomplete tail; committed segments retained");
+                            Vec::new()
+                        })
+                    } else {
+                        current.muxer.finish()?
+                    };
                     self.commit_encoded(current, segments)?;
                     let wrote_any = current.segment_index > 0;
                     encoded.take();
@@ -303,7 +314,7 @@ impl OfficialBrowser {
                     channel,
                     BrowserMessage::Finish {
                         recording_id,
-                        interrupted: interrupted || !wrote_any,
+                        interrupted: (interrupted && !rollover) || !wrote_any,
                         reason: if !wrote_any {
                             Some("empty_segment".into())
                         } else {
@@ -537,6 +548,80 @@ mod tests {
         assert!(result
             .expect("in-memory fragment waited on the disk store")
             .is_ok());
+    }
+    #[test]
+    fn track_rollover_preserves_broadcast_and_requires_a_fresh_native_arm() {
+        for cancelled in [false, true] {
+            let (_dir, host, nonce) = armed();
+            let source = uuid::Uuid::new_v4().to_string();
+            let ack = begin(&host, &nonce, &source).unwrap();
+            let id = ack["id"].as_str().unwrap();
+            host.inner
+                .store
+                .lock()
+                .unwrap()
+                .set_broadcast_key(id, "id:21499428")
+                .unwrap();
+            for (track, scale) in [(0, 90_000), (1, 48_000)] {
+                append(
+                    &host,
+                    id,
+                    track,
+                    0,
+                    0,
+                    true,
+                    &fmp4::fixtures::fragment(track, 4000 * scale, 4, true),
+                )
+                .unwrap();
+            }
+            if cancelled {
+                host.inner.view.lock().unwrap().continuation = None;
+            }
+            let done = host
+                .process(
+                    CHANNEL,
+                    BrowserMessage::EncodedFinish {
+                        recording_id: id.into(),
+                        interrupted: true,
+                        reason: Some("track_changed".into()),
+                    },
+                )
+                .unwrap();
+            assert_eq!(done["interrupted"], false);
+            assert!(begin(&host, &nonce, &source).is_err());
+            if cancelled {
+                assert!(done["continuation"].is_null());
+                continue;
+            }
+            assert!(!host.active_ids().is_empty());
+            let new_nonce = done["continuation"]["requestId"].as_str().unwrap();
+            let next = begin(&host, new_nonce, &source).unwrap();
+            assert_ne!(next["id"], id);
+            let snapshot = host.snapshot().unwrap();
+            assert!(snapshot
+                .recordings
+                .iter()
+                .all(|r| r.broadcast_key.as_deref() == Some("id:21499428")));
+        }
+    }
+
+    #[test]
+    fn empty_track_change_finalizes_without_leaving_a_stuck_native_recording() {
+        let (_dir, host, nonce) = armed();
+        let ack = begin(&host, &nonce, &uuid::Uuid::new_v4().to_string()).unwrap();
+        let result = host
+            .process(
+                CHANNEL,
+                BrowserMessage::EncodedFinish {
+                    recording_id: ack["id"].as_str().unwrap().into(),
+                    interrupted: true,
+                    reason: Some("track_changed".into()),
+                },
+            )
+            .unwrap();
+        assert_eq!(result["interrupted"], true);
+        assert!(result["continuation"].is_null());
+        assert!(host.active_ids().is_empty());
     }
     #[test]
     fn pending_append_rejects_reordering_other_recordings_and_changed_retries() {

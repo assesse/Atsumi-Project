@@ -1028,6 +1028,17 @@ impl EncodedMuxer {
         }
         result
     }
+
+    /// A player track reset may abandon a partial fragment. Keep only parsed,
+    /// validated samples; never join the replacement codec into this muxer.
+    #[allow(dead_code)] // Standalone mux probe imports this module but never rotates tracks.
+    pub fn finish_discontinuity(&mut self) -> Result<Vec<EncodedSegment>> {
+        for input in &mut self.inputs {
+            input.pending.clear();
+            input.moof = None;
+        }
+        self.finish()
+    }
 }
 
 fn before(a: u64, a_scale: u32, b: u64, b_scale: u32) -> bool {

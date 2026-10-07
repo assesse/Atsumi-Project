@@ -112,6 +112,7 @@ select:focus-visible {
   height: 100%;
   min-width: 920px;
   background: var(--canvas);
+  transition: grid-template-columns 180ms ease;
 }
 
 .app-shell.sidebar-collapsed {
@@ -221,27 +222,56 @@ select:focus-visible {
 }
 
 .sidebar-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  display: grid;
+  gap: 6px;
   margin-top: auto;
-  min-height: 44px;
+  padding-top: 16px;
 }
 
-.live-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #b9ccd2;
-  font-size: 12px;
-  white-space: nowrap;
-}
+.sidebar-foot .nav-item { width: 100%; }
+.sidebar-privacy:disabled { cursor: progress; opacity: .65; }
 
-.live-indicator i {
-  width: 9px;
-  height: 9px;
-  background: #59b892;
-  border-radius: 50%;
+/* The rail edge itself is the control; no separate button occupies the footer. */
+.sidebar .sidebar-boundary {
+  position: absolute;
+  z-index: 1;
+  inset: 0 -5px 0 auto;
+  display: grid;
+  place-items: center;
+  width: 10px;
+  min-width: 0;
+  padding: 0;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sidebar-boundary::before {
+  position: absolute;
+  inset: 0 4px;
+  content: "";
+  background: var(--primary);
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.sidebar-boundary > .fluent {
+  position: relative;
+  padding: 9px 2px;
+  font-size: 11px;
+  background: var(--rail);
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+.sidebar-boundary:hover::before,
+.sidebar-boundary:focus-visible::before,
+.sidebar-boundary:hover > .fluent,
+.sidebar-boundary:focus-visible > .fluent { opacity: 1; }
+.sidebar .sidebar-boundary:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .app-shell, .sidebar-boundary::before, .sidebar-boundary > .fluent { transition: none; }
 }
 
 .sidebar-collapsed .brand {
@@ -265,14 +295,6 @@ select:focus-visible {
   grid-template-columns: 1fr;
   justify-items: center;
   padding: 0;
-}
-
-.sidebar-collapsed .sidebar-foot {
-  justify-content: center;
-}
-
-.sidebar-collapsed .live-indicator {
-  display: none;
 }
 
 .workspace {
@@ -310,7 +332,7 @@ select:focus-visible {
   position: relative;
   z-index: 15;
   display: grid;
-  grid-template-columns: minmax(280px, 1fr) repeat(6, 48px);
+  grid-template-columns: minmax(280px, 1fr) repeat(4, 48px);
   align-items: center;
   gap: 10px;
 }
@@ -604,6 +626,9 @@ h2 {
 .heading-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
   gap: 8px;
   min-height: 42px;
 }
@@ -928,6 +953,18 @@ h2 {
   font-size: 13px;
 }
 
+.result-details { position: relative; flex: 0 0 auto; color: var(--muted); font-size: 13px; }
+.result-details > summary { display: flex; align-items: center; gap: 7px; padding: 8px 0 8px 8px; cursor: pointer; list-style: none; white-space: nowrap; }
+.result-details > summary::-webkit-details-marker { display: none; }
+.result-details > summary:hover, .result-details[open] > summary { color: var(--text); }
+.result-details-error { color: var(--danger); }
+.result-details-popover { position: absolute; z-index: 30; top: 100%; right: 0; width: min(420px, calc(100vw - 48px)); max-height: min(460px, 60vh); overflow-y: auto; overscroll-behavior: contain; padding: 14px; color: var(--text-soft); background: var(--surface); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 12px 26px #0004; white-space: normal; overflow-wrap: anywhere; line-height: 1.6; }
+.result-details-popover p { margin: 0 0 10px; }
+.result-details-popover p:last-child { margin-bottom: 0; }
+.result-details-popover summary { cursor: pointer; }
+.result-details-popover ul { display: grid; gap: 6px; padding-left: 18px; }
+.result-details-popover button { margin-bottom: 10px; }
+
 .auto-find-status.is-running {
   color: var(--primary-strong);
   font-weight: 650;
@@ -968,6 +1005,8 @@ h2 {
 .selection-toolbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 0;
   width: 100%;
   min-height: 42px;
   padding: 0 8px 0 13px;
@@ -988,6 +1027,8 @@ h2 {
 
 .selection-toolbar strong {
   margin-right: auto;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .selection-toolbar .text-button {
@@ -7221,7 +7262,7 @@ dialog::backdrop {
 .gallery-card.is-quarantined-blind {
   position: relative;
   overflow: hidden;
-  cursor: not-allowed;
+  cursor: context-menu;
   border-color: color-mix(in srgb, var(--warning) 34%, var(--line));
 }
 
@@ -7230,6 +7271,22 @@ dialog::backdrop {
   opacity: 0.3;
   pointer-events: none;
   user-select: none;
+  transition: filter 180ms ease, opacity 180ms ease;
+}
+
+.gallery-card.is-quarantined-blind:is(:hover, :focus-visible, .is-exclusion-menu-open) > :not(.quarantined-blind-overlay) {
+  filter: blur(0.5px) saturate(0.85);
+  opacity: 0.85;
+}
+
+.gallery-card.is-quarantined-blind:is(:hover, :focus-visible, .is-exclusion-menu-open) > .quarantined-blind-overlay {
+  place-content: end center;
+  padding-bottom: 12px;
+  background: linear-gradient(transparent 65%, #000b);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gallery-card.is-quarantined-blind > :not(.quarantined-blind-overlay) { transition: none; }
 }
 
 .quarantined-blind-overlay {
@@ -8425,35 +8482,6 @@ dialog::backdrop {
 
   .detail-layout {
     grid-template-columns: minmax(310px, 0.8fr) minmax(420px, 1.2fr);
-  }
-}
-
-@media (max-width: 1020px) {
-  .app-shell {
-    grid-template-columns: 76px minmax(0, 1fr);
-  }
-
-  .brand {
-    justify-content: center;
-    height: 62px;
-    padding: 7px;
-  }
-
-  .brand-copy,
-  .nav-label,
-  .nav-count,
-  .live-indicator {
-    display: none;
-  }
-
-  .nav-item {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    padding: 0;
-  }
-
-  .sidebar-foot {
-    justify-content: center;
   }
 }
 

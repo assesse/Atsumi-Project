@@ -67,7 +67,7 @@ export type DanbooruSessionActivity = {
 };
 
 const RECENT_ACTIVITY_LIMIT = 50;
-const sessionActivityGroups = ["검토", "해시 · 검증", "다운로드", "실패 · 중단 · 취소", "완료"] as const;
+const sessionActivityGroups = ["검토", "해시 · 검증", "다운로드", "실패 · 중단", "완료"] as const;
 
 const duplicateProcessedDetail = "중복 처리 완료 · 목록에서 제외";
 
@@ -78,7 +78,7 @@ const sessionActivityPriority = (state: DownloadState, duplicateExcluded = false
   if (state === "review_required") return 0;
   if (state === "hashing" || state === "verifying") return 1;
   if (runningDownloadStates.has(state)) return 2;
-  if (state === "failed" || state === "interrupted" || state === "cancelled") return 3;
+  if (state === "failed" || state === "interrupted") return 3;
   return 4;
 };
 
@@ -93,8 +93,8 @@ const stateDetail: Partial<Record<NonNullable<Gallery["download"]>["state"], str
   interrupted: "중단됨",
   failed: "실패",
   completed: "완료",
-  quarantined: "격리됨",
-  cancelled: "취소됨",
+  quarantined: "격리 완료",
+  cancelled: "취소 완료",
 };
 
 const downloadDetail = (download: NonNullable<Gallery["download"]>): string => {
@@ -254,8 +254,9 @@ export function ActivityDrawer({
           <FluentIcon glyph="\uE711" />
         </button>
       </header>
+      {queueSummary}
       <nav className="activity-section-tabs" role="tablist" aria-label="활동 기록 분류">
-        {queuePanel ? <button type="button" role="tab" aria-selected={activeSection === "queue"} className={`mini-command${activeSection === "queue" ? " is-active" : ""}`} onClick={() => setActiveSection("queue")}>다운로드 큐</button> : null}
+        {queuePanel ? <button type="button" role="tab" aria-selected={activeSection === "queue"} className={`mini-command${activeSection === "queue" ? " is-active" : ""}`} onClick={() => setActiveSection("queue")}>대기 큐</button> : null}
         <button
           type="button"
           role="tab"
@@ -263,7 +264,7 @@ export function ActivityDrawer({
           aria-controls="activity-session-panel"
           className={`mini-command${activeSection === "session" ? " is-active" : ""}`}
           onClick={() => setActiveSection("session")}
-        >실시간 실행</button>
+        >작업 중</button>
         <button
           type="button"
           role="tab"
@@ -276,7 +277,6 @@ export function ActivityDrawer({
         </button>
       </nav>
       <div className="activity-panel-content">
-      {activeSection !== "queue" ? queueSummary : null}
       {activeSection === "queue" ? queuePanel : null}
       {activeSection !== "queue" && (containmentGroups.length > 0 || containmentLoading) && (
         <section className="activity-containment-priority" aria-label="합본 우선 검토">
@@ -295,7 +295,7 @@ export function ActivityDrawer({
       {activeSection === "session" ? <div id="activity-session-panel" role="tabpanel" className="activity-list">
         <p className="activity-history-note">이번 앱 실행에서 관찰한 작업입니다. 대기·실행뿐 아니라 완료·중단도 포함합니다.</p>
         {allSessionActivities.length > RECENT_ACTIVITY_LIMIT ? (
-          <p className="activity-history-note" title="이전 작업은 다운로드 큐 또는 앨범 상세에서 확인·취소할 수 있습니다.">최근 {RECENT_ACTIVITY_LIMIT}개만 표시합니다.</p>
+          <p className="activity-history-note" title="이전 작업은 대기 큐 또는 앨범 상세에서 확인·취소할 수 있습니다.">최근 {RECENT_ACTIVITY_LIMIT}개만 표시합니다.</p>
         ) : null}
         {feedGroups.map((group) => (
           <section key={group.priority} className="activity-state-group" aria-labelledby={`activity-state-${group.priority}`}>
@@ -327,7 +327,7 @@ export function ActivityDrawer({
                     <div>
                       <strong>{activity.title}</strong>
                       <span>{activity.detail}</span>
-                      <small>자동 판본 분류 · 실시간 실행</small>
+                      <small>자동 판본 분류 · {activity.state === "completed" ? "완료" : "실패"}</small>
                     </div>
                     <div className="activity-actions">
                       <button
@@ -343,7 +343,7 @@ export function ActivityDrawer({
               const download = gallery.download!;
               const running = runningDownloadStates.has(download.state);
               const duplicateProcessed = duplicateExcludedGalleryIds.has(gallery.id) && !running;
-              const complete = download.state === "completed" || duplicateProcessed;
+              const complete = ["completed", "cancelled", "quarantined"].includes(download.state) || duplicateProcessed;
               const warning = !duplicateProcessed && ["review_required", "failed", "interrupted"].includes(download.state);
               const retryable = !duplicateProcessed && ["failed", "interrupted", "cancelled"].includes(download.state);
               const cancellable = !duplicateProcessed && (running || warning);
@@ -366,7 +366,8 @@ export function ActivityDrawer({
                       </details>
                     ) : null}
                   </div>
-                  <div className="activity-actions">
+                  <div className="activity-actions activity-download-actions">
+                    <div className="activity-command-buttons">
                     {!duplicateProcessed && download.state === "review_required" ? (
                       <button type="button" className="mini-command" disabled={pending} onClick={() => onReview(gallery.id)}>검토</button>
                     ) : null}
@@ -376,9 +377,10 @@ export function ActivityDrawer({
                     {cancellable ? (
                       <button type="button" className="mini-command" disabled={pending} onClick={() => onCancel(gallery.id)}>취소</button>
                     ) : null}
+                    </div>
                     {!duplicateProcessed && running ? (
                       <DownloadProgressLabel gallery={gallery} />
-                    ) : null}
+                    ) : <small className="activity-outcome">{duplicateProcessed ? "중복 처리 완료" : stateDetail[download.state]}</small>}
                   </div>
                 </article>
               );
@@ -413,7 +415,7 @@ export function ActivityDrawer({
                   <div>
                     <strong>{activity.title}</strong>
                     <span>{activity.detail}</span>
-                    <small>실시간 실행 · 영구 기록 반영 대기</small>
+                    <small>영구 기록 반영 대기</small>
                   </div>
                   <div className="activity-actions">
                     <button type="button" className="mini-command" onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}>근거 보기</button>

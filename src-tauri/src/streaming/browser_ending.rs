@@ -24,6 +24,7 @@ fn classify(trigger: &str, saved: &BrowserRecording) -> &'static str {
         "broadcast_changed" => "broadcast_changed",
         "video_ended" | "source_changed" | "video_changed" => "checking",
         "timeline_changed" => "timeline_discontinuity",
+        "track_changed" | "codec_changed" | "init_changed" => "format_changed",
         "page_hidden" | "window_closed" | "renderer_failed" => "app_interrupted",
         "native_rejected" | "queue_overflow" | "bridge_ack_timeout" | "bridge_busy"
         | "bridge_post_failed" => "storage_error",

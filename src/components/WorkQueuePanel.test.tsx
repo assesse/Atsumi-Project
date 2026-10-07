@@ -9,17 +9,18 @@ const snapshot=():QueueSnapshot=>({queriedAt:"",counts:{completed:4,review_requi
 describe("minimal download queue",()=>{
  it("settles the indicator for review, interrupted and excluded work without calling them successful",()=>{
   const settled = {...snapshot(), counts:{completed:4, review_required:2, interrupted:1, failed:1, cancelled:1, quarantined:1}, globalActive:0};
-  expect(queueProgress(settled)).toMatchObject({percent:100,completed:4,review:2,failed:2,cancelled:2});
+  expect(queueProgress(settled)).toMatchObject({percent:100,completed:6,review:2,failed:2,cancelled:2});
   expect(queueProgress({...settled,counts:{completed:1000,verifying:1}}).percent).toBe(99);
   expect(queueProgress(null).percent).toBe(0);
  });
  it("shows only the stage bar with concise hover labels and preserves completion semantics",async()=>{
-  expect(queueProgress(snapshot())).toEqual({total:10,active:2,completed:4,review:2,failed:1,cancelled:1,percent:80});
+  expect(queueProgress(snapshot())).toEqual({total:10,active:2,completed:5,review:2,failed:1,cancelled:1,percent:80});
   const host=document.createElement("div"),root=createRoot(host);
   try {
    await act(async()=>root.render(<QueueSummary snapshot={snapshot()}/>));
    expect(host.textContent).toBe("");
-   expect(host.querySelector('[title="완료 4개"]')).toBeTruthy();
+   expect(host.querySelector('[title="완료 5개 (취소·격리 1개 포함)"]')).toBeTruthy();
+   expect(host.querySelector('.tone-muted')).toBeNull();
    expect(host.querySelector('[title="해시 2개"]')).toHaveClass("is-running");
    expect(host.querySelector('[title="검토 필요 2개"]')).not.toHaveClass("is-running");
    await act(async()=>root.render(<QueueSummary snapshot={snapshot()} error="offline"/>));
@@ -31,6 +32,7 @@ describe("minimal download queue",()=>{
   const render=(s:QueueSnapshot)=>root.render(<WorkQueuePanel snapshot={s} query={{}} error={null} onQuery={vi.fn()} onRefresh={refresh} onCancelEntries={cancel} onOpen={vi.fn()}/>);
   try {
    await act(async()=>render(snapshot()));
+   expect(host.querySelector('.queue-summary')).toBeNull();
    expect(host.querySelectorAll("select,details,dialog")).toHaveLength(0);
    expect(host.querySelectorAll("button")).toHaveLength(3);
    expect(host.textContent).not.toMatch(/상태 확인|요청 이후|완료 포함|전체 취소|예상/);

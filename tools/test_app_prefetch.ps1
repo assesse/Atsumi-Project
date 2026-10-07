@@ -69,7 +69,7 @@ $developmentRunner = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'run_taur
 $autostart = Get-Content -LiteralPath (Join-Path $projectRoot 'src-tauri/src/autostart.rs') -Raw
 if ($release -notmatch '-ArgumentList "/prefetch:1"' -or
     $development -notmatch '-File \$developmentRunner' -or
-    $developmentRunner -notmatch '-Action tauri -ExtraArgs @\("dev", "--", "--", "/prefetch:2"\)' -or
+    $developmentRunner -notmatch '-Action tauri -ExtraArgs @\("dev", "--config", \$configPath, "--", "--", "/prefetch:2"\)' -or
     $autostart -notmatch 'RELEASE_PREFETCH_ARGUMENT: &str = "/prefetch:1"') {
   throw 'Launch paths disagree with the fixed prefetch policy.'
 }

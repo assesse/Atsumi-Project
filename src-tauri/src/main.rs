@@ -11,6 +11,9 @@ use std::{
 const STARTUP_FAILURE_EXIT_CODE: i32 = 1;
 
 fn main() {
+    if let Some(code) = atsumi_lib::run_portable_update_helper() {
+        std::process::exit(code);
+    }
     atsumi_lib::initialize_startup_metrics();
     configure_taskbar_identity();
     if let Err(error) = atsumi_lib::run() {

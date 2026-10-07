@@ -27,6 +27,7 @@ import type {
   DuplicateReview,
   DuplicateScanRun,
   DuplicateSnapshot,
+  ExplorationExclusionContext,
   FavoriteKey,
   FavoriteNamespace,
   FavoriteRecord,
@@ -62,6 +63,7 @@ import { ExploreContextBar, type ExploreContextTab } from "../../components/Expl
 import { InternalDuplicateDialog } from "../../components/InternalDuplicateDialog";
 import { FluentIcon } from "../../components/FluentIcon";
 import { GalleryCard } from "../../components/GalleryCard";
+import { ExcludedAlbumDialog } from "../../components/ExcludedAlbumDialog";
 import { GalleryGrid } from "../../components/GalleryGrid";
 import { GalleryGridSkeleton } from "../../components/GalleryGridSkeleton";
 import { GalleryDisplayModeControl } from "../../components/GalleryDisplayModeControl";
@@ -69,6 +71,7 @@ import { GalleryScrollPositionHint } from "../../components/GalleryScrollPositio
 import { ProgressiveGallerySlot } from "../../components/ProgressiveGallerySlot";
 import { KeyboardShortcutsDialog } from "../../components/KeyboardShortcutsDialog";
 import { SelectionToolbar } from "../../components/SelectionToolbar";
+import { ResultDetails } from "../../components/ResultDetails";
 import { SettingsDialog } from "../../components/SettingsDialog";
 import { TutorialDialog } from "../../components/TutorialDialog";
 import { beginTutorialAction } from "../../tutorial/tourActions";
@@ -332,6 +335,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   const [duplicateHiddenGalleryIds, setDuplicateHiddenGalleryIds] = useState<ReadonlySet<GalleryId>>(() => new Set());
   const [explorationExcludedGalleryIds, setExplorationExcludedGalleryIds] = useState<ReadonlySet<GalleryId>>(() => new Set());
   const [explorationExclusionsReady, setExplorationExclusionsReady] = useState(false);
+  const [exclusionContext, setExclusionContext] = useState<ExplorationExclusionContext | null>(null);
+  const restoringExclusionIds = useRef(new Set<GalleryId>());
+  const [restoringExclusions, setRestoringExclusions] = useState<ReadonlySet<GalleryId>>(() => new Set());
   const [downloadsLoading, setDownloadsLoading] = useState(true);
   const [downloadsError, setDownloadsError] = useState<string | null>(null);
   const [exploreContextIds, setExploreContextIds] = useState<string[]>([]);
@@ -4097,7 +4103,6 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   }, [personalLibraryOpen, closeActivity, active, effectiveKeyboardFocusId, excludeAutoFindCandidates, excludeExploreGalleries, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, renderedActionableIds, selectedIds, showToast, shell.activityOpen, shell.settingsOpen, shell.exitConfirmOpen, ui.detail.activeId, ui.detail.minimized, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction, closeDetail, closeExploreContext, reopenClosedNavigation, lastUndoAction]);
 
   const config = viewConfig[ui.view];
-  const resultSourceLabel = backend.runtime === "tauri" ? "Hitomi 실데이터" : "브라우저 fixture";
   const currentAutoFindStatus = autoFindStatusLabel(
     autoFindLoading,
     autoFindError,
@@ -4130,6 +4135,63 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     else if (ui.view === "auto-find") void excludeAutoFindCandidates([id]);
     else void excludeExploreGalleries([id]);
   }, [ui.view, quarantineGalleries, excludeAutoFindCandidates, excludeExploreGalleries]);
+  const inspectExclusion = useCallback((_id: GalleryId, context: ExplorationExclusionContext) => {
+    setExclusionContext(context);
+  }, []);
+  const restoreExcludedGallery = useCallback(async (id: GalleryId): Promise<boolean> => {
+    if (restoringExclusionIds.current.has(id)) return false;
+    restoringExclusionIds.current.add(id);
+    setRestoringExclusions(new Set(restoringExclusionIds.current));
+    let filesRestored = false;
+    try {
+      // Refresh the entry identity at action time; the menu may have been open
+      // while a background download or quarantine changed the album.
+      const context = await backend.explorationExclusionContext(id);
+      if (!context.ok) { showToast(context.error.message); return false; }
+      if (context.data.quarantined) {
+        if (!context.data.quarantineEntryId) {
+          showToast("격리된 파일의 위치를 확인할 수 없어 복원을 중단했습니다.");
+          return false;
+        }
+        const restored = await backend.downloadQuarantineUndo([context.data.quarantineEntryId]);
+        if (!restored.ok) { showToast(restored.error.message); return false; }
+        setGalleries((current) => mergeDownloadEntries(current, restored.data));
+        filesRestored = true;
+      }
+      const result = await restoreExplorationExclusionsAndSync([id]);
+      if (!result.ok) {
+        showToast(`${filesRestored ? "파일은 복원했지만 목록 제외 해제에 실패했습니다. " : ""}${result.error.message}`);
+        return false;
+      }
+      applyAutoFindSnapshot(result.data.snapshot);
+      setDownloadsRefresh((value) => value + 1);
+      showToast(filesRestored ? "격리 파일과 목록 표시를 복원했습니다." : "목록 제외를 해제했습니다. 새 다운로드는 시작하지 않습니다.");
+      return true;
+    } catch {
+      showToast(filesRestored ? "파일은 복원했지만 목록 제외 해제를 확인하지 못했습니다. 다시 시도해 주세요." : "앨범을 복원하지 못했습니다. 다시 시도해 주세요.");
+      return false;
+    } finally {
+      restoringExclusionIds.current.delete(id);
+      setRestoringExclusions(new Set(restoringExclusionIds.current));
+    }
+  }, [applyAutoFindSnapshot, restoreExplorationExclusionsAndSync, showToast]);
+  const restoreExclusionFromMenu = useCallback((id: GalleryId) => { void restoreExcludedGallery(id); }, [restoreExcludedGallery]);
+  const reviewExclusion = () => {
+    if (!exclusionContext) return;
+    setExclusionContext(null);
+    if (exclusionContext.reviewId) {
+      openAutomaticOverlapReview(exclusionContext.reviewId, exclusionContext.reviewGalleryId ?? exclusionContext.galleryId);
+    } else if (exclusionContext.legacyCandidateId) {
+      cancelAutomationReviewSequence();
+      setDownloadOverlapReviewId(null);
+      setDownloadOverlapReview(null);
+      setDuplicateReviewCandidateId(exclusionContext.legacyCandidateId);
+      setDuplicateReview(null);
+      setDuplicateReviewError(null);
+      dispatch({ type: "overlay.review", galleryId: exclusionContext.galleryId });
+      void hydrateDuplicateReview(exclusionContext.legacyCandidateId);
+    }
+  };
   const renderGalleryGrid = (items: Gallery[], ariaLabel: string) => (
     <GalleryGrid
       columns={galleryColumns}
@@ -4174,9 +4236,11 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           onStatusDetail={openStatusDetail}
           onMetadataSearch={searchMetadata}
           onMetadataFavorite={toggleMetadataFavorite}
-          pendingAction={gallery.download ? pendingDownloadEntries.has(gallery.download.entryId) : false}
+          pendingAction={restoringExclusions.has(gallery.id) || Boolean(gallery.download && pendingDownloadEntries.has(gallery.download.entryId))}
           onQueue={queueGalleryFromMenu}
           onExclude={excludeGalleryFromMenu}
+          onInspectExclusion={inspectExclusion}
+          onRestoreExclusion={restoreExclusionFromMenu}
         />;
         return ui.view === "downloads" ? (
           <ProgressiveGallerySlot
@@ -4211,8 +4275,10 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           collapsed={shell.railCollapsed}
           autoFindCount={autoFindCount}
           attentionCount={attentionCount}
-          sourceLabel={backend.runtime === "tauri" ? "Hitomi live" : "Browser fixture"}
           source="hitomi"
+          privacyMode={shell.privacyMode}
+          privacyModePending={privacyModePending || settingsLoading}
+          onPrivacyModeToggle={() => void togglePrivacyMode()}
           personalLibraryOpen={personalLibraryOpen}
           onOpenPersonalLibrary={() => { setPersonalLibraryVisited(true); setPersonalLibraryOpen(true); dispatch({ type: "detail.minimize", minimized: true }); }}
           onSettings={() => setSettingsOpen(true)}
@@ -4222,11 +4288,11 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         />
         {personalLibraryVisited ? <div className="personal-library-host" hidden={!personalLibraryOpen}>
           <PersonalLibraryWorkspace previewWidth={previewWidth} pageSize={hitomiPageSize} privacyMode={shell.privacyMode}
-            privacyModePending={privacyModePending || settingsLoading} activityOpen={shell.activityOpen}
-            onActivity={() => shell.activityOpen ? closeActivity() : openActivity()} onSettings={() => setSettingsOpen(true)}
+            activityOpen={shell.activityOpen}
+            onActivity={() => shell.activityOpen ? closeActivity() : openActivity()}
             onQueue={(id) => void queueGalleries([id])} onExclude={(id) => excludeExploreGalleries([id])} onOpenFolder={openDownloadFolder}
             queueProgress={workQueue.snapshot && !workQueue.error ? queueProgress(workQueue.snapshot).percent : undefined} queueActiveCount={workQueue.snapshot?.globalActive}
-            onPrivacyToggle={() => void togglePrivacyMode()} onOpen={openSavedItem} onBack={() => setPersonalLibraryOpen(false)} />
+            onOpen={openSavedItem} onBack={() => setPersonalLibraryOpen(false)} />
         </div> : null}
         <main className="workspace" style={personalLibraryOpen ? { display: "none" } : undefined} onKeyDownCapture={(event) => {
           const target = event.target as HTMLElement;
@@ -4307,11 +4373,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
             onRandomOpen={() => void openRandomGallery()}
             randomOpenPending={randomOpenPending}
             randomOpenAvailable={randomOpenAvailable}
-            privacyMode={shell.privacyMode}
-            privacyModePending={privacyModePending || settingsLoading}
-            onPrivacyModeToggle={() => void togglePrivacyMode()}
             onActivity={() => shell.activityOpen ? closeActivity() : openActivity()}
-            onSettings={() => setSettingsOpen(true)}
           />
           <section className="page-heading">
             <div><span className="eyebrow">{config.eyebrow}</span><h1>{config.title}</h1></div>
@@ -4326,13 +4388,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
               ) : ui.view === "downloads" ? (
                 <>
                   <p className="sr-only" id="duplicate-scan-explanation">작품 간 검사는 작가가 같은 서로 다른 앨범끼리 비교하고, 내부 페이지 검사는 각 앨범 안에서 반복되거나 유사한 페이지를 찾습니다.</p>
-                  <button type="button" className="text-button" disabled={reconcilingArtifacts} onClick={() => void reconcileArtifacts()}><FluentIcon glyph="\uE9D9" /> {reconcilingArtifacts ? "무결성 검사 중" : "무결성 검사"}</button>
-                  <button type="button" className="text-button" aria-describedby="duplicate-scan-explanation" title="완료된 앨범 중 작가 정보가 하나라도 같은 작품끼리만 비교합니다." disabled={duplicateLoading || duplicatePending || duplicateRun?.state === "running"} onClick={() => void startDuplicateScan()}><FluentIcon glyph="\uE9D9" /> 같은 작가 작품 중복 검사</button>
-                  <button type="button" className="text-button primary" onClick={() => {
-                    if (selectedIds.length === 2) setPairCompareIds([String(selectedIds[0]), String(selectedIds[1])]);
-                    setPairCompareOpen((value) => !value);
-                  }}>두 앨범 직접 대조</button>
-                  {duplicateRun?.state === "running" ? <button type="button" className="text-button danger-button" disabled={duplicatePending} onClick={() => void cancelDuplicateScan()}><FluentIcon glyph="\uE711" /> 중복 검사 취소</button> : null}
+                  <button type="button" className="text-button" aria-busy={reconcilingArtifacts} disabled={reconcilingArtifacts} onClick={() => void reconcileArtifacts()}><FluentIcon glyph="\uE9D9" /> 무결성 검사</button>
+                  <button type="button" className="text-button" aria-describedby="duplicate-scan-explanation" title="완료된 앨범 중 작가 정보가 하나라도 같은 작품끼리만 비교합니다." disabled={duplicateLoading || duplicatePending || duplicateRun?.state === "running"} onClick={() => void startDuplicateScan()}><FluentIcon glyph="\uE9D9" /> 작가 내 검사</button>
                   <button
                     type="button"
                     className="text-button"
@@ -4344,9 +4401,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                         : `선택한 완료 앨범 ${selectedCompletedEntryIds.length}개만 내부 검사합니다.`}
                     disabled={internalLoading || internalPending || internalRun?.state === "running" || !selectedCanInternalScan}
                     onClick={() => void startInternalScan(selectedCompletedEntryIds)}
-                  ><FluentIcon glyph="\uE9D9" /> 선택 앨범 내부 페이지 검사{selectedCanInternalScan ? ` (${selectedCompletedEntryIds.length})` : ""}</button>
-                  {internalRun?.state === "running" ? <button type="button" className="text-button danger-button" disabled={internalPending} onClick={() => void cancelInternalScan()}><FluentIcon glyph="\uE711" /> 내부 검사 취소</button> : null}
-                  <button type="button" className="text-button primary" disabled={bulkRetryPending} title="현재 필터의 미완료 항목을 대기·진행 합계 200개까지 추가합니다. 기존 작업은 취소하지 않습니다." onClick={() => void retryAvailableDownloads(actionableVisibleIds)}><FluentIcon glyph="\uE896" /> {bulkRetryPending ? "대기열에 추가 중" : "전체 다운로드"}</button>
+                  ><FluentIcon glyph="\uE9D9" /> 내부 중복 검사</button>
+                  <button type="button" className="text-button primary" aria-busy={bulkRetryPending} disabled={bulkRetryPending} title="현재 필터의 미완료 항목을 대기·진행 합계 200개까지 추가합니다. 기존 작업은 취소하지 않습니다." onClick={() => void retryAvailableDownloads(actionableVisibleIds)}><FluentIcon glyph="\uE896" /> 전체 다운로드</button>
                 </>
               ) : null}
             </div>
@@ -4426,41 +4482,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                   ><FluentIcon glyph="\uE70D" /> {allVisibleGroupsCollapsed ? "전부 펼치기" : "전부 접기"}</button>
                 </div>
               ) : null}
-              {ui.view === "auto-find" ? (
-                <div className="auto-find-evidence">
-                  <span className={`context-summary auto-find-status is-${autoFindSnapshot.run?.state ?? "idle"}`} role="status">{currentAutoFindStatus}</span>
-                  {autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== settings.autoFindHistoryMode ? (
-                    <span className="context-summary">표시된 결과는 이전 기준입니다. 다음 실행부터 ‘{autoFindHistoryModeLabel(settings.autoFindHistoryMode)}’ 기준을 적용합니다.</span>
-                  ) : null}
-                  {((autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== "include_all_history" && autoFindSnapshot.cutoffEvidence.length)
-                    || autoFindSnapshot.truncations.length) ? (
-                    <details className="auto-find-evidence-details">
-                      <summary>검색 범위·제한 {autoFindSnapshot.cutoffEvidence.length + autoFindSnapshot.truncations.length}개</summary>
-                      <div className="auto-find-evidence-popover">
-                        {autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== "include_all_history" && autoFindSnapshot.cutoffEvidence.length ? (
-                          <ul aria-label="Auto Find 작가·그룹별 검색 시작점">
-                            {autoFindSnapshot.cutoffEvidence.map((evidence) => (
-                              <li key={`${evidence.namespace ?? "artist"}:${evidence.artist}`}>
-                                {evidence.namespace === "group" ? "그룹" : "작가"} · {evidence.artist}: {autoFindCutoffDescription(evidence, autoFindSnapshot.run!.historyMode)}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        {autoFindSnapshot.truncations.length ? (
-                          <ul aria-label="Auto Find 결과 제한 경고">
-                            {autoFindSnapshot.truncations.map((truncation) => (
-                              <li key={`${truncation.namespace ?? "artist"}:${truncation.artist}-${truncation.limit}`}>
-                                {truncation.namespace === "group" ? "그룹" : "작가"} · {truncation.artist}: 검색 범위 내 후보 {truncation.eligibleCount}개 중 {truncation.limit}개만 표시했습니다.
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                      </div>
-                    </details>
-                  ) : null}
-                </div>
-              ) : (
-                <>
+              {ui.view !== "auto-find" ? (
                   <div className="select-control download-status-filter-control">
                     <label className="sr-only" htmlFor="download-status-filter">다운로드 상태</label>
                     <select
@@ -4479,21 +4501,45 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                       ))}
                     </select>
                   </div>
-                  <span className={`context-summary duplicate-scan-status is-${duplicateRun?.state ?? "idle"}`} role="status">{currentDuplicateStatus}</span>
-                  <span className={`context-summary duplicate-scan-status is-${internalRun?.state ?? "idle"}`} role="status">{currentInternalStatus}</span>
-                  {internalSnapshot.skips.length ? (
-                    <details className="internal-scan-skips">
-                      <summary>내부 검사 제외 항목 {internalSnapshot.skips.length}개</summary>
-                      <p>500페이지 이상 앨범은 성능 상한 때문에 내부 페이지 검사에서만 제외됩니다. 다운로드와 전체 페이지 탐색에는 제한이 없습니다.</p>
-                      <ul>{internalSnapshot.skips.map((skip) => <li key={skip.entryId}>#{skip.galleryId} · {skip.pageCount}p · 페이지 제한으로 제외</li>)}</ul>
-                    </details>
-                  ) : null}
-                  {duplicateError ? <button type="button" className="text-button compact" onClick={() => void hydrateDuplicateSnapshot(true)}>결과 다시 불러오기</button> : null}
-                  {internalError ? <button type="button" className="text-button compact" onClick={() => void hydrateInternalSnapshot(true)}>내부 결과 다시 불러오기</button> : null}
-                </>
-              )}
+              ) : null}
             </div>
-            <div className="context-summary">{visible.length}개 결과 · {resultSourceLabel}</div>
+            {ui.view === "auto-find" ? <ResultDetails key="auto-find" count={visible.length}
+              busy={autoFindLoading || autoFindSnapshot.run?.state === "running"} error={!!autoFindError || autoFindSnapshot.run?.state === "failed"}>
+              <p role="status">{currentAutoFindStatus}</p>
+              {autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== settings.autoFindHistoryMode ? (
+                <p>표시된 결과는 이전 기준입니다. 다음 실행부터 ‘{autoFindHistoryModeLabel(settings.autoFindHistoryMode)}’ 기준을 적용합니다.</p>
+              ) : null}
+              {((autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== "include_all_history" && autoFindSnapshot.cutoffEvidence.length)
+                || autoFindSnapshot.truncations.length) ? <details>
+                <summary>검색 범위·제한</summary>
+                {autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== "include_all_history" && autoFindSnapshot.cutoffEvidence.length ? (
+                  <ul aria-label="Auto Find 작가·그룹별 검색 시작점">
+                    {autoFindSnapshot.cutoffEvidence.map(evidence => <li key={`${evidence.namespace ?? "artist"}:${evidence.artist}`}>
+                      {evidence.namespace === "group" ? "그룹" : "작가"} · {evidence.artist}: {autoFindCutoffDescription(evidence, autoFindSnapshot.run!.historyMode)}
+                    </li>)}
+                  </ul>
+                ) : null}
+                {autoFindSnapshot.truncations.length ? <ul aria-label="Auto Find 결과 제한 경고">
+                  {autoFindSnapshot.truncations.map(truncation => <li key={`${truncation.namespace ?? "artist"}:${truncation.artist}-${truncation.limit}`}>
+                    {truncation.namespace === "group" ? "그룹" : "작가"} · {truncation.artist}: 검색 범위 내 후보 {truncation.eligibleCount}개 중 {truncation.limit}개만 표시했습니다.
+                  </li>)}
+                </ul> : null}
+              </details> : null}
+            </ResultDetails> : ui.view === "downloads" ? <ResultDetails key="downloads" count={visible.length}
+              busy={duplicateRun?.state === "running" || internalRun?.state === "running" || reconcilingArtifacts}
+              error={!!duplicateError || !!internalError || duplicateRun?.state === "failed" || internalRun?.state === "failed"}>
+              <p role="status">{currentDuplicateStatus}</p>
+              {duplicateRun?.state === "running" ? <button type="button" className="text-button danger-button" disabled={duplicatePending} onClick={() => void cancelDuplicateScan()}>중복 검사 취소</button> : null}
+              <p role="status">{currentInternalStatus}</p>
+              {internalRun?.state === "running" ? <button type="button" className="text-button danger-button" disabled={internalPending} onClick={() => void cancelInternalScan()}>내부 검사 취소</button> : null}
+              {internalSnapshot.skips.length ? <details className="internal-scan-skips">
+                <summary>내부 검사 제외 항목 {internalSnapshot.skips.length}개</summary>
+                <p>500페이지 이상 앨범은 내부 페이지 검사에서만 제외됩니다.</p>
+                <ul>{internalSnapshot.skips.map(skip => <li key={skip.entryId}>#{skip.galleryId} · {skip.pageCount}p</li>)}</ul>
+              </details> : null}
+              {duplicateError ? <button type="button" className="text-button compact" onClick={() => void hydrateDuplicateSnapshot(true)}>결과 다시 불러오기</button> : null}
+              {internalError ? <button type="button" className="text-button compact" onClick={() => void hydrateInternalSnapshot(true)}>내부 결과 다시 불러오기</button> : null}
+            </ResultDetails> : <div className="context-summary">{visible.length}개 결과</div>}
           </section>
           <SelectionToolbar
             active={multiSelectionMode}
@@ -4503,6 +4549,12 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
             cancelCount={selectedRunningIds.length}
             cancelPending={selectionCancelPending}
             downloadPending={selectionDownloadPending}
+            onCompare={ui.view === "downloads" ? () => {
+              if (selectedIds.length !== 2) return;
+              setPairCompareIds([String(selectedIds[0]), String(selectedIds[1])]);
+              setPairCompareOpen(value => !value);
+            } : undefined}
+            compareDisabled={duplicatePending || duplicateRun?.state === "running"}
             onCancelDownloads={() => void cancelGalleries(selectedRunningIds)}
             onAll={() => dispatch({ type: "selection.all", ids: renderedActionableIds })}
             onClear={() => dispatch({ type: "selection.clear" })}
@@ -4723,6 +4775,19 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         }}
         onClose={() => { setSettingsOpen(false); shell.closeTutorial(); }} /> : null}
 
+      {exclusionContext ? <ExcludedAlbumDialog
+        context={exclusionContext}
+        title={displayGalleries.get(exclusionContext.galleryId)?.title ?? `앨범 #${exclusionContext.galleryId}`}
+        onClose={() => setExclusionContext(null)}
+        onRestore={() => restoreExcludedGallery(exclusionContext.galleryId)}
+        onReview={reviewExclusion}
+        onOpenRetained={() => {
+          if (exclusionContext.retainedGallery) {
+            setExclusionContext(null);
+            openDetail(exclusionContext.retainedGallery.galleryId);
+          }
+        }}
+      /> : null}
       <DuplicateReviewDialog
         open={ui.overlays.reviewGalleryId !== null && duplicateReviewCandidateId !== null}
         review={duplicateReview ?? undefined}

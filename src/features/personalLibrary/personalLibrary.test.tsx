@@ -86,7 +86,7 @@ describe("private favorites and collections", () => {
     await api(save()); await api(save(7)); await api(save(8));
     await api({ action: "membership_set", target: targetFor(gallery, 7), collectionId, enabled: true });
     const calls = vi.fn(api);
-    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={vi.fn()} />, calls);
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onBack={vi.fn()} onOpen={vi.fn()} />, calls);
     expect(container.querySelectorAll('[aria-label="즐겨찾기 종류"] button')).toHaveLength(2);
     expect(container.textContent).not.toMatch(/컬렉션|미분류|장면 모음/);
     expect(container.querySelectorAll(".saved-card")).toHaveLength(1);
@@ -103,16 +103,17 @@ describe("private favorites and collections", () => {
     expect(container.querySelector(".bookmark-actions")).toHaveAttribute("data-saved", "true");
     expect(container.querySelectorAll("button")).toHaveLength(1);
   });
-  it("uses the common toolbar with independent search and working activity, privacy and settings actions", async () => {
+  it("uses the common toolbar with independent search and working activity without duplicate sidebar actions", async () => {
     await api(save());
-    const onActivity = vi.fn(), onSettings = vi.fn(), onPrivacyToggle = vi.fn();
-    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={onPrivacyToggle} onBack={vi.fn()} onOpen={vi.fn()} onActivity={onActivity} onSettings={onSettings} />);
+    const onActivity = vi.fn();
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onBack={vi.fn()} onOpen={vi.fn()} onActivity={onActivity} />);
     expect(container).not.toHaveTextContent("탐색으로 돌아가기");
     const header = container.querySelector(".view-header")!;
     expect(header.querySelector(".search-box input")).toHaveAccessibleName("즐겨찾기 검색");
     expect(header.querySelector('button[type="submit"]')).toHaveAttribute("form", "personal-library-search");
-    await click("활동 기록", header); await click("프라이버시 모드", header); await click("설정", header);
-    expect(onActivity).toHaveBeenCalledOnce(); expect(onPrivacyToggle).toHaveBeenCalledOnce(); expect(onSettings).toHaveBeenCalledOnce();
+    await click("활동 기록", header);
+    expect(header.querySelector('[aria-label="프라이버시 모드"], [aria-label="설정"]')).toBeNull();
+    expect(onActivity).toHaveBeenCalledOnce();
     expect(container.querySelector(".personal-collections")).toBeNull();
     await input("즐겨찾기 검색", "없는 작품");
     await act(async () => { header.querySelector<HTMLButtonElement>('button[type="submit"]')!.click(); await settle(); });
@@ -131,7 +132,7 @@ describe("private favorites and collections", () => {
     const saved = { ...gallery, title: "Original title | 한글 제목" };
     await api({ ...save(), action: "bookmark_set", target: targetFor(saved), enabled: true, snapshot: snapshotFor(saved) });
     const onOpen = vi.fn();
-    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={onOpen} />);
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onBack={vi.fn()} onOpen={onOpen} />);
     const card = container.querySelector(".saved-card")!;
     expect(card.querySelector(".saved-card-info strong")).toHaveTextContent(/^한글 제목$/);
     expect(card.querySelector(".saved-card-info strong")).toHaveAttribute("title", saved.title);
@@ -147,7 +148,7 @@ describe("private favorites and collections", () => {
   });
   it.each([0, 7])("offers a menu on right-click for saved page %i, while Enter opens the saved target", async (page) => {
     await api(save(page)); const onOpen = vi.fn(), calls = vi.fn(api);
-    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={onOpen} />, calls);
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onBack={vi.fn()} onOpen={onOpen} />, calls);
     if (page) await click("페이지 1");
     const card = container.querySelector<HTMLElement>(".saved-card")!;
     for (const target of [card.querySelector(".saved-card-preview")!, card.querySelector(".saved-card-info strong")!]) {
@@ -171,7 +172,7 @@ describe("private favorites and collections", () => {
   it("loads a bounded list, opens the precise page and checks its state again before opening", async () => {
     for (const page of [5, 6, 7]) await api(save(page));
     const onOpen = vi.fn(); const calls = vi.fn(api);
-    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={2} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={onOpen} />, calls);
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={2} privacyMode={false} onBack={vi.fn()} onOpen={onOpen} />, calls);
     await click("페이지 3");
     expect(container.querySelectorAll(".saved-card")).toHaveLength(2);
     const opening = container.querySelector<HTMLButtonElement>(".saved-card-preview")!;
@@ -183,7 +184,7 @@ describe("private favorites and collections", () => {
   it("keeps excluded and changed bookmarks visible without loading their images", async () => {
     await api(save(7)); const onOpen = vi.fn();
     const excluded: LibraryApi = async (request) => { const result = await api(request); result.items.forEach((item) => { item.reference.status = "changed"; }); return result; };
-    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={onOpen} />, excluded);
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onBack={vi.fn()} onOpen={onOpen} />, excluded);
     await click("페이지 1"); expect(container.querySelector(".saved-card-preview")).toBeDisabled();
     expect(container.querySelector(".saved-thumbnail")).toBeNull(); expect(container.textContent).toContain("저장 당시 페이지와 달라짐");
     await act(async () => {
@@ -201,7 +202,7 @@ describe("private favorites and collections", () => {
       if (removed) result.items.forEach((item) => { item.reference.status = "excluded"; });
       return result;
     };
-    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onPrivacyToggle={vi.fn()} onBack={vi.fn()} onOpen={onOpen} />, changing);
+    await render(<PersonalLibraryWorkspace previewWidth={220} pageSize={50} privacyMode={false} onBack={vi.fn()} onOpen={onOpen} />, changing);
     await act(async () => { container.querySelector<HTMLButtonElement>(".saved-card-preview")!.click(); await settle(); });
     expect(onOpen).not.toHaveBeenCalled();
     expect(container.querySelector('.personal-library-error[role="status"]')).toHaveTextContent("원본 상태를 먼저 확인해 주세요");
