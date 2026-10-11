@@ -5,6 +5,9 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[path = "browser_merge_artifacts.rs"]
+pub(crate) mod artifacts;
+
 const MAX_PROOF: u64 = 64 * 1024 * 1024;
 const CLEANUP_ERROR: &str = "병합 영상은 저장되었습니다. 사용 중이거나 변경된 원본 조각은 보존했습니다. 원본 정리를 다시 시도할 수 있습니다.";
 
@@ -43,6 +46,10 @@ struct Proof {
     segments: Vec<SourceProof>,
     #[serde(default)]
     derivatives: Vec<DerivativeProof>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    artifacts: Vec<DerivativeProof>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_manifest_sha256: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -180,6 +187,8 @@ pub(crate) fn verified_range_inputs(
         if proof.version != 1
             || proof.recording_id != job.recording.id
             || !proof.derivatives.is_empty()
+            || !proof.artifacts.is_empty()
+            || proof.artifact_manifest_sha256.is_some()
             || proof.segments.len() as u64 != part.end - part.first
             || hashes.len() as u64 != part.first
         {
@@ -243,6 +252,7 @@ pub(crate) fn write_proof(
         });
     }
     let (_, derivatives) = verified_range_inputs(job, cancel)?;
+    let (artifacts, artifact_manifest_sha256) = artifacts::snapshot(job, &derivatives, cancel)?;
     let journal_sha256 = if let Some(plan) = &job.part {
         validate_merge_generation(job)?;
         plan.prefix_sha256.clone()
@@ -260,6 +270,8 @@ pub(crate) fn write_proof(
         journal_sha256,
         segments: sources,
         derivatives,
+        artifacts,
+        artifact_manifest_sha256,
     };
     let bytes = serde_json::to_vec(&proof).map_err(|_| storage())?;
     if bytes.len() as u64 > MAX_PROOF {
@@ -472,6 +484,15 @@ pub(crate) fn remove_verified_sources(
         {
             return Err(invalid());
         }
+        // The attempt manifest was committed before any temporary output was
+        // created. Pin it and validate every exact retirement target up front.
+        let _attempts = artifacts::verify(
+            job,
+            &proof.artifacts,
+            proof.artifact_manifest_sha256.as_deref(),
+            &proof.derivatives,
+            cancel,
+        )?;
         for (segment, source) in segments.iter().zip(&proof.segments) {
             if cancel.load(Ordering::Acquire) {
                 return Err(inactive());
@@ -494,10 +515,11 @@ pub(crate) fn remove_verified_sources(
         }
         // Finished-prefix readers retain their already-open handles. Only the
         // exact proven derivatives are retired after the final file is durable.
-        for derivative in &proof.derivatives {
+        for derivative in proof.derivatives.iter().chain(&proof.artifacts) {
             if cancel.load(Ordering::Acquire) {
                 return Err(inactive());
             }
+            validate_merge_generation(job)?;
             let path = root.join(&derivative.file);
             if !path.try_exists().map_err(|_| storage())? {
                 continue;
@@ -634,6 +656,12 @@ mod tests {
     fn publish(store: &BrowserCaptureStore) -> BrowserMergeJob {
         let job = store.take_merge_job().unwrap().unwrap();
         let root = Path::new(&job.recording.output_dir);
+        artifacts::register(&job).unwrap();
+        fs::write(
+            root.join(format!("merge-{}.ffconcat", job.token)),
+            b"synthetic concat\n",
+        )
+        .unwrap();
         let media = format!("merged-{}.webm", job.token);
         let timeline = format!("merged-{}.timeline.jsonl", job.token);
         fs::write(root.join(&media), WEBM).unwrap();
@@ -679,7 +707,14 @@ mod tests {
     fn cleanup_removes_only_proven_fragments_and_replay_handles_survive_reopen() {
         let (dir, store, recording) = fixture();
         let root = Path::new(&recording.output_dir);
-        for name in ["chat.jsonl", "init.mp4", "assets.bin", "unowned.webm"] {
+        for name in [
+            "chat.jsonl",
+            "viewer-metrics.jsonl",
+            "channel-profile.json",
+            "init.mp4",
+            "assets.bin",
+            "unowned.webm",
+        ] {
             fs::write(root.join(name), b"retain").unwrap();
         }
         let job = publish(&store);
@@ -690,7 +725,14 @@ mod tests {
         for index in 0..2 {
             assert!(!source(root, index).exists());
         }
-        for name in ["chat.jsonl", "init.mp4", "assets.bin", "unowned.webm"] {
+        for name in [
+            "chat.jsonl",
+            "viewer-metrics.jsonl",
+            "channel-profile.json",
+            "init.mp4",
+            "assets.bin",
+            "unowned.webm",
+        ] {
             assert_eq!(fs::read(root.join(name)).unwrap(), b"retain");
         }
         for name in [
@@ -715,6 +757,211 @@ mod tests {
         assert!(reopened.replay_source(&recording.id).is_ok());
         assert_eq!(reopened.retry_merges(Some(&recording.id)).unwrap(), 0);
         assert!(reopened.take_cleanup_job().unwrap().is_none());
+        assert!(!root.join(format!("merge-{}.ffconcat", job.token)).exists());
+    }
+
+    fn failed_attempt(store: &BrowserCaptureStore) -> (BrowserMergeJob, Vec<String>) {
+        let job = store.take_merge_job().unwrap().unwrap();
+        artifacts::register(&job).unwrap();
+        let names = vec![
+            format!("merge-{}.ffconcat", job.token),
+            format!("merged-{}.webm.partial", job.token),
+            format!("merged-{}.timeline.jsonl.partial", job.token),
+            format!("merged-{}.cleanup.json.partial", job.token),
+        ];
+        for name in &names {
+            fs::write(
+                Path::new(&job.recording.output_dir).join(name),
+                b"unfinished",
+            )
+            .unwrap();
+        }
+        store
+            .fail_merge(&job, BrowserMergeStatus::Failed, "synthetic failed attempt")
+            .unwrap();
+        (job, names)
+    }
+
+    #[test]
+    fn cleanup_tracks_failed_attempts_but_only_retires_them_after_verified_final_publication() {
+        let (dir, store, recording) = fixture();
+        let root = Path::new(&recording.output_dir);
+        let (_, names) = failed_attempt(&store);
+        assert!(store.take_cleanup_job().unwrap().is_none());
+        for name in &names {
+            assert!(root.join(name).is_file());
+        }
+        assert_eq!(store.retry_merges(Some(&recording.id)).unwrap(), 1);
+        let final_job = publish(&store);
+        let unknown = "merged-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.webm.partial";
+        let capture_tail = partial_name(2, "webm");
+        for name in [
+            unknown,
+            &capture_tail,
+            "chat.jsonl",
+            "viewer-metrics.jsonl",
+            "channel-profile.json",
+        ] {
+            fs::write(root.join(name), b"retain").unwrap();
+        }
+        // Crash after one temporary deletion must remain idempotent on restart.
+        fs::remove_file(root.join(&names[2])).unwrap();
+        drop(store);
+        let reopened = BrowserCaptureStore::new(dir.path()).unwrap();
+        let outcome = clean(&reopened);
+        assert!(outcome.complete);
+        assert_eq!(outcome.deleted, 2);
+        for name in &names {
+            assert!(!root.join(name).exists(), "{name}");
+        }
+        assert!(!root
+            .join(format!("merge-{}.ffconcat", final_job.token))
+            .exists());
+        for name in [
+            unknown,
+            &capture_tail,
+            "chat.jsonl",
+            "viewer-metrics.jsonl",
+            "channel-profile.json",
+        ] {
+            assert_eq!(fs::read(root.join(name)).unwrap(), b"retain");
+        }
+        assert!(reopened.replay_source(&recording.id).is_ok());
+        assert!(reopened.take_merge_job().unwrap().is_none());
+    }
+
+    #[test]
+    fn cleanup_corrupt_final_keeps_failed_attempt_files_and_sources() {
+        let (_dir, store, recording) = fixture();
+        let root = Path::new(&recording.output_dir);
+        let (_, names) = failed_attempt(&store);
+        store.retry_merges(Some(&recording.id)).unwrap();
+        let job = publish(&store);
+        let media = root.join(format!("merged-{}.webm", job.token));
+        let mut changed = WEBM.to_vec();
+        changed[8] = 99;
+        fs::write(&media, changed).unwrap();
+        assert!(!clean(&store).complete);
+        for name in &names {
+            assert!(root.join(name).is_file());
+        }
+        assert!(source(root, 0).is_file() && source(root, 1).is_file());
+    }
+
+    #[test]
+    fn cleanup_preserves_modified_or_busy_attempt_file_and_retries_without_remerge() {
+        use std::os::windows::fs::OpenOptionsExt;
+        for busy in [true, false] {
+            let (_dir, store, recording) = fixture();
+            let root = Path::new(&recording.output_dir);
+            let (_, names) = failed_attempt(&store);
+            store.retry_merges(Some(&recording.id)).unwrap();
+            publish(&store);
+            let path = root.join(&names[1]);
+            let reader = if busy {
+                Some(
+                    OpenOptions::new()
+                        .read(true)
+                        .share_mode(1)
+                        .open(&path)
+                        .unwrap(),
+                )
+            } else {
+                fs::write(&path, b"modified!!").unwrap();
+                None
+            };
+            assert!(!clean(&store).complete);
+            assert!(path.is_file());
+            assert!(store.replay_source(&recording.id).is_ok());
+            drop(reader);
+            if !busy {
+                fs::write(&path, b"unfinished").unwrap();
+            }
+            store.retry_merges(Some(&recording.id)).unwrap();
+            assert!(store.take_merge_job().unwrap().is_none());
+            assert!(clean(&store).complete);
+            assert!(!path.exists());
+        }
+    }
+
+    #[test]
+    fn cleanup_rejects_changed_attempt_manifest_before_first_unlink() {
+        let (_dir, store, recording) = fixture();
+        let root = Path::new(&recording.output_dir);
+        publish(&store);
+        fs::write(root.join("merge-attempts.json"), b"{}").unwrap();
+        let result = clean(&store);
+        assert!(!result.complete);
+        assert_eq!(result.deleted, 0);
+        assert!(source(root, 0).is_file());
+    }
+
+    #[test]
+    fn cleanup_rejects_forged_artifact_paths_including_the_retained_movie() {
+        for target in [
+            "../outside.webm",
+            "chat.jsonl",
+            "merge-attempts.json",
+            "segment-00000000.webm.partial",
+            "FINAL",
+        ] {
+            let (_dir, store, recording) = fixture();
+            publish(&store);
+            let root = Path::new(&recording.output_dir);
+            let mut job = store.take_cleanup_job().unwrap().unwrap();
+            let proof_path = root.join(
+                job.recording
+                    .merge
+                    .as_ref()
+                    .unwrap()
+                    .source_cleanup
+                    .as_ref()
+                    .unwrap()
+                    .proof_file
+                    .clone(),
+            );
+            let mut proof: Proof = serde_json::from_slice(&fs::read(&proof_path).unwrap()).unwrap();
+            let name = if target == "FINAL" {
+                job.recording.merge.as_ref().unwrap().file.clone().unwrap()
+            } else {
+                target.into()
+            };
+            proof.artifacts.push(DerivativeProof {
+                file: name,
+                bytes: 16,
+                sha256: format!("{:x}", Sha256::digest(WEBM)),
+            });
+            let bytes = serde_json::to_vec(&proof).unwrap();
+            fs::write(&proof_path, &bytes).unwrap();
+            job.recording
+                .merge
+                .as_mut()
+                .unwrap()
+                .source_cleanup
+                .as_mut()
+                .unwrap()
+                .proof_sha256 = format!("{:x}", Sha256::digest(&bytes));
+            let outcome = remove_verified_sources(&job, &AtomicBool::new(false));
+            assert!(!outcome.complete, "{target}");
+            assert_eq!(outcome.deleted, 0);
+            assert!(source(root, 0).is_file() && source(root, 1).is_file());
+            assert!(store.merged_file(&recording.id).is_ok());
+        }
+    }
+
+    #[test]
+    fn attempt_registration_never_claims_colliding_files_or_other_recordings() {
+        let (_dir, store, recording) = fixture();
+        let job = store.take_merge_job().unwrap().unwrap();
+        let root = Path::new(&recording.output_dir);
+        let collision = root.join(format!("merged-{}.webm.partial", job.token));
+        fs::write(&collision, b"not owned by this attempt").unwrap();
+        assert!(artifacts::register(&job).is_err());
+        assert!(!root.join("merge-attempts.json").exists());
+        assert_eq!(fs::read(collision).unwrap(), b"not owned by this attempt");
+        let mut bad = job.clone();
+        bad.token = "../outside".into();
+        assert!(artifacts::register(&bad).is_err());
     }
 
     #[test]

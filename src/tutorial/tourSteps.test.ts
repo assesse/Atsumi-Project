@@ -2,12 +2,14 @@ import { describe, expect, it } from "vitest";
 import { hitomiTourSteps, chzzkTourSteps } from "./tourSteps";
 
 describe("privacy introduction", () => {
-  it("explains both Mado layouts without starting playback or changing a recording", () => {
-    const step = chzzkTourSteps.find(step => step.id === "chzzk-mado")!;
-    expect(step.description).toContain("1화면4챗: 선택한 영상 하나");
-    expect(step.description).toContain("4화면4챗: 네 채널의 영상");
+  it("explains channel addition and favorite auto recording without separate Mado modes", () => {
+    const step = chzzkTourSteps.find(step => step.id === "chzzk-more")!;
+    expect(step.description).toContain("+ 버튼");
+    expect(step.description).toContain("최대 네 채널");
     expect(step.action).toBeUndefined();
     expect(chzzkTourSteps.find(step => step.id === "chzzk-channels")?.title).toBe("방송 보기");
+    expect(chzzkTourSteps.some(step => step.id === "chzzk-mado")).toBe(false);
+    expect(chzzkTourSteps.find(step => step.id === "chzzk-auto")?.description).toContain("즐겨찾기 채널");
   });
   it("explains the default before browsing without forcing private images to appear", () => {
     const index = hitomiTourSteps.findIndex(step => step.id === "privacy");

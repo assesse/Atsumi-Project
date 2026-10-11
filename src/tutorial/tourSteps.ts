@@ -29,7 +29,7 @@ export const hitomiTourSteps: readonly TourStep[] = [
   { id: "detail", section: "Hitomi", target: '[data-tour="hitomi-detail-actions"]', title: "앨범 도구", description: "즐겨찾기 · 코멘트 · 다운로드" },
   { id: "follow", section: "Hitomi", target: '[data-tour="hitomi-detail-follow"]', spotlightSelector: '[data-tour-follow-kind]', title: "작가·그룹 즐겨찾기", description: "우클릭을 통해 즐겨찾기에 등록하세요\n즐겨찾기는 자동 탐색 대상에 포함됩니다.", action: "contextmenu", actionSelector: followTarget.split(", ").map(s => `${s}:not([data-favorite="true"])`).join(", "), satisfiedSelector: followTarget.split(", ").map(s => `${s}[data-favorite="true"]`).join(", "), waitForResult: true, hint: "키보드: Shift+F10", satisfiedHint: "이미 등록됨 · 다음으로 진행", emptyActionFallback: { step: "album", message: "이 앨범에는 작가·그룹 정보가 없습니다.", label: "다른 앨범 선택" } },
   { id: "auto-find", section: "Hitomi", target: '[data-tour="hitomi-nav-auto-find"]', title: "Auto Find", description: "즐겨찾기 작가·그룹의 앨범 탐색", action: "click", hint: "Auto Find 클릭" },
-  { id: "auto-find-refresh", section: "Hitomi", target: '[data-tour="hitomi-auto-find-refresh"]', title: "자동 탐색 갱신", description: "갱신을 눌러야 탐색이 시작됩니다. 다운로드는 별도로 선택.", action: "click", waitForResult: true, satisfiedSelector: ':scope[data-running="true"]', hint: "즐겨찾기 작가·그룹 갱신 클릭", satisfiedHint: "탐색 진행 중 · 다음으로 진행" },
+  { id: "auto-find-refresh", section: "Hitomi", target: '[data-tour="hitomi-auto-find-refresh"]', title: "신규 작품 갱신", description: "즐겨찾기 작가·그룹의 신규 작품 탐색. 다시 누르면 취소.", action: "click", waitForResult: true, satisfiedSelector: ':scope[data-running="true"]', hint: "신규 작품 갱신 클릭", satisfiedHint: "탐색 진행 중 · 다음으로 진행" },
   { id: "downloads", section: "Hitomi", target: '[data-tour="hitomi-nav-downloads"]', title: "Downloads", description: "전체 · 작가 · 기간별 분류", action: "click", hint: "Downloads 클릭" },
   { id: "favorites", section: "Hitomi", target: '[data-tour="hitomi-favorites"]', title: "내 즐겨찾기", description: "앨범 · 페이지. 작가·그룹 즐겨찾기와는 별개.", action: "click", hint: "내 즐겨찾기 클릭" },
   { id: "activity", section: "공통", target: '[data-tour="hitomi-activity"]', title: "활동 기록", description: "대기 큐 · 작업 중 · 판본 검토", action: "click", hint: "활동 기록 클릭" },
@@ -49,9 +49,9 @@ export const chzzkTourSteps: readonly TourStep[] = [
   { id: "chzzk-live", section: "CHZZK", target: '[data-tour="chzzk-nav-live"]', title: "라이브", description: "실시간 영상 · 채팅", action: "click", hint: "라이브 클릭" },
   { id: "chzzk-channels", section: "CHZZK", target: '[data-tour="chzzk-channels"]', title: "방송 보기", description: "채널 선택 · 주소 입력 · 로그인", action: "click", hint: "방송 보기 클릭" },
   { id: "chzzk-connection", section: "CHZZK", target: '[data-tour="chzzk-connection"]', title: "채널 연결", description: "주소 입력 시 채널 이름·프로필 표시. 별표로 즐겨찾기 등록." },
-  { id: "chzzk-mado", section: "CHZZK", target: '[data-tour="chzzk-mado-mode"]', title: "마도모드", description: "최대 네 채널을 함께 시청.\n1화면4챗: 선택한 영상 하나 + 네 채널 채팅\n4화면4챗: 네 채널의 영상 + 채팅" },
-  { id: "chzzk-auto", section: "CHZZK", target: '[data-tour="chzzk-nav-auto-record"]', title: "자동 녹화", description: "앱 실행 중 등록 채널의 방송 시작을 확인합니다.", action: "click", hint: "자동 녹화 클릭" },
-  { id: "chzzk-auto-info", section: "CHZZK", target: '[data-tour="chzzk-auto-register"]', title: "채널 등록", description: "방송 중인 채널은 등록 즉시 녹화를 시도합니다. 로그인·권한 확인은 라이브에서. 안내 중에는 등록하지 않습니다." },
+  { id: "chzzk-more", section: "CHZZK", target: '[data-tour="chzzk-add-channel"]', title: "방송 추가", description: "+ 버튼으로 최대 네 채널 시청." },
+  { id: "chzzk-auto", section: "CHZZK", target: '[data-tour="chzzk-auto"]', title: "즐겨찾기 · 자동 녹화", description: "즐겨찾기 채널의 방송 상태와 자동 녹화 설정." },
+  { id: "chzzk-auto-info", section: "CHZZK", target: '[data-tour="chzzk-auto-register"]', title: "자동 녹화", description: "켜면 앱 실행 중 방송 시작을 확인해 녹화합니다. 로그인·권한은 라이브에서 확인." },
   { id: "chzzk-recordings", section: "CHZZK", target: '[data-tour="chzzk-nav-recordings"]', title: "녹화 목록", description: "저장본 재생 · 저장 상태 확인. 녹화 중에도 라이브 시청 가능.", action: "click", hint: "녹화 목록 클릭" },
 ];
 

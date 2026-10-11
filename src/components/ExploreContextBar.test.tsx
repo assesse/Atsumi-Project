@@ -4,6 +4,18 @@ import { describe, expect, it, vi } from "vitest";
 import { ExploreContextBar } from "./ExploreContextBar";
 
 describe("ExploreContextBar", () => {
+  it("labels an empty query as all explore with no visible loading text", async () => {
+    const container = document.createElement("div");
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<ExploreContextBar tabs={[{ id: "all", label: " ", busy: true }]}
+        activeId="all" onActivate={vi.fn()} onClose={vi.fn()} />));
+      expect(container.querySelector('[role="tab"]')).toHaveAccessibleName("전체 탐색, 불러오는 중");
+      expect(container.querySelector('.explore-context-spinner')).not.toBeNull();
+      expect(container).toHaveTextContent("전체 탐색");
+      expect(container).not.toHaveTextContent("불러오는 중");
+    } finally { await act(async () => root.unmount()); }
+  });
   it("shows the first search as a closable tab", async () => {
     const container = document.createElement("div");
     const root = createRoot(container);
@@ -75,7 +87,8 @@ describe("ExploreContextBar", () => {
       const activeTab = container.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]');
       expect(activeTab).toHaveAccessibleName("첫 검색, 불러오는 중, 3 / 17 페이지");
       expect(activeTab).toHaveAttribute("aria-busy", "true");
-      expect(activeTab).toHaveTextContent("불러오는 중");
+      expect(activeTab).not.toHaveTextContent("불러오는 중");
+      expect(activeTab?.querySelector('.explore-context-spinner')).not.toBeNull();
       expect(activeTab).not.toHaveTextContent("3 / 17");
     } finally {
       await act(async () => root.unmount());

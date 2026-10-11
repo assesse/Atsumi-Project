@@ -188,7 +188,7 @@ describe("encoded capture integration", () => {
     expect(start).not.toHaveBeenCalled();
     expect(h.ofKind("status").at(-1)).toMatchObject({ recording: false, ready: false, detail: "unavailable" });
   });
-  it("uses an approved encoded session without creating a second MediaRecorder and drains chat before finish", async () => {
+  it.each([["saved", "saved"], ["encoded_end_checking", "checking_end"]])("maps encoded terminal status %s without a false transport error", async (detail, expected) => {
     const h = fixture({ originalOnly: true }); const order: string[] = [];
     const state = { active: false, starting: false, stopping: false, recordingId: RECORDING, channelId: CHANNEL, detail: "recording" };
     let hooks: { beforeFinish(id: string): Promise<void>; onStatus(detail: string): void; onStarted(response: unknown, video: unknown): void } | undefined;
@@ -196,7 +196,7 @@ describe("encoded capture integration", () => {
       canStart: (video: unknown) => video === h.video,
       getStatus: () => state,
       start: vi.fn(async (_command: unknown, supplied: typeof hooks) => { hooks = supplied; state.active = true; const response = { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true }; hooks!.onStarted(response, h.video); return response; }),
-      stop: vi.fn(async () => { state.stopping = true; await hooks!.beforeFinish(RECORDING); order.push("finish"); state.active = false; hooks!.onStatus("saved"); return { stopped: true }; }),
+      stop: vi.fn(async () => { state.stopping = true; await hooks!.beforeFinish(RECORDING); order.push("finish"); state.active = false; hooks!.onStatus(detail); return { stopped: true }; }),
     };
     h.window.__atsumiEncodedCapture = encoded;
     h.window.__atsumiPageChat = { start: vi.fn(() => true), stop: vi.fn(async () => { order.push("chat-drained"); }) };
@@ -206,7 +206,7 @@ describe("encoded capture integration", () => {
     expect(h.ofKind("begin")).toHaveLength(0);
     h.command("start"); await flush(); expect(encoded.start).toHaveBeenCalledOnce();
     h.command("stop"); await flush(); expect(order).toEqual(["chat-drained", "finish"]);
-    expect(h.ofKind("status").at(-1)).toMatchObject({ recording: false, detail: "saved" });
+    expect(h.ofKind("status").at(-1)).toMatchObject({ recording: false, detail: expected });
   });
   it("does not silently create a legacy recorder after an encoded begin failure", async () => {
     const h = fixture();

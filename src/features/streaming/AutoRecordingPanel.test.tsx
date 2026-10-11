@@ -57,7 +57,7 @@ describe("automatic recording registration", () => {
   it("shows persisted channels and updates live progress without a confirmation", async () => {
     const api = fake();
     await act(async () => root.render(<AutoRecordingPanel runtime="tauri" api={api} />));
-    expect(container).toHaveTextContent("등록한 채널"); expect(container).toHaveTextContent("방송 대기");
+    expect(container).toHaveTextContent("등록한 채널"); expect(container).toHaveTextContent("녹화 예약 됨");
     api.snapshot.mockResolvedValue(ok(data("recording")));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(container).toHaveTextContent("녹화 중");

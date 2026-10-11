@@ -734,7 +734,7 @@ impl BrowserCaptureStore {
 
     /// Only a pending source-end classification may be upgraded. Storage failures,
     /// partial files, explicit stops and older recordings are never rewritten.
-    pub(crate) fn confirm_end(&self, id: &str, reason: &str) -> Result<(), StreamError> {
+    pub(crate) fn confirm_end(&self, id: &str, reason: &str) -> Result<bool, StreamError> {
         self.ensure_recovered(id)?;
         let mut state = self.lock()?;
         let recording = state
@@ -742,12 +742,14 @@ impl BrowserCaptureStore {
             .iter_mut()
             .find(|r| r.id == id && !r.deletion_pending && r.media_removed_at.is_none())
             .ok_or_else(inactive)?;
-        if recording
-            .ending
-            .as_ref()
-            .is_none_or(|end| end.reason != "checking")
-        {
-            return Ok(());
+        if recording.ending.as_ref().is_none_or(|end| {
+            end.reason != "checking"
+                || !matches!(
+                    end.trigger.as_str(),
+                    "video_ended" | "source_changed" | "video_changed"
+                )
+        }) {
+            return Ok(false);
         }
         let end = recording.ending.as_mut().unwrap();
         end.reason = reason.into();
@@ -760,7 +762,12 @@ impl BrowserCaptureStore {
             recording.status = BrowserRecordingStatus::Stopped;
             recording.last_error = None;
         }
-        save_metadata(recording)
+        let clean_end = matches!(reason, "broadcast_ended" | "broadcast_changed")
+            && recording.status == BrowserRecordingStatus::Stopped
+            && recording.partial.is_none()
+            && recording.last_error.is_none();
+        save_metadata(recording)?;
+        Ok(clean_end)
     }
 
     pub(crate) fn note_capture_error(
@@ -2260,7 +2267,7 @@ mod tests {
             .record_end(&recording.id, "checking", "video_ended")
             .unwrap();
         assert!(store.checking_end(CHANNEL, Some("id:42"), now_ms()));
-        store.confirm_end(&recording.id, "broadcast_ended").unwrap();
+        assert!(store.confirm_end(&recording.id, "broadcast_ended").unwrap());
         let saved = store.snapshot().unwrap().remove(0);
         assert_eq!(saved.status, BrowserRecordingStatus::Stopped);
         assert!(saved.last_error.is_none());
@@ -2300,6 +2307,24 @@ mod tests {
             BrowserRecordingStatus::Interrupted
         );
         assert!(partial_store.snapshot().unwrap()[0].last_error.is_some());
+    }
+
+    #[test]
+    fn end_confirmation_does_not_erase_late_capture_storage_errors() {
+        let (_directory, store, record) = fixture();
+        store.append(&record.id, 0, 0, WEBM).unwrap();
+        store.finish_segment(&record.id, 0, 15.0).unwrap();
+        store.finish(&record.id, true, Some("ended")).unwrap();
+        store
+            .record_end(&record.id, "checking", "video_ended")
+            .unwrap();
+        store
+            .note_capture_error(&record.id, "native_rejected", "storage failed")
+            .unwrap();
+        assert!(!store.confirm_end(&record.id, "broadcast_ended").unwrap());
+        let saved = store.snapshot().unwrap().remove(0);
+        assert_eq!(saved.status, BrowserRecordingStatus::Interrupted);
+        assert_eq!(saved.last_error.as_deref(), Some("storage failed"));
     }
 
     #[test]

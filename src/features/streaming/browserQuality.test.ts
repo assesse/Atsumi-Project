@@ -43,6 +43,18 @@ function fixture(tracks: Track[], options: { active?: boolean; deny?: string; fi
 beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(1_000_000); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); });
 describe("official live quality preference", () => {
+  it("does not force 1080p again after the user or player lowers quality", async () => {
+    const f = fixture([track(480, true), track(720), track(1080)]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.select).toHaveBeenCalledExactlyOnceWith('1080');
+    f.tracks.forEach(track => { track.selected = track.height === 720; });
+    f.video.videoWidth = 1280; f.video.videoHeight = 720;
+    await vi.advanceTimersByTimeAsync(90_000);
+    expect(f.select).toHaveBeenCalledTimes(1);
+    expect(f.api!.getStatus()).toEqual({ status: 'ready', height: 720 });
+    expect(await f.api!.prepare()).toBe(true);
+    expect(f.select).toHaveBeenCalledTimes(1);
+  });
   it("shares the live 1080p preference with a cold grid-free automatic receiver", () => {
     const f = fixture([track(480, true)], { autoRecording: true });
     expect(JSON.parse(f.storage.get("live-player-video-track")!)).toEqual({ label: "1080p", width: 1920, height: 1080 });

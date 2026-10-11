@@ -1,10 +1,11 @@
 // Original SDK only: no CHZZK application, account, advertising or live API code.
 import originalVodTemplate from './accepted-vod-template.js';
+import { parentOrigins, previewOrigin } from './host-policy.js';
 const CHANNEL='atsumi-replay-player-v1', nonce=location.hash.slice(1);
 // This public file must never initialize in a privileged app page or a
 // same-origin frame, even if someone opens its URL directly.
 if(window===window.top||window.origin!=='null'||!/^[a-f0-9]{32}$/.test(nonce))throw new Error('Original player requires an opaque, scoped frame');
-const parents=new Set(['http://tauri.localhost','https://tauri.localhost','tauri://localhost','http://127.0.0.1:1420']);
+const parents=new Set(parentOrigins);
 let player=null,privateMode=false,disposed=false,metrics=null,lastState='',clock=0,presentation={wide:false,fullscreen:false},recordingHeader=null;
 // The SDK expects Web Storage even for local playback. Opaque frames intentionally
 // have none: provide a bounded, recording-local memory store, never browser cookies/storage.
@@ -20,7 +21,7 @@ function mediaAllowed(value,parentOrigin){try{
  const url=new URL(value);
  if(url.username||url.password||url.search||url.hash)return false;
  if((['http:','https:'].includes(url.protocol)&&url.hostname==='atsumi-replay.localhost'&&!url.port||url.protocol==='atsumi-replay:'&&url.hostname==='localhost')&&/^\/[a-f0-9]{32}$/.test(url.pathname))return true;
- return parentOrigin==='http://127.0.0.1:1420'&&url.origin===parentOrigin&&['/.runtime/chzzk-original-player/synthetic.mp4','/.runtime/progressive-preview'].includes(url.pathname);
+ return previewOrigin!==null&&parentOrigin===previewOrigin&&url.origin===parentOrigin&&['/.runtime/chzzk-original-player/synthetic.mp4','/.runtime/progressive-preview'].includes(url.pathname);
 }catch{return false;}}
 function state(){
  if(!player||disposed)return;const v=document.querySelector('video');

@@ -137,6 +137,7 @@ mod tests {
             include_str!("browser_host.rs"),
             include_str!("browser_multiview.rs"),
             include_str!("browser_auth.rs"),
+            include_str!("browser_session.rs"),
             include_str!("browser_chat_popup.rs"),
             include_str!("browser_clip_popup.rs"),
             include_str!("browser_service_popup.rs"),

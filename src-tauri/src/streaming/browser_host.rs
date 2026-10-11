@@ -4,6 +4,27 @@ use super::*;
 use tauri::{LogicalPosition, LogicalSize, WebviewBuilder, WebviewUrl, WebviewWindowBuilder};
 
 const LOGIN_LABEL: &str = "chzzk-login";
+
+fn allowed_account_popup(url: &tauri::Url) -> bool {
+    url.as_str() == "about:blank" || allowed_navigation(url)
+}
+
+pub(super) fn login_navigation(url: &tauri::Url) -> bool {
+    allowed_navigation(url) && url.host_str() == Some("nid.naver.com")
+}
+
+pub(super) fn queue_login(app: &AppHandle) {
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Ok(host) = host(&app) {
+            if let Err(cause) = host.login(&app) {
+                if let Ok(mut state) = host.inner.view.lock() {
+                    state.error = Some(cause.message);
+                }
+            }
+        }
+    });
+}
 const INSTALL_URL: &str =
     "https://chromewebstore.google.com/detail/ooadnieabchijkibjpeieeliohjidnjj";
 const EDGE_INSTALL_URL: &str =
@@ -394,6 +415,7 @@ impl OfficialBrowser {
             s.channel = Some(channel);
             s.error = None;
         }
+        self.prepare_profile_session(app)?;
         if let Some(view) = app.get_webview(WINDOW_LABEL) {
             if view.url().ok().as_ref() != Some(&url) {
                 view.navigate(url).map_err(|_| unavailable())?;
@@ -456,6 +478,10 @@ impl OfficialBrowser {
             if !allowed_navigation(url) {
                 return false;
             }
+            if login_navigation(url) {
+                queue_login(&nav_app);
+                return false;
+            }
             let state = nav_host
                 .inner
                 .view
@@ -465,18 +491,6 @@ impl OfficialBrowser {
                 return live_channel(url).as_ref() == state.channel.as_ref();
             }
             drop(state);
-            if url.host_str() == Some("nid.naver.com") {
-                let host = nav_host.clone();
-                let app = nav_app.clone();
-                // Queue after this WebView2 navigation callback unwinds.
-                thread::spawn(move || {
-                    let dispatch = app.clone();
-                    let _ = dispatch.run_on_main_thread(move || {
-                        let _ = host.login(&app);
-                    });
-                });
-                return false;
-            }
             true
         })
         .on_new_window(move |url, features| {
@@ -966,12 +980,15 @@ impl OfficialBrowser {
         self.snapshot()
     }
     fn reserve_account_window(&self) -> Result<(), StreamError> {
+        self.reserve_account_window_mode(false)
+    }
+    fn reserve_account_window_mode(&self, login_only: bool) -> Result<(), StreamError> {
         // All videos share this browser profile. Serialize against starting a
         // recording in ANY pane, not merely the single-view controller.
         let _gate = self.inner.contexts.gate.lock().map_err(|_| unavailable())?;
         if self.label() != WINDOW_LABEL
             || self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0
-            || !self.active_ids().is_empty()
+            || (!login_only && !self.active_ids().is_empty())
         {
             return Err(error(
                 "BROWSER_ACCOUNT_BUSY",
@@ -980,8 +997,7 @@ impl OfficialBrowser {
         }
         let mut s = self.inner.view.lock().map_err(|_| unavailable())?;
         if s.account_busy
-            || s.recording.is_some()
-            || s.arm.is_some()
+            || (!login_only && (s.recording.is_some() || s.arm.is_some()))
             || self.inner.closing.load(Ordering::Acquire)
             || self.inner.reserved.load(Ordering::Acquire)
             || s.extension_connecting
@@ -1005,7 +1021,14 @@ impl OfficialBrowser {
         }
     }
     pub fn login(&self, app: &AppHandle) -> Result<(), StreamError> {
-        self.reserve_account_window()?;
+        // Login does not clear the shared profile or navigate active recorders.
+        // Logout remains exclusive and cannot run while anything is recording.
+        self.reserve_account_window_mode(true)?;
+        // Retain the profile before closing a probe or the completed login.
+        if let Err(cause) = self.prepare_profile_session(app) {
+            self.account_window_created(false);
+            return Err(cause);
+        }
         auth::cancel(app);
         if let Some((_, window)) = app
             .webview_windows()
@@ -1022,54 +1045,96 @@ impl OfficialBrowser {
         result
     }
     fn create_login_window(&self, app: &AppHandle) -> Result<(), StreamError> {
+        self.build_account_window(app, LOGIN_LABEL, None)
+            .map(|_| ())
+    }
+    fn build_account_window(
+        &self,
+        app: &AppHandle,
+        label: &str,
+        features: Option<tauri::webview::NewWindowFeatures>,
+    ) -> Result<tauri::WebviewWindow, StreamError> {
         let profile = self.inner.data_dir.join("chzzk-browser-profile");
         std::fs::create_dir_all(&profile).map_err(|_| unavailable())?;
-        let url = "https://nid.naver.com/nidlogin.login?url=https%3A%2F%2Fchzzk.naver.com%2F"
-            .parse()
-            .map_err(|_| unavailable())?;
+        let url = if features.is_some() {
+            "about:blank"
+        } else {
+            "https://nid.naver.com/nidlogin.login?url=https%3A%2F%2Fchzzk.naver.com%2F"
+        }
+        .parse()
+        .map_err(|_| unavailable())?;
         let return_app = app.clone();
-        let window = WebviewWindowBuilder::new(app, LOGIN_LABEL, WebviewUrl::External(url))
+        let return_label = label.to_owned();
+        let popup_host = self.clone();
+        let popup_app = app.clone();
+        let is_popup = features.is_some();
+        let initial = service_popup::InitialNavigation::default();
+        let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
             .title("CHZZK 로그인·계정 관리")
             .inner_size(700.0, 820.0)
             .data_directory(profile)
             .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
-            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+            .on_new_window(move |url, features| {
+                // Preserve WebView2's opener and POST state for official login
+                // challenges. Rebuilding a GET URL loses their one-use state.
+                if !allowed_account_popup(&url)
+                    || popup_app
+                        .webview_windows()
+                        .keys()
+                        .filter(|label| account_label(label))
+                        .count()
+                        >= 4
+                {
+                    return tauri::webview::NewWindowResponse::Deny;
+                }
+                let label = format!("{LOGIN_LABEL}-{}", uuid::Uuid::new_v4().simple());
+                match popup_host.build_account_window(&popup_app, &label, Some(features)) {
+                    Ok(window) => tauri::webview::NewWindowResponse::Create { window },
+                    Err(_) => tauri::webview::NewWindowResponse::Deny,
+                }
+            })
             .on_navigation(move |url| {
-                if url.host_str() == Some("chzzk.naver.com") && allowed_navigation(url) {
+                if !is_popup && url.host_str() == Some("chzzk.naver.com") && allowed_navigation(url)
+                {
                     let app = return_app.clone();
-                    // Destroyed is the single session-refresh path, whether the
-                    // user closes the window or NAVER returns to CHZZK.
+                    let label = return_label.clone();
                     thread::spawn(move || {
                         let dispatch = app.clone();
                         let _ = dispatch.run_on_main_thread(move || {
-                            if let Some(w) = app.get_webview_window(LOGIN_LABEL) {
-                                let _ = w.destroy();
+                            if let Some(window) = app.get_webview_window(&label) {
+                                let _ = window.destroy();
                             }
                         });
                     });
                     return false;
                 }
-                allowed_navigation(url)
-            })
-            .build()
-            .map_err(|_| unavailable())?;
+                initial.allows(url, allowed_navigation(url))
+            });
+        if let Some(features) = features {
+            builder = builder.window_features(features);
+        }
+        let window = builder.build().map_err(|_| unavailable())?;
         let host = self.clone();
         let handle = app.clone();
+        let closed_label = label.to_owned();
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                host.account_window_closed(&handle, LOGIN_LABEL);
+                // Never synchronously navigate/destroy sibling WebViews while
+                // WebView2/Tauri is still unwinding a window destruction event.
+                let (host, handle, label) = (host.clone(), handle.clone(), closed_label.clone());
+                tauri::async_runtime::spawn_blocking(move || {
+                    host.account_window_closed(&handle, &label)
+                });
             }
         });
         let _ = window.set_focus();
-        Ok(())
+        Ok(window)
     }
     fn account_window_closed(&self, app: &AppHandle, closed_label: &str) {
         let Ok(_gate) = self.inner.contexts.gate.lock() else {
             return;
         };
-        if !self.active_ids().is_empty() {
-            return;
-        }
+        let recording = !self.active_ids().is_empty();
         let mut s = self.inner.view.lock().unwrap_or_else(|p| p.into_inner());
         if s.account_busy || self.inner.closing.load(Ordering::Acquire) {
             return;
@@ -1085,18 +1150,35 @@ impl OfficialBrowser {
         }
         s.login_status = "저장된 브라우저 세션 반영 · 로그인 여부는 공식 화면에서 확인".into();
         s.invalidate_auth();
-        s.account_busy = true;
+        s.account_busy = !recording;
         drop(s);
         drop(_gate);
-        self.refresh_account_playback(app);
+        if recording {
+            self.refresh_account_chats(app);
+        } else {
+            self.refresh_account_playback(app);
+        }
         self.inner
             .view
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .account_busy = false;
     }
+    fn refresh_account_chats(&self, app: &AppHandle) {
+        self.refresh_multiview_chats(app);
+        for (label, window) in app.webview_windows() {
+            if label.starts_with("chzzk-chat-") {
+                let _ = window.as_ref().reload();
+            }
+        }
+        self.refresh_auth_state(app, true);
+    }
     pub fn logout(&self, app: &AppHandle) -> Result<(), StreamError> {
         self.reserve_account_window()?;
+        if let Err(cause) = self.prepare_profile_session(app) {
+            self.account_window_created(false);
+            return Err(cause);
+        }
         chat_popup::close_all(app);
         auth::cancel(app);
         {
@@ -1153,7 +1235,11 @@ impl OfficialBrowser {
         let host = self.clone();
         let handle = app.clone();
         let result = clear_profile(&view, move |success| {
-            host.profile_clear_completed(&handle, success, cleanup_label.as_deref())
+            // Completion is a COM callback on the UI thread. Waiting for a
+            // navigation/destruction there can deadlock logout permanently.
+            tauri::async_runtime::spawn_blocking(move || {
+                host.profile_clear_completed(&handle, success, cleanup_label.as_deref());
+            });
         });
         if result
             .as_ref()
@@ -1314,7 +1400,30 @@ fn paint_viewport(
     };
     let result = (|| {
         let before = surface.inspect()?;
-        let restricted = if desired.occluded || !desired.occlusions.is_empty() {
+        // A full, hole-free clip explicitly retains every video pixel. During
+        // a splitter drag disable the child input first, but do not install an
+        // empty region on every mouse move (that flashes the video black).
+        // Partial masks and popup holes still use the fail-closed transaction.
+        let input_only = before.visible
+            && desired.occluded
+            && desired.occlusions.is_empty()
+            && desired.clip[0..2] == [0, 0]
+            // Clip rounds inward; bounds round to nearest at 125/150% DPI.
+            && (0..=1).contains(&(desired.bounds[2] - desired.clip[2]))
+            && (0..=1).contains(&(desired.bounds[3] - desired.clip[3]))
+            && desired.clip[2] > 0
+            && desired.clip[3] > 0;
+        if input_only && before.enabled {
+            surface.input(false)?;
+            check()?;
+            if surface.inspect()?.enabled {
+                return Err(viewport_failed());
+            }
+            surface.focus_main()?;
+            check()?;
+        }
+        let must_mask = !input_only && (desired.occluded || !desired.occlusions.is_empty());
+        let restricted = if must_mask {
             // Even a nonmodal panel must never have native pixels/input over
             // its controls while its verified hole region is being installed.
             // Keep the enabled state/focus unchanged outside a real modal.
@@ -1326,13 +1435,13 @@ fn paint_viewport(
             surface.clip(restricted)?;
         }
         check()?;
-        if desired.occluded || !desired.occlusions.is_empty() {
+        if must_mask {
             // Verify the actual HWND region before leaving IsVisible enabled.
             if surface.inspect()?.clip != Some([0; 4]) {
                 return Err(viewport_failed());
             }
         }
-        if desired.occluded {
+        if desired.occluded && !input_only {
             surface.input(false)?;
             check()?;
             surface.focus_main()?;
@@ -1660,7 +1769,11 @@ fn clear_profile(
 ) -> Result<(), StreamError> {
     use webview2_com::{
         ClearBrowsingDataCompletedHandler,
-        Microsoft::Web::WebView2::Win32::{ICoreWebView2Profile2, ICoreWebView2_13},
+        Microsoft::Web::WebView2::Win32::{
+            ICoreWebView2Profile2, ICoreWebView2_13,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE,
+            COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES,
+        },
     };
     use windows::core::Interface;
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
@@ -1682,7 +1795,13 @@ fn clear_profile(
                 .cast::<ICoreWebView2_13>()?
                 .Profile()?
                 .cast::<ICoreWebView2Profile2>()?
-                .ClearBrowsingDataAll(&callback)
+                // Logout clears authentication/site state, not gigabytes of
+                // playback HTTP cache, saved preferences or browser autofill.
+                .ClearBrowsingData(
+                    COREWEBVIEW2_BROWSING_DATA_KINDS_COOKIES
+                        | COREWEBVIEW2_BROWSING_DATA_KINDS_ALL_DOM_STORAGE,
+                    &callback,
+                )
         })();
         if result.is_err() {
             complete_profile_clear(&dispatch_completion, false);
@@ -1907,6 +2026,43 @@ mod tests {
         surface.operations.clear();
         paint_viewport(&mut surface, scrolled(), || true).unwrap();
         assert_eq!(surface.operations, ["inspect", "inspect", "inspect"]);
+    }
+    #[test]
+    fn splitter_resize_keeps_full_video_visible_and_disables_only_input() {
+        let mut surface = FakeSurface::new(true);
+        for (size, clip_size) in [(100, 100), (120, 119), (85, 85), (110, 109)] {
+            let desired = PixelViewport {
+                bounds: [8, 8, size, size],
+                clip: [0, 0, clip_size, clip_size],
+                occluded: true,
+                occlusions: PixelOcclusions::default(),
+            };
+            surface.operations.clear();
+            paint_viewport(&mut surface, desired, || true).unwrap();
+            assert!(surface.state.visible && !surface.state.enabled);
+            assert_eq!(surface.state.bounds, desired.bounds);
+            assert_eq!(surface.state.clip, Some(desired.clip));
+            assert!(!surface
+                .operations
+                .iter()
+                .any(|op| matches!(*op, "mask" | "hide" | "show")));
+        }
+        paint_viewport(&mut surface, scrolled(), || true).unwrap();
+        assert!(surface.state.visible && surface.state.enabled);
+        let mut failed_input = FakeSurface::new(true);
+        failed_input.ignore_input = true;
+        assert!(paint_viewport(
+            &mut failed_input,
+            PixelViewport {
+                bounds: [0, 0, 100, 100],
+                clip: [0, 0, 100, 100],
+                occluded: true,
+                occlusions: PixelOcclusions::default(),
+            },
+            || true
+        )
+        .is_err());
+        assert!(!failed_input.state.visible);
     }
     #[test]
     fn hidden_surface_is_shown_only_after_confirmed_bounds_and_clip() {
@@ -2648,6 +2804,45 @@ mod tests {
                 assert!(!account_label(label));
             }
         }
+    }
+    #[test]
+    fn account_challenges_allow_only_official_https_or_initial_blank() {
+        for value in [
+            "https://nid.naver.com/nidlogin.login",
+            "https://nid.naver.com/login/ext/captcha",
+            "about:blank",
+        ] {
+            assert!(allowed_account_popup(&value.parse().unwrap()));
+        }
+        for value in [
+            "https://nid.naver.com.evil.test/",
+            "http://nid.naver.com/",
+            "https://evil@nid.naver.com/",
+            "https://nid.naver.com:8443/",
+            "file:///C:/test",
+        ] {
+            assert!(!allowed_account_popup(&value.parse().unwrap()));
+        }
+        assert!(login_navigation(
+            &"https://nid.naver.com/nidlogin.login".parse().unwrap()
+        ));
+        assert!(!login_navigation(
+            &"https://chzzk.naver.com/".parse().unwrap()
+        ));
+    }
+    #[test]
+    fn login_can_preserve_recording_while_logout_remains_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(dir.path().into()).unwrap();
+        root.inner.view.lock().unwrap().recording = Some("synthetic-recording".into());
+        assert!(root.reserve_account_window().is_err());
+        root.reserve_account_window_mode(true).unwrap();
+        root.account_window_created(true);
+        assert_eq!(
+            root.inner.view.lock().unwrap().recording.as_deref(),
+            Some("synthetic-recording")
+        );
+        assert!(!root.snapshot().unwrap().account_busy);
     }
     #[test]
     fn profile_completion_remains_reserved_until_callback_and_fires_once() {

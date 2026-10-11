@@ -77,6 +77,7 @@ describe("SettingsDialog operational boundaries", () => {
       data: { action, completedSteps: ["done"], warnings: [], restartRequired: false },
     }));
     const onCheckForUpdates = vi.fn(async () => ({ status: "current" } as const));
+    const onReplayTutorial = vi.fn();
     const onTagCatalogRefresh = vi.fn(async () => undefined);
     const onLoadStorageUsage = vi.fn(async (): Promise<ApiResult<StorageUsageSnapshot>> => ({
       ok: true,
@@ -131,6 +132,7 @@ describe("SettingsDialog operational boundaries", () => {
           onPreviewFolderName={onPreviewFolderName}
           onMaintenance={onMaintenance}
           onCheckForUpdates={onCheckForUpdates}
+          onReplayTutorial={onReplayTutorial}
           onTagCatalogRefresh={onTagCatalogRefresh}
           tagCatalogStatus={{ revision: 3, entryCount: 10_000, neutralCount: 4_000, femaleCount: 3_000, maleCount: 1_000, artistCount: 1_500, groupCount: 500 }}
           tagCatalogRefreshing={false}
@@ -182,7 +184,11 @@ describe("SettingsDialog operational boundaries", () => {
       expect(autostart).not.toBeChecked();
       expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru", "치지직"]);
       expect(container.querySelector(".settings-scope-intro")).toBeNull();
-      expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["다운로드 폴더", "Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "설정 초기화"]);
+      expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["다운로드 폴더", "튜토리얼", "Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "설정 초기화"]);
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="튜토리얼 다시 보기"]')!.click());
+      expect([...container.querySelectorAll('[role="option"]')].map(option => option.lastElementChild?.textContent)).toEqual(["선택하여 다시 보기", "Hitomi", "Danbooru", "CHZZK"]);
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent === "CHZZK")!.click());
+      expect(onReplayTutorial).toHaveBeenCalledWith("chzzk");
       expect(container.textContent).not.toContain("다음 단계");
       expect(container.querySelectorAll('[data-settings-scroll-root="true"]')).toHaveLength(1);
       expect(container.querySelector(".settings-dialog > .settings-form")).not.toBeNull();
@@ -207,16 +213,13 @@ describe("SettingsDialog operational boundaries", () => {
       const about = container.querySelector<HTMLElement>(".settings-about-panel");
       expect(about).toHaveTextContent("Atsumi");
       expect(about).toHaveTextContent("assesse · Atsumi contributors");
-      expect(about).toHaveTextContent("앨범 제목, 태그, 파일 경로, 데이터베이스 내용이 포함되지 않습니다");
+      expect(about).not.toHaveTextContent(/진단 정보|GitHub 이슈|피드백 주소 복사/);
       const aboutButtons = [...about?.querySelectorAll<HTMLButtonElement>("button") ?? []];
       await act(async () => aboutButtons.find((button) => button.textContent === "업데이트 확인")?.click());
       expect(onCheckForUpdates).toHaveBeenCalledOnce();
       expect(about).toHaveTextContent("현재 최신 버전입니다.");
-      await act(async () => aboutButtons.find((button) => button.textContent === "피드백 주소 복사")?.click());
-      expect(writeText).toHaveBeenLastCalledWith("https://github.com/assesse/Atsumi-Project/issues/new/choose");
-      await act(async () => aboutButtons.find((button) => button.textContent === "진단 정보 복사")?.click());
-      expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("privateDataIncluded=false"));
-      expect(writeText.mock.calls.at(-1)?.[0]).not.toMatch(/C:\\|앨범|tag=/i);
+      expect(aboutButtons.some(button => /진단|피드백|이슈/.test(button.textContent ?? ""))).toBe(false);
+      expect(writeText).not.toHaveBeenCalled();
 
       expect(container.querySelector(".settings-reset-row")).not.toBeNull();
       expect(container.querySelector(".maintenance-panel .settings-reset-row")).toBeNull();

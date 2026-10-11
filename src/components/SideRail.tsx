@@ -9,6 +9,7 @@ import {
 } from "../app/workspaceRegistry";
 import { FluentIcon } from "./FluentIcon";
 import { useCommonNavigation } from "../app/CommonNavigation";
+import { OPEN_FEEDBACK } from "../features/feedback/api";
 
 type SideRailProps<Source extends ContentSource> = {
   view: WorkspaceViewId<Source>;
@@ -25,6 +26,8 @@ type SideRailProps<Source extends ContentSource> = {
   onPrivacyModeToggle?: () => void;
   personalLibraryOpen?: boolean;
   onOpenPersonalLibrary?: () => void;
+  onOpenLiveChannels?: () => void;
+  liveChannelsOpen?: boolean;
 };
 
 export function SideRail<Source extends ContentSource>({
@@ -42,6 +45,8 @@ export function SideRail<Source extends ContentSource>({
   onPrivacyModeToggle,
   personalLibraryOpen = false,
   onOpenPersonalLibrary,
+  onOpenLiveChannels,
+  liveChannelsOpen = false,
 }: SideRailProps<Source>) {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const common = useCommonNavigation();
@@ -106,7 +111,7 @@ export function SideRail<Source extends ContentSource>({
       <nav className="main-nav">
         {visibleItems.map((item) => {
           const count = item.badgeKey ? badgeCounts[item.badgeKey] : 0;
-          return (
+          const navigation = (
             <button
               key={item.view}
               type="button"
@@ -123,13 +128,21 @@ export function SideRail<Source extends ContentSource>({
               ) : null}
             </button>
           );
+          return source === "chzzk" && item.view === "live" && onOpenLiveChannels ? <div className="nav-live-item" key={item.view}>
+            {navigation}
+            <button type="button" className="nav-live-disclosure" data-tour="chzzk-channels"
+              aria-label={liveChannelsOpen ? "방송 설정 접기" : "방송 설정 펼치기"} title="방송 보기"
+              aria-expanded={liveChannelsOpen} aria-controls={liveChannelsOpen ? "chzzk-connection-panel" : undefined}
+              onClick={onOpenLiveChannels}><FluentIcon glyph="\uE76C" /></button>
+          </div> : navigation;
         })}
         {onOpenPersonalLibrary ? <button type="button" data-tour={`${source}-favorites`} className={`nav-item${personalLibraryOpen ? " is-active" : ""}`} aria-label="내 즐겨찾기" aria-current={personalLibraryOpen ? "page" : undefined} onClick={onOpenPersonalLibrary}><FluentIcon glyph="\uE8A4" /><span className="nav-label">내 즐겨찾기</span></button> : null}
         {common && source !== "chzzk" ? <button type="button" data-tour="community-nav" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
       </nav>
 
       <div className="sidebar-foot">
-        {source !== "chzzk" && onPrivacyModeToggle ? <button
+        <button type="button" className="nav-item" title="오류·의견 보내기" aria-label="오류·의견 보내기" onClick={() => window.dispatchEvent(new Event(OPEN_FEEDBACK))}><FluentIcon glyph="\uE8F2" /><span className="nav-label">오류·의견 보내기</span></button>
+        {onPrivacyModeToggle ? <button
           type="button" className={`nav-item sidebar-privacy${privacyMode ? " is-active" : ""}`}
           title={`프라이버시 모드 ${privacyMode ? "켜짐" : "꺼짐"}`}
           aria-label="프라이버시 모드" data-tour="privacy-mode" aria-pressed={privacyMode}

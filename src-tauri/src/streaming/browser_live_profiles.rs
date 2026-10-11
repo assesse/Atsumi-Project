@@ -12,6 +12,14 @@ pub struct Profile {
     channel_name: String,
     image: Option<String>,
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSnapshot {
+    #[serde(flatten)]
+    profile: Profile,
+    live_status: &'static str,
+    checked_at: Option<u64>,
+}
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Saved {
@@ -27,6 +35,7 @@ pub(super) struct Profiles {
     directory: PathBuf,
     cache: Mutex<HashMap<String, Cached>>,
     active: AtomicUsize,
+    presence: Mutex<HashMap<String, (u64, Option<bool>)>>,
 }
 struct Permit<'a>(&'a AtomicUsize);
 impl Drop for Permit<'_> {
@@ -40,7 +49,62 @@ impl Profiles {
             directory: directory.into(),
             cache: Mutex::new(HashMap::new()),
             active: AtomicUsize::new(0),
+            presence: Mutex::new(HashMap::new()),
         }
+    }
+    fn snapshot(&self, channel: &str) -> Result<ProfileSnapshot, StreamError> {
+        let profile = self.get(channel)?;
+        let (checked_at, live) = self.presence_with(channel, now_ms(), || {
+            ChzzkProvider::new()?.channel_live_status(channel)
+        });
+        Ok(ProfileSnapshot {
+            profile,
+            live_status: match live {
+                Some(true) => "live",
+                Some(false) => "offline",
+                None => "unknown",
+            },
+            checked_at: live.map(|_| checked_at),
+        })
+    }
+    fn presence_with(
+        &self,
+        channel: &str,
+        now: u64,
+        fetch: impl FnOnce() -> Result<Option<bool>, StreamError>,
+    ) -> (u64, Option<bool>) {
+        if let Ok(cache) = self.presence.lock() {
+            if let Some(&(at, status)) = cache
+                .get(channel)
+                .filter(|(at, _)| *at <= now && now - *at < 30_000)
+            {
+                return (at, status);
+            }
+        }
+        if self
+            .active
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+                (n < 2).then_some(n + 1)
+            })
+            .is_err()
+        {
+            return (now, None);
+        }
+        let _permit = Permit(&self.active);
+        let value = (now, fetch().ok().flatten());
+        if let Ok(mut cache) = self.presence.lock() {
+            if cache.len() >= MAX_ENTRIES {
+                if let Some(old) = cache
+                    .iter()
+                    .min_by_key(|(_, (at, _))| at)
+                    .map(|(key, _)| key.clone())
+                {
+                    cache.remove(&old);
+                }
+            }
+            cache.insert(channel.into(), value);
+        }
+        value
     }
     pub fn get(&self, channel: &str) -> Result<Profile, StreamError> {
         self.get_with(channel, now_ms(), || {
@@ -193,12 +257,12 @@ pub async fn chzzk_live_channel_profile(
     app: AppHandle,
     window: Webview,
     channel_id: String,
-) -> ApiResult<Profile> {
+) -> ApiResult<ProfileSnapshot> {
     if let Err(cause) = require_main(&window) {
-        return Err::<Profile, _>(cause).into();
+        return Err::<ProfileSnapshot, _>(cause).into();
     }
     tauri::async_runtime::spawn_blocking(move || {
-        host(&app)?.inner.favorites.profiles.get(&channel_id)
+        host(&app)?.inner.favorites.profiles.snapshot(&channel_id)
     })
     .await
     .unwrap_or_else(|_| Err(unavailable()))
@@ -209,6 +273,31 @@ pub async fn chzzk_live_channel_profile(
 mod tests {
     use super::*;
     const ID: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    #[test]
+    fn presence_refreshes_independently_and_never_calls_network_failure_offline() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = Profiles::new(dir.path());
+        assert_eq!(
+            cache.presence_with(ID, 100, || Ok(Some(true))),
+            (100, Some(true))
+        );
+        assert_eq!(
+            cache.presence_with(ID, 200, || panic!("cached")),
+            (100, Some(true))
+        );
+        assert_eq!(
+            cache.presence_with(ID, 30_100, || Ok(Some(false))),
+            (30_100, Some(false))
+        );
+        assert_eq!(
+            cache.presence_with(ID, 60_100, || Err(unavailable())),
+            (60_100, None)
+        );
+        assert_eq!(
+            cache.presence_with(ID, 60_200, || panic!("backoff")),
+            (60_100, None)
+        );
+    }
     #[test]
     #[ignore = "Explicit anonymous network smoke test; no account or recordings"]
     fn public_portrait_smoke() {

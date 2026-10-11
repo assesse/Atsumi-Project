@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { ApiResult } from "./contracts";
 import type { AutoRecordingEntry } from "./autoRecording";
 export type LiveFavorite = { channelId: string; channelName: string };
-export type LiveChannelProfile = { channelName: string; image: string | null };
+export type LiveChannelProfile = { channelName: string; image: string | null; liveStatus?: "live" | "offline" | "unknown"; checkedAt?: number | null };
 export type LiveChannel = LiveFavorite & { favorite: boolean; scheduled?: AutoRecordingEntry };
 export interface LiveChannelsApi {
   snapshot(): Promise<ApiResult<LiveFavorite[]>>;

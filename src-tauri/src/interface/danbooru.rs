@@ -227,6 +227,8 @@ pub enum DanbooruError {
     TagLimit,
     NotFound,
     RateLimited,
+    AccessDenied,
+    QueryTimedOut,
     Unavailable,
     Protocol,
     DownloadRootMissing,
@@ -311,6 +313,11 @@ impl DanbooruClient {
     ) -> Result<DanbooruSearchPage, DanbooruError> {
         validate_page(request.page, request.page_size)?;
         let tags = normalize_query(&request.tags)?;
+        let _diagnostic = crate::diagnostics::operation("danbooru_search", Some(&tags)).entered();
+        // A fixed order category (never the tag query) lets a report distinguish
+        // per-sort failures from transport failures affecting every request.
+        tracing::info!(diag_stage = search_order_diagnostic(&tags));
+        let started = Instant::now();
         if let Ok(post_id) = tags.parse::<u64>() {
             if post_id == 0 {
                 return Err(DanbooruError::InvalidRequest("postId"));
@@ -330,6 +337,12 @@ impl DanbooruClient {
             url.query_pairs_mut().append_pair("tags", &tags);
         }
         let posts: Vec<RemotePost> = self.get_json(url)?;
+        tracing::info!(
+            diag_stage = "search_results_received",
+            count = posts.len() as u64,
+            pages = request.page as u64,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+        );
         let has_more = posts.len() == request.page_size as usize;
         Ok(DanbooruSearchPage {
             items: posts.into_iter().map(DanbooruPost::from).collect(),
@@ -690,7 +703,7 @@ impl DanbooruClient {
         );
         let body = response.text().map_err(|_| DanbooruError::Unavailable)?;
         map_http_status(status, Some(&body))?;
-        serde_json::from_str(&body).map_err(|_| DanbooruError::Protocol)
+        parse_api_json(&body)
     }
 
     fn wait_for_slot(&self) -> Result<(), DanbooruError> {
@@ -705,6 +718,41 @@ impl DanbooruClient {
         *next = Instant::now() + API_START_INTERVAL;
         Ok(())
     }
+}
+
+fn search_order_diagnostic(tags: &str) -> &'static str {
+    let order = tags
+        .split_whitespace()
+        .find_map(|term| term.strip_prefix("order:"));
+    match order {
+        None | Some("id_desc") => "search_order_newest",
+        Some("id" | "id_asc") => "search_order_oldest",
+        Some("score") => "search_order_score",
+        Some("favcount") => "search_order_favorites",
+        Some("mpixels") => "search_order_resolution",
+        Some("filesize") => "search_order_file_size",
+        Some("tagcount") => "search_order_tag_count",
+        Some("portrait") => "search_order_portrait",
+        Some("landscape") => "search_order_landscape",
+        Some(_) => "search_order_other",
+    }
+}
+
+fn parse_api_json<T: DeserializeOwned>(body: &str) -> Result<T, DanbooruError> {
+    serde_json::from_str(body).map_err(|error| {
+        let code = match error.classify() {
+            serde_json::error::Category::Data => "DANBOORU_JSON_DATA",
+            serde_json::error::Category::Syntax => "DANBOORU_JSON_SYNTAX",
+            serde_json::error::Category::Eof => "DANBOORU_JSON_INCOMPLETE",
+            serde_json::error::Category::Io => "DANBOORU_JSON_IO",
+        };
+        tracing::warn!(
+            diag_stage = "api_decode_failed",
+            error_code = code,
+            bytes = body.len() as u64
+        );
+        DanbooruError::Protocol
+    })
 }
 
 fn diagnostic_transport_error(error: reqwest::Error, started: Instant) -> DanbooruError {
@@ -851,6 +899,18 @@ fn api_error(error: DanbooruError) -> ApiError {
         DanbooruError::RateLimited => (
             "DANBOORU_RATE_LIMIT",
             "Danbooru 요청 제한에 도달했습니다. 잠시 뒤 다시 시도해 주세요.",
+            true,
+            ApiAction::Retry,
+        ),
+        DanbooruError::AccessDenied => (
+            "DANBOORU_ACCESS_DENIED",
+            "Danbooru가 요청을 허용하지 않았습니다. 사이트의 보안 확인 또는 접속 환경을 확인해 주세요.",
+            true,
+            ApiAction::Reconnect,
+        ),
+        DanbooruError::QueryTimedOut => (
+            "DANBOORU_QUERY_TIMEOUT",
+            "Danbooru 서버가 이 검색을 시간 안에 처리하지 못했습니다. 태그나 기간을 좁혀 다시 검색해 주세요.",
             true,
             ApiAction::Retry,
         ),
@@ -1035,7 +1095,51 @@ fn normalize_query(value: &str) -> Result<String, DanbooruError> {
     if normalized.len() > 500 {
         return Err(DanbooruError::InvalidRequest("tags"));
     }
+    // Do not rely on browser date inputs: persisted or directly entered queries
+    // reach this boundary too. Leave Danbooru's relative-date syntax untouched.
+    for term in normalized.split_whitespace() {
+        if let Some(period) = term.trim_start_matches('-').strip_prefix("date:") {
+            validate_absolute_date_period(period)?;
+        }
+    }
     Ok(normalized)
+}
+
+fn validate_absolute_date_period(period: &str) -> Result<(), DanbooruError> {
+    let period = period.trim_start_matches(['<', '>', '=']);
+    let endpoints: Vec<_> = period.split("..").collect();
+    let mut parsed = Vec::new();
+    for endpoint in &endpoints {
+        if endpoint.is_empty()
+            || !endpoint.as_bytes()[0].is_ascii_digit()
+            || !endpoint.contains('-')
+        {
+            continue;
+        }
+        // Danbooru also accepts month precision in hand-entered queries.
+        let expanded_month = (endpoint.len() == 7).then(|| format!("{endpoint}-01"));
+        let endpoint = expanded_month.as_deref().unwrap_or(endpoint);
+        if endpoint.len() != 10
+            || endpoint.as_bytes()[4] != b'-'
+            || endpoint.as_bytes()[7] != b'-'
+            || !endpoint
+                .bytes()
+                .enumerate()
+                .all(|(index, value)| matches!(index, 4 | 7) || value.is_ascii_digit())
+        {
+            return Err(DanbooruError::InvalidRequest("date"));
+        }
+        let date = chrono::NaiveDate::parse_from_str(endpoint, "%Y-%m-%d")
+            .map_err(|_| DanbooruError::InvalidRequest("date"))?;
+        if endpoint.starts_with("0000") {
+            return Err(DanbooruError::InvalidRequest("date"));
+        }
+        parsed.push(date);
+    }
+    if endpoints.len() > 2 || (parsed.len() == 2 && parsed[0] > parsed[1]) {
+        return Err(DanbooruError::InvalidRequest("date"));
+    }
+    Ok(())
 }
 
 fn map_http_status(status: StatusCode, body: Option<&str>) -> Result<(), DanbooruError> {
@@ -1044,13 +1148,28 @@ fn map_http_status(status: StatusCode, body: Option<&str>) -> Result<(), Danboor
     }
     match status {
         StatusCode::NOT_FOUND => Err(DanbooruError::NotFound),
+        StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => Err(DanbooruError::AccessDenied),
         StatusCode::TOO_MANY_REQUESTS => Err(DanbooruError::RateLimited),
         StatusCode::UNPROCESSABLE_ENTITY
             if body.is_some_and(|value| value.contains("TagLimitError")) =>
         {
             Err(DanbooruError::TagLimit)
         }
-        status if status.is_server_error() => Err(DanbooruError::Unavailable),
+        status if status.is_server_error() => {
+            // A successful connection can still exceed Danbooru's DB query
+            // budget. Do not call this a connection failure or change order.
+            let query_timeout = body
+                .and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+                .is_some_and(|value| {
+                    value.get("error").and_then(|v| v.as_str())
+                        == Some("ActiveRecord::QueryCanceled")
+                });
+            Err(if query_timeout {
+                DanbooruError::QueryTimedOut
+            } else {
+                DanbooruError::Unavailable
+            })
+        }
         _ => Err(DanbooruError::Protocol),
     }
 }
@@ -1220,6 +1339,72 @@ fn now_unix_ms() -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn search_rejects_reversed_and_invalid_calendar_dates_before_network() {
+        for query in [
+            "date:2018-10-08..2012-10-08",
+            "date:201888-01-01..2019-01-01",
+            "date:2025-02-29",
+            "date:0000-01-01",
+            "date:2024-13-01",
+            "date:2024-04-31",
+        ] {
+            assert!(
+                matches!(
+                    normalize_query(query),
+                    Err(DanbooruError::InvalidRequest("date"))
+                ),
+                "{query}"
+            );
+        }
+        for query in [
+            "date:2024-02-29",
+            "date:2018-10",
+            "date:2018-10-08..2018-10-08",
+            "date:>=2018-10-08",
+            "date:1_week_ago..today",
+        ] {
+            assert_eq!(normalize_query(query).unwrap(), query);
+        }
+    }
+
+    #[test]
+    fn blocked_requests_are_not_reported_as_empty_search_results_or_dns_failure() {
+        for status in [StatusCode::FORBIDDEN, StatusCode::UNAUTHORIZED] {
+            assert_eq!(
+                map_http_status(status, Some("Just a moment...")),
+                Err(DanbooruError::AccessDenied)
+            );
+        }
+        assert_eq!(
+            api_error(DanbooruError::AccessDenied).code,
+            "DANBOORU_ACCESS_DENIED"
+        );
+    }
+
+    #[test]
+    fn upstream_query_timeout_is_not_a_connection_or_empty_result_error() {
+        let body = r#"{"success":false,"error":"ActiveRecord::QueryCanceled","message":"The database timed out running your query."}"#;
+        assert_eq!(
+            map_http_status(StatusCode::INTERNAL_SERVER_ERROR, Some(body)),
+            Err(DanbooruError::QueryTimedOut)
+        );
+        let error = api_error(DanbooruError::QueryTimedOut);
+        assert_eq!(error.code, "DANBOORU_QUERY_TIMEOUT");
+        assert!(error.message.contains("태그나 기간"));
+        for body in [
+            "Bad gateway",
+            r#"{"message":"ActiveRecord::QueryCanceled"}"#,
+            "{}",
+        ] {
+            assert_eq!(
+                map_http_status(StatusCode::INTERNAL_SERVER_ERROR, Some(body)),
+                Err(DanbooruError::Unavailable)
+            );
+        }
+        assert_eq!(map_http_status(StatusCode::OK, Some("[]")), Ok(()));
+    }
+
     fn post(id: u64) -> DanbooruPost {
         DanbooruPost {
             id,
@@ -1361,6 +1546,73 @@ mod tests {
             has_children: false,
         });
         assert_eq!(converted.large_url, converted.preview_url);
+    }
+
+    #[test]
+    fn search_order_diagnostic_never_contains_user_query() {
+        assert_eq!(
+            search_order_diagnostic("private_artist order:portrait"),
+            "search_order_portrait"
+        );
+        assert_eq!(
+            search_order_diagnostic("private_artist"),
+            "search_order_newest"
+        );
+        assert_eq!(
+            search_order_diagnostic("order:private_data"),
+            "search_order_other"
+        );
+        assert!(parse_api_json::<Vec<RemotePost>>("<html>challenge</html>").is_err());
+        assert!(parse_api_json::<Vec<RemotePost>>(r#"[{"id":"invalid"}]"#).is_err());
+    }
+
+    #[test]
+    #[ignore = "opt-in public Danbooru all-sort transport/parsing matrix; never fetches media"]
+    fn live_all_search_orders_return_parseable_results() {
+        let client = DanbooruClient::new().unwrap();
+        // Optional explicit scope makes it possible to distinguish query cost
+        // from an invalid sort. Never silently add this filter in production.
+        let query =
+            std::env::var("ATSUMI_DANBOORU_TEST_QUERY").unwrap_or_else(|_| "rating:g".into());
+        let mut failures = Vec::new();
+        for order in [
+            "",
+            "id_asc",
+            "score",
+            "favcount",
+            "mpixels",
+            "filesize",
+            "tagcount",
+            "portrait",
+            "landscape",
+        ] {
+            let tags = if order.is_empty() {
+                query.clone()
+            } else {
+                format!("{query} order:{order}")
+            };
+            match client.search(DanbooruSearchRequest {
+                tags,
+                page: 1,
+                page_size: 60,
+            }) {
+                Ok(result) => {
+                    println!("sort={order:?}, count={}", result.items.len());
+                    if result.items.is_empty() {
+                        failures.push(format!("{order}: empty"));
+                    }
+                }
+                Err(error) => {
+                    println!("sort={order:?}, error={error:?}");
+                    failures.push(format!("{order}: {error:?}"));
+                }
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "sort transport/parsing failures: {}",
+            failures.join("; ")
+        );
     }
 
     #[test]

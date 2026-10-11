@@ -31,6 +31,15 @@ const delay = () => act(async () => vi.advanceTimersByTimeAsync(250));
 const row = (index = 0) => host.querySelectorAll<HTMLElement>(".connection-channel-row")[index]!;
 
 describe("numbered channel drafts", () => {
+  it("clears an address inside its input without toggling favorites or connecting", async () => {
+    const view = setup(); await view.render(); await delay();
+    const clear = row().querySelector<HTMLButtonElement>('.connection-channel-draft .connection-channel-clear')!;
+    expect(clear).toHaveAccessibleName("방송 1 주소 지우기");
+    await act(async () => clear.click());
+    expect(view.onInput).toHaveBeenCalledExactlyOnceWith(0, "");
+    expect(document.activeElement).toBe(row().querySelector('input'));
+    expect(view.api.set).not.toHaveBeenCalled(); expect(view.connect).not.toHaveBeenCalled();
+  });
   it("reserves skeleton profiles beside the number, never below the input", async () => {
     const view = setup(); await view.render(["", "", "", ""]);
     for (const item of host.querySelectorAll(".connection-channel-row")) {
@@ -61,10 +70,14 @@ describe("numbered channel drafts", () => {
   });
   it("shares favorite state between an input and saved channel without changing recording", async () => {
     const view = setup(); await view.render(); await delay();
-    const star = row().querySelector<HTMLButtonElement>('button')!;
+    const star = row().querySelector<HTMLButtonElement>('.connection-channel-favorite')!;
+    expect(star.querySelector('svg')).toHaveAttribute('viewBox', '0 0 24 24');
+    expect(star).not.toHaveTextContent(/[★☆]/);
+    expect(star.querySelector('path')).toHaveAttribute('fill', 'none');
     await act(async () => star.click());
     expect(view.api.set).toHaveBeenCalledExactlyOnceWith(A, true);
     expect(star).toHaveAttribute('aria-pressed', 'true');
+    expect(star.querySelector('path')).toHaveAttribute('fill', 'currentColor');
     const saved = host.querySelector<HTMLButtonElement>('.live-channel-star')!;
     expect(saved).toHaveAttribute('aria-pressed', 'true');
     await act(async () => saved.click());
@@ -84,7 +97,7 @@ describe("numbered channel drafts", () => {
     const view = setup(); await view.render([A, A, "https://chzzk.naver.com.evil.test/" + B, "partial"]); await delay();
     expect(view.api.profile).toHaveBeenCalledExactlyOnceWith(A);
     expect(row(0)).toHaveTextContent("채널 A"); expect(row(1)).toHaveTextContent("채널 A");
-    expect(row(2).querySelector("button")).toBeDisabled(); expect(row(3).querySelector("button")).toBeDisabled();
+    expect(row(2).querySelector(".connection-channel-favorite")).toBeDisabled(); expect(row(3).querySelector(".connection-channel-favorite")).toBeDisabled();
   });
   it("respects privacy without loading or revealing profiles", async () => {
     const view = setup(); await view.render([A, "", "", ""], true); await delay();
@@ -107,8 +120,8 @@ describe("numbered channel drafts", () => {
   it("does not optimistically mark a failed favorite write as saved", async () => {
     const view = setup(); await view.render(); await delay();
     view.api.set.mockResolvedValue({ ok: false, error: { code: "OFFLINE", message: "즐겨찾기 저장 실패", retryable: true } });
-    await act(async () => row().querySelector<HTMLButtonElement>('button')!.click());
-    expect(row().querySelector("button")).toHaveAttribute('aria-pressed', 'false');
+    await act(async () => row().querySelector<HTMLButtonElement>('.connection-channel-favorite')!.click());
+    expect(row().querySelector(".connection-channel-favorite")).toHaveAttribute('aria-pressed', 'false');
     expect(host.querySelector('[role=alert]')).toHaveTextContent("즐겨찾기 저장 실패");
   });
 });

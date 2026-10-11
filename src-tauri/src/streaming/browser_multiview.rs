@@ -167,8 +167,28 @@ fn must_mute(
 fn busy() -> StreamError {
     error(
         "MULTIVIEW_BUSY",
-        "마도 구성을 변경 중입니다. 잠시 후 다시 시도해 주세요.",
+        "방송 화면을 준비 중입니다. 잠시 후 다시 시도해 주세요.",
     )
+}
+// configure runs on a worker. A brief reaper/audio transaction should not
+// reject a user's 2 -> 4 layout request, but a stuck owner must stay bounded.
+fn wait_layout_mutation(
+    lock: &Mutex<()>,
+    timeout: std::time::Duration,
+) -> Result<std::sync::MutexGuard<'_, ()>, StreamError> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match lock.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(_)) => return Err(unavailable()),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(busy());
+                }
+                thread::sleep(std::time::Duration::from_millis(20));
+            }
+        }
+    }
 }
 fn invalid() -> StreamError {
     error(
@@ -287,6 +307,23 @@ fn chat_header_script(pane: &Pane) -> String {
 }
 
 impl OfficialBrowser {
+    pub(super) fn refresh_multiview_chats(&self, app: &AppHandle) {
+        let panes = self
+            .inner
+            .multiview
+            .state
+            .lock()
+            .map(|state| state.panes.clone())
+            .unwrap_or_default();
+        for pane in panes
+            .into_iter()
+            .filter(|pane| pane.kind == PaneKind::Chat && !pane.dead.load(Ordering::Acquire))
+        {
+            if let Some(view) = app.get_webview(&pane.id) {
+                let _ = view.reload();
+            }
+        }
+    }
     pub fn multiview_active(&self) -> bool {
         self.inner.multiview.active.load(Ordering::Acquire)
     }
@@ -423,13 +460,19 @@ impl OfficialBrowser {
         app: &AppHandle,
         entries: Vec<MultiViewEntry>,
     ) -> Result<MultiViewSnapshot, StreamError> {
+        let _diagnostic = crate::diagnostics::operation("chzzk_layout_configure", None).entered();
+        tracing::info!(
+            diag_stage = "chzzk_layout_begin",
+            count = entries.len() as u64
+        );
         let entries = validate_entries(entries)?;
-        let _mutation = self
-            .inner
-            .multiview
-            .mutations
-            .try_lock()
-            .map_err(|_| busy())?;
+        let _mutation = wait_layout_mutation(
+            &self.inner.multiview.mutations,
+            std::time::Duration::from_secs(2),
+        )
+        .inspect_err(|_| {
+            tracing::warn!(diag_stage = "chzzk_layout_wait_timeout");
+        })?;
         let lifecycle = self.inner.multiview.lifecycle.load(Ordering::Acquire);
         let _configuration = {
             let _gate = self.inner.contexts.gate.lock().map_err(|_| busy())?;
@@ -440,6 +483,7 @@ impl OfficialBrowser {
                 ));
             }
             if self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0 {
+                tracing::info!(diag_stage = "chzzk_layout_context_busy");
                 return Err(busy());
             }
             self.inner
@@ -481,6 +525,7 @@ impl OfficialBrowser {
                 ));
             }
             if state.account_busy || state.extension_connecting || self.account_window_open(app) {
+                tracing::info!(diag_stage = "chzzk_layout_account_busy");
                 return Err(busy());
             }
             // Reserve while holding the single-view state lock. All ordinary
@@ -492,13 +537,15 @@ impl OfficialBrowser {
         // presentation owner for a receiver now attached to the live layout.
         self.detach_auto_watch(app);
         self.close_multiview_panes(app)?;
-        // Reclaim unused manual receivers before allocating their replacement
-        // set (four background recordings + four new visible videos fit the
-        // registry, but keeping four retired videos as well would not). The
-        // context reconfiguration reservation remains held across this gap.
-        drop(_mutation);
-        self.reap_retired_auto_receivers(app);
-        let _mutation = self.inner.multiview.mutations.lock().map_err(|_| busy())?;
+        // Reclaim only receivers absent from the new layout. Reuse requested
+        // channels without restarting playback and keep the mutation lock held
+        // throughout, so viewport writes/reapers cannot claim this handoff gap.
+        let retained_channels = entries
+            .iter()
+            .filter(|entry| entry.video)
+            .map(|entry| entry.channel_id.clone())
+            .collect();
+        self.reap_retired_auto_receivers_for_layout(app, &retained_channels);
         if self.inner.multiview.lifecycle.load(Ordering::Acquire) != lifecycle {
             self.inner.multiview.active.store(false, Ordering::Release);
             return Err(busy());
@@ -623,6 +670,7 @@ impl OfficialBrowser {
             .map_err(|_| unavailable())?
             .entries = entries;
         self.queue_channel_names(app);
+        tracing::info!(diag_stage = "chzzk_layout_ready");
         self.multiview_snapshot()
     }
 
@@ -676,6 +724,37 @@ impl OfficialBrowser {
         view.eval(&script).is_ok()
     }
 
+    pub(super) fn reusable_auto_target(
+        &self,
+        channel: &str,
+    ) -> Result<Option<(Self, bool, bool)>, StreamError> {
+        // The scheduler's fast path must share the creation/reaper transaction.
+        // Otherwise a retired receiver may disappear between lookup and claim.
+        let _receivers = self
+            .inner
+            .multiview
+            .receivers
+            .lock()
+            .map_err(|_| unavailable())?;
+        for host in self.inner.contexts.hosts() {
+            let state = host.inner.view.lock().map_err(|_| unavailable())?;
+            if !host.inner.detached.load(Ordering::Acquire)
+                && !host.multiview_active()
+                && state.open
+                && state.channel.as_deref() == Some(channel)
+            {
+                let active = state.recording.is_some() || state.arm.is_some();
+                drop(state);
+                let automatic = host.label().starts_with("chzzk-auto-");
+                if automatic {
+                    self.claim_auto_receiver(host.label());
+                }
+                return Ok(Some((host, automatic, !active)));
+            }
+        }
+        Ok(None)
+    }
+
     /// Uses the same official ingress/capture bridge as visible panes. This
     /// controller is deliberately not registered in the UI's multiview layout.
     pub(super) fn open_auto_view(
@@ -697,8 +776,12 @@ impl OfficialBrowser {
         // Serialize lookup + creation across scheduler and live layout opens.
         let _creation = self.inner.multiview.receivers.lock().map_err(|_| busy())?;
         if let Some(capture) = self.shared_receiver(channel) {
+            if !presentation_owned {
+                self.claim_auto_receiver(capture.label());
+            }
             return Ok(capture);
         }
+        tracing::info!(diag_stage = "chzzk_receiver_create");
         let id = format!("chzzk-auto-{}", uuid::Uuid::new_v4().simple());
         let capture = self.pane_controller(&id, channel)?;
         let pane = Arc::new(Pane {
@@ -741,6 +824,7 @@ impl OfficialBrowser {
             // A scheduler claiming this receiver removes the retired marker.
             self.retire_auto_receiver(capture.label());
         }
+        tracing::info!(diag_stage = "chzzk_receiver_ready");
         Ok(capture)
     }
     fn shared_receiver(&self, channel: &str) -> Option<Self> {
@@ -769,6 +853,7 @@ impl OfficialBrowser {
         if !self.label().starts_with("chzzk-auto-") {
             return;
         }
+        tracing::info!(diag_stage = "chzzk_receiver_close");
         if let Ok(root) = self.capture_context(None) {
             root.forget_auto_watch_pane(self.label());
         }
@@ -790,9 +875,11 @@ impl OfficialBrowser {
             return Err(busy());
         }
         let parent = app.get_window("main").ok_or_else(unavailable)?;
+        self.prepare_profile_session(app)?;
         let profile = self.inner.data_dir.join("chzzk-browser-profile");
         std::fs::create_dir_all(&profile).map_err(|_| unavailable())?;
         let nav = pane.clone();
+        let nav_app = app.clone();
         let page = pane.clone();
         let page_host = self.clone();
         let popup = pane.clone();
@@ -846,11 +933,15 @@ impl OfficialBrowser {
             ""
         })
         .on_navigation(move |url| {
+            if !nav.dead.load(Ordering::Acquire) && host_view::login_navigation(url) {
+                host_view::queue_login(&nav_app);
+                return false;
+            }
             let allowed = !nav.dead.load(Ordering::Acquire)
                 && ((url.as_str() == "about:blank" && nav.initial_blank.load(Ordering::Acquire))
                     || exact_navigation(url, &nav.channel, nav.kind));
             if !allowed {
-                set_status(&nav, "navigation_blocked_exit_mado_for_login");
+                set_status(&nav, "navigation_blocked");
             }
             allowed
         })
@@ -1061,6 +1152,7 @@ impl OfficialBrowser {
         app: &AppHandle,
         expected_epoch: Option<u64>,
     ) -> Result<(), StreamError> {
+        let _diagnostic = crate::diagnostics::operation("chzzk_layout_close", None).entered();
         let _configuration = {
             let _gate = self.inner.contexts.gate.lock().map_err(|_| busy())?;
             if !self.ui_active_ids().is_empty() {
@@ -1093,6 +1185,7 @@ impl OfficialBrowser {
         }
         self.close_multiview_panes(app)?;
         self.inner.multiview.active.store(false, Ordering::Release);
+        tracing::info!(diag_stage = "chzzk_layout_closed");
         Ok(())
     }
 
@@ -1599,6 +1692,50 @@ fn initialize_native_pane(_: &Webview, _: Arc<Pane>, _: Vec<String>) -> Result<(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn layout_mutation_wait_is_bounded_and_recovers_after_short_contention() {
+        let lock = Mutex::new(());
+        let held = lock.lock().unwrap();
+        assert_eq!(
+            wait_layout_mutation(&lock, std::time::Duration::ZERO)
+                .unwrap_err()
+                .code,
+            "MULTIVIEW_BUSY"
+        );
+        std::thread::scope(|scope| {
+            let waiting = scope
+                .spawn(|| wait_layout_mutation(&lock, std::time::Duration::from_secs(1)).is_ok());
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            drop(held);
+            assert!(waiting.join().unwrap());
+        });
+    }
+
+    #[test]
+    fn scheduler_fast_path_claims_retired_receiver_and_rechecks_detached_and_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(dir.path().into()).unwrap();
+        let child = root
+            .pane_controller(&format!("chzzk-auto-{}", uuid::Uuid::new_v4().simple()), A)
+            .unwrap();
+        child.inner.view.lock().unwrap().open = true;
+        root.retire_auto_receiver(child.label());
+        let (found, automatic, start) = root.reusable_auto_target(A).unwrap().unwrap();
+        assert_eq!(found.label(), child.label());
+        assert!(automatic && start);
+        assert!(root
+            .inner
+            .multiview
+            .retired_auto_panes
+            .lock()
+            .unwrap()
+            .is_empty());
+        child.inner.view.lock().unwrap().open = false;
+        assert!(root.reusable_auto_target(A).unwrap().is_none());
+        child.inner.view.lock().unwrap().open = true;
+        child.inner.detached.store(true, Ordering::Release);
+        assert!(root.reusable_auto_target(A).unwrap().is_none());
+    }
     use super::*;
     const A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     fn entry(id: &str, video: bool, chat: bool) -> MultiViewEntry {

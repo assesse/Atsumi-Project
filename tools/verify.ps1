@@ -159,7 +159,9 @@ try {
     "-File", $frontendRunner
   )
   Invoke-LoggedNative -Label "Pinned recording merge tools" -FilePath $powershellPath -Arguments @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", (Join-Path $PSScriptRoot "prepare_media_tools.ps1"))
-  Invoke-LoggedNative -Label "Frontend tests" -FilePath $powershellPath -Arguments ($frontendPrefix + @("test"))
+  # Layout cases launch isolated Chromium instances. Keep those and jsdom roots
+  # bounded so a large workstation does not overload timers/profile cleanup.
+  Invoke-LoggedNative -Label "Frontend tests" -FilePath $powershellPath -Arguments ($frontendPrefix + @("test", "--maxWorkers=2"))
   Invoke-LoggedNative -Label "Frontend typecheck" -FilePath $powershellPath -Arguments ($frontendPrefix + @("typecheck"))
   Invoke-LoggedNative -Label "Frontend production build" -FilePath $powershellPath -Arguments ($frontendPrefix + @("build"))
 

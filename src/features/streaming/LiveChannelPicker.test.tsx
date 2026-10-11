@@ -19,6 +19,47 @@ function setup(inputs = ["", "", "", ""], multiple = false, privacy = false) {
 }
 const click = async (name: string) => act(async () => container.querySelector<HTMLButtonElement>('[aria-label="' + name + '"]')!.click());
 describe("live channel selector", () => {
+  it("aligns both icon controls in the same action row and labels reservations consistently", async () => {
+    const view = setup();
+    view.auto.snapshot.mockResolvedValue(ok({ channels: [{ ...recording, status: "waiting", recordingId: null }], captureChat: true, error: null }));
+    await view.render();
+    expect(container.querySelectorAll('.live-channel-actions')).toHaveLength(2);
+    for (const actions of container.querySelectorAll('.live-channel-actions')) {
+      expect(actions.querySelectorAll('button > svg')).toHaveLength(2);
+      for (const icon of actions.querySelectorAll('svg')) expect(icon.getAttribute('viewBox')).toBe('0 0 24 24');
+    }
+    const labels = [...container.querySelectorAll('.live-channel-choice small')].map(label => label.textContent);
+    expect(labels).toEqual(['녹화 예약 됨', '예약 꺼짐']);
+    view.auto.update.mockResolvedValue(ok({ channels: [{ ...recording, status: "disabled", enabled: false, recordingId: null }], captureChat: true, error: null }));
+    await click("예약 방송 자동 녹화 끄기");
+    expect([...container.querySelectorAll('.live-channel-choice small')].map(label => label.textContent)).toEqual(['예약 꺼짐', '예약 꺼짐']);
+  });
+  it("toggles automatic recording with the same icon without altering favorites or playback", async () => {
+    const view = setup(); await view.render();
+    view.auto.update.mockResolvedValue(ok({ channels: [{ ...recording, enabled: false, status: "disabled" }], captureChat: true, error: null }));
+    await click("예약 방송 자동 녹화 끄기");
+    expect(view.auto.update).toHaveBeenCalledExactlyOnceWith(A, { action: "enabled", enabled: false });
+    expect(container.querySelector('[aria-label="예약 방송 자동 녹화 켜기"]')).toHaveAttribute("aria-pressed", "false");
+    view.auto.add.mockResolvedValue(ok({ channels: [recording, { ...recording, channelId: B, channelName: "즐겨찾기 방송", status: "waiting", recordingId: null }], captureChat: true, error: null }));
+    await click("즐겨찾기 방송 자동 녹화 켜기");
+    expect(view.auto.add).toHaveBeenCalledExactlyOnceWith(B);
+    expect(view.api.set).not.toHaveBeenCalled(); expect(view.onInputs).not.toHaveBeenCalled();
+  });
+  it("refreshes live/offline presence every 30 seconds, independently from reservation state", async () => {
+    const view = setup();
+    view.api.profile.mockResolvedValueOnce(ok({ channelName: "", image: null, liveStatus: "live" })).mockResolvedValueOnce(ok({ channelName: "", image: null, liveStatus: "offline" }));
+    await view.render();
+    expect(container.querySelectorAll('.live-channel-presence.is-live')).toHaveLength(1);
+    expect(container.querySelectorAll('.live-channel-presence.is-offline')).toHaveLength(1);
+    view.api.profile.mockResolvedValue(ok({ channelName: "", image: null, liveStatus: "offline" }));
+    await act(async () => vi.advanceTimersByTimeAsync(30_000));
+    expect(view.api.profile).toHaveBeenCalledTimes(4);
+    expect(container.querySelectorAll('.live-channel-presence.is-live')).toHaveLength(0);
+  });
+  it("adds a favorite to a new dynamic row when fewer than four broadcasts are selected", async () => {
+    const view = setup([A], true); await view.render(); await click("즐겨찾기 방송 선택");
+    expect(view.onInputs).toHaveBeenCalledExactlyOnceWith([A, B]);
+  });
   it("keeps available favorites during reservation initialization without raising an error", async () => {
     const view = setup();
     view.auto.snapshot.mockResolvedValue({ ok: false, error: { code: "BROWSER_INITIALIZING", message: "준비 중", retryable: true } });
@@ -42,6 +83,47 @@ describe("live channel selector", () => {
     expect(view.api.set).toHaveBeenCalledExactlyOnceWith(A, false);
     expect(container.querySelectorAll(".live-channel-row")).toHaveLength(2); expect(container).toHaveTextContent("녹화 중");
     expect(view.auto.update).not.toHaveBeenCalled();
+  });
+  it("hides inactive unfavorited legacy rows without deleting their saved reservation", async () => {
+    const view = setup();
+    view.auto.snapshot.mockResolvedValue(ok({ channels: [recording, { ...recording, channelId: C, channelName: "옛 예약", enabled: false, status: "disabled", recordingId: null }, { ...recording, channelId: D, channelName: "마무리 방송", enabled: false, status: "stopping" }], captureChat: true, error: null }));
+    await view.render();
+    expect(container.querySelectorAll(".live-channel-row")).toHaveLength(3);
+    expect(container).not.toHaveTextContent("옛 예약");
+    expect(container).toHaveTextContent("마무리 방송");
+    expect(view.auto.update).not.toHaveBeenCalled();
+    expect(view.api.set).not.toHaveBeenCalled();
+  });
+  it("shows automatic recording failures instead of calling them a normal reservation", async () => {
+    const view = setup();
+    view.auto.snapshot.mockResolvedValue(ok({ channels: [{ ...recording, status: "attention", recordingId: null, message: "영상 준비에 실패했습니다." }], captureChat: true, error: null }));
+    await view.render();
+    expect(container.querySelector('.live-channel-choice small.is-problem')).toHaveTextContent("녹화 확인 필요");
+    expect(container.querySelector('.live-channel-choice small.is-problem')).toHaveAttribute("title", "영상 준비에 실패했습니다.");
+  });
+  it("keeps hidden legacy reservations removable in the management popup and returns focus without stopping", async () => {
+    const view = setup();
+    const legacy = { ...recording, channelId: C, channelName: "옛 예약", enabled: false, status: "disabled", recordingId: null };
+    view.auto.snapshot.mockResolvedValue(ok({ channels: [recording, legacy], captureChat: true, error: null }));
+    await view.render();
+    expect(container).not.toHaveTextContent("옛 예약");
+    const opener = container.querySelector<HTMLButtonElement>('[aria-label="자동 녹화 관리"]')!;
+    await act(async () => { opener.focus(); opener.click(); });
+    const dialog = document.querySelector('dialog[aria-label="자동 녹화 관리"]')!;
+    expect(dialog).toHaveAttribute("open");
+    expect(dialog).toHaveAttribute("data-native-preserve-video", "true");
+    expect(dialog).toHaveTextContent("옛 예약");
+    expect(dialog.querySelector('[data-tour="chzzk-auto-register"]')).toBeNull();
+    expect(dialog.querySelector('.auto-record-stop')).toHaveTextContent("녹화 중지");
+    view.auto.update.mockResolvedValue(ok({ channels: [recording], captureChat: true, error: null }));
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="옛 예약 등록 해제"]')!.click());
+    expect(view.auto.update).toHaveBeenCalledExactlyOnceWith(C, { action: "remove" });
+    expect(dialog).not.toHaveTextContent("옛 예약");
+    await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="자동 녹화 관리 닫기"]')!.click());
+    expect(document.querySelector('dialog[aria-label="자동 녹화 관리"]')).toBeNull();
+    expect(document.activeElement).toBe(opener);
+    expect(view.auto.update).toHaveBeenCalledTimes(1);
+    expect(view.onInputs).not.toHaveBeenCalled();
   });
   it("does not reshuffle a reservation when its favorite switch changes", async () => {
     const view = setup();
@@ -80,7 +162,7 @@ describe("live channel selector", () => {
     const view = setup(); await view.render();
     expect(container.querySelectorAll('.live-channel-choice .live-channel-avatar img')).toHaveLength(2);
     expect(container.querySelectorAll('.live-channel-row.is-favorite')).toHaveLength(2);
-    expect(container.querySelector('.live-channel-choice .live-channel-identity')).toHaveTextContent('예약 방송녹화 중');
+    expect(container.querySelector('.live-channel-choice .live-channel-identity')).toHaveTextContent('예약 방송방송 확인 중녹화 중');
     expect(view.api.profile).toHaveBeenCalledTimes(2);
     await act(async () => vi.advanceTimersByTimeAsync(9000));
     expect(view.api.profile).toHaveBeenCalledTimes(2);

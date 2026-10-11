@@ -24,7 +24,8 @@ const scenes = [false, true].flatMap(collapsed => (["hitomi", "chzzk"] as const)
   name: `${source}-${collapsed ? "collapsed" : "expanded"}`,
   html: renderToStaticMarkup(<div id="root"><div className={`app-shell streaming-shell${collapsed ? " sidebar-collapsed" : ""}`}>
     <SideRail source={source} view={source === "chzzk" ? "recordings" : "explore"} collapsed={collapsed} autoFindCount={0} attentionCount={0}
-      privacyMode onPrivacyModeToggle={noop} onSettings={noop} onNavigate={noop} onSourceChange={noop} onToggle={noop} />
+      privacyMode onPrivacyModeToggle={noop} onSettings={noop} onNavigate={noop} onSourceChange={noop} onToggle={noop}
+      onOpenLiveChannels={source === 'chzzk' ? noop : undefined} liveChannelsOpen={!collapsed} />
     <main className="streaming-workspace">{source === "chzzk" ? <RecordingLibrary recordings={records} selectedId="fixture-0" disabled={false} privacy={false}
       retrying={false} openingFolder={false} onSelect={noop} onFolder={noop} onReplay={noop} onRetryMerge={noop} onDelete={async () => ({ deletedIds: [], failures: [] })} />
       : <h1>갤러리 탐색</h1>}</main>

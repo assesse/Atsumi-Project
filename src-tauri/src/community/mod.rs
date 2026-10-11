@@ -1,6 +1,7 @@
 //! Community is independent of the library DB and its reset lifecycle.
 //! Public reads carry no user token. Only BeginWriting may issue an identity.
 //! Tokens never cross IPC into the webview, and no device identifier is sent.
+pub(crate) mod feedback;
 #[cfg(test)]
 mod tests;
 mod vault;
@@ -144,6 +145,9 @@ fn safe_server_error(status: u16, value: &Value) -> String {
         "anonymous_provider_disabled" => "서버의 익명 작성 기능이 아직 활성화되지 않았습니다.",
         "captcha_failed" => {
             "서버에서 봇 방지 확인을 요구합니다. 현재 앱의 작성 기능으로는 확인할 수 없습니다."
+        }
+        "Report limit reached. Try later." => {
+            "진단 제보 한도에 도달했습니다. 나중에 다시 보내 주세요."
         }
         _ if status == 429 => "요청이 많습니다. 잠시 후 다시 시도해 주세요.",
         _ if status == 401 || status == 403 => {

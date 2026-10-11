@@ -48,6 +48,8 @@ pub mod recording_profile;
 mod screenshot;
 #[path = "browser_service_popup.rs"]
 mod service_popup;
+#[path = "browser_session.rs"]
+mod session;
 pub use host_view::{BrowserClip, BrowserViewport, InstallerBrowser};
 
 use super::{
@@ -521,7 +523,7 @@ fn sanitized_capture_diagnostics(value: Option<Value>) -> Option<Value> {
         json!({"selected":source["selected"].as_bool().unwrap_or(false), "tracks":tracks})
     }).collect();
     let last_stop = value.get("lastStop").filter(|v| v.is_object()).map(|v| json!({
-        "reason": match v["reason"].as_str() { Some("video_ended") => "video_ended", Some("source_changed") => "source_changed", _ => "other" },
+        "reason": v["reason"].as_str().filter(|value| crate::diagnostics::safe_capture_reason(value)).unwrap_or("other"),
         "ended": v["ended"].as_bool().unwrap_or(false), "sourceAttached":v["sourceAttached"].as_bool().unwrap_or(false),
         "sourceClosed":v["sourceClosed"].as_bool().unwrap_or(false), "readyState":v["readyState"].as_u64().unwrap_or(0).min(4)
     }));
@@ -534,6 +536,7 @@ fn sanitized_capture_diagnostics(value: Option<Value>) -> Option<Value> {
     }));
     Some(
         json!({"reason":reason, "installed":value["installed"].as_bool().unwrap_or(false),
+        "width":value["width"].as_u64().unwrap_or(0).min(16384), "height":value["height"].as_u64().unwrap_or(0).min(16384),
         "autoPreparation": match value["autoPreparation"].as_str() {
             Some("disabled" | "waiting_player" | "standard_quality_selected" | "standard_quality_failed" | "standard_quality_ambiguous" | "video_ready") => value["autoPreparation"].as_str(),
             _ => None,
@@ -1414,6 +1417,8 @@ impl OfficialBrowser {
                 let _ = handle.join();
             }
         }
+        auth::cancel(app);
+        session::release(self, app);
     }
     fn interrupt(&self, reason: &str) {
         self.interrupt_matching(reason, None);
@@ -1621,7 +1626,14 @@ impl OfficialBrowser {
             }
             if diagnostics.as_ref().map(|d| &d["reason"])
                 != state.capture_diagnostics.as_ref().map(|d| &d["reason"])
+                || diagnostics.as_ref().map(|d| &d["sources"])
+                    != state.capture_diagnostics.as_ref().map(|d| &d["sources"])
+                || diagnostics.as_ref().map(|d| &d["lastStop"])
+                    != state.capture_diagnostics.as_ref().map(|d| &d["lastStop"])
             {
+                if let Some(value) = &diagnostics {
+                    diagnostics::capability(value);
+                }
                 tracing::info!(
                     channel_id = channel,
                     webview = self.label(),
@@ -2074,7 +2086,6 @@ impl OfficialBrowser {
                     .replay_assets
                     .submit_channel(Path::new(&finished.output_dir), &finished.channel_id);
                 let interrupted = finished.status != BrowserRecordingStatus::Stopped;
-                let ending = self.finish_reason(&finished, reason.as_deref().unwrap_or("unknown"));
                 let continuation = {
                     let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
                     let can_continue = matches!(
@@ -2110,6 +2121,7 @@ impl OfficialBrowser {
                         command
                     })
                 };
+                let ending = self.finish_reason(&finished, reason.as_deref().unwrap_or("unknown"));
                 self.stop_chat();
                 self.inner.contexts.notice(if continuation.is_some() {
                     "영상 형식이 변경되어 새 파일로 이어 저장합니다."
@@ -2123,7 +2135,7 @@ impl OfficialBrowser {
                     "녹화를 종료했습니다."
                 });
                 Ok(
-                    json!({"stopped":true,"interrupted":interrupted,"status":finished.status,"continuation":continuation}),
+                    json!({"stopped":true,"interrupted":interrupted,"status":finished.status,"endingReason":ending,"continuation":continuation}),
                 )
             }
             _ => Err(unavailable()),

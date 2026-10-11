@@ -36,6 +36,7 @@ import type { AppUpdateCheckResult } from "../update/useAppUpdater";
 import { FluentIcon } from "./FluentIcon";
 import { DropdownSelect } from "./DropdownSelect";
 import { AutostartSetting } from "./AutostartSetting";
+import type { ContentSource } from "../app/workspaceRegistry";
 import { useSettingsAutosave } from "../hooks/useSettingsAutosave";
 import "./SettingsDialog.css";
 
@@ -46,7 +47,7 @@ type SettingsDialogProps = {
   error: ApiError | null;
   onClose: () => void;
   onSave: (patch: SettingsPatch) => Promise<boolean>;
-  onReplayTutorial?: () => void;
+  onReplayTutorial?: (source?: ContentSource) => void;
   tutorialSourceLabel?: string;
   onChooseDownloadRoot?: () => Promise<ApiResult<string | null>>;
   onLoadStorageUsage: () => Promise<ApiResult<StorageUsageSnapshot>>;
@@ -63,8 +64,6 @@ type SettingsDialogProps = {
 
 const DEFAULT_FOLDER_NAME_TEMPLATE = "[{artist}] {title} [{group}] {id}";
 const EXCLUSION_RENDER_BATCH = 50;
-const PROJECT_URL = "https://github.com/assesse/Atsumi-Project";
-const FEEDBACK_URL = `${PROJECT_URL}/issues/new/choose`;
 const exclusionReasonLabel = (kind: ExplorationExclusion["reasons"][number]["kind"]): string => ({
   manual: "직접 제외",
   duplicate_hidden: "중복 숨김",
@@ -85,23 +84,6 @@ const formatBytes = (bytes: number): string => {
 const storagePercent = (part: number, total: number): number => (
   total > 0 ? Math.min(100, Math.max(0, (part / total) * 100)) : 0
 );
-
-const copyText = async (value: string) => {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-    return;
-  }
-  const textarea = document.createElement("textarea");
-  textarea.value = value;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.opacity = "0";
-  document.body.append(textarea);
-  textarea.select();
-  const copied = document.execCommand("copy");
-  textarea.remove();
-  if (!copied) throw new Error("clipboard unavailable");
-};
 
 function SettingCopy({ title, summary, detail }: {
   title: string;
@@ -222,7 +204,6 @@ export function SettingsDialog({
   onClose,
   onSave,
   onReplayTutorial,
-  tutorialSourceLabel = "현재 서비스",
   onChooseDownloadRoot,
   onLoadStorageUsage,
   onPreviewLayout,
@@ -258,7 +239,6 @@ export function SettingsDialog({
   const folderPreviewRequest = useRef(0);
   const [maintenanceBusy, setMaintenanceBusy] = useState<MaintenanceAction["kind"] | null>(null);
   const [maintenanceMessage, setMaintenanceMessage] = useState("");
-  const [informationMessage, setInformationMessage] = useState("");
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateMessage, setUpdateMessage] = useState("");
   const [rebuildOptions, setRebuildOptions] = useState({ thumbnail: true, duplicate: false, internal: false, autoFind: false });
@@ -295,7 +275,6 @@ export function SettingsDialog({
       setDraft(restored);
       setFolderChoiceError("");
       setMaintenanceMessage("");
-      setInformationMessage("");
       setUpdateMessage("");
       setActiveTab("general");
       setDanbooruDraft(loadDanbooruSearchPreferences());
@@ -541,24 +520,6 @@ export function SettingsDialog({
     setMaintenanceMessage(result.ok ? result.data.completedSteps.join(" · ") : result.error.message);
   };
 
-  const copyInformation = async (kind: "feedback" | "diagnostics") => {
-    const value = kind === "feedback"
-      ? FEEDBACK_URL
-      : [
-          "Atsumi diagnostic summary",
-          `version=${packageMetadata.version}`,
-          `runtime=${"__TAURI_INTERNALS__" in window ? "desktop" : "browser-preview"}`,
-          `project=${PROJECT_URL}`,
-          "privateDataIncluded=false",
-        ].join("\n");
-    try {
-      await copyText(value);
-      setInformationMessage(kind === "feedback" ? "피드백 접수 주소를 복사했습니다." : "개인정보가 제외된 진단 정보를 복사했습니다.");
-    } catch {
-      setInformationMessage("클립보드에 복사하지 못했습니다.");
-    }
-  };
-
   const checkForUpdates = async () => {
     if (updateCheckBusy) return;
     setUpdateCheckBusy(true);
@@ -696,15 +657,19 @@ export function SettingsDialog({
                   </div>
                 </div>
                 <hr className="settings-divider" hidden={activeTab !== "general"} />
-                <AutostartSetting active={open && activeTab === "general"} />
                 {onReplayTutorial ? <div className="setting-row" hidden={activeTab !== "general"}>
-                  <div><strong>튜토리얼</strong><span>{tutorialSourceLabel}</span></div>
-                  <button type="button" className="text-button" disabled={loading || saving || folderChoosing} onClick={() => { close(); onReplayTutorial(); }}>사용 안내</button>
+                  <div><strong>튜토리얼</strong></div>
+                  <DropdownSelect ariaLabel="튜토리얼 다시 보기" value="" options={[
+                    { value: "", label: "선택하여 다시 보기" },
+                    { value: "hitomi", label: "Hitomi" }, { value: "danbooru", label: "Danbooru" }, { value: "chzzk", label: "CHZZK" },
+                  ]} onChange={(source) => {
+                    if (!loading && !saving && !folderChoosing && (source === "hitomi" || source === "danbooru" || source === "chzzk")) { close(); onReplayTutorial(source); }
+                  }} />
                 </div> : null}
+                <AutostartSetting active={open && activeTab === "general"} />
                 <div className="setting-row" hidden={activeTab !== "general"}>
                   <div>
                     <strong>프라이버시 모드 상태로 시작</strong>
-                    <span>Hitomi·Danbooru에 적용</span>
                   </div>
                   <label className="setting-checkbox">
                     <input
@@ -817,7 +782,7 @@ export function SettingsDialog({
                 <section className="settings-about-panel" aria-labelledby="settings-about-title" hidden={activeTab !== "general"}>
                   <header>
                     <div>
-                      <span className="eyebrow">ABOUT &amp; FEEDBACK</span>
+                      <span className="eyebrow">ABOUT</span>
                       <strong id="settings-about-title">프로그램 정보</strong>
                     </div>
                     <span className="settings-about-version">v{packageMetadata.version}</span>
@@ -827,13 +792,10 @@ export function SettingsDialog({
                     <div><dt>제작</dt><dd>assesse · Atsumi contributors</dd></div>
                     <div><dt>프로젝트</dt><dd>github.com/assesse/Atsumi-Project</dd></div>
                   </dl>
-                  <p>버그와 기능 제안은 GitHub Issues에서 받습니다. 복사되는 진단 정보에는 앨범 제목, 태그, 파일 경로, 데이터베이스 내용이 포함되지 않습니다.</p>
                   <div className="settings-about-actions">
                     <button type="button" className="text-button primary" disabled={updateCheckBusy} onClick={() => void checkForUpdates()}>{updateCheckBusy ? "확인 중" : "업데이트 확인"}</button>
-                    <button type="button" className="text-button" onClick={() => void copyInformation("feedback")}>피드백 주소 복사</button>
-                    <button type="button" className="text-button" onClick={() => void copyInformation("diagnostics")}>진단 정보 복사</button>
                   </div>
-                  <p className="settings-about-message" role="status" aria-live="polite">{updateMessage || informationMessage}</p>
+                  <p className="settings-about-message" role="status" aria-live="polite">{updateMessage}</p>
                 </section>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <div><strong>앨범 카드 최대 열 수</strong><span>창이 넓어도 설정한 열 수를 넘지 않습니다</span></div>

@@ -3,15 +3,17 @@ import { hasCompletedMerge } from "./RecordingPlayback";
 
 export function recordingStatus(recording: BrowserRecording): string {
   if (recording.mediaRemovedAt != null) return "영상 없음";
-  if (recording.summaryPending || recording.storageCheckPending) return "확인 중";
+  // Cached, settled history defers disk validation until playback. That is not
+  // a running task: retain its saved outcome without waking every archive disk.
+  if (recording.summaryPending) return "기록 불러오는 중";
   if (recording.status === "recording") return "녹화 중";
   if (recording.status === "failed" || recording.partial) return "저장 오류";
   if (recording.ending?.reason === "checking") return "종료 확인 중";
-  if (recording.status === "interrupted") return "중단된 파일";
+  if (recording.status === "interrupted") return "중단됨";
   if (emptyRecordingAttempt(recording)) return "영상 없음";
   if (recording.merge?.status === "failed") return "처리 실패";
   if (recording.merge?.status === "blocked") return "처리 대기";
-  if (hasCompletedMerge(recording)) return "정상 파일";
+  if (hasCompletedMerge(recording)) return "정상";
   if (recording.merge?.status === "complete") return "확인 필요";
   return "재생 준비 중";
 }

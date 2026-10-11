@@ -112,7 +112,8 @@ impl DeferredBrowser {
             let mut slot = owner.inner.0.lock().unwrap_or_else(|e| e.into_inner());
             match built {
                 Ok(Ok(browser)) if !slot.closed => {
-                    app.manage(super::replay::ReplayService::new(&data_dir, browser.capture_store()));
+                    app.manage(super::replay::ReplayService::new(&data_dir, browser.capture_store())
+                        .with_development_url(app.config().build.dev_url.clone()));
                     // The close flag and publication share this lock.
                     let _ = slot.publish(browser.clone());
                     // Only starts controllers; no network/disk wait under this lock.

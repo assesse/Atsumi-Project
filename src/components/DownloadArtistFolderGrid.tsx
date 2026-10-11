@@ -7,10 +7,11 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type RefObject,
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import type { Gallery, GalleryId } from "../core/types";
+import type { Gallery, GalleryDisplayMode, GalleryId } from "../core/types";
 import { galleryPreviewPreset, galleryPreviewPresetStyle } from "../layout/galleryPreviewPresets";
 import {
   galleryGroupStorageKey,
@@ -27,6 +28,7 @@ import {
 } from "../thumbnail";
 import { GalleryCoverBackgroundPreloader } from "../thumbnail/backgroundCoverPreloader";
 import { GalleryThumbnail } from "./GalleryThumbnail";
+import { DownloadArtistFolderWindow } from "./DownloadArtistFolderWindow";
 
 type DownloadArtistFolderGridProps = {
   groups: readonly GalleryGroup[];
@@ -38,7 +40,12 @@ type DownloadArtistFolderGridProps = {
   onToggle: (key: string) => void;
   onPreviewItems?: (ids: readonly GalleryId[]) => void;
   onStopPreviewItems?: (ids: readonly GalleryId[]) => void;
-  renderGrid: (items: Gallery[], ariaLabel: string) => ReactNode;
+  renderGrid: (items: Gallery[], ariaLabel: string, columns?: number) => ReactNode;
+  contentsRef?: RefObject<HTMLElement | null>;
+  displayMode?: GalleryDisplayMode;
+  maximumColumns?: number;
+  onColumnsChange?: (columns: number) => void;
+  suspended?: boolean;
   thumbnailClient?: ThumbnailClient;
   coverRetainer?: GalleryCoverSessionRetainer;
 };
@@ -104,6 +111,11 @@ export function DownloadArtistFolderGrid({
   onPreviewItems,
   onStopPreviewItems,
   renderGrid,
+  contentsRef,
+  displayMode = "detail",
+  maximumColumns = 4,
+  onColumnsChange,
+  suspended = false,
   thumbnailClient,
   coverRetainer,
 }: DownloadArtistFolderGridProps) {
@@ -116,6 +128,9 @@ export function DownloadArtistFolderGrid({
   const safeColumns = Math.max(1, Math.trunc(columns));
   const hoverPreviewLimit = previewCountForColumns(safeColumns);
   const preset = galleryPreviewPreset(previewWidth);
+  // Older callers may still carry several expanded keys. Render only one
+  // window even in that case, never a row-expanding grid of folder contents.
+  const openedGroup = groups.find((group) => !collapsedGroupKeys.has(galleryGroupStorageKey("downloads", group)));
   const rows = Array.from(
     { length: Math.ceil(groups.length / safeColumns) },
     (_, rowIndex) => groups.slice(rowIndex * safeColumns, (rowIndex + 1) * safeColumns),
@@ -132,6 +147,10 @@ export function DownloadArtistFolderGrid({
     group.key,
     savedArtistPreviewGalleries(group.items, previewGalleryIdsByArtist?.get(group.label.trim().toLocaleLowerCase()), Math.max(12, hoverPreviewLimit * 2)),
   ])), [groups, previewGalleryIdsByArtist, hoverPreviewLimit]);
+  // Hover/open/selection should not recount every tag in the downloaded library.
+  const groupTagSummaries = useMemo(() => new Map(groups.map((group) => [
+    group.key, summarizeArtistFolderTags(group.items, favoriteMetadata, 6),
+  ])), [groups, favoriteMetadata]);
   const overlayPreviews = useMemo(
     () => (previewedGroup ? groupPreviews.get(previewedGroup.key) ?? [] : []).slice(0, hoverPreviewLimit),
     [hoverPreviewLimit, previewedGroup, groupPreviews],
@@ -237,9 +256,9 @@ export function DownloadArtistFolderGrid({
             {row.map((group, columnIndex) => {
               const groupIndex = rowIndex * safeColumns + columnIndex;
               const storageKey = galleryGroupStorageKey("downloads", group);
-              const collapsed = collapsedGroupKeys.has(storageKey);
+              const collapsed = openedGroup?.key !== group.key;
               const latest = groupPreviews.get(group.key)?.[0];
-              const tagSummary = summarizeArtistFolderTags(group.items, favoriteMetadata, 6);
+              const tagSummary = groupTagSummaries.get(group.key) ?? [];
               const emptyTagLabel = group.items.some((gallery) => gallery.tagsKnown === false)
                 ? "태그 정보 미확인"
                 : "표시할 태그가 없습니다";
@@ -258,7 +277,7 @@ export function DownloadArtistFolderGrid({
                       className="download-artist-folder-button"
                       aria-expanded={!collapsed}
                       aria-controls={collapsed ? undefined : `${headingId}-contents`}
-                      aria-label={`${group.label} ${folderType(group)}, ${group.items.length}개 작품, ${collapsed ? "열기" : "접기"}`}
+                      aria-label={`${group.label} ${folderType(group)}, ${group.items.length}개 작품, ${collapsed ? "열기" : "닫기"}`}
                       onFocus={(event) => {
                         const anchor = event.currentTarget.querySelector<HTMLElement>(".download-artist-folder-preview-stack");
                         if (collapsed && anchor && event.currentTarget.matches(":focus-visible")) {
@@ -295,6 +314,7 @@ export function DownloadArtistFolderGrid({
                             priority={priority}
                             alt=""
                             expectedAspectRatio={expectedRatio(latest)}
+                            style={{ "--folder-cover-aspect": latest.thumbnailWidth && latest.thumbnailHeight ? latest.thumbnailWidth / latest.thumbnailHeight : 2 / 3 } as CSSProperties}
                             data-gallery-id={Number(latest.id)}
                             client={thumbnailClient}
                           />
@@ -324,7 +344,7 @@ export function DownloadArtistFolderGrid({
                           )) : <span>{emptyTagLabel}</span>}
                         </span>
                         <span className="download-artist-folder-action" aria-hidden="true">
-                          {collapsed ? "작품 보기" : "폴더 접기"}<i>›</i>
+                          {collapsed ? "작품 보기" : "열린 폴더"}<i>›</i>
                         </span>
                       </span>
                     </button>
@@ -332,37 +352,23 @@ export function DownloadArtistFolderGrid({
                 </article>
               );
             })}
-            {row.map((group, columnIndex) => {
-              const groupIndex = rowIndex * safeColumns + columnIndex;
-              const storageKey = galleryGroupStorageKey("downloads", group);
-              if (collapsedGroupKeys.has(storageKey)) return null;
-              const headingId = `download-artist-folder-${groupIndex}`;
-              return (
-                <section
-                  className="download-artist-folder-contents"
-                  id={`${headingId}-contents`}
-                  aria-labelledby={headingId}
-                  key={`${group.key}-contents`}
-                >
-                  <header>
-                    <div>
-                      <span>{folderType(group)}</span>
-                      <strong>{group.label}</strong>
-                      <small>{group.items.length.toLocaleString()}개 작품</small>
-                    </div>
-                    <button
-                      type="button"
-                      className="text-button dark"
-                      onClick={() => onToggle(storageKey)}
-                    >폴더 접기</button>
-                  </header>
-                  {renderGrid(group.items, `${group.label} 다운로드 작품`)}
-                </section>
-              );
-            })}
           </Fragment>
         ))}
       </div>
+      {openedGroup ? <DownloadArtistFolderWindow
+        key={openedGroup.key}
+        group={openedGroup}
+        folderType={folderType(openedGroup)}
+        id={`download-artist-folder-${groups.indexOf(openedGroup)}-contents`}
+        contentsRef={contentsRef}
+        previewWidth={previewWidth}
+        displayMode={displayMode}
+        maximumColumns={maximumColumns}
+        onColumnsChange={onColumnsChange}
+        suspended={suspended}
+        renderGrid={renderGrid}
+        onClose={() => onToggle(galleryGroupStorageKey("downloads", openedGroup))}
+      /> : null}
       {previewedGroup && overlayPosition && overlayPreviews.length ? createPortal(
         <aside
           className="download-artist-folder-preview-overlay"
@@ -390,6 +396,7 @@ export function DownloadArtistFolderGrid({
                 "--folder-preview-origin-y": `${overlayPosition.originY}px`,
                 "--folder-preview-tilt": `${index === 0 ? 0 : (index % 2 ? -1 : 1) * (3 + index)}deg`,
                 "--folder-preview-delay": `${index * 28}ms`,
+                "--folder-cover-aspect": gallery.thumbnailWidth && gallery.thumbnailHeight ? gallery.thumbnailWidth / gallery.thumbnailHeight : 2 / 3,
                 zIndex: overlayPosition.count - index,
               } as CSSProperties}
               key={gallery.id}

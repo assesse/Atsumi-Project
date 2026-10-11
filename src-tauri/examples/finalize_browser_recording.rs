@@ -131,6 +131,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .as_str()
             .ok_or("Missing recording root")?,
     );
+    let metadata: Value = serde_json::from_slice(&fs::read(root.join("recording.json"))?)?;
+    // A temporary catalog must never authorize an archive move: publication
+    // would update only that disposable catalog. Prepare an independent copy
+    // without an archive transfer, or let the full application handle it.
+    if args[3] == "--apply" && !metadata["archive"].is_null() {
+        return Err("Offline finalize requires a recording without an archive transfer".into());
+    }
     if args[3] == "--refresh-summary" {
         let saved: Value = serde_json::from_slice(&fs::read(root.join("recording.json"))?)?;
         if saved["id"].as_str() != Some(&args[1])
@@ -164,7 +171,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Unexpected maintenance scope".into());
     }
     store.lock().unwrap().retry_merges(Some(&args[1]))?;
-    let worker = BrowserMergeWorker::start(store.clone(), Some(tools))?;
+    let worker = BrowserMergeWorker::start_offline_maintenance(store.clone(), Some(tools))?;
     let start = Instant::now();
     let mut last = String::new();
     let outcome = loop {
@@ -181,7 +188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             m.status == BrowserMergeStatus::Complete
                 && m.source_cleanup
                     .as_ref()
-                    .is_none_or(|c| c.status != BrowserSourceCleanupStatus::Pending)
+                    .is_some_and(|c| c.status == BrowserSourceCleanupStatus::Complete)
         }) {
             break Ok(());
         }
@@ -189,9 +196,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             matches!(
                 m.status,
                 BrowserMergeStatus::Failed | BrowserMergeStatus::Blocked
-            )
+            ) || m
+                .source_cleanup
+                .as_ref()
+                .is_some_and(|c| c.status == BrowserSourceCleanupStatus::Blocked)
         }) {
-            break Err("Merge failed/blocked; sources preserved");
+            break Err("Merge or cleanup failed/blocked; remaining sources preserved");
         }
         if start.elapsed() > Duration::from_secs(14400) {
             break Err("Maintenance deadline; sources preserved");

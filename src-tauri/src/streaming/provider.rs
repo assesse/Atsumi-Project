@@ -67,15 +67,7 @@ impl ChzzkProvider {
     /// bounded anonymous request at recording start; never a playback request.
     /// Protocol reference: kimcore/chzzk src/client.ts channel() and api/channel.ts.
     pub fn channel_profile(&self, input: &str) -> Result<(String, Option<String>), StreamError> {
-        let channel_id = parse_channel(input)?;
-        let url = Url::parse(&format!(
-            "https://api.chzzk.naver.com/service/v1/channels/{channel_id}"
-        ))
-        .map_err(|_| invalid_url())?;
-        let content = self.json_content(&url, Duration::from_secs(4))?;
-        if content.get("channelId").and_then(Value::as_str) != Some(channel_id.as_str()) {
-            return Err(invalid_url());
-        }
+        let content = self.channel_content(input)?;
         let name = content
             .get("channelName")
             .and_then(Value::as_str)
@@ -88,18 +80,35 @@ impl ChzzkProvider {
             .get("channelImageUrl")
             .and_then(Value::as_str)
             .and_then(super::chat_assets::sanitize_chat_asset_url);
-        // Channel avatars can be multi-megabyte originals. Capture the CDN's
-        // bounded avatar rendition, not the full-resolution upload.
         let image = image.map(|image| {
             let mut url = Url::parse(&image).expect("validated asset URL");
             if url.host_str() == Some("nng-phinf.pstatic.net") {
-                // CHZZK's CDN supports f120_120. f160_160 returns HTTP 404
-                // even for otherwise valid, publicly available avatars.
                 url.set_query(Some("type=f120_120"));
             }
             url.into()
         });
         Ok((name, image))
+    }
+
+    /// Public on-air presence only; no live-detail/media URL or credentials.
+    pub(crate) fn channel_live_status(&self, input: &str) -> Result<Option<bool>, StreamError> {
+        Ok(self
+            .channel_content(input)?
+            .get("openLive")
+            .and_then(Value::as_bool))
+    }
+
+    fn channel_content(&self, input: &str) -> Result<Value, StreamError> {
+        let channel_id = parse_channel(input)?;
+        let url = Url::parse(&format!(
+            "https://api.chzzk.naver.com/service/v1/channels/{channel_id}"
+        ))
+        .map_err(|_| invalid_url())?;
+        let content = self.json_content(&url, Duration::from_secs(4))?;
+        if content.get("channelId").and_then(Value::as_str) != Some(channel_id.as_str()) {
+            return Err(invalid_url());
+        }
+        Ok(content)
     }
 
     /// Read anonymous chat metadata independently of the selected video player.

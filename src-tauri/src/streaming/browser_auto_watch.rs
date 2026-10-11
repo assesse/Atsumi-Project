@@ -171,7 +171,21 @@ impl OfficialBrowser {
         let Ok(_layout) = self.inner.multiview.mutations.try_lock() else {
             return;
         };
+        self.reap_retired_auto_receivers_for_layout(app, &std::collections::HashSet::new());
+    }
+    // Caller holds the layout mutation lock throughout detach/reuse/create.
+    // Requested receivers must survive the short gap between presentations.
+    pub(super) fn reap_retired_auto_receivers_for_layout(
+        &self,
+        app: &AppHandle,
+        retained_channels: &std::collections::HashSet<String>,
+    ) {
         let Ok(_mutation) = self.inner.multiview.auto_watch.mutations.try_lock() else {
+            return;
+        };
+        // Lookup/claim and disposal must be one receiver transaction. The
+        // scheduler can claim a receiver even when no live layout is active.
+        let Ok(_receivers) = self.inner.multiview.receivers.try_lock() else {
             return;
         };
         let ids = self
@@ -182,6 +196,15 @@ impl OfficialBrowser {
             .unwrap_or_else(|p| p.into_inner())
             .clone();
         for id in ids {
+            if !self
+                .inner
+                .multiview
+                .retired_auto_panes
+                .lock()
+                .is_ok_and(|retired| retired.contains(&id))
+            {
+                continue;
+            }
             let pane = self
                 .inner
                 .multiview
@@ -190,7 +213,7 @@ impl OfficialBrowser {
                 .ok()
                 .and_then(|panes| panes.get(&id).cloned());
             if let Some(pane) = pane {
-                if !self.auto_receiver_in_use(&pane) {
+                if !retained_channels.contains(&pane.channel) && !self.auto_receiver_in_use(&pane) {
                     if let Some(capture) = &pane.capture {
                         capture.close_auto_view(app);
                     }

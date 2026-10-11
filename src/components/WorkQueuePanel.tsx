@@ -22,22 +22,67 @@ export function queueProgress(snapshot: QueueSnapshot | null) {
   return { total, active, completed, review, failed, cancelled, percent: total ? Math.floor(settled / total * 100) : 0 };
 }
 
-/** The bar is the entire summary; each segment explains itself on hover/focus. */
-export function QueueSummary({ snapshot, error }: { snapshot: QueueSnapshot | null; scoped?: boolean; error?: string | null }) {
+/** Stable segments animate real count changes; motion never estimates progress. */
+export function QueueSummary({ snapshot, scoped = false, error }: { snapshot: QueueSnapshot | null; scoped?: boolean; error?: string | null }) {
   const counts = snapshot?.counts ?? {};
   const p = queueProgress(snapshot);
-  const segments = [
-    ["complete", "완료", p.completed], ["waiting", "대기", counts.queued ?? 0],
-    ["metadata", "정보 확인", counts.resolving_metadata ?? 0],
-    ["active", "다운로드", counts.downloading ?? 0], ["hashing", "해시", counts.hashing ?? 0],
-    ["verifying", "검증", counts.verifying ?? 0], ["retry", "재시도 대기", counts.retry_wait ?? 0],
-    ["review", "검토 필요", p.review], ["error", "실패·중단", p.failed],
+  const waiting = (counts.queued ?? 0) + (counts.retry_wait ?? 0);
+  const working = p.active - waiting;
+  const stages = [
+    ["정보 확인", counts.resolving_metadata ?? 0], ["다운로드", counts.downloading ?? 0],
+    ["해시", counts.hashing ?? 0], ["검증", counts.verifying ?? 0],
   ] as const;
-  return <section className={"queue-summary" + (error ? " is-stale" : "")} aria-label="다운로드 진행 요약">
+  const stageDetail = stages.filter(([, n]) => n > 0).map(([label, n]) => `${label} ${n}개`).join(" · ");
+  const completionDetail = p.cancelled ? ` (취소·격리 ${p.cancelled}개 포함)` : "";
+  const segments = [
+    ["complete", "완료", p.completed, completionDetail],
+    ["active", "작업 중", working, stageDetail ? ` · ${stageDetail}` : ""],
+    ["waiting", "대기", waiting, counts.retry_wait ? ` (재시도 ${counts.retry_wait}개 포함)` : ""],
+    ["review", "검토 필요", p.review, ""], ["error", "실패·중단", p.failed, ""],
+  ] as const;
+  const completionEdge = useRef<HTMLSpanElement>(null);
+  const completionCount = useRef<HTMLElement>(null);
+  const previous = useRef({ completed: p.completed, total: p.total, ready: Boolean(snapshot), stale: Boolean(error), scoped });
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = { completed: p.completed, total: p.total, ready: Boolean(snapshot), stale: Boolean(error), scoped };
+    // Opening, changing scope, or recovering stale counts is not a new completion.
+    if (!snapshot || error || !before.ready || before.stale || before.scoped !== scoped
+      || before.total !== p.total || p.completed <= before.completed
+      || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    const animations = [
+      completionEdge.current?.animate?.([
+        { opacity: 0, transform: "translateX(-14px)" },
+        { opacity: .85, offset: .3 }, { opacity: 0, transform: "translateX(0)" },
+      ], { duration: 850, easing: "ease-out" }),
+      completionCount.current?.animate?.([
+        { opacity: .5, transform: "translateY(3px)" }, { opacity: 1, transform: "translateY(0)" },
+      ], { duration: 380, easing: "ease-out" }),
+    ];
+    return () => animations.forEach((animation) => animation?.cancel());
+  }, [p.completed, p.total, scoped, Boolean(snapshot), Boolean(error)]);
+
+  const running = working > 0 && !error;
+  const finished = p.total > 0 && p.completed === p.total;
+  return <section className={"queue-summary" + (error ? " is-stale" : "") + (running ? " is-running" : "") + (finished ? " is-finished" : "")} aria-label="다운로드 진행 요약">
+    <div className="queue-summary-heading">
+      <span>{scoped ? "선택한 작업" : "전체 작업"}</span>
+      <span className="queue-summary-count" title={snapshot ? `완료 ${p.completed}개${completionDetail}` : undefined}>
+        {snapshot ? p.total ? <><strong ref={completionCount}>{p.completed.toLocaleString()}</strong><span> / {p.total.toLocaleString()} 완료</span></> : "작업 없음" : "확인 중…"}
+      </span>
+    </div>
     <div className="queue-progress-track" role="group" aria-label={snapshot ? "자동 처리 종료 " + p.percent + "% (완료·검토 대기·중단 포함)" : "큐 확인 중"} aria-busy={!snapshot}>
-      {segments.filter(([, , n]) => n > 0).map(([tone, label, n]) => <span key={tone}
-        className={"tone-" + tone + (p.active > 0 && ["metadata", "active", "hashing", "verifying"].includes(tone) ? " is-running" : "")}
-        style={{ flexGrow: n, flexBasis: 0 }} title={label + " " + n + "개" + (tone === "complete" && p.cancelled ? ` (취소·격리 ${p.cancelled}개 포함)` : "")} aria-label={label + " " + n + "개"} role="img" tabIndex={0} />)}
+      {segments.map(([tone, label, n, detail]) => <span key={tone} className={"queue-progress-segment tone-" + tone}
+        style={{ width: `${p.total ? n / p.total * 100 : 0}%` }} title={`${label} ${n}개${detail}`}
+        aria-label={`${label} ${n}개${detail}`} aria-hidden={n === 0} role="img">
+        {tone === "complete" ? <span ref={completionEdge} className="queue-completion-edge" aria-hidden="true" /> : null}
+      </span>)}
+    </div>
+    <div className="queue-summary-legend">
+      {segments.filter(([tone, , n]) => n > 0 || ["complete", "active", "waiting"].includes(tone)).map(([tone, label, n, detail]) =>
+        <span key={tone} className={"tone-" + tone} title={`${label} ${n}개${detail}`}>
+          <i className="queue-legend-dot" aria-hidden="true" />{label} <b>{snapshot ? n.toLocaleString() : "—"}</b>
+        </span>)}
     </div>
     {error ? <p className="queue-error" role="alert">큐 갱신 지연 · 마지막 확인값입니다.</p> : null}
   </section>;

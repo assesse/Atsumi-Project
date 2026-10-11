@@ -27,7 +27,7 @@ const init = () => concat(box("ftyp", new Uint8Array([1,2,3,4])), box("moov", ne
 const media = (size = 16) => concat(box("moof", new Uint8Array([1,2,3,4])), box("mdat", new Uint8Array(size).fill(9)));
 const flush = async () => { for (let i = 0; i < 80; i++) await Promise.resolve(); };
 
-function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number; supported?: boolean; rollover?: boolean } = {}) {
+function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number; supported?: boolean; rollover?: boolean; endingReason?: string } = {}) {
   const nativeCalls: unknown[] = [];
   class Buffer extends Target {
     mode = "segments"; timestampOffset = 0; appendWindowStart = 0; appendWindowEnd = Infinity;
@@ -62,7 +62,7 @@ function fixture(options: { url?: string; iframe?: boolean; queueBytes?: number;
   const messages: Message[] = []; const pending: Array<{ message: Message; resolve(value: unknown): void; reject(error: Error): void }> = [];
   const hold = new Set<string>(); const reject = new Set<string>(); const notices: string[] = [];
   const response = (message: Message) => message.kind === "encoded_begin" ? { id: RECORDING, mode: "encoded", nativeApproved: true, captureChat: true } :
-    message.kind === "encoded_finish" ? { stopped: true, interrupted: message.interrupted,
+    message.kind === "encoded_finish" ? { stopped: true, interrupted: message.interrupted, endingReason: options.endingReason,
       ...(options.rollover ? { continuation: { requestId: REQUEST, channelId: CHANNEL, rightsAcknowledged: true } } : {}) } : {};
   const request = (kind: string, fields: Record<string, unknown>) => {
     const message = { kind, ...fields }; messages.push(message);
@@ -173,6 +173,19 @@ describe("already-received encoded MSE capture", () => {
   it.each(["encrypted", "ended"])("fails closed on %s without changing playback", async (event) => {
     const f = fixture(); f.load(); await f.start(); f.video.dispatch(event); await flush();
     expect(f.ofKind("encoded_finish")[0]?.interrupted).toBe(true); expect(f.video.currentTime).toBe(100); expect(f.video.playbackRate).toBe(1);
+  });
+  it.each([["checking", "encoded_end_checking"], ["broadcast_ended", "encoded_saved"],
+    ["broadcast_changed", "encoded_saved"], ["storage_error", "encoded_interrupted"]])(
+    "uses native end classification %s without inventing a transport failure", async (endingReason, notice) => {
+      const f = fixture({ endingReason }); f.load(); await f.start(); f.video.dispatch("ended"); await flush();
+      expect(f.ofKind("encoded_finish")[0]).toMatchObject({ interrupted: true, reason: "video_ended" });
+      expect(f.notices.at(-1)).toBe(notice);
+      expect(f.notices).not.toContain("native_rejected");
+    });
+  it("never hides a transport failure behind end confirmation", async () => {
+    const f = fixture({ endingReason: "checking" }); f.load(); await f.start(); f.reject.add("encoded_append");
+    f.v.appendBuffer(media()); await flush();
+    expect(f.notices.at(-1)).toBe("encoded_interrupted");
   });
   it("does not confuse decoder buffering or emptied with a replaced compressed source", async () => {
     const f=fixture(); f.load(); await f.start();

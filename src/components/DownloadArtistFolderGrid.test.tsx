@@ -60,6 +60,35 @@ const mockFolderBounds = (button: HTMLButtonElement) => {
 };
 
 describe("DownloadArtistFolderGrid", () => {
+  it("does not rescan folder tags on hover/open and fits three detail columns when space allows", async () => {
+    let tagReads = 0;
+    const item = downloadedGallery(950, "Alpha", "2026-10-08");
+    Object.defineProperty(item, "tags", { get: () => { tagReads++; return ["tag:sample"]; } });
+    const groups = groupGalleries([item], "artist", gallery => gallery.download?.createdAt);
+    const favoriteMetadata = new Set<string>();
+    const collapsed = new Set(groups.map(group => galleryGroupStorageKey("downloads", group)));
+    const renderGrid = vi.fn(() => null);
+    const onColumnsChange = vi.fn();
+    const client = thumbnailClient();
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1800);
+    const render = (keys: Set<string>) => <DownloadArtistFolderGrid groups={groups} columns={2} previewWidth={280}
+      maximumColumns={3} onColumnsChange={onColumnsChange} favoriteMetadata={favoriteMetadata}
+      collapsedGroupKeys={keys} onToggle={() => {}} renderGrid={renderGrid} thumbnailClient={client} />;
+    try {
+      await act(async () => root.render(render(collapsed)));
+      const reads = tagReads;
+      const anchor = mockFolderBounds(container.querySelector('.download-artist-folder-button')!);
+      await act(async () => anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })));
+      expect(tagReads).toBe(reads);
+      await act(async () => root.render(render(new Set())));
+      expect(tagReads).toBe(reads);
+      expect(onColumnsChange).toHaveBeenLastCalledWith(3);
+      expect(renderGrid).toHaveBeenLastCalledWith(groups[0]!.items, 'Alpha 다운로드 작품', 3);
+      expect(document.querySelector<HTMLElement>('.download-artist-folder-window')?.style.getPropertyValue('--folder-preferred-width')).toBe('1700px');
+    } finally { await act(async () => root.unmount()); width.mockRestore(); client.dispose(); container.remove(); }
+  });
   it.each([[2, 3], [3, 4], [4, 5]])("preloads every folder's %i-column fan without opening, hovering, or entering the viewport", async (columns, count) => {
     vi.stubGlobal("IntersectionObserver", class {
       observe() {}
@@ -465,14 +494,66 @@ describe("DownloadArtistFolderGrid", () => {
     ));
 
     expect(container.querySelectorAll(".download-artist-folder-card")).toHaveLength(3);
-    expect(container.querySelectorAll(".download-artist-folder-contents")).toHaveLength(1);
-    expect(container.querySelector(".download-artist-folder-contents")).toHaveTextContent("Alpha");
-    expect(container.querySelector(".rendered-folder-items")).toHaveAccessibleName("Alpha 다운로드 작품");
-    expect(container.querySelector(".rendered-folder-items")).toHaveTextContent("Work 301");
+    expect(container.querySelectorAll(".download-artist-folder-contents")).toHaveLength(0);
+    expect(document.querySelectorAll(".download-artist-folder-window")).toHaveLength(1);
+    expect(document.querySelector(".download-artist-folder-window")).toHaveTextContent("Alpha");
+    expect(document.querySelector(".rendered-folder-items")).toHaveAccessibleName("Alpha 다운로드 작품");
+    expect(document.querySelector(".rendered-folder-items")).toHaveTextContent("Work 301");
     expect(container.querySelector(".download-artist-folder-grid")).toHaveAttribute("data-preview-size", "compact");
 
     await act(async () => root.unmount());
     client.dispose();
     container.remove();
+  });
+
+  it("keeps one floating folder, restores focus, and leaves detail-window shortcuts alone", async () => {
+    const groups = groupGalleries([
+      downloadedGallery(901, "Alpha", "2026-09-03T10:00:00Z"),
+      downloadedGallery(902, "Beta", "2026-09-02T10:00:00Z"),
+    ], "artist", (gallery) => gallery.download?.createdAt);
+    const client = thumbnailClient();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const onToggle = vi.fn();
+    const render = (collapsed: ReadonlySet<string>, suspended = false) => <DownloadArtistFolderGrid
+      groups={groups} columns={2} previewWidth={160} favoriteMetadata={new Set()}
+      collapsedGroupKeys={collapsed} onToggle={onToggle} suspended={suspended}
+      renderGrid={(items) => <button>{items[0]!.title}</button>} thumbnailClient={client} />;
+    const allCollapsed = new Set(groups.map(group => galleryGroupStorageKey("downloads", group)));
+    try {
+      await act(async () => root.render(render(allCollapsed)));
+      expect(document.querySelector(".download-artist-folder-window")).toBeNull();
+      const opener = container.querySelector<HTMLButtonElement>(".download-artist-folder-button")!;
+      opener.focus();
+      await act(async () => root.render(render(new Set())));
+      expect(document.querySelectorAll(".download-artist-folder-window")).toHaveLength(1);
+      expect(document.querySelector(".download-artist-folder-window")).toHaveTextContent("Work 901");
+      expect(document.querySelector(".download-artist-folder-window")).not.toHaveTextContent("Work 902");
+      expect(document.activeElement).toHaveAccessibleName("폴더 닫기");
+      const lastControl = document.querySelector<HTMLButtonElement>(".download-artist-folder-window-scroll button")!;
+      lastControl.focus();
+      const modifiedTab = new KeyboardEvent("keydown", { key: "Tab", ctrlKey: true, bubbles: true, cancelable: true });
+      lastControl.dispatchEvent(modifiedTab);
+      expect(modifiedTab.defaultPrevented).toBe(false);
+      expect(document.activeElement).toBe(lastControl);
+      const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
+      lastControl.dispatchEvent(tab);
+      expect(tab.defaultPrevented).toBe(true);
+      expect(document.activeElement).toHaveAccessibleName("폴더 닫기");
+      await act(async () => root.render(render(new Set(), true)));
+      const detailEscape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      document.dispatchEvent(detailEscape);
+      expect(onToggle).not.toHaveBeenCalled();
+      expect(detailEscape.defaultPrevented).toBe(false);
+      await act(async () => root.render(render(new Set())));
+      const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      await act(async () => document.dispatchEvent(escape));
+      expect(onToggle).toHaveBeenCalledWith(galleryGroupStorageKey("downloads", groups[0]!));
+      expect(escape.defaultPrevented).toBe(true);
+      await act(async () => root.render(render(allCollapsed)));
+      expect(document.querySelector(".download-artist-folder-window")).toBeNull();
+      expect(document.activeElement).toBe(opener);
+    } finally { await act(async () => root.unmount()); client.dispose(); container.remove(); }
   });
 });

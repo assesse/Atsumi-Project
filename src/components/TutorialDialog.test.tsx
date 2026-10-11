@@ -24,6 +24,26 @@ afterEach(() => {
 });
 
 describe("TutorialDialog", () => {
+  it("pulses the required target instead of rendering a button-like hint", async () => {
+    const container = document.createElement("div");
+    const target = document.createElement("button");
+    target.id = "tutorial-fixture-target";
+    target.textContent = "설정";
+    const rect = new DOMRect(40, 40, 100, 40);
+    target.getBoundingClientRect = () => rect;
+    target.getClientRects = () => Object.assign([rect], { item: () => rect });
+    document.body.append(target, container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<TutorialDialog open onClose={vi.fn()} steps={[
+        { id: "fixture", section: "공통", target: "#tutorial-fixture-target", title: "저장 위치", description: "저장 위치 설정", action: "click", hint: "이 붉은 글씨를 누르세요" },
+      ]} />));
+      await act(async () => { await new Promise(resolve => window.setTimeout(resolve, 40)); });
+      expect(container.querySelector(".tutorial-spotlight")).toHaveClass("is-action-required");
+      expect(container).not.toHaveTextContent("이 붉은 글씨를 누르세요");
+      expect(container.querySelector("[data-tour-next]")).toBeNull();
+    } finally { await act(async () => root.unmount()); container.remove(); target.remove(); }
+  });
   it("starts at the first step without an opt-in screen or replay preference", async () => {
     const container = document.createElement("div");
     document.body.append(container);

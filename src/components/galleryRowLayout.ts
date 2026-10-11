@@ -14,10 +14,19 @@ export function groupGalleryCardRows(
   topTolerance = 1,
 ): GalleryCardRow[] {
   const rows: Array<{ top: number; indices: number[]; height: number }> = [];
+  let lastTop = -Infinity;
+  let ordered = true;
   for (const metric of metrics) {
     if (!Number.isFinite(metric.top) || !Number.isFinite(metric.intrinsicThumbnailHeight)
       || metric.intrinsicThumbnailHeight <= 0) continue;
-    const row = rows.find((candidate) => Math.abs(candidate.top - metric.top) <= topTolerance);
+    const last = rows.at(-1);
+    ordered &&= metric.top >= lastTop;
+    lastTop = metric.top;
+    // Grid hosts arrive in row order. Avoid scanning all previous rows for
+    // every card in a large artist folder; retain the unordered-input fallback.
+    const row = ordered
+      ? last && metric.top - last.top <= topTolerance ? last : undefined
+      : rows.find((candidate) => Math.abs(candidate.top - metric.top) <= topTolerance);
     if (row) {
       row.indices.push(metric.index);
       row.height = Math.max(row.height, metric.intrinsicThumbnailHeight);

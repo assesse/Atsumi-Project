@@ -15,7 +15,7 @@
     try { window.localStorage.setItem("live-player-video-track", JSON.stringify({ label: "1080p", width: 1920, height: 1080 })); } catch { /* Storage denial must not prevent viewing. */ }
   }
   let standardQuality = false;
-  let binding = null, pending = null, alive = true, preparing = null;
+  let binding = null, pending = null, alive = true, preparing = null, preferenceApplied = false;
   let last = { status: "waiting", height: null }, lastAttempt = 0;
   const failed = new Map();
   const read = (object, key) => { try { return object?.[key]; } catch { return undefined; } };
@@ -31,7 +31,7 @@
   const find = (v) => {
     if (!v) return null;
     if (valid(binding, v)) return binding;
-    binding = null; failed.clear(); lastAttempt = 0;
+    binding = null; failed.clear(); lastAttempt = 0; preferenceApplied = false;
     const host = v.closest(".chzzk_player.type_live");
     if (!host) return null;
     // Bounded traversal of the official React component's player reference.
@@ -81,13 +81,17 @@
     if (!b) { last = { status: "native", height: null }; return; }
     if (pending) {
       if (pending.binding !== b) { pending = null; return; }
-      if (pending.accepted && settled(b, pending.track)) { last = { status: "ready", height: height(pending.track) }; pending = null; }
+      if (pending.accepted && settled(b, pending.track)) { last = { status: "ready", height: height(pending.track) }; pending = null; preferenceApplied = true; }
       else if (Date.now() >= pending.deadline) { failed.set(pending.track.id, Date.now() + 60_000); pending = null; }
       return;
     }
+    // One initial preference per source, not a recurring resolution lock.
+    // After success the official menu/ABR owns quality, including downshifts
+    // when several simultaneous broadcasts exceed the available bandwidth.
+    if (preferenceApplied) { last = { status: "ready", height: b.video.videoHeight || null }; return; }
     const target = choices(b)[0];
     if (!target) { last = { status: "native", height: b.video.videoHeight || null }; return; }
-    if (target.selected === true && settled(b, target)) { last = { status: "ready", height: height(target) }; return; }
+    if (target.selected === true && settled(b, target)) { last = { status: "ready", height: height(target) }; preferenceApplied = true; return; }
     if (b.video.paused || b.video.seeking || b.video.readyState < 2 || Date.now() - lastAttempt < 1000) return;
     lastAttempt = Date.now();
     last = { status: "selecting", height: height(target) };

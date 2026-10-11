@@ -36,11 +36,21 @@ impl ViewState {
         if self.auth_generation != generation || !self.auth_checking || self.account_busy {
             return;
         }
+        if self.auth_status != status {
+            // Diagnose the UI's account verdict without logging any account
+            // identity, response body, cookies or tokens.
+            // Debug fields are deliberately omitted by the diagnostic sink.
+            // Fixed stage names retain the verdict without any account data.
+            tracing::info!(
+                diag_stage = status.diagnostic_stage(),
+                "official account status updated"
+            );
+        }
         self.auth_checking = false;
         self.auth_status = status;
         self.auth_last_probe = Some(Instant::now());
         self.auth_error = (status == AuthStatus::Unknown).then(||
-            "로그인 상태를 확인하지 못했습니다. 인터넷 연결을 확인한 뒤 ‘상태 확인’을 다시 눌러 주세요.".into());
+            "로그인 상태를 확인하지 못했습니다. 인터넷 연결을 확인해 주세요. 잠시 후 자동으로 다시 확인합니다.".into());
     }
 
     pub(super) fn invalidate_auth(&mut self) {
@@ -92,6 +102,10 @@ pub(super) fn probe_profile(host: &OfficialBrowser, app: &AppHandle, generation:
                 })
         };
         if !current() {
+            finish(AuthStatus::Unknown);
+            return;
+        }
+        if host.prepare_profile_session(&app).is_err() || !current() {
             finish(AuthStatus::Unknown);
             return;
         }
@@ -157,6 +171,17 @@ pub(super) enum AuthStatus {
     Checking,
     SignedIn,
     SignedOut,
+}
+
+impl AuthStatus {
+    fn diagnostic_stage(self) -> &'static str {
+        match self {
+            Self::Unknown => "chzzk_auth_unknown",
+            Self::Checking => "chzzk_auth_checking",
+            Self::SignedIn => "chzzk_auth_signed_in",
+            Self::SignedOut => "chzzk_auth_signed_out",
+        }
+    }
 }
 
 fn parse_response(json: &str) -> AuthStatus {
@@ -234,6 +259,22 @@ pub(super) fn probe(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn diagnostic_verdicts_are_fixed_anonymous_stage_names() {
+        assert_eq!(
+            AuthStatus::SignedIn.diagnostic_stage(),
+            "chzzk_auth_signed_in"
+        );
+        assert_eq!(
+            AuthStatus::SignedOut.diagnostic_stage(),
+            "chzzk_auth_signed_out"
+        );
+        assert_eq!(AuthStatus::Unknown.diagnostic_stage(), "chzzk_auth_unknown");
+        assert_eq!(
+            AuthStatus::Checking.diagnostic_stage(),
+            "chzzk_auth_checking"
+        );
+    }
     #[test]
     fn status_check_works_without_a_player_and_manual_check_bypasses_cache() {
         let mut state = ViewState::default();

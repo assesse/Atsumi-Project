@@ -1,7 +1,7 @@
-//! Immutable public player assets, hosted outside the privileged app origin.
+//! Public player assets, hosted outside the privileged app origin.
 //!
-//! This protocol serves only compiled-in CHZZK player code and our small frame
-//! adapter. It never resolves filesystem paths, replay tokens, or user data.
+//! This protocol serves compiled-in player code and a native-configured origin
+//! allowlist. It never resolves filesystem paths, replay tokens, or user data.
 //! The embedding iframe and this response both keep the document sandboxed;
 //! Vue's runtime compiler needs unsafe-eval here, not in the main app's CSP.
 use tauri::http::{header, Method, Request, Response, StatusCode};
@@ -13,14 +13,27 @@ const PLAYER_ORIGINS: &str =
     "atsumi-player://localhost http://atsumi-player.localhost https://atsumi-player.localhost";
 const MEDIA_ORIGINS: &str =
     "atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost";
-const MAIN_ORIGINS: &str = "tauri://localhost http://tauri.localhost https://tauri.localhost";
+fn parent_origins(development: bool, dev_url: Option<&tauri::Url>) -> Vec<String> {
+    crate::frontend_origin::PRODUCTION_ORIGINS
+        .into_iter()
+        .map(str::to_owned)
+        .chain(crate::frontend_origin::development_origin(
+            development,
+            dev_url,
+        ))
+        .collect()
+}
 
-fn content_security_policy() -> String {
-    let ancestors = if cfg!(debug_assertions) {
-        format!("{MAIN_ORIGINS} http://127.0.0.1:1420")
-    } else {
-        MAIN_ORIGINS.to_owned()
-    };
+fn host_policy(development: bool, dev_url: Option<&tauri::Url>) -> String {
+    // Native playback never permits the browser-only synthetic media routes.
+    format!(
+        "export const parentOrigins={};\nexport const previewOrigin=null;\n",
+        serde_json::to_string(&parent_origins(development, dev_url)).expect("origin strings")
+    )
+}
+
+fn content_security_policy(dev_url: Option<&tauri::Url>) -> String {
+    let ancestors = parent_origins(cfg!(debug_assertions), dev_url).join(" ");
     format!(
         "default-src 'none'; base-uri 'none'; object-src 'none'; \
          frame-src 'none'; frame-ancestors {ancestors}; \
@@ -90,15 +103,28 @@ fn trusted_uri(uri: &tauri::http::Uri) -> bool {
 }
 
 /// `webview_label` must come from UriSchemeContext, never a request header.
-pub fn response(request: &Request<Vec<u8>>, webview_label: &str) -> Response<Vec<u8>> {
+pub fn response(
+    request: &Request<Vec<u8>>,
+    webview_label: &str,
+    dev_url: Option<&tauri::Url>,
+) -> Response<Vec<u8>> {
     if webview_label != "main" {
-        return build_response(StatusCode::FORBIDDEN, &[], None, false);
+        return build_response(StatusCode::FORBIDDEN, &[], None, false, dev_url);
     }
     if request.method() != Method::GET && request.method() != Method::HEAD {
-        return build_response(StatusCode::METHOD_NOT_ALLOWED, &[], None, false);
+        return build_response(StatusCode::METHOD_NOT_ALLOWED, &[], None, false, dev_url);
     }
     if !trusted_uri(request.uri()) || !request.body().is_empty() {
-        return build_response(StatusCode::BAD_REQUEST, &[], None, false);
+        return build_response(StatusCode::BAD_REQUEST, &[], None, false, dev_url);
+    }
+    if request.uri().path() == "/host-policy.js" {
+        return build_response(
+            StatusCode::OK,
+            host_policy(cfg!(debug_assertions), dev_url).as_bytes(),
+            Some("text/javascript; charset=utf-8"),
+            request.method() == Method::HEAD,
+            dev_url,
+        );
     }
     match asset(request.uri().path()) {
         Some((bytes, mime)) => build_response(
@@ -106,8 +132,9 @@ pub fn response(request: &Request<Vec<u8>>, webview_label: &str) -> Response<Vec
             bytes,
             Some(mime),
             request.method() == Method::HEAD,
+            dev_url,
         ),
-        None => build_response(StatusCode::NOT_FOUND, &[], None, false),
+        None => build_response(StatusCode::NOT_FOUND, &[], None, false, dev_url),
     }
 }
 
@@ -116,6 +143,7 @@ fn build_response(
     bytes: &[u8],
     mime: Option<&str>,
     head: bool,
+    dev_url: Option<&tauri::Url>,
 ) -> Response<Vec<u8>> {
     let mut builder = Response::builder()
         .status(status)
@@ -123,7 +151,7 @@ fn build_response(
         .header(header::CONTENT_LENGTH, bytes.len().to_string())
         .header("X-Content-Type-Options", "nosniff")
         .header("Referrer-Policy", "no-referrer")
-        .header("Content-Security-Policy", content_security_policy())
+        .header("Content-Security-Policy", content_security_policy(dev_url))
         .header(
             "Permissions-Policy",
             "camera=(), microphone=(), geolocation=(), display-capture=(), \
@@ -150,6 +178,41 @@ fn build_response(
 mod tests {
     use super::*;
 
+    fn response(request: &Request<Vec<u8>>, label: &str) -> Response<Vec<u8>> {
+        super::response(request, label, None)
+    }
+
+    #[test]
+    fn frame_and_message_policy_use_only_the_configured_development_origin() {
+        let dev: tauri::Url = "http://127.0.0.1:14200/nested".parse().unwrap();
+        let frame = super::response(&request("/frame.html"), "main", Some(&dev));
+        let policy = frame.headers()["Content-Security-Policy"].to_str().unwrap();
+        let script = super::response(&request("/host-policy.js"), "main", Some(&dev));
+        let script = String::from_utf8(script.into_body()).unwrap();
+        assert_eq!(
+            policy.contains("http://127.0.0.1:14200"),
+            cfg!(debug_assertions)
+        );
+        assert_eq!(
+            script.contains("http://127.0.0.1:14200"),
+            cfg!(debug_assertions)
+        );
+        assert!(!script.contains("14201"));
+        assert!(script.contains("previewOrigin=null"));
+        assert!(!host_policy(false, Some(&dev)).contains("127.0.0.1"));
+        for bad in [
+            "https://example.com",
+            "http://user@127.0.0.1:14200",
+            "http://127.0.0.1.evil.example:14200",
+        ] {
+            assert_eq!(parent_origins(true, Some(&bad.parse().unwrap())).len(), 3);
+        }
+        assert_eq!(
+            super::response(&request("/host-policy.js"), "chzzk-official", Some(&dev)).status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
     fn request(path: &str) -> Request<Vec<u8>> {
         Request::builder()
             .uri(format!("http://atsumi-player.localhost{path}"))
@@ -162,6 +225,7 @@ mod tests {
         for (path, expected_type) in [
             ("/frame.html", "text/html"),
             ("/runtime.js", "text/javascript"),
+            ("/host-policy.js", "text/javascript"),
             ("/recording-source.js", "text/javascript"),
             ("/player-vendor-BYg0wCyN.js", "text/javascript"),
             ("/common-vendor-pcHQV1G2.js", "text/javascript"),

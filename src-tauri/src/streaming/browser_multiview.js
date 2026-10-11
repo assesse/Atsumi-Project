@@ -12,9 +12,17 @@
   const PLAYER = "data-atsumi-mado-player";
   const MEDIA = "data-atsumi-mado-media";
   const VIDEO = "data-atsumi-mado-video";
+  const MODAL = "data-atsumi-mado-dialog";
+  const MODAL_PATH = "data-atsumi-mado-dialog-path";
   const DIALOG = '[role="dialog"],[role="alertdialog"],[aria-modal="true"]';
+  const PLAYER_SELECTOR = ".chzzk_player,.u_rmcplayer,.pzp-pc,.webplayer";
+  // The official page mounts its pre-roll/startup view before the PZP player.
+  // Hiding that slot makes its geometry 0x0 and can strand startup forever.
+  // Keep this verified live-player slot (not the site's main/sidebar) visible.
+  const STARTUP_SELECTOR = "main ._player_jwedy_23,main #preAdPlayerWrapper";
   const WIDE_BUTTON = 'button.pzp-pc__viewmode-button[aria-label="넓은 화면"]';
-  const wideAttempts = new WeakSet();
+  const wideAttempts = new WeakMap();
+  let wideRetry = null;
   let expandedPlayer = null;
   let audioEnabled = false;
   let requested = true;
@@ -22,12 +30,81 @@
   let reason = chat ? "chat_only" : "loading";
   let timer = null;
   let style = null;
-  let toggle = null;
   let currentPlayer = null;
   let currentVideo = null;
+  let placeholder = null;
   const CHAT_HEADER = "._container_1e2su_2";
   const CHAT_TITLE = "h2._title_1e2su_12";
   let chatContext = null, chatHeading = null, chatLabel = null, chatStyle = null;
+  let chatLayoutStyle = null, chatScaleControl = null, chatScaleOriginal = null, chatScaleRoot = null;
+  let chatScale = 100;
+  const clearChatLayout = () => {
+    document.body?.removeAttribute("data-atsumi-chat-fit");
+    document.body?.style.removeProperty("--atsumi-chat-zoom");
+    for (const element of document.querySelectorAll("[data-atsumi-chat-layout]")) element.removeAttribute("data-atsumi-chat-layout");
+    chatScaleOriginal?.removeAttribute("data-atsumi-chat-scale-original");
+    chatScaleControl?.remove(); chatScaleControl = chatScaleOriginal = chatScaleRoot = null;
+  };
+  const renderChatLayout = () => {
+    if (!chat) return;
+    if (!allowed() || !document.body) { clearChatLayout(); return; }
+    const roots = document.querySelectorAll("#aside-chatting._is_popup_chat_b8csn_13");
+    if (roots.length !== 1) { clearChatLayout(); return; }
+    const root = roots[0];
+    if (!chatLayoutStyle) {
+      chatLayoutStyle = document.createElement("style");
+      chatLayoutStyle.textContent = `
+        html:has(body[data-atsumi-chat-fit]) {min-width:0!important;min-height:0!important;height:100%!important;overflow:hidden!important;}
+        body[data-atsumi-chat-fit] {min-width:0!important;min-height:0!important;margin:0!important;width:100%!important;height:calc(100dvh / var(--atsumi-chat-zoom,1))!important;zoom:var(--atsumi-chat-zoom,1);overflow:hidden!important;}
+        body[data-atsumi-chat-fit] [data-atsumi-chat-layout] {min-width:0!important;min-height:0!important;width:100%!important;height:100%!important;box-sizing:border-box!important;}
+        body[data-atsumi-chat-fit] #aside-chatting {min-width:0!important;min-height:0!important;width:100%!important;height:100%!important;box-sizing:border-box!important;}
+        body[data-atsumi-chat-fit] #aside-chatting > ._container_1e2su_2 {flex:none;}
+        body[data-atsumi-chat-fit] [data-atsumi-chat-scale-original] {display:none!important;}
+        body[data-atsumi-chat-fit] .atsumi-chat-scale {position:absolute;right:40px;top:10px;display:flex;align-items:center;z-index:1001;}
+        body[data-atsumi-chat-fit] .atsumi-chat-scale output {min-width:30px;text-align:center;}
+      `;
+      document.documentElement.appendChild(chatLayoutStyle);
+    }
+    if (!document.body.hasAttribute("data-atsumi-chat-fit")) document.body.setAttribute("data-atsumi-chat-fit", "");
+    for (let parent = root.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+      if (!parent.hasAttribute("data-atsumi-chat-layout")) parent.setAttribute("data-atsumi-chat-layout", "");
+    }
+    const original = root.querySelector(`${CHAT_HEADER} > ._scale_1e2su_39`);
+    const originalButtons = original?.querySelectorAll("button");
+    if (originalButtons?.length === 2 && (chatScaleOriginal !== original || !chatScaleControl?.isConnected)) {
+      chatScaleControl?.remove(); chatScaleOriginal?.removeAttribute("data-atsumi-chat-scale-original");
+      chatScaleOriginal = original; chatScaleRoot = root;
+      chatScaleControl = document.createElement("div"); chatScaleControl.className = "atsumi-chat-scale";
+      const minus = document.createElement("button"), plus = document.createElement("button"), value = document.createElement("output");
+      value.className = "_scale_text_1e2su_46"; value.setAttribute("aria-label", "채팅 배율");
+      for (const [button, direction, text] of [[minus, -1, "−"], [plus, 1, "+"]]) {
+        button.type = "button"; button.className = "_scale_button_1e2su_55"; button.textContent = text;
+        button.setAttribute("aria-label", direction < 0 ? "채팅 크기 마이너스" : "채팅 크기 플러스");
+        button.title = direction < 0 ? "채팅 축소 (최소 50%)" : "채팅 확대";
+        button.addEventListener("click", () => {
+          if (!allowed() || chatScaleRoot !== root || chatScaleOriginal !== original) return;
+          const nativeScale = Number.parseInt(original.querySelector("._scale_text_1e2su_46")?.textContent || "100", 10);
+          if (chatScale < 100 || (direction < 0 && nativeScale === 100)) {
+            chatScale = Math.max(50, Math.min(100, chatScale + direction * 10));
+            renderChatLayout(); renderChatHeader();
+            // Notify the official list/virtualizer of its new logical size.
+            window.dispatchEvent(new Event("resize"));
+          } else originalButtons[direction < 0 ? 0 : 1].click();
+        });
+      }
+      chatScaleControl.append(minus, value, plus); original.parentElement.appendChild(chatScaleControl);
+      original.setAttribute("data-atsumi-chat-scale-original", "");
+    }
+    const factor = chatScale / 100;
+    if (document.body.style.getPropertyValue("--atsumi-chat-zoom") !== String(factor)) document.body.style.setProperty("--atsumi-chat-zoom", String(factor));
+    if (chatScaleControl?.isConnected) {
+      const nativeScale = Number.parseInt(chatScaleOriginal.querySelector("._scale_text_1e2su_46")?.textContent || "100", 10);
+      const value = chatScaleControl.querySelector("output"), text = `${chatScale < 100 ? chatScale : nativeScale}%`;
+      if (value.textContent !== text) value.textContent = text;
+      chatScaleControl.firstElementChild.disabled = chatScale <= 50;
+      chatScaleControl.lastElementChild.disabled = chatScale === 100 && chatScaleOriginal.lastElementChild.disabled;
+    }
+  };
   const clearChatHeader = () => {
     chatLabel?.remove();
     chatHeading?.removeAttribute("data-atsumi-mado-chat-heading");
@@ -37,8 +114,8 @@
   };
   const renderChatHeader = () => {
     if (!chat || !chatContext || !allowed()) { clearChatHeader(); return; }
-    // Only augment the verified official popup-chat heading, never message
-    // content. Keep its original text, scaling/menu controls and event owners.
+    // Only augment the verified popup-chat heading, never message content.
+    // The menu/input and native scale above 100% keep their original owners.
     const titles = document.querySelectorAll(`${CHAT_HEADER} > ${CHAT_TITLE}`);
     if (titles.length !== 1) { clearChatHeader(); return; }
     const heading = titles[0];
@@ -59,18 +136,19 @@
     }
     const name = `${chatContext.number}.${chatContext.channelName || "방송"}`;
     if (chatLabel.textContent !== name) { chatLabel.textContent = name; chatLabel.title = name; }
-    const header = heading.parentElement, bounds = header.getBoundingClientRect();
+    const header = heading.parentElement, bounds = header.getBoundingClientRect(), factor = chatScale / 100;
+    const width = bounds.width / factor;
     const fontSize = Number.parseFloat(window.getComputedStyle(heading).fontSize) || 15;
-    let right = bounds.width;
-    for (const control of header.querySelectorAll("._wrapper_1e2su_28")) {
+    let right = width;
+    for (const control of header.querySelectorAll("._wrapper_1e2su_28,.atsumi-chat-scale")) {
       const rect = control.getBoundingClientRect();
-      if (rect.width > 0 && rect.left >= bounds.left + bounds.width / 3) right = Math.min(right, rect.left - bounds.left);
+      if (rect.width > 0 && rect.left >= bounds.left + bounds.width / 3) right = Math.min(right, (rect.left - bounds.left) / factor);
     }
     // Keep the original centered title at normal widths. In a narrow chat,
     // reserve room for the original scale/menu controls and ellipsize only the
     // channel name, rather than shrinking either heading's typography.
-    const center = Math.min(bounds.width / 2, right - fontSize - 8);
-    const values = { "--atsumi-chat-title-inset": `${Math.max(0, bounds.width - center * 2)}px`, "--atsumi-chat-label-width": `${Math.max(0, center - fontSize - 22)}px` };
+    const center = Math.min(width / 2, right - fontSize - 8);
+    const values = { "--atsumi-chat-title-inset": `${Math.max(0, width - center * 2)}px`, "--atsumi-chat-label-width": `${Math.max(0, center - fontSize - 22)}px` };
     for (const [property, value] of Object.entries(values)) if (heading.style.getPropertyValue(property) !== value) heading.style.setProperty(property, value);
   };
   const configureChat = (value) => {
@@ -78,6 +156,7 @@
         !Number.isInteger(value.number) || value.number < 1 || value.number > 4 ||
         typeof value.channelName !== "string" || value.channelName.length > 160 || /[\u0000-\u001f\u007f]/.test(value.channelName)) return;
     chatContext = { number: value.number, channelName: value.channelName.trim() };
+    renderChatLayout();
     renderChatHeader();
   };
   const changed = new Map();
@@ -85,7 +164,18 @@
     if (!changed.has(element)) changed.set(element, new Map());
     const previous = changed.get(element);
     if (!previous.has(name)) previous.set(name, element.getAttribute(name));
-    element.setAttribute(name, "");
+    if (!element.hasAttribute(name)) element.setAttribute(name, "");
+  };
+  const reconcile = (desired) => {
+    for (const [element, attributes] of changed) {
+      for (const [name, previous] of attributes) if (!desired.get(element)?.has(name)) {
+        if (previous === null) element.removeAttribute(name);
+        else element.setAttribute(name, previous);
+        attributes.delete(name);
+      }
+      if (!attributes.size) changed.delete(element);
+    }
+    for (const [element, names] of desired) for (const name of names) mark(element, name);
   };
   const restore = () => {
     for (const [element, attributes] of changed) for (const [name, previous] of attributes) {
@@ -96,24 +186,37 @@
     active = false;
     currentPlayer = null;
     currentVideo = null;
+    placeholder?.remove(); placeholder = null;
   };
   const showOfficialInformation = (player) => {
     // CHZZK renders avatar/title/channel/viewers/uptime only in its own wide
     // mode. Let that original component populate and update its existing
     // header; CSS alone cannot reveal metadata that the site did not render.
     const button = player.querySelector(WIDE_BUTTON);
-    if (!button || button.disabled || wideAttempts.has(button)) return;
-    wideAttempts.add(button);
+    if (!button) { clearTimeout(wideRetry); wideRetry = null; wideAttempts.delete(player); return; }
+    // A disabled control may stay disabled throughout the pre-roll. Its
+    // eventual disabled/aria-label mutation will schedule a fresh attempt.
+    if (button.disabled) return;
+    const previous = wideAttempts.get(player);
+    const attempt = previous?.button === button ? previous : { count: 0, at: -Infinity };
+    // The first click can precede the site's event binding. Verify the native
+    // wide-state label, with bounded retries, rather than remembering an
+    // attempted click forever. Never toggle an already-wide player.
+    if (attempt.count >= 4 || Date.now() - attempt.at < 1000) return;
+    wideAttempts.set(player, { button, count: attempt.count + 1, at: Date.now() });
+    clearTimeout(wideRetry);
+    wideRetry = setTimeout(() => { wideRetry = null; if (requested && allowed() && player.isConnected) schedule(); }, 1200);
     expandedPlayer = player;
     button.click();
   };
   const restoreOfficialView = () => {
+    clearTimeout(wideRetry); wideRetry = null;
     const player = expandedPlayer;
     expandedPlayer = null;
     if (!player?.isConnected || !allowed()) return;
     const button = player.querySelector('button.pzp-pc__viewmode-button[aria-label="좁은 화면"]');
     if (button && !button.disabled) {
-      wideAttempts.delete(button);
+      wideAttempts.delete(player);
       button.click();
     }
   };
@@ -126,69 +229,115 @@
     if (chat && !element.paused) element.pause();
   };
   const muteAll = () => { for (const element of document.querySelectorAll("video,audio")) mute(element); };
-  const visible = (element) => {
-    const rect = element.getBoundingClientRect();
-    const css = window.getComputedStyle(element);
-    return rect.width > 0 && rect.height > 0 && css.display !== "none" && css.visibility !== "hidden";
-  };
   const update = () => {
     timer = null;
     muteAll();
     // Never change chat input, focus, key handlers, DOM parents or navigation.
     // In particular, failure here must not load a full live page.
-    if (chat) { renderChatHeader(); return; }
+    if (chat) { renderChatLayout(); renderChatHeader(); return; }
     if (!document.body) return;
     if (!style) {
       style = document.createElement("style");
       style.textContent = `
-        #atsumi-mado-toggle {opacity:0;pointer-events:none;transition:opacity .16s ease;}
-        body:hover #atsumi-mado-toggle,#atsumi-mado-toggle:focus-visible {opacity:1;pointer-events:auto;}
-        @media(prefers-reduced-motion:reduce) {#atsumi-mado-toggle,body[${ROOT}] .player_header .header_info {transition:none!important;}}
+        @media(prefers-reduced-motion:reduce) {body[${ROOT}] .player_header .header_info {transition:none!important;}}
         body[${ROOT}] {overflow:hidden!important;background:#000!important;transform:none!important;min-width:0!important;}
-        body[${ROOT}] > :not([${PATH}]):not([${PLAYER}]):not(#atsumi-mado-toggle),
-        body[${ROOT}] [${PATH}] > :not([${PATH}]):not([${PLAYER}]) {display:none!important;}
+        body[${ROOT}] > :not([${PATH}]):not([${PLAYER}]):not([${MODAL}]),
+        body[${ROOT}] [${PATH}] > :not([${PATH}]):not([${PLAYER}]):not([${MODAL}]) {display:none!important;}
         body[${ROOT}] [${PATH}] {transform:none!important;translate:none!important;rotate:none!important;scale:none!important;filter:none!important;perspective:none!important;overflow:visible!important;clip:auto!important;clip-path:none!important;contain:none!important;}
         body[${ROOT}] [${PLAYER}] {position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;box-sizing:border-box!important;aspect-ratio:auto!important;margin:0!important;padding:0!important;border:0!important;border-radius:0!important;transform:none!important;translate:none!important;rotate:none!important;scale:none!important;z-index:2147483600!important;background:#000!important;}
         body[${ROOT}] [${MEDIA}],body[${ROOT}] [${VIDEO}] {position:absolute!important;inset:0!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;box-sizing:border-box!important;aspect-ratio:auto!important;margin:0!important;padding:0!important;border:0!important;transform:none!important;translate:none!important;rotate:none!important;scale:none!important;clip:auto!important;clip-path:none!important;}
         body[${ROOT}] [${MEDIA}] {overflow:visible!important;}
         body[${ROOT}] [${VIDEO}] {object-fit:contain!important;object-position:center!important;}
-        body[${ROOT}] [${PLAYER}]:focus-within .player_header .header_info {opacity:1!important;}
+        body[${ROOT}] [${MODAL}],body[${ROOT}] [${MODAL_PATH}] {z-index:2147483640!important;}
+        body[${ROOT}] [data-atsumi-mado-placeholder] {display:grid!important;place-items:center;color:#a6abb6;font:14px/1.6 sans-serif;}
+        body[${ROOT}] [${PLAYER}]:hover .pzp-pc__bottom,
+        body[${ROOT}] [${PLAYER}]:focus-within .pzp-pc__bottom {opacity:1!important;visibility:visible!important;}
+        body[${ROOT}] [${PLAYER}]:is(:hover,:focus-within) .pzp-pc__bottom :is(button,.pzp-pc__volume-control,.pzp-pc__vod-time,.pzp-pc__live-time),
+        body[${ROOT}] [${PLAYER}]:is(:hover,:focus-within) .pzp-pc__bottom-shadow {opacity:1!important;visibility:visible!important;}
+        body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons,
+        body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-left,
+        body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-right {align-items:center!important;}
+        @media(max-width:640px) {
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom {left:8px!important;right:8px!important;}
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons {height:36px!important;flex-wrap:nowrap!important;gap:4px;}
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-left {flex:0 0 auto;}
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-right {flex:0 0 auto;flex-wrap:nowrap;gap:2px;margin-left:auto!important;}
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-right .pzp-button {margin-left:0!important;}
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-right > button,
+          body[${ROOT}] [${PLAYER}] #atsumi-player-controls > button {width:32px!important;height:36px!important;min-width:0!important;}
+          body[${ROOT}] [${PLAYER}] #atsumi-player-controls > [data-playback-rate] {width:40px!important;}
+        }
+        /* Truly small tiles need two rows; both rows stay centered and the
+           secondary tools remain reachable without spilling outside the tile. */
+        @media(max-width:400px) {
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons {height:auto!important;flex-wrap:wrap!important;row-gap:2px;}
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-right {flex:1 1 100%;flex-wrap:wrap;justify-content:flex-end;}
+          body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-shadow {height:120px!important;}
+        }
+        body[${ROOT}] [${PLAYER}]:is(:hover,:focus-within) .player_header .header_info {opacity:1!important;}
+        body[${ROOT}] button.pzp-pc__viewmode-button[aria-label="넓은 화면"],
+        body[${ROOT}] button.pzp-pc__viewmode-button[aria-label="좁은 화면"] {display:none!important;}
       `;
       document.body.appendChild(style);
-      toggle = document.createElement("button");
-      toggle.id = "atsumi-mado-toggle";
-      toggle.type = "button";
-      toggle.style.cssText = "position:fixed;right:8px;top:8px;z-index:2147483647;background:#18212ed9;color:white;border:1px solid #526170;border-radius:5px;font:11px system-ui;padding:4px 6px";
-      toggle.addEventListener("click", () => { requested = !requested; if (!requested) restoreOfficialView(); update(); });
-      document.body.appendChild(toggle);
     }
-    restore();
-    reason = "original";
-    if (!allowed()) reason = "navigation_blocked";
-    else if (!requested) reason = "original";
-    else if (window.innerWidth < 160 || window.innerHeight < 90) reason = "viewport_too_small";
-    else if ([...document.querySelectorAll(DIALOG)].some(visible)) reason = "dialog_visible";
-    else {
-      const video = [...document.querySelectorAll("video")]
-        .filter((item) => item.isConnected && item.readyState >= 1 && item.videoWidth > 0 && visible(item))
+    if (!allowed() || !requested) {
+      restore(); reason = allowed() ? "original" : "navigation_blocked"; return;
+    }
+    // Keep the presentation stable across viewport/receiver updates. Tearing
+    // these attributes down briefly exposes the site and resets native controls.
+    const desired = new Map();
+    const want = (element, name) => {
+      if (!desired.has(element)) desired.set(element, new Set());
+      desired.get(element).add(name);
+    };
+    const path = element => {
+      for (let parent = element.parentElement; parent && parent !== document.body; parent = parent.parentElement) want(parent, PATH);
+    };
+    want(document.body, ROOT);
+    const video = [...document.querySelectorAll("video")]
+        .filter((item) => item.isConnected && item.closest(PLAYER_SELECTOR))
         .sort((a, b) => {
           const x = a.getBoundingClientRect(), y = b.getBoundingClientRect();
           return y.width * y.height - x.width * x.height;
         })[0];
-      const player = video?.closest(".u_rmcplayer,.pzp-pc,.webplayer");
-      if (!player || player === document.body) reason = "player_unavailable";
-      else {
-        for (let parent = player.parentElement; parent && parent !== document.body; parent = parent.parentElement) mark(parent, PATH);
-        for (let parent = video.parentElement; parent && parent !== player; parent = parent.parentElement) mark(parent, MEDIA);
-        mark(player, PLAYER); mark(video, VIDEO); mark(document.body, ROOT);
-        currentPlayer = player; currentVideo = video;
-        active = true; reason = "video_only";
-        showOfficialInformation(player);
+    // The official outer player owns controls AND offline/access notices.
+    // Do not crop to an inner media wrapper or require a decoded video frame.
+    const decodedPlayer = video?.closest(".chzzk_player") || video?.closest(PLAYER_SELECTOR) || document.querySelector(PLAYER_SELECTOR);
+    const player = decodedPlayer || document.querySelector(STARTUP_SELECTOR);
+    if (player && player !== document.body) {
+      placeholder?.remove(); placeholder = null;
+      path(player); want(player, PLAYER);
+      if (video) {
+        for (let parent = video.parentElement; parent && parent !== player; parent = parent.parentElement) want(parent, MEDIA);
+        want(video, VIDEO);
       }
+      currentPlayer = player; currentVideo = video || null;
+      active = true; reason = video ? "video_only" : decodedPlayer ? "player_notice" : "player_preparing";
+    } else {
+      if (!placeholder) {
+        placeholder = document.createElement("div");
+        placeholder.setAttribute("data-atsumi-mado-placeholder", "");
+        placeholder.setAttribute("role", "status");
+        placeholder.textContent = "방송 화면을 기다리고 있습니다.";
+        document.body.appendChild(placeholder);
+      }
+      want(placeholder, PLAYER);
+      active = false; reason = "player_unavailable"; currentPlayer = currentVideo = null;
     }
-    const text = active ? "전체 보기" : "영상만";
-    if (toggle.textContent !== text) toggle.textContent = text;
-    toggle.setAttribute("aria-pressed", String(active));
+    // Preserve official authentication/quality dialogs without revealing the
+    // site's navigation/sidebar. Never click or bypass an access dialog.
+    for (const dialog of document.querySelectorAll(DIALOG)) {
+      if (dialog.closest('[hidden],[aria-hidden="true"]')) continue;
+      if (!player?.contains(dialog)) {
+        path(dialog);
+        for (let parent = dialog.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+          if (!player || !parent.contains(player)) want(parent, MODAL_PATH);
+        }
+      }
+      want(dialog, MODAL);
+    }
+    reconcile(desired);
+    if (player) showOfficialInformation(player);
   };
   const schedule = () => { if (timer === null) timer = setTimeout(update, 150); };
   window.addEventListener("atsumi-multiview-audio", (event) => {
@@ -208,22 +357,25 @@
   }
   window.addEventListener("resize", schedule);
   const structural = (node) => node.nodeType === 1 &&
-    (node.matches(`video,${DIALOG},${WIDE_BUTTON}`) || node.querySelector(`video,${DIALOG},${WIDE_BUTTON}`));
+    (node.matches(`video,${PLAYER_SELECTOR},${STARTUP_SELECTOR},${DIALOG},${WIDE_BUTTON}`) || node.querySelector(`video,${PLAYER_SELECTOR},${STARTUP_SELECTOR},${DIALOG},${WIDE_BUTTON}`));
   const observer = new MutationObserver((records) => {
     muteAll();
     if (chat) {
-      if (chatContext && (!chatHeading?.isConnected || !chatLabel?.isConnected || records.some(record => chatHeading.parentElement?.contains(record.target)))) schedule();
+      // Ignore high-volume message appends; only layout/header replacement and
+      // the original scale label need another presentation pass.
+      if (!chatScaleRoot?.isConnected || !chatScaleControl?.isConnected ||
+          (chatContext && (!chatHeading?.isConnected || !chatLabel?.isConnected)) ||
+          records.some(record => chatHeading?.parentElement?.contains(record.target) || chatScaleOriginal?.contains(record.target))) schedule();
       return;
     }
     const stable = active && allowed() && currentPlayer?.isConnected &&
-      currentVideo?.isConnected && currentPlayer.contains(currentVideo);
+      (!currentVideo || currentVideo.isConnected && currentPlayer.contains(currentVideo));
     if (stable && records.every((record) => {
       const target = record.target;
-      if (target === toggle || toggle?.contains(target)) return true;
       // Site progress bars, volume controls and live-chat classes can update
       // many times per second. They must not restore/reapply the entire pane.
       // Existing dialogs may become visible via an ancestor's class/style.
-      if (record.type === "attributes") return !(target.matches(DIALOG) || target.querySelector(DIALOG));
+      if (record.type === "attributes") return !(target.matches(DIALOG) || target.querySelector(DIALOG) || target.matches(WIDE_BUTTON));
       return ![...record.addedNodes, ...record.removedNodes].some(structural);
     })) return;
     if (!stable || records.some((record) => record.type === "attributes" ||
@@ -231,7 +383,8 @@
   });
   const observe = () => {
     observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true,
-      attributeFilter: ["class", "style", "hidden", "role", "aria-modal"] });
+      characterData: chat,
+      attributeFilter: ["class", "style", "hidden", "role", "aria-modal", "aria-label", "disabled"] });
     schedule();
   };
   if (document.documentElement) observe();
@@ -241,7 +394,7 @@
     configureChat,
     // Presentation only: preserve the video, chat connection and capture session.
     setVideoOnly: (enabled) => {
-      if (chat || typeof enabled !== "boolean") return;
+      if (chat || typeof enabled !== "boolean" || requested === enabled) return;
       if (requested && !enabled) restoreOfficialView();
       requested = enabled;
       update();

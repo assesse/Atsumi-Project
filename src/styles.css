@@ -228,6 +228,17 @@ select:focus-visible {
   padding-top: 16px;
 }
 
+.nav-live-item { position:relative; min-width:0; }
+.nav-live-item>.nav-item { width:100%; padding-right:42px; }
+.nav-live-disclosure { position:absolute; right:4px; top:4px; bottom:4px; display:grid; place-items:center; width:30px; margin:0; padding:0; border:0; border-radius:4px; background:transparent; color:var(--muted); }
+.nav-live-disclosure:hover { background:var(--surface-soft); color:var(--text); }
+.nav-live-disclosure:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
+.nav-live-disclosure>.fluent { display:block; font-size:12px; line-height:1; transition:transform 180ms ease; }
+.nav-live-disclosure[aria-expanded=true]>.fluent { transform:rotate(90deg); }
+.sidebar-collapsed .nav-live-item>.nav-item { padding-right:20px; }
+.sidebar-collapsed .nav-live-disclosure { right:0; width:20px; }
+@media(prefers-reduced-motion:reduce) { .nav-live-disclosure>.fluent { transition:none; } }
+
 .sidebar-foot .nav-item { width: 100%; }
 .sidebar-privacy:disabled { cursor: progress; opacity: .65; }
 
@@ -762,16 +773,19 @@ h2 {
   flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
-  background: var(--surface-soft);
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  transition: background-color 140ms ease, border-color 140ms ease;
 }
 
 .explore-context-tab-shell.is-active {
-  background: var(--primary-soft);
-  border-color: color-mix(in srgb, var(--primary) 66%, var(--line));
-  box-shadow: inset 0 -2px 0 var(--primary);
+  background: transparent;
+  border-bottom-color: var(--primary);
+  box-shadow: none;
 }
+.explore-context-tab-shell:hover { background: var(--surface-hover); }
 
 .explore-context-tab {
   display: inline-flex;
@@ -781,7 +795,7 @@ h2 {
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  color: var(--text);
+  color: var(--muted);
   font: inherit;
   background: transparent;
   border: 0;
@@ -790,15 +804,18 @@ h2 {
 .explore-context-tab > span {
   overflow: hidden;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.explore-context-tab > small {
+.explore-context-tab-shell.is-active .explore-context-tab { color: var(--text); }
+.explore-context-spinner:not(.is-busy) { visibility: hidden; animation: none; }
+.explore-context-spinner {
   flex: 0 0 auto;
-  color: var(--muted);
-  font-size: 10px;
+  width: 12px;
+  height: 12px;
+  margin: 0;
 }
 
 .explore-context-close {
@@ -810,7 +827,7 @@ h2 {
   color: var(--muted);
   background: transparent;
   border: 0;
-  border-left: 1px solid var(--line);
+  border-left: 0;
 }
 
 .explore-context-close:hover {
@@ -1225,13 +1242,13 @@ h2 {
 .download-artist-folder-grid {
   display: grid;
   min-width: 0;
-  align-items: start;
+  align-items: stretch;
   gap: 12px;
 }
 
 .download-artist-folder-card {
   min-width: 0;
-  height: calc(var(--preview-width) * 1.5);
+  min-height: calc(var(--preview-width) * 1.5);
 }
 
 .download-artist-folder-card > h2 {
@@ -1277,6 +1294,7 @@ h2 {
   display: block;
   min-width: 0;
   height: 100%;
+  min-height: calc(var(--preview-width) * 1.5);
   overflow: hidden;
   background:
     radial-gradient(circle at 52% 42%, color-mix(in srgb, var(--primary) 15%, transparent), transparent 56%),
@@ -1287,14 +1305,13 @@ h2 {
 
 .download-artist-folder-preview {
   position: absolute !important;
-  top: 11px;
-  bottom: 11px;
-  left: 10px;
-  width: calc(100% - 28px);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  container-type: size;
   background: var(--thumbnail-frame);
-  border: 1px solid rgba(220, 239, 241, 0.3);
-  border-radius: 6px;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.42);
+  border: 0;
+  border-radius: 0;
   transform-origin: center;
   transition: border-color 160ms ease, box-shadow 180ms ease;
 }
@@ -1305,9 +1322,14 @@ h2 {
   object-position: center top;
 }
 
+.download-artist-folder-preview > .cover-image:not(.cover-image--sprite) {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+}
+
 .download-artist-folder-preview.is-preview-1 {
   z-index: 4;
-  transform: translate(-5px, 5px);
 }
 
 .download-artist-folder-preview-stack:hover .download-artist-folder-preview,
@@ -1349,6 +1371,7 @@ h2 {
   position: relative;
   display: grid;
   min-width: 0;
+  grid-template-rows: auto auto 1fr auto;
   align-content: start;
   gap: 7px;
   padding: var(--card-padding);
@@ -1379,12 +1402,10 @@ h2 {
 .download-artist-folder-tags {
   display: flex;
   min-width: 0;
-  max-height: 78px;
   align-content: flex-start;
   flex-wrap: wrap;
   gap: 5px;
   margin-top: 3px;
-  overflow: hidden;
 }
 
 .download-artist-folder-tags.is-empty {
@@ -1437,9 +1458,8 @@ h2 {
 }
 
 .download-artist-folder-action {
-  position: absolute;
-  right: var(--card-padding);
-  bottom: var(--card-padding);
+  justify-self: end;
+  margin-top: 5px;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1518,6 +1538,7 @@ h2 {
   width: var(--folder-preview-width);
   min-width: 0;
   height: var(--folder-preview-height);
+  container-type: size;
   overflow: hidden;
   background: var(--thumbnail-frame);
   border: 1px solid color-mix(in srgb, var(--primary) 54%, #dceff1);
@@ -1551,9 +1572,11 @@ h2 {
   animation: download-artist-folder-cover-sheen 620ms ease-out both;
 }
 
+.download-artist-folder-preview .thumbnail-sprite-viewport,
 .download-artist-folder-overlay-preview .thumbnail-sprite-viewport {
-  width: 100% !important;
-  height: 100% !important;
+  width: max(100cqw, calc(100cqh * var(--folder-cover-aspect, 0.666667))) !important;
+  height: max(100cqh, calc(100cqw / var(--folder-cover-aspect, 0.666667))) !important;
+  margin: 0 !important;
   max-width: none !important;
   max-height: none !important;
 }

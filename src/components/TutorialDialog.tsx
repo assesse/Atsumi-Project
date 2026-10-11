@@ -215,13 +215,13 @@ export function TutorialDialog({ open, onClose, onStart, onStepChange, steps = h
   const shade = `M0 0H${viewport.width}V${viewport.height}H0Z${hole ? ` M${hole.left} ${hole.top}v${hole.height}h${hole.width}v-${hole.height}Z` : ""}`;
   const content = <div ref={layer} popover="manual" className="tutorial-tour" role="dialog" aria-modal="true" aria-labelledby="tutorial-title" aria-describedby="tutorial-description" data-tutorial-active="true" data-tour-step={step?.id} data-native-overlay="true" data-native-preserve-video="true">
     <svg className="tutorial-shade" data-native-dialog-surface="true" width={viewport.width} height={viewport.height} aria-hidden="true"><path d={shade} fillRule="evenodd" />{line ? <path className="tutorial-connector" d={line} /> : null}</svg>
-    {hole ? <div className="tutorial-spotlight" style={{ left: hole.left, top: hole.top, width: hole.width, height: hole.height }} aria-hidden="true" /> : null}
+    {hole ? <div className={`tutorial-spotlight${step?.action && !satisfied && !emptyAction && actionState.phase !== "pending" ? " is-action-required" : ""}`} style={{ left: hole.left, top: hole.top, width: hole.width, height: hole.height }} aria-hidden="true" /> : null}
     <section ref={bubble} className="tutorial-callout" style={{ left: position.left, top: position.top }}>
       <button type="button" className="tutorial-close" aria-label="튜토리얼 닫기" onClick={close}>×</button>
       <div key={index} className="tutorial-copy" aria-live="polite">
         <h2 id="tutorial-title">{index + 1}. {step?.title}</h2>
         <p id="tutorial-description">{step?.description}</p>
-        {step?.hint && hole ? <p className="tutorial-hint">{emptyAction ? step.emptyActionFallback?.message : step.hint}</p> : null}
+        {emptyAction && hole ? <p className="tutorial-hint">{step?.emptyActionFallback?.message}</p> : null}
         {step && !hole ? <p className="tutorial-hint">화면을 불러오는 중…</p> : null}
         {satisfied ? <p className="tutorial-hint">{step?.satisfiedHint ?? "조건 충족 · 다음으로 진행"}</p> : null}
         {actionState.phase === "pending" ? <p className="tutorial-hint" role="status">처리 중…</p> : null}

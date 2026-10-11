@@ -267,10 +267,13 @@ describe("App Phase 3A backend flow", () => {
           await settle();
         });
         expect(container.querySelector(".settings-dialog")).toHaveAttribute("open");
-        const replayButton = [...container.querySelectorAll<HTMLButtonElement>(".settings-dialog button")]
-          .find(button => button.textContent === "사용 안내");
+        const replayButton = container.querySelector<HTMLButtonElement>('[aria-label="튜토리얼 다시 보기"]');
         expect(replayButton).toBeVisible();
         await act(async () => { replayButton!.click(); await settle(); });
+        const hitomiOption = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')]
+          .find(button => button.lastElementChild?.textContent === "Hitomi");
+        expect(hitomiOption).toBeVisible();
+        await act(async () => { hitomiOption!.click(); await settle(); });
         expect(container.querySelector(".settings-dialog")).not.toHaveAttribute("open");
         expect(container.querySelector(".tutorial-tour")).toHaveAttribute("data-tour-step", "settings");
         expect(isTutorialDismissed()).toBe(true);
@@ -419,6 +422,8 @@ describe("App Phase 3A backend flow", () => {
       expect(order()).toEqual(expected);
       const select = host.querySelector<HTMLSelectElement>(".search-box #sort-select")!;
       expect(select).not.toBeNull();
+      expect(host.querySelector("#download-status-filter")).toBeNull();
+      expect(host.querySelector("#downloads-sort-select")).toBeNull();
       await act(async () => { Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!.call(select, "popular_week"); select.dispatchEvent(new Event("change", { bubbles: true })); });
       expect(search).toHaveBeenCalledOnce(); expect(order()).toEqual(expected);
       await submitExploreSearch(host);
@@ -1485,7 +1490,7 @@ describe("App Phase 3A backend flow", () => {
       expect(card).toHaveClass("is-selected");
       await act(async () => { card.querySelector(".byline")!.dispatchEvent(new MouseEvent("click",{bubbles:true,ctrlKey:true,detail:1})); await settle(); });
       expect(search).toHaveBeenCalledTimes(2);
-      expect(container.querySelector('.explore-context-bar [aria-selected="true"]')).toHaveTextContent("새 탐색");
+      expect(container.querySelector('.explore-context-bar [aria-selected="true"]')).toHaveTextContent("전체 탐색");
       expect(viewport.scrollTop).toBe(345);
       expect(container.querySelector('[data-gallery-id="4051038"]')).not.toBeNull();
       expect(container.querySelector(".detail-workspace")).toBeNull();
@@ -1647,14 +1652,14 @@ describe("App Phase 3A backend flow", () => {
       };
 
       await act(async () => {
-        findContextTab("새 탐색").click();
+        findContextTab("전체 탐색").click();
         await settle();
       });
       expect(container).toHaveTextContent("Root page 3");
       expect(container.querySelector(".pager")).toHaveTextContent("3 / 20");
       expect(container.querySelector('[data-gallery-id="8100003"]')).not.toBeNull();
       expect(container.querySelector('[data-gallery-id="8200002"]')).toBeNull();
-      expect(findContextTab("새 탐색")).toHaveAttribute("aria-selected", "true");
+      expect(findContextTab("전체 탐색")).toHaveAttribute("aria-selected", "true");
       await vi.waitFor(() => expect(viewport.scrollTop).toBe(417));
       expect(searchSubmit).toHaveBeenCalledTimes(callsBeforeSwitching.submit);
       expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
@@ -1672,7 +1677,7 @@ describe("App Phase 3A backend flow", () => {
       expect(searchPageGet).toHaveBeenCalledTimes(callsBeforeSwitching.page);
 
       await act(async () => {
-        findContextTab("새 탐색")?.click();
+        findContextTab("전체 탐색")?.click();
         await settle();
       });
       expect(container).toHaveTextContent("Root page 3");
@@ -2160,14 +2165,17 @@ describe("App Phase 3A backend flow", () => {
       await settle();
     });
     await act(async () => {
-      clickButtonContaining(container, "즐겨찾기 작가·그룹 갱신");
+      clickButtonContaining(container, "신규 작품 갱신");
       await settle(10);
     });
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(container.querySelector('[data-tour="hitomi-auto-find-refresh"]')).toHaveAttribute("aria-busy", "true");
     expect(container.querySelector('[data-tour="hitomi-auto-find-refresh"] .spinner')).not.toBeNull();
+    expect(container.querySelector('.result-details > summary .spinner')).toBeNull();
+    expect(container.querySelectorAll('[data-tour="hitomi-auto-find-refresh"]')).toHaveLength(1);
+    expect([...container.querySelectorAll(".heading-actions button")].some(button => button.textContent?.includes("탐색 취소"))).toBe(false);
     await act(async () => {
-      clickButtonContaining(container, "탐색 취소");
+      clickButtonContaining(container, "신규 작품 갱신");
       await settle();
     });
     expect(cancel).toHaveBeenCalledTimes(1);
@@ -2175,7 +2183,7 @@ describe("App Phase 3A backend flow", () => {
     expect(container.querySelector('[data-tour="hitomi-auto-find-refresh"]')).toHaveAttribute("aria-busy", "false");
 
     await act(async () => {
-      clickButtonContaining(container, "즐겨찾기 작가·그룹 갱신");
+      clickButtonContaining(container, "신규 작품 갱신");
       await settle(150);
       container.querySelector<HTMLButtonElement>('button[aria-label="언어 필터"]')?.click();
       await settle();
@@ -2432,7 +2440,7 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       await act(async () => {
-        clickButtonContaining(container, "즐겨찾기 작가·그룹 갱신");
+        clickButtonContaining(container, "신규 작품 갱신");
         await settle(180);
       });
       expect(container).toHaveTextContent("기간별");
@@ -2483,7 +2491,7 @@ describe("App Phase 3A backend flow", () => {
       const downloadsGroupingToolbar = container.querySelector(".context-left > .gallery-grouping-toolbar");
       expect(downloadsGroupingToolbar).not.toBeNull();
       expect(downloadsGroupingToolbar?.querySelectorAll("button")).toHaveLength(
-        3,
+        2,
       );
       const statusFilter = container.querySelector<HTMLSelectElement>("#download-status-filter");
       expect(statusFilter).toHaveAccessibleName("다운로드 상태 필터");
@@ -2493,6 +2501,8 @@ describe("App Phase 3A backend flow", () => {
       expect(downloadsGroupingToolbar?.querySelector<HTMLButtonElement>("button[aria-pressed='true']")).toHaveTextContent("전체");
       expect(container.querySelector(".gallery-group-toggle")).toBeNull();
       expect(container.querySelector<HTMLSelectElement>("#downloads-sort-select")?.options).toHaveLength(5);
+      expect(container.querySelector("#downloads-sort-select")).toHaveAccessibleName("보관함 정렬");
+      expect(downloadsGroupingToolbar?.querySelector(".gallery-groups-toggle-all")).toBeNull();
       await act(async () => {
         clickButtonContaining(container, "작가별");
         await settle();
@@ -2505,6 +2515,14 @@ describe("App Phase 3A backend flow", () => {
       expect(artistFolder?.querySelector(".download-artist-folder-latest")).toBeNull();
       expect(artistFolder?.querySelector(".download-artist-folder-tags")).not.toBeNull();
       expect(container.querySelector(".download-artist-folder-contents")).toBeNull();
+      const folderButton = artistFolder?.querySelector<HTMLButtonElement>(".download-artist-folder-button");
+      await act(async () => { folderButton?.click(); await settle(); });
+      expect(document.querySelectorAll(".download-artist-folder-window")).toHaveLength(1);
+      expect(document.querySelector(".download-artist-folder-window .gallery-card")).not.toBeNull();
+      expect(container.querySelector(".download-artist-folder-window")).toBeNull();
+      await act(async () => { document.querySelector<HTMLButtonElement>('[aria-label="폴더 닫기"]')?.click(); await settle(); });
+      expect(document.querySelector(".download-artist-folder-window")).toBeNull();
+      expect(folderButton).toHaveAttribute("aria-expanded", "false");
       await vi.waitFor(() => expect(settingsUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ downloadsGrouping: "artist" }),
         expect.any(Number),
@@ -2540,6 +2558,81 @@ describe("App Phase 3A backend flow", () => {
         downloadsGrouping: originalSettings.data.downloadsGrouping,
       }, latest.data.revision);
     }
+  });
+
+  it.each(["completed", "failed"] as const)("scopes floating-folder clicks and keyboard actions to its own albums (%s)", async (state) => {
+    const settings = await backend.settingsGet();
+    if (!settings.ok) throw new Error("settings fixture unavailable");
+    vi.spyOn(backend, "settingsGet").mockResolvedValue({ ok: true, data: { ...settings.data, downloadsGrouping: "artist" } });
+    // Interleaved library order catches Shift ranges that accidentally include
+    // the other artist even when the visible folder contains only two cards.
+    const details: GalleryDetail[] = ["Alpha", "Beta", "Alpha", "Beta"].map((artist, index) => ({
+      id: galleryId(4_615_001 + index), title: `Folder ${artist} ${index}`, artist,
+      pages: 12, language: "korean", tags: [], series: [], characters: [], publishedRank: 20260901,
+      popularity: 0, thumbnailWidth: 400, thumbnailHeight: 600, related: [], pageDimensions: [],
+    }));
+    const entries: DownloadEntry[] = details.map((detail) => ({
+      entryId: `folder-scope-${detail.id}`, galleryId: detail.id, revision: 1, state, progress: state === "completed" ? 100 : 40,
+    }));
+    vi.mocked(backend.downloadLibraryPageList).mockResolvedValue({ ok: true, data: {
+      page: 1, totalItems: details.length, items: details.map((gallery, index) => ({ gallery, download: entries[index]! })),
+    } });
+    vi.spyOn(backend, "gallerySummaryGet").mockImplementation(async (id) => ({ ok: true, data: details.find(item => item.id === id)! }));
+    vi.spyOn(backend, "galleryDetailGet").mockImplementation(async (id) => ({ ok: true, data: details.find(item => item.id === id)! }));
+    const quarantine = vi.spyOn(backend, "downloadQuarantine").mockResolvedValue({ ok: true, data: [] });
+    const retry = vi.spyOn(backend, "downloadRetry").mockResolvedValue({ ok: true, data: [] });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    const openFolder = async (artist: string) => {
+      const folder = [...container.querySelectorAll<HTMLElement>(".download-artist-folder-card")]
+        .find(item => item.querySelector(".download-artist-folder-name")?.textContent === artist)!;
+      await act(async () => { folder.querySelector<HTMLButtonElement>(".download-artist-folder-button")!.click(); await settle(); });
+      return [...document.querySelectorAll<HTMLElement>(".download-artist-folder-window .gallery-card")];
+    };
+    const key = async (target: HTMLElement, init: KeyboardEventInit) => {
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, ...init });
+      await act(async () => { target.dispatchEvent(event); await settle(); });
+      return event;
+    };
+    const selectedCount = () => container.querySelector(".selection-toolbar")?.textContent;
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      const alpha = await openFolder("Alpha");
+      expect(alpha).toHaveLength(2);
+      await act(async () => alpha[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 })));
+      await act(async () => alpha[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true, detail: 1 })));
+      expect(selectedCount()).toContain("2개 선택됨");
+      await act(async () => clickButtonContaining(container.querySelector<HTMLElement>(".selection-toolbar")!, "전체 선택"));
+      expect(selectedCount()).toContain("2개 선택됨");
+      await key(alpha[0]!, { key: "ArrowRight" });
+      expect(document.activeElement).toBe(alpha[1]);
+      expect((await key(alpha[1]!, { key: "a", ctrlKey: true })).defaultPrevented).toBe(true);
+      expect(selectedCount()).toContain("2개 선택됨");
+
+      const beta = await openFolder("Beta");
+      expect(beta).toHaveLength(2);
+      expect(selectedCount()).not.toContain("선택됨");
+      await act(async () => beta[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, detail: 1 })));
+      expect(selectedCount()).not.toContain("선택됨");
+      await act(async () => beta[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true, detail: 1 })));
+      expect(selectedCount()).toContain("2개 선택됨");
+      const mutation = await key(beta[1]!, state === "completed" ? { key: "Delete" } : { key: "Enter", ctrlKey: true });
+      expect(mutation.defaultPrevented).toBe(true);
+      const betaEntries = beta.map(card => `folder-scope-${card.dataset.galleryId}`);
+      expect(betaEntries).toEqual(expect.arrayContaining([entries[1]!.entryId, entries[3]!.entryId]));
+      if (state === "completed") expect(quarantine).toHaveBeenCalledWith(betaEntries, "사용자가 Downloads 화면에서 격리를 확인함");
+      else expect(retry).toHaveBeenCalledWith(betaEntries);
+      expect(selectedCount()).not.toContain("선택됨");
+
+      const betaFirst = document.querySelector<HTMLElement>(".download-artist-folder-window .gallery-card")!;
+      await key(betaFirst, { key: "a", ctrlKey: true });
+      expect((await key(betaFirst, { key: "Enter" })).defaultPrevented).toBe(true);
+      expect(container.querySelectorAll(".detail-tabs [role=tab]")).toHaveLength(2);
+      expect(container.querySelector(".detail-tabs")).toHaveTextContent("Folder Beta");
+      expect(container.querySelector(".detail-tabs")).not.toHaveTextContent("Folder Alpha");
+    } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
   it("shows persisted artist-folder tags on cold mounts while only legacy metadata waits or fails", async () => {

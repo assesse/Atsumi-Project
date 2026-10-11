@@ -70,6 +70,9 @@ function Workspaces() {
         /> : shell.source === "hitomi" ? gallery.workspace : null}
         {(danbooruVisited || shell.source === "danbooru") ? workspaces.danbooru : null}
         <StreamingWorkspace
+          privacyMode={shell.privacyMode}
+          privacyModePending={shell.privacyModePending || loading}
+          onPrivacyModeToggle={() => void shell.togglePrivacyMode()}
           tutorialActive={shell.tutorialSource === "chzzk"}
           runtime={backend.runtime}
           active={shell.source === "chzzk" && !communityOpen}

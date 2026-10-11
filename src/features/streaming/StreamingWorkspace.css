@@ -5,3 +5,6 @@
 .streaming-workspace button:disabled { opacity: .45; cursor: not-allowed; }
 .streaming-workspace button:focus-visible, .streaming-workspace input:focus-visible, .streaming-workspace select:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .streaming-workspace button[aria-pressed="true"] { background: var(--primary-soft); border-color: var(--primary); }
+.streaming-shell.is-live-immersive { position: relative; grid-template-columns: minmax(0, 1fr); transition: none; }
+.streaming-shell.is-live-immersive > .streaming-workspace { padding: 0 0 0 8px; overflow: hidden; scrollbar-gutter: auto; }
+.streaming-shell.is-live-immersive .mado-workspace { height: 100%; }

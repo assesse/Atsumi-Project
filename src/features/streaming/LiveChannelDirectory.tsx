@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createLiveChannelsApi, mergeLiveChannels, type LiveChannelsApi, type LiveFavorite, type LiveChannelProfile } from "../../api/liveChannels";
-import { createAutoRecordingApi, type AutoRecordingApi, type AutoRecordingEntry } from "../../api/autoRecording";
+import { createAutoRecordingApi, type AutoRecordingApi, type AutoRecordingEntry, type AutoRecordingSnapshot } from "../../api/autoRecording";
 import { normalizeMultiviewChannel } from "../../api/multiview";
 import type { ApiError } from "../../api/contracts";
 
@@ -12,13 +12,16 @@ type Directory = {
   pending: boolean; error: string | null; pollError: ApiError | null;
   hasSnapshot: boolean; hasFavorites: boolean;
   toggle(input: string, favorite: boolean): Promise<void>;
+  toggleAuto(input: string, enabled: boolean): Promise<void>;
+  managementApi: AutoRecordingApi;
+  acceptManagedSnapshot(snapshot: AutoRecordingSnapshot): void;
 };
 const Context = createContext<Directory | null>(null);
 export const useLiveChannelDirectory = () => useContext(Context);
 export const safeChannelPortrait = (image: string | null | undefined) => !!image && /^data:image\/(?:png|jpeg|gif|webp);base64,/.test(image);
 
 /** One directory for the saved picker and input previews, including serialized
- * favorite writes. It never starts/stops playback or changes recording schedules. */
+ * favorite/schedule writes. Only the explicit recording toggle changes a schedule. */
 export function LiveChannelDirectory({ runtime, privacy, inputs, api: suppliedApi, autoApi: suppliedAutoApi, children }: {
   runtime: "tauri" | "browser-mock"; privacy: boolean; inputs: string[];
   api?: LiveChannelsApi; autoApi?: AutoRecordingApi; children: ReactNode;
@@ -61,7 +64,24 @@ export function LiveChannelDirectory({ runtime, privacy, inputs, api: suppliedAp
     } catch { if (alive.current && request === version.current) setError("즐겨찾기를 변경하지 못했습니다."); }
     finally { busy.current = false; if (alive.current) setPending(false); }
   };
-  const channels = mergeLiveChannels(favorites, scheduled);
+  const toggleAuto = async (input: string, enabled: boolean) => {
+    if (busy.current || runtime !== "tauri") return;
+    busy.current = true; setPending(true); setError(null); const request = ++version.current;
+    try {
+      const exists = scheduled.some(channel => channel.channelId === input);
+      const result = exists ? await autoApi.update(input, { action: "enabled", enabled }) : enabled ? await autoApi.add(input) : null;
+      if (!alive.current || request !== version.current || !result) return;
+      if (result.ok) { setScheduled(result.data.channels); setPollError(null); }
+      else if (result.error.code === "BROWSER_INITIALIZING") setPollError(result.error);
+      else setError(result.error.message);
+    } catch { if (alive.current && request === version.current) setError("자동 녹화를 변경하지 못했습니다."); }
+    finally { busy.current = false; if (alive.current) setPending(false); }
+  };
+  // Keep legacy reservations in storage, but a disabled, unfavorited channel
+  // should not become an undeletable row after the dedicated tab is removed.
+  const channels = mergeLiveChannels(favorites, scheduled).filter(row => row.favorite
+    || row.scheduled?.enabled
+    || ["starting", "recording", "stopping", "ending"].includes(row.scheduled?.status ?? ""));
   const draftKey = inputs.map(normalizeMultiviewChannel).filter(Boolean).sort().join(",");
   const [settledDraft, setSettledDraft] = useState("");
   useEffect(() => {
@@ -70,6 +90,12 @@ export function LiveChannelDirectory({ runtime, privacy, inputs, api: suppliedAp
   }, [draftKey]);
   const profileKey = privacy ? "" : [...new Set([...channels.map(row => row.channelId), ...settledDraft.split(",").filter(Boolean)])].sort().join(",");
   const requests = useMemo(() => new Map<string, ReturnType<LiveChannelsApi["profile"]>>(), [api]);
+  const [profileRevision, setProfileRevision] = useState(0);
+  useEffect(() => {
+    if (privacy || runtime !== "tauri") return;
+    const timer = setInterval(() => { requests.clear(); setProfileRevision(value => value + 1); }, 30_000);
+    return () => clearInterval(timer);
+  }, [privacy, requests, runtime]);
   useEffect(() => {
     let cancelled = false;
     const queue = profileKey ? profileKey.split(",") : [];
@@ -94,6 +120,11 @@ export function LiveChannelDirectory({ runtime, privacy, inputs, api: suppliedAp
     };
     if (runtime === "tauri") { void load(); void load(); }
     return () => { cancelled = true; };
-  }, [api, profileKey, requests, runtime]);
-  return <Context.Provider value={{ channels, favorites, profiles, profileErrors, pending, error, pollError, hasSnapshot, hasFavorites, toggle }}>{children}</Context.Provider>;
+  }, [api, profileKey, profileRevision, requests, runtime]);
+  const acceptManagedSnapshot = (snapshot: AutoRecordingSnapshot) => {
+    // A management mutation owns the new reservation state over older polls.
+    version.current++;
+    setScheduled(snapshot.channels);
+  };
+  return <Context.Provider value={{ channels, favorites, profiles, profileErrors, pending, error, pollError, hasSnapshot, hasFavorites, toggle, toggleAuto, managementApi: autoApi, acceptManagedSnapshot }}>{children}</Context.Provider>;
 }

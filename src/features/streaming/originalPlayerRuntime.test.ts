@@ -37,11 +37,12 @@ const mediaUrl = `http://atsumi-replay.localhost/${"b".repeat(32)}`;
 const template = '<div id="player_layout"><pzp-pc-layout></pzp-pc-layout><div class="pzp-pc__progress-slider"></div></div>';
 const transformed = source
   .replace("import originalVodTemplate from './accepted-vod-template.js';", `const originalVodTemplate=${JSON.stringify(template)};`)
+  .replace("import { parentOrigins, previewOrigin } from './host-policy.js';", "const { parentOrigins, previewOrigin } = providedPolicy;")
   .replace("const sdk=await import('./player-vendor-BYg0wCyN.js');", "const sdk=providedSdk;")
   .replace("const metadata=await import('./recording-metadata.js');", "const metadata=providedMetadata;")
   .replace("const localSource=await import('./recording-source.js');", "const localSource=providedSource;");
 
-async function fixture(options: { top?: boolean; origin?: string; hash?: string } = {}) {
+async function fixture(options: { top?: boolean; origin?: string; hash?: string; devOrigin?: string } = {}) {
   const document = window.document.implementation.createHTMLDocument("isolated-runtime-test");
   const listeners = new Map<string, EventListener>();
   const playerListeners = new Map<string, () => void>();
@@ -83,8 +84,9 @@ async function fixture(options: { top?: boolean; origin?: string; hash?: string 
   const metadata = { mountRecordingMetadata: vi.fn(() => recordingHeader) };
   const sourceAdapter = { update: vi.fn(), dispose: vi.fn() };
   const localSource = { recordingSource: new Function(recordingSource.replaceAll("export function", "function") + ";return recordingSource;")(), attachRecordingSource: vi.fn(() => sourceAdapter) };
-  const execute = new Function("window", "document", "location", "parent", "providedSdk", "providedMetadata", "providedSource", "setInterval", "clearInterval", `return (async()=>{${transformed}\n})();`);
-  const boot = execute(frame, document, { hash: options.hash ?? `#${nonce}` }, parent, sdk, metadata, localSource, interval, clear) as Promise<void>;
+  const policy = { parentOrigins: ["http://tauri.localhost", "https://tauri.localhost", "tauri://localhost", ...(options.devOrigin ? [options.devOrigin] : [])], previewOrigin: null };
+  const execute = new Function("window", "document", "location", "parent", "providedSdk", "providedMetadata", "providedSource", "providedPolicy", "setInterval", "clearInterval", `return (async()=>{${transformed}\n})();`);
+  const boot = execute(frame, document, { hash: options.hash ?? `#${nonce}` }, parent, sdk, metadata, localSource, policy, interval, clear) as Promise<void>;
   const send = (type: string, data?: unknown, patch: Record<string, unknown> = {}) => listeners.get("message")?.({
     source: parent, origin: "http://tauri.localhost", data: { channel: "atsumi-replay-player-v1", nonce, type, data }, ...patch,
   } as unknown as Event);
@@ -94,6 +96,22 @@ async function fixture(options: { top?: boolean; origin?: string; hash?: string 
 afterEach(() => vi.restoreAllMocks());
 
 describe("original player runtime isolation and lifecycle", () => {
+  it("accepts the native-configured fallback port but rejects other local ports and preview media", async () => {
+    const f = await fixture({ devOrigin: "http://127.0.0.1:14200" }); await f.boot;
+    for (const origin of ["http://127.0.0.1:1420", "http://127.0.0.1:14201", "https://chzzk.naver.com"]) {
+      f.send("init", { url: mediaUrl, duration: 8 }, { origin });
+    }
+    f.send("init", { url: "http://127.0.0.1:14200/.runtime/chzzk-original-player/synthetic.mp4", duration: 8 }, { origin: "http://127.0.0.1:14200" });
+    expect(f.upgrade).not.toHaveBeenCalled();
+    f.send("init", { url: mediaUrl, duration: 8 }, { origin: "http://127.0.0.1:14200" });
+    expect(f.upgrade).toHaveBeenCalledOnce();
+    expect(f.provider.mock.calls[0]![0].videoTracks[0].src).toBe(mediaUrl);
+  });
+  it("does not trust any development port without a native development policy", async () => {
+    const f = await fixture(); await f.boot;
+    for (const origin of ["http://127.0.0.1:1420", "http://127.0.0.1:14200"]) f.send("init", { url: mediaUrl, duration: 8 }, { origin });
+    expect(f.upgrade).not.toHaveBeenCalled();
+  });
   it("uses the same original SDK for local parts, refreshes without a new player and acknowledges source ownership", async () => {
     const f = await fixture(); await f.boot;
     const parts = [{ index: 0, startSeconds: 0, durationSeconds: 4 }, { index: 1, startSeconds: 4, durationSeconds: 4 }];

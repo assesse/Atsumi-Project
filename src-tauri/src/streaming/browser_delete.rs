@@ -75,9 +75,15 @@ impl BrowserCaptureStore {
         if !valid_root_shape(&root, id) {
             return Err(invalid());
         }
-        // Only a durable previous deletion can explain an already absent root.
-        if !record.deletion_pending {
-            owned_root(&record.output_dir, id)?;
+        // An explicit library deletion also forgets a recording removed in
+        // Explorer. A missing folder is not an I/O failure; existing folders
+        // must still pass every ownership/link check before anything is removed.
+        match fs::symlink_metadata(&root) {
+            Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(blocked()),
+            Ok(_) => {
+                owned_root(&record.output_dir, id)?;
+            }
         }
         let secondary_roots = archive::extra_delete_roots(record)?;
         let mut catalog = state.catalog.clone();
@@ -224,7 +230,19 @@ mod files {
         if !valid_root_shape(&job.root, &job.id) {
             return Err(invalid());
         }
-        let _ancestors = cleanup::pin_directories(job.root.parent().ok_or_else(invalid)?)?;
+        // A user may have removed BrowserCapture/CHZZK as well. Pin the nearest
+        // surviving ancestor, refusing inaccessible drives or reparse points,
+        // then confirm absence again. Never recreate folders just to delete them.
+        let parent = job.root.parent().ok_or_else(invalid)?;
+        let ancestor = parent
+            .ancestors()
+            .find_map(|path| match fs::symlink_metadata(path) {
+                Ok(_) => Some(Ok(path)),
+                Err(cause) if cause.kind() == std::io::ErrorKind::NotFound => None,
+                Err(_) => Some(Err(blocked())),
+            })
+            .ok_or_else(blocked)??;
+        let _ancestors = cleanup::pin_directories(ancestor)?;
         match fs::symlink_metadata(&job.root) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(_) => return Err(blocked()),
@@ -425,6 +443,28 @@ mod tests {
             .snapshot()
             .unwrap()
             .is_empty());
+    }
+    #[test]
+    fn deletion_forgets_externally_removed_folder_without_prior_tombstone() {
+        let (temp, store, rec) = fixture();
+        store.finish(&rec.id, false, None).unwrap();
+        // Use the verified handle-based deletion helper to simulate Explorer;
+        // deliberately do not publish a deletion tombstone in the catalog.
+        remove_files(&DeleteJob {
+            id: rec.id.clone(),
+            root: PathBuf::from(&rec.output_dir),
+            token: "fixture".into(),
+            secondary_roots: vec![],
+        })
+        .unwrap();
+        assert!(!store.snapshot().unwrap()[0].deletion_pending);
+        let parent = Path::new(&rec.output_dir).parent().unwrap();
+        fs::remove_dir(parent).unwrap();
+        fs::remove_dir(parent.parent().unwrap()).unwrap();
+        drop(store);
+        let reopened = BrowserCaptureStore::new(temp.path()).unwrap();
+        delete(&reopened, &rec.id).unwrap();
+        assert!(reopened.snapshot().unwrap().is_empty());
     }
     #[test]
     fn deletion_catalog_failure_remains_retryable_after_files_removed() {

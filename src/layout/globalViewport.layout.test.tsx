@@ -16,6 +16,7 @@ import { DownloadOverlapReviewDialog } from "../components/DownloadOverlapReview
 import { InternalDuplicateDialog } from "../components/InternalDuplicateDialog";
 import { RecordingLibrary } from "../features/streaming/RecordingLibrary";
 import { AutoRecordingPanel } from "../features/streaming/AutoRecordingPanel";
+import { FeedbackDialog } from "../features/feedback/FeedbackDialog";
 import type { BrowserRecording } from "../api/officialBrowser";
 import type { DownloadOverlapReview, InternalDuplicateReview } from "../api/contracts";
 import { galleryId } from "../core/types";
@@ -125,7 +126,9 @@ async function snapshots(): Promise<LayoutScene[]> {
     await click('[data-tour="danbooru-nav-downloads"]'); capture("danbooru-downloads");
     await click('[data-tour="source-menu"]'); await click('[data-tour="source-chzzk"]'); capture("chzzk-live-setup");
     await click('[data-tour="chzzk-nav-recordings"]'); capture("chzzk-recordings");
-    await click('[data-tour="chzzk-nav-auto-record"]'); capture("chzzk-auto-record");
+    await click('[data-tour="chzzk-nav-live"]'); capture("chzzk-unified-live");
+    await render(<FeedbackDialog source="hitomi" onClose={noop} api={{ prepare: async () => ({ id: "layout-only", eventCount: 20, bytes: 1024, createdAt: 1, payload: { schemaVersion: 1, events: [] } }), send: async () => ({ receiptId: "layout-only" }) }} />);
+    capture("private-feedback");
     await render(<div className="community-workspace"><div className="community-content"><ReviewEditor work={{ source: "hitomi", workId: "9900000" }} api={communityApi}
       initialWriter={{ profile: { id: "layout-author", nickname: "레이아웃 검사" }, mine: { id: "layout-own", rating: 4, recommended: true, comment: "후기 수정 화면 검사", hidden: false } }} onClose={noop} onSaved={noop} /></div></div>);
     capture("community-review-editor");

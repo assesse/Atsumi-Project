@@ -970,7 +970,7 @@ pub fn run() -> tauri::Result<()> {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_uri_scheme_protocol("atsumi-player", |context, request| {
-            streaming::original_player::response(&request, context.webview_label())
+            streaming::original_player::response(&request, context.webview_label(), context.app_handle().config().build.dev_url.as_ref())
         })
         .register_asynchronous_uri_scheme_protocol("atsumi-replay", |context, request, responder| {
             // Webview identity comes from native dispatch, not a forgeable HTTP
@@ -1233,6 +1233,8 @@ pub fn run() -> tauri::Result<()> {
             autostart::autostart_enabled_set,
             community::community_read,
             community::community_write,
+            community::feedback::feedback_prepare,
+            community::feedback::feedback_send,
             personal_library::personal_library,
 
             streaming::browser::chzzk_browser_open,

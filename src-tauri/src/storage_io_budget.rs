@@ -13,6 +13,25 @@ const HASH_BYTES_PER_SECOND: u64 = 24 * 1024 * 1024;
 const MEDIA_BYTES_PER_SECOND: u64 = 16 * 1024 * 1024;
 const CANCEL_POLL: Duration = Duration::from_millis(25);
 
+thread_local! {
+    static OFFLINE_MAINTENANCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Explicit offline maintenance only. Scoped to one worker thread, never an
+/// environment/global switch affecting active downloads or viewers. Integrity,
+/// free-space, memory and cancellation guards remain enabled.
+pub(crate) struct OfflineMaintenance(bool);
+impl OfflineMaintenance {
+    pub(crate) fn enter() -> Self {
+        Self(OFFLINE_MAINTENANCE.with(|flag| flag.replace(true)))
+    }
+}
+impl Drop for OfflineMaintenance {
+    fn drop(&mut self) {
+        OFFLINE_MAINTENANCE.with(|flag| flag.set(self.0));
+    }
+}
+
 /// Unknown is deliberately not treated as SSD. This does not alter I/O policy.
 pub(crate) fn is_solid_state(path: &Path) -> Option<bool> {
     #[cfg(windows)]
@@ -45,6 +64,9 @@ pub(crate) struct BulkReadBudget(Option<Arc<Mutex<Schedule>>>);
 
 impl BulkReadBudget {
     pub(crate) fn for_path(path: &Path) -> Self {
+        if OFFLINE_MAINTENANCE.with(|flag| flag.get()) {
+            return Self::default();
+        }
         #[cfg(windows)]
         {
             Self(native::budget(path))
@@ -283,6 +305,25 @@ mod native {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn offline_budget_override_is_nested_and_thread_local() {
+        assert!(!OFFLINE_MAINTENANCE.with(|flag| flag.get()));
+        {
+            let _outer = OfflineMaintenance::enter();
+            {
+                let _inner = OfflineMaintenance::enter();
+                assert!(OFFLINE_MAINTENANCE.with(|flag| flag.get()));
+                assert!(
+                    !thread::spawn(|| OFFLINE_MAINTENANCE.with(|flag| flag.get()))
+                        .join()
+                        .unwrap()
+                );
+            }
+            assert!(OFFLINE_MAINTENANCE.with(|flag| flag.get()));
+            assert!(BulkReadBudget::for_path(Path::new("D:/")).0.is_none());
+        }
+        assert!(!OFFLINE_MAINTENANCE.with(|flag| flag.get()));
+    }
     #[test]
     fn readers_share_one_schedule_and_idle_time_does_not_accumulate_credit() {
         let start = Instant::now();

@@ -48,15 +48,34 @@ fn main() {
                     Err(error) => { eprintln!("{}", json!({"ok":false,"code":error.code})); handle.exit(1); return; }
                 };
                 let cleanup = Instant::now();
-                while !handle.webview_windows().is_empty() && cleanup.elapsed() < Duration::from_secs(3) {
+                while handle.webview_windows().keys().any(|label| label.starts_with("chzzk-auth-probe-")) && cleanup.elapsed() < Duration::from_secs(3) {
                     tokio::time::sleep(Duration::from_millis(20)).await;
                 }
                 let expected = if unavailable_profile { "unknown" } else { "signed_out" };
                 let ok = snapshot["authStatus"] == expected && snapshot["authChecking"] == false
                     && snapshot["authError"].is_string() == unavailable_profile && snapshot["windowOpen"] == false
-                    && snapshot["accountBusy"] == false && handle.webview_windows().is_empty();
+                    && snapshot["accountBusy"] == false
+                    && handle.webview_windows().len() == usize::from(!unavailable_profile)
+                    && (unavailable_profile || handle.get_webview_window("chzzk-profile-session").is_some());
                 checks.push(json!({"ok":ok,"authStatus":snapshot["authStatus"],"authChecking":snapshot["authChecking"],"hasError":snapshot["authError"].is_string(),"elapsedMs":started.elapsed().as_millis(),"remainingWindows":handle.webview_windows().len()}));
                 if !ok { eprintln!("{}", json!({"unavailableProfile":unavailable_profile,"checks":checks})); handle.exit(1); return; }
+            }
+            if unavailable_profile {
+                // A failed session owner must not leave account actions locked.
+                if host.login(&handle).is_ok() || host.logout(&handle).is_ok()
+                    || serde_json::to_value(host.snapshot().unwrap()).unwrap()["accountBusy"] != false {
+                    eprintln!("{}", json!({"ok":false,"stage":"failed_profile_account_lock"})); handle.exit(1); return;
+                }
+            }
+            let shutdown_host = host.clone();
+            let shutdown_handle = handle.clone();
+            tauri::async_runtime::spawn_blocking(move || shutdown_host.shutdown_and_wait(&shutdown_handle)).await.unwrap();
+            let cleanup = Instant::now();
+            while !handle.webview_windows().is_empty() && cleanup.elapsed() < Duration::from_secs(3) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            if !handle.webview_windows().is_empty() {
+                eprintln!("{}", json!({"ok":false,"stage":"shutdown_profile_cleanup"})); handle.exit(1); return;
             }
             println!("{}", json!({"ok":true,"unavailableProfile":unavailable_profile,"anonymousProfile":true,"noPlayerOpened":true,"checks":checks}));
             worker_outcome.store(0, Ordering::Release);

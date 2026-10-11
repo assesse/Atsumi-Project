@@ -298,15 +298,22 @@ describe("AppShell without feature workspaces", () => {
     expect(next.current.privacyMode).toBe(true);
     expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
   });
-  it("does not mask CHZZK but restores gallery privacy when switching back", async () => {
+  it("applies the same privacy switch to CHZZK and gallery workspaces", async () => {
     const fake = fakeShellApi(), shell = await mountShell(fake.api);
     expect(shell.current.privacyMode).toBe(true);
     expect(document.documentElement).toHaveAttribute("data-privacy-mode", "on");
     await act(async () => shell.current.selectSource("chzzk"));
-    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "off");
+    expect(document.documentElement).toHaveAttribute("data-privacy-mode", "on");
     expect(shell.current.privacyMode).toBe(true);
     await act(async () => shell.current.selectSource("danbooru"));
     expect(document.documentElement).toHaveAttribute("data-privacy-mode", "on");
+    expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
+  });
+  it.each(["hitomi", "danbooru", "chzzk"] as const)("replays the selected %s tutorial from another workspace", async source => {
+    const fake = fakeShellApi(), shell = await mountShell(fake.api);
+    await act(async () => shell.current.setSettingsOpen(true));
+    await act(async () => shell.current.replayTutorial(source));
+    expect(shell.current).toMatchObject({ source, tutorialSource: source, tutorialOpen: true, settingsOpen: false });
     expect(fake.api.settingsUpdate).not.toHaveBeenCalled();
   });
   it("honors an explicitly disabled startup mask", async () => {

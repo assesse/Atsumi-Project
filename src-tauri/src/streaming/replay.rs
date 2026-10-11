@@ -327,11 +327,13 @@ impl Drop for Inner {
 #[derive(Clone)]
 pub struct ReplayService {
     inner: Arc<Inner>,
+    development_url: Option<tauri::Url>,
 }
 impl ReplayService {
     /// Initialization does not read recordings, build indexes, or touch a database.
     pub fn new(data_dir: &Path, store: Arc<Mutex<BrowserCaptureStore>>) -> Self {
         Self {
+            development_url: None,
             inner: Arc::new(Inner {
                 store,
                 lifecycle: Mutex::new(()),
@@ -343,6 +345,11 @@ impl ReplayService {
                 closing: AtomicBool::new(false),
             }),
         }
+    }
+    /// Use only the native app configuration, never a caller-provided URL.
+    pub fn with_development_url(mut self, url: Option<tauri::Url>) -> Self {
+        self.development_url = url;
+        self
     }
     pub fn open(&self, recording_id: &str) -> Result<ReplaySession, StreamError> {
         let _lifecycle = self.inner.lifecycle.lock().map_err(|_| storage())?;
@@ -831,24 +838,30 @@ fn bounded_limit(limit: Option<usize>) -> usize {
     limit.unwrap_or(MAX_PAGE_ROWS).clamp(1, MAX_PAGE_ROWS)
 }
 
-fn require_main(window: &Webview) -> Result<(), StreamError> {
-    if window.label() != "main" || window.window().label() != "main" {
-        return Err(invalid());
-    }
-    let url = window.url().map_err(|_| invalid())?;
-    let trusted = matches!(
-        (url.scheme(), url.host_str(), url.port()),
-        ("tauri", Some("localhost"), None) | ("http" | "https", Some("tauri.localhost"), None)
-    ) || cfg!(debug_assertions)
-        && url.scheme() == "http"
-        && url.host_str() == Some("127.0.0.1")
-        && url.port() == Some(1420);
-    if !trusted {
-        return Err(invalid());
+fn require_main<R: tauri::Runtime>(window: &Webview<R>) -> Result<(), StreamError> {
+    let denied = || {
+        failure(
+            "REPLAY_CALLER_DENIED",
+            "앱의 다시보기 연결을 확인하지 못했습니다. 앱을 다시 실행해 주세요.",
+        )
+    };
+    let url = window.url().map_err(|_| denied())?;
+    if window.window().label() != "main"
+        || !crate::frontend_origin::trusted_main(
+            window.label(),
+            &url,
+            cfg!(debug_assertions),
+            window.app_handle().config().build.dev_url.as_ref(),
+        )
+    {
+        return Err(denied());
     }
     Ok(())
 }
-fn service(app: &AppHandle, window: &Webview) -> Result<ReplayService, StreamError> {
+fn service<R: tauri::Runtime>(
+    app: &AppHandle<R>,
+    window: &Webview<R>,
+) -> Result<ReplayService, StreamError> {
     require_main(window)?;
     app.try_state::<ReplayService>()
         .map(|state| state.inner().clone())
@@ -864,9 +877,9 @@ async fn blocking<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn replay_open(
-    app: AppHandle,
-    window: Webview,
+pub async fn replay_open<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    window: Webview<R>,
     recording_id: String,
 ) -> ApiResult<ReplaySession> {
     let service = match service(&app, &window) {
@@ -876,7 +889,11 @@ pub async fn replay_open(
     blocking(move || service.open(&recording_id)).await
 }
 #[tauri::command]
-pub async fn replay_close(app: AppHandle, window: Webview, token: String) -> ApiResult<()> {
+pub async fn replay_close<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    window: Webview<R>,
+    token: String,
+) -> ApiResult<()> {
     service(&app, &window)
         .and_then(|service| service.close(&token))
         .into()
@@ -934,9 +951,9 @@ pub async fn replay_open_profile(
     .await
 }
 #[tauri::command]
-pub async fn replay_chat_at(
-    app: AppHandle,
-    window: Webview,
+pub async fn replay_chat_at<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    window: Webview<R>,
     token: String,
     media_time: f64,
     generation: u64,
@@ -988,9 +1005,9 @@ pub async fn replay_chat_search(
     .await
 }
 #[tauri::command]
-pub async fn replay_timeline(
-    app: AppHandle,
-    window: Webview,
+pub async fn replay_timeline<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    window: Webview<R>,
     token: String,
     bucket_seconds: Option<f64>,
 ) -> ApiResult<ReplayTimeline> {

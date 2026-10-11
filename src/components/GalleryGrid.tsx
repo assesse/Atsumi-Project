@@ -33,11 +33,20 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
     let disposed = false;
     let lastWidth = grid.clientWidth;
     let resizeTimer: number | undefined;
+    let measureAll = true;
+    const dirtyHosts = new Set<HTMLElement>();
+    const hostRows = new Map<HTMLElement, HTMLElement[]>();
 
     const measure = () => {
       frame = 0;
       if (disposed) return;
-      const hosts = [...grid.children].filter((child): child is HTMLElement => child instanceof HTMLElement);
+      const full = measureAll || [...dirtyHosts].some(host => !hostRows.has(host));
+      const hosts = full
+        ? [...grid.children].filter((child): child is HTMLElement => child instanceof HTMLElement)
+        : [...new Set([...dirtyHosts].flatMap(host => hostRows.get(host) ?? []))];
+      measureAll = false;
+      dirtyHosts.clear();
+      if (full) hostRows.clear();
       const cards = hosts.map((host) => host.matches(".gallery-card")
         ? host
         : host.querySelector<HTMLElement>(":scope > .gallery-card"));
@@ -60,7 +69,24 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
       });
       const rows = groupGalleryCardRows(metrics);
       const nextHeights = new Map<number, number>();
-      for (const row of rows) for (const index of row.indices) nextHeights.set(index, row.height);
+      for (const row of rows) {
+        const members = row.indices.map(index => hosts[index]!);
+        for (const index of row.indices) {
+          nextHeights.set(index, row.height);
+          hostRows.set(hosts[index]!, members);
+        }
+      }
+      if (full) {
+        // Empty skeletons can have no measurable cover yet. Cache their CSS
+        // grid row too, so first hydration does not rescan the whole folder.
+        const rowSize = Math.max(1, Math.trunc(columns));
+        hosts.forEach((host, index) => {
+          if (hostRows.has(host)) return;
+          const start = Math.floor(index / rowSize) * rowSize;
+          const members = hosts.slice(start, start + rowSize);
+          members.forEach(member => hostRows.set(member, members));
+        });
+      }
       cards.forEach((card, index) => {
         if (!card) return;
         const height = nextHeights.get(index);
@@ -76,7 +102,8 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
         }
       });
     };
-    const schedule = () => {
+    const schedule = (full = true) => {
+      measureAll ||= full;
       if (!disposed && !frame) frame = window.requestAnimationFrame(measure);
     };
     schedule();
@@ -88,15 +115,23 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
       if (nextWidth === lastWidth) return;
       lastWidth = nextWidth;
       window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(schedule, 100);
+      resizeTimer = window.setTimeout(() => schedule(), 100);
     }) : null;
     resize?.observe(grid);
     const mutation = typeof MutationObserver === "function" ? new MutationObserver((records) => {
-      if (records.some((record) => record.type === "attributes"
-        || record.target === grid
-        || (record.target instanceof HTMLElement
-          && record.target.parentElement === grid
-          && record.target.classList.contains("progressive-gallery-slot")))) schedule();
+      for (const record of records) {
+        if (record.target === grid) { schedule(); continue; }
+        if (!(record.target instanceof HTMLElement)) continue;
+        const replacedSlot = record.type === "childList" && record.target.parentElement === grid
+          && record.target.classList.contains("progressive-gallery-slot");
+        if (record.type !== "attributes" && !replacedSlot) continue;
+        let host: HTMLElement = record.target;
+        while (host.parentElement && host.parentElement !== grid) host = host.parentElement;
+        if (host.parentElement !== grid) continue;
+        // A thumbnail arriving only changes its row, not every album in the folder.
+        dirtyHosts.add(host);
+        schedule(false);
+      }
     }) : null;
     mutation?.observe(grid, {
       childList: true,
@@ -104,7 +139,7 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
       attributes: true,
       attributeFilter: ["data-thumbnail-intrinsic-width", "data-thumbnail-intrinsic-height"],
     });
-    document.fonts?.ready.then(schedule).catch(() => undefined);
+    document.fonts?.ready.then(() => schedule()).catch(() => undefined);
     return () => {
       disposed = true;
       window.clearTimeout(resizeTimer);

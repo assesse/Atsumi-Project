@@ -78,24 +78,24 @@ describe("GalleryGrid row coordinator", () => {
       // Intrinsic cover changes and direct slot/card insertions still measure.
       await act(async () => { container.querySelector<HTMLElement>(".cover")!.dataset.thumbnailIntrinsicHeight = "4"; });
       await flushFrames();
-      expect(coverReads).toBe(180);
+      expect(coverReads).toBe(122);
       expect(container.querySelector<HTMLElement>(".gallery-card")?.dataset.rowHeight).toBe("360px");
       const grid = container.querySelector<HTMLElement>(".gallery-grid")!;
       const slot = document.createElement("div");
       slot.className = "progressive-gallery-slot is-placeholder";
       await act(async () => grid.append(slot));
       await flushFrames();
-      expect(coverReads).toBe(240);
+      expect(coverReads).toBe(182);
       await act(async () => slot.append(container.querySelector(".gallery-card")!.cloneNode(true)));
       await flushFrames();
-      expect(coverReads).toBe(301);
+      expect(coverReads).toBe(183);
 
       gridWidth -= 2;
       await act(async () => resizeCallback?.([], {} as ResizeObserver));
       await act(async () => root.unmount());
       await act(async () => vi.advanceTimersByTime(100));
       expect(frames.size).toBe(0);
-      expect(coverReads).toBe(301);
+      expect(coverReads).toBe(183);
     } finally {
       await act(async () => root.unmount());
       rect.mockRestore();

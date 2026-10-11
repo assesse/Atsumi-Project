@@ -54,6 +54,34 @@ fn confirmation(info: &LiveInfo, original: Option<&str>, offline: &mut u8) -> Op
     }
 }
 
+/// A delayed provider answer may clear only the warning owned by this exact
+/// capture/document. Never hide a newer recording, login or storage failure.
+fn sync_confirmed_end(
+    state: &mut ViewState,
+    recording: &BrowserRecording,
+    generation: u64,
+) -> bool {
+    if state.page_generation != generation
+        || state.channel.as_deref() != Some(recording.channel_id.as_str())
+        || !state
+            .accepted_arm
+            .as_ref()
+            .is_some_and(|(_, id, at)| id == &recording.id && *at == generation)
+        || state.recording.is_some()
+        || state.arm.is_some()
+        || state.account_busy
+        || state.chat_status == "storage_failed"
+        || state.error != recording.last_error
+    {
+        return false;
+    }
+    state.error = None;
+    if state.status == "error" {
+        state.status = if state.ready { "ready" } else { "waiting" }.into();
+    }
+    true
+}
+
 impl OfficialBrowser {
     pub(super) fn finish_reason(
         &self,
@@ -76,6 +104,12 @@ impl OfficialBrowser {
         }
         let root = self.clone();
         let recording = recording.clone();
+        let generation = self
+            .inner
+            .view
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .page_generation;
         let _ = thread::Builder::new().name("chzzk-end-confirm".into()).spawn(move || {
             let mut offline = 0;
             let mut confirmed = None;
@@ -97,7 +131,12 @@ impl OfficialBrowser {
                 }
             }
             let final_reason = confirmed.unwrap_or("end_unconfirmed");
-            if let Ok(store) = root.inner.store.lock() { let _ = store.confirm_end(&id, final_reason); }
+            let clean_end = root.inner.store.lock().is_ok_and(|store| store.confirm_end(&id, final_reason).unwrap_or(false));
+            if clean_end {
+                if let Ok(mut state) = root.inner.view.lock() {
+                    sync_confirmed_end(&mut state, &recording, generation);
+                }
+            }
         });
         reason
     }
@@ -106,6 +145,42 @@ impl OfficialBrowser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn confirmed_end_clears_only_its_own_document_warning() {
+        let record: BrowserRecording = serde_json::from_value(json!({
+            "id":"recording-a", "channelId":"a".repeat(32), "title":"test", "startedAt":1,
+            "updatedAt":2, "status":"interrupted", "mimeType":"video/mp4", "outputDir":"",
+            "segmentCount":1, "bytesWritten":10, "durationSeconds":1.0, "segments":[],
+            "lastError":"temporary source interruption"
+        }))
+        .unwrap();
+        let original = || ViewState {
+            channel: Some(record.channel_id.clone()),
+            page_generation: 7,
+            accepted_arm: Some(("nonce".into(), record.id.clone(), 7)),
+            status: "error".into(),
+            error: record.last_error.clone(),
+            ..ViewState::default()
+        };
+        let mut state = original();
+        assert!(sync_confirmed_end(&mut state, &record, 7));
+        assert!(state.error.is_none());
+        assert_eq!(state.status, "waiting");
+        for case in 0..6 {
+            let mut state = original();
+            match case {
+                0 => state.page_generation = 8,
+                1 => state.channel = Some("b".repeat(32)),
+                2 => state.accepted_arm.as_mut().unwrap().1 = "new-recording".into(),
+                3 => state.recording = Some("new-recording".into()),
+                4 => state.error = Some("a real storage error".into()),
+                _ => state.chat_status = "storage_failed".into(),
+            }
+            let error = state.error.clone();
+            assert!(!sync_confirmed_end(&mut state, &record, 7));
+            assert_eq!(state.error, error);
+        }
+    }
     fn info(status: LiveStatus, id: Option<&str>) -> LiveInfo {
         LiveInfo {
             channel_id: "a".repeat(32),

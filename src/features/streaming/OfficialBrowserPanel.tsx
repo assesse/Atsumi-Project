@@ -386,7 +386,11 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     });
   };
   const openFolder = (id: string) => void runAction("folder", () => api.openFolder(id));
-  const retryMerge = (id: string) => void runAction("merge", () => api.retryMerge(id), acceptSnapshot);
+  const retryMerge = async (id: string) => {
+    let accepted = false;
+    await runAction("merge", () => api.retryMerge(id), value => { accepted = true; acceptSnapshot(value); });
+    return accepted;
+  };
   const deleteRecordings = async (ids: string[]) => {
     if (!active || !desktop || actionInFlight.current) throw new Error("다른 작업이 끝난 뒤 다시 시도해 주세요.");
     actionInFlight.current = true;
@@ -481,13 +485,13 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
           runtime={runtime} privacy={privacyMode}
           inputs={connectionMode === "mado" ? madoInputs : [input]} onInput={(index, value) => connectionMode === "mado" ? setMadoInputs((rows) => rows.map((row, i) => i === index ? value : row)) : setInput(value)}
           disabled={!desktop || pending !== null || hasRecording || extensionBusy || connectionLocked} pending={pending === "open" || pending === "mado"} onConnect={open} onClose={settingsOpen ? () => setSettingsOpen(false) : undefined} closeRef={settingsClose}
-          auth={pollError ? "unknown" : accountStatus(snapshot)} accountDisabled={!desktop || pending !== null || hasRecording || snapshot.accountBusy === true} accountReason={hasRecording ? "녹화를 중지한 뒤 방송·모드·계정을 변경할 수 있습니다." : undefined}
+          auth={pollError ? "unknown" : accountStatus(snapshot)} accountDisabled={!desktop || pending !== null || snapshot.accountBusy === true} logoutDisabled={hasRecording} accountReason={hasRecording ? "녹화 중에도 로그인할 수 있습니다. 로그아웃은 녹화 종료 후 가능합니다." : undefined}
           authChecking={snapshot.authChecking} authError={snapshot.authError}
           onLogin={() => void runAction("login", () => api.login(), acceptSnapshot)} onLogout={logout}
           onGrid={() => void runAction("extension", () => api.connectExtension(), acceptSnapshot)} gridDisabled={!desktop || pending !== null || hasRecording || extensionBusy || !snapshot.windowOpen || connectionLocked} gridStatus={extensionSummary}
           onInstaller={(browser) => void runAction("installer", () => api.openInstaller(browser))} installerDisabled={!desktop || pending !== null || hasRecording}
           helpDetails={`${recordingDetails}${screenshotDetails} 버튼을 눌러야 녹화가 시작됩니다. 다른 메뉴로 이동하거나 창을 최소화해도 녹화는 계속됩니다.`}
-          options={<><div className="mado-layout-options"><button type="button" aria-pressed={madoLayout === "paired"} onClick={() => setMadoLayout("paired")}>4화면4챗</button><button type="button" aria-pressed={madoLayout === "chats"} onClick={() => setMadoLayout("chats")}>1화면4챗</button></div>{madoLayout === "chats" ? <label>영상 방송 <select value={madoLead} onChange={(event) => setMadoLead(Number(event.target.value))}>{madoInputs.map((_, index) => <option key={index} value={index}>방송 {index + 1}</option>)}</select></label> : null}</>}
+          options={names => <><div className="mado-layout-options"><button type="button" aria-pressed={madoLayout === "paired"} onClick={() => setMadoLayout("paired")}>모두 보기</button><button type="button" aria-pressed={madoLayout === "chats"} onClick={() => setMadoLayout("chats")}>선택 보기</button></div>{madoLayout === "chats" ? <label>영상 방송 <select value={madoLead} onChange={(event) => setMadoLead(Number(event.target.value))}>{names.map((name, index) => <option key={index} value={index}>{name}</option>)}</select></label> : null}</>}
         >
           <div className="official-browser-heading-actions"><span className="official-browser-resolution">{videoSize ?? "영상 확인 전"}</span><span role="status">{compactStatus}</span></div>
           <div className="official-browser-options"><label title="채팅과 함께 식별 가능한 공개 프로필 링크·시청자 수 관측을 저장합니다."><input type="checkbox" checked={captureChat} disabled={!desktop || pending !== null || hasRecording} aria-description="채팅과 함께 식별 가능한 공개 프로필 링크·시청자 수 관측을 저장합니다." onChange={(event) => { const enabled = event.target.checked; if (api.setCaptureChat) void runAction("control", () => api.setCaptureChat!(enabled)); else setCaptureChat(enabled); }} /> 채팅도 저장</label></div>

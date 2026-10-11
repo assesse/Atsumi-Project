@@ -1,0 +1,24 @@
+.danbooru-search-tools { position: relative; }
+.danbooru-overview:has(.danbooru-filter-popover) { overflow: visible; }
+.danbooru-search-tools > .danbooru-filter-popover {
+  position: absolute;
+  z-index: 45;
+  inset: calc(100% + 8px) auto auto 0;
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 175px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  box-sizing: border-box;
+  box-shadow: 0 16px 44px #0008;
+  animation: danbooru-conditions-in 150ms ease-out;
+}
+.danbooru-filter-popover > header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; color: var(--text); }
+.danbooru-filter-popover > header .icon-button { width: 28px; height: 28px; min-height: 28px; }
+.danbooru-filter-popover .danbooru-filter-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+.danbooru-filter-popover .danbooru-filter-grid fieldset { padding: 8px 10px 10px; }
+.danbooru-filter-popover .danbooru-filter-grid small { margin-top: 6px; }
+.danbooru-filter-popover > footer { position: sticky; bottom: -14px; padding-block: 10px; background: #14242b; }
+@keyframes danbooru-conditions-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 580px) { .danbooru-filter-popover .danbooru-check-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .danbooru-search-tools > .danbooru-filter-popover { animation: none; } }

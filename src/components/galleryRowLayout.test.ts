@@ -2,6 +2,16 @@ import { describe, expect, it } from "vitest";
 import { groupGalleryCardRows } from "./galleryRowLayout";
 
 describe("groupGalleryCardRows", () => {
+  it("does linear work for a large ordered folder and preserves unordered grouping", () => {
+    let reads = 0;
+    const metrics = Array.from({ length: 6000 }, (_, index) => ({ index,
+      get top() { reads++; return Math.floor(index / 3) * 300; }, intrinsicThumbnailHeight: 200,
+    }));
+    expect(groupGalleryCardRows(metrics)).toHaveLength(2000);
+    expect(reads).toBeLessThan(6000 * 8);
+    expect(groupGalleryCardRows([0, 300, 150, 300].map((top, index) => ({ index, top, intrinsicThumbnailHeight: 200 }))))
+      .toEqual([{ indices: [0], height: 200 }, { indices: [1, 3], height: 200 }, { indices: [2], height: 200 }]);
+  });
   it("uses the tallest intrinsic thumbnail per visual row", () => {
     expect(groupGalleryCardRows([
       { index: 0, top: 0, intrinsicThumbnailHeight: 160 },

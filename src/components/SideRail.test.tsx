@@ -3,8 +3,29 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { SideRail } from "./SideRail";
 import { CommonNavigationContext } from "../app/CommonNavigation";
+import { OPEN_FEEDBACK } from "../features/feedback/api";
 
 describe("SideRail source switcher", () => {
+  it("keeps the live disclosure beside navigation with separate click and keyboard targets", async () => {
+    const host = document.createElement("div"), root = createRoot(host);
+    const navigate = vi.fn(), toggle = vi.fn();
+    try {
+      for (const collapsed of [false, true]) for (const open of [false, true]) {
+        await act(async () => root.render(<SideRail source="chzzk" view="live" collapsed={collapsed} autoFindCount={0} attentionCount={0} onNavigate={navigate} onSourceChange={vi.fn()} onToggle={vi.fn()} onOpenLiveChannels={toggle} liveChannelsOpen={open} />));
+        const row = host.querySelector('.nav-live-item')!;
+        expect(row.querySelectorAll('button')).toHaveLength(2);
+        expect(host.querySelector('[aria-label="방송 보기"]')).toBeNull();
+        const arrow = row.querySelector<HTMLButtonElement>('.nav-live-disclosure')!;
+        expect(arrow).toHaveAttribute('aria-expanded', String(open));
+        expect(arrow).toHaveAccessibleName(open ? '방송 설정 접기' : '방송 설정 펼치기');
+        navigate.mockClear(); toggle.mockClear();
+        await act(async () => arrow.click());
+        expect(toggle).toHaveBeenCalledOnce(); expect(navigate).not.toHaveBeenCalled();
+        await act(async () => row.querySelector<HTMLButtonElement>('.nav-item')!.click());
+        expect(navigate).toHaveBeenCalledExactlyOnceWith('live'); expect(toggle).toHaveBeenCalledOnce();
+      }
+    } finally { await act(async () => root.unmount()); }
+  });
   it("uses the boundary to fold the rail and keeps privacy/settings stacked at the bottom", async () => {
     const host = document.createElement("div"), root = createRoot(host);
     const toggle = vi.fn(), privacy = vi.fn(), settings = vi.fn();
@@ -14,7 +35,11 @@ describe("SideRail source switcher", () => {
     try {
       await render(false);
       const foot = host.querySelector(".sidebar-foot")!;
-      expect([...foot.querySelectorAll("button")].map(node => node.getAttribute("aria-label"))).toEqual(["프라이버시 모드", "설정"]);
+      expect([...foot.querySelectorAll("button")].map(node => node.getAttribute("aria-label"))).toEqual(["오류·의견 보내기", "프라이버시 모드", "설정"]);
+      const feedback = vi.fn();
+      window.addEventListener(OPEN_FEEDBACK, feedback, { once: true });
+      await act(async () => foot.querySelector<HTMLButtonElement>('[aria-label="오류·의견 보내기"]')!.click());
+      expect(feedback).toHaveBeenCalledOnce();
       expect(host.querySelector(".live-indicator, .sidebar-toggle")).toBeNull();
       expect(host.textContent).not.toMatch(/live|fixture|Community/);
       expect(foot.querySelector('[data-tour="privacy-mode"]')).toHaveAttribute("aria-pressed", "true");
@@ -34,7 +59,7 @@ describe("SideRail source switcher", () => {
       expect(settings).toHaveBeenCalledOnce();
     } finally { await act(async () => root.unmount()); }
   });
-  it("keeps community for album sources only and places auto recording before recordings", async () => {
+  it("keeps community for album sources only and integrates automatic recording into live", async () => {
     const host = document.createElement("div"), root = createRoot(host);
     const openCommunity = vi.fn();
     try {
@@ -43,7 +68,7 @@ describe("SideRail source switcher", () => {
         const community = host.querySelector('[aria-label="커뮤니티"]');
         if (source === "chzzk") {
           expect(community).toBeNull();
-          expect([...host.querySelectorAll('.main-nav button')].map(button => button.getAttribute('aria-label'))).toEqual(["라이브", "자동 녹화", "녹화 목록"]);
+          expect([...host.querySelectorAll('.main-nav button')].map(button => button.getAttribute('aria-label'))).toEqual(["라이브", "녹화 목록"]);
         } else expect(community).not.toBeNull();
       }
     } finally { await act(async () => root.unmount()); }
@@ -54,9 +79,12 @@ describe("SideRail source switcher", () => {
     const root = createRoot(container);
     const onSettings = vi.fn();
     const onNavigate = vi.fn();
+    const onPrivacyModeToggle = vi.fn();
     try {
-      await act(async () => root.render(<SideRail source="chzzk" view="recordings" collapsed={false} autoFindCount={0} attentionCount={0} onNavigate={onNavigate} onSourceChange={vi.fn()} onToggle={vi.fn()} onSettings={onSettings} onPrivacyModeToggle={vi.fn()} />));
-      expect(container.querySelector('[aria-label="프라이버시 모드"]')).toBeNull();
+      await act(async () => root.render(<SideRail source="chzzk" view="recordings" collapsed={false} autoFindCount={0} attentionCount={0} onNavigate={onNavigate} onSourceChange={vi.fn()} onToggle={vi.fn()} onSettings={onSettings} onPrivacyModeToggle={onPrivacyModeToggle} />));
+      expect(container.querySelector('[aria-label="프라이버시 모드"]')).not.toBeNull();
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="프라이버시 모드"]')!.click());
+      expect(onPrivacyModeToggle).toHaveBeenCalledOnce();
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="설정"]')!.click());
       expect(onSettings).toHaveBeenCalledOnce();
       expect(onNavigate).not.toHaveBeenCalled();

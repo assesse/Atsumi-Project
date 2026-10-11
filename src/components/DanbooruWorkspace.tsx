@@ -21,11 +21,15 @@ import {
   defaultDanbooruSearchFilters,
   loadDanbooruSearchPreferences,
   sanitizeDanbooruSearchFilters,
+  validateDanbooruSearchDates,
+  withoutRetiredRelationship,
   type DanbooruFileType,
   type DanbooruRating,
   type DanbooruSearchFilters,
   type DanbooruSort,
 } from "../danbooru/searchPreferences";
+import { DanbooruDateRange } from "../danbooru/DanbooruDateRange";
+import "../danbooru/DanbooruSearchPopover.css";
 import { FluentIcon } from "./FluentIcon";
 import type { DanbooruSessionActivity } from "./ActivityDrawer";
 import { DropdownSelect } from "./DropdownSelect";
@@ -89,7 +93,7 @@ const loadState = (): PersistedDanbooruState => {
     return {
       view: parsed.view === "downloads" ? "downloads" : "explore",
       exploreDraft: typeof parsed.exploreDraft === "string" ? parsed.exploreDraft : "",
-      exploreCommitted: typeof parsed.exploreCommitted === "string" ? parsed.exploreCommitted : "",
+      exploreCommitted: withoutRetiredRelationship(typeof parsed.exploreCommitted === "string" ? parsed.exploreCommitted : "", typeof parsed.exploreDraft === "string" ? parsed.exploreDraft : "", parsed.filters),
       downloadsDraft: typeof parsed.downloadsDraft === "string" ? parsed.downloadsDraft : "",
       downloadsCommitted: typeof parsed.downloadsCommitted === "string" ? parsed.downloadsCommitted : "",
       explorePage: Number.isInteger(parsed.explorePage) && Number(parsed.explorePage) > 0 ? Number(parsed.explorePage) : 1,
@@ -195,6 +199,25 @@ export function DanbooruWorkspace({
   const [downloadsPageNumber, setDownloadsPageNumber] = useState(persisted.downloadsPage);
   const [filters, setFilters] = useState<DanbooruSearchFilters>(persisted.filters);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const filterTools = useRef<HTMLElement>(null);
+  const filterTrigger = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!filtersOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !filterTools.current?.contains(event.target)) setFiltersOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setFiltersOpen(false);
+      filterTrigger.current?.focus();
+    };
+    document.addEventListener("pointerdown", outside);
+    document.addEventListener("keydown", escape, true);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape, true); };
+  }, [filtersOpen]);
+  useEffect(() => { if (!active || view !== "explore") setFiltersOpen(false); }, [active, view]);
   const [searchPage, setSearchPage] = useState<DanbooruSearchPage | null>(null);
   const [downloadsPage, setDownloadsPage] = useState<DanbooruDownloadsPage | null>(null);
   const [loading, setLoading] = useState(false);
@@ -411,6 +434,12 @@ export function DanbooruWorkspace({
     setSuggestions([]);
     if (view === "explore") {
       setExploreDraft(query);
+      const dateError = /^\d+$/.test(query) ? null : validateDanbooruSearchDates(nextFilters);
+      if (dateError) {
+        setError(dateError);
+        setFiltersOpen(true);
+        return;
+      }
       const composed = buildDanbooruSearchQuery(query, nextFilters);
       if (danbooruLimitedTermCount(composed) > 2) {
         setError("현재 비로그인 검색은 제한 대상 조건을 2개까지 사용할 수 있습니다. 정렬을 사용하면 일반 태그는 1개까지 입력할 수 있습니다.");
@@ -418,6 +447,9 @@ export function DanbooruWorkspace({
       }
       if (!loading && searchPage && composed !== exploreCommitted) rememberSearch();
       committedPresentation.current = { draft: query, filters: nextFilters };
+      // A user search supersedes deferred first-layout restoration as well as
+      // older network requests. Resize/visibility notifications must not replay it.
+      restoredPageLoaded.current = true;
       scrollPositions.current.explore = 0;
       setExploreCommitted(composed);
       setExplorePage(1);
@@ -542,11 +574,13 @@ export function DanbooruWorkspace({
         <div className="danbooru-overview">
           {historySize > 0 ? <div className="danbooru-search-history"><button type="button" className="text-button" onClick={restoreSearch}>← 이전 탐색</button><span>이전 결과와 스크롤로 돌아가기</span></div> : null}
           {view === "explore" ? <>
-            <section className="danbooru-search-tools" aria-label="Danbooru 검색 조건과 정렬">
+            <section ref={filterTools} className="danbooru-search-tools" aria-label="Danbooru 검색 조건과 정렬">
               <button
+                ref={filterTrigger}
                 type="button"
                 className={`danbooru-filter-button${filtersOpen ? " is-active" : ""}`}
                 aria-expanded={filtersOpen}
+                aria-controls="danbooru-search-filters"
                 onClick={() => setFiltersOpen((current) => !current)}
               >
                 <FluentIcon glyph="\uE71C" /> 상세 조건
@@ -562,13 +596,12 @@ export function DanbooruWorkspace({
                 onChange={(sort) => {
                     const next = { ...filters, sort: sort as DanbooruSort };
                     setFilters(next);
-                    submit(exploreDraft, next);
+                    submit(exploreDraft.replace(/(?:^|\s)order:[^\s]+/gi, " ").trim(), next);
                 }}
               />
               <span className={`danbooru-tag-budget${limitedTermCount > 2 ? " is-over" : ""}`}>
                 제한 대상 {limitedTermCount}/2 · rating/date/score 등은 제외 · 정렬은 1개 사용
               </span>
-            </section>
             {filtersOpen ? (
               <DanbooruSearchFilterPanel
                 filters={filters}
@@ -578,8 +611,10 @@ export function DanbooruWorkspace({
                   submit(exploreDraft, filters);
                 }}
                 onReset={() => setFilters(defaultDanbooruSearchFilters())}
+                onClose={() => { setFiltersOpen(false); filterTrigger.current?.focus(); }}
               />
             ) : null}
+            </section>
           </> : null}
 
           <section className="danbooru-heading">
@@ -593,9 +628,9 @@ export function DanbooruWorkspace({
         </div>
 
         <section ref={content} className="danbooru-content" aria-busy={loading} onScroll={event => { if (active && !loading) scrollPositions.current[view] = event.currentTarget.scrollTop; }}>
-          {error ? (
-            <div className="empty-state" role="alert"><FluentIcon glyph="\uE7BA" /><h2>Danbooru 결과를 불러오지 못했습니다</h2><p>{error}</p><button type="button" className="text-button" onClick={() => view === "explore" ? void loadExplore(exploreCommitted, explorePage, true) : void loadDownloads(downloadsPageNumber, downloadsCommitted, true)}>다시 시도</button></div>
-          ) : loading && !posts.length ? (
+          {error ? <div className="danbooru-search-pending" role="alert"><FluentIcon glyph="\uE7BA" /><span>{error}</span><button type="button" className="text-button" onClick={() => submit()}>다시 시도</button></div> : null}
+          {loading && posts.length > 0 ? <div className="danbooru-search-pending" role="status"><span className="spinner" /> 검색 중 · 이전 결과 표시 중</div> : null}
+          {loading && !posts.length ? (
             <div className="loading-state" role="status"><span className="spinner" /> Danbooru 결과를 불러오는 중</div>
           ) : posts.length ? (
             <div className="danbooru-grid" style={{ "--danbooru-card-width": `${gridWidth}px` } as CSSProperties}>
@@ -611,9 +646,9 @@ export function DanbooruWorkspace({
                 />
               ))}
             </div>
-          ) : (
+          ) : !error ? (
             <div className="empty-state"><FluentIcon glyph="\uE11A" /><h2>{view === "explore" ? "검색 결과가 없습니다" : "저장한 Danbooru post가 없습니다"}</h2><p>{view === "explore" ? "태그 또는 post ID를 바꿔 보세요." : "Explore에서 상세 화면을 열고 원본 저장을 선택하세요."}</p></div>
-          )}
+          ) : null}
           <div className="pager danbooru-pager">
             <button type="button" className="text-button" disabled={loading || (view === "explore" ? explorePage <= 1 : (downloadsPage?.page ?? 1) <= 1)} onClick={() => {
               scrollPositions.current[view] = 0;
@@ -664,16 +699,18 @@ export function DanbooruWorkspace({
   );
 }
 
-function DanbooruSearchFilterPanel({
+export function DanbooruSearchFilterPanel({
   filters,
   onChange,
   onApply,
   onReset,
+  onClose,
 }: {
   filters: DanbooruSearchFilters;
   onChange: (filters: DanbooruSearchFilters) => void;
   onApply: () => void;
   onReset: () => void;
+  onClose: () => void;
 }) {
   const toggleRating = (rating: DanbooruRating, checked: boolean) => onChange({
     ...filters,
@@ -688,7 +725,8 @@ function DanbooruSearchFilterPanel({
       : filters.fileTypes.filter((value) => value !== fileType),
   });
   return (
-    <section className="danbooru-filter-panel" aria-label="Danbooru 상세 검색 조건">
+    <section id="danbooru-search-filters" className="danbooru-filter-panel danbooru-filter-popover" role="dialog" aria-label="Danbooru 상세 검색 조건">
+      <header><strong>상세 조건</strong><button type="button" className="icon-button" aria-label="상세 조건 닫기" onClick={onClose}><FluentIcon glyph="\uE711" /></button></header>
       <div className="danbooru-filter-grid">
         <fieldset>
           <legend>등급</legend>
@@ -723,11 +761,8 @@ function DanbooruSearchFilterPanel({
         </fieldset>
         <fieldset>
           <legend>등록 기간</legend>
-          <div className="danbooru-range-fields">
-            <label><span>시작</span><input type="date" aria-label="Danbooru 등록 시작일" value={filters.dateFrom} max={filters.dateTo || undefined} onChange={(event) => onChange({ ...filters, dateFrom: event.target.value })} /></label>
-            <label><span>종료</span><input type="date" aria-label="Danbooru 등록 종료일" value={filters.dateTo} min={filters.dateFrom || undefined} onChange={(event) => onChange({ ...filters, dateTo: event.target.value })} /></label>
-          </div>
-          <small>기간과 점수순을 함께 쓰면 해당 기간의 인기 게시물을 볼 수 있습니다.</small>
+          <DanbooruDateRange from={filters.dateFrom} to={filters.dateTo} onChange={(dateFrom, dateTo) => onChange({ ...filters, dateFrom, dateTo })} />
+          <small>Danbooru 등록일 기준 · YYYYMMDD 붙여넣기 가능</small>
         </fieldset>
         <fieldset>
           <legend>최소 기준</legend>
@@ -735,22 +770,6 @@ function DanbooruSearchFilterPanel({
             <label><span>점수</span><input type="number" aria-label="Danbooru 최소 점수" step="1" value={filters.minimumScore} onChange={(event) => onChange({ ...filters, minimumScore: event.target.value })} /></label>
             <label><span>즐겨찾기</span><input type="number" aria-label="Danbooru 최소 즐겨찾기" min="0" step="1" value={filters.minimumFavorites} onChange={(event) => onChange({ ...filters, minimumFavorites: event.target.value })} /></label>
           </div>
-        </fieldset>
-        <fieldset>
-          <legend>게시물 관계</legend>
-          <DropdownSelect
-            ariaLabel="Danbooru 게시물 관계"
-            className="danbooru-filter-dropdown"
-            value={filters.relationship}
-            options={[
-              { value: "any", label: "관계 제한 없음" },
-              { value: "has_parent", label: "부모가 있는 변형판" },
-              { value: "no_parent", label: "부모가 없는 게시물" },
-              { value: "has_children", label: "자식 변형판이 있는 게시물" },
-              { value: "no_children", label: "자식 변형판이 없는 게시물" },
-            ]}
-            onChange={(relationship) => onChange({ ...filters, relationship })}
-          />
         </fieldset>
       </div>
       <footer>

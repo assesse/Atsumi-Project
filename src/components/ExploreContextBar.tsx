@@ -36,6 +36,7 @@ export function ExploreContextBar({
       <div ref={tabList} className="explore-context-tabs" role="tablist" aria-label="탐색 세션">
         <MovingTabs>{tabs.map((tab) => {
           const active = tab.id === activeId;
+          const label = tab.label.trim() || "전체 탐색";
           const pageDescription = tab.page === undefined
             ? null
             : `${tab.page} / ${Math.max(1, tab.totalPages ?? 1)} 페이지`;
@@ -51,17 +52,17 @@ export function ExploreContextBar({
                 aria-selected={active}
                 aria-controls="gallery-viewport"
                 aria-busy={tab.busy || undefined}
-                aria-label={accessibleStatus ? `${tab.label}, ${accessibleStatus}` : tab.label}
+                aria-label={accessibleStatus ? `${label}, ${accessibleStatus}` : label}
                 data-explore-context-id={tab.id}
                 onClick={() => onActivate(tab.id)}
               >
-                <span>{tab.label}</span>
-                {tab.busy ? <small>불러오는 중</small> : null}
+                <i className={`spinner explore-context-spinner${tab.busy ? " is-busy" : ""}`} aria-hidden="true" />
+                <span>{label}</span>
               </button>
               <button
                 type="button"
                 className="explore-context-close"
-                aria-label={`${tab.label} 탐색 닫기`}
+                aria-label={`${label} 탐색 닫기`}
                 title="탐색 닫기"
                 onClick={() => onClose(tab.id)}
               >

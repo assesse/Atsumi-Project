@@ -9,7 +9,7 @@
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const pending = new Map();
   let state = { ready: false, recording: false, detail: "unavailable" };
-  let controls = null, record = null, screenshot = null, speed = null, focus = null, player = null, style = null;
+  let controls = null, record = null, screenshot = null, speed = null, player = null, style = null;
   let topControls = null, settings = null, rateButton = null, rateMenu = null;
   let recordOnly = null;
   const context = { multiview: false, automaticWatch: false };
@@ -17,6 +17,35 @@
   let selectedRate = null;
   const RATES = [.5, .75, 1, 1.25, 1.5, 2];
   let pageActive = true, renderFrame = null;
+  // The embedded official player can leave an idle `cursor:none` style active
+  // after a native view is reattached. Repair only a moving pointer's path in
+  // this document, never Windows' process-global ShowCursor counter. Real
+  // fullscreen retains the site's normal idle-cursor behavior.
+  const cursorNodes = new Set();
+  let cursorFrame = null, cursorTarget = null;
+  const clearCursor = () => {
+    if (cursorFrame !== null) window.cancelAnimationFrame(cursorFrame);
+    cursorFrame = null; cursorTarget = null;
+    for (const node of cursorNodes) node.removeAttribute("data-atsumi-cursor-restored");
+    cursorNodes.clear();
+  };
+  const revealMovingCursor = (event) => {
+    if (!pageActive || !channel() || document.hidden || document.fullscreenElement) { clearCursor(); return; }
+    cursorTarget = event.target;
+    if (cursorFrame !== null) return;
+    cursorFrame = window.requestAnimationFrame(() => {
+      cursorFrame = null;
+      const target = cursorTarget;
+      for (const node of cursorNodes) node.removeAttribute("data-atsumi-cursor-restored");
+      cursorNodes.clear();
+      if (!target?.closest?.(".u_rmcplayer,.pzp-pc,.webplayer") || document.fullscreenElement) return;
+      for (let node = target; node && node !== document.documentElement; node = node.parentElement) {
+        if (window.getComputedStyle(node).cursor === "none") {
+          node.setAttribute("data-atsumi-cursor-restored", ""); cursorNodes.add(node);
+        }
+      }
+    });
+  };
   let snapshotBusy = false, intentBusy = false, notice = "", noticeUntil = 0;
   let pageRevision = 0, screenshotNotice = null, screenshotNoticeTimer = null;
   const request = (kind, fields) => new Promise((resolve, reject) => {
@@ -235,6 +264,8 @@
     if (!style) {
       style = document.createElement("style"); style.id = "atsumi-player-ui-style";
       style.textContent = `
+        [data-atsumi-cursor-restored]{cursor:auto!important}
+        button[data-atsumi-cursor-restored],a[data-atsumi-cursor-restored],[role=button][data-atsumi-cursor-restored]{cursor:pointer!important}
         #atsumi-player-controls{display:flex;align-items:center;gap:2px;flex:0 0 auto;pointer-events:auto;z-index:2147483646}
         #atsumi-player-controls[data-floating]{position:absolute;right:12px;bottom:12px;top:auto;opacity:0;transition:opacity .15s;background:#111a;border-radius:6px}
         .u_rmcplayer:hover #atsumi-player-controls,.pzp-pc:hover #atsumi-player-controls,.webplayer:hover #atsumi-player-controls,#atsumi-player-controls:focus-within{opacity:1}
@@ -331,8 +362,6 @@
           choices[(index + delta + choices.length) % choices.length]?.focus();
         }
       });
-      focus = button("기본 보기", '<path d="M4 9V4h5m6 0h5v5M4 15v5h5m6 0h5v-5"/>');
-      focus.addEventListener("click", (event) => { event.stopPropagation(); if (context.multiview) void viewIntent("exit_focus", event); });
     }
     player = nextPlayer;
     // Cheese-PIP uses this official control strip as well. Unknown versions get
@@ -361,9 +390,6 @@
     const distance = liveDistance(video);
     const latencyText = distance === null ? "재생 가능 끝점 거리 확인 전" : `재생 가능 끝점까지 ${distance.toFixed(1)}초`;
     speed.title = `${catchup ? "1.2배로 따라잡는 중 · 다시 누르면 해제" : "최신 지점까지 1.2배로 따라잡기 · 영상 재다운로드 없음"} · ${latencyText}`;
-    focus.hidden = !context.multiview;
-    focus.setAttribute("aria-label", "기본 보기");
-    focus.title = "넓게 보기 종료 · Esc";
     record.setAttribute("data-recording", String(state.recording));
     const text = state.recording ? "녹화 중지" : "녹화";
     const resolution = video.videoWidth > 0 && video.videoHeight > 0 ? ` · ${video.videoWidth}×${video.videoHeight}` : "";
@@ -452,17 +478,20 @@
     const isScreenshot = event.code === "KeyS" || event.key?.toLowerCase() === "s";
     if (isScreenshot && !context.automaticWatch && videoSource() && !snapshotBusy && !intentBusy) {
       event.preventDefault(); event.stopPropagation(); void saveScreenshot();
-    } else if (event.key === "Escape" && context.multiview && !document.fullscreenElement && !intentBusy) {
-      event.preventDefault(); event.stopPropagation(); void viewIntent("exit_focus", event);
     }
   }, true);
   window.addEventListener("pagehide", () => {
     pageActive = false;
+    clearCursor();
     pageRevision++; clearTimeout(screenshotNoticeTimer); screenshotNotice?.remove();
     if (renderFrame !== null) { window.cancelAnimationFrame(renderFrame); renderFrame = null; }
     stopCatchup(); stopSelectedRate(); removeControls();
   });
   window.addEventListener("pageshow", () => { pageActive = true; scheduleRender(); });
+  document.addEventListener("pointermove", revealMovingCursor, { passive: true });
+  document.addEventListener("pointerleave", clearCursor);
+  document.addEventListener("fullscreenchange", clearCursor);
+  window.addEventListener("blur", clearCursor);
   window.addEventListener("resize", scheduleRender);
   // Capture also observes nested non-bubbling scroll events on the full page.
   window.addEventListener("scroll", scheduleRender, true);

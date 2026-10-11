@@ -499,6 +499,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   const visibleIdsRef = useRef<GalleryId[]>([]);
   const activityOpener = useRef<HTMLElement | null>(null);
   const galleryViewport = useRef<HTMLElement>(null);
+  const artistFolderViewport = useRef<HTMLElement>(null);
+  const [folderGalleryColumns, setFolderGalleryColumns] = useState(1);
   const explorePageSession = useRef<ExplorePageSession | null>(null);
   const exploreContexts = useRef(new Map<string, ExploreContext>());
   const exploreContextIdsRef = useRef<string[]>([]);
@@ -706,7 +708,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     const id = `explore-context-${++exploreContextSequence.current}`;
     const context: ExploreContext = {
       id,
-      label: "검색",
+      label: "전체 탐색",
       session: createExplorePageSession(),
       request: null,
       requestKey: null,
@@ -1589,7 +1591,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     context.displayValue = options.displayValue.trim();
     context.languages = [...request.languages];
     context.sort = request.sort;
-    context.label = options.label?.trim() || options.displayValue.trim() || "검색";
+    context.label = options.label?.trim() || options.displayValue.trim() || "전체 탐색";
     context.scrollTop = 0;
     context.keyboardFocusId = null;
     context.selectionIds = [];
@@ -1887,9 +1889,6 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     [],
   );
 
-  useLayoutEffect(() => {
-    dispatch({ type: "selection.retain", ids: actionableVisibleIds });
-  }, [actionableVisibleIds]);
 
   const hydrateDetail = useCallback(async (id: GalleryId, options?: { silent?: boolean }) => {
     if (hydratedDetails.current.has(id) || hydratingDetails.current.has(id)) return;
@@ -3639,21 +3638,6 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     });
   }, [publishExploreContext]);
 
-  const selectedIds = useMemo(() => [...ui.selection.ids], [ui.selection.ids]);
-  const multiSelectionMode = ui.selection.ids.size >= 2;
-  const selectedRunningIds = selectedIds.filter((id) => {
-    const download = displayGalleries.get(id)?.download;
-    return download && runningDownloadStates.has(download.state);
-  });
-  const selectionDownloadPending = selectedIds.some((id) => pendingDownloadEntries.has(displayGalleries.get(id)?.download?.entryId ?? ""));
-  const selectionCancelPending = selectedIds.some((id) => cancellingDownloadEntries.has(displayGalleries.get(id)?.download?.entryId ?? ""));
-  const selectedCompletedEntryIds = useMemo(() => [...new Set(selectedIds.flatMap((id) => {
-    const download = displayGalleries.get(id)?.download;
-    return download?.state === "completed" ? [download.entryId] : [];
-  }))], [displayGalleries, selectedIds]);
-  const selectedCanInternalScan = selectedIds.length > 0
-    && selectedCompletedEntryIds.length === selectedIds.length;
-
   const requestTagSuggestions = useCallback((query: string, namespace?: TagNamespace) => {
     const sequence = ++tagSuggestionSequence.current;
     if (!query) { setTagSuggestions([]); return; }
@@ -3802,7 +3786,6 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         && !duplicateHiddenGalleryIds.has(gallery.id))
       .map((gallery) => gallery.id);
   }, [actionableVisibleIds, duplicateHiddenGalleryIds, renderedVisible, ui.view]);
-  visibleIdsRef.current = renderedActionableIds;
 
   useEffect(() => {
     if (ui.view !== "auto-find" || autoFindPage === autoFindPagination.page) return;
@@ -3856,13 +3839,16 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     if (ui.view !== "downloads") return collapsedGroupKeys;
     return new Set(groupedStorageKeys.filter((key) => !expandedDownloadGroupKeys.has(key)));
   }, [collapsedGroupKeys, expandedDownloadGroupKeys, groupedStorageKeys, ui.view]);
+  const artistFolderMode = ui.view === "downloads" && ui.grouping.downloads === "artist";
+  const artistFolderOpen = artistFolderMode && groupedStorageKeys.some((key) => !visibleCollapsedGroupKeys.has(key));
+  const activeGalleryViewport = artistFolderOpen ? artistFolderViewport : galleryViewport;
   const progressiveDownloadsObserveKey = useMemo(() => {
     if (ui.view !== "downloads") return "inactive";
     const collapsed = [...visibleCollapsedGroupKeys].sort().join("\u001f");
     return `${currentGalleryDisplayMode}\u001e${ui.grouping.downloads}\u001e${collapsed}\u001e${renderedVisible.map((gallery) => gallery.id).join(",")}`;
   }, [currentGalleryDisplayMode, renderedVisible, ui.grouping.downloads, ui.view, visibleCollapsedGroupKeys]);
   const nearbyDownloadIds = useProgressiveGalleryWindow({
-    rootRef: galleryViewport,
+    rootRef: activeGalleryViewport,
     enabled: ui.view === "downloads",
     observeKey: progressiveDownloadsObserveKey,
     onEnter: hydrateNearbyDownloadDetails,
@@ -3873,11 +3859,36 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   const keyboardNavigableIds = useMemo(() => {
     if (ui.view === "explore" || ui.grouping[ui.view] === "all") return renderedActionableIds;
     const groupedView = ui.view;
+    const actionable = new Set(renderedActionableIds);
     return [...new Set(groupedVisible.flatMap((group) => {
       const key = galleryGroupStorageKey(groupedView, group);
-      return visibleCollapsedGroupKeys.has(key) ? [] : group.items.map((gallery) => gallery.id);
+      return visibleCollapsedGroupKeys.has(key) ? [] : group.items.map((gallery) => gallery.id).filter((id) => actionable.has(id));
     }))];
   }, [groupedVisible, renderedActionableIds, ui.grouping, ui.view, visibleCollapsedGroupKeys]);
+  // A floating folder is its own selection scope. Never carry hidden artists
+  // into Shift ranges, Select All, or destructive actions behind the window.
+  const selectionScopeIds = artistFolderMode ? keyboardNavigableIds : renderedActionableIds;
+  const selectionScope = useMemo(() => new Set(selectionScopeIds), [selectionScopeIds]);
+  visibleIdsRef.current = selectionScopeIds;
+  const retainedSelectionIds = artistFolderMode ? selectionScopeIds : actionableVisibleIds;
+  useLayoutEffect(() => {
+    dispatch({ type: "selection.retain", ids: retainedSelectionIds });
+  }, [retainedSelectionIds]);
+  const selectedIds = useMemo(() => [...ui.selection.ids].filter((id) => !artistFolderMode || selectionScope.has(id)),
+    [artistFolderMode, selectionScope, ui.selection.ids]);
+  const multiSelectionMode = selectedIds.length >= 2;
+  const selectedRunningIds = selectedIds.filter((id) => {
+    const download = displayGalleries.get(id)?.download;
+    return download && runningDownloadStates.has(download.state);
+  });
+  const selectionDownloadPending = selectedIds.some((id) => pendingDownloadEntries.has(displayGalleries.get(id)?.download?.entryId ?? ""));
+  const selectionCancelPending = selectedIds.some((id) => cancellingDownloadEntries.has(displayGalleries.get(id)?.download?.entryId ?? ""));
+  const selectedCompletedEntryIds = useMemo(() => [...new Set(selectedIds.flatMap((id) => {
+    const download = displayGalleries.get(id)?.download;
+    return download?.state === "completed" ? [download.entryId] : [];
+  }))], [displayGalleries, selectedIds]);
+  const selectedCanInternalScan = selectedIds.length > 0
+    && selectedCompletedEntryIds.length === selectedIds.length;
   const effectiveKeyboardFocusId = useMemo(() => {
     if (keyboardFocusId !== null && keyboardNavigableIds.includes(keyboardFocusId)) return keyboardFocusId;
     return selectedIds.find((id) => keyboardNavigableIds.includes(id))
@@ -3887,13 +3898,13 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   const focusGalleryCard = useCallback((id: GalleryId) => {
     setKeyboardFocusId(id);
     window.requestAnimationFrame(() => {
-      const slot = galleryViewport.current?.querySelector<HTMLElement>(`[data-progressive-gallery-id="${Number(id)}"]`);
-      const card = slot?.querySelector<HTMLElement>(".gallery-card") ?? galleryViewport.current?.querySelector<HTMLElement>(`.gallery-card[data-gallery-id="${Number(id)}"]`);
+      const slot = activeGalleryViewport.current?.querySelector<HTMLElement>(`[data-progressive-gallery-id="${Number(id)}"]`);
+      const card = slot?.querySelector<HTMLElement>(".gallery-card") ?? activeGalleryViewport.current?.querySelector<HTMLElement>(`.gallery-card[data-gallery-id="${Number(id)}"]`);
       const focusTarget = card ?? slot;
       focusTarget?.focus({ preventScroll: true });
       focusTarget?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
     });
-  }, []);
+  }, [activeGalleryViewport]);
   const changeAutoFindPage = useCallback((page: number) => {
     setAutoFindPage(page);
     setKeyboardFocusId(null);
@@ -3925,12 +3936,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     && groupedStorageKeys.every((key) => visibleCollapsedGroupKeys.has(key));
   const toggleGroupCollapsed = useCallback((key: string) => {
     if (ui.view === "downloads") {
-      setExpandedDownloadGroupKeys((current) => {
-        const next = new Set(current);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
-      });
+      dispatch({ type: "selection.clear" });
+      setKeyboardFocusId(null);
+      setExpandedDownloadGroupKeys((current) => current.has(key) ? new Set() : new Set([key]));
       return;
     }
     const next = new Set(collapsedGroupKeys);
@@ -4047,13 +4055,13 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         return;
       }
 
-      const galleryContext = Boolean(target.closest(".gallery-viewport, .selection-toolbar"));
+      const galleryContext = Boolean(target.closest(".gallery-viewport, .selection-toolbar, .download-artist-folder-window"));
       if (!galleryContext) return;
 
       if (primaryModifier && event.key.toLocaleLowerCase() === "a" && !event.altKey && !event.repeat) {
         event.preventDefault();
         if (event.shiftKey) dispatch({ type: "selection.clear" });
-        else dispatch({ type: "selection.all", ids: renderedActionableIds });
+        else dispatch({ type: "selection.all", ids: selectionScopeIds });
         return;
       }
 
@@ -4062,7 +4070,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       const focusedId = card?.dataset.galleryId ? galleryId(Number(card.dataset.galleryId)) : effectiveKeyboardFocusId;
 
       if (primaryModifier && event.key === "Enter" && !event.shiftKey && !event.altKey && !event.repeat) {
-        const actionIds = selectedIds.length ? selectedIds : focusedId === null ? [] : [focusedId];
+        const actionIds = selectedIds.length ? selectedIds : focusedId === null || !selectionScope.has(focusedId) ? [] : [focusedId];
         if (!actionIds.length) return;
         event.preventDefault();
         void queueGalleries(actionIds);
@@ -4070,7 +4078,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       }
 
       if (event.key === "Delete" && !primaryModifier && !event.altKey && !event.repeat && !target.closest("button")) {
-        const actionIds = selectedIds.length ? selectedIds : focusedId === null ? [] : [focusedId];
+        const actionIds = selectedIds.length ? selectedIds : focusedId === null || !selectionScope.has(focusedId) ? [] : [focusedId];
         if (!actionIds.length) return;
         event.preventDefault();
         if (ui.view === "downloads") void quarantineGalleries(actionIds);
@@ -4081,7 +4089,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
 
       if (!cardIsDirectTarget || focusedId === null) return;
       const horizontal = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
-      const vertical = event.key === "ArrowUp" ? -galleryColumns : event.key === "ArrowDown" ? galleryColumns : 0;
+      const navigationColumns = artistFolderOpen ? folderGalleryColumns : galleryColumns;
+      const vertical = event.key === "ArrowUp" ? -navigationColumns : event.key === "ArrowDown" ? navigationColumns : 0;
       const delta = horizontal || vertical;
       if (!delta) return;
       const currentIndex = keyboardNavigableIds.indexOf(focusedId);
@@ -4100,7 +4109,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     };
     window.addEventListener("keydown", keyDown);
     return () => window.removeEventListener("keydown", keyDown);
-  }, [personalLibraryOpen, closeActivity, active, effectiveKeyboardFocusId, excludeAutoFindCandidates, excludeExploreGalleries, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, renderedActionableIds, selectedIds, showToast, shell.activityOpen, shell.settingsOpen, shell.exitConfirmOpen, ui.detail.activeId, ui.detail.minimized, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction, closeDetail, closeExploreContext, reopenClosedNavigation, lastUndoAction]);
+  }, [artistFolderOpen, folderGalleryColumns, personalLibraryOpen, closeActivity, active, effectiveKeyboardFocusId, excludeAutoFindCandidates, excludeExploreGalleries, focusGalleryCard, galleryColumns, keyboardNavigableIds, navigateView, openExitConfirm, quarantineGalleries, queueGalleries, refreshCurrentView, selectionScope, selectionScopeIds, selectedIds, showToast, shell.activityOpen, shell.settingsOpen, shell.exitConfirmOpen, ui.detail.activeId, ui.detail.minimized, ui.overlays, ui.search, ui.selection.anchorId, ui.view, undoLastGalleryAction, closeDetail, closeExploreContext, reopenClosedNavigation, lastUndoAction]);
 
   const config = viewConfig[ui.view];
   const currentAutoFindStatus = autoFindStatusLabel(
@@ -4192,9 +4201,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       void hydrateDuplicateReview(exclusionContext.legacyCandidateId);
     }
   };
-  const renderGalleryGrid = (items: Gallery[], ariaLabel: string) => (
+  const renderGalleryGrid = (items: Gallery[], ariaLabel: string, columns = galleryColumns) => (
     <GalleryGrid
-      columns={galleryColumns}
+      columns={columns}
       previewWidth={previewWidth}
       selectionContext={multiSelectionMode}
       ariaLabel={ariaLabel}
@@ -4204,7 +4213,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         const card = <GalleryCard
           key={gallery.id}
           gallery={gallery}
-          thumbnailPriority={index < galleryColumns ? "visible" : "prefetch"}
+          thumbnailPriority={index < columns ? "visible" : "prefetch"}
           view={ui.view}
           displayMode={currentGalleryDisplayMode}
           explorationExcluded={duplicateHiddenGalleryIds.has(gallery.id) || explorationExcludedGalleryIds.has(gallery.id)}
@@ -4299,7 +4308,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           if (event.key !== "Enter" || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey
             || event.repeat || event.nativeEvent.isComposing || event.defaultPrevented || !multiSelectionMode
             || target.closest("button, input, textarea, select, [contenteditable='true']")
-            || !target.closest(".gallery-viewport, .selection-toolbar")) return;
+            || !target.closest(".gallery-viewport, .selection-toolbar, .download-artist-folder-window")) return;
           event.preventDefault();
           event.stopPropagation();
           openSelectedDetails(selectedIds);
@@ -4335,7 +4344,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                   languages: [...ui.search.explore.languages],
                   sort: ui.exploreSort,
                   pageSize: hitomiPageSize,
-                }, { displayValue, label: displayValue || "새 탐색" });
+                }, { displayValue, label: displayValue || "전체 탐색" });
                 return;
               }
               dispatch({ type: "search.commit", view: ui.view, value });
@@ -4346,7 +4355,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                 startExploreSearch({
                   ...suggestion.request,
                   pageSize: hitomiPageSize,
-                }, { displayValue: value, label: value || "새 탐색", background: options?.background });
+                }, { displayValue: value, label: value || "전체 탐색", background: options?.background });
                 return;
               } else if (ui.view === "explore") {
                 startExploreSearch({
@@ -4356,7 +4365,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                   languages: [...ui.search.explore.languages],
                   sort: ui.exploreSort,
                   pageSize: hitomiPageSize,
-                }, { displayValue: value, label: value || "새 탐색", background: options?.background });
+                }, { displayValue: value, label: value || "전체 탐색", background: options?.background });
                 return;
               }
               dispatch({ type: "search.commit", view: ui.view, value });
@@ -4380,10 +4389,11 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
             <div className="heading-actions">
               {ui.view === "auto-find" ? (
                 <>
-                  <button type="button" data-tour="hitomi-auto-find-refresh" data-running={autoFindSnapshot.run?.state === "running"} className="text-button" aria-busy={autoFindPending || autoFindSnapshot.run?.state === "running"} disabled={autoFindPending || autoFindSnapshot.run?.state === "running"} onClick={() => void refreshAutoFind()}>
-                    {autoFindPending || autoFindSnapshot.run?.state === "running" ? <><span className="spinner catalog-refresh-spinner" aria-hidden="true" /> 즐겨찾기 작가·그룹 탐색 중…</> : <><FluentIcon glyph="\uE72C" /> {autoFindSnapshot.run?.state === "failed" ? "다시 탐색" : "즐겨찾기 작가·그룹 갱신"}</>}
+                  <button type="button" data-tour="hitomi-auto-find-refresh" data-running={autoFindSnapshot.run?.state === "running"} className="text-button" aria-busy={autoFindPending || autoFindSnapshot.run?.state === "running"} disabled={autoFindPending}
+                    title={autoFindSnapshot.run?.state === "running" ? "다시 누르면 갱신을 취소합니다." : "즐겨찾기한 작가·그룹의 신규 작품을 찾습니다."}
+                    onClick={() => void (autoFindSnapshot.run?.state === "running" ? cancelAutoFind() : refreshAutoFind())}>
+                    {autoFindPending || autoFindSnapshot.run?.state === "running" ? <span className="spinner catalog-refresh-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE72C" />} 신규 작품 갱신
                   </button>
-                  {autoFindSnapshot.run?.state === "running" ? <button type="button" className="text-button danger-button" disabled={autoFindPending} onClick={() => void cancelAutoFind()}><FluentIcon glyph="\uE711" /> 탐색 취소</button> : null}
                 </>
               ) : ui.view === "downloads" ? (
                 <>
@@ -4467,22 +4477,22 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                       grouping,
                     )}
                   />
-                  {ui.view === "downloads" ? <div className="select-control downloads-sort-control" title={popularity.message || "기간별 전체 순위 · 순위 미확인은 뒤에 표시"}>
-                    <label htmlFor="downloads-sort-select">정렬</label>
+                  {ui.view === "downloads" ? <div className="select-control downloads-sort-control" title={popularity.message || "다운로드 목록만 정렬합니다. 인기순은 Hitomi 전체 인기 순위 기준이며 순위 미확인 작품은 뒤에 표시합니다."}>
+                    <label htmlFor="downloads-sort-select">보관함 정렬</label>
                     <select id="downloads-sort-select" value={ui.downloadsSort ?? "recent"} onChange={(event) => dispatch({ type: "downloads.sort", sort: event.target.value as DownloadSort })}>
-                      <option value="recent">최신순</option><option value="popular_today">일간 인기순</option><option value="popular_week">주간 인기순</option><option value="popular_month">월간 인기순</option><option value="popular_year">연간 인기순</option>
+                      <option value="recent">최근 다운로드</option><option value="popular_today">일간 인기순</option><option value="popular_week">주간 인기순</option><option value="popular_month">월간 인기순</option><option value="popular_year">연간 인기순</option>
                     </select>
                   </div> : null}
-                  <button
+                  {ui.view === "auto-find" ? <button
                     type="button"
                     className="text-button dark gallery-groups-toggle-all"
                     disabled={ui.grouping[ui.view] === "all" || !groupedVisible.length}
-                    title={ui.grouping[ui.view] === "all" ? (ui.view === "downloads" ? "작가별에서 사용할 수 있습니다." : "기간별 또는 작가별에서 사용할 수 있습니다.") : undefined}
+                    title={ui.grouping[ui.view] === "all" ? "기간별 또는 작가별에서 사용할 수 있습니다." : undefined}
                     onClick={() => setAllVisibleGroupsCollapsed(!allVisibleGroupsCollapsed)}
-                  ><FluentIcon glyph="\uE70D" /> {allVisibleGroupsCollapsed ? "전부 펼치기" : "전부 접기"}</button>
+                  ><FluentIcon glyph="\uE70D" /> {allVisibleGroupsCollapsed ? "전부 펼치기" : "전부 접기"}</button> : null}
                 </div>
               ) : null}
-              {ui.view !== "auto-find" ? (
+              {ui.view === "downloads" ? (
                   <div className="select-control download-status-filter-control">
                     <label className="sr-only" htmlFor="download-status-filter">다운로드 상태</label>
                     <select
@@ -4504,7 +4514,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
               ) : null}
             </div>
             {ui.view === "auto-find" ? <ResultDetails key="auto-find" count={visible.length}
-              busy={autoFindLoading || autoFindSnapshot.run?.state === "running"} error={!!autoFindError || autoFindSnapshot.run?.state === "failed"}>
+              error={!!autoFindError || autoFindSnapshot.run?.state === "failed"}>
               <p role="status">{currentAutoFindStatus}</p>
               {autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== settings.autoFindHistoryMode ? (
                 <p>표시된 결과는 이전 기준입니다. 다음 실행부터 ‘{autoFindHistoryModeLabel(settings.autoFindHistoryMode)}’ 기준을 적용합니다.</p>
@@ -4543,7 +4553,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           </section>
           <SelectionToolbar
             active={multiSelectionMode}
-            count={ui.selection.ids.size}
+            count={selectedIds.length}
             downloadsView={ui.view === "downloads"}
             restoreMode={selectedIds.length > 0 && selectedIds.every((id) => displayGalleries.get(id)?.download?.state === "quarantined")}
             cancelCount={selectedRunningIds.length}
@@ -4556,7 +4566,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
             } : undefined}
             compareDisabled={duplicatePending || duplicateRun?.state === "running"}
             onCancelDownloads={() => void cancelGalleries(selectedRunningIds)}
-            onAll={() => dispatch({ type: "selection.all", ids: renderedActionableIds })}
+            onAll={() => dispatch({ type: "selection.all", ids: selectionScopeIds })}
             onClear={() => dispatch({ type: "selection.clear" })}
             onPrimary={() => void queueGalleries(selectedIds)}
             onDelete={() => ui.view === "downloads"
@@ -4602,6 +4612,11 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                         onPreviewItems={hydrateNearbyDownloadDetails}
                         onStopPreviewItems={discardNearbyDownloadDetails}
                         renderGrid={renderGalleryGrid}
+                        contentsRef={artistFolderViewport}
+                        displayMode={currentGalleryDisplayMode}
+                        maximumColumns={3}
+                        onColumnsChange={setFolderGalleryColumns}
+                        suspended={(!ui.detail.minimized && ui.detail.activeId !== null) || shell.settingsOpen || shell.activityOpen}
                       />
                     : <GalleryAccordionGroups
                         groups={groupedVisible}

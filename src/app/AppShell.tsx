@@ -14,6 +14,8 @@ import { usePreferenceQueue } from "./usePreferenceQueue";
 import type { ContentSource } from "./workspaceRegistry";
 import { useRecordingNotifications } from "./useRecordingNotifications";
 import { useStartup } from "./useStartup";
+import { FeedbackDialog } from "../features/feedback/FeedbackDialog";
+import { OPEN_FEEDBACK } from "../features/feedback/api";
 
 export type AppShellApi = SettingsApi & AppExitApi & Pick<BackendClient, "runtime">;
 
@@ -35,7 +37,7 @@ type AppShellServices = ShellState & {
   backgroundReady: boolean;
   tutorialOpen: boolean;
   tutorialSource: ContentSource | null;
-  replayTutorial: () => void;
+  replayTutorial: (source?: ContentSource) => void;
   closeTutorial: () => void;
 };
 
@@ -56,6 +58,12 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   const updater = useAppUpdater(api.runtime, updateGuard);
   const [tutorialSource, setTutorialSource] = useState<ContentSource | null>(() => isTutorialDismissed(state.source) ? null : state.source);
   const tutorialOpen = tutorialSource !== null;
+  const [feedbackSource, setFeedbackSource] = useState<ContentSource | null>(null);
+  useEffect(() => {
+    const open = () => { setTutorialSource(null); setFeedbackSource(current => current ?? state.source); };
+    window.addEventListener(OPEN_FEEDBACK, open);
+    return () => window.removeEventListener(OPEN_FEEDBACK, open);
+  }, [state.source]);
   const shownTutorials = useRef(new Set<ContentSource>());
   // Remember first display, not completion: skipping or closing the app must not replay it.
   useEffect(() => {
@@ -103,7 +111,7 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   const setActivityOpen = useCallback((open: boolean) => dispatch({ type: "activity.set", open }), []);
 
   useLayoutEffect(() => {
-    document.documentElement.dataset.privacyMode = privacyMode && state.source !== "chzzk" ? "on" : "off";
+    document.documentElement.dataset.privacyMode = privacyMode ? "on" : "off";
   }, [privacyMode, state.source]);
 
   const saveSettingsPatch = useCallback(async (patch: SettingsPatch) => {
@@ -117,10 +125,14 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
     setPrivacyMode((current) => !current);
   }, [privacyModePending]);
 
-  const replayTutorial = useCallback(() => {
+  const replayTutorial = useCallback((source: ContentSource = state.source) => {
     // This opens only the current session; never clear the first-display marker.
     setSettingsOpen(false);
-    if (!exit.open) setTutorialSource(state.source);
+    if (!exit.open) {
+      saveContentSource(source);
+      dispatch({ type: "source.select", source });
+      setTutorialSource(source);
+    }
   }, [setSettingsOpen, state.source, exit.open]);
   const closeTutorial = useCallback(() => {
     setTutorialSource(null);
@@ -139,6 +151,7 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   return (
     <AppShellContext.Provider value={value}>
       {children}
+      {feedbackSource ? <FeedbackDialog source={feedbackSource} onClose={() => setFeedbackSource(null)} /> : null}
       {startup.phase !== "ready" ? <aside className={`startup-status is-${startup.phase === "failed" ? "error" : startup.statusError ? "warning" : "loading"}`} role={startup.phase === "failed" || startup.statusError ? "alert" : "status"}>
         <i className="startup-status-icon" aria-hidden="true">{startup.phase === "failed" ? "×" : startup.statusError ? "!" : ""}</i>
         <span>{startup.phase === "failed" ? "앱 데이터 준비 실패 · 기존 데이터는 보존됩니다."

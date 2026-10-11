@@ -88,6 +88,7 @@
       source.buffers.some(state => !configurationOK(state)) ? "timeline_unsupported" :
       source.buffers.some(state => !state.init || state.awaitingInit || state.initParts.length) ? "waiting_init" : candidate(video) ? "ready" : "tracks_unsupported";
     return { version: 1, reason, installed, sourceCount: sourcesList.length, appendCount, appendBytes, lastStop, lastTransportFault,
+      width: video?.videoWidth ?? 0, height: video?.videoHeight ?? 0,
       queuedBytes: active?.queuedBytes ?? 0,
       maxAckMs,
       lastAppendAgoMs: lastAppendAt === null ? null : Math.max(0, Date.now() - lastAppendAt),
@@ -363,7 +364,12 @@
         if (!response || response.stopped !== true) throw new Error("native_rejected");
         cleanUp(current);
         if (current.transportFailed || !continueRecording(current, response.continuation)) {
-          safeNotify(current, response.interrupted || current.interrupted || current.transportFailed ? "encoded_interrupted" : "encoded_saved");
+          // An ended video is provisional until native checks the broadcast.
+          // Do not turn that pending classification into a persistent IPC error.
+          const ending = current.transportFailed ? null : response.endingReason;
+          safeNotify(current, ending === "checking" ? "encoded_end_checking" :
+            ["broadcast_ended", "broadcast_changed"].includes(ending) ? "encoded_saved" :
+            response.interrupted || current.interrupted || current.transportFailed ? "encoded_interrupted" : "encoded_saved");
         }
         return response;
       } catch (cause) { cleanUp(current); safeNotify(current, "native_rejected"); throw cause; }

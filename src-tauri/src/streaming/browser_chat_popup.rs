@@ -36,6 +36,10 @@ pub(super) fn open(
     features: NewWindowFeatures,
     channel: &str,
 ) -> NewWindowResponse<tauri::Wry> {
+    if host_view::login_navigation(&url) {
+        host_view::queue_login(app);
+        return NewWindowResponse::Deny;
+    }
     if clip_popup::is_editor(&url) {
         return clip_popup::open(host, app, url, features, channel);
     }
@@ -60,6 +64,7 @@ pub(super) fn open(
     let child_channel = channel.to_owned();
     let child_label = label.clone();
     let initial = service_popup::InitialNavigation::default();
+    let navigation_app = app.clone();
     let result = WebviewWindowBuilder::new(app, &label, service_popup::blank())
         .data_directory(host.inner.data_dir.join("chzzk-browser-profile"))
         .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
@@ -71,7 +76,13 @@ pub(super) fn open(
         // This script detects /chat and only augments the header and silences
         // accidental media; it does not receive the recorder's native bridge.
         .initialization_script(include_str!("browser_multiview.js"))
-        .on_navigation(move |next| initial.allows(next, same_chat(next, &expected)))
+        .on_navigation(move |next| {
+            if host_view::login_navigation(next) {
+                host_view::queue_login(&navigation_app);
+                return false;
+            }
+            initial.allows(next, same_chat(next, &expected))
+        })
         .on_new_window(move |next, features| {
             if !child_app
                 .get_webview_window(&child_label)

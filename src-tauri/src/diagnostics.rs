@@ -274,6 +274,10 @@ impl SafeFields {
                 | "column"
                 | "eligible"
                 | "metadata_requests"
+                | "width"
+                | "height"
+                | "track_index"
+                | "init_bytes"
         ) && self.0.len() < 24
         {
             self.0.insert(field.name().into(), value);
@@ -321,6 +325,8 @@ impl Visit for SafeFields {
                         .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
             }
             "diag_work" => v.len() == 16 && v.bytes().all(|b| b.is_ascii_hexdigit()),
+            "capture_reason" => safe_capture_reason(v),
+            "capture_mime" => safe_capture_mime(v),
             _ => false,
         };
         if safe {
@@ -328,6 +334,73 @@ impl Visit for SafeFields {
         }
     }
     fn record_debug(&mut self, _: &Field, _: &dyn std::fmt::Debug) {}
+}
+
+pub(crate) fn safe_capture_reason(value: &str) -> bool {
+    matches!(
+        value,
+        "ready"
+            | "buffering"
+            | "waiting_video"
+            | "waiting_tracks"
+            | "waiting_init"
+            | "mse_unavailable"
+            | "observer_changed"
+            | "encrypted"
+            | "source_object_unsupported"
+            | "source_not_observed"
+            | "timeline_unsupported"
+            | "timeline_changed"
+            | "tracks_unsupported"
+            | "codec_unsupported"
+            | "source_blocked"
+            | "buffer_blocked"
+            | "native_init_unsupported"
+            | "init_unsupported"
+            | "init_changed"
+            | "container_unsupported"
+            | "append_unsupported"
+            | "observer_failed"
+            | "source_buffer_error"
+            | "codec_changed"
+            | "track_changed"
+            | "video_ended"
+            | "source_changed"
+            | "user_stop"
+            | "broadcast_ended"
+            | "broadcast_changed"
+            | "renderer_failed"
+            | "window_closed"
+            | "native_rejected"
+            | "unsupported"
+            | "other"
+    )
+}
+
+pub(crate) fn safe_capture_mime(value: &str) -> bool {
+    if value == "unsupported" {
+        return true;
+    }
+    if value.len() > 120 {
+        return false;
+    }
+    value
+        .strip_prefix("video/mp4;codecs=")
+        .or_else(|| value.strip_prefix("audio/mp4;codecs="))
+        .is_some_and(|codecs| {
+            let parts: Vec<_> = codecs.split(',').collect();
+            !parts.is_empty()
+                && parts.len() <= 2
+                && parts.iter().all(|codec| {
+                    *codec == "mp4a.40.2"
+                        || codec
+                            .strip_prefix("avc1.")
+                            .or_else(|| codec.strip_prefix("avc3."))
+                            .is_some_and(|suffix| {
+                                suffix.len() == 6 && suffix.bytes().all(|b| b.is_ascii_hexdigit())
+                            })
+                })
+        })
 }
 
 #[derive(Default)]
@@ -627,5 +700,21 @@ mod tests {
             tx.try_send(Message::Event(json!({}))),
             Err(mpsc::TrySendError::Full(_))
         ));
+    }
+    #[test]
+    fn capture_fields_accept_technical_enums_but_never_tokens_or_urls() {
+        assert!(safe_capture_reason("track_changed"));
+        assert!(safe_capture_reason("init_changed"));
+        assert!(safe_capture_mime("video/mp4;codecs=avc1.64002a,mp4a.40.2"));
+        assert!(safe_capture_mime("audio/mp4;codecs=mp4a.40.2"));
+        for value in [
+            "https://secret.test/token",
+            "cookie=secret",
+            "private channel",
+            "video/mp4;codecs=secret",
+        ] {
+            assert!(!safe_capture_reason(value));
+            assert!(!safe_capture_mime(value));
+        }
     }
 }

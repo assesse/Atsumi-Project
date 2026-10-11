@@ -95,6 +95,29 @@ beforeEach(() => { vi.useFakeTimers(); });
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("official player controls", () => {
+  it("restores only a moving hidden cursor in the embedded player and clears on blur/fullscreen", () => {
+    const h = fixture();
+    h.video.style.cursor = "none";
+    h.video.dispatchEvent(new MouseEvent("pointermove", { bubbles: true })); h.flushFrame();
+    expect(h.video.hasAttribute("data-atsumi-cursor-restored")).toBe(true);
+    expect(h.video.style.cursor).toBe("none"); // Never overwrite the site's style.
+    h.window.dispatchEvent(new Event("blur"));
+    expect(h.video.hasAttribute("data-atsumi-cursor-restored")).toBe(false);
+    Object.defineProperty(h.page, "fullscreenElement", { value: h.player, configurable: true });
+    h.video.dispatchEvent(new MouseEvent("pointermove", { bubbles: true })); h.flushFrame();
+    expect(h.video.hasAttribute("data-atsumi-cursor-restored")).toBe(false);
+    expect(h.messages).toEqual([]);
+  });
+  it("does not override normal pointer/text cursors or touch other page sections", () => {
+    const h = fixture();
+    h.video.style.cursor = "pointer";
+    h.video.dispatchEvent(new MouseEvent("pointermove", { bubbles: true })); h.flushFrame();
+    expect(h.video.hasAttribute("data-atsumi-cursor-restored")).toBe(false);
+    h.input.style.cursor = "none";
+    h.input.dispatchEvent(new MouseEvent("pointermove", { bubbles: true })); h.flushFrame();
+    expect(h.input.hasAttribute("data-atsumi-cursor-restored")).toBe(false);
+    expect(h.messages).toEqual([]);
+  });
   it("hides controls only for the off-canvas automatic receiver without replacing the player", () => {
     const h = fixture(); h.ready();
     h.window.__atsumiPlayerUI!.configure({ automaticWatch: true, multiview: false });
@@ -265,7 +288,7 @@ describe("official player controls", () => {
     official.click(); expect(official.textContent).toBe("좁게 보기");
     official.click(); expect(official.textContent).toBe("넓게 보기");
     expect(h.page.querySelector("[data-presentation],#atsumi-presentation-toggle")).toBeNull();
-    expect(h.page.querySelector<HTMLButtonElement>('[aria-label="기본 보기"]')!.hidden).toBe(true);
+    expect(h.page.querySelector('[aria-label="기본 보기"]')).toBeNull();
     expect(h.key({ key: "Escape", code: "Escape" }).preventDefault).not.toHaveBeenCalled();
     expect(h.messages).toEqual([]);
   });
@@ -424,9 +447,9 @@ describe("official player controls", () => {
     expect(h.video.muted).toBe(true); expect(h.video.volume).toBe(.35);
     expect(h.messages).toEqual([]); expect(h.writes()).toBe(0);
     expect(h.page.querySelector("#atsumi-player-top-controls")).toBeNull();
-    h.trustedClick("기본 보기"); await flush();
-    expect(h.messages[0]).toMatchObject({ kind: "view_intent", action: "exit_focus" });
-    expect(h.messages).toHaveLength(1);
+    expect(h.page.querySelector('[aria-label="기본 보기"]')).toBeNull();
+    expect(h.key({ key: "Escape", code: "Escape" }).preventDefault).not.toHaveBeenCalled();
+    expect(h.messages).toHaveLength(0);
     expect(source).not.toContain("audio_toggle");
     expect(source).not.toContain("이 방송 소리");
   });

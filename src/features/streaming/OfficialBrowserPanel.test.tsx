@@ -384,7 +384,7 @@ describe("OfficialBrowserPanel", () => {
     await act(async () => help("녹화 상태").blur());
     expect(button("녹화 중지")).toBeUndefined();
     await act(async () => help("녹화").focus());
-    expect(container.querySelector('.connection-help-content')).toHaveTextContent("녹화 중에는 방송·계정·모드를 변경할 수 없습니다.");
+    expect(container.querySelector('.connection-help-content')).toHaveTextContent("녹화 중에는 방송·모드를 변경할 수 없습니다.");
   });
 
   it("recovers polling errors and never lets an old poll undo an open action", async () => {
@@ -477,7 +477,8 @@ describe("OfficialBrowserPanel", () => {
     await render(api, { view: "recordings" });
     expect(button("재생")).toBeEnabled();
     expect(api.openMerged).not.toHaveBeenCalled();
-    expect(container.querySelector(".official-browser-files")).toHaveTextContent("마지막 조각은 미완성입니다.");
+    expect(container.querySelector(".official-browser-files")).toHaveTextContent("중단됨");
+    expect(container.querySelector(".official-browser-files")).not.toHaveTextContent("마지막 조각은 미완성입니다.");
     expect(container.querySelector(".official-browser-saved-chat-warning")).not.toBeNull();
     expect(container.querySelector(".official-browser-originals")).toBeNull();
     await act(async () => { const open = button("저장 폴더 열기"); open.click(); open.click(); });
@@ -503,7 +504,7 @@ describe("OfficialBrowserPanel", () => {
       mediaUrl: () => `http://atsumi-replay.localhost/${token}`,
     };
     await render(api, { view: "recordings", replayApi });
-    await act(async () => [...container.querySelectorAll<HTMLButtonElement>(".official-browser-recording-select")].find((entry) => entry.textContent?.includes(saved.title))!.click());
+    await act(async () => [...container.querySelectorAll<HTMLButtonElement>(".official-browser-recording-select")].find((entry) => entry.closest('.recording-broadcast-group')?.textContent?.includes(saved.title))!.click());
     expect(button("재생")).toHaveClass("official-browser-primary");
     await act(async () => button("재생").click());
     await act(async () => { await import("./RecordingReplay"); });
@@ -570,9 +571,10 @@ describe("OfficialBrowserPanel", () => {
     ] })));
     await render(api, { view: "recordings" });
     const records = [...container.querySelectorAll<HTMLButtonElement>(".official-browser-recording-select")];
-    expect(records[0]!.title).toContain("채팅 저장 실패"); expect(records[0]!.title).toContain("42개 기록");
+    expect(records[0]).toHaveAttribute("aria-description", "채팅 저장 실패 · 일부 기록 누락 가능 · 42개 기록");
+    expect(records[0]!.title).toContain("Ctrl로 추가/해제");
     expect(records[1]!.querySelector('[role="img"]')).toHaveAccessibleName(expect.stringContaining("채팅 일부 누락 가능"));
-    expect(records[2]!.title).toBe("이 기록의 채팅 저장 상태는 확인되지 않았습니다.");
+    expect(records[2]).toHaveAttribute("aria-description", "이 기록의 채팅 저장 상태는 확인되지 않았습니다.");
     expect(records[2]!.querySelector(".official-browser-saved-chat-warning")).toBeNull();
     await act(async () => records[2]!.click());
     expect(container.querySelector(".official-browser-files .official-browser-muted")).toHaveAttribute("title", "이 기록의 채팅 저장 상태는 확인되지 않았습니다.");
@@ -853,7 +855,7 @@ describe("OfficialBrowserPanel", () => {
     await act(async () => start.click());
     expect(api.start).toHaveBeenCalledExactlyOnceWith({ rightsAcknowledged: true, captureChat: true });
     expect(button("녹화 중지")).toBeEnabled();
-    expect(container).toHaveTextContent("녹화를 중지한 뒤 방송·모드·계정을 변경할 수 있습니다.");
+    expect(container).toHaveTextContent("녹화 중에도 로그인할 수 있습니다. 로그아웃은 녹화 종료 후 가능합니다.");
   });
 
   it("uses one focusable help control and keeps tips out of the initial connection form", async () => {

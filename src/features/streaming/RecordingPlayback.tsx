@@ -26,6 +26,20 @@ export function hasReplayableRanges(recording: BrowserRecording): boolean {
     Number.isFinite(ranges.durationSeconds) && ranges.durationSeconds > 0;
 }
 
+/** Shared by individual and batch actions; never restart work already running. */
+export function canRetryRecording(recording: BrowserRecording): boolean {
+  if (recording.mediaRemovedAt != null || recording.deletionPending || recording.summaryPending || recording.storageCheckPending
+    || recording.archive?.status === "copying" || recording.merge?.status === "merging"
+    || recording.merge?.sourceCleanup?.status === "pending") return false;
+  // An active recorder may retry a failed saved-range/archive writer. Batch
+  // selection excludes active recordings, but the existing individual repair remains.
+  if (recording.status === "recording") return !!recording.archive?.lastError || !!recording.progressive?.lastError;
+  const completed = hasCompletedMerge(recording);
+  const merge = recording.merge;
+  return recording.segmentCount > 0 && (!merge || merge.status === "blocked" || merge.status === "failed" || merge.status === "complete" && !completed)
+    || completed && merge?.sourceCleanup?.status === "blocked" || !!recording.archive?.lastError || !!recording.progressive?.lastError;
+}
+
 
 type RecordingPlaybackProps = {
   recording: BrowserRecording;
@@ -44,7 +58,6 @@ export function RecordingPlayback({ recording, disabled, privacyMode, retrying, 
   const merge = recording.merge;
   const ranges = hasReplayableRanges(recording);
   const invalidMerge = !active && merge?.status === "complete" && !completed;
-  const retryable = !active && recording.segmentCount > 0 && (!merge || merge.status === "blocked" || merge.status === "failed" || invalidMerge);
   const retryCleanup = completed && merge?.sourceCleanup?.status === "blocked";
   const problems = [...new Set([
     recording.archive?.lastError,
@@ -53,7 +66,7 @@ export function RecordingPlayback({ recording, disabled, privacyMode, retrying, 
     recording.progressive?.lastError,
     retryCleanup ? merge?.sourceCleanup?.lastError || "남은 파일을 정리하지 못했습니다. 재생은 가능합니다." : null,
   ].filter((value): value is string => !!value))];
-  const canRetry = retryable || retryCleanup || !!recording.archive?.lastError || !!recording.progressive?.lastError;
+  const canRetry = canRetryRecording(recording);
   return <div className="official-browser-playback">
     <button type="button" className="official-browser-primary" disabled={disabled || privacyMode || !completed && !ranges} title={privacyMode ? "프라이버시 모드를 끄면 재생할 수 있습니다." : undefined} onClick={() => onReplay(recording.id)}>재생</button>
     {!completed ? <p className="official-browser-muted" role="status">{ranges ? `${duration(recording.progressive!.durationSeconds)}까지 재생 가능${active ? " · 녹화 중" : ""}` : !active && !recording.segmentCount ? "저장된 영상이 없습니다." : problems.length ? "재생 준비에 문제가 있습니다." : "재생 준비 중…"}</p> : null}

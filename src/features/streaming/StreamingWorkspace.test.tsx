@@ -17,15 +17,57 @@ const fixture = () => {
 beforeEach(() => { vi.clearAllMocks(); localStorage.removeItem("atsumi.chzzk.view.v1"); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); });
 afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem("atsumi.chzzk.view.v1"); vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe("one live entry", () => {
+  it("opens channel settings from the sidebar, consumes the request and never replays it on ordinary navigation", async () => {
+    const view = fixture();
+    try {
+      await view.render();
+      expect(view.container.querySelector('.main-nav [data-tour="chzzk-channels"]')).toHaveAccessibleName('방송 설정 펼치기');
+      expect(view.container.querySelector('.main-nav [aria-label="방송 보기"]')).toBeNull();
+      await view.navigate('녹화 목록');
+      await view.navigate('방송 설정 펼치기');
+      const props = calls.live.mock.calls.at(-1)![0];
+      expect(props.connectionRequest).toBeGreaterThan(0);
+      await act(async () => props.onConnectionRequestHandled());
+      expect(calls.live.mock.calls.at(-1)![0].connectionRequest).toBe(0);
+      await act(async () => props.onConnectionOpenChange(true));
+      expect(view.container.querySelector('[data-tour="chzzk-channels"]')).toHaveAttribute('aria-expanded', 'true');
+      await view.navigate('방송 설정 접기');
+      expect(calls.live.mock.calls.at(-1)![0].connectionRequest).toBeGreaterThan(0);
+      await act(async () => calls.live.mock.calls.at(-1)![0].onConnectionRequestHandled());
+      await view.navigate('녹화 목록'); await view.navigate('라이브');
+      expect(calls.live.mock.calls.at(-1)![0].connectionRequest).toBe(0);
+      expect(view.container.querySelector('[data-tour="chzzk-channels"]')).toHaveAttribute('aria-expanded', 'false');
+      expect(calls.invoke).not.toHaveBeenCalled();
+    } finally { await view.close(); }
+  });
+  it("auto-hides navigation only while watching, keeps tutorial visible and preserves the ordinary rail preference", async () => {
+    const view = fixture();
+    try {
+      await view.render({ railCollapsed: true });
+      const watch = calls.live.mock.calls.at(-1)![0].onWatchingChange as (watching: boolean) => void;
+      await act(async () => watch(true));
+      expect(view.container.querySelector('.streaming-shell')).toHaveClass('is-live-immersive');
+      expect(view.container.querySelector('.streaming-shell')).not.toHaveClass('sidebar-collapsed');
+      expect(view.container.querySelector('.edge-left .live-edge-overlay')).toHaveAttribute('hidden');
+      expect(view.container.querySelector('[aria-label="메뉴 열기"]')).not.toBeNull();
+      await view.render({ railCollapsed: true, tutorialActive: true });
+      expect(view.container.querySelector('.streaming-shell')).not.toHaveClass('is-live-immersive');
+      expect(view.container.querySelector('.streaming-shell')).toHaveClass('sidebar-collapsed');
+      await view.render({ railCollapsed: true });
+      await view.navigate('녹화 목록');
+      expect(view.container.querySelector('.streaming-shell')).not.toHaveClass('is-live-immersive');
+      expect(view.container.querySelector('.streaming-shell')).toHaveClass('sidebar-collapsed');
+      expect(base.onToggleRail).not.toHaveBeenCalled();
+    } finally { await view.close(); }
+  });
   it("uses the shared receiver layout only in Live and has no archive/reservation watch route", async () => {
     const view = fixture();
     try {
       await view.render();
       expect(view.container.querySelector('[aria-label="unified live"]')).toHaveAttribute("data-unified", "true");
       expect(calls.panel).not.toHaveBeenCalled();
-      await view.navigate("자동 녹화");
-      expect(view.container.querySelector('[aria-label="unified live"]')).toBeNull();
-      expect(calls.reservations).toHaveBeenLastCalledWith({ runtime: "tauri", privacy: false });
+      expect([...view.container.querySelectorAll("button")].some(button => button.textContent === "자동 녹화")).toBe(false);
+      expect(calls.reservations).not.toHaveBeenCalled();
       await view.navigate("녹화 목록");
       expect(view.container.querySelector('[aria-label="archive"]')).toHaveAttribute("data-view", "recordings");
       await view.navigate("라이브");
@@ -34,14 +76,14 @@ describe("one live entry", () => {
       expect(calls.invoke).not.toHaveBeenCalled();
     } finally { await view.close(); }
   });
-  it("never applies gallery privacy to CHZZK and retains the selected section", async () => {
+  it("applies shared privacy to live and recordings and retains the selected section", async () => {
     const view = fixture();
     try {
-      await view.render({ runtime: "browser-mock", railCollapsed: true });
-      expect(calls.live).toHaveBeenLastCalledWith(expect.objectContaining({ runtime: "browser-mock", privacy: false, unifiedLive: true }));
+      await view.render({ runtime: "browser-mock", railCollapsed: true, privacyMode: true });
+      expect(calls.live).toHaveBeenLastCalledWith(expect.objectContaining({ runtime: "browser-mock", privacy: true, unifiedLive: true }));
       expect(view.container.querySelector(".streaming-shell")).toHaveClass("sidebar-collapsed");
       await view.navigate("녹화 목록");
-      expect(calls.panel).toHaveBeenLastCalledWith(expect.objectContaining({ privacyMode: false }));
+      expect(calls.panel).toHaveBeenLastCalledWith(expect.objectContaining({ privacyMode: true }));
       await view.render({ active: false }); expect(view.container).toBeEmptyDOMElement();
       await view.render(); expect(view.container.querySelector('[aria-label="archive"]')).toHaveAttribute("data-view", "recordings");
     } finally { await view.close(); }
@@ -49,7 +91,6 @@ describe("one live entry", () => {
   it.each([
     ["라이브", "live", "unified live"],
     ["녹화 목록", "recordings", "archive"],
-    ["자동 녹화", "auto-record", "reservations"],
   ])("restores %s after a new workspace is mounted", async (label, saved, target) => {
     const first = fixture();
     try { await first.render(); await first.navigate(label); } finally { await first.close(); }
@@ -71,14 +112,14 @@ describe("one live entry", () => {
       expect(view.container.querySelector('[aria-label="archive"]')).not.toBeNull();
       expect(calls.live).not.toHaveBeenCalled();
       expect(localStorage.getItem("atsumi.chzzk.view.v1")).toBe("recordings");
-      await view.render({ navigationRequest: { source: "chzzk", view: "auto-record", sequence: 2 } });
-      expect(view.container.querySelector('[aria-label="reservations"]')).not.toBeNull();
-      expect(localStorage.getItem("atsumi.chzzk.view.v1")).toBe("auto-record");
+      await view.render({ navigationRequest: { source: "chzzk", view: "live", sequence: 2 } });
+      expect(view.container.querySelector('[aria-label="unified live"]')).not.toBeNull();
+      expect(localStorage.getItem("atsumi.chzzk.view.v1")).toBe("live");
       await view.render({ navigationRequest: { source: "hitomi", view: "explore", sequence: 3 } });
-      expect(view.container.querySelector('[aria-label="reservations"]')).not.toBeNull();
+      expect(view.container.querySelector('[aria-label="unified live"]')).not.toBeNull();
     } finally { await view.close(); }
   });
-  it.each(["", "unknown", '{"view":"recordings"}'])("uses Live for an invalid saved tab %j", async saved => {
+  it.each(["", "unknown", "auto-record", '{"view":"recordings"}'])("uses Live for a legacy or invalid saved tab %j", async saved => {
     localStorage.setItem("atsumi.chzzk.view.v1", saved);
     const view = fixture();
     try { await view.render(); expect(view.container.querySelector('[aria-label="unified live"]')).not.toBeNull(); }
@@ -98,7 +139,7 @@ describe("one live entry", () => {
   it("does not create streams or mutate recording sessions during tab navigation", async () => {
     vi.useFakeTimers(); const fetch = vi.fn(); vi.stubGlobal("fetch", fetch); const view = fixture();
     try {
-      await view.render(); await view.navigate("자동 녹화"); await view.navigate("라이브");
+      await view.render(); await view.navigate("녹화 목록"); await view.navigate("라이브");
       await view.render({ active: false }); await act(async () => vi.advanceTimersByTimeAsync(60_000));
       expect(calls.invoke).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
     } finally { await view.close(); }

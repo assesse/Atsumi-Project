@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDanbooruApi, type DanbooruApi } from "../api/featureClients";
 import type { DanbooruPost } from "../api/contracts";
-import { defaultDanbooruSearchFilters } from "../danbooru/searchPreferences";
+import { DANBOORU_SORTS, defaultDanbooruSearchFilters } from "../danbooru/searchPreferences";
 import { DanbooruWorkspace } from "./DanbooruWorkspace";
 
 const settle = (delay = 20) => new Promise((resolve) => window.setTimeout(resolve, delay));
@@ -73,6 +73,102 @@ describe("DanbooruWorkspace", () => {
     window.localStorage.removeItem("atsumi.danbooru-state.v1");
     window.localStorage.removeItem("atsumi.danbooru-search-preferences.v1");
     vi.clearAllMocks();
+  });
+
+  it.each(DANBOORU_SORTS)("requests the server sort $value from its actual dropdown option", async ({ label, metatag }) => {
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    try {
+      await act(async () => root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Danbooru 정렬 기준"]')!.click());
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes(label))!.click());
+      expect(backend.danbooruSearch).toHaveBeenLastCalledWith({ tags: metatag ?? "", page: 1, pageSize: 50 });
+      expect(container.querySelector('[data-post-id="12345678"]')).toBeInTheDocument();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("preserves loaded cards and the exact sort after an upstream query timeout without retry loops", async () => {
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    try {
+      await act(async () => root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
+      vi.mocked(backend.danbooruSearch).mockResolvedValueOnce({ ok: false, error: { code: "DANBOORU_QUERY_TIMEOUT", message: "Danbooru 서버 검색 시간 초과 · 태그나 기간을 좁혀 주세요.", retryable: true } });
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Danbooru 정렬 기준"]')!.click());
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes('점수 높은순'))!.click());
+      expect(backend.danbooruSearch).toHaveBeenLastCalledWith({ tags: "order:score", page: 1, pageSize: 50 });
+      expect(container.querySelector('[data-post-id="12345678"]')).toBeInTheDocument();
+      expect(container.querySelector('[role="alert"]')).toHaveTextContent('태그나 기간');
+      expect(container.querySelector('.danbooru-empty')).toBeNull();
+      const calls = vi.mocked(backend.danbooruSearch).mock.calls.length;
+      await act(async () => settle(100));
+      expect(backend.danbooruSearch).toHaveBeenCalledTimes(calls);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("opens compact filters as a dismissible overlay without retired relationship options", async () => {
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    try {
+      await act(async () => root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
+      const trigger = container.querySelector<HTMLButtonElement>(".danbooru-filter-button")!;
+      await act(async () => trigger.click());
+      expect(container.querySelector('.danbooru-search-tools > [role="dialog"]')).toHaveAttribute("id", "danbooru-search-filters");
+      expect(container).not.toHaveTextContent("게시물 관계");
+      expect(container.querySelectorAll('input[type="date"]')).toHaveLength(2);
+      await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      expect(container.querySelector(".danbooru-filter-popover")).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+      await act(async () => trigger.click());
+      await act(async () => container.querySelector(".danbooru-content")!.dispatchEvent(new Event("pointerdown", { bubbles: true })));
+      expect(container.querySelector(".danbooru-filter-popover")).toBeNull();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("removes a retired relationship condition from a restored committed query", async () => {
+    window.localStorage.setItem("atsumi.danbooru-state.v1", JSON.stringify({ exploreDraft: "solo", exploreCommitted: "solo child:any", filters: { ...defaultDanbooruSearchFilters(), relationship: "has_children" } }));
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    try {
+      await act(async () => root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
+      expect(backend.danbooruSearch).toHaveBeenLastCalledWith(expect.objectContaining({ tags: "solo" }));
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("rejects a reversed date range without requesting it or erasing loaded cards", async () => {
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    const props = { backend: danbooruApi, railCollapsed: false, pageSize: 50, previewWidth: 220, onToggleRail: vi.fn(), onSourceChange: vi.fn(), onOpenSettings: vi.fn() };
+    const type = async (label: string, value: string) => {
+      const input = container.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
+      await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+    };
+    try {
+      await act(async () => root.render(<DanbooruWorkspace {...props} />));
+      await act(async () => container.querySelector<HTMLButtonElement>(".danbooru-filter-button")!.click());
+      for (const [label, value] of [["시작 연도", "2018"], ["시작 월", "10"], ["시작 일", "08"], ["종료 연도", "2012"], ["종료 월", "10"], ["종료 일", "08"]] as const) await type(label, value);
+      const calls = vi.mocked(backend.danbooruSearch).mock.calls.length;
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "조건 적용")!.click());
+      expect(backend.danbooruSearch).toHaveBeenCalledTimes(calls);
+      expect(container.querySelector('[role="alert"]')).toHaveTextContent("종료일은 시작일 이후");
+      expect(container.querySelector('[data-post-id="12345678"]')).toBeInTheDocument();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("keeps a portrait result after idle and ignores an older empty response", async () => {
+    let resolveOld: ((result: Awaited<ReturnType<DanbooruApi["danbooruSearch"]>>) => void) | undefined;
+    const search = vi.fn<DanbooruApi["danbooruSearch"]>()
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
+      .mockResolvedValue({ ok: true, data: { items: [post], page: 1, hasMore: false } });
+    const api = { ...danbooruApi, danbooruSearch: search };
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    const props = { backend: api, railCollapsed: false, pageSize: 50, previewWidth: 220, onToggleRail: vi.fn(), onSourceChange: vi.fn(), onOpenSettings: vi.fn() };
+    try {
+      await act(async () => root.render(<DanbooruWorkspace {...props} />));
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Danbooru 정렬 기준"]')!.click());
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes("세로 이미지 우선"))!.click());
+      expect(search).toHaveBeenLastCalledWith({ tags: "order:portrait", page: 1, pageSize: 50 });
+      await act(async () => resolveOld!({ ok: true, data: { items: [], page: 1, hasMore: false } }));
+      vi.useFakeTimers();
+      await act(async () => { vi.advanceTimersByTime(60_000); });
+      expect(container.querySelector('[data-post-id="12345678"]')).toBeInTheDocument();
+      expect(container).not.toHaveTextContent("검색 결과가 없습니다");
+      expect(search).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); await act(async () => root.unmount()); container.remove(); }
   });
 
   it("retains results, scroll and detail selection while inactive without loading or handling detail keys", async () => {

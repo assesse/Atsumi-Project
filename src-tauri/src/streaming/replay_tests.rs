@@ -4,6 +4,138 @@ use std::io::{BufWriter, Write};
 use tauri::http::{header, Request, StatusCode};
 
 const CHANNEL: &str = "0123456789abcdef0123456789abcdef";
+
+#[test]
+#[cfg(debug_assertions)]
+fn configured_fallback_origin_opens_through_real_ipc_and_reads_media_chat_and_timeline() {
+    use serde_json::{json, Value};
+    use tauri::{
+        ipc::{CallbackFn, InvokeBody},
+        test::{get_ipc_response, mock_builder, mock_context, noop_assets},
+        webview::InvokeRequest,
+        WebviewUrl, WebviewWindowBuilder,
+    };
+    let fixture = fixture(5, 4096);
+    let dev: tauri::Url = "http://127.0.0.1:14200/".parse().unwrap();
+    let service = fixture
+        .service
+        .clone()
+        .with_development_url(Some(dev.clone()));
+    let mut context = mock_context(noop_assets());
+    context.config_mut().build.dev_url = Some(dev.clone());
+    let app = mock_builder()
+        .manage(service.clone())
+        .invoke_handler(tauri::generate_handler![
+            replay_open,
+            replay_close,
+            replay_chat_at,
+            replay_timeline
+        ])
+        .build(context)
+        .unwrap();
+    let main = WebviewWindowBuilder::new(&app, "main", WebviewUrl::External(dev.clone()))
+        .build()
+        .unwrap();
+    let call = |command: &str, body: Value, origin: &str| {
+        get_ipc_response(
+            &main,
+            InvokeRequest {
+                cmd: command.into(),
+                callback: CallbackFn(0),
+                error: CallbackFn(1),
+                url: origin.parse().unwrap(),
+                body: InvokeBody::Json(body),
+                headers: Default::default(),
+                invoke_key: app.handle().invoke_key().into(),
+            },
+        )
+    };
+    let opened = call(
+        "replay_open",
+        json!({"recordingId":fixture.id}),
+        dev.as_str(),
+    )
+    .unwrap()
+    .deserialize::<Value>()
+    .unwrap();
+    assert_eq!(opened["ok"], true, "{opened}");
+    let token = opened["data"]["token"].as_str().unwrap();
+    for (command, body) in [
+        (
+            "replay_chat_at",
+            json!({"token":token,"mediaTime":30.0,"generation":1,"limit":20}),
+        ),
+        (
+            "replay_timeline",
+            json!({"token":token,"bucketSeconds":60.0}),
+        ),
+    ] {
+        assert_eq!(
+            call(command, body, dev.as_str())
+                .unwrap()
+                .deserialize::<Value>()
+                .unwrap()["ok"],
+            true
+        );
+    }
+    let request = |origin: &str| {
+        Request::builder()
+            .uri(format!("http://atsumi-replay.localhost/{token}"))
+            .header(header::ORIGIN, origin)
+            .header(header::RANGE, "bytes=0-15")
+            .body(Vec::new())
+            .unwrap()
+    };
+    let response = service.media_response(&request("http://127.0.0.1:14200"), "main");
+    assert_eq!(response.status(), StatusCode::PARTIAL_CONTENT);
+    assert_eq!(response.body().len(), 16);
+    assert_eq!(
+        response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN],
+        "http://127.0.0.1:14200"
+    );
+    for origin in [
+        "http://127.0.0.1:1420",
+        "http://127.0.0.1:14201",
+        "https://chzzk.naver.com",
+    ] {
+        assert_eq!(
+            service.media_response(&request(origin), "main").status(),
+            StatusCode::FORBIDDEN
+        );
+        assert!(call("replay_open", json!({"recordingId":fixture.id}), origin).is_err());
+    }
+    assert_eq!(
+        service
+            .media_response(&request("http://127.0.0.1:14200"), "chzzk-official")
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    let child = main
+        .as_ref()
+        .window()
+        .add_child(
+            tauri::WebviewBuilder::new("chzzk-auto-test", WebviewUrl::External(dev)),
+            tauri::LogicalPosition::new(0.0, 0.0),
+            tauri::LogicalSize::new(100.0, 100.0),
+        )
+        .unwrap();
+    assert_eq!(
+        require_main(&child).unwrap_err().code,
+        "REPLAY_CALLER_DENIED"
+    );
+    assert_eq!(
+        call(
+            "replay_close",
+            json!({"token":token}),
+            "http://127.0.0.1:14200"
+        )
+        .unwrap()
+        .deserialize::<Value>()
+        .unwrap()["ok"],
+        true
+    );
+    service.shutdown_and_wait();
+}
 const WEBM: &[u8] = &[
     0x1a, 0x45, 0xdf, 0xa3, 0x9f, 0x42, 0x86, 0x81, 1, 0, 0, 0, 0, 0, 0, 0,
 ];

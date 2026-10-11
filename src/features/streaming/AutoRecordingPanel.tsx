@@ -6,12 +6,13 @@ import { normalizeChannelDraft, normalizeMultiviewChannel } from "../../api/mult
 import "./AutoRecordingPanel.css";
 
 const statuses: Record<string, string> = {
-  waiting: "방송 대기", disabled: "꺼짐", starting: "녹화 준비", recording: "녹화 중",
+  waiting: "녹화 예약 됨", disabled: "예약 꺼짐", starting: "녹화 준비", recording: "녹화 중",
   stopping: "마무리 중", queued: "자리 대기", retry: "연결 확인 · 재시도 대기", skipped: "이번 방송 건너뜀",
   ending: "방송 종료 확인 중", attention: "반복 실패 · 확인 필요",
 };
-export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi }: {
+export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi, embedded = false, onChange }: {
   runtime: "tauri" | "browser-mock"; privacy?: boolean; api?: AutoRecordingApi;
+  embedded?: boolean; onChange?: (snapshot: AutoRecordingSnapshot) => void;
 }) {
   const api = useMemo(() => suppliedApi ?? createAutoRecordingApi(runtime), [runtime, suppliedApi]);
   const [snapshot, setSnapshot] = useState<AutoRecordingSnapshot>({ channels: [], captureChat: true, error: null });
@@ -46,7 +47,7 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
     try {
       const result = await action();
       if (mounted.current && request === version.current) {
-        if (result.ok) { setSnapshot(result.data); setHasSnapshot(true); setPollError(null); if (clearInput) setInput(""); }
+        if (result.ok) { setSnapshot(result.data); onChange?.(result.data); setHasSnapshot(true); setPollError(null); if (clearInput) setInput(""); }
         else if (result.error.code === "BROWSER_INITIALIZING") setPollError(result.error);
         else setError(result.error.message);
       }
@@ -57,7 +58,7 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
   return <section className="auto-record-panel" aria-label="자동 녹화">
     <header><div><h2>자동 녹화</h2><p>방송이 시작되면 녹화합니다.</p></div>
       <span className="auto-record-help" tabIndex={0} aria-label="자동 녹화 도움말" title="앱 실행 중(트레이 포함) 약 30초마다 확인합니다. 등록 시 이미 방송 중이면 녹화를 시작합니다. 최대 4개 동시 녹화, 초과 채널은 대기합니다. 직접 중지한 회차는 다시 녹화하지 않습니다. 그리드·브라우저 확장 없이 직접 재생하며, 제공되는 화질을 녹화합니다. 로그인·권한 확인이 필요한 방송은 라이브에서 먼저 확인하세요.">?</span></header>
-    <form data-tour="chzzk-auto-register" onSubmit={(event) => { event.preventDefault(); if (input.trim()) void mutate(() => api.add(input.trim()), true); }}>
+    <form data-tour={embedded ? undefined : "chzzk-auto-register"} onSubmit={(event) => { event.preventDefault(); if (input.trim()) void mutate(() => api.add(input.trim()), true); }}>
       <input aria-label="자동 녹화 채널 주소" placeholder="방송·채널 주소 또는 ID" maxLength={300} value={input} disabled={disabled} onChange={(event) => setInput(normalizeChannelDraft(event.target.value))}
         onPaste={(event) => {
           const channel = normalizeMultiviewChannel(event.clipboardData.getData("text"));
@@ -84,7 +85,7 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi 
           <div className="auto-record-actions">
             {active || channel.status === "retry" ? <button type="button" className="auto-record-stop" disabled={disabled || channel.status === "stopping"} onClick={() => void mutate(() => api.update(channel.channelId, { action: "stop" }))}>{channel.status === "starting" || channel.status === "retry" ? "시도 중지" : "녹화 중지"}</button> : null}
             <button type="button" aria-label={`${name} 자동 녹화 ${channel.enabled ? "끄기" : "켜기"}`} aria-pressed={channel.enabled} disabled={disabled} title="끄면 자동으로 시작한 녹화도 마무리합니다. 다시 켜면 현재 방송부터 확인합니다." onClick={() => void mutate(() => api.update(channel.channelId, { action: "enabled", enabled: !channel.enabled }))}>{channel.enabled ? "켜짐" : "꺼짐"}</button>
-            <button type="button" aria-label={`${name} 등록 해제`} disabled={disabled} title="자동 녹화 등록만 해제합니다. 저장된 녹화본은 남습니다." onClick={() => void mutate(() => api.update(channel.channelId, { action: "remove" }))}>해제</button>
+            <button type="button" aria-label={`${name} 등록 해제`} disabled={disabled} title="자동 녹화 등록을 해제하고 진행 중인 자동 녹화는 마무리합니다. 저장된 녹화본은 남습니다." onClick={() => void mutate(() => api.update(channel.channelId, { action: "remove" }))}>해제</button>
           </div>
         </article>;
       })}

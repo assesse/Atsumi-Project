@@ -2,6 +2,51 @@
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub(super) fn capability(value: &Value) {
+    let reason = value["reason"]
+        .as_str()
+        .filter(|value| crate::diagnostics::safe_capture_reason(value))
+        .unwrap_or("other");
+    tracing::info!(
+        diag_stage = "capture_capability",
+        capture_reason = reason,
+        width = value["width"].as_u64().unwrap_or(0).min(16384),
+        height = value["height"].as_u64().unwrap_or(0).min(16384)
+    );
+    for source in value["sources"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|s| s["selected"].as_bool() == Some(true))
+        .take(1)
+    {
+        for (index, track) in source["tracks"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .take(2)
+            .enumerate()
+        {
+            let mime = track["mimeType"]
+                .as_str()
+                .filter(|value| crate::diagnostics::safe_capture_mime(value))
+                .unwrap_or("unsupported");
+            tracing::info!(
+                diag_stage = "capture_track",
+                track_index = index as u64,
+                capture_mime = mime,
+                init_bytes = track["initBytes"].as_u64().unwrap_or(0).min(65536)
+            );
+        }
+    }
+    if let Some(reason) = value["lastStop"]["reason"]
+        .as_str()
+        .filter(|value| crate::diagnostics::safe_capture_reason(value))
+    {
+        tracing::info!(diag_stage = "capture_last_stop", capture_reason = reason);
+    }
+}
+
 pub(super) fn record(_: &OfficialBrowser, event: &str, fields: Value) {
     // Old per-session capture files are left intact. New evidence uses the
     // shared ring instead of adding another permanent 32 MiB file each run.
@@ -41,6 +86,12 @@ pub(super) fn record(_: &OfficialBrowser, event: &str, fields: Value) {
     if let Some(code) = fields["errorCode"].as_str() {
         tracing::warn!(error_code = code, diag_stage = "capture_failed");
     }
+    if let Some(reason) = packet["reason"]
+        .as_str()
+        .filter(|value| crate::diagnostics::safe_capture_reason(value))
+    {
+        tracing::info!(diag_stage = "capture_finished", capture_reason = reason);
+    }
 }
 
 pub(super) fn packet(message: &BrowserMessage) -> Value {
@@ -59,9 +110,10 @@ pub(super) fn packet(message: &BrowserMessage) -> Value {
         BrowserMessage::EncodedFinish {
             recording_id,
             interrupted,
-            ..
+            reason,
         } => {
-            json!({"kind":"encoded_finish","recordingId":safe_id(recording_id),"interrupted":interrupted})
+            json!({"kind":"encoded_finish","recordingId":safe_id(recording_id),"interrupted":interrupted,
+                "reason":reason.as_deref().filter(|value| crate::diagnostics::safe_capture_reason(value)).unwrap_or("other")})
         }
         BrowserMessage::ChatBatch {
             recording_id,
@@ -94,5 +146,18 @@ mod tests {
         assert!(packet["recordingId"].is_null());
         assert!(!packet.to_string().contains("private"));
         assert_eq!(packet["events"], 1);
+    }
+    #[test]
+    fn finish_evidence_keeps_precise_track_change_without_free_form_reason() {
+        let finish = |reason: &str| BrowserMessage::EncodedFinish {
+            recording_id: "a".repeat(32),
+            interrupted: true,
+            reason: Some(reason.into()),
+        };
+        assert_eq!(packet(&finish("track_changed"))["reason"], "track_changed");
+        assert_eq!(packet(&finish("secret token"))["reason"], "other");
+        assert!(!packet(&finish("secret token"))
+            .to_string()
+            .contains("secret"));
     }
 }

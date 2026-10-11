@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { normalizeChannelDraft, normalizeMultiviewChannel } from "../../api/multiview";
 import { safeChannelPortrait, useLiveChannelDirectory } from "./LiveChannelDirectory";
+import { FluentIcon } from "../../components/FluentIcon";
 
-export function ChannelDraftField({ value, index, multiple, disabled, privacy, runtime, onChange }: {
+export function ChannelDraftField({ value, index, multiple, disabled, privacy, runtime, onChange, onRemove }: {
   value: string; index: number; multiple: boolean; disabled: boolean; privacy: boolean;
   runtime: "tauri" | "browser-mock"; onChange(value: string): void;
+  onRemove?: () => void;
 }) {
   const directory = useLiveChannelDirectory()!;
   const [failedImage, setFailedImage] = useState<string | null>(null);
@@ -24,14 +26,17 @@ export function ChannelDraftField({ value, index, multiple, disabled, privacy, r
       {safeChannelPortrait(profile?.image) && failedImage !== profile?.image ? <img src={profile!.image!} alt="" decoding="async" onError={() => setFailedImage(profile!.image!)} /> : <span className="connection-channel-avatar" aria-hidden="true">{skeleton ? "" : privacy ? "·" : Array.from(name || "?")[0]}</span>}
       <span className="connection-channel-name" aria-hidden={skeleton || undefined}>{skeleton ? "" : description}</span>
     </div>
-    <div className="connection-channel-draft">
+    <div className={`connection-channel-draft${onRemove || value ? " has-clear" : ""}`}>
       <label className="connection-input-label-hidden" htmlFor={inputId}>{label}</label>
       <input id={inputId} value={value} disabled={disabled} autoComplete="off" spellCheck={false} placeholder="방송·채널 주소 또는 채널 ID"
         onChange={event => onChange(normalizeChannelDraft(event.target.value))}
         onPaste={event => { const channel = normalizeMultiviewChannel(event.clipboardData.getData("text")); if (channel) { event.preventDefault(); onChange(channel); } }} />
+      {onRemove || value ? <button type="button" className="connection-channel-clear" disabled={disabled}
+        aria-label={`방송 ${index + 1} ${onRemove ? "입력칸 제거" : "주소 지우기"}`}
+        onClick={() => { if (onRemove) onRemove(); else { onChange(""); document.getElementById(inputId)?.focus(); } }}><FluentIcon glyph="\uE711" /></button> : null}
     </div>
     <button type="button" className="connection-channel-favorite" aria-pressed={favorite} aria-busy={directory.pending} aria-label={`방송 ${index + 1} 즐겨찾기 ${favorite ? "해제" : "추가"}`}
       title={favorite ? "즐겨찾기 해제 · 녹화 예약은 유지됩니다" : "즐겨찾기에 추가"} disabled={disabled || !channelId || !directory.hasFavorites || directory.pending || runtime !== "tauri"}
-      onClick={() => { if (channelId) void directory.toggle(channelId, !favorite); }}>{directory.pending ? <span className="spinner" aria-hidden="true" /> : favorite ? "★" : "☆"}</button>
+      onClick={() => { if (channelId) void directory.toggle(channelId, !favorite); }}>{directory.pending ? <span className="spinner" aria-hidden="true" /> : <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 2.78 5.63L21 9.54l-4.5 4.39 1.06 6.2L12 17.2l-5.56 2.93 1.06-6.2L3 9.54l6.22-.91Z" fill={favorite ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" /></svg>}</button>
   </div>;
 }

@@ -1,6 +1,5 @@
 export type DanbooruRating = "g" | "s" | "q" | "e";
 export type DanbooruFileType = "jpg" | "png" | "gif" | "webp" | "avif" | "webm" | "mp4" | "zip";
-export type DanbooruRelationship = "any" | "has_parent" | "no_parent" | "has_children" | "no_children";
 export type DanbooruSort =
   | "newest"
   | "oldest"
@@ -19,7 +18,6 @@ export type DanbooruSearchFilters = {
   dateTo: string;
   minimumScore: string;
   minimumFavorites: string;
-  relationship: DanbooruRelationship;
   sort: DanbooruSort;
 };
 
@@ -66,14 +64,26 @@ export const defaultDanbooruSearchFilters = (): DanbooruSearchFilters => ({
   dateTo: "",
   minimumScore: "",
   minimumFavorites: "",
-  relationship: "any",
   sort: "newest",
 });
 
 const preferenceKey = "atsumi.danbooru-search-preferences.v1";
 export const DANBOORU_SEARCH_PREFERENCES_CHANGED = "atsumi:danbooru-search-preferences-changed";
 
-const isDate = (value: unknown): value is string => typeof value === "string" && (/^\d{4}-\d{2}-\d{2}$/).test(value);
+export const isDanbooruDate = (value: unknown): value is string => {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year = 0, month = 0, day = 0] = value.split("-").map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  return day <= ([31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1] ?? 0);
+};
+
+export const validateDanbooruSearchDates = (filters: Pick<DanbooruSearchFilters, "dateFrom" | "dateTo">): string | null => {
+  if (filters.dateFrom && !isDanbooruDate(filters.dateFrom)) return "시작일의 연·월·일을 확인해 주세요.";
+  if (filters.dateTo && !isDanbooruDate(filters.dateTo)) return "종료일의 연·월·일을 확인해 주세요.";
+  if (filters.dateFrom && filters.dateTo && filters.dateFrom > filters.dateTo) return "종료일은 시작일 이후여야 합니다.";
+  return null;
+};
 const numericText = (value: unknown): string => typeof value === "string" && (/^-?\d+$/).test(value) ? value : "";
 
 export const sanitizeDanbooruSearchFilters = (value: unknown): DanbooruSearchFilters => {
@@ -86,21 +96,16 @@ export const sanitizeDanbooruSearchFilters = (value: unknown): DanbooruSearchFil
   const fileTypes = Array.isArray(candidate.fileTypes)
     ? DANBOORU_FILE_TYPES.map(({ value }) => value).filter((fileType) => candidate.fileTypes?.includes(fileType))
     : defaults.fileTypes;
-  const relationship = (["any", "has_parent", "no_parent", "has_children", "no_children"] as const)
-    .includes(candidate.relationship as DanbooruRelationship)
-    ? candidate.relationship as DanbooruRelationship
-    : defaults.relationship;
   const sort = DANBOORU_SORTS.some(({ value }) => value === candidate.sort)
     ? candidate.sort as DanbooruSort
     : defaults.sort;
   return {
     ratings,
     fileTypes,
-    dateFrom: isDate(candidate.dateFrom) ? candidate.dateFrom : "",
-    dateTo: isDate(candidate.dateTo) ? candidate.dateTo : "",
+    dateFrom: isDanbooruDate(candidate.dateFrom) ? candidate.dateFrom : "",
+    dateTo: isDanbooruDate(candidate.dateTo) ? candidate.dateTo : "",
     minimumScore: numericText(candidate.minimumScore),
     minimumFavorites: numericText(candidate.minimumFavorites),
-    relationship,
     sort,
   };
 };
@@ -143,12 +148,10 @@ export const buildDanbooruSearchQuery = (tags: string, filters: DanbooruSearchFi
   else if (filters.dateTo) terms.push(`date:<=${filters.dateTo}`);
   if (filters.minimumScore) terms.push(`score:>=${filters.minimumScore}`);
   if (filters.minimumFavorites) terms.push(`favcount:>=${filters.minimumFavorites}`);
-  if (filters.relationship === "has_parent") terms.push("parent:any");
-  else if (filters.relationship === "no_parent") terms.push("parent:none");
-  else if (filters.relationship === "has_children") terms.push("child:any");
-  else if (filters.relationship === "no_children") terms.push("child:none");
   const sort = DANBOORU_SORTS.find(({ value }) => value === filters.sort)?.metatag;
-  if (sort) terms.push(sort);
+  // An explicitly entered order owns this request. A dropdown selection clears
+  // that token before composing a query, so we never send two singleton orders.
+  if (sort && !terms.some(term => /^order:/i.test(term))) terms.push(sort);
   return terms.join(" ");
 };
 
@@ -165,6 +168,14 @@ export const activeDanbooruFilterCount = (filters: DanbooruSearchFilters): numbe
     + Number(filters.fileTypes.length !== defaults.fileTypes.length)
     + Number(Boolean(filters.dateFrom || filters.dateTo))
     + Number(Boolean(filters.minimumScore))
-    + Number(Boolean(filters.minimumFavorites))
-    + Number(filters.relationship !== "any");
+    + Number(Boolean(filters.minimumFavorites));
+};
+
+/** Remove only a retired UI-generated condition, never a user's typed metatag. */
+export const withoutRetiredRelationship = (query: string, draft: string, storedFilters: unknown): string => {
+  const relationship = storedFilters && typeof storedFilters === "object" && "relationship" in storedFilters
+    ? storedFilters.relationship : null;
+  const term = ({ has_parent: "parent:any", no_parent: "parent:none", has_children: "child:any", no_children: "child:none" } as Record<string, string>)[String(relationship)];
+  if (!term || draft.split(/\s+/).includes(term)) return query;
+  return query.split(/\s+/).filter(value => value !== term).join(" ");
 };

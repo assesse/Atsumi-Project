@@ -608,29 +608,17 @@ impl OfficialBrowser {
         channel: &str,
     ) -> Result<(Self, bool, bool), StreamError> {
         // Reuse an existing receiver, including manually started recordings.
-        for host in self.inner.contexts.hosts() {
-            let state = host.inner.view.lock().map_err(|_| unavailable())?;
-            if !host.inner.detached.load(Ordering::Acquire)
-                && !host.multiview_active()
-                && state.open
-                && state.channel.as_deref() == Some(channel)
-            {
-                let active = state.recording.is_some() || state.arm.is_some();
-                drop(state);
-                let automatic = host.label().starts_with("chzzk-auto-");
-                if automatic {
-                    self.claim_auto_receiver(host.label());
-                    if let Some(view) = app.get_webview(host.label()) {
-                        // A previously opened live receiver may still be waiting
-                        // for the official standard-quality choice. It may only
-                        // act after returning to the background, never on top of
-                        // the user's active player controls.
-                        let _ = view.eval("window.__atsumiAutoReceiver?.prepareRecording();");
-                    }
+        if let Some((host, automatic, start)) = self.reusable_auto_target(channel)? {
+            if automatic {
+                if let Some(view) = app.get_webview(host.label()) {
+                    // Only the background receiver may choose standard quality;
+                    // never change controls on the user's visible live player.
+                    let _ = view.eval("window.__atsumiAutoReceiver?.prepareRecording();");
                 }
-                return Ok((host, automatic, !active));
             }
+            return Ok((host, automatic, start));
         }
+        // No receiver guard is held here: open_auto_view takes the same mutex.
         if self.active_ids().len() >= 4
             || self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0
             || self.primary_profile_busy()

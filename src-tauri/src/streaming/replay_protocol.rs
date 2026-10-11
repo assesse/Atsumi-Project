@@ -38,7 +38,15 @@ impl ReplayService {
             .headers()
             .get(header::ORIGIN)
             .and_then(|value| value.to_str().ok());
-        if webview_label != "main" || origin.is_some_and(|origin| !trusted_origin(origin)) {
+        if webview_label != "main"
+            || origin.is_some_and(|origin| {
+                !crate::frontend_origin::trusted_origin(
+                    origin,
+                    cfg!(debug_assertions),
+                    self.development_url.as_ref(),
+                )
+            })
+        {
             return response(StatusCode::FORBIDDEN, vec![], None, None, None);
         }
         let Some(_lease) = RequestLease::acquire() else {
@@ -203,12 +211,6 @@ impl ReplayService {
     }
 }
 
-fn trusted_origin(origin: &str) -> bool {
-    matches!(
-        origin,
-        "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
-    ) || cfg!(debug_assertions) && origin == "http://127.0.0.1:1420"
-}
 fn decimal(value: &str) -> Option<u64> {
     if value.is_empty() || value.len() > 20 || !value.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
@@ -318,6 +320,7 @@ mod tests {
     }
     #[test]
     fn remote_origins_are_never_trusted() {
+        let trusted_origin = |origin| crate::frontend_origin::trusted_origin(origin, true, None);
         assert!(trusted_origin("http://tauri.localhost"));
         for origin in [
             "https://chzzk.naver.com",

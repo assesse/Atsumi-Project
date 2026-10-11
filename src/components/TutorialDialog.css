@@ -11,7 +11,9 @@
 .tutorial-copy { animation: tutorial-enter 160ms ease-out; }
 .tutorial-callout h2 { margin: 0 28px 12px 0; font-size: 19px; line-height: 1.4; font-weight: 600; }
 .tutorial-callout p { margin: 0 0 14px; color: var(--text-soft); font-size: 14px; line-height: 1.7; word-break: keep-all; overflow-wrap: anywhere; }
-.tutorial-callout .tutorial-hint { color: var(--primary-strong); font-size: 13px; }
+.tutorial-callout .tutorial-hint { color: var(--text-soft); font-size: 13px; }
+.tutorial-spotlight.is-action-required { animation: tutorial-action-pulse 1.5s ease-in-out infinite; }
+@keyframes tutorial-action-pulse { 0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); } 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--primary) 32%, transparent), 0 0 24px color-mix(in srgb, var(--primary) 28%, transparent); } }
 .tutorial-callout #tutorial-description { white-space: pre-line; }
 .tutorial-callout footer { display: flex; justify-content: flex-end; margin-top: 16px; }
 .tutorial-callout footer button { white-space: nowrap; flex-shrink: 0; }
@@ -21,4 +23,4 @@
 .tutorial-callout .tutorial-error { color: var(--danger, #f39595); font-size: 13px; }
 @keyframes tutorial-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1000px) { .tutorial-callout { width: min(320px, calc(100% - 32px)); padding: 18px; } }
-@media (prefers-reduced-motion: reduce) { .tutorial-copy { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .tutorial-copy, .tutorial-spotlight.is-action-required { animation: none; } }

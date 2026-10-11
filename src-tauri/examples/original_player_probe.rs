@@ -227,12 +227,12 @@ mod probe {
             .register_uri_scheme_protocol("atsumi-player", |context, request| {
                 if context.webview_label() == "main" && request.uri().path() == "/probe.js" {
                     let template = Request::builder().uri("http://atsumi-player.localhost/runtime.js").body(Vec::new()).unwrap();
-                    let mut response = original_player::response(&template, "main");
+                    let mut response = original_player::response(&template, "main", context.app_handle().config().build.dev_url.as_ref());
                     *response.body_mut() = FRAME_PROBE.as_bytes().to_vec();
                     response.headers_mut().insert(header::CONTENT_LENGTH, FRAME_PROBE.len().to_string().parse().unwrap());
                     return response;
                 }
-                let mut response = original_player::response(&request, context.webview_label());
+                let mut response = original_player::response(&request, context.webview_label(), context.app_handle().config().build.dev_url.as_ref());
                 println!("{}",json!({"kind":"original_player_asset_request","uri":request.uri().to_string(),"origin":request.headers().get(header::ORIGIN).and_then(|v|v.to_str().ok()),"status":response.status().as_u16(),"cors":response.headers().get(header::ACCESS_CONTROL_ALLOW_ORIGIN).and_then(|v|v.to_str().ok())}));
                 if request.uri().path() == "/frame.html" && response.status() == StatusCode::OK {
                     let html = String::from_utf8(response.body().clone()).unwrap();

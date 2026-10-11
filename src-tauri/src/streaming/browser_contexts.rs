@@ -10,6 +10,9 @@ pub(super) struct ContextGroup {
     pending: Mutex<Option<(String, String, Instant)>>,
     pub reconfiguring: AtomicU64,
     pub screenshot_decode: Mutex<()>,
+    // Worker-only: never acquire this from a WebView2/UI callback. Native
+    // creation/destruction can dispatch to that same UI thread.
+    pub profile_session: Mutex<()>,
     notices: Mutex<std::collections::VecDeque<String>>,
 }
 
@@ -461,6 +464,19 @@ mod tests {
         assert!(second.inner.contexts.screenshot_decode.try_lock().is_err());
         drop(guard);
         assert!(second.inner.contexts.screenshot_decode.try_lock().is_ok());
+    }
+
+    #[test]
+    fn profile_session_creation_is_shared_across_players_and_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = OfficialBrowser::new(dir.path().into()).unwrap();
+        let first = pane(&root);
+        let second = pane(&root);
+        let guard = first.inner.contexts.profile_session.try_lock().unwrap();
+        assert!(root.inner.contexts.profile_session.try_lock().is_err());
+        assert!(second.inner.contexts.profile_session.try_lock().is_err());
+        drop(guard);
+        assert!(root.inner.contexts.profile_session.try_lock().is_ok());
     }
 
     #[test]

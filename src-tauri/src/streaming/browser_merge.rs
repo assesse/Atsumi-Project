@@ -27,6 +27,20 @@ const RESERVE: u64 = 512 * 1024 * 1024;
 const MAX_INFO: usize = 256 * 1024;
 const MAX_TIMELINE: u64 = 128 * 1024 * 1024;
 const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
+// FFmpeg's max_alloc limits ONE allocation, not process RSS. MP4 sample
+// indexes grow with playback duration even during stream-copy. Keep short
+// untrusted chunks at 64 MiB; allow bounded index headroom for long exports.
+fn media_allocation_limit(duration: f64) -> u64 {
+    const MIB: u64 = 1024 * 1024;
+    if !duration.is_finite() || duration <= 0.0 {
+        return 64 * MIB;
+    }
+    let hours = (duration / 3600.0).ceil() as u64;
+    (hours.saturating_mul(32).saturating_add(32))
+        .clamp(64, 1024)
+        .next_power_of_two()
+        * MIB
+}
 const POLL: Duration = Duration::from_millis(40);
 // Historical disk recovery is not part of launching a viewer. Keep it outside
 // Windows' initial launch prediction window; newly recorded segments and explicit
@@ -61,6 +75,32 @@ impl BrowserMergeWorker {
         store: Arc<Mutex<BrowserCaptureStore>>,
         tools: Option<MediaTools>,
     ) -> Result<Self, StreamError> {
+        Self::start_with_mode(store, tools, false)
+    }
+    /// For the explicit offline maintenance CLI, after it checks the app is
+    /// closed. One stopped recording only; keeps every validation/cleanup gate.
+    pub fn start_offline_maintenance(
+        store: Arc<Mutex<BrowserCaptureStore>>,
+        tools: Option<MediaTools>,
+    ) -> Result<Self, StreamError> {
+        let records = store
+            .lock()
+            .map_err(|_| failure("녹화 목록을 확인하지 못했습니다."))?
+            .snapshot()?;
+        if records.len() != 1
+            || records[0].status == browser_store::BrowserRecordingStatus::Recording
+        {
+            return Err(failure(
+                "오프라인 복구는 종료된 녹화 한 개만 처리할 수 있습니다.",
+            ));
+        }
+        Self::start_with_mode(store, tools, true)
+    }
+    fn start_with_mode(
+        store: Arc<Mutex<BrowserCaptureStore>>,
+        tools: Option<MediaTools>,
+        offline: bool,
+    ) -> Result<Self, StreamError> {
         let shared = Arc::new(Shared {
             store,
             tools,
@@ -71,7 +111,10 @@ impl BrowserMergeWorker {
         let run = shared.clone();
         let handle = thread::Builder::new()
             .name("browser-merge".into())
-            .spawn(move || worker(run))
+            .spawn(move || {
+                let _offline = offline.then(crate::storage_io_budget::OfflineMaintenance::enter);
+                worker(run)
+            })
             .map_err(|_| failure("병합 작업자를 시작하지 못했습니다."))?;
         Ok(Self {
             shared,
@@ -299,6 +342,7 @@ fn verify_full_decode(
         verification_threads(thread::available_parallelism().map_or(1, |count| count.get()))
             .to_string();
     let mut command = Command::new(&tools.ffmpeg);
+    let allocation_limit = media_allocation_limit(duration).to_string();
     command.args([
         "-nostdin",
         "-hide_banner",
@@ -312,7 +356,7 @@ fn verify_full_decode(
         "-filter_threads",
         "1",
         "-max_alloc",
-        "67108864",
+        &allocation_limit,
         "-protocol_whitelist",
         "file",
     ]);
@@ -460,6 +504,7 @@ fn run_tool(
     output_limit: Option<(&Path, u64)>,
 ) -> Result<ToolOutput, StreamError> {
     check_cancel(cancel)?;
+    let reports_progress = command.get_args().any(|arg| arg == "-progress");
     command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -496,6 +541,7 @@ fn run_tool(
             Ok(ToolOutput::Packets(stats))
         } else {
             let mut bytes = Vec::new();
+            let mut reported_seconds = 0;
             let mut buffer = [0; 8192];
             let mut oversized = false;
             loop {
@@ -505,6 +551,16 @@ fn run_tool(
                 }
                 if bytes.len() + n <= MAX_INFO {
                     bytes.extend_from_slice(&buffer[..n]);
+                    if reports_progress {
+                        let seconds = decoded_progress_seconds(&bytes) as u64;
+                        if seconds >= reported_seconds + 60 {
+                            reported_seconds = seconds;
+                            tracing::info!(
+                                decoded_seconds = seconds,
+                                "browser recording full decode progress"
+                            );
+                        }
+                    }
                 } else {
                     oversized = true;
                 }
@@ -519,24 +575,21 @@ fn run_tool(
     let read_err = thread::spawn(move || {
         let mut stderr = stderr;
         let mut buffer = [0; 8192];
-        #[cfg(test)]
         let mut diagnostic = Vec::new();
         loop {
             let n = stderr.read(&mut buffer).unwrap_or(0);
             if n == 0 {
                 break;
             }
-            #[cfg(test)]
-            if diagnostic.len() + n <= 16 * 1024 {
-                diagnostic.extend_from_slice(&buffer[..n]);
+            diagnostic.extend_from_slice(&buffer[..n]);
+            if diagnostic.len() > 16 * 1024 {
+                diagnostic.drain(..diagnostic.len() - 16 * 1024);
             }
         }
-        #[cfg(test)]
-        {
-            diagnostic
-        }
+        diagnostic
     });
     let started = Instant::now();
+    let mut exit_code = None;
     let outcome = loop {
         let guard = check_cancel(cancel).and_then(|()| {
             if started.elapsed() > timeout {
@@ -565,13 +618,14 @@ fn run_tool(
         }
         match child.try_wait() {
             Ok(Some(status)) => {
+                exit_code = status.code();
                 break if status.success() {
                     Ok(())
                 } else {
                     Err(failure(
                         "미디어 조각을 병합하거나 검증하지 못했습니다. 원본 조각은 보존됩니다.",
                     ))
-                }
+                };
             }
             Ok(None) => thread::sleep(POLL),
             Err(_) => {
@@ -584,18 +638,55 @@ fn run_tool(
     let output = read_out
         .join()
         .map_err(|_| failure("병합 도구 응답을 확인하지 못했습니다."));
-    let _diagnostic = read_err.join();
-    // Enabled only by the explicitly invoked temporary-media integration tests.
-    // Production always drains/discards tool stderr and returns generic errors.
+    let diagnostic = read_err.join().unwrap_or_default();
+    // Retain only a bounded tail in memory. Production logs a fixed category,
+    // never raw stderr (which can contain paths or other private input).
+    let category = tool_error_category(&diagnostic);
+    if outcome.is_err() {
+        tracing::warn!(
+            ?exit_code,
+            category,
+            elapsed_seconds = started.elapsed().as_secs(),
+            "browser media tool failed"
+        );
+    }
     #[cfg(test)]
     if outcome.is_err() && std::env::var_os("ATSUMI_MERGE_TEST_TOOLS_DIR").is_some() {
         eprintln!(
             "synthetic media tool: {}",
-            String::from_utf8_lossy(&_diagnostic.unwrap_or_default())
+            String::from_utf8_lossy(&diagnostic)
         );
+    }
+    if outcome.is_err() && exit_code.is_some() && category == "allocation_limit" {
+        return Err(StreamError::new("BROWSER_MERGE_MEMORY_LIMIT", "장시간 영상의 병합 색인에 필요한 메모리를 확보하지 못했습니다. 원본 조각은 보존됩니다.", true));
     }
     outcome?;
     output?.map_err(|_| failure("병합 도구 응답이 제한을 초과했거나 올바르지 않습니다."))
+}
+fn decoded_progress_seconds(bytes: &[u8]) -> f64 {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .filter_map(|line| line.strip_prefix("out_time_us=")?.parse::<f64>().ok())
+        .rfind(|value| value.is_finite() && *value >= 0.0)
+        .unwrap_or(0.0)
+        / 1_000_000.0
+}
+fn tool_error_category(stderr: &[u8]) -> &'static str {
+    let message = String::from_utf8_lossy(stderr).to_ascii_lowercase();
+    if message.contains("cannot allocate memory") || message.contains("out of memory") {
+        "allocation_limit"
+    } else if message.contains("no space left") || message.contains("disk full") {
+        "disk_full"
+    } else if message.contains("permission denied") || message.contains("access is denied") {
+        "access_denied"
+    } else if message.contains("invalid data")
+        || message.contains("error while decoding")
+        || message.contains("moov atom not found")
+    {
+        "invalid_media"
+    } else {
+        "unclassified"
+    }
 }
 #[derive(Clone)]
 struct MediaInfo {
@@ -676,9 +767,10 @@ fn probe(
     } else {
         "mov"
     };
+    let allocation_limit = media_allocation_limit(max_duration).to_string();
     let output = retry_probe_timeout(Duration::from_secs(20), |timeout| {
         let mut cmd = Command::new(&tools.ffprobe);
-        cmd.args(["-v","error","-max_alloc","67108864","-protocol_whitelist","file","-f",format,"-show_data_hash","sha256","-show_entries",
+        cmd.args(["-v","error","-max_alloc",&allocation_limit,"-protocol_whitelist","file","-f",format,"-show_data_hash","sha256","-show_entries",
         "stream=index,codec_type,codec_name,profile,time_base,width,height,sample_rate,channels,channel_layout,extradata_hash:format=duration","-of","json"]).arg(file);
         run_tool(cmd, cancel, timeout, false, None)
     })?;
@@ -700,7 +792,7 @@ fn probe(
                 "-v",
                 "error",
                 "-max_alloc",
-                "67108864",
+                &allocation_limit,
                 "-protocol_whitelist",
                 "file",
                 "-f",
@@ -861,6 +953,9 @@ fn merge_recording(
     let name = format!("merged-{}.{}", job.token, ext);
     let partial = root.join(format!("{name}.partial"));
     let timeline_partial = root.join(format!("{timeline_name}.partial"));
+    // Remember this attempt before the first output: a crash/retry must not
+    // strand its partial movie after a later, fully verified export succeeds.
+    browser_store::cleanup::artifacts::register(job)?;
     let mut manifest = new_file(&root.join(&list_name))?;
     let mut timeline = new_file(&timeline_partial)?;
     manifest
@@ -996,13 +1091,14 @@ fn merge_recording(
     let output = new_file(&partial)?;
     drop(output);
     let mut cmd = Command::new(&tools.ffmpeg);
+    let allocation_limit = media_allocation_limit(offset).to_string();
     cmd.current_dir(&root).args([
         "-nostdin",
         "-hide_banner",
         "-loglevel",
         "error",
         "-max_alloc",
-        "67108864",
+        &allocation_limit,
         "-xerror",
         "-protocol_whitelist",
         "file",
@@ -1112,6 +1208,46 @@ fn merge_recording(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn long_mp4_indexes_get_bounded_headroom_in_all_media_phases() {
+        let mib = 1024 * 1024;
+        for duration in [0.0, -1.0, f64::NAN, f64::INFINITY, 15.0, 180.0, 3600.0] {
+            assert_eq!(media_allocation_limit(duration), 64 * mib);
+        }
+        assert_eq!(media_allocation_limit(39877.249313), 512 * mib);
+        assert_eq!(media_allocation_limit(24.0 * 3600.0), 1024 * mib);
+        assert_eq!(media_allocation_limit(f64::MAX), 1024 * mib);
+    }
+
+    #[test]
+    fn tool_diagnostics_classify_without_returning_private_input() {
+        for (message, category) in [
+            (
+                "C:/private/name.mp4: Cannot allocate memory",
+                "allocation_limit",
+            ),
+            ("No space left on device", "disk_full"),
+            ("Permission denied", "access_denied"),
+            ("moov atom not found", "invalid_media"),
+            ("secret signed url", "unclassified"),
+        ] {
+            assert_eq!(tool_error_category(message.as_bytes()), category);
+        }
+    }
+    #[test]
+    fn decode_progress_accepts_only_bounded_numeric_tool_fields() {
+        assert_eq!(
+            decoded_progress_seconds(
+                b"out_time_us=2000000\nprogress=continue\nout_time_us=4500000\n"
+            ),
+            4.5
+        );
+        assert_eq!(
+            decoded_progress_seconds(b"out_time_us=NaN\nout_time_us=-1\nprivate path"),
+            0.0
+        );
+    }
+
     #[test]
     fn final_exports_are_not_starved_by_live_range_backlog() {
         let dir = tempfile::tempdir().unwrap();
@@ -1437,6 +1573,63 @@ mod tests {
     fn synthetic_mp4(tools: &MediaTools) -> Vec<u8> {
         synthetic_mp4_seconds(tools, 15)
     }
+    #[test]
+    #[ignore = "explicit verified tools; creates temporary synthetic 12-hour sample-index regression"]
+    fn synthetic_ffmpeg_twelve_hour_mp4_index_exceeds_old_limit_and_new_limit_succeeds() {
+        let tools = e2e_tools();
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("minute.mp4");
+        fs::write(&source, synthetic_mp4_seconds(&tools, 60)).unwrap();
+        let output = directory.path().join("twelve-hours.mp4");
+        let duration = 12.0 * 3600.0;
+        let mux = |limit: u64, target: &Path| {
+            let mut cmd = Command::new(&tools.ffmpeg);
+            cmd.args([
+                "-nostdin",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-xerror",
+                "-max_alloc",
+                &limit.to_string(),
+                "-stream_loop",
+                "-1",
+                "-i",
+            ])
+            .arg(&source)
+            .args([
+                "-t", "43200", "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-f", "mp4", "-y",
+            ])
+            .arg(target);
+            run_tool(
+                cmd,
+                &AtomicBool::new(false),
+                Duration::from_secs(600),
+                false,
+                None,
+            )
+        };
+        #[cfg(windows)]
+        let sink = Path::new("NUL");
+        #[cfg(not(windows))]
+        let sink = Path::new("/dev/null");
+        assert_eq!(
+            mux(64 * 1024 * 1024, sink).err().unwrap().code,
+            "BROWSER_MERGE_MEMORY_LIMIT"
+        );
+        mux(media_allocation_limit(duration), &output).unwrap();
+        let info = probe(
+            &tools,
+            &output,
+            "video/mp4",
+            &AtomicBool::new(false),
+            duration + 2.0,
+            false,
+        )
+        .unwrap();
+        assert!((info.duration - duration).abs() < 0.5);
+        assert!(fs::metadata(output).unwrap().len() > 0);
+    }
     fn synthetic_mp4_seconds(tools: &MediaTools, seconds: u32) -> Vec<u8> {
         let video = format!("color=c=blue:s=160x90:r=25:duration={seconds}");
         let audio = format!("sine=frequency=440:sample_rate=48000:duration={seconds}.1");
@@ -1646,6 +1839,7 @@ mod tests {
             .unwrap();
         let root = Path::new(&recording.output_dir);
         fs::write(root.join("chat.jsonl"), b"").unwrap();
+        let mut retired_part_files = Vec::new();
         for (index, segment) in segments.iter().enumerate() {
             let store = store.lock().unwrap();
             store
@@ -1666,6 +1860,12 @@ mod tests {
                 output.cleanup.is_some(),
                 "range evidence is saved but does not authorize source deletion yet"
             );
+            retired_part_files.extend([
+                output.file.clone(),
+                output.timeline_file.clone(),
+                format!("merge-{}.ffconcat", job.token),
+                output.cleanup.as_ref().unwrap().file.clone(),
+            ]);
             store.finish_part_job(&job, Ok(output)).unwrap();
             assert!(store.has_active());
             assert!(store.take_short_part_job().unwrap().is_none());
@@ -1727,6 +1927,29 @@ mod tests {
             .finish(&recording.id, false, None)
             .unwrap();
         let job = store.lock().unwrap().take_merge_job().unwrap().unwrap();
+        // A previous attempt can leave a reserved empty media file after a
+        // crash. A later verified export must clean it, not keep copying it to
+        // the archive. No partial is discarded before the final proof exists.
+        browser_store::cleanup::artifacts::register(&job).unwrap();
+        let failed_partial = format!("merged-{}.mp4.partial", job.token);
+        fs::write(root.join(&failed_partial), b"").unwrap();
+        store
+            .lock()
+            .unwrap()
+            .fail_merge(
+                &job,
+                BrowserMergeStatus::Failed,
+                "synthetic interrupted mux",
+            )
+            .unwrap();
+        assert!(store.lock().unwrap().take_cleanup_job().unwrap().is_none());
+        assert!(root.join(&failed_partial).is_file());
+        store
+            .lock()
+            .unwrap()
+            .retry_merges(Some(&recording.id))
+            .unwrap();
+        let job = store.lock().unwrap().take_merge_job().unwrap().unwrap();
         let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
         verify_decode(&tools, &root.join(&output.file));
         store.lock().unwrap().complete_merge(&job, output).unwrap();
@@ -1754,6 +1977,15 @@ mod tests {
         replay.close(&session.token).unwrap();
         replay.shutdown_and_wait();
         drop(replay);
+        assert!(!root.join(&failed_partial).exists());
+        assert!(!root.join(format!("merge-{}.ffconcat", job.token)).exists());
+        for file in retired_part_files {
+            assert!(!root.join(&file).exists(), "{file}");
+        }
+        assert_eq!(
+            fs::read(root.join("chat.jsonl")).unwrap(),
+            b"{\"future\":true}\n"
+        );
         drop(store);
         let recovered = BrowserCaptureStore::new(dir.path()).unwrap();
         assert_eq!(

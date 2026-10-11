@@ -36,7 +36,7 @@
   const encodedState = () => window.__atsumiEncodedCapture?.getStatus() ?? null;
   const encodedDetail = (detail) => ({ encoded_ready: "ready", encoded_starting: "starting",
     encoded_recording: "recording", encoded_waiting: "waiting_source", encoded_saving: "saving", encoded_saved: "saved",
-    encoded_interrupted: "native_rejected", encoded_unavailable: "unavailable" })[detail] ?? detail;
+    encoded_end_checking: "checking_end", encoded_interrupted: "native_rejected", encoded_unavailable: "unavailable" })[detail] ?? detail;
 
   // The native host must also validate the WebView label, current URL and its
   // one-use start requestId. Page script/events are never an authorization boundary.
