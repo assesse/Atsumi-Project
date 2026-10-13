@@ -3888,266 +3888,129 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
-  const prepareAutomationSequenceApp = async (count = 3, unacknowledgedIndexes?: number[]) => {
+  const prepareManualSequenceApp = async (count = 3) => {
     const fixture = await prepareAutomationEvidenceApp();
-    const items: DownloadOverlapAutomationHistoryItem[] = Array.from({ length: count }, (_, index) => ({
-      ...fixture.historyItem,
-      reviewId: `sequence-review-${index}`,
-      incomingGalleryId: galleryId(7_000_000 + index),
-      title: `순차 자동분류 ${index}`,
-      occurredAt: new Date(Date.UTC(2026, 8, 4) - index * 1_000).toISOString(),
-      removedGalleryIds: [galleryId(8_000_000 + index)],
-      ...(unacknowledgedIndexes && !unacknowledgedIndexes.includes(index)
-        ? { acknowledgedAt: "2026-09-04T01:31:00Z" } : {}),
+    const resolved = new Set<string>();
+    const entries = Array.from({ length: count }, (_, i) => ({
+      entryId: `manual-entry-${i}`, galleryId: galleryId(7_000_000 + i), revision: 1,
+      state: "review_required" as const, reviewKind: "gallery_duplicate" as const, reviewId: `manual-review-${i}`, progress: 100,
     }));
-    const historyPage = (request: { page: number; pageSize: number }) => ({
-      ok: true as const,
-      data: {
-        ...request,
-        totalItems: items.length,
-        unacknowledgedItems: items.filter((item) => !item.acknowledgedAt).length,
-        items: items.slice((request.page - 1) * request.pageSize, request.page * request.pageSize),
-      },
-    });
-    fixture.historyList.mockImplementation(async (request) => historyPage(request));
+    const pendingPage = (request: { page: number; pageSize: number }) => ({ ok: true as const, data: {
+      page: request.page, totalItems: entries.length,
+      entries: entries.slice((request.page - 1) * request.pageSize, request.page * request.pageSize),
+    } });
+    const entriesList = vi.mocked(backend.downloadEntriesList).mockImplementation(async request =>
+      request.state === "review_required" ? pendingPage(request) : { ok: true, data: { page: request.page, totalItems: 0, entries: [] } });
     const reviewFor = (reviewId: string): DownloadOverlapReview => {
-      const item = items.find((candidate) => candidate.reviewId === reviewId);
-      if (!item) throw new Error(`Unknown sequence review ${reviewId}`);
-      return {
-        ...fixture.review,
-        reviewId,
-        incoming: { ...fixture.review.incoming, galleryId: item.incomingGalleryId, title: item.title },
-        candidates: fixture.review.candidates.map((candidate, index) => index === 0 ? {
-          ...candidate,
-          existing: { ...candidate.existing, galleryId: item.removedGalleryIds[0]! },
-        } : candidate),
+      const entry = entries.find(row => row.reviewId === reviewId)!;
+      return { ...fixture.review, reviewId, entryId: entry.entryId,
+        incoming: { ...fixture.review.incoming, galleryId: entry.galleryId, title: `수동 판단 ${entry.galleryId}` },
+        state: resolved.has(reviewId) ? "resolved" : "pending",
+        candidates: fixture.review.candidates.map(candidate => ({ ...candidate, decision: undefined })),
       };
     };
-    fixture.reviewGet.mockImplementation(async (reviewId) => ({ ok: true, data: reviewFor(reviewId) }));
-    fixture.historyAcknowledge.mockImplementation(async (reviewId) => {
-      const index = items.findIndex((item) => item.reviewId === reviewId);
-      if (index === -1) throw new Error(`Unknown acknowledgement ${reviewId}`);
-      const item = { ...items[index]!, acknowledgedAt: "2026-09-04T01:31:00Z" };
-      items[index] = item;
-      return { ok: true, data: item };
+    fixture.reviewGet.mockImplementation(async reviewId => ({ ok: true, data: reviewFor(reviewId) }));
+    fixture.decisionApply.mockImplementation(async request => {
+      resolved.add(request.reviewId!);
+      return { ok: true, data: { review: reviewFor(request.reviewId!), resumed: true, cancelled: false } };
     });
-    fixture.restoreExclusions.mockImplementation(async (ids) => ({
-      ok: true, data: {
-        restoredGalleryIds: ids,
-        snapshot: { candidates: [], cutoffEvidence: [], truncations: [] },
-      },
-    }));
-    return { ...fixture, items, historyPage, reviewFor };
+    return { ...fixture, entries, entriesList, pendingPage, reviewFor, resolved };
   };
 
-  const openAutomationSequence = async (container: HTMLElement) => {
+  const openManualSequence = async (container: HTMLElement) => {
     await act(async () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')!.click();
       await settle();
     });
-    await act(async () => {
-      clickButtonContaining(container, "자동분류 검토");
-    });
-    await act(async () => {
-      clickButtonContaining(container, "미확인 순차 검토");
-      await settle();
-    });
-    const dialog = document.querySelector<HTMLDialogElement>(".download-overlap-dialog");
-    if (!dialog) throw new Error("Automatic review sequence did not open");
-    return dialog;
+    expect(container).not.toHaveTextContent("미확인 순차 검토");
+    await act(async () => { clickButtonContaining(container, "자동분류 검토"); await settle(); });
+    await act(async () => { clickButtonContaining(container, "미확인 순차 검토"); await settle(); });
+    return document.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
   };
 
-  it("collects every automatic history page and sequentially reviews only unacknowledged evidence", async () => {
-    const fixture = await prepareAutomationSequenceApp(202, [1, 198, 201]);
-    const container = document.createElement("div");
-    document.body.append(container);
+  it("collects pending jobs across pages without adding already quarantined history", async () => {
+    const fixture = await prepareManualSequenceApp(202);
+    const container = document.createElement("div"); document.body.append(container);
     const root = createRoot(container);
     try {
-      await act(async () => {
-        root.render(<TestApp />);
-        await settle();
-      });
-      await openAutomationSequence(container);
-      const currentDialog = () => document.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
-      const navigate = async (label: string) => act(async () => {
-        currentDialog().querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!.click();
-        await settle();
-      });
-      expect(fixture.historyList).toHaveBeenCalledWith({ page: 1, pageSize: 200 });
-      expect(fixture.historyList).toHaveBeenCalledWith({ page: 2, pageSize: 200 });
-      expect(fixture.reviewGet).toHaveBeenCalledExactlyOnceWith(fixture.items[1]!.reviewId);
-      expect(currentDialog()).toHaveTextContent(fixture.items[1]!.title);
-      expect(currentDialog().querySelector(".download-overlap-sequence")).toHaveTextContent("1 / 3");
-      await navigate("다음 자동 분류");
-      expect(currentDialog()).toHaveTextContent(fixture.items[198]!.title);
-      await navigate("이전 자동 분류");
-      expect(currentDialog()).toHaveTextContent(fixture.items[1]!.title);
-      await navigate("다음 자동 분류");
-      await navigate("다음 자동 분류");
-      expect(currentDialog()).toHaveTextContent(fixture.items[201]!.title);
-      expect(currentDialog().querySelector(".download-overlap-sequence")).toHaveTextContent("3 / 3");
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      const dialog = await openManualSequence(container);
+      expect(fixture.entriesList).toHaveBeenCalledWith({ state: "review_required", page: 1, pageSize: 200 });
+      expect(fixture.entriesList).toHaveBeenCalledWith({ state: "review_required", page: 2, pageSize: 200 });
+      expect(dialog.querySelector(".download-overlap-sequence")).toHaveTextContent("1 / 202");
+      expect(dialog).toHaveTextContent("수동 판단 7000000");
+      expect(dialog).not.toHaveTextContent(fixture.historyItem.title);
+      expect(dialog.querySelector(".download-overlap-history-actions")).toBeNull();
+      await act(async () => { dialog.querySelector<HTMLButtonElement>('[aria-label="다음 검토"]')!.click(); await settle(); });
+      expect(dialog).toHaveTextContent("수동 판단 7000001");
+      await act(async () => { dialog.querySelector<HTMLButtonElement>('[aria-label="이전 검토"]')!.click(); await settle(); });
+      expect(dialog).toHaveTextContent("수동 판단 7000000");
       expect(fixture.historyAcknowledge).not.toHaveBeenCalled();
       expect(fixture.restoreExclusions).not.toHaveBeenCalled();
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
 
-      await act(async () => {
-        clickButtonContaining(currentDialog(), "확인 완료");
-        await settle();
-      });
-      expect(fixture.historyAcknowledge).toHaveBeenCalledExactlyOnceWith(fixture.items[201]!.reviewId);
-      expect(currentDialog()).toHaveTextContent(fixture.items[1]!.title);
-      await act(async () => {
-        clickButtonContaining(currentDialog(), "목록에 복원");
-        await settle();
-      });
-      expect(fixture.restoreExclusions).toHaveBeenCalledExactlyOnceWith(fixture.items[1]!.removedGalleryIds);
-      expect(currentDialog()).toHaveTextContent(fixture.items[198]!.title);
-      await act(async () => {
-        clickButtonContaining(currentDialog(), "확인 완료");
-        await settle();
-      });
+  it("advances only after successful manual judgment and skips newly resolved jobs", async () => {
+    const fixture = await prepareManualSequenceApp();
+    fixture.resolved.add("manual-review-1");
+    fixture.decisionApply.mockResolvedValueOnce({ ok: false, error: {
+      code: "MANUAL_FAILURE", message: "판정 저장 실패", retryable: true, action: "retry",
+    } });
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await openManualSequence(container);
+      const dialog = () => document.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
+      await act(async () => { clickButtonContaining(dialog(), "둘 다 보존"); await settle(); });
+      expect(dialog()).toHaveTextContent("판정 저장 실패");
+      expect(dialog()).toHaveTextContent("수동 판단 7000000");
+      await act(async () => { clickButtonContaining(dialog(), "둘 다 보존"); await settle(); });
+      expect(dialog()).toHaveTextContent("수동 판단 7000002");
+      await act(async () => { clickButtonContaining(dialog(), "둘 다 보존"); await settle(); });
       expect(document.querySelector(".download-overlap-dialog")).toBeNull();
-      expect(fixture.historyAcknowledge.mock.calls.map(([id]) => id)).toEqual([
-        fixture.items[201]!.reviewId, fixture.items[1]!.reviewId, fixture.items[198]!.reviewId,
-      ]);
-      expect(container).toHaveTextContent("자동분류 3건의 순차 검토를 완료했습니다");
-      expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toBeNull();
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-    }
-  });
-
-  it.each(["restore", "acknowledge"])("does not advance an automatic review sequence after failed %s", async (failure) => {
-    const fixture = await prepareAutomationSequenceApp();
-    const failed = { ok: false as const, error: {
-      code: "SEQUENCE_ACTION_FAILURE", message: "순차 검토 처리 실패", retryable: true, action: "retry" as const,
-    } };
-    if (failure === "restore") fixture.restoreExclusions.mockResolvedValueOnce(failed);
-    else fixture.historyAcknowledge.mockResolvedValueOnce(failed);
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    try {
-      await act(async () => {
-        root.render(<TestApp />);
-        await settle();
-      });
-      const dialog = await openAutomationSequence(container);
-      const action = failure === "restore" ? "목록에 복원" : "확인 완료";
-      await act(async () => {
-        clickButtonContaining(dialog, action);
-        await settle();
-      });
-      expect(dialog).toHaveTextContent(fixture.items[0]!.title);
-      expect(fixture.reviewGet).toHaveBeenCalledTimes(1);
-      expect(container).toHaveTextContent("순차 검토 처리 실패");
-      await act(async () => {
-        clickButtonContaining(dialog, action);
-        await settle();
-      });
-      expect(document.querySelector(".download-overlap-dialog")).toHaveTextContent(fixture.items[1]!.title);
-      expect(fixture.reviewGet).toHaveBeenCalledTimes(2);
-      await act(async () => {
-        document.querySelector<HTMLButtonElement>('.download-overlap-dialog [aria-label="닫기"]')!.click();
-        await settle();
-      });
-      await openAutomationSequence(container);
-      expect(document.querySelector(".download-overlap-dialog")).toHaveTextContent(fixture.items[1]!.title);
-      expect(document.querySelector(".download-overlap-sequence")).toHaveTextContent("1 / 2");
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-    }
-  });
-
-  it("navigates past failed automatic evidence and ignores an older detail response after navigating back", async () => {
-    const fixture = await prepareAutomationSequenceApp();
-    let finishOldDetail: (() => void) | undefined;
-    fixture.reviewGet
-      .mockResolvedValueOnce({ ok: false, error: {
-        code: "SEQUENCE_DETAIL_FAILURE", message: "순차 검토 근거를 불러오지 못했습니다", retryable: true, action: "retry",
-      } })
-      .mockImplementationOnce((reviewId) => new Promise((resolve) => {
-        finishOldDetail = () => resolve({ ok: true, data: fixture.reviewFor(reviewId) });
-      }));
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    try {
-      await act(async () => {
-        root.render(<TestApp />);
-        await settle();
-      });
-      const dialog = await openAutomationSequence(container);
-      expect(dialog).toHaveTextContent("순차 검토 근거를 불러오지 못했습니다");
-      await act(async () => {
-        dialog.querySelector<HTMLButtonElement>('[aria-label="다음 자동 분류"]')!.click();
-        await settle();
-      });
-      expect(dialog).toHaveAttribute("aria-busy", "true");
-      await act(async () => {
-        dialog.querySelector<HTMLButtonElement>('[aria-label="이전 자동 분류"]')!.click();
-        await settle();
-      });
-      expect(dialog).toHaveTextContent(fixture.items[0]!.title);
-      await act(async () => {
-        finishOldDetail!();
-        await settle();
-      });
-      expect(dialog).toHaveTextContent(fixture.items[0]!.title);
-      expect(dialog).not.toHaveTextContent(fixture.items[1]!.title);
       expect(fixture.historyAcknowledge).not.toHaveBeenCalled();
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-    }
+    } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
-  it("cancels automatic sequence collection when Activity closes before the next history page resolves", async () => {
-    const fixture = await prepareAutomationSequenceApp(202, [1, 198, 201]);
-    let finishHistoryPage: (() => void) | undefined;
-    fixture.historyList.mockImplementation(async (request) => {
-      if (request.pageSize === 200 && request.page === 2) {
-        return new Promise((resolve) => {
-          finishHistoryPage = () => resolve(fixture.historyPage(request));
-        });
-      }
-      return fixture.historyPage(request);
+  it("ignores late manual detail replies after navigation", async () => {
+    const fixture = await prepareManualSequenceApp();
+    let finish: (() => void) | undefined;
+    fixture.reviewGet.mockResolvedValueOnce({ ok: false, error: { code: "DETAIL", message: "근거 조회 실패", retryable: true, action: "retry" } })
+      .mockImplementationOnce(reviewId => new Promise(resolve => { finish = () => resolve({ ok: true, data: fixture.reviewFor(reviewId) }); }));
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      const dialog = await openManualSequence(container);
+      expect(dialog).toHaveTextContent("근거 조회 실패");
+      await act(async () => { dialog.querySelector<HTMLButtonElement>('[aria-label="다음 검토"]')!.click(); await settle(); });
+      await act(async () => { dialog.querySelector<HTMLButtonElement>('[aria-label="이전 검토"]')!.click(); await settle(); });
+      await act(async () => { finish!(); await settle(); });
+      expect(dialog).toHaveTextContent("수동 판단 7000000");
+      expect(dialog).not.toHaveTextContent("수동 판단 7000001");
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("cancels pending collection when Activity closes", async () => {
+    const fixture = await prepareManualSequenceApp(202);
+    let finish: (() => void) | undefined;
+    fixture.entriesList.mockImplementation(async request => {
+      if (request.state !== "review_required") return { ok: true, data: { page: request.page, totalItems: 0, entries: [] } };
+      if (request.page === 2) return new Promise(resolve => { finish = () => resolve(fixture.pendingPage(request)); });
+      return fixture.pendingPage(request);
     });
-    const container = document.createElement("div");
-    document.body.append(container);
+    const container = document.createElement("div"); document.body.append(container);
     const root = createRoot(container);
     try {
-      await act(async () => {
-        root.render(<TestApp />);
-        await settle();
-      });
-      await act(async () => {
-        container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')!.click();
-        await settle();
-      });
-      await act(async () => clickButtonContaining(container, "자동분류 검토"));
-      await act(async () => {
-        clickButtonContaining(container, "미확인 순차 검토");
-        await settle();
-      });
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await openManualSequence(container);
       expect(container).toHaveTextContent("검토 목록 준비 중");
-      expect(fixture.reviewGet).not.toHaveBeenCalled();
-      await act(async () => {
-        container.querySelector<HTMLButtonElement>('[aria-label="활동 기록 닫기"]')!.click();
-        await settle();
-      });
-      await act(async () => {
-        finishHistoryPage!();
-        await settle();
-      });
+      await act(async () => { container.querySelector<HTMLButtonElement>('[aria-label="활동 기록 닫기"]')!.click(); await settle(); });
+      await act(async () => { finish!(); await settle(); });
       expect(document.querySelector(".download-overlap-dialog")).toBeNull();
       expect(fixture.reviewGet).not.toHaveBeenCalled();
-      expect(fixture.historyAcknowledge).not.toHaveBeenCalled();
-    } finally {
-      await act(async () => root.unmount());
-      container.remove();
-    }
+    } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
   it("hydrates, routes, and clears per-artifact internal scan progress on exact Downloads cards", async () => {

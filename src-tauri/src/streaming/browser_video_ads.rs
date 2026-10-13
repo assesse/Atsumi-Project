@@ -5,6 +5,7 @@ use super::model::StreamError;
 
 const MAX_URL_BYTES: usize = 8 * 1024;
 const LIVE_SCHEDULE: &str = "LIVE_CHZZK_NDP_SCH";
+const LIVE_EVENT_SCHEDULE: &str = "LIVE_CHZZK_NDP_SCH_EVENT";
 // A locally generated empty response, readable only by the exact CHZZK origin.
 // Never reflect Origin or expose any original server response or credentials.
 const EMPTY_RESPONSE_HEADERS: &str = "Content-Length: 0\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: https://chzzk.naver.com\r\nAccess-Control-Allow-Credentials: true";
@@ -12,10 +13,11 @@ const EMPTY_RESPONSE_HEADERS: &str = "Content-Length: 0\r\nCache-Control: no-sto
 // WebView2 glob filters only reduce callback traffic. The parsed matcher below
 // is the actual boundary, including method, main document, host and full path.
 #[cfg(windows)]
-const REQUEST_FILTERS: [&str; 3] = [
+const REQUEST_FILTERS: [&str; 4] = [
     "https://api.chzzk.naver.com/service/v1/lives/*/ads/current*",
     "https://api.chzzk.naver.com/ad-polling/v1/lives/*/ad*",
     "https://nam.veta.naver.com/gfp/v1/vas/vas*",
+    "https://api.chzzk.naver.com/service/v1/seoraksan*",
 ];
 
 fn parsed_https(input: &str) -> Option<tauri::Url> {
@@ -50,15 +52,37 @@ fn live_id(input: &str) -> bool {
 }
 
 fn should_block(document: &str, request: &str, method: &str, is_fetch_or_xhr: bool) -> bool {
-    if method != "GET" || !is_fetch_or_xhr || !live_document(document) {
+    if !is_fetch_or_xhr || !live_document(document) {
         return false;
     }
     let Some(url) = parsed_https(request) else {
         return false;
     };
+    // Leave shared GFP/OPTIONS probes alone. Blocking them caused an ad-block
+    // warning without stopping the new encrypted pre-roll transport. That
+    // path is handled by the strictly scoped player adapter instead.
+    if method != "GET" {
+        return false;
+    }
     match url.host_str() {
         Some("api.chzzk.naver.com") => {
             let path = url.path();
+            if path == "/service/v1/seoraksan" {
+                // The current official player uses this for pre/mid-roll flags.
+                // It is shared: match only the live channel displayed here.
+                let page = tauri::Url::parse(document).ok();
+                let channel = page
+                    .as_ref()
+                    .and_then(|url| url.path().strip_prefix("/live/"));
+                let mut types = url.query_pairs().filter(|(name, _)| name == "pgType");
+                let mut ids = url.query_pairs().filter(|(name, _)| name == "pgId");
+                return types.next().is_some_and(|(_, value)| value == "CHZZK_LIVE")
+                    && types.next().is_none()
+                    && ids
+                        .next()
+                        .is_some_and(|(_, value)| Some(value.as_ref()) == channel)
+                    && ids.next().is_none();
+            }
             let id = path
                 .strip_prefix("/service/v1/lives/")
                 .and_then(|p| p.strip_suffix("/ads/current"))
@@ -74,7 +98,7 @@ fn should_block(document: &str, request: &str, method: &str, is_fetch_or_xhr: bo
             let mut schedules = url.query_pairs().filter(|(name, _)| name == "vsi");
             schedules
                 .next()
-                .is_some_and(|(_, value)| value == LIVE_SCHEDULE)
+                .is_some_and(|(_, value)| value == LIVE_SCHEDULE || value == LIVE_EVENT_SCHEDULE)
                 && schedules.next().is_none()
         }
         _ => false,
@@ -83,6 +107,18 @@ fn should_block(document: &str, request: &str, method: &str, is_fetch_or_xhr: bo
 
 fn enabled(value: Option<&str>) -> bool {
     value != Some("0")
+}
+
+pub(super) fn initialization_script() -> &'static str {
+    if enabled(
+        std::env::var("ATSUMI_CHZZK_VIDEO_AD_FILTER")
+            .ok()
+            .as_deref(),
+    ) {
+        include_str!("browser_video_ads.js")
+    } else {
+        ""
+    }
 }
 
 /// Attach only to app-owned video views, before navigating to CHZZK. An
@@ -129,6 +165,7 @@ pub(super) fn install(view: &tauri::Webview) -> Result<(), StreamError> {
             let core = platform.controller().CoreWebView2()?;
             let environment = platform.environment();
             let mut token = 0;
+            let reported = AtomicBool::new(false);
             core.add_WebResourceRequested(
                 &WebResourceRequestedEventHandler::create(Box::new(move |sender, args| {
                     if !callback_active.load(Ordering::Acquire) {
@@ -166,13 +203,22 @@ pub(super) fn install(view: &tauri::Webview) -> Result<(), StreamError> {
                     {
                         return Ok(());
                     }
-                    if let Ok(response) = environment.CreateWebResourceResponse(
+                    let response = environment.CreateWebResourceResponse(
                         None::<&IStream>,
                         204,
                         &HSTRING::from("No Content"),
                         &HSTRING::from(EMPTY_RESPONSE_HEADERS),
-                    ) {
-                        let _ = args.SetResponse(&response);
+                    );
+                    if let Ok(response) = response {
+                        if args.SetResponse(&response).is_ok()
+                            && !reported.swap(true, Ordering::Relaxed)
+                        {
+                            // Once per view, no request URL, account, cookies or headers.
+                            tracing::info!(
+                                diag_stage = "chzzk_video_ad_filtered",
+                                "identified live video ad request filtered"
+                            );
+                        }
                     }
                     Ok(())
                 })),
@@ -219,7 +265,7 @@ mod tests {
         "https://nam.veta.naver.com/gfp/v1/vas/vas?vsi=LIVE_CHZZK_NDP_SCH&ct=web";
 
     #[test]
-    fn only_three_identified_video_ad_routes_match() {
+    fn identified_video_ad_routes_match() {
         for request in [CURRENT, POLLING, SCHEDULE] {
             assert!(should_block(PAGE, request, "GET", true), "{request}");
         }
@@ -232,9 +278,40 @@ mod tests {
     }
 
     #[test]
+    fn new_live_ad_flags_and_event_unit_are_scoped_to_live_video() {
+        let url = "https://api.chzzk.naver.com/service/v1/seoraksan?pgType=CHZZK_LIVE&pgId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(should_block(PAGE, url, "GET", true));
+        assert!(should_block(
+            PAGE,
+            &SCHEDULE.replace("LIVE_CHZZK_NDP_SCH", "LIVE_CHZZK_NDP_SCH_EVENT"),
+            "GET",
+            true
+        ));
+        for other in [
+            url.replace("CHZZK_LIVE", "CHZZK_VOD"),
+            url.replace(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            ),
+            format!("{url}&pgId=other"),
+            format!("{url}&pgType=CHZZK_VOD"),
+        ] {
+            assert!(!should_block(PAGE, &other, "GET", true));
+        }
+        assert!(!should_block(
+            "https://nid.naver.com/nidlogin.login",
+            url,
+            "GET",
+            true
+        ));
+        assert!(!should_block(PAGE, url, "POST", true));
+    }
+
+    #[test]
     fn unknown_and_shared_naver_routes_remain_available() {
         for request in [
             "https://nam.veta.naver.com/gfp/v1?u=display_banner",
+            "https://nam.veta.naver.com/gfp/v1/other?u=display_banner",
             "https://nam.veta.naver.com/vas",
             "https://nam.veta.naver.com/call",
             "https://nam.veta.naver.com/nac/1",
@@ -298,6 +375,56 @@ mod tests {
     }
 
     #[test]
+    fn shared_ad_provider_probes_are_left_untouched() {
+        for path in ["/vas", "/call", "/gfp/v1"] {
+            let url = format!("https://nam.veta.naver.com{path}");
+            for method in ["GET", "POST", "HEAD", "OPTIONS"] {
+                assert!(!should_block(PAGE, &url, method, true));
+            }
+            assert!(!should_block(PAGE, &url, "OPTIONS", false));
+            assert!(!should_block(
+                "https://nid.naver.com/nidlogin.login",
+                &url,
+                "OPTIONS",
+                true
+            ));
+            assert!(!should_block(
+                &format!("{PAGE}?chat=1"),
+                &url,
+                "OPTIONS",
+                true
+            ));
+            assert!(!should_block(
+                PAGE,
+                &format!("{url}/other"),
+                "OPTIONS",
+                true
+            ));
+        }
+    }
+
+    #[test]
+    fn shared_encrypted_ad_transport_is_not_blanket_filtered() {
+        let request = "https://nam.veta.naver.com/gfp/v1?payload=opaque";
+        assert!(!should_block(PAGE, request, "GET", true));
+        for document in [
+            "https://nid.naver.com/nidlogin.login",
+            "https://chzzk.naver.com/",
+            &format!("{PAGE}?chat=1"),
+        ] {
+            assert!(!should_block(document, request, "GET", true));
+        }
+        assert!(!should_block(PAGE, request, "POST", true));
+        assert!(!should_block(PAGE, request, "GET", false));
+        assert!(!should_block(
+            PAGE,
+            "https://nam.veta.naver.com.evil.test/gfp/v1",
+            "GET",
+            true
+        ));
+    }
+
+    #[test]
     fn host_path_and_input_boundaries_fail_open() {
         for request in [
             "http://api.chzzk.naver.com/service/v1/lives/123456/ads/current",
@@ -329,6 +456,24 @@ mod tests {
         assert!(!enabled(Some("0")));
         assert!(enabled(None));
         assert!(enabled(Some("1")));
+    }
+
+    #[test]
+    fn pre_roll_adapter_is_installed_before_navigation_in_both_video_builders() {
+        for source in [
+            include_str!("browser_host.rs"),
+            include_str!("browser_multiview.rs"),
+        ] {
+            assert!(source.contains("browser_video_ads::initialization_script()"));
+        }
+        for source in [
+            include_str!("browser_auth.rs"),
+            include_str!("browser_chat_popup.rs"),
+            include_str!("browser_clip_popup.rs"),
+            include_str!("browser_service_popup.rs"),
+        ] {
+            assert!(!source.contains("browser_video_ads::initialization_script()"));
+        }
     }
 
     #[test]

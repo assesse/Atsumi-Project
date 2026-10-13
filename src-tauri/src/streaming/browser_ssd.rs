@@ -10,13 +10,66 @@ pub(crate) struct StoragePlan {
     pub archive_root: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordingStorageStatus {
+    pub destination_kind: &'static str,
+    pub detected_ssds: usize,
+    pub staging_available: bool,
+}
+
+/// Read-only settings inspection. Never creates a staging directory or changes
+/// the recording plan. Unknown hardware stays unknown (including network disks).
+pub(crate) fn inspect(data_dir: &Path, destination: Option<&Path>) -> RecordingStorageStatus {
+    let destination_kind = destination
+        .and_then(|p| p.ancestors().find(|p| p.exists()))
+        .and_then(|p| fs::canonicalize(p).ok())
+        .and_then(|p| crate::storage_io_budget::is_solid_state(&p));
+    status(destination_kind, &candidates(data_dir))
+}
+
+fn status(destination: Option<bool>, candidates: &[Candidate]) -> RecordingStorageStatus {
+    RecordingStorageStatus {
+        destination_kind: match destination {
+            Some(true) => "ssd",
+            Some(false) => "hdd",
+            None => "unknown",
+        },
+        detected_ssds: candidates.iter().filter(|c| c.ssd).count(),
+        staging_available: candidates.iter().any(|c| c.ssd && c.free >= START_FREE),
+    }
+}
+
+fn named_staging_root(data_dir: &Path, root: &Path) -> PathBuf {
+    let identity = format!(
+        "{:x}",
+        Sha256::digest(data_dir.to_string_lossy().as_bytes())
+    );
+    root.join(format!("Atsumi-Recordings-{}", &identity[..16]))
+}
+
+/// Only app-owned staging paths, not entire drives. Include old paths even if
+/// the disk is no longer selected, so unfinished media isn't counted as a DB.
+pub(crate) fn staging_roots(data_dir: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![data_dir.join("ssd-recordings")];
+    roots.extend(
+        candidates(data_dir)
+            .iter()
+            .map(|c| named_staging_root(data_dir, &c.root)),
+    );
+    roots
+}
+
 pub(crate) fn plan(
     enabled: bool,
     data_dir: &Path,
     destination: &Path,
 ) -> Result<StoragePlan, StreamError> {
     let destination = checked_directory(destination)?;
-    if !enabled || crate::storage_io_budget::is_solid_state(&destination) == Some(true) {
+    if !needs_staging(
+        enabled,
+        crate::storage_io_budget::is_solid_state(&destination),
+    ) {
         return Ok(StoragePlan {
             working_root: destination,
             archive_root: None,
@@ -29,13 +82,12 @@ pub(crate) fn plan(
     let base = if candidate.preferred {
         child_directory(&checked_directory(data_dir)?, "ssd-recordings")?
     } else {
-        let identity = format!(
-            "{:x}",
-            Sha256::digest(data_dir.to_string_lossy().as_bytes())
-        );
+        let root = named_staging_root(data_dir, &candidate.root);
         child_directory(
             &candidate.root,
-            &format!("Atsumi-Recordings-{}", &identity[..16]),
+            root.file_name()
+                .and_then(|n| n.to_str())
+                .ok_or_else(invalid)?,
         )?
     };
     tracing::info!(working_root=%base.display(), archive_root=%destination.display(), free_gib=candidate.free / 1024 / 1024 / 1024, "SSD recording staging selected");
@@ -43,6 +95,10 @@ pub(crate) fn plan(
         working_root: base,
         archive_root: Some(destination),
     })
+}
+
+fn needs_staging(enabled: bool, destination_ssd: Option<bool>) -> bool {
+    enabled && destination_ssd != Some(true)
 }
 
 struct Candidate {
@@ -146,6 +202,23 @@ mod tests {
         .unwrap();
         assert_eq!(found.root, Path::new("ssd"));
         assert!(select(vec![c("unknown", 100 * START_FREE, false)]).is_none());
+    }
+    #[test]
+    fn inspection_distinguishes_destination_from_available_staging_without_writes() {
+        let disks = vec![
+            c("hdd", 100 * START_FREE, false),
+            c("ssd", START_FREE, true),
+        ];
+        assert_eq!(status(Some(true), &disks).destination_kind, "ssd");
+        assert_eq!(status(Some(false), &disks).destination_kind, "hdd");
+        assert_eq!(status(None, &disks).destination_kind, "unknown");
+        assert_eq!(status(None, &disks).detected_ssds, 1);
+        assert!(status(None, &disks).staging_available);
+        assert!(!status(Some(false), &[c("full-ssd", START_FREE - 1, true)]).staging_available);
+        assert!(!needs_staging(true, Some(true)));
+        assert!(needs_staging(true, Some(false)));
+        assert!(needs_staging(true, None));
+        assert!(!needs_staging(false, None));
     }
     #[test]
     fn most_free_ssd_is_selected_and_off_never_creates_working_folders() {

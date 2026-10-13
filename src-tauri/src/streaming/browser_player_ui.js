@@ -17,6 +17,18 @@
   let selectedRate = null;
   const RATES = [.5, .75, 1, 1.25, 1.5, 2];
   let pageActive = true, renderFrame = null;
+  let idleTimer = null, lastActivity = 0;
+  const revealControls = () => {
+    if (!pageActive || !channel()) return;
+    document.documentElement.setAttribute("data-atsumi-controls", "visible");
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      if (document.querySelector('#atsumi-rate-menu:not([hidden]),.pzp-pc__setting-pane:not([hidden])')?.getBoundingClientRect().width > 0 ||
+          document.activeElement?.matches?.(":focus-visible")) { revealControls(); return; }
+      document.documentElement.setAttribute("data-atsumi-controls", "idle"); clearCursor();
+    }, 2400);
+    if (Date.now() - lastActivity > 900) { lastActivity = Date.now(); void request("view_intent", { channelId: channel(), action: "pointer_activity" }).catch(() => {}); }
+  };
   // The embedded official player can leave an idle `cursor:none` style active
   // after a native view is reattached. Repair only a moving pointer's path in
   // this document, never Windows' process-global ShowCursor counter. Real
@@ -48,6 +60,7 @@
   };
   let snapshotBusy = false, intentBusy = false, notice = "", noticeUntil = 0;
   let pageRevision = 0, screenshotNotice = null, screenshotNoticeTimer = null;
+  let screenshotPreview = null, screenshotPreviewUrl = null, screenshotPreviewTimer = null;
   const request = (kind, fields) => new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => { pending.delete(id); reject(new Error("응답을 받지 못했습니다")); }, 8000);
@@ -266,9 +279,13 @@
       style.textContent = `
         [data-atsumi-cursor-restored]{cursor:auto!important}
         button[data-atsumi-cursor-restored],a[data-atsumi-cursor-restored],[role=button][data-atsumi-cursor-restored]{cursor:pointer!important}
-        #atsumi-player-controls{display:flex;align-items:center;gap:2px;flex:0 0 auto;pointer-events:auto;z-index:2147483646}
+        /* PZP fades each button, not the parent strip. Match its state and
+           transition directly; the independent fallback timer must not win. */
+        #atsumi-player-controls{display:flex;align-items:center;gap:2px;flex:0 0 auto;opacity:0;transition:opacity .2s ease-in;pointer-events:none;z-index:2147483646}
+        .pzp-pc.pzp-pc--controls #atsumi-player-controls{opacity:1;pointer-events:auto}
         #atsumi-player-controls[data-floating]{position:absolute;right:12px;bottom:12px;top:auto;opacity:0;transition:opacity .15s;background:#111a;border-radius:6px}
-        .u_rmcplayer:hover #atsumi-player-controls,.pzp-pc:hover #atsumi-player-controls,.webplayer:hover #atsumi-player-controls,#atsumi-player-controls:focus-within{opacity:1}
+        [data-atsumi-controls=visible] #atsumi-player-controls[data-floating]{opacity:1;pointer-events:auto}
+        [data-atsumi-controls=idle] #atsumi-player-controls[data-floating]{opacity:0;pointer-events:none}
         #atsumi-player-controls button{position:relative;display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:7px;border:0;border-radius:5px;background:transparent;color:#fff;cursor:pointer;filter:drop-shadow(0 1px 2px #000)}
         #atsumi-player-controls button:hover,#atsumi-player-controls button:focus-visible{background:#ffffff24;color:#00ffa3;outline:1px solid #ffffff80;outline-offset:-2px}
         #atsumi-player-controls button:disabled{opacity:.4;cursor:default}
@@ -285,11 +302,12 @@
         #atsumi-player-controls [role=menu] [data-catchup]{grid-column:1/-1;height:32px;margin-bottom:3px;border-bottom:1px solid #ffffff20;border-radius:4px 4px 0 0}
         #atsumi-player-controls [aria-checked=true]{color:#00ffa3;background:#ffffff16}
         #atsumi-player-controls svg{width:22px;height:22px;pointer-events:none}
-        #atsumi-player-top-controls{position:fixed;display:flex;align-items:center;gap:6px;max-width:calc(100% - 16px);box-sizing:border-box;pointer-events:auto;z-index:2147483646;padding:3px;border-radius:6px;background:#111b;color:#fff;opacity:0;transition:opacity .15s}
-        #atsumi-player-top-controls[data-bootstrap]{position:fixed;opacity:1}
-        #atsumi-player-top-controls[data-inline]{position:relative;flex:0 0 auto;align-self:center;inset:auto;max-width:none;padding:0;background:transparent;opacity:1}
+        #atsumi-player-top-controls{position:fixed;display:flex;align-items:center;gap:6px;max-width:calc(100% - 16px);box-sizing:border-box;pointer-events:none;z-index:2147483646;padding:3px;border-radius:6px;background:#111b;color:#fff;opacity:0;transition:opacity .2s ease-in}
+        #atsumi-player-top-controls[data-bootstrap]{position:fixed;opacity:1;pointer-events:auto}
+        #atsumi-player-top-controls[data-inline]{position:relative;flex:0 0 auto;align-self:center;inset:auto;max-width:none;padding:0;background:transparent}
         #atsumi-player-top-controls[hidden]{display:none!important}
-        body:has(.u_rmcplayer:hover) #atsumi-player-top-controls,body:has(.pzp-pc:hover) #atsumi-player-top-controls,body:has(.webplayer:hover) #atsumi-player-top-controls,#atsumi-player-top-controls:hover,#atsumi-player-top-controls:focus-within{opacity:1}
+        html:has(.pzp-pc.pzp-pc--controls) #atsumi-player-top-controls{opacity:1;pointer-events:auto}
+        html:not(:has(.pzp-pc))[data-atsumi-controls=visible] #atsumi-player-top-controls{opacity:1;pointer-events:auto}
         #atsumi-player-top-controls button{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:32px;height:32px;padding:0 9px;border:0;border-radius:4px;background:transparent;color:inherit;font:12px/1.3 system-ui,sans-serif;white-space:nowrap;cursor:pointer}
         #atsumi-player-top-controls button:hover,#atsumi-player-top-controls button:focus-visible{background:#ffffff24;outline:1px solid #ffffff80;outline-offset:-1px}
         #atsumi-player-top-controls button:disabled{opacity:.4;cursor:default}
@@ -368,7 +386,9 @@
     // a small player-local hover strip, never a layout-changing extra row.
     const strip = player.querySelector(".pzp-pc__bottom-buttons-right");
     const parent = strip ?? player;
-    if (controls.parentElement !== parent) parent.appendChild(controls);
+    const fullscreen = strip?.querySelector('.pzp-pc__fullscreen-button');
+    if (controls.parentElement !== parent || fullscreen && controls.nextSibling !== fullscreen) parent.insertBefore(controls, fullscreen ?? null);
+    if (fullscreen && strip.lastElementChild !== fullscreen) strip.appendChild(fullscreen);
     controls.toggleAttribute("data-floating", !strip);
     record.disabled = intentBusy || (!state.recording && !state.ready) || state.detail === "saving";
     screenshot.disabled = intentBusy || snapshotBusy || !video;
@@ -405,6 +425,36 @@
     screenshotNotice.style.cssText = "position:absolute;right:14px;bottom:56px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 28px);padding:9px 12px;border:1px solid #ffffff26;border-radius:7px;background:#252528f5;color:#fff;font:13px/1.5 system-ui,sans-serif;box-shadow:0 4px 16px #0005";
     player.appendChild(screenshotNotice);
     if (!saving) screenshotNoticeTimer = setTimeout(() => screenshotNotice?.remove(), 2600);
+  };
+  const clearScreenshotPreview = () => {
+    clearTimeout(screenshotPreviewTimer); screenshotPreview?.remove(); screenshotPreview = null;
+    if (screenshotPreviewUrl) URL.revokeObjectURL(screenshotPreviewUrl);
+    screenshotPreviewUrl = null;
+  };
+  const showScreenshotPreview = (blob, id, sourceChannel, revision) => {
+    clearScreenshotPreview();
+    if (!/^[a-f0-9]{32}$/.test(id ?? "") || !pageActive || !player?.isConnected) return;
+    const popup = document.createElement("div"); popup.id = "atsumi-screenshot-preview";
+    popup.style.cssText = "position:absolute;left:12px;top:64px;width:min(480px,80%);z-index:2147483647;pointer-events:auto;overflow:hidden;border:1px solid #ffffff40;border-radius:8px;background:#202024f5;box-shadow:0 6px 24px #0008;color:white;font:12px/1.5 system-ui,sans-serif";
+    const image = document.createElement("img"); image.alt = "방금 저장한 스크린샷";
+    screenshotPreviewUrl = URL.createObjectURL(blob); image.src = screenshotPreviewUrl;
+    image.style.cssText = "display:block;width:100%;max-height:320px;object-fit:contain;background:#080808";
+    const footer = document.createElement("div"); footer.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 9px";
+    const label = document.createElement("span"); label.textContent = "스크린샷 저장됨";
+    const undo = document.createElement("button"); undo.type = "button"; undo.textContent = "저장 취소"; undo.setAttribute("aria-label", "스크린샷 저장 취소");
+    undo.style.cssText = "border:0;border-radius:4px;padding:4px 6px;background:#ffffff18;color:white;cursor:pointer;font:inherit;white-space:nowrap";
+    undo.addEventListener("click", async event => {
+      if (!event.isTrusted || undo.disabled || !pageActive || pageRevision !== revision || sourceChannel !== channel()) return;
+      event.stopPropagation(); undo.disabled = true; clearTimeout(screenshotPreviewTimer);
+      try {
+        await request("screenshot_undo", { screenshotId: id });
+        if (screenshotPreview === popup) { clearScreenshotPreview(); showScreenshotNotice("스크린샷 저장 취소됨"); }
+      } catch {
+        if (screenshotPreview === popup) { label.textContent = "취소 실패 · 목록에서 삭제 가능"; undo.remove(); screenshotPreviewTimer = setTimeout(clearScreenshotPreview, 5000); }
+      }
+    });
+    footer.append(label, undo); popup.append(image, footer); player.appendChild(popup); screenshotPreview = popup;
+    screenshotPreviewTimer = setTimeout(clearScreenshotPreview, 10000);
   };
   const saveScreenshot = async (command) => {
     if (!pageActive || snapshotBusy || intentBusy || context.automaticWatch || !channel()) return;
@@ -450,8 +500,11 @@
         }
         await Promise.all(batch);
       }
-      check(); await request("screenshot_finish", { requestId });
-      if (pageActive && revision === pageRevision && sourceChannel === channel()) showScreenshotNotice("스크린샷 저장 완료");
+      check(); const saved = await request("screenshot_finish", { requestId });
+      if (pageActive && revision === pageRevision && sourceChannel === channel()) {
+        showScreenshotNotice("스크린샷 저장 완료");
+        try { showScreenshotPreview(blob, saved?.id, sourceChannel, revision); } catch { /* Saving succeeded even if a preview cannot be displayed. */ }
+      }
     } catch {
       if (UUID.test(requestId ?? "")) void request("screenshot_abort", { requestId }).catch(() => {});
       if (pageActive && revision === pageRevision && sourceChannel === channel()) showScreenshotNotice("스크린샷 저장 실패 · 다시 시도해 주세요");
@@ -482,13 +535,29 @@
   }, true);
   window.addEventListener("pagehide", () => {
     pageActive = false;
+    clearTimeout(idleTimer);
     clearCursor();
     pageRevision++; clearTimeout(screenshotNoticeTimer); screenshotNotice?.remove();
+    clearScreenshotPreview();
     if (renderFrame !== null) { window.cancelAnimationFrame(renderFrame); renderFrame = null; }
     stopCatchup(); stopSelectedRate(); removeControls();
   });
   window.addEventListener("pageshow", () => { pageActive = true; scheduleRender(); });
   document.addEventListener("pointermove", revealMovingCursor, { passive: true });
+  document.addEventListener("pointermove", revealControls, { passive: true });
+  document.addEventListener("pointerdown", revealControls, { passive: true });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Tab") revealControls();
+    if (!event.isTrusted || event.defaultPrevented || event.repeat || event.isComposing || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || editing(event)) return;
+    if (event.key?.toLowerCase() === "f") { event.preventDefault(); event.stopImmediatePropagation(); void viewIntent("fullscreen_toggle", event); }
+    if (event.key === "Escape") { void viewIntent("fullscreen_exit", event); }
+  }, true);
+  document.addEventListener("click", event => {
+    const button = event.target?.closest?.('.pzp-pc__fullscreen-button,[data-atsumi-chat-toggle]');
+    if (!button || !event.isTrusted) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+    void viewIntent(button.hasAttribute("data-atsumi-chat-toggle") ? "chat_toggle" : "fullscreen_toggle", event);
+  }, true);
   document.addEventListener("pointerleave", clearCursor);
   document.addEventListener("fullscreenchange", clearCursor);
   window.addEventListener("blur", clearCursor);

@@ -47,7 +47,7 @@ describe("ProgressivePagePreview", () => {
       expect(container.querySelector(".page-preview-media")).toHaveAttribute("data-original-source", "local-artifact");
       const original = container.querySelector<HTMLImageElement>(".page-preview-original")!;
       expect(original.src).toContain("detail-original.localhost");
-      expect(original.alt).toBe("");
+      expect(original.alt).toContain("7페이지 원본");
       await act(async () => original.dispatchEvent(new Event("load")));
       expect(original).toHaveClass("is-ready");
     } finally {
@@ -58,10 +58,10 @@ describe("ProgressivePagePreview", () => {
     }
   });
 
-  it("keeps incomplete galleries on the bounded thumbnail path", async () => {
+  it("loads an incomplete gallery from the source original without requesting a local artifact", async () => {
     const gallery: Gallery = { ...mockGalleries[0]!, download: { entryId: "active-entry", state: "downloading" } };
-    const prepare = vi.fn();
-    const backend = { detailOriginalPrepare: prepare, detailOriginalDispose: vi.fn() } as unknown as BackendClient;
+    const prepare = vi.fn(async (request: DetailOriginalPrepareRequest) => ({ ok: true as const, data: { ...request, mediaUrl: "http://detail-original.localhost/remote", contentType: "image/webp", width: 1600, height: 900 } }));
+    const backend = { detailOriginalPrepare: prepare, detailOriginalDispose: vi.fn(async () => ({ ok: true, data: true })) } as unknown as BackendClient;
     const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "test fixture" }) });
     const container = document.createElement("div");
     document.body.append(container);
@@ -76,12 +76,13 @@ describe("ProgressivePagePreview", () => {
           backend={backend}
         />,
       ));
-      expect(prepare).not.toHaveBeenCalled();
+      expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ sourcePage: 3, entryId: undefined }));
       const media = container.querySelector<HTMLElement>(".page-preview-media")!;
-      expect(media).toHaveAttribute("data-original-source", "thumbnail");
+      expect(media).toHaveAttribute("data-original-source", "source-original");
       expect(media).toHaveAttribute("data-page-orientation", "landscape");
       expect(media).toHaveStyle({ aspectRatio: "1600 / 900" });
-      expect(container.querySelector(".page-preview-original")).toBeNull();
+      expect(container.querySelector(".page-preview-original")).not.toBeNull();
+      expect(container.querySelector(".page-preview-fallback")).toBeNull();
     } finally {
       await act(async () => root.unmount());
       client.dispose();
@@ -91,7 +92,7 @@ describe("ProgressivePagePreview", () => {
 
   it("reports the resolved source dimensions so the dialog can replace its metadata fallback", async () => {
     const gallery: Gallery = { ...mockGalleries[0]!, download: undefined };
-    const backend = { detailOriginalPrepare: vi.fn(), detailOriginalDispose: vi.fn() } as unknown as BackendClient;
+    const backend = { detailOriginalPrepare: vi.fn(async (request: DetailOriginalPrepareRequest) => ({ ok: true, data: { ...request, mediaUrl: "http://detail-original.localhost/remote", contentType: "image/webp", width: 720, height: 1080 } })), detailOriginalDispose: vi.fn(async () => ({ ok: true, data: true })) } as unknown as BackendClient;
     const client = new ThumbnailClient({
       resolve: () => ({ kind: "image" as const, url: "https://images.example.test/resolved.webp", width: 720, height: 1080 }),
     });

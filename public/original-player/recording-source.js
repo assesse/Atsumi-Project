@@ -49,7 +49,14 @@ export function attachRecordingSource(video, initial, onTail) {
   const ended = event => {
     if (disposed) return;
     if (index < source.parts.length - 1) { event.stopImmediatePropagation(); change(index + 1, source.parts[index + 1].startSeconds); }
-    else if (!tailSent) { tailSent = true; onTail(); }
+    else {
+      // The live-site SDK's end screen takes over pointer/seek handling. Local
+      // recordings have no recommendation/end-screen controller to release it.
+      // Retain the normal paused VOD surface at EOF and let play restart at 0.
+      event.stopImmediatePropagation(); paused = true;
+      if (!tailSent) { tailSent = true; onTail(); }
+      video.dispatchEvent(new Event('pause')); video.dispatchEvent(new Event('timeupdate'));
+    }
   };
   Object.defineProperties(video, {
     currentTime: { configurable: true, get: currentTime, set: seek },
@@ -62,9 +69,14 @@ export function attachRecordingSource(video, initial, onTail) {
       return ranges(entries);
     } },
     seeking: { configurable: true, get: () => pending !== null || read('seeking') },
-    ended: { configurable: true, get: () => pending === null && index === source.parts.length - 1 && read('ended') },
+    ended: { configurable: true, get: () => false },
     paused: { configurable: true, get: () => pending !== null ? paused : read('paused') },
-    play: { configurable: true, value: () => { paused = false; return play(); } },
+    play: { configurable: true, value: () => {
+      if (disposed) return Promise.reject(new DOMException('Disposed recording', 'AbortError'));
+      if (currentTime() >= source.duration - .05) seek(0);
+      paused = false;
+      return pending !== null ? Promise.resolve() : play();
+    } },
     pause: { configurable: true, value: () => { paused = true; pause(); } },
   });
   video.addEventListener('loadedmetadata', loaded, true);

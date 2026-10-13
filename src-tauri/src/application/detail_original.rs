@@ -249,9 +249,9 @@ impl DetailOriginalSupervisor {
             .map(|entry_id| DownloadEntryId::new(entry_id.clone()))
             .transpose()
             .map_err(|_| DetailOriginalError::InvalidRequest)?;
-        if entry_id.is_none() && source_page.get() != 1 {
-            return Err(DetailOriginalError::InvalidRequest);
-        }
+        // Page preview may read any validated source page, not only the cover.
+        // The download source resolves the page from trusted gallery metadata;
+        // IPC still accepts no URL or filesystem path.
 
         let cancellation = CancellationToken::new();
         let (generation, replaced) = {
@@ -787,17 +787,17 @@ mod tests {
     }
 
     #[test]
-    fn remote_original_remains_page_one_only() {
+    fn remote_original_can_prepare_later_verified_pages() {
         let temp = tempfile::tempdir().unwrap();
         let (supervisor, started) = fixture_supervisor(FixtureMode::Png, temp.path());
         let mut request = fixture_request("550e8400-e29b-41d4-a716-446655440000");
         request.source_page = 2;
 
-        assert_eq!(
-            supervisor.prepare(request),
-            Err(DetailOriginalError::InvalidRequest)
-        );
-        assert!(!started.load(Ordering::Acquire));
+        let prepared = supervisor.prepare(request).unwrap();
+        assert_eq!(prepared.source_page, 2);
+        assert!(started.load(Ordering::Acquire));
+        assert!(supervisor.media_file(&prepared.request_id).is_some());
+        assert!(supervisor.dispose(&prepared.request_id));
     }
 
     #[test]

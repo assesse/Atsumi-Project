@@ -6,23 +6,23 @@ import { CommonNavigationContext } from "../app/CommonNavigation";
 import { OPEN_FEEDBACK } from "../features/feedback/api";
 
 describe("SideRail source switcher", () => {
-  it("keeps the live disclosure beside navigation with separate click and keyboard targets", async () => {
+  it("opens live settings from the whole navigation row including its disclosure", async () => {
     const host = document.createElement("div"), root = createRoot(host);
     const navigate = vi.fn(), toggle = vi.fn();
     try {
       for (const collapsed of [false, true]) for (const open of [false, true]) {
         await act(async () => root.render(<SideRail source="chzzk" view="live" collapsed={collapsed} autoFindCount={0} attentionCount={0} onNavigate={navigate} onSourceChange={vi.fn()} onToggle={vi.fn()} onOpenLiveChannels={toggle} liveChannelsOpen={open} />));
         const row = host.querySelector('.nav-live-item')!;
-        expect(row.querySelectorAll('button')).toHaveLength(2);
+        expect(row.querySelectorAll('button')).toHaveLength(1);
         expect(host.querySelector('[aria-label="방송 보기"]')).toBeNull();
-        const arrow = row.querySelector<HTMLButtonElement>('.nav-live-disclosure')!;
-        expect(arrow).toHaveAttribute('aria-expanded', String(open));
-        expect(arrow).toHaveAccessibleName(open ? '방송 설정 접기' : '방송 설정 펼치기');
+        const arrow = row.querySelector<HTMLElement>('.nav-live-disclosure')!;
+        expect(row.querySelector('button')).toHaveAttribute('aria-expanded', String(open));
+        expect(arrow).toHaveAttribute('aria-hidden', 'true');
         navigate.mockClear(); toggle.mockClear();
         await act(async () => arrow.click());
         expect(toggle).toHaveBeenCalledOnce(); expect(navigate).not.toHaveBeenCalled();
         await act(async () => row.querySelector<HTMLButtonElement>('.nav-item')!.click());
-        expect(navigate).toHaveBeenCalledExactlyOnceWith('live'); expect(toggle).toHaveBeenCalledOnce();
+        expect(navigate).not.toHaveBeenCalled(); expect(toggle).toHaveBeenCalledTimes(2);
       }
     } finally { await act(async () => root.unmount()); }
   });
@@ -68,7 +68,7 @@ describe("SideRail source switcher", () => {
         const community = host.querySelector('[aria-label="커뮤니티"]');
         if (source === "chzzk") {
           expect(community).toBeNull();
-          expect([...host.querySelectorAll('.main-nav button')].map(button => button.getAttribute('aria-label'))).toEqual(["라이브", "녹화 목록"]);
+          expect([...host.querySelectorAll('.main-nav button')].map(button => button.getAttribute('aria-label'))).toEqual(["라이브", "스크린샷", "녹화 목록"]);
         } else expect(community).not.toBeNull();
       }
     } finally { await act(async () => root.unmount()); }
@@ -112,6 +112,7 @@ describe("SideRail source switcher", () => {
       const banner = container.querySelector<HTMLButtonElement>('.brand[aria-haspopup="menu"]');
       await act(async () => banner?.click());
       expect(container.querySelector('[role="menu"]')).toBeInTheDocument();
+      expect([...container.querySelectorAll('[role="menuitemradio"]')].map(option => option.textContent)).toEqual(["Hitomi", "Danbooru", "CHZZK"]);
       const hitomi = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
         .find((button) => button.textContent?.includes("Hitomi"));
       await act(async () => hitomi?.click());
@@ -182,9 +183,9 @@ describe("SideRail source switcher", () => {
       await act(async () => banner?.click());
       const choices = [...container.querySelectorAll('[role="menuitemradio"]')];
       expect(choices.map((choice) => choice.textContent)).toEqual([
-        "Hitomi앨범 탐색·다운로드·중복 검토",
-        "Danboorupost 검색·미리보기·원본 보관",
-        "CHZZK공개 라이브 시청·녹화·채팅 보관",
+        "Hitomi",
+        "Danbooru",
+        "CHZZK",
       ]);
       expect(choices[1]).toHaveAttribute("aria-checked", "true");
       await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));

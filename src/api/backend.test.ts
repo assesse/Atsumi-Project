@@ -1924,7 +1924,7 @@ describe("browser backend detail original contract", () => {
         requestId,
         galleryId: gallery,
         sourcePage: 2,
-      })).resolves.toMatchObject({ ok: false, error: { code: "VALIDATION_ERROR" } });
+      })).resolves.toMatchObject({ ok: true, data: { galleryId: gallery, sourcePage: 2 } });
     } finally {
       if (previous) state.downloadEntries.set(entryId, previous);
       else state.downloadEntries.delete(entryId);

@@ -3,10 +3,11 @@ import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StreamingWorkspace, type StreamingWorkspaceProps } from "./StreamingWorkspace";
 
-const calls = vi.hoisted(() => ({ panel: vi.fn(), live: vi.fn(), reservations: vi.fn(), invoke: vi.fn() }));
+const calls = vi.hoisted(() => ({ panel: vi.fn(), live: vi.fn(), screenshots: vi.fn(), reservations: vi.fn(), invoke: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: calls.invoke }));
 vi.mock("./OfficialBrowserPanel", () => ({ OfficialBrowserPanel: (props: { view: string }) => { calls.panel(props); return <section aria-label="archive" data-view={props.view} />; } }));
 vi.mock("./MadoWorkspace", () => ({ MadoWorkspace: (props: { unifiedLive: boolean }) => { calls.live(props); return <section aria-label="unified live" data-unified={props.unifiedLive} />; } }));
+vi.mock("./ScreenshotLibrary", () => ({ ScreenshotLibrary: (props: unknown) => { calls.screenshots(props); return <section aria-label="screenshots" />; } }));
 vi.mock("./AutoRecordingPanel", () => ({ AutoRecordingPanel: (props: unknown) => { calls.reservations(props); return <section aria-label="reservations" />; } }));
 const base: StreamingWorkspaceProps = { runtime: "tauri", active: true, railCollapsed: false, onToggleRail: vi.fn(), onSourceChange: vi.fn() };
 const fixture = () => {
@@ -17,26 +18,18 @@ const fixture = () => {
 beforeEach(() => { vi.clearAllMocks(); localStorage.removeItem("atsumi.chzzk.view.v1"); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); });
 afterEach(() => { vi.restoreAllMocks(); localStorage.removeItem("atsumi.chzzk.view.v1"); vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe("one live entry", () => {
-  it("opens channel settings from the sidebar, consumes the request and never replays it on ordinary navigation", async () => {
+  it("keeps live navigation separate from the bottom connection drawer", async () => {
     const view = fixture();
     try {
       await view.render();
-      expect(view.container.querySelector('.main-nav [data-tour="chzzk-channels"]')).toHaveAccessibleName('방송 설정 펼치기');
-      expect(view.container.querySelector('.main-nav [aria-label="방송 보기"]')).toBeNull();
+      expect(view.container.querySelector('main')).toHaveClass('is-unified-live');
+      expect(view.container.querySelector('.main-nav [data-tour="chzzk-channels"]')).toBeNull();
       await view.navigate('녹화 목록');
-      await view.navigate('방송 설정 펼치기');
-      const props = calls.live.mock.calls.at(-1)![0];
-      expect(props.connectionRequest).toBeGreaterThan(0);
-      await act(async () => props.onConnectionRequestHandled());
-      expect(calls.live.mock.calls.at(-1)![0].connectionRequest).toBe(0);
-      await act(async () => props.onConnectionOpenChange(true));
-      expect(view.container.querySelector('[data-tour="chzzk-channels"]')).toHaveAttribute('aria-expanded', 'true');
-      await view.navigate('방송 설정 접기');
-      expect(calls.live.mock.calls.at(-1)![0].connectionRequest).toBeGreaterThan(0);
-      await act(async () => calls.live.mock.calls.at(-1)![0].onConnectionRequestHandled());
-      await view.navigate('녹화 목록'); await view.navigate('라이브');
-      expect(calls.live.mock.calls.at(-1)![0].connectionRequest).toBe(0);
-      expect(view.container.querySelector('[data-tour="chzzk-channels"]')).toHaveAttribute('aria-expanded', 'false');
+      expect(view.container.querySelector('main')).not.toHaveClass('is-unified-live');
+      await view.navigate('라이브');
+      expect(calls.live.mock.calls.at(-1)![0].connectionRequest).toBeUndefined();
+      expect(view.container.querySelector('.main-nav [aria-label="라이브"]')).toHaveAttribute('aria-current', 'page');
+      expect(view.container.querySelector('.main-nav [aria-label="라이브"]')).not.toHaveAttribute('aria-expanded');
       expect(calls.invoke).not.toHaveBeenCalled();
     } finally { await view.close(); }
   });
@@ -88,8 +81,22 @@ describe("one live entry", () => {
       await view.render(); expect(view.container.querySelector('[aria-label="archive"]')).toHaveAttribute("data-view", "recordings");
     } finally { await view.close(); }
   });
+  it("opens screenshots above recordings without creating a player and forwards privacy", async () => {
+    const view = fixture();
+    try {
+      await view.render({ privacyMode: true, navigationRequest: { source: "chzzk", view: "screenshots", sequence: 1 } });
+      const labels = [...view.container.querySelectorAll('.main-nav button')].map(button => button.getAttribute('aria-label'));
+      expect(labels.indexOf('스크린샷')).toBeLessThan(labels.indexOf('녹화 목록'));
+      expect(calls.screenshots).toHaveBeenLastCalledWith(expect.objectContaining({ runtime: "tauri", privacy: true }));
+      expect(calls.live).not.toHaveBeenCalled(); expect(calls.panel).not.toHaveBeenCalled();
+      expect(calls.invoke).not.toHaveBeenCalled();
+      await view.navigate('녹화 목록');
+      expect(view.container.querySelector('[aria-label="screenshots"]')).toBeNull();
+    } finally { await view.close(); }
+  });
   it.each([
     ["라이브", "live", "unified live"],
+    ["스크린샷", "screenshots", "screenshots"],
     ["녹화 목록", "recordings", "archive"],
   ])("restores %s after a new workspace is mounted", async (label, saved, target) => {
     const first = fixture();

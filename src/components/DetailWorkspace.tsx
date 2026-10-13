@@ -45,6 +45,7 @@ import {
 } from "./detailPreviewWindow";
 import { backend as defaultBackend, type BackendClient } from "../api/backend";
 import { ProgressivePagePreview } from "./ProgressivePagePreview";
+import { OriginalPageWindow } from "./OriginalPageWindow";
 import {
   pagePreviewAspect,
   pagePreviewFrame,
@@ -1246,6 +1247,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                 gridTemplateColumns: previewSlotDimensions.map((dimension) => `${pagePreviewAspect(dimension)}fr`).join(" "),
               } : undefined}
             >
+              <OriginalPageWindow gallery={gallery} pages={actualPreviewPages} count={totalPageCount} backend={backend}>
               {previewDisplayPages.map((page, index) => page === null
                 ? <div key={`blank-${index}`} className="page-preview-empty-slot" aria-hidden="true" /> : (
                 <ProgressivePagePreview
@@ -1258,6 +1260,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                   onDimensionResolved={handlePreviewDimensionResolved}
                 />
               ))}
+              </OriginalPageWindow>
             </div>
             {(["left", "right"] as const).map((side) => {
               const direction = (side === "left") === (readingDirection === "ltr") ? -1 : 1;

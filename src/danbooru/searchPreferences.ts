@@ -3,6 +3,9 @@ export type DanbooruFileType = "jpg" | "png" | "gif" | "webp" | "avif" | "webm" 
 export type DanbooruSort =
   | "newest"
   | "oldest"
+  | "popular"
+  | "popular_week"
+  | "popular_month"
   | "score"
   | "favorites"
   | "resolution"
@@ -39,17 +42,23 @@ export const DANBOORU_FILE_TYPES: ReadonlyArray<{ value: DanbooruFileType; label
   { value: "zip", label: "Ugoira ZIP" },
 ];
 
-export const DANBOORU_SORTS: ReadonlyArray<{ value: DanbooruSort; label: string; metatag?: string }> = [
+export const DANBOORU_SORTS: ReadonlyArray<{ value: DanbooruSort; label: string; metatag?: string; description?: string }> = [
   { value: "newest", label: "최신 등록순" },
   { value: "oldest", label: "오래된 등록순", metatag: "order:id_asc" },
-  { value: "score", label: "점수 높은순", metatag: "order:score" },
-  { value: "favorites", label: "즐겨찾기 많은순", metatag: "order:favcount" },
-  { value: "resolution", label: "해상도 높은순", metatag: "order:mpixels" },
+  // Danbooru's native rank is score + freshness, limited upstream to two days.
+  { value: "popular", label: "인기순 · 최근 2일", metatag: "order:rank", description: "최근 2일 · 점수와 최신성" },
+  // Verified against the public API, including the next page and tag/rating
+  // filters. These rank newly uploaded posts by their current total score,
+  // not votes received during the period. A month means a rolling 30 days.
+  { value: "popular_week", label: "인기순 · 일주일", metatag: "age:<7days order:score", description: "최근 7일 등록 · 누적 점수순" },
+  { value: "popular_month", label: "인기순 · 한 달", metatag: "age:<30days order:score", description: "최근 30일 등록 · 누적 점수순" },
   { value: "file_size", label: "파일 큰순", metatag: "order:filesize" },
-  { value: "tag_count", label: "태그 많은순", metatag: "order:tagcount" },
-  { value: "portrait", label: "세로 이미지 우선", metatag: "order:portrait" },
-  { value: "landscape", label: "가로 이미지 우선", metatag: "order:landscape" },
 ];
+// Public API probes on 2026-10-12 repeatedly returned QueryTimedOut for
+// unfiltered all-time score order. The other retired orders also timed out.
+// Do not offer unsupported global orders or silently substitute a local sort
+// or a date-restricted search for all-time results.
+// Legacy persisted values are normalized to newest by the sanitizer below.
 
 const DANBOORU_UNLIMITED_METATAGS = new Set([
   "status", "rating", "limit", "is", "id", "date", "age", "filesize", "filetype",

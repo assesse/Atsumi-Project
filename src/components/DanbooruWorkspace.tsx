@@ -511,6 +511,8 @@ export function DanbooruWorkspace({
   const nextDetail = detailIndex >= 0 && detailIndex < posts.length - 1 ? posts[detailIndex + 1] : undefined;
   const activeFilterCount = activeDanbooruFilterCount(filters);
   const limitedTermCount = danbooruLimitedTermCount(buildDanbooruSearchQuery(exploreDraft, filters));
+  const sortDescription = /(?:^|\s)order:/i.test(exploreDraft)
+    ? undefined : DANBOORU_SORTS.find(({ value }) => value === filters.sort)?.description;
 
   return (
     <div className={`app-shell danbooru-shell${railCollapsed ? " sidebar-collapsed" : ""}`} hidden={!active} inert={!active} style={active ? undefined : { display: "none" }}>
@@ -600,6 +602,7 @@ export function DanbooruWorkspace({
                 }}
               />
               <span className={`danbooru-tag-budget${limitedTermCount > 2 ? " is-over" : ""}`}>
+                {sortDescription ? <>인기순: {sortDescription}<br /></> : null}
                 제한 대상 {limitedTermCount}/2 · rating/date/score 등은 제외 · 정렬은 1개 사용
               </span>
             {filtersOpen ? (
@@ -762,7 +765,6 @@ export function DanbooruSearchFilterPanel({
         <fieldset>
           <legend>등록 기간</legend>
           <DanbooruDateRange from={filters.dateFrom} to={filters.dateTo} onChange={(dateFrom, dateTo) => onChange({ ...filters, dateFrom, dateTo })} />
-          <small>Danbooru 등록일 기준 · YYYYMMDD 붙여넣기 가능</small>
         </fieldset>
         <fieldset>
           <legend>최소 기준</legend>
@@ -773,8 +775,8 @@ export function DanbooruSearchFilterPanel({
         </fieldset>
       </div>
       <footer>
-        <button type="button" className="text-button" onClick={onReset}>조건 초기화</button>
-        <button type="button" className="text-button primary" onClick={onApply}>조건 적용</button>
+        <button type="button" className="icon-button" aria-label="조건 초기화" title="조건 초기화" onClick={onReset}><FluentIcon glyph="\uE72C" /></button>
+        <button type="button" className="text-button primary" onClick={onApply}>적용</button>
       </footer>
     </section>
   );

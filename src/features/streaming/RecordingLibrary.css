@@ -11,10 +11,11 @@
 .streaming-workspace .recording-library-filters button[aria-pressed=true] { background: var(--primary-soft); border-color: var(--line-strong); color: var(--text); }
 .recording-library-toolbar input { min-width: 180px; width: min(100%, 240px); border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; background: var(--workspace); color: var(--text); font-size: 12px; }
 .recording-library-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(290px, 400px); gap: 20px; align-items: start; }
-.recording-library-layout:not(:has(.recording-library-detail)) { grid-template-columns: 1fr; }
+.recording-library-detail-placeholder { min-height: 180px; }
 .recording-library-browse { min-width: 0; }
 .recording-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; align-items: start; }
-.recording-broadcast-group { min-width: 0; align-self: start; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--workspace); }
+.recording-broadcast-group { position:relative; min-width: 0; align-self: start; border: 1px solid var(--line); border-radius: 10px; background: var(--workspace); }
+.recording-broadcast-group:has(.recording-broadcast-heading[aria-expanded=true]){z-index:12}
 .recording-broadcast-group > .recorded-channel { padding: 12px 12px 0; }
 .streaming-workspace .recording-broadcast-heading { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border: 0; border-radius: 0; background: transparent; text-align: left; }
 .recording-broadcast-heading > span:first-child { flex: 1; min-width: 0; }
@@ -22,8 +23,12 @@
 .recording-broadcast-heading small { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
 .recording-broadcast-heading > .fluent { flex: none; font-size: 12px; transition: transform 160ms ease; }
 .recording-broadcast-heading[aria-expanded=true] > .fluent { transform: rotate(180deg); }
-.recording-broadcast-files { display: grid; gap: 6px; padding: 0 8px 8px; }
+.recording-broadcast-files { position:absolute;left:-1px;right:-1px;top:calc(100% - 4px);z-index:12;display:grid;gap:6px;padding:8px;max-height:min(52vh,440px);overflow:auto;background:var(--workspace);border:1px solid var(--line);border-radius:0 0 10px 10px;box-shadow:0 16px 32px #0008;animation:recording-files-open 150ms ease-out; }
+@keyframes recording-files-open{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.recording-broadcast-files{animation:none}}
 .recording-broadcast-files[hidden] { display: none; }
+.recording-broadcast-group.is-single .recording-broadcast-files { position:static;max-height:none;border:0;box-shadow:none;border-radius:0 0 10px 10px; }
+.recording-broadcast-group.is-single { z-index:auto; }
 .streaming-workspace .recording-library .recording-broadcast-files .recording-library-card { padding: 10px; gap: 8px; background: var(--surface); }
 .recording-library .recording-broadcast-files .recording-library-card > strong { min-height: 0; font-size: 12px; color: var(--text-soft); }
 .recording-broadcast-files .recording-library-check { top: 10px; right: 10px; }
@@ -46,6 +51,9 @@
 .recording-library .recording-library-state.is-recording i { color: var(--danger); }
 .recording-library .official-browser-saved-chat-warning { color: var(--danger); }
 .recording-library-detail.official-browser-files { padding: 20px; border-radius: 12px; background: var(--surface); }
+.recording-library-detail-heading { position:relative; padding-right:28px; }
+.streaming-workspace .recording-library-detail-close { position:absolute;top:-6px;right:-8px;display:grid;place-items:center;width:28px;height:28px;min-width:0;padding:4px;border:0;background:transparent; }
+.recording-library-detail-close svg { width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round; }
 .recording-library-detail-heading > span { font-size: 10px; letter-spacing: .03em; color: var(--muted); }
 .recording-library-detail-heading h3 { font-size: 16px; line-height: 1.6; margin: 8px 0; overflow-wrap: anywhere; }
 .recording-library-detail-heading > p { font-size: 11px; color: var(--muted); margin: 0 0 18px; }

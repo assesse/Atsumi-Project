@@ -75,7 +75,7 @@ describe("DanbooruWorkspace", () => {
     vi.clearAllMocks();
   });
 
-  it.each(DANBOORU_SORTS)("requests the server sort $value from its actual dropdown option", async ({ label, metatag }) => {
+  it.each(DANBOORU_SORTS)("requests the server sort $value from its actual dropdown option", async ({ label, metatag, description }) => {
     const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
     try {
       await act(async () => root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
@@ -83,6 +83,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes(label))!.click());
       expect(backend.danbooruSearch).toHaveBeenLastCalledWith({ tags: metatag ?? "", page: 1, pageSize: 50 });
       expect(container.querySelector('[data-post-id="12345678"]')).toBeInTheDocument();
+      if (description) expect(container).toHaveTextContent(`인기순: ${description}`);
     } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
@@ -92,14 +93,35 @@ describe("DanbooruWorkspace", () => {
       await act(async () => root.render(<DanbooruWorkspace backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
       vi.mocked(backend.danbooruSearch).mockResolvedValueOnce({ ok: false, error: { code: "DANBOORU_QUERY_TIMEOUT", message: "Danbooru 서버 검색 시간 초과 · 태그나 기간을 좁혀 주세요.", retryable: true } });
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Danbooru 정렬 기준"]')!.click());
-      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes('점수 높은순'))!.click());
-      expect(backend.danbooruSearch).toHaveBeenLastCalledWith({ tags: "order:score", page: 1, pageSize: 50 });
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes('파일 큰순'))!.click());
+      expect(backend.danbooruSearch).toHaveBeenLastCalledWith({ tags: "order:filesize", page: 1, pageSize: 50 });
       expect(container.querySelector('[data-post-id="12345678"]')).toBeInTheDocument();
       expect(container.querySelector('[role="alert"]')).toHaveTextContent('태그나 기간');
       expect(container.querySelector('.danbooru-empty')).toBeNull();
       const calls = vi.mocked(backend.danbooruSearch).mock.calls.length;
       await act(async () => settle(100));
       expect(backend.danbooruSearch).toHaveBeenCalledTimes(calls);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("keeps the popularity period on later pages and replaces it when switching sorts", async () => {
+    const search = vi.fn<DanbooruApi["danbooruSearch"]>(async request => ({ ok: true, data: { items: [post], page: request.page, hasMore: true } }));
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    const select = async (label: string) => {
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Danbooru 정렬 기준"]')!.click());
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes(label))!.click());
+    };
+    try {
+      await act(async () => root.render(<DanbooruWorkspace backend={{ ...danbooruApi, danbooruSearch: search }} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
+      await select("인기순 · 일주일");
+      expect(search).toHaveBeenLastCalledWith({ tags: "age:<7days order:score", page: 1, pageSize: 50 });
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>(".danbooru-pager button")].find(button => button.textContent === "다음")!.click());
+      expect(search).toHaveBeenLastCalledWith({ tags: "age:<7days order:score", page: 2, pageSize: 50 });
+      await select("인기순 · 한 달");
+      expect(search).toHaveBeenLastCalledWith({ tags: "age:<30days order:score", page: 1, pageSize: 50 });
+      await select("최신 등록순");
+      expect(search).toHaveBeenLastCalledWith({ tags: "", page: 1, pageSize: 50 });
+      expect(container).not.toHaveTextContent("누적 점수순");
     } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
@@ -111,6 +133,11 @@ describe("DanbooruWorkspace", () => {
       await act(async () => trigger.click());
       expect(container.querySelector('.danbooru-search-tools > [role="dialog"]')).toHaveAttribute("id", "danbooru-search-filters");
       expect(container).not.toHaveTextContent("게시물 관계");
+      expect(container).not.toHaveTextContent("YYYYMMDD 붙여넣기 가능");
+      const reset = container.querySelector<HTMLButtonElement>('[aria-label="조건 초기화"]')!;
+      expect(reset).toHaveAttribute("title", "조건 초기화");
+      expect(reset.querySelector(".fluent")).not.toBeNull();
+      expect(container.querySelector(".danbooru-filter-popover footer .primary")).toHaveTextContent(/^적용$/);
       expect(container.querySelectorAll('input[type="date"]')).toHaveLength(2);
       await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
       expect(container.querySelector(".danbooru-filter-popover")).toBeNull();
@@ -142,14 +169,14 @@ describe("DanbooruWorkspace", () => {
       await act(async () => container.querySelector<HTMLButtonElement>(".danbooru-filter-button")!.click());
       for (const [label, value] of [["시작 연도", "2018"], ["시작 월", "10"], ["시작 일", "08"], ["종료 연도", "2012"], ["종료 월", "10"], ["종료 일", "08"]] as const) await type(label, value);
       const calls = vi.mocked(backend.danbooruSearch).mock.calls.length;
-      await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "조건 적용")!.click());
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "적용")!.click());
       expect(backend.danbooruSearch).toHaveBeenCalledTimes(calls);
       expect(container.querySelector('[role="alert"]')).toHaveTextContent("종료일은 시작일 이후");
       expect(container.querySelector('[data-post-id="12345678"]')).toBeInTheDocument();
     } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
-  it("keeps a portrait result after idle and ignores an older empty response", async () => {
+  it("keeps a sorted result after idle and ignores an older empty response", async () => {
     let resolveOld: ((result: Awaited<ReturnType<DanbooruApi["danbooruSearch"]>>) => void) | undefined;
     const search = vi.fn<DanbooruApi["danbooruSearch"]>()
       .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
@@ -160,8 +187,8 @@ describe("DanbooruWorkspace", () => {
     try {
       await act(async () => root.render(<DanbooruWorkspace {...props} />));
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Danbooru 정렬 기준"]')!.click());
-      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes("세로 이미지 우선"))!.click());
-      expect(search).toHaveBeenLastCalledWith({ tags: "order:portrait", page: 1, pageSize: 50 });
+      await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.includes("파일 큰순"))!.click());
+      expect(search).toHaveBeenLastCalledWith({ tags: "order:filesize", page: 1, pageSize: 50 });
       await act(async () => resolveOld!({ ok: true, data: { items: [], page: 1, hasMore: false } }));
       vi.useFakeTimers();
       await act(async () => { vi.advanceTimersByTime(60_000); });
@@ -368,7 +395,7 @@ describe("DanbooruWorkspace", () => {
       await act(async () => general?.click());
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>(".danbooru-filter-panel button")]
-          .find((button) => button.textContent === "조건 적용")
+          .find((button) => button.textContent === "적용")
           ?.click();
         await settle();
       });
@@ -380,12 +407,12 @@ describe("DanbooruWorkspace", () => {
         sort.click();
         await Promise.resolve();
         [...document.body.querySelectorAll<HTMLButtonElement>('[role="option"]')]
-          .find((option) => option.textContent?.includes("점수 높은순"))
+          .find((option) => option.textContent?.includes("파일 큰순"))
           ?.click();
         await settle();
       });
       expect(backend.danbooruSearch).toHaveBeenLastCalledWith(expect.objectContaining({
-        tags: expect.stringContaining("order:score"),
+        tags: expect.stringContaining("order:filesize"),
       }));
     } finally {
       await act(async () => root.unmount());
@@ -401,7 +428,7 @@ describe("DanbooruWorkspace", () => {
     const nextSearchDefaults = {
       ...defaultDanbooruSearchFilters(),
       ratings: ["g"],
-      sort: "score",
+      sort: "file_size",
     };
     window.localStorage.setItem("atsumi.danbooru-state.v1", JSON.stringify({
       view: "explore",
@@ -444,7 +471,7 @@ describe("DanbooruWorkspace", () => {
         await settle();
       });
       expect(backend.danbooruSearch).toHaveBeenLastCalledWith({
-        tags: "sample_artist rating:g order:score",
+        tags: "sample_artist rating:g order:filesize",
         page: 1,
         pageSize: 50,
       });

@@ -92,6 +92,8 @@ pub struct BrowserViewport {
     /// Stage-local trusted popup rectangles, subtracted from the scroll clip.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub occlusions: Vec<BrowserClip>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rounded_occlusions: Vec<BrowserRoundedClip>,
     #[serde(default)]
     pub clip: Option<BrowserClip>,
 }
@@ -109,6 +111,7 @@ impl Default for BrowserViewport {
             occluded: false,
             preserve_background: false,
             occlusions: vec![],
+            rounded_occlusions: vec![],
             clip: None,
         }
     }
@@ -162,8 +165,19 @@ impl BrowserViewport {
                 "확인 창의 시청 범위를 확인하지 못했습니다.",
             ));
         }
-        if self.occlusions.len() > 8
-            || (!self.occlusions.is_empty() && !self.preserve_background)
+        if self.occlusions.len() + self.rounded_occlusions.len() > 8
+            || ((!self.occlusions.is_empty() || !self.rounded_occlusions.is_empty())
+                && !self.preserve_background)
+            || self.rounded_occlusions.iter().any(|c| {
+                [c.x, c.y, c.width, c.height]
+                    .iter()
+                    .any(|v| !v.is_finite() || v.abs() > 32768.0)
+                    || c.width <= 0.0
+                    || c.height <= 0.0
+                    || c.radii
+                        .iter()
+                        .any(|r| !r.is_finite() || *r < 0.0 || *r > c.width.min(c.height) / 2.0)
+            })
             || self.occlusions.iter().any(|c| {
                 [c.x, c.y, c.width, c.height]
                     .iter()
@@ -255,9 +269,21 @@ fn clip_pixels(viewport: &BrowserViewport, scale: f64) -> Result<[i32; 4], Strea
     Ok([left, top, right, bottom])
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BrowserRoundedClip {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    /// CSS order: top-left, top-right, bottom-right, bottom-left.
+    pub radii: [f64; 4],
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PixelOcclusions {
     rectangles: [[i32; 4]; 8],
+    radii: [[i32; 4]; 8],
     length: usize,
 }
 impl PixelOcclusions {
@@ -290,6 +316,17 @@ fn occlusion_pixels(
         ];
         result.length += 1;
     }
+    for rect in &viewport.rounded_occlusions {
+        let index = result.length;
+        result.rectangles[index] = [
+            (rect.x * scale).floor() as i32,
+            (rect.y * scale).floor() as i32,
+            ((rect.x + rect.width) * scale).ceil() as i32,
+            ((rect.y + rect.height) * scale).ceil() as i32,
+        ];
+        result.radii[index] = rect.radii.map(|r| (r * scale).round() as i32);
+        result.length += 1;
+    }
     Ok(result)
 }
 
@@ -299,8 +336,8 @@ mod native_region {
     use windows::Win32::{
         Foundation::HWND,
         Graphics::Gdi::{
-            CombineRgn, CreateRectRgn, DeleteObject, EqualRgn, GetWindowRgn, SetWindowRgn, HGDIOBJ,
-            HRGN, RGN_DIFF,
+            CombineRgn, CreateEllipticRgn, CreateRectRgn, DeleteObject, EqualRgn, GetWindowRgn,
+            SetWindowRgn, HGDIOBJ, HRGN, RGN_DIFF,
         },
     };
 
@@ -316,8 +353,45 @@ mod native_region {
                 return Err(viewport_failed());
             }
             let result = Self(region);
-            for hole in occlusions.rectangles() {
+            for (index, hole) in occlusions.rectangles().iter().enumerate() {
                 let mask = Self::new(*hole, PixelOcclusions::default())?;
+                for (corner, radius) in occlusions.radii[index].iter().copied().enumerate() {
+                    if radius == 0 {
+                        continue;
+                    }
+                    let [left, top, right, bottom] = *hole;
+                    let x = if corner == 0 || corner == 3 {
+                        left
+                    } else {
+                        right - radius
+                    };
+                    let y = if corner < 2 { top } else { bottom - radius };
+                    let outside =
+                        Self::new([x, y, x + radius, y + radius], PixelOcclusions::default())?;
+                    let ex = if corner == 0 || corner == 3 {
+                        left
+                    } else {
+                        right - 2 * radius
+                    };
+                    let ey = if corner < 2 { top } else { bottom - 2 * radius };
+                    let ellipse =
+                        unsafe { CreateEllipticRgn(ex, ey, ex + 2 * radius, ey + 2 * radius) };
+                    if ellipse.0.is_null() {
+                        return Err(viewport_failed());
+                    }
+                    let ellipse = Self(ellipse);
+                    if unsafe {
+                        CombineRgn(Some(outside.0), Some(outside.0), Some(ellipse.0), RGN_DIFF)
+                    }
+                    .0 == 0
+                        || unsafe {
+                            CombineRgn(Some(mask.0), Some(mask.0), Some(outside.0), RGN_DIFF)
+                        }
+                        .0 == 0
+                    {
+                        return Err(viewport_failed());
+                    }
+                }
                 if unsafe { CombineRgn(Some(result.0), Some(result.0), Some(mask.0), RGN_DIFF) }.0
                     == 0
                 {
@@ -453,6 +527,7 @@ impl OfficialBrowser {
         )
         .data_directory(profile)
         .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
+        .initialization_script(super::super::browser_video_ads::initialization_script())
         .initialization_script(include_str!("browser_chat_enhancements.js"))
         .initialization_script(include_str!("browser_page_chat.js"))
         .initialization_script(include_str!("browser_encoded_capture.js"))
@@ -782,6 +857,7 @@ impl OfficialBrowser {
                 state.viewport.occluded = false;
                 state.viewport.preserve_background = false;
                 state.viewport.occlusions.clear();
+                state.viewport.rounded_occlusions.clear();
                 state.viewport.request_sequence = viewport.request_sequence;
             } else {
                 viewport.visible = viewport.visible
@@ -855,6 +931,7 @@ impl OfficialBrowser {
                 state.viewport.occluded = false;
                 state.viewport.preserve_background = false;
                 state.viewport.occlusions.clear();
+                state.viewport.rounded_occlusions.clear();
                 let _ = view.hide();
             }
         }
@@ -874,6 +951,7 @@ impl OfficialBrowser {
         viewport.occluded = false;
         viewport.preserve_background = false;
         viewport.occlusions.clear();
+        viewport.rounded_occlusions.clear();
         let _ = self.set_viewport(app, viewport);
     }
     pub fn probe_extensions(&self, view: &Webview) {
@@ -1063,14 +1141,16 @@ impl OfficialBrowser {
         }
         .parse()
         .map_err(|_| unavailable())?;
-        let return_app = app.clone();
-        let return_label = label.to_owned();
         let popup_host = self.clone();
         let popup_app = app.clone();
-        let is_popup = features.is_some();
         let initial = service_popup::InitialNavigation::default();
+        let return_app = app.clone();
+        let return_label = label.to_owned();
+        let is_popup = features.is_some();
+        let account_navigation = Arc::new(super::account_navigation::AccountNavigation::default());
+        let navigation_guard = account_navigation.clone();
         let mut builder = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
-            .title("CHZZK 로그인·계정 관리")
+            .title("CHZZK 로그인")
             .inner_size(700.0, 820.0)
             .data_directory(profile)
             .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
@@ -1094,11 +1174,25 @@ impl OfficialBrowser {
                 }
             })
             .on_navigation(move |url| {
+                if let Some(upgrade) = navigation_guard.observe(url) {
+                    tracing::info!(diag_stage = "chzzk_account_challenge_https_upgrade");
+                    super::account_navigation::enqueue(
+                        &return_app,
+                        &return_label,
+                        navigation_guard.clone(),
+                        upgrade,
+                    );
+                    // The original HTTP request is never sent. Only its exact
+                    // post-challenge continuation resumes over HTTPS.
+                    return false;
+                }
+                // Restore the previous root-window return behavior. Nested
+                // verification popups retain their opener/POST continuation.
                 if !is_popup && url.host_str() == Some("chzzk.naver.com") && allowed_navigation(url)
                 {
                     let app = return_app.clone();
                     let label = return_label.clone();
-                    thread::spawn(move || {
+                    std::thread::spawn(move || {
                         let dispatch = app.clone();
                         let _ = dispatch.run_on_main_thread(move || {
                             if let Some(window) = app.get_webview_window(&label) {
@@ -1108,17 +1202,41 @@ impl OfficialBrowser {
                     });
                     return false;
                 }
-                initial.allows(url, allowed_navigation(url))
+                let allowed = initial.allows(url, allowed_navigation(url));
+                if !allowed {
+                    tracing::warn!(
+                        diag_stage = "chzzk_account_navigation_blocked",
+                        "official account navigation denied"
+                    );
+                }
+                allowed
+            })
+            .on_page_load(|_, payload| {
+                if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+                    && allowed_navigation(payload.url())
+                {
+                    let stage = if payload.url().host_str() == Some("nid.naver.com") {
+                        "chzzk_account_identity_loaded"
+                    } else {
+                        "chzzk_account_return_loaded"
+                    };
+                    // Stage only: never record URLs, inputs, challenge answers or cookies.
+                    tracing::info!(diag_stage = stage, "official account page loaded");
+                }
             });
         if let Some(features) = features {
             builder = builder.window_features(features);
         }
         let window = builder.build().map_err(|_| unavailable())?;
+        if let Some(view) = app.get_webview(label) {
+            super::account_diagnostics::install(&view);
+        }
         let host = self.clone();
         let handle = app.clone();
         let closed_label = label.to_owned();
         window.on_window_event(move |event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                account_navigation.close();
                 // Never synchronously navigate/destroy sibling WebViews while
                 // WebView2/Tauri is still unwinding a window destruction event.
                 let (host, handle, label) = (host.clone(), handle.clone(), closed_label.clone());
@@ -2445,6 +2563,50 @@ mod tests {
             assert!(!surface.state.visible && !surface.state.enabled);
         }
     }
+    #[cfg(windows)]
+    #[test]
+    fn rounded_masks_match_individual_css_corners_at_high_dpi_and_pane_edges() {
+        use windows::Win32::Graphics::Gdi::PtInRegion;
+        let mut viewport = BrowserViewport {
+            visible: true,
+            preserve_background: true,
+            width: 100.0,
+            height: 100.0,
+            clip: Some(BrowserClip {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            }),
+            rounded_occlusions: vec![BrowserRoundedClip {
+                x: 20.0,
+                y: 20.0,
+                width: 60.0,
+                height: 40.0,
+                radii: [8.0, 8.0, 0.0, 0.0],
+            }],
+            ..Default::default()
+        };
+        for scale in [1.0, 1.25, 2.0] {
+            let holes = occlusion_pixels(&viewport, scale).unwrap();
+            let region =
+                native_region::Region::new(clip_pixels(&viewport, scale).unwrap(), holes).unwrap();
+            let visible = |x: f64, y: f64| {
+                unsafe { PtInRegion(region.0, (x * scale) as i32, (y * scale) as i32) }.as_bool()
+            };
+            assert!(visible(20.0, 20.0)); // live pixels reach the rounded corner
+            assert!(!visible(50.0, 20.0)); // middle of handle remains protected
+            assert!(!visible(20.0, 59.0)); // bottom is square, not rounded
+            assert!(visible(10.0, 40.0));
+        }
+        viewport.rounded_occlusions[0].x = -10.0;
+        let holes = occlusion_pixels(&viewport, 1.0).unwrap();
+        assert_eq!(holes.rectangles[0][0], -10);
+        viewport.rounded_occlusions[0].radii[0] = f64::NAN;
+        assert!(viewport.validate().is_err());
+        viewport.rounded_occlusions[0].radii[0] = 100.0;
+        assert!(viewport.validate().is_err());
+    }
     #[test]
     fn modal_failures_and_cancellation_never_leave_an_interactive_surface() {
         for phase in ["mask", "disable", "focus", "show"] {
@@ -2694,11 +2856,13 @@ mod tests {
             preserve_background: false,
             occlusions: vec![],
             clip: Some(BrowserClip {
+                // The independent rounded masks are empty in this legacy clip test.
                 x: 0.0,
                 y: 100.0,
                 width: 1000.0,
                 height: 600.0,
             }),
+            rounded_occlusions: vec![],
         };
         assert!(v.validate().is_ok());
         v.clip.as_mut().unwrap().height = 701.0;

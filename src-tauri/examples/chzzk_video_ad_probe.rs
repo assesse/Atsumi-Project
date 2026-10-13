@@ -8,6 +8,7 @@ mod model {
 }
 #[cfg(windows)]
 #[path = "../src/streaming/browser_video_ads.rs"]
+#[allow(dead_code)] // The offline fixture tests interception without live initialization.
 mod browser_video_ads;
 
 #[cfg(not(windows))]
@@ -88,6 +89,9 @@ mod probe {
         request('ad_current_fetch',current),
         xhr('ad_polling_xhr','https://api.chzzk.naver.com/ad-polling/v1/lives/123456/ad'),
         request('ad_schedule_fetch','https://nam.veta.naver.com/gfp/v1/vas/vas?vsi=LIVE_CHZZK_NDP_SCH'),
+        request('ad_event_schedule','https://nam.veta.naver.com/gfp/v1/vas/vas?vsi=LIVE_CHZZK_NDP_SCH_EVENT'),
+        request('ad_live_flags','https://api.chzzk.naver.com/service/v1/seoraksan?pgType=CHZZK_LIVE&pgId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+        request('allow_other_flags','https://api.chzzk.naver.com/service/v1/seoraksan?pgType=CHZZK_VOD&pgId=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
         request('allow_auth','https://nid.naver.com/nidlogin.login'),
         request('allow_chat','https://api.chzzk.naver.com/service/v1/chats/access-token'),
         request('allow_manifest','https://livecloud.pstatic.net/synthetic/master.m3u8'),
@@ -234,7 +238,7 @@ mod probe {
             thread::sleep(Duration::from_millis(80));
         };
         let items = result["results"].as_array().ok_or("fixture result array")?;
-        let expected = if mode == "live" { 12 } else { 1 };
+        let expected = if mode == "live" { 15 } else { 1 };
         if items.len() != expected {
             return Err(format!("{mode}: unexpected fixture count").into());
         }

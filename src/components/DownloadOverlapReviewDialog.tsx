@@ -53,7 +53,7 @@ type Props = {
   decisionPending?: boolean;
   automationHistoryItem?: DownloadOverlapAutomationHistoryItem;
   automationHistoryPending?: boolean;
-  automationReviewSequence?: { position: number; total: number; canPrevious: boolean; canNext: boolean };
+  automationReviewSequence?: { position: number; total: number; canPrevious: boolean; canNext: boolean; manual?: boolean };
   containmentGroup?: DownloadOverlapContainmentGroup;
   containmentLoading?: boolean;
   batchProgress?: { completed: number; total: number };
@@ -1189,12 +1189,12 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
             <span className="eyebrow">DOWNLOAD OVERLAP REVIEW</span>
             <h2 id={titleId}>다운로드 판본 중복 검토</h2>
             {automationReviewSequence ? (
-              <nav className="download-overlap-sequence" aria-label="자동 분류 순차 검토">
-                <button type="button" className="text-button" aria-label="이전 자동 분류" title="확인 처리하지 않고 이전 기록으로 이동합니다." disabled={decisionPending || !automationReviewSequence.canPrevious || !onPreviousAutomationReview} onClick={onPreviousAutomationReview}>
+              <nav className="download-overlap-sequence" aria-label={automationReviewSequence.manual ? "수동 판단 순차 검토" : "자동 분류 순차 검토"}>
+                <button type="button" className="text-button" aria-label={automationReviewSequence.manual ? "이전 검토" : "이전 자동 분류"} title="판정하지 않고 이전 항목으로 이동합니다." disabled={decisionPending || !automationReviewSequence.canPrevious || !onPreviousAutomationReview} onClick={onPreviousAutomationReview}>
                   <FluentIcon glyph="\uE76B" /> 이전
                 </button>
                 <span role="status">순차 검토 · {automationReviewSequence.position} / {automationReviewSequence.total}</span>
-                <button type="button" className="text-button" aria-label="다음 자동 분류" title="확인 처리하지 않고 다음 기록으로 이동합니다." disabled={decisionPending || !automationReviewSequence.canNext || !onNextAutomationReview} onClick={onNextAutomationReview}>
+                <button type="button" className="text-button" aria-label={automationReviewSequence.manual ? "다음 검토" : "다음 자동 분류"} title="판정하지 않고 다음 항목으로 이동합니다." disabled={decisionPending || !automationReviewSequence.canNext || !onNextAutomationReview} onClick={onNextAutomationReview}>
                   다음 <FluentIcon glyph="\uE76C" />
                 </button>
               </nav>

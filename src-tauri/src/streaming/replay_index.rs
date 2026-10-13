@@ -239,10 +239,9 @@ fn build_fresh(session: &Session) -> Result<IndexStatus, StreamError> {
         ));
     }
     if backward > 0 {
-        status.warnings.push(
-            "시각 또는 순서가 역행한 기록이 있어 시간 조회와 원본 로그 순서가 다를 수 있습니다."
-                .into(),
-        );
+        status.warnings.push(format!(
+            "채팅 표시 시각·순서 조정 {backward}곳 · 수신 순서와 영상 시각이 달라 시간순으로 표시합니다. 이 안내만으로 영상 손상이나 채팅 유실을 뜻하지는 않습니다."
+        ));
     }
     if tail {
         status

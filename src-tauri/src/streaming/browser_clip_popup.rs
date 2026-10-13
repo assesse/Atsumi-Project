@@ -58,6 +58,14 @@ impl ClipTarget {
 
     fn allows(&self, url: &tauri::Url) -> bool {
         Self::parse(url).as_ref() == Some(self)
+            || (url.scheme() == "https"
+                && url.port().is_none()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.as_str().len() <= 16_384
+                && (url.host_str() == Some("nid.naver.com")
+                    || url.host_str() == Some("chzzk.naver.com")
+                        && matches!(url.path(), "/close-window" | "/")))
     }
 }
 
@@ -199,7 +207,13 @@ mod tests {
             "offsetTime=-12.75&contentId=21213148&contentType=live"
         )));
         assert!(!target.allows(&editor("contentType=live&contentId=21210314&offsetTime=0")));
-        assert!(!target.allows(&"https://nid.naver.com/nidlogin.login".parse().unwrap()));
+        assert!(target.allows(&"https://nid.naver.com/nidlogin.login".parse().unwrap()));
+        assert!(target.allows(&"https://chzzk.naver.com/close-window".parse().unwrap()));
+        assert!(!target.allows(
+            &"https://nid.naver.com.evil.invalid/nidlogin.login"
+                .parse()
+                .unwrap()
+        ));
     }
 
     #[test]

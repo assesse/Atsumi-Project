@@ -22,6 +22,10 @@ pub mod live_channels;
 #[path = "browser_live_profiles.rs"]
 pub mod live_profiles;
 
+#[path = "browser_account_diagnostics.rs"]
+mod account_diagnostics;
+#[path = "browser_account_navigation.rs"]
+mod account_navigation;
 #[path = "browser_auth.rs"]
 mod auth;
 #[path = "browser_chat_popup.rs"]
@@ -45,7 +49,7 @@ pub mod multiview_commands;
 #[path = "browser_recording_profile.rs"]
 pub mod recording_profile;
 #[path = "browser_screenshot.rs"]
-mod screenshot;
+pub mod screenshot;
 #[path = "browser_service_popup.rs"]
 mod service_popup;
 #[path = "browser_session.rs"]
@@ -253,6 +257,7 @@ struct ViewState {
     last_screenshot: Option<screenshot::SavedScreenshot>,
     pending_ui_action: Option<UiAction>,
     last_ui_intent: Option<Instant>,
+    last_pointer_activity: Option<Instant>,
 }
 impl Default for ViewState {
     fn default() -> Self {
@@ -300,6 +305,7 @@ impl Default for ViewState {
             last_screenshot: None,
             pending_ui_action: None,
             last_ui_intent: None,
+            last_pointer_activity: None,
         }
     }
 }
@@ -396,6 +402,9 @@ enum BrowserMessage {
     ScreenshotAbort {
         request_id: String,
     },
+    ScreenshotUndo {
+        screenshot_id: String,
+    },
     Begin {
         request_id: String,
         channel_id: String,
@@ -460,6 +469,7 @@ impl BrowserMessage {
                 | Self::ScreenshotChunk { .. }
                 | Self::ScreenshotFinish { .. }
                 | Self::ScreenshotAbort { .. }
+                | Self::ScreenshotUndo { .. }
         )
     }
     fn screenshot_lane(&self) -> bool {
@@ -757,6 +767,7 @@ impl OfficialBrowser {
         {
             return Err(control_stale());
         }
+        screenshot::library::register_root(&self.inner.data_dir, Path::new(&root))?;
         let _gate = self.inner.contexts.gate.lock().map_err(|_| unavailable())?;
         let profile_busy = self.primary_profile_busy();
         let mut capture = self.inner.screenshots.try_lock().map_err(|_| {
@@ -885,6 +896,7 @@ impl OfficialBrowser {
                         return Err(control_stale());
                     }
                 }
+                screenshot::library::register_root(&self.inner.data_dir, Path::new(&root))?;
                 let nonce =
                     capture.arm(Path::new(&root), &pending.channel_id, pending.generation)?;
                 let result = send_command(
@@ -981,11 +993,20 @@ impl OfficialBrowser {
                     .lock()
                     .map_err(|_| unavailable())?
                     .last_screenshot = Some(saved.clone());
-                Ok(json!({"saved":true,"fileName":saved.file_name}))
+                Ok(json!({"saved":true,"id":saved.id,"fileName":saved.file_name}))
             }
             BrowserMessage::ScreenshotAbort { request_id } => {
                 capture.abort(&request_id);
                 Ok(json!({"aborted":true}))
+            }
+            BrowserMessage::ScreenshotUndo { screenshot_id } => {
+                capture.undo(&screenshot_id, channel, generation)?;
+                self.inner
+                    .view
+                    .lock()
+                    .map_err(|_| unavailable())?
+                    .last_screenshot = None;
+                Ok(json!({"deleted":true}))
             }
             _ => Err(unavailable()),
         }
@@ -2366,6 +2387,10 @@ fn bridge_worker(
                     .lock()
                     .is_ok_and(|state| state.page_generation == generation);
                 let toggle_audio=matches!(&envelope.message,BrowserMessage::ViewIntent {action,..} if action=="audio_toggle");
+                let presentation_action = match &envelope.message {
+                    BrowserMessage::ViewIntent { action, .. } if matches!(action.as_str(), "chat_toggle" | "fullscreen_toggle" | "fullscreen_exit" | "pointer_activity") => Some(action.clone()),
+                    _ => None,
+                };
                 let immediate_record = matches!(&envelope.message, BrowserMessage::ControlIntent { action: ControlAction::RecordStart | ControlAction::RecordStop, .. });
                 let original = matches!(&envelope.message, BrowserMessage::EncodedBegin { .. } | BrowserMessage::EncodedAppend { .. } | BrowserMessage::EncodedFinish { .. });
                 let mut result = if current {
@@ -2380,6 +2405,10 @@ fn bridge_worker(
                 if result.is_ok() && toggle_audio {
                     result=worker_host.capture_context(None).and_then(|root|root.toggle_pane_audio(worker_window.app_handle(),worker_host.label())).map(|_|json!({"accepted":true}));
                 }
+                if result.is_ok() { if let Some(action) = presentation_action {
+                    use tauri::Emitter;
+                    let _ = worker_window.app_handle().emit_to("main", "chzzk-presentation", json!({"action": action, "channelId": channel}));
+                } }
                 if result.is_ok() && immediate_record {
                     // The native bridge has already checked the originating
                     // channel/document. Consume its one-use intent immediately;
@@ -3073,6 +3102,12 @@ mod tests {
     }
     #[test]
     fn screenshot_intents_use_the_photo_lane_not_the_recording_writer() {
+        let envelope: Envelope = serde_json::from_value(json!({"atsumiBrowserCapture":1,"id":"transport-request","kind":"screenshot_undo","screenshotId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})).unwrap();
+        assert_eq!(envelope.id, "transport-request");
+        assert!(envelope.message.screenshot_lane());
+        assert!(
+            matches!(envelope.message, BrowserMessage::ScreenshotUndo { screenshot_id } if screenshot_id == "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
         let photo = BrowserMessage::ControlIntent {
             channel_id: CHANNEL.into(),
             action: ControlAction::Screenshot,

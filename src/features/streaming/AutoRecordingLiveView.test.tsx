@@ -56,7 +56,8 @@ describe("automatic receiver attached to the common live controller", () => {
     expect(container.querySelector('[aria-label="공식 CHZZK 플레이어와 채팅"]')).not.toBeNull();
     await intent(live, "open_settings");
     expect(button("녹화 중지")).toBeEnabled();
-    expect(container).toHaveTextContent("42개");
+    await act(async () => container.querySelector<HTMLButtonElement>('.connection-help')!.click());
+    expect(document.querySelector('.connection-help-content')?.querySelectorAll("p")).toHaveLength(5);
     await act(async () => button("녹화 중지").click());
     expect(live.stop).toHaveBeenCalledOnce(); expect(api.close).not.toHaveBeenCalled();
     expect(live.start).not.toHaveBeenCalled(); expect(live.open).not.toHaveBeenCalled(); expect(api.open).not.toHaveBeenCalled();

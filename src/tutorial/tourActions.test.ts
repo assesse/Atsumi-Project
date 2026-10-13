@@ -36,7 +36,7 @@ describe("tutorial action results", () => {
   });
   it("keeps guides short, source-local and free of forced service switches", () => {
     expect(Object.fromEntries(Object.entries(tutorialStepsBySource).map(([source, steps]) => [source, steps.length])))
-      .toEqual({ hitomi: 15, danbooru: 4, chzzk: 7 });
+      .toEqual({ hitomi: 15, danbooru: 4, chzzk: 6 });
     for (const [source, steps] of Object.entries(tutorialStepsBySource)) {
       expect(new Set(steps.map(step => step.id)).size).toBe(steps.length);
       for (const step of steps) {

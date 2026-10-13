@@ -52,7 +52,12 @@ describe("single recording source for the original player", () => {
     expect(ended).not.toHaveBeenCalled(); expect(tail).not.toHaveBeenCalled();
     expect([video.volume, video.muted, video.playbackRate]).toEqual([.35, true, 1.5]);
     expect(video.buffered.start(0)).toBe(30); expect(video.buffered.end(0)).toBe(55);
-    video.finish(); expect(ended).toHaveBeenCalledOnce(); expect(tail).toHaveBeenCalledOnce();
+    video.finish(); expect(ended).not.toHaveBeenCalled(); expect(tail).toHaveBeenCalledOnce();
+    expect(video.ended).toBe(false); expect(video.paused).toBe(true);
+    video.currentTime = 55; await video.play();
+    expect(video.currentTime).toBe(55); expect(video.paused).toBe(false);
+    video.finish(); await video.play(); video.loaded();
+    expect(video.currentTime).toBe(0); expect(video.paused).toBe(false);
   });
   it("keeps global position through appended ranges and the final single-file transition", async () => {
     const { video, adapter } = fixture(); await video.play(); video.currentTime = 45; video.loaded();

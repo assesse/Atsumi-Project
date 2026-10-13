@@ -54,8 +54,10 @@ const missionLabels: Record<string, string> = { PENDING: "대기", OPEN: "진행
 export function ReplayNoticeHeading({ item }: { item: ReplayMessage }) {
   const notice = item.rich?.notice;
   if (!notice || !(notice.kind in noticeLabels)) return null;
-  return <div className="recording-replay-notice-heading"><strong>{noticeLabels[notice.kind]}</strong>
-    {notice.amount != null && <span>{notice.amount.toLocaleString("ko-KR")} 치즈</span>}
+  return <div className="recording-replay-notice-heading">
+    <svg className="recording-replay-notice-icon" viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d={notice.kind === "mission" ? "M10 1a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V1Zm0 4a5 5 0 1 0 5 5h-2a3 3 0 1 1-3-3V5Zm6-5v4h4l-4 4h-2l-4 4-2-2 4-4V4l4-4Z" : "M3 4h14v3h2v10H1V7h2V4Zm2-2h10v3H5V2ZM4 9v3h3V9H4Zm9 2v3h3v-3h-3Z"}/></svg>
+    <strong>{noticeLabels[notice.kind]}</strong>
+    {notice.amount != null && <span className="recording-replay-notice-amount">{notice.amount.toLocaleString("ko-KR")} 치즈</span>}
     {notice.kind === "subscription" && notice.months != null && <span>{notice.months}개월</span>}
     {notice.kind === "mission" && notice.status && missionLabels[notice.status] && <span className="recording-replay-mission-status">{missionLabels[notice.status]}</span>}
   </div>;

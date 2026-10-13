@@ -49,6 +49,21 @@ afterEach(() => {
 });
 
 describe("watch-only official multiview bridge", () => {
+  it("keeps the original aside out of video-only presentation and delegates chat to the app", () => {
+    const f = fixture(); const player = f.page.querySelector('.pzp-pc')!, aside = f.page.querySelector('aside')!;
+    aside.id = 'aside-chatting'; const parent = aside.parentElement;
+    const header = f.page.createElement('div'); header.className = 'player_header';
+    header.innerHTML = '<div class="header_info"><div class="_control_1m3jr_148"><button>채팅</button><button>후원</button><button>미션</button><button>영도</button></div></div>'; player.append(header);
+    const fullscreen = vi.fn(() => Promise.resolve());
+    Object.defineProperty(f.page.documentElement, 'requestFullscreen', { configurable: true, value: fullscreen });
+    Object.defineProperty(f.page, 'fullscreenElement', { configurable: true, value: player });
+    f.advance();
+    expect(header.querySelector('button')?.hasAttribute('data-atsumi-chat-toggle')).toBe(true);
+    for (const button of [...header.querySelectorAll('button')].slice(1)) expect(button.hasAttribute('data-atsumi-redundant-action')).toBe(true);
+    expect(fullscreen).not.toHaveBeenCalled(); expect(aside.parentElement).toBe(parent);
+    expect(aside.hasAttribute('data-atsumi-mado-side')).toBe(false);
+    expect(player.querySelector('video')).toBe(f.video); expect(f.pause).not.toHaveBeenCalled();
+  });
   it("preserves the official pre-player slot before PZP exists and transitions without touching media", () => {
     const f = fixture(); const main = f.page.querySelector('main')!;
     main.innerHTML = '<div class="_player_jwedy_23"><div class="_container_10lql_1"><div id="preAdPlayerWrapper"><video id="preAdContentPlayer"></video><button>닫기</button></div></div></div><aside>Related broadcasts</aside>';

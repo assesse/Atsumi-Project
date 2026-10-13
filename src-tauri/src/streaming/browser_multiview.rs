@@ -894,6 +894,11 @@ impl OfficialBrowser {
         // WebView2 rejects that focus operation with E_INVALIDARG at creation.
         .focused(!pane.id.starts_with("chzzk-auto-"))
         .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
+        .initialization_script(if pane.kind == PaneKind::Video {
+            super::super::browser_video_ads::initialization_script()
+        } else {
+            ""
+        })
         .initialization_script(if pane.id.starts_with("chzzk-auto-") {
             include_str!("browser_auto_view.js")
         } else {
@@ -1268,6 +1273,7 @@ impl OfficialBrowser {
             if !displayed.visible {
                 displayed.occluded = false;
                 displayed.occlusions.clear();
+                displayed.rounded_occlusions.clear();
                 displayed.preserve_background = false;
             }
             let result = (|| {

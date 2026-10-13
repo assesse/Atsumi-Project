@@ -24,6 +24,7 @@ type DropdownSelectProps<T extends string> = {
   prefix?: string;
   className?: string;
   variant?: "toolbar" | "field";
+  menuMinWidth?: number;
 };
 
 type MenuPlacement = {
@@ -46,6 +47,7 @@ export function DropdownSelect<T extends string>({
   prefix,
   className = "",
   variant = "field",
+  menuMinWidth = 220,
 }: DropdownSelectProps<T>) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -65,7 +67,7 @@ export function DropdownSelect<T extends string>({
     const rect = node.getBoundingClientRect();
     const viewportPadding = 8;
     const gap = 6;
-    const preferredWidth = Math.max(rect.width, 220);
+    const preferredWidth = Math.max(rect.width, menuMinWidth);
     const width = Math.min(preferredWidth, Math.max(180, window.innerWidth - viewportPadding * 2));
     const left = clamp(rect.left, viewportPadding, window.innerWidth - width - viewportPadding);
     const availableBelow = window.innerHeight - rect.bottom - viewportPadding - gap;
@@ -76,7 +78,7 @@ export function DropdownSelect<T extends string>({
     setPlacement(opensUp
       ? { left, width, maxHeight, bottom: window.innerHeight - rect.top + gap }
       : { left, width, maxHeight, top: rect.bottom + gap });
-  }, []);
+  }, [menuMinWidth]);
 
   const close = useCallback((restoreFocus = false) => {
     setOpen(false);

@@ -7,7 +7,8 @@ describe("privacy introduction", () => {
     expect(step.description).toContain("+ 버튼");
     expect(step.description).toContain("최대 네 채널");
     expect(step.action).toBeUndefined();
-    expect(chzzkTourSteps.find(step => step.id === "chzzk-channels")?.title).toBe("방송 보기");
+    expect(chzzkTourSteps.find(step => step.id === "chzzk-live")).toMatchObject({ title: "방송 보기", satisfiedSelector: ':scope[aria-current="page"]' });
+    expect(chzzkTourSteps.some(step => step.id === "chzzk-channels")).toBe(false); // A second click would close the same panel.
     expect(chzzkTourSteps.some(step => step.id === "chzzk-mado")).toBe(false);
     expect(chzzkTourSteps.find(step => step.id === "chzzk-auto")?.description).toContain("즐겨찾기 채널");
   });

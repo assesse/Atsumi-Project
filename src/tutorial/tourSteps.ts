@@ -46,8 +46,7 @@ export const danbooruTourSteps: readonly TourStep[] = [
 ];
 
 export const chzzkTourSteps: readonly TourStep[] = [
-  { id: "chzzk-live", section: "CHZZK", target: '[data-tour="chzzk-nav-live"]', title: "라이브", description: "실시간 영상 · 채팅", action: "click", hint: "라이브 클릭" },
-  { id: "chzzk-channels", section: "CHZZK", target: '[data-tour="chzzk-channels"]', title: "방송 보기", description: "채널 선택 · 주소 입력 · 로그인", action: "click", hint: "방송 보기 클릭" },
+  { id: "chzzk-live", section: "CHZZK", target: '[data-tour="chzzk-nav-live"]', title: "방송 보기", description: "하단 꺾쇠를 누르거나 끌어올려 채널 선택·로그인.", action: "click", hint: "라이브 클릭", satisfiedSelector: ':scope[aria-current="page"]', satisfiedHint: "라이브 열림" },
   { id: "chzzk-connection", section: "CHZZK", target: '[data-tour="chzzk-connection"]', title: "채널 연결", description: "주소 입력 시 채널 이름·프로필 표시. 별표로 즐겨찾기 등록." },
   { id: "chzzk-more", section: "CHZZK", target: '[data-tour="chzzk-add-channel"]', title: "방송 추가", description: "+ 버튼으로 최대 네 채널 시청." },
   { id: "chzzk-auto", section: "CHZZK", target: '[data-tour="chzzk-auto"]', title: "즐겨찾기 · 자동 녹화", description: "즐겨찾기 채널의 방송 상태와 자동 녹화 설정." },

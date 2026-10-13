@@ -231,10 +231,9 @@ select:focus-visible {
 .nav-live-item { position:relative; min-width:0; }
 .nav-live-item>.nav-item { width:100%; padding-right:42px; }
 .nav-live-disclosure { position:absolute; right:4px; top:4px; bottom:4px; display:grid; place-items:center; width:30px; margin:0; padding:0; border:0; border-radius:4px; background:transparent; color:var(--muted); }
-.nav-live-disclosure:hover { background:var(--surface-soft); color:var(--text); }
-.nav-live-disclosure:focus-visible { outline:2px solid var(--primary); outline-offset:-2px; }
+.nav-live-item .nav-item:hover .nav-live-disclosure { color:var(--text); }
 .nav-live-disclosure>.fluent { display:block; font-size:12px; line-height:1; transition:transform 180ms ease; }
-.nav-live-disclosure[aria-expanded=true]>.fluent { transform:rotate(90deg); }
+.nav-live-disclosure[data-expanded=true]>.fluent { transform:rotate(90deg); }
 .sidebar-collapsed .nav-live-item>.nav-item { padding-right:20px; }
 .sidebar-collapsed .nav-live-disclosure { right:0; width:20px; }
 @media(prefers-reduced-motion:reduce) { .nav-live-disclosure>.fluent { transition:none; } }
@@ -4729,11 +4728,10 @@ dialog::backdrop {
   font-size: 13px;
 }
 
-.setting-copy:hover .setting-help-trigger,
+.setting-help-trigger:hover,
 .setting-help-trigger:focus-visible {
   color: var(--primary-strong);
   background: color-mix(in srgb, var(--primary) 15%, transparent);
-  transform: scale(1.08);
 }
 
 .setting-help-trigger:focus-visible {
@@ -7432,18 +7430,23 @@ dialog::backdrop {
   left: 14px;
   display: grid;
   gap: 6px;
-  width: min(310px, calc(100vw - 28px));
+  width: calc(100% - 28px);
+  box-sizing: border-box;
+  transform-origin: top center;
+  animation: source-menu-drop 180ms ease-out;
   padding: 8px;
-  background: #17272e;
-  border: 1px solid #3b5661;
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 10px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
 }
 
 .source-switcher button {
-  display: grid;
-  gap: 3px;
-  padding: 11px 12px;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  padding: 9px 12px;
   color: #dcebee;
   text-align: left;
   background: transparent;
@@ -7484,8 +7487,15 @@ dialog::backdrop {
 
 .sidebar-collapsed .source-switcher {
   top: 92px;
-  left: 12px;
+  left: 4px;
+  width: calc(100% - 8px);
+  padding: 3px;
 }
+.sidebar-collapsed .source-switcher button { padding: 9px 2px; justify-content: center; text-align: center; }
+.sidebar-collapsed .source-switcher strong { font-size: 10px; }
+.sidebar-collapsed .source-switcher span,.sidebar-collapsed .source-switcher button::after { display: none; }
+@keyframes source-menu-drop { from { opacity: 0; transform: translateY(-8px) scaleY(.94); } to { opacity: 1; transform: none; } }
+@media(prefers-reduced-motion:reduce) { .source-switcher { animation: none; } }
 
 .danbooru-workspace {
   display: grid;
@@ -8382,7 +8392,6 @@ dialog::backdrop {
 
   .source-switcher {
     top: 92px;
-    left: 12px;
   }
 
   .danbooru-detail-backdrop {

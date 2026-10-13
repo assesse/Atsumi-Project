@@ -15,6 +15,9 @@
   const MODAL = "data-atsumi-mado-dialog";
   const MODAL_PATH = "data-atsumi-mado-dialog-path";
   const DIALOG = '[role="dialog"],[role="alertdialog"],[aria-modal="true"]';
+  const SIDE = "data-atsumi-mado-side";
+  const LIVE_CHAT = "#aside-chatting";
+  let sideRequested = false, sideWasOpen = false;
   const PLAYER_SELECTOR = ".chzzk_player,.u_rmcplayer,.pzp-pc,.webplayer";
   // The official page mounts its pre-roll/startup view before the PZP player.
   // Hiding that slot makes its geometry 0x0 and can strand startup forever.
@@ -186,6 +189,7 @@
     active = false;
     currentPlayer = null;
     currentVideo = null;
+    sideRequested = sideWasOpen = false;
     placeholder?.remove(); placeholder = null;
   };
   const showOfficialInformation = (player) => {
@@ -249,11 +253,16 @@
         body[${ROOT}] [${MEDIA}] {overflow:visible!important;}
         body[${ROOT}] [${VIDEO}] {object-fit:contain!important;object-position:center!important;}
         body[${ROOT}] [${MODAL}],body[${ROOT}] [${MODAL_PATH}] {z-index:2147483640!important;}
+        body[${ROOT}]:has([${SIDE}]) [${PLAYER}] {width:calc(100vw - min(380px, 48vw))!important;right:auto!important;}
+        body[${ROOT}] [${SIDE}] {display:flex!important;flex-direction:column!important;position:fixed!important;inset:0 0 0 auto!important;width:min(380px,48vw)!important;max-width:100vw!important;min-width:0!important;height:100dvh!important;min-height:0!important;max-height:100dvh!important;box-sizing:border-box!important;overflow:hidden!important;z-index:2147483641!important;}
+        body[${ROOT}] [${SIDE}] > * {min-width:0!important;max-width:100%!important;box-sizing:border-box!important;}
+        body[${ROOT}] [${SIDE}] [class*="_popup_"],body[${ROOT}] [${SIDE}] [class*="_layer_"] {min-width:0!important;max-width:100%!important;max-height:100dvh!important;box-sizing:border-box!important;overflow:auto!important;}
         body[${ROOT}] [data-atsumi-mado-placeholder] {display:grid!important;place-items:center;color:#a6abb6;font:14px/1.6 sans-serif;}
-        body[${ROOT}] [${PLAYER}]:hover .pzp-pc__bottom,
-        body[${ROOT}] [${PLAYER}]:focus-within .pzp-pc__bottom {opacity:1!important;visibility:visible!important;}
-        body[${ROOT}] [${PLAYER}]:is(:hover,:focus-within) .pzp-pc__bottom :is(button,.pzp-pc__volume-control,.pzp-pc__vod-time,.pzp-pc__live-time),
-        body[${ROOT}] [${PLAYER}]:is(:hover,:focus-within) .pzp-pc__bottom-shadow {opacity:1!important;visibility:visible!important;}
+        /* Native PZP owns visibility. Its children fade individually; fading
+           their parent a second time produces an earlier/darker fade. */
+        body[${ROOT}] [${PLAYER}] .player_header .header_info{opacity:0!important;transition:opacity .2s ease-in!important;pointer-events:none!important;}
+        body[${ROOT}]:has(.pzp-pc.pzp-pc--controls) [${PLAYER}] .player_header .header_info{opacity:1!important;pointer-events:auto!important;}
+        [data-atsumi-redundant-action]{display:none!important;}
         body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons,
         body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-left,
         body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-right {align-items:center!important;}
@@ -274,7 +283,6 @@
           body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-buttons-right {flex:1 1 100%;flex-wrap:wrap;justify-content:flex-end;}
           body[${ROOT}] [${PLAYER}] .pzp-pc__bottom-shadow {height:120px!important;}
         }
-        body[${ROOT}] [${PLAYER}]:is(:hover,:focus-within) .player_header .header_info {opacity:1!important;}
         body[${ROOT}] button.pzp-pc__viewmode-button[aria-label="넓은 화면"],
         body[${ROOT}] button.pzp-pc__viewmode-button[aria-label="좁은 화면"] {display:none!important;}
       `;
@@ -336,6 +344,13 @@
       }
       want(dialog, MODAL);
     }
+    // No second aside inside a video tile. The existing app chat owns these
+    // functions; its visibility is toggled by a channel-scoped native intent.
+    for (const button of document.querySelectorAll('.player_header .header_info button')) {
+      const label = button.getAttribute('aria-label') || button.title || button.textContent || '';
+      if (/채팅/.test(label)) { button.setAttribute('data-atsumi-chat-toggle', ''); button.setAttribute('title', 'Atsumi 채팅창 켜기/끄기'); }
+      else if (button.closest('[class*="_control_"]') || /후원|미션/.test(label)) button.setAttribute('data-atsumi-redundant-action', '');
+    }
     reconcile(desired);
     if (player) showOfficialInformation(player);
   };
@@ -356,8 +371,16 @@
     document.addEventListener(event, (event) => { mute(event.target); if (event.type === "loadedmetadata") schedule(); }, true);
   }
   window.addEventListener("resize", schedule);
+  document.addEventListener("fullscreenchange", schedule);
+  document.addEventListener("click", event => {
+    const button = event.target?.closest?.(".player_header .header_info button");
+    if (!chat && requested && allowed() && button &&
+        (button.closest('[class*="_control_"]') || /채팅|후원|미션/.test(button.getAttribute("aria-label") || button.title || button.textContent || ""))) {
+      if (!button.hasAttribute('data-atsumi-chat-toggle')) { event.preventDefault(); event.stopImmediatePropagation(); }
+    }
+  }, true);
   const structural = (node) => node.nodeType === 1 &&
-    (node.matches(`video,${PLAYER_SELECTOR},${STARTUP_SELECTOR},${DIALOG},${WIDE_BUTTON}`) || node.querySelector(`video,${PLAYER_SELECTOR},${STARTUP_SELECTOR},${DIALOG},${WIDE_BUTTON}`));
+    (node.matches(`video,${PLAYER_SELECTOR},${STARTUP_SELECTOR},${DIALOG},${WIDE_BUTTON},${LIVE_CHAT}`) || node.querySelector(`video,${PLAYER_SELECTOR},${STARTUP_SELECTOR},${DIALOG},${WIDE_BUTTON},${LIVE_CHAT}`));
   const observer = new MutationObserver((records) => {
     muteAll();
     if (chat) {
@@ -375,7 +398,7 @@
       // Site progress bars, volume controls and live-chat classes can update
       // many times per second. They must not restore/reapply the entire pane.
       // Existing dialogs may become visible via an ancestor's class/style.
-      if (record.type === "attributes") return !(target.matches(DIALOG) || target.querySelector(DIALOG) || target.matches(WIDE_BUTTON));
+      if (record.type === "attributes") return !(target.matches(DIALOG) || target.querySelector(DIALOG) || target.matches(WIDE_BUTTON) || target.matches(LIVE_CHAT));
       return ![...record.addedNodes, ...record.removedNodes].some(structural);
     })) return;
     if (!stable || records.some((record) => record.type === "attributes" ||

@@ -154,6 +154,70 @@ fn feedback_claim_requires_preview_expires_and_serializes_double_clicks_and_retr
 }
 
 #[test]
+fn feedback_keeps_reports_above_the_previous_200_kib_cap() {
+    let temp = tempfile::tempdir().unwrap();
+    write_lines(
+        temp.path(),
+        "application-0.jsonl",
+        &(0..1000).map(|i| event(NOW - 1000 + i)).collect::<Vec<_>>(),
+    );
+    let prepared = prepare(temp.path(), "chzzk", NOW).unwrap();
+    assert_eq!(prepared.event_count, 1000);
+    assert!(prepared.bytes > 200 * 1024);
+    assert!(prepared.bytes <= 1024 * 1024);
+    assert_eq!(prepared.payload["truncated"], false);
+}
+
+#[test]
+fn feedback_prioritizes_older_login_and_errors_over_repetitive_health_samples() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut login = event(NOW - 60_000);
+    login["level"] = json!("INFO");
+    login["fields"] =
+        json!({"diag_stage":"chzzk_account_captcha_response","status":200,"success":true});
+    let mut lines = vec![
+        login,
+        event(NOW - 59_000),
+        json!({"kind":"http_summary","timeUnixMs":NOW-58_000,"failures":1}),
+    ];
+    for i in 0..6000 {
+        let mut health = event(NOW - 6000 + i);
+        health["level"] = json!("INFO");
+        health["fields"] =
+            json!({"diag_stage":"health","elapsed_ms":i,"renderer_private_bytes":123456789});
+        lines.push(health);
+    }
+    write_lines(temp.path(), "application-0.jsonl", &lines);
+    let prepared = prepare(temp.path(), "chzzk", NOW).unwrap();
+    let events = prepared.payload["events"].as_array().unwrap();
+    assert_eq!(prepared.payload["truncated"], true);
+    assert!(prepared.bytes <= MAX_PAYLOAD);
+    assert_eq!(
+        events[0]["fields"]["diag_stage"],
+        "chzzk_account_captcha_response"
+    );
+    assert_eq!(events[1]["level"], "ERROR");
+    assert_eq!(events[2]["failures"], 1);
+    assert!(events
+        .windows(2)
+        .all(|pair| pair[0]["timeUnixMs"].as_u64() <= pair[1]["timeUnixMs"].as_u64()));
+    assert_eq!(events.last().unwrap()["timeUnixMs"], NOW - 1);
+}
+
+#[test]
+fn feedback_caps_the_number_of_even_tiny_events_at_ten_thousand() {
+    let temp = tempfile::tempdir().unwrap();
+    let lines = (0..10_100)
+        .map(|i| json!({"kind":"event","timeUnixMs":NOW - 10_100 + i}))
+        .collect::<Vec<_>>();
+    write_lines(temp.path(), "application-0.jsonl", &lines);
+    let prepared = prepare(temp.path(), "chzzk", NOW).unwrap();
+    assert_eq!(prepared.event_count, 10_000);
+    assert_eq!(prepared.payload["truncated"], true);
+    assert!(prepared.bytes <= MAX_PAYLOAD);
+}
+
+#[test]
 fn feedback_drafts_are_bounded_and_identity_is_separate_from_community() {
     let temp = tempfile::tempdir().unwrap();
     let mut drafts = DraftStore::default();

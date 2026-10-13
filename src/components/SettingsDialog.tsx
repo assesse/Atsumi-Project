@@ -81,10 +81,6 @@ const formatBytes = (bytes: number): string => {
   })} ${units[unit]}`;
 };
 
-const storagePercent = (part: number, total: number): number => (
-  total > 0 ? Math.min(100, Math.max(0, (part / total) * 100)) : 0
-);
-
 function SettingCopy({ title, summary, detail }: {
   title: string;
   summary: string;
@@ -140,21 +136,7 @@ function SettingCopy({ title, summary, detail }: {
 
   const portalHost = trigger.current?.closest("dialog") ?? document.body;
   return (
-    <div
-      className={`setting-copy${detail ? " has-help" : ""}`}
-      onMouseEnter={() => {
-        if (!detail) return;
-        clearHoverTimer();
-        hoverTimer.current = window.setTimeout(() => {
-          hoverTimer.current = undefined;
-          setHovered(true);
-        }, 180);
-      }}
-      onMouseLeave={() => {
-        clearHoverTimer();
-        setHovered(false);
-      }}
-    >
+    <div className={`setting-copy${detail ? " has-help" : ""}`}>
       <div className="setting-copy-heading">
         <strong>{title}</strong>
         {detail ? (
@@ -164,6 +146,14 @@ function SettingCopy({ title, summary, detail }: {
             className="setting-help-trigger"
             aria-label={`${title} 자세한 설명`}
             aria-describedby={open ? tooltipId : undefined}
+            onMouseEnter={() => {
+              clearHoverTimer();
+              hoverTimer.current = window.setTimeout(() => {
+                hoverTimer.current = undefined;
+                setHovered(true);
+              }, 180);
+            }}
+            onMouseLeave={() => { clearHoverTimer(); setHovered(false); }}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onKeyDown={(event) => {
@@ -257,8 +247,18 @@ export function SettingsDialog({
   const [storageUsage, setStorageUsage] = useState<StorageUsageSnapshot | null>(null);
   const [storageUsageLoading, setStorageUsageLoading] = useState(false);
   const [storageUsageError, setStorageUsageError] = useState("");
+  const recordingStorage = storageUsage?.recordingStorage;
+  const directSsd = recordingStorage?.destinationKind === "ssd";
+  const recordingStorageSummary = !settings.downloadRoot.trim() ? "먼저 다운로드 폴더를 선택하세요."
+    : directSsd ? "다운로드 폴더가 SSD입니다. 이곳에 바로 저장합니다."
+    : !recordingStorage ? (storageUsageLoading ? "저장 디스크 확인 중…" : "저장 디스크를 확인하지 못했습니다.")
+    : recordingStorage.destinationKind === "unknown" ? "다운로드 폴더의 디스크 종류를 확인하지 못했습니다."
+    : recordingStorage.stagingAvailable ? "다운로드 폴더는 HDD · SSD에서 녹화 후 이동"
+    : recordingStorage.detectedSsds > 0 ? "SSD 여유 공간 부족 · 이 옵션을 끄면 HDD에 직접 저장"
+    : "사용 가능한 SSD 없음 · 이 옵션을 끄면 다운로드 폴더에 저장";
   const storageUsageRequest = useRef(0);
   const storageUsageLoadingRef = useRef(false);
+  const storageUsageRequestedPath = useRef<string | null>(null);
   const storageUsagePath = useRef<string | null>(null);
   const storageUsageLoadedAt = useRef(0);
 
@@ -330,12 +330,13 @@ export function SettingsDialog({
   };
 
   const loadStorageUsage = useCallback((force = false) => {
-    if (storageUsageLoadingRef.current) return;
     const requestedPath = settings.downloadRoot.trim();
+    if (storageUsageLoadingRef.current && storageUsageRequestedPath.current === requestedPath) return;
     const fresh = storageUsagePath.current === requestedPath
       && Date.now() - storageUsageLoadedAt.current < 30_000;
-    if (!force && fresh) return;
+    if (!force && fresh && !storageUsageLoadingRef.current) return;
     const request = ++storageUsageRequest.current;
+    storageUsageRequestedPath.current = requestedPath;
     storageUsageLoadingRef.current = true;
     setStorageUsageLoading(true);
     setStorageUsageError("");
@@ -657,10 +658,10 @@ export function SettingsDialog({
                   </div>
                 </div>
                 <hr className="settings-divider" hidden={activeTab !== "general"} />
-                {onReplayTutorial ? <div className="setting-row" hidden={activeTab !== "general"}>
+                {onReplayTutorial ? <div className="setting-row settings-tutorial-row" hidden={activeTab !== "general"}>
                   <div><strong>튜토리얼</strong></div>
-                  <DropdownSelect ariaLabel="튜토리얼 다시 보기" value="" options={[
-                    { value: "", label: "선택하여 다시 보기" },
+                  <DropdownSelect ariaLabel="튜토리얼 다시 보기" className="settings-tutorial-select" menuMinWidth={148} value="" options={[
+                    { value: "", label: "다시 체험하기" },
                     { value: "hitomi", label: "Hitomi" }, { value: "danbooru", label: "Danbooru" }, { value: "chzzk", label: "CHZZK" },
                   ]} onChange={(source) => {
                     if (!loading && !saving && !folderChoosing && (source === "hitomi" || source === "danbooru" || source === "chzzk")) { close(); onReplayTutorial(source); }
@@ -701,60 +702,15 @@ export function SettingsDialog({
                   {storageUsage ? <>
                     <div className="storage-summary-grid">
                       <article>
-                        <span>메모리 미리보기 캐시</span>
-                        <data value={storageUsage.memoryCacheBytes}>{formatBytes(storageUsage.memoryCacheBytes)}</data>
-                        <small>현재 실행 중인 RAM 사용량</small>
+                        <span>시스템 데이터</span>
+                        <data value={storageUsage.systemBytes ?? storageUsage.diskCache.bytes + storageUsage.appData.bytes}>{formatBytes(storageUsage.systemBytes ?? storageUsage.diskCache.bytes + storageUsage.appData.bytes)}</data>
+                        <small>캐시·설정·DB</small>
                       </article>
                       <article>
-                        <span>디스크 캐시</span>
-                        <data value={storageUsage.diskCache.bytes}>{formatBytes(storageUsage.diskCache.bytes)}</data>
-                        <small title="썸네일은 앱을 다시 실행해도 재사용합니다. 원본 페이지 미리보기용 임시 파일도 포함합니다.">저장된 썸네일·원본 미리보기</small>
+                        <span>미디어</span>
+                        <data value={storageUsage.mediaBytes ?? storageUsage.downloads.bytes}>{formatBytes(storageUsage.mediaBytes ?? storageUsage.downloads.bytes)}</data>
+                        <small>다운로드·녹화·스크린샷</small>
                       </article>
-                      <article>
-                        <span>앱 데이터</span>
-                        <data value={storageUsage.appData.bytes}>{formatBytes(storageUsage.appData.bytes)}</data>
-                        <small>DB·분석 정보·마이그레이션 백업</small>
-                      </article>
-                      <article>
-                        <span>다운로드 폴더</span>
-                        <data value={storageUsage.downloads.bytes}>
-                          {!settings.downloadRoot.trim() ? "폴더 미설정" : formatBytes(storageUsage.downloads.bytes)}
-                        </data>
-                        <small>{settings.downloadRoot.trim() && !storageUsage.downloads.exists ? "설정된 폴더가 존재하지 않음" : "다운로드 루트 아래의 실제 파일"}</small>
-                      </article>
-                    </div>
-                    <div className="storage-volume-list">
-                      {storageUsage.volumes.map((volume) => {
-                        const total = volume.totalBytes;
-                        const available = volume.availableBytes;
-                        if (total === undefined || available === undefined || total <= 0) {
-                          return <article className="storage-volume" key={volume.root}>
-                            <div><strong>{volume.root}</strong><span>디스크 전체·남은 용량을 읽지 못했습니다.</span></div>
-                            <small>Atsumi 관리 경로 {formatBytes(volume.atsumiBytes)}</small>
-                          </article>;
-                        }
-                        const occupied = Math.min(total, Math.max(0, total - available));
-                        const atsumiOnDisk = Math.min(occupied, volume.atsumiBytes);
-                        const otherOccupied = Math.max(0, occupied - atsumiOnDisk);
-                        return <article className="storage-volume" key={volume.root}>
-                          <div className="storage-volume-heading">
-                            <strong>{volume.root} 디스크</strong>
-                            <span>{formatBytes(available)} 남음 / {formatBytes(total)}</span>
-                          </div>
-                          <div
-                            className="storage-volume-meter"
-                            role="img"
-                            aria-label={`${volume.root} 전체 ${formatBytes(total)} 중 ${formatBytes(occupied)} 사용, Atsumi 관리 경로 ${formatBytes(volume.atsumiBytes)}`}
-                          >
-                            <span className="is-other" style={{ width: `${storagePercent(otherOccupied, total)}%` }} />
-                            <span className="is-atsumi" style={{ width: `${storagePercent(atsumiOnDisk, total)}%` }} />
-                          </div>
-                          <div className="storage-volume-legend">
-                            <span><i className="is-atsumi" />Atsumi 관리 경로 {formatBytes(volume.atsumiBytes)} ({storagePercent(volume.atsumiBytes, total).toLocaleString("ko-KR", { maximumFractionDigits: 2 })}%)</span>
-                            <span><i className="is-other" />기타 사용 {formatBytes(otherOccupied)}</span>
-                          </div>
-                        </article>;
-                      })}
                     </div>
                     {storageUsage.warnings.length ? <ul className="storage-usage-warnings">
                       {storageUsage.warnings.map((warning) => <li key={warning}>{warning}</li>)}
@@ -1115,9 +1071,11 @@ export function SettingsDialog({
                     </article>
                   </div>
                 </section>
-                <div className="setting-row" hidden={activeTab !== "chzzk"} title="새 녹화부터 PC의 SSD를 자동으로 찾아 녹화·병합합니다. 검증된 영상과 채팅·프로필을 다운로드 폴더로 복사하고 확인한 뒤 SSD 작업 파일을 정리합니다. SSD가 없거나 시작 여유 공간이 20 GiB 미만이면 이유를 알리고 시작하지 않습니다. 끄더라도 이미 SSD에 저장한 녹화의 이관은 계속됩니다.">
-                  <div><strong>CHZZK 녹화에 SSD 사용</strong><span>SSD에서 녹화·병합 후 다운로드 폴더로 자동 이동</span></div>
-                  <label className="setting-checkbox"><input type="checkbox" role="switch" aria-label="CHZZK 녹화에 SSD 사용" checked={draft.chzzkSsdStaging ?? false} onChange={(event) => patch("chzzkSsdStaging", event.target.checked)} /><span>{draft.chzzkSsdStaging ? "사용 중" : "사용 안 함"}</span></label>
+                <div className="setting-row" hidden={activeTab !== "chzzk"}>
+                  <SettingCopy title="CHZZK 녹화에 SSD 사용" summary={recordingStorageSummary}
+                    detail="다운로드 폴더가 SSD이면 다른 경로를 쓰지 않습니다. HDD일 때만 20 GB 이상 여유가 있는 SSD를 사용하고, 검증 후 다운로드 폴더로 이동합니다. 끄더라도 기존 녹화의 이동은 계속됩니다." />
+                  <label className="setting-checkbox"><input type="checkbox" role="switch" aria-label="CHZZK 녹화에 SSD 사용" checked={directSsd || (draft.chzzkSsdStaging ?? false)} disabled={directSsd || !!recordingStorage && !recordingStorage.stagingAvailable && !draft.chzzkSsdStaging}
+                    onChange={(event) => patch("chzzkSsdStaging", event.target.checked)} /><span>{directSsd ? "직접 저장" : draft.chzzkSsdStaging ? "사용 중" : "사용 안 함"}</span></label>
                 </div>
               </> : null}
               {activeTab === "danbooru" ? (
@@ -1216,7 +1174,7 @@ function DanbooruSettingsPanel({
           <article><strong>범위·비교 입력</strong><p>날짜 범위와 수치 비교를 같은 문법으로 조합할 수 있습니다.</p><code>date:2026-08-01..2026-08-31 · score:&gt;=20 · favcount:&gt;=5 · width:&gt;=1600 · ratio:&gt;1</code></article>
           <article><strong>제한에서 제외</strong><p>일반 태그 2개와 함께 추가해도 슬롯을 쓰지 않습니다.</p><code>status rating limit is id date age filesize filetype parent child md5 width height duration mpixels ratio score upvote downvotes favcount embedded tagcount pixiv_id pixiv</code></article>
           <article><strong>제한에 포함</strong><p>각 종류가 일반 태그와 같은 슬롯을 사용합니다.</p><code>order source pool user fav favgroup has ai note comment commentary search wildcards</code></article>
-          <article><strong>정렬 값</strong><p>Atsumi가 제공하는 주요 정렬이며 한 번에 하나만 사용할 수 있습니다.</p><code>id_asc score favcount mpixels filesize tagcount portrait landscape</code></article>
+          <article><strong>정렬 값</strong><p>최근 2일은 점수·최신성, 일주일·한 달은 최근 7일·30일에 등록된 작품의 누적 점수순입니다.</p><code>order:id_asc · order:rank · order:score · order:filesize</code></article>
         </div>
       </details>
       <hr className="settings-divider" />

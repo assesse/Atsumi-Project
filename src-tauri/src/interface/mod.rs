@@ -1,6 +1,7 @@
 mod api;
 pub(crate) mod commands;
 pub(crate) mod danbooru;
+mod danbooru_transport;
 mod storage_usage;
 
 pub use api::{

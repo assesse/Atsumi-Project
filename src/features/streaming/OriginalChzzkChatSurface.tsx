@@ -22,6 +22,7 @@ export function OriginalChzzkChatSurface({ children }: { children: (surface: Sha
       <style>{shadowChatStyles}</style>
       <style>{searchStyles}</style>
       <style>{adapterStyles}</style>
+      <style>{`.recording-replay-menu-anchor{display:flex;align-items:center;gap:4px}.recording-replay-dismiss{display:grid;place-items:center;position:static;width:30px;height:30px;flex:none;padding:4px;border:0;border-radius:6px;color:inherit;background:transparent;cursor:pointer}.recording-replay-dismiss:hover{background:#ffffff18}.recording-replay-dismiss svg{width:22px;height:22px}`}</style>
       <div className="original-chat-root theme_dark" data-theme="dark">{children(surface)}</div>
     </>, surface)}
   </aside>;

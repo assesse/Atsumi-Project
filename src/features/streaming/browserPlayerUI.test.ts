@@ -23,10 +23,10 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
   Object.defineProperties(video, { readyState: { value: options.notReady ? 0 : 4, configurable: true }, videoWidth: { value: 1920, configurable: true }, videoHeight: { value: 1080 }, currentTime: { value: 100, writable: true },
     seekable: { value: { length: 1, start: () => 90, end: () => 104.25 }, configurable: true }, buffered: { value: { length: 1, start: () => 90, end: () => 106 }, configurable: true },
     paused: { value: false, writable: true }, playbackRate: { value: 1, writable: true }, seeking: { value: false, writable: true } });
-  let keyListener: ((event: Record<string, unknown>) => void) | undefined;
+  const keyListeners: ((event: Record<string, unknown>) => void)[] = [];
   const addListener = page.addEventListener.bind(page);
   vi.spyOn(page, "addEventListener").mockImplementation(((name: string, listener: EventListener, options?: boolean) => {
-    if (name === "keydown") keyListener = listener as unknown as typeof keyListener;
+    if (name === "keydown") keyListeners.push(listener as unknown as (event: Record<string, unknown>) => void);
     addListener(name, listener, options);
   }) as typeof page.addEventListener);
   const events = new Map<Element, (event: unknown) => void>();
@@ -61,18 +61,19 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
     chrome: { webview: { postMessage: (raw: string) => {
       const message = JSON.parse(raw.slice("ATSUMI_BROWSER_CAPTURE:".length)) as Message;
       messages.push(message);
-      const data = options.replyData ?? (message.kind === "control_intent" && message.action === "screenshot" ? { requestId: REQUEST, channelId: CHANNEL } : { saved: true });
+      const data = options.replyData ?? (message.kind === "control_intent" && message.action === "screenshot" ? { requestId: REQUEST, channelId: CHANNEL } : { saved: true, id: "a".repeat(32) });
       if (!options.manualReply) queueMicrotask(() => pageWindow.dispatchEvent(new CustomEvent("atsumi-browser-reply", { detail: { id: message.id, ok: !options.rejectReply, data } })));
     } } }, __atsumiPlayerUI: undefined as undefined | { update(state: Record<string, unknown>): void; configure(state: Record<string, unknown>): void; stopCatchup(): void },
     __atsumiEncodedCapture: undefined as undefined | { canChangePlaybackRate(video: HTMLVideoElement): boolean },
   });
   const windowListener = vi.spyOn(pageWindow, "addEventListener");
   pageWindow.top = options.frame ? {} : pageWindow;
-  const context = { window: pageWindow, document: page, crypto, CustomEvent, Date, setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array, btoa };
+  const objectURLs = { createObjectURL: vi.fn(() => 'blob:synthetic-screenshot'), revokeObjectURL: vi.fn() };
+  const context = { window: pageWindow, document: page, crypto, CustomEvent, Date, setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array, btoa, URL: objectURLs };
   runInNewContext(source, context);
   return { page, player, live, video, messages, canvas, capturedTimes, window: pageWindow,
     reply: (index: number, data: Record<string, unknown> = { saved: true }, ok = true) => pageWindow.dispatchEvent(new CustomEvent("atsumi-browser-reply", { detail: { id: messages[index]!.id, ok, data } })),
-    windowListener,
+    windowListener, objectURLs,
     flushFrame: () => { const pendingFrames = [...frames.values()]; frames.clear(); for (const callback of pendingFrames) callback(0); },
     movePlayer: (top: number) => {
       vi.mocked(player.getBoundingClientRect).mockReturnValue(rect(playerLeft, top, playerWidth, options.playerHeight ?? 540));
@@ -85,7 +86,7 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
     trustedClick: (name: string) => { const button = page.querySelector(`[aria-label="${name}"]`)!; events.get(button)?.({ isTrusted: true, stopPropagation() {} }); },
     key: (fields: Record<string, unknown> = {}) => {
       const event = { isTrusted: true, code: "KeyS", key: "s", target: page.body, preventDefault: vi.fn(), stopPropagation: vi.fn(), ...fields };
-      keyListener?.(event); return event;
+      for (const listener of keyListeners) listener(event); return event;
     },
     command: (fields: Record<string, unknown> = {}) => pageWindow.dispatchEvent(new CustomEvent("atsumi-browser-command", { detail: { kind: "screenshot", channelId: CHANNEL, requestId: REQUEST, ...fields } })),
     again: () => runInNewContext(source, context),
@@ -106,7 +107,7 @@ describe("official player controls", () => {
     Object.defineProperty(h.page, "fullscreenElement", { value: h.player, configurable: true });
     h.video.dispatchEvent(new MouseEvent("pointermove", { bubbles: true })); h.flushFrame();
     expect(h.video.hasAttribute("data-atsumi-cursor-restored")).toBe(false);
-    expect(h.messages).toEqual([]);
+    expect(h.messages).toEqual([expect.objectContaining({ kind: "view_intent", action: "pointer_activity" })]);
   });
   it("does not override normal pointer/text cursors or touch other page sections", () => {
     const h = fixture();
@@ -116,7 +117,7 @@ describe("official player controls", () => {
     h.input.style.cursor = "none";
     h.input.dispatchEvent(new MouseEvent("pointermove", { bubbles: true })); h.flushFrame();
     expect(h.input.hasAttribute("data-atsumi-cursor-restored")).toBe(false);
-    expect(h.messages).toEqual([]);
+    expect(h.messages).toEqual([expect.objectContaining({ kind: "view_intent", action: "pointer_activity" })]);
   });
   it("hides controls only for the off-canvas automatic receiver without replacing the player", () => {
     const h = fixture(); h.ready();
@@ -280,7 +281,7 @@ describe("official player controls", () => {
     h.live.dispatchEvent(new Event("click"));
     expect(officialClick).toHaveBeenCalledOnce();
   });
-  it("leaves official wide/narrow controls and single-view Escape handling to the site", () => {
+  it("keeps official controls intact and forwards Escape to the app-owned fullscreen", () => {
     const h = fixture();
     const official = h.page.querySelector<HTMLButtonElement>("#official-wide")!;
     const toggle = vi.fn(() => { official.textContent = official.textContent === "넓게 보기" ? "좁게 보기" : "넓게 보기"; });
@@ -290,7 +291,7 @@ describe("official player controls", () => {
     expect(h.page.querySelector("[data-presentation],#atsumi-presentation-toggle")).toBeNull();
     expect(h.page.querySelector('[aria-label="기본 보기"]')).toBeNull();
     expect(h.key({ key: "Escape", code: "Escape" }).preventDefault).not.toHaveBeenCalled();
-    expect(h.messages).toEqual([]);
+    expect(h.messages).toEqual([expect.objectContaining({ kind: "view_intent", action: "fullscreen_exit" })]);
   });
   it("sends a trusted one-use native intent without capturing pixels in the control UI", async () => {
     const h = fixture(); h.ready();
@@ -360,6 +361,27 @@ describe("official player controls", () => {
     expect(h.messages.map((m) => m.kind)).toEqual(["screenshot_begin", "screenshot_chunk", "screenshot_finish"]);
     expect(h.messages[0]).toMatchObject({ mimeType: "image/png", width: 1920, height: 1080, size: 8 });
     expect(h.canvas.width).toBe(0); expect(h.canvas.height).toBe(0);
+  });
+  it("previews the saved frame at the upper left and undoes only its returned ID", async () => {
+    const h = fixture(); h.key(); await flush();
+    const preview = h.page.querySelector<HTMLElement>('#atsumi-screenshot-preview')!;
+    expect(preview).not.toBeNull(); expect(preview.style.left).toBe('12px'); expect(preview.style.top).toBe('64px');
+    expect(preview.querySelector('img')?.getAttribute('src')).toBe('blob:synthetic-screenshot');
+    preview.querySelector<HTMLButtonElement>('button')!.click(); await flush();
+    expect(h.messages.some(value => value.kind === 'screenshot_undo')).toBe(false);
+    h.trustedClick('스크린샷 저장 취소'); await flush();
+    expect(h.messages.at(-1)).toMatchObject({ kind: 'screenshot_undo', screenshotId: 'a'.repeat(32) });
+    expect(h.page.querySelector('#atsumi-screenshot-preview')).toBeNull();
+    expect(h.objectURLs.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:synthetic-screenshot');
+    expect(h.page.querySelector('[role="status"]')?.textContent).toContain('저장 취소됨');
+  });
+  it.each(['timeout', 'pagehide', 'next capture'])("releases the preview blob on %s without deleting a photo", async reason => {
+    const h = fixture(); h.key(); await flush();
+    if (reason === 'timeout') await vi.advanceTimersByTimeAsync(10000);
+    else if (reason === 'pagehide') h.window.dispatchEvent(new Event('pagehide'));
+    else { h.key(); await flush(); }
+    expect(h.objectURLs.revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(h.messages.some(value => value.kind === 'screenshot_undo')).toBe(false);
   });
   it("rejects oversized screenshot data without uploading it and releases the arm", async () => {
     const h = fixture(); h.setPngSize(16 * 1024 * 1024 + 1); h.command(); await flush();
@@ -449,7 +471,7 @@ describe("official player controls", () => {
     expect(h.page.querySelector("#atsumi-player-top-controls")).toBeNull();
     expect(h.page.querySelector('[aria-label="기본 보기"]')).toBeNull();
     expect(h.key({ key: "Escape", code: "Escape" }).preventDefault).not.toHaveBeenCalled();
-    expect(h.messages).toHaveLength(0);
+    expect(h.messages).toEqual([expect.objectContaining({ kind: "view_intent", action: "fullscreen_exit" })]);
     expect(source).not.toContain("audio_toggle");
     expect(source).not.toContain("이 방송 소리");
   });
@@ -473,7 +495,7 @@ describe("official player controls", () => {
     h.trustedClick('재생 배속'); h.trustedClick('1.5배속'); expect(h.video.playbackRate).toBe(1.5);
     expect(menu.querySelector('[data-catchup]')?.getAttribute('aria-checked')).toBe('false');
     h.trustedClick('재생 배속'); h.page.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-    expect(menu.hidden).toBe(true); expect(h.video.playbackRate).toBe(1.5); expect(h.messages).toEqual([]);
+    expect(menu.hidden).toBe(true); expect(h.video.playbackRate).toBe(1.5); expect(h.messages).toEqual([expect.objectContaining({ kind: "view_intent", action: "pointer_activity" })]);
   });
   it("keeps legacy recording at 1x and allows only an approved matching encoded session", () => {
     const h = fixture(); h.window.__atsumiPlayerUI!.update({ ready: true, recording: true, detail: "recording" });

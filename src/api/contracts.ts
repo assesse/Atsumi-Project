@@ -216,6 +216,9 @@ export type StorageVolumeUsage = {
 };
 
 export type StorageUsageSnapshot = {
+  systemBytes?: number;
+  mediaBytes?: number;
+  recordingStorage?: { destinationKind: "ssd" | "hdd" | "unknown"; detectedSsds: number; stagingAvailable: boolean };
   /** In-process thumbnail cache; this does not consume disk space. */
   memoryCacheBytes: number;
   /** Temporary original images retained while a page preview is open. */

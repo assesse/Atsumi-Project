@@ -7,6 +7,13 @@ import { MadoWorkspace, NativeStreamingPane, readMadoLayout } from "./MadoWorksp
 import { createOfficialBrowserApi, emptyOfficialBrowserSnapshot } from "../../api/officialBrowser";
 import { tutorialStepEvent } from "../../tutorial/tourActions";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+const nativeWindow = vi.hoisted(() => ({ isMinimized: vi.fn(), isVisible: vi.fn(), isFullscreen: vi.fn(), setFullscreen: vi.fn() }));
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => nativeWindow }));
+const presentationEvents = vi.hoisted(() => new Set<(event: { payload: { action: string; channelId: string } }) => void>());
+vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, handler: (event: { payload: { action: string; channelId: string } }) => void) => {
+  if (name === 'chzzk-presentation') presentationEvents.add(handler);
+  return () => presentationEvents.delete(handler);
+} }));
 // Simulate the parent's sidebar request; the live workspace has no own header.
 function WorkspaceFixture(props: ComponentProps<typeof MadoWorkspace>) {
   const [request, setRequest] = useState(0);
@@ -35,15 +42,107 @@ const fake = () => ({ runtime: "tauri" as const, configure: vi.fn<MultiviewApi["
   setViewport: vi.fn<MultiviewApi["setViewport"]>().mockResolvedValue(success(undefined)),
 });
 let container: HTMLDivElement, root: Root;
-beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))); });
+beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))); nativeWindow.isMinimized.mockResolvedValue(false); nativeWindow.isVisible.mockResolvedValue(true); nativeWindow.isFullscreen.mockResolvedValue(false); nativeWindow.setFullscreen.mockResolvedValue(undefined); });
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.useFakeTimers(); vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 16)); vi.stubGlobal("cancelAnimationFrame", clearTimeout); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
-const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === text)!;
+const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === text || element.getAttribute('aria-label') === text)!;
 const enter = async (index: number, text: string) => act(async () => {
   const input = container.querySelector<HTMLInputElement>(`#mado-channel-${index}`)!;
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text); input.dispatchEvent(new Event("input", { bubbles: true }));
 });
 describe("마도 배치", () => {
+  it("names the bottom handle for watching or editing the current broadcast", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    expect(container.querySelector('.live-bottom-handle')?.textContent).toBe("");
+    expect(container.querySelector('.live-bottom-handle')).toHaveAttribute("aria-label", "방송 조작 열기");
+    await act(async () => root.render(null));
+    api.snapshot.mockResolvedValue(success(emptyMultiview()));
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    expect(container.querySelector('.live-bottom-handle')?.textContent).toBe("");
+    expect(container.querySelector('.live-bottom-handle')).toHaveAccessibleName("방송 보기 열기");
+  });
+  it("starts with a short directional guide and opens the drawer only from the bottom handle", async () => {
+    const api = fake();
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    expect(container.querySelector('.mado-live-empty')).toHaveTextContent("아래 손잡이를 누르거나 끌어올려 방송을 선택하세요.");
+    expect(container.querySelector('.live-empty-direction')).toHaveAttribute('aria-hidden', 'true');
+    expect(container.querySelector('.mado-connection-panel')).toBeNull();
+    const handle = button('방송 보기 열기');
+    expect(handle).toBeVisible();
+    await act(async () => { handle.focus(); handle.click(); });
+    expect(handle).toBeVisible(); expect(handle).toHaveAccessibleName('방송 보기 닫기');
+    expect(handle).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.mado-live-empty')).toBeNull();
+    expect(container.querySelector('.mado-connection-panel')).not.toBeNull();
+    await act(async () => button('연결 설정 닫기').click());
+    expect(handle).toBeVisible(); expect(document.activeElement).toBe(handle);
+    expect(container.querySelector('.mado-live-empty')).not.toBeNull();
+    expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+  });
+  it("keeps the neutral empty-state guide readable in privacy mode without exposing channels", async () => {
+    const api = fake();
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy unifiedLive onLeave={vi.fn()} api={api} />));
+    expect(container.querySelector('.mado-live-empty')).toHaveTextContent('프라이버시 모드를 끈 뒤');
+    expect(button('방송 보기 열기')).toBeVisible();
+    expect(container.querySelector('.mado-connection-panel,.mado-native-slot')).toBeNull();
+    expect(api.configure).not.toHaveBeenCalled();
+  });
+  it("requires a real upward pull, not unpressed movement or a cancelled gesture", async () => {
+    const api = fake();
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    const handle = button('방송 보기 열기');
+    const pointer = (type: string, y: number) => {
+      const event = new MouseEvent(type, { clientY: y, button: 0, bubbles: true });
+      Object.defineProperty(event, 'pointerId', { value: 1 }); handle.dispatchEvent(event);
+    };
+    await act(async () => { pointer('pointermove', 30); pointer('pointerdown', 100); pointer('pointermove', 90); });
+    expect(container.querySelector('.mado-connection-panel')).toBeNull();
+    await act(async () => { pointer('pointercancel', 90); pointer('pointermove', 20); });
+    expect(container.querySelector('.mado-connection-panel')).toBeNull();
+    await act(async () => { pointer('pointerdown', 100); pointer('pointermove', 75); });
+    expect(container.querySelector('.mado-connection-panel')).not.toBeNull();
+    await act(async () => { pointer('pointerup', 75); handle.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })); });
+    expect(handle).toHaveAttribute('aria-expanded', 'true');
+    await act(async () => { pointer('pointerdown', 100); pointer('pointermove', 125); pointer('pointerup', 125); handle.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 })); });
+    expect(handle).toHaveAttribute('aria-expanded', 'false');
+    await act(async () => handle.click()); expect(handle).toHaveAttribute('aria-expanded', 'true');
+    await act(async () => handle.click()); expect(handle).toHaveAttribute('aria-expanded', 'false');
+    expect(api.configure).not.toHaveBeenCalled();
+  });
+  it("routes the native chat and fullscreen buttons to Atsumi without opening another chat", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    nativeWindow.setFullscreen.mockClear();
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    const send = (action: string, channelId = A) => act(async () => { for (const handler of presentationEvents) handler({ payload: { action, channelId } }); });
+    await send('chat_toggle', B);
+    expect(container.querySelector('.mado-content-surfaces')).not.toHaveClass('chat-hidden');
+    await send('chat_toggle');
+    expect(container.querySelector('.mado-content-surfaces')).toHaveClass('chat-hidden');
+    await send('chat_toggle');
+    expect(container.querySelector('.mado-content-surfaces')).not.toHaveClass('chat-hidden');
+    await send('fullscreen_toggle'); expect(nativeWindow.setFullscreen).toHaveBeenLastCalledWith(true);
+    await send('fullscreen_exit'); expect(nativeWindow.setFullscreen).toHaveBeenLastCalledWith(false);
+    expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+  });
+  it("keeps audio on minimize, mutes for tray hide and restores the same viewport", async () => {
+    const api = fake();
+    let hidden = false;
+    vi.spyOn(document, 'hidden', 'get').mockImplementation(() => hidden);
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(10, 10, 800, 500));
+    await act(async () => root.render(<NativeStreamingPane api={api} pane={active().panes[0]!} epoch={7} privacy={false} onError={vi.fn()} />));
+    const initial = api.setViewport.mock.calls.at(-1)![1];
+    expect(initial.visible).toBe(true); api.setViewport.mockClear();
+    nativeWindow.isMinimized.mockResolvedValue(true); hidden = true;
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(api.setViewport).not.toHaveBeenCalled();
+    nativeWindow.isVisible.mockResolvedValue(false);
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(api.setViewport.mock.calls.at(-1)![1]).toMatchObject({ visible: false, suspendAudio: true });
+    hidden = false; nativeWindow.isVisible.mockResolvedValue(true); nativeWindow.isMinimized.mockResolvedValue(false);
+    await act(async () => document.dispatchEvent(new Event('visibilitychange')));
+    expect(api.setViewport.mock.calls.at(-1)![1]).toEqual(initial);
+  });
   it("toggles the live settings disclosure without reconnecting or stopping the current broadcast", async () => {
     const api = fake(), changed = vi.fn(); api.snapshot.mockResolvedValue(success(active()));
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} onConnectionOpenChange={changed} api={api} />));
@@ -61,6 +160,7 @@ describe("마도 배치", () => {
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
     expect(container.querySelector('.mado-workspace header,.mado-workspace .edge-top')).toBeNull();
     expect(button('시청 종료')).toBeUndefined(); expect(button('위아래 배치')).toBeUndefined();
+    await act(async () => button('방송 보기 열기').click());
     expect(button('모두 보기').closest('.connection-actions')).toBe(button('시청 시작').closest('.connection-actions'));
     await enter(0, A); await act(async () => button('시청 시작').click());
     await act(async () => button('방송 보기').click());
@@ -160,6 +260,7 @@ describe("마도 배치", () => {
   it("starts unified live with one editable row and adds/removes at most four broadcasts", async () => {
     const api = fake();
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
+    await act(async () => button('방송 보기 열기').click());
     expect(container.querySelectorAll('.connection-channel-draft input')).toHaveLength(1);
     expect(button("일반모드")).toBeUndefined(); expect(button("마도모드")).toBeUndefined();
     const add = () => container.querySelector<HTMLButtonElement>('[aria-label="방송 추가"]')!;
@@ -183,7 +284,10 @@ describe("마도 배치", () => {
     await enter(1, replacement);
     expect(container.querySelector<HTMLInputElement>('#mado-channel-1')).toHaveValue(replacement);
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    // Reopening the editor after a late snapshot still retains the changed draft.
+    // An explicitly open editor survives late snapshots; closing and reopening
+    // it must still retain the changed draft.
+    expect(container.querySelector<HTMLInputElement>('#mado-channel-1')).toHaveValue(replacement);
+    await act(async () => button('연결 설정 닫기').click());
     await act(async () => button("방송 보기").click());
     expect(container.querySelector<HTMLInputElement>('#mado-channel-1')).toHaveValue(replacement);
     await act(async () => button("변경").click());
@@ -215,12 +319,12 @@ describe("마도 배치", () => {
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy tutorialActive={false} unifiedLive onLeave={() => {}} api={api} />));
     expect(container.querySelector('[data-tour="chzzk-connection"]')).toBeNull();
   });
-  it.each([false, true])("starts with an inline connection form without opening a dialog or moving focus (unified: %s)", async unifiedLive => {
+  it.each([false, true])("starts with a guide for unified live, retaining the legacy inline setup without stealing focus (unified: %s)", async unifiedLive => {
     const api = fake(), background = document.createElement("button"); document.body.append(background); background.focus();
     try {
       const render = () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive={unifiedLive} onLeave={() => {}} api={api} />);
       await act(async () => render());
-      expect(container.querySelector(".mado-connection-inline .connection-setup")).not.toBeNull();
+      expect(container.querySelector(unifiedLive ? ".mado-live-empty" : ".mado-connection-inline .connection-setup")).not.toBeNull();
       expect(container.querySelector('[role="dialog"]')).toBeNull();
       expect(container.querySelector('[aria-label="연결 설정 닫기"]')).toBeNull();
       expect(document.activeElement).toBe(background);
@@ -243,21 +347,21 @@ describe("마도 배치", () => {
       expect(dialog).toHaveAttribute("data-native-overlay", "true");
       expect(dialog).toHaveAttribute("data-native-preserve-video", "true");
       expect(dialog).toHaveAttribute("data-native-interactive-background", "true");
-      expect(document.activeElement).toBe(button("설정 닫기"));
+      expect(document.activeElement).toBe(button("연결 설정 닫기"));
       const last = button("로그아웃"); last.focus();
       const tab = new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true });
       await act(async () => last.dispatchEvent(tab));
       expect(tab.defaultPrevented).toBe(false);
-      const first = button("설정 닫기"); first.focus();
+      const first = button("연결 설정 닫기"); first.focus();
       const previous = new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true });
       await act(async () => first.dispatchEvent(previous));
       expect(previous.defaultPrevented).toBe(false);
       background.focus();
-      await act(async () => button("설정 닫기").click());
+      await act(async () => button("연결 설정 닫기").click());
       expect(document.activeElement).toBe(background);
       expect(container.querySelector('.mado-connection-panel')).toBeNull();
       await act(async () => { opener.focus(); opener.click(); });
-      await act(async () => button("설정 닫기").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      await act(async () => button("연결 설정 닫기").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
       expect(document.activeElement).toBe(opener);
       expect(container.querySelector('.mado-connection-panel')).toBeNull();
       expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
@@ -276,6 +380,7 @@ describe("마도 배치", () => {
     const api = fake();
     const officialApi = { ...createOfficialBrowserApi("tauri"), open: vi.fn() };
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} officialApi={officialApi} />));
+    await act(async () => button('방송 보기 열기').click());
     const input = container.querySelector<HTMLInputElement>("#mado-channel-0")!;
     await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, `https://chzzk.naver.com/live/${A}`); input.dispatchEvent(new Event("input", { bubbles: true })); });
     await act(async () => button("시청 시작").click());
@@ -295,15 +400,16 @@ describe("마도 배치", () => {
     await act(async () => button("방송 보기").click());
     await act(async () => button("종료").click());
     expect(api.close).toHaveBeenCalledExactlyOnceWith(7); expect(api.requestControl).not.toHaveBeenCalled(); expect(api.confirmControl).not.toHaveBeenCalled();
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(container.querySelector(".mado-connection-inline .connection-setup")).not.toBeNull();
+    expect(container.querySelector('.mado-connection-panel[role="dialog"]')).not.toBeNull();
+    expect(container.querySelector(".mado-connection-panel .connection-setup")).not.toBeNull();
   });
   it("needs no grid connection with a live receiver or the old root player", async () => {
     const api = fake(); api.snapshot.mockResolvedValue(success(active()));
     const officialApi = { ...createOfficialBrowserApi("tauri"), snapshot: vi.fn().mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))), connectExtension: vi.fn().mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))) };
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} officialApi={officialApi} />));
     await act(async () => button("방송 보기").click()); expect(button("그리드 연결")).toBeUndefined();
-    expect(container).toHaveTextContent("그리드 없이 직접 재생"); expect(officialApi.connectExtension).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+    await act(async () => container.querySelector<HTMLButtonElement>('.connection-help')!.click());
+    expect(document.querySelector('.connection-help-content')).toHaveTextContent("그리드 없이 직접 재생"); expect(officialApi.connectExtension).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
   });
   it("automatically rechecks the account and displays failures without changing the Mado panes", async () => {
     const api = fake(); api.snapshot.mockResolvedValue(success(multiple()));
@@ -371,26 +477,27 @@ describe("마도 배치", () => {
       expect(input.closest('.connection-channel-row')?.querySelector('.connection-channel-number')).toHaveTextContent(String(index + 1));
     }
   });
-  it("keeps collapsed help out of keyboard navigation and reveals it below the heading without remounting", async () => {
+  it("shows hover help outside the form without shifting connection controls", async () => {
     const api = fake();
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} onLeave={() => {}} api={api} />));
     const help = container.querySelector<HTMLButtonElement>('.connection-help')!;
-    const reveal = container.querySelector('.connection-help-reveal')!;
-    const content = container.querySelector<HTMLElement>('.connection-help-content')!;
-    expect(reveal).toHaveAttribute("aria-hidden", "true"); expect(reveal).toHaveAttribute("inert");
+    expect(document.querySelector('.connection-help-popover')).toBeNull();
+    const form = container.querySelector('form');
     expect(button("Chrome")).toBeUndefined();
     await act(async () => help.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
-    expect(help).toHaveAttribute("aria-expanded", "true"); expect(reveal).not.toHaveAttribute("inert");
-    expect(reveal.previousElementSibling).toHaveClass("connection-setup-heading");
+    expect(help).toHaveAttribute("aria-expanded", "true");
+    const content = document.querySelector<HTMLElement>('.connection-help-content')!;
+    expect(container.contains(content)).toBe(false);
+    expect(content.parentElement).toHaveAttribute('data-native-preserve-video', 'true');
+    expect(container.querySelector('form')).toBe(form);
     expect(button("Chrome")).toBeUndefined();
     await act(async () => help.focus());
-    expect(help).toHaveAccessibleDescription(/주소를 입력하고 시청을 시작하세요/);
+    expect(help).toHaveAccessibleDescription(/주소 입력 후 시청 시작/);
+    expect(content.querySelectorAll('p')).toHaveLength(5);
     await act(async () => help.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
-    expect(document.activeElement).toBe(help); expect(reveal).toHaveAttribute("inert");
-    expect(reveal).toHaveAttribute("aria-hidden", "true"); expect(button("Chrome")).toBeUndefined();
-    expect(container.querySelector('.connection-help-content')).toBe(content);
+    expect(document.activeElement).toBe(help); expect(button("Chrome")).toBeUndefined();
+    expect(document.querySelector('.connection-help-popover')).toBeNull();
     expect(container.querySelector('[aria-label="연결 설정"][role="dialog"]')).toBeNull();
-    expect(container.querySelector(".mado-connection-inline")).toContainElement(content);
     expect(api.configure).not.toHaveBeenCalled();
   });
   it.each([false, true])("keeps video and chat panes free of duplicate outside headers and audio controls (one video: %s)", async (oneVideo) => {
@@ -402,21 +509,16 @@ describe("마도 배치", () => {
     expect([...container.querySelectorAll('.mado-chat-cell')].every(cell => cell.children.length === 1 && cell.firstElementChild?.classList.contains('mado-native-slot'))).toBe(true);
     expect(container.querySelectorAll('.mado-native-slot.is-video')).toHaveLength(oneVideo ? 1 : 4);
   });
-  it("keeps chat failure and gap warnings in the workspace toolbar even after recording stops", async () => {
+  it("keeps recording problems out of the live viewing surface", async () => {
     const api = fake(); let state = multiple();
     state.panes[0] = { ...state.panes[0]!, recordingStatus: "stopped", recordingId: null, chatStatus: "storage_failed", chatCount: 42 };
     api.snapshot.mockImplementation(async () => success(state));
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} onLeave={() => {}} api={api} />));
     const slots = [...container.querySelectorAll(".mado-native-slot")];
-    const warning = container.querySelector<HTMLElement>(".mado-chat-warning")!;
-    expect(warning).toHaveTextContent("⚠"); expect(warning).toHaveAttribute("tabindex", "0");
-    expect(warning.title).toContain("채팅 저장 실패"); expect(warning.title).toContain("42개 기록");
-    expect(warning).toHaveAccessibleName(warning.title);
-    expect(warning.closest(".mado-notices")).not.toBeNull();
-    expect(warning).toHaveTextContent("1. 도서관 1");
+    expect(container.querySelector(".mado-chat-warning,.mado-notices")).toBeNull();
     state = { ...state, panes: state.panes.map((pane, index) => index === 0 ? { ...pane, chatStatus: "connection_gap" } : pane) };
     await act(async () => vi.advanceTimersByTimeAsync(2000));
-    expect(container.querySelector<HTMLElement>(".mado-chat-warning")!.title).toContain("일부 누락 가능");
+    expect(container.querySelector(".mado-chat-warning,.mado-notices")).toBeNull();
     expect([...container.querySelectorAll(".mado-native-slot")]).toEqual(slots);
     expect(api.close).not.toHaveBeenCalled();
   });
@@ -471,7 +573,7 @@ describe("마도 배치", () => {
   });
   it("persists bounded split preferences and supports keyboard adjustment", async () => {
     localStorage.setItem("atsumi.mado.layout.v1", '{"version":1,"direction":"horizontal","horizontal":999,"vertical":-20}');
-    expect(readMadoLayout()).toEqual({ version: 1, direction: "horizontal", horizontal: 76, vertical: 24 });
+    expect(readMadoLayout()).toEqual({ version: 1, direction: "horizontal", horizontal: 94, vertical: 10 });
     localStorage.setItem("atsumi.mado.layout.v1", "broken"); expect(readMadoLayout().horizontal).toBe(60); localStorage.clear();
     const api = fake(); api.snapshot.mockResolvedValue(success(multiple(true)));
     await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} onLeave={() => {}} api={api} />));
@@ -481,7 +583,7 @@ describe("마도 배치", () => {
     await act(async () => button("위아래 배치").click()); expect(divider).toHaveAttribute("aria-orientation", "horizontal");
     await act(async () => divider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true })));
     await act(async () => vi.advanceTimersByTimeAsync(250));
-    expect(JSON.parse(localStorage.getItem("atsumi.mado.layout.v1")!)).toEqual({ version: 1, direction: "vertical", horizontal: 62, vertical: 24 });
+    expect(JSON.parse(localStorage.getItem("atsumi.mado.layout.v1")!)).toEqual({ version: 1, direction: "vertical", horizontal: 62, vertical: 10 });
   });
   it("keeps video pixels and audio during divider dragging and restores input after cancellation", async () => {
     const api = fake(); api.snapshot.mockResolvedValue(success(multiple(true)));
@@ -793,6 +895,23 @@ describe("마도 배치", () => {
       expect(api.close).not.toHaveBeenCalled(); expect(api.setAudio).not.toHaveBeenCalled(); expect(api.setPaneAudio).not.toHaveBeenCalled();
     } finally { modal.remove(); }
   });
+  it("does not reclip or reconnect idle players when pointer activity and snapshot polls repeat", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(new DOMRect(10, 10, 400, 300));
+    await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive onLeave={() => {}} api={api} />));
+    await act(async () => vi.advanceTimersByTimeAsync(32));
+    api.setViewport.mockClear();
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await act(async () => {
+        window.dispatchEvent(new MouseEvent('pointermove'));
+        for (const handler of presentationEvents) handler({ payload: { action: 'pointer_activity', channelId: A } });
+        container.querySelector('.live-bottom-handle')!.dispatchEvent(new Event('animationiteration', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+    }
+    expect(api.setViewport).not.toHaveBeenCalled();
+    expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+  });
   it("installs nonmodal panel holes immediately while an older visible update is still pending", async () => {
     const api = fake(), visible = deferred<Awaited<ReturnType<MultiviewApi["setViewport"]>>>();
     api.snapshot.mockResolvedValue(success(active()));
@@ -807,9 +926,11 @@ describe("마도 배치", () => {
       expect(viewport).toMatchObject({ visible: true, occluded: false, preserveBackground: true });
       expect(viewport.occlusions).toHaveLength(1);
     }
-    await act(async () => { button("설정 닫기").click(); await vi.advanceTimersByTimeAsync(20); });
+    await act(async () => { button("연결 설정 닫기").click(); await vi.advanceTimersByTimeAsync(20); });
     await act(async () => visible.resolve(success(undefined)));
-    expect(api.setViewport.mock.calls.slice(-2).every(([, viewport]) => viewport.visible && !viewport.occluded && !viewport.preserveBackground)).toBe(true);
+    expect(container.querySelector('.mado-connection-panel')).toBeNull();
+    expect(container.querySelector('.live-bottom-handle[data-native-overlay=true]')).not.toBeNull();
+    expect(api.setViewport.mock.calls.slice(-2).every(([, viewport]) => viewport.visible && !viewport.occluded && viewport.preserveBackground)).toBe(true);
     expect(api.close).not.toHaveBeenCalled();
   });
   it.each(["modal", "panel"] as const)("hard-hides after a %s transport rejection before reporting its safe error", async kind => {

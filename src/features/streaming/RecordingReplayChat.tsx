@@ -8,7 +8,7 @@ import { OriginalChzzkChatSurface } from "./OriginalChzzkChatSurface";
 import { createOriginalChatPresentation, type OriginalChatMessage } from "./generated/originalChatPresentation.js";
 import { createSurfaces } from "./generated/accepted/original-surfaces.js";
 
-type Props = { api: ReplayApi; session: ReplaySession; time: number; seekVersion: number; onSeek: (time: number) => void; onIndexReady: (quality: ReplaySyncQuality) => void; onSetOffset?: (value: number) => Promise<string | null> };
+type Props = { api: ReplayApi; session: ReplaySession; time: number; seekVersion: number; onSeek: (time: number) => void; onIndexReady: (quality: ReplaySyncQuality) => void; onSetOffset?: (value: number) => Promise<string | null>; closeControl?: React.ReactNode };
 const badgeLabels: Record<string, string> = { subscription: "구독", activity: "활동", profile: "배지", donation: "후원" };
 type Presentation = ReturnType<typeof createOriginalChatPresentation>;
 function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item: ReplayMessage; mode: ReplayTimeLabel; api: ReplayApi; sessionToken: string; onSeek: Props["onSeek"]; presentation: Presentation }) {
@@ -36,7 +36,9 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
     const nicknameColor = safeNicknameColor(rich?.nicknameColor) ?? null;
     const profile = { nickname: item.sender, userIdHash: item.senderKey || String(item.sequence),
       viewerBadges: badges.flatMap((badge, order) => badge.src ? [{ order, activatedV2: true, badge: { scope: "CHANNEL", imageUrl: badge.src, title: badge.label, description: "" } }] : []) };
-    const message: OriginalChatMessage = { key: String(item.sequence), user: profile.userIdHash, time: item.receivedAt, type: 1, status: "NORMAL", content, profile,
+    const notice = rich?.notice;
+    const extras = notice ? { donationType: ({ donation: "CHAT", video_donation: "VIDEO", mission: "MISSION", subscription: "SUBSCRIPTION" })[notice.kind], payAmount: notice.amount ?? 0, month: notice.months ?? 0 } : undefined;
+    const message: OriginalChatMessage = { key: String(item.sequence), user: profile.userIdHash, time: item.receivedAt, type: notice?.kind === "subscription" ? 11 : notice ? 10 : 1, extras, status: "NORMAL", content, profile,
       displayBadgeList: badges.flatMap((badge) => badge.src ? [{ type: "ACTIVITY", imageSource: badge.src, title: badge.label, description: "" }] : []),
       displayNicknameColor: { light: nicknameColor, dark: nicknameColor } };
     return { message, badges, portrait: rich?.profileImageUrl ? localAsset(rich.profileImageUrl) : null, missing: badges.filter(badge => !badge.src) };
@@ -69,7 +71,7 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
 export const RecordingReplayChat = memo(function RecordingReplayChat(props: Props) {
   return <OriginalChzzkChatSurface>{surface => <ReplayChatContent key={props.session.token} {...props} surface={surface} />}</OriginalChzzkChatSurface>;
 });
-function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexReady, onSetOffset, surface }: Props & { surface: ShadowRoot }) {
+function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexReady, onSetOffset, closeControl, surface }: Props & { surface: ShadowRoot }) {
   const presentation = useMemo(() => {
     // Original badge images can appear in a child effect after the row commits.
     // Apply transport metadata at element creation, not in a one-time DOM pass.
@@ -265,6 +267,7 @@ function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexRea
     else if (menu && event.key !== "Tab") event.stopPropagation();
   }}>
     <button type="button" className="recording-replay-menu-toggle" aria-label="채팅 메뉴" title="채팅 메뉴" aria-expanded={menu} onClick={() => { setMenu(value => !value); setSync(false); setOffsetError(null); }}><MenuIcon aria-hidden /></button>
+    {closeControl}
     {menu && <div className="recording-replay-chat-options">
       <p className="recording-replay-menu-label">시간 표시</p>
       <div className="recording-replay-time-options" role="radiogroup" aria-label="채팅 시각 표시" onKeyDown={event => {

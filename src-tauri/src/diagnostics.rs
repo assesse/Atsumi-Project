@@ -702,6 +702,38 @@ mod tests {
         ));
     }
     #[test]
+    fn account_diagnostics_retain_stage_method_enum_and_status_without_auth_data() {
+        struct Capture(std::sync::Arc<std::sync::Mutex<Value>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+                let mut fields = SafeFields::default();
+                event.record(&mut fields);
+                *self.0.lock().unwrap() = json!(fields.0);
+            }
+        }
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
+        tracing::subscriber::with_default(
+            tracing_subscriber::registry().with(Capture(captured.clone())),
+            || {
+                tracing::info!(
+                    diag_stage = "chzzk_account_challenge_response",
+                    diag_operation = "account_post",
+                    status = 200i32,
+                    attempt = 2u32,
+                    method = "POST",
+                    http_status = 200i32,
+                    answer = "private",
+                    url = "https://nid.naver.com/?private=value",
+                    cookie = "secret"
+                );
+            },
+        );
+        assert_eq!(
+            *captured.lock().unwrap(),
+            json!({"diag_stage":"chzzk_account_challenge_response","diag_operation":"account_post","status":200,"attempt":2})
+        );
+    }
+    #[test]
     fn capture_fields_accept_technical_enums_but_never_tokens_or_urls() {
         assert!(safe_capture_reason("track_changed"));
         assert!(safe_capture_reason("init_changed"));

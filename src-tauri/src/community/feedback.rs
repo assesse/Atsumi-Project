@@ -16,10 +16,12 @@ use std::{
 use tauri::Manager;
 use uuid::Uuid;
 
-const MAX_PAYLOAD: usize = 200 * 1024;
-const FILE_TAIL_BYTES: u64 = 1024 * 1024;
+// Keep reports bounded without losing the incident to routine health samples.
+// The server allows 1.25 MiB for jsonb's whitespace-expanded representation.
+const MAX_PAYLOAD: usize = 1024 * 1024;
+const FILE_TAIL_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_LINE: usize = 8192;
-const MAX_EVENTS: usize = 2000;
+const MAX_EVENTS: usize = 10_000;
 const WINDOW_MS: u64 = 2 * 60 * 60 * 1000;
 const DRAFT_LIFETIME_MS: u64 = 30 * 60 * 1000;
 const MAX_DRAFTS: usize = 4;
@@ -351,6 +353,25 @@ fn regular_unlinked(metadata: &std::fs::Metadata) -> bool {
     }
     true
 }
+fn report_priority(event: &Value) -> u8 {
+    let fields = &event["fields"];
+    let stage = fields["diag_stage"].as_str().unwrap_or_default();
+    if event["kind"] == "panic"
+        || matches!(event["level"].as_str(), Some("WARN" | "ERROR"))
+        || fields.get("error_code").is_some()
+        || fields["success"] == false
+        || event["failures"].as_u64().is_some_and(|n| n > 0)
+        || stage.starts_with("chzzk_auth_")
+        || stage.starts_with("chzzk_account_")
+    {
+        0
+    } else if matches!(stage, "health" | "ui_health" | "webview_memory") {
+        2
+    } else {
+        1
+    }
+}
+
 fn collect_payload(directory: &Path, source: &str, now: u64) -> Result<Value, String> {
     validate_source(source)?;
     match std::fs::symlink_metadata(directory) {
@@ -398,7 +419,12 @@ fn collect_payload(directory: &Path, source: &str, now: u64) -> Result<Value, St
             }
         }
     }
-    events.sort_by_key(|event| std::cmp::Reverse(event["timeUnixMs"].as_u64().unwrap_or_default()));
+    events.sort_by_key(|event| {
+        (
+            report_priority(event),
+            std::cmp::Reverse(event["timeUnixMs"].as_u64().unwrap_or_default()),
+        )
+    });
     let mut selected = Vec::new();
     let mut size = 512; // Reserve the payload envelope and array punctuation.
     for event in events {
@@ -406,14 +432,18 @@ fn collect_payload(directory: &Path, source: &str, now: u64) -> Result<Value, St
             .map_err(|_| "진단 정보를 정리하지 못했습니다.")?
             .len()
             + 1;
-        if selected.len() >= MAX_EVENTS || size + event_bytes > MAX_PAYLOAD {
+        if selected.len() >= MAX_EVENTS {
             truncated = true;
             break;
+        }
+        if size + event_bytes > MAX_PAYLOAD {
+            truncated = true;
+            continue;
         }
         selected.push(event);
         size += event_bytes;
     }
-    selected.reverse();
+    selected.sort_by_key(|event| event["timeUnixMs"].as_u64().unwrap_or_default());
     let payload = json!({"schemaVersion":1,"appVersion":env!("CARGO_PKG_VERSION"),"source":source,"createdAt":now,
         "windowMinutes":120,"eventCount":selected.len(),"truncated":truncated,"events":selected});
     if serde_json::to_vec(&payload)

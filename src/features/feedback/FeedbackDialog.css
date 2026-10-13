@@ -2,7 +2,8 @@
 .feedback-dialog::backdrop { background: #0008; }
 .feedback-dialog header, .feedback-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .feedback-dialog header h2 { margin: 0; font-size: 17px; }
-.feedback-dialog header button { width: 32px; height: 32px; }
+.feedback-dialog header .feedback-close { display:grid; place-items:center; flex:none; box-sizing:border-box; width:32px; height:32px; margin:0; padding:0; line-height:1; }
+.feedback-close svg { display:block; width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; }
 .feedback-dialog p, .feedback-dialog label, .feedback-dialog summary { font-size: 13px; line-height: 1.6; }
 .feedback-dialog label { display: block; margin-bottom: 6px; }
 .feedback-dialog label span, .feedback-dialog .feedback-privacy { color: var(--muted); font-size: 12px; }

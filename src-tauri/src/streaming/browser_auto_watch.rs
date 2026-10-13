@@ -111,6 +111,7 @@ impl WatchLease {
         viewport.occluded = false;
         viewport.preserve_background = false;
         viewport.occlusions.clear();
+        viewport.rounded_occlusions.clear();
         self.pane.audio.store(false, Ordering::Release);
         Some(self.pane.revision.fetch_add(1, Ordering::AcqRel) + 1)
     }
@@ -648,6 +649,7 @@ impl OfficialBrowser {
                 viewport.occluded = false;
                 viewport.preserve_background = false;
                 viewport.occlusions.clear();
+                viewport.rounded_occlusions.clear();
             }
             *previous = viewport.clone();
             lease.pane.audio.store(

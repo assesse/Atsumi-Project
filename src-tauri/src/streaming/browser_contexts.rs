@@ -216,7 +216,14 @@ impl OfficialBrowser {
         if self.inner.detached.load(Ordering::Acquire)
             || !matches!(
                 action,
-                "exit_focus" | "open_settings" | "audio_toggle" | "record_only"
+                "exit_focus"
+                    | "open_settings"
+                    | "audio_toggle"
+                    | "record_only"
+                    | "chat_toggle"
+                    | "fullscreen_toggle"
+                    | "fullscreen_exit"
+                    | "pointer_activity"
             )
             || (matches!(action, "open_settings" | "record_only")
                 && self.label() != WINDOW_LABEL
@@ -227,13 +234,24 @@ impl OfficialBrowser {
         let mut state = self.inner.view.lock().map_err(|_| unavailable())?;
         if source != channel
             || state.channel.as_deref() != Some(source)
-            || state
-                .last_ui_intent
-                .is_some_and(|at| at.elapsed() < Duration::from_millis(250))
+            || action != "pointer_activity"
+                && state
+                    .last_ui_intent
+                    .is_some_and(|at| at.elapsed() < Duration::from_millis(250))
         {
             return Err(unavailable());
         }
-        state.last_ui_intent = Some(Instant::now());
+        if action == "pointer_activity" {
+            if state
+                .last_pointer_activity
+                .is_some_and(|at| at.elapsed() < Duration::from_millis(750))
+            {
+                return Err(unavailable());
+            }
+            state.last_pointer_activity = Some(Instant::now());
+        } else {
+            state.last_ui_intent = Some(Instant::now());
+        }
         // These requests only open main-app UI. They cannot authorize recording,
         // account access, extension installation or any other privileged action.
         if matches!(action, "exit_focus" | "open_settings" | "record_only") {
@@ -245,7 +263,7 @@ impl OfficialBrowser {
                 viewport_epoch: state.viewport_epoch,
                 page_generation: state.page_generation,
             });
-        } else if self.label() == WINDOW_LABEL {
+        } else if self.label() == WINDOW_LABEL && action == "audio_toggle" {
             return Err(unavailable());
         }
         Ok(json!({"accepted":true}))

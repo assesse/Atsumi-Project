@@ -287,7 +287,8 @@ impl Drop for MediaPermit<'_> {
 
 impl DanbooruClient {
     pub fn new() -> Result<Self, DanbooruError> {
-        let http = Client::builder()
+        let http = super::danbooru_transport::configure(Client::builder())
+            .map_err(|_| DanbooruError::Unavailable)?
             .user_agent(format!(
                 "Atsumi/{} (https://github.com/assesse/Atsumi-Project)",
                 env!("CARGO_PKG_VERSION")
@@ -727,6 +728,7 @@ fn search_order_diagnostic(tags: &str) -> &'static str {
     match order {
         None | Some("id_desc") => "search_order_newest",
         Some("id" | "id_asc") => "search_order_oldest",
+        Some("rank") => "search_order_popular",
         Some("score") => "search_order_score",
         Some("favcount") => "search_order_favorites",
         Some("mpixels") => "search_order_resolution",
@@ -1567,25 +1569,71 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "opt-in public Danbooru all-sort transport/parsing matrix; never fetches media"]
-    fn live_all_search_orders_return_parseable_results() {
+    #[ignore = "opt-in public popular-rank requests through the actual app transport"]
+    fn live_popular_rank_returns_results() {
+        let client = DanbooruClient::new().unwrap();
+        for tags in [
+            "order:rank",
+            "rating:g order:rank",
+            "rating:g ratio:>1 order:rank",
+            "rating:g filetype:png order:rank",
+        ] {
+            let result = client
+                .search(DanbooruSearchRequest {
+                    tags: tags.into(),
+                    page: 1,
+                    page_size: 60,
+                })
+                .expect("popular rank must really return data, not silently fall back");
+            println!(
+                "query={tags}, count={}, first_ids={:?}",
+                result.items.len(),
+                result
+                    .items
+                    .iter()
+                    .take(5)
+                    .map(|p| p.id)
+                    .collect::<Vec<_>>()
+            );
+            assert!(!result.items.is_empty());
+        }
+    }
+
+    #[test]
+    #[ignore = "opt-in public Danbooru available-sort transport/parsing matrix; never fetches media"]
+    fn live_available_search_orders_return_parseable_results() {
         let client = DanbooruClient::new().unwrap();
         // Optional explicit scope makes it possible to distinguish query cost
         // from an invalid sort. Never silently add this filter in production.
         let query =
             std::env::var("ATSUMI_DANBOORU_TEST_QUERY").unwrap_or_else(|_| "rating:g".into());
         let mut failures = Vec::new();
-        for order in [
-            "",
-            "id_asc",
-            "score",
-            "favcount",
-            "mpixels",
-            "filesize",
-            "tagcount",
-            "portrait",
-            "landscape",
-        ] {
+        let export = std::env::var("ATSUMI_DANBOORU_TEST_SCREENSHOT").as_deref() == Ok("1");
+        let mut panels = String::new();
+        if export {
+            assert_eq!(
+                query, "rating:g",
+                "only public General-rated verification may be exported"
+            );
+        }
+        let orders: &[&str] =
+            if std::env::var("ATSUMI_DANBOORU_TEST_ALL_ORDERS").as_deref() == Ok("1") {
+                &[
+                    "",
+                    "id_asc",
+                    "rank",
+                    "score",
+                    "favcount",
+                    "mpixels",
+                    "filesize",
+                    "tagcount",
+                    "portrait",
+                    "landscape",
+                ]
+            } else {
+                &["", "id_asc", "rank", "filesize"]
+            };
+        for &order in orders {
             let tags = if order.is_empty() {
                 query.clone()
             } else {
@@ -1598,6 +1646,44 @@ mod tests {
             }) {
                 Ok(result) => {
                     println!("sort={order:?}, count={}", result.items.len());
+                    if export {
+                        let label = match order {
+                            "" => "최신 등록순",
+                            "id_asc" => "오래된 등록순",
+                            "rank" => "인기순 · 최근 2일",
+                            "filesize" => "파일 큰순",
+                            _ => "추가 진단",
+                        };
+                        panels.push_str(&format!(
+                            "<section><h2>{label}</h2><p>서버 응답 {}개 · rating:g {}</p>",
+                            result.items.len(),
+                            if order.is_empty() {
+                                String::new()
+                            } else {
+                                format!("order:{order}")
+                            }
+                        ));
+                        for post in result.items.iter().take(3) {
+                            let media = post
+                                .preview_url
+                                .as_deref()
+                                .and_then(|url| url.rsplit('/').next())
+                                .and_then(|token| client.media(token).ok());
+                            let image = media
+                                .filter(|media| is_display_image_content_type(&media.content_type))
+                                .map(|media| {
+                                    format!(
+                                        "data:{};base64,{}",
+                                        media.content_type,
+                                        base64::engine::general_purpose::STANDARD
+                                            .encode(media.bytes)
+                                    )
+                                })
+                                .unwrap_or_default();
+                            panels.push_str(&format!("<article><img src=\"{image}\" alt=\"일반등급 게시물\"><div><b>#{}</b><br>{:.2} MB<br>{} × {}</div></article>",post.id,post.file_size as f64/1_000_000.0,post.image_width,post.image_height));
+                        }
+                        panels.push_str("</section>");
+                    }
                     if result.items.is_empty() {
                         failures.push(format!("{order}: empty"));
                     }
@@ -1613,6 +1699,12 @@ mod tests {
             "sort transport/parsing failures: {}",
             failures.join("; ")
         );
+        if export {
+            let html = format!("<!doctype html><html lang=ko><meta charset=utf-8><meta http-equiv=Content-Security-Policy content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'\"><title>단부루 실제 응답 검증</title><style>body{{font:14px 'Segoe UI',sans-serif;background:#16171b;color:#e8e9ec;margin:28px}}h1{{font-size:23px}}.sub{{color:#a7acb7}}main{{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}}section{{background:#22242b;padding:18px;border:1px solid #414550;border-radius:12px}}h2{{font-size:19px;margin:0}}section p{{font-size:11px;color:#b5bbca;height:30px}}article{{display:flex;align-items:center;gap:12px;height:145px;border-top:1px solid #393c46;padding:10px 0}}img{{width:150px;height:135px;object-fit:contain;background:#111}}article div{{line-height:1.8;color:#bac3d6}}b{{color:#fff}}</style><h1>단부루 · 실제 검색 응답</h1><p class=sub>2026-10-12 · Atsumi와 동일한 Rust 클라이언트 / DoH + TLS 분할 전송 · 무로그인 · 검색별 첫 3개 미리보기</p><main>{panels}</main><p class=sub>이 화면은 실제 서버 응답을 담은 검증 화면입니다. 앱 화면 캡처나 모의 데이터가 아닙니다.</p></html>");
+            let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../.runtime/danbooru-sort-verification.html");
+            fs::write(path, html).unwrap();
+        }
     }
 
     #[test]

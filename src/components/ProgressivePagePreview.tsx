@@ -4,6 +4,7 @@ import type { DetailOriginalPrepared } from "../api/contracts";
 import type { Gallery } from "../core/types";
 import { sourcePageThumbnailKey, type ThumbnailClient } from "../thumbnail";
 import { GalleryThumbnail } from "./GalleryThumbnail";
+import { useOriginalPagePool } from "./OriginalPageWindow";
 
 type ProgressivePagePreviewProps = {
   gallery: Gallery;
@@ -22,16 +23,15 @@ type ProgressivePagePreviewProps = {
 type OriginalState =
   | { kind: "thumbnail" }
   | { kind: "preparing"; requestId: string }
-  | { kind: "prepared"; requestId: string; entryId: string; media: DetailOriginalPrepared }
-  | { kind: "displayed"; requestId: string; entryId: string; media: DetailOriginalPrepared }
+  | { kind: "prepared"; requestId: string; entryId?: string; media: DetailOriginalPrepared }
+  | { kind: "displayed"; requestId: string; entryId?: string; media: DetailOriginalPrepared }
   | { kind: "failed"; reason: string };
 
 const newRequestId = (): string => crypto.randomUUID();
 
 /**
- * Completed downloads progressively replace the bounded source thumbnail with
- * the verified local page. Incomplete galleries deliberately remain on the
- * network thumbnail path so PAGE PREVIEW never implies a local artifact exists.
+ * Original-first: prefer verified local pages, otherwise the source original.
+ * The window pool bounds neighbouring prefetches; thumbnails are failure-only.
  */
 export function ProgressivePagePreview({
   gallery,
@@ -42,13 +42,21 @@ export function ProgressivePagePreview({
   onDimensionResolved,
 }: ProgressivePagePreviewProps) {
   const completedEntryId = gallery.download?.state === "completed" ? gallery.download.entryId : undefined;
+  const pool = useOriginalPagePool();
   const [original, setOriginal] = useState<OriginalState>({ kind: "thumbnail" });
   const generation = useRef(0);
 
   useEffect(() => {
-    if (!completedEntryId) {
-      setOriginal({ kind: "thumbnail" });
-      return;
+    if (pool) {
+      let active = true;
+      setOriginal({ kind: "preparing", requestId: "pool" });
+      void Promise.resolve().then(() => {
+        const promise = pool.get(page);
+        if (!promise) throw new Error("original unavailable");
+        return promise;
+      }).then(media => { if (active) setOriginal({ kind: "prepared", requestId: media.requestId, entryId: completedEntryId, media }); })
+        .catch(() => { if (active) setOriginal({ kind: "failed", reason: "unavailable" }); });
+      return () => { active = false; };
     }
     const requestId = newRequestId();
     const currentGeneration = ++generation.current;
@@ -103,7 +111,7 @@ export function ProgressivePagePreview({
       generation.current = Math.max(generation.current, currentGeneration + 1);
       void backend.detailOriginalDispose(requestId);
     };
-  }, [backend, completedEntryId, gallery.id, gallery.download?.revision, page]);
+  }, [backend, completedEntryId, gallery.id, gallery.download?.revision, page, pool]);
 
   const media = (original.kind === "prepared" || original.kind === "displayed")
     && original.entryId === completedEntryId
@@ -160,12 +168,12 @@ export function ProgressivePagePreview({
     <div
       className="page-preview-media"
       data-original-state={original.kind}
-      data-original-source={completedEntryId ? "local-artifact" : "thumbnail"}
+      data-original-source={completedEntryId ? "local-artifact" : "source-original"}
       data-page-orientation={orientation}
       style={{ aspectRatio } as CSSProperties}
-      title={original.kind === "failed" ? "로컬 원본을 불러오지 못해 미리보기를 표시 중" : undefined}
+      title={original.kind === "failed" ? "원본을 불러오지 못해 미리보기를 표시 중" : undefined}
     >
-      <GalleryThumbnail
+      {original.kind === "failed" ? <GalleryThumbnail
         className="page-preview-fallback"
         thumbnailKey={sourcePageThumbnailKey(gallery, page)}
         consumer="detail"
@@ -177,14 +185,14 @@ export function ProgressivePagePreview({
           : undefined}
         onTerminalSnapshot={handleThumbnailTerminal}
         alt={`${gallery.title} ${page}페이지 확대 미리보기`}
-      />
+      /> : original.kind !== "displayed" ? <span className="page-preview-original-loading" role="status" aria-label="원본 불러오는 중"><span className="spinner" aria-hidden="true" /></span> : null}
       {media ? (
         <img
           className={`page-preview-original${original.kind === "displayed" ? " is-ready" : ""}`}
           src={media.mediaUrl}
           width={media.width}
           height={media.height}
-          alt=""
+          alt={`${gallery.title} ${page}페이지 원본`}
           onLoad={() => setOriginal((current) => current.kind === "prepared" && current.requestId === media.requestId
             ? { kind: "displayed", requestId: current.requestId, entryId: current.entryId, media: current.media }
             : current)}

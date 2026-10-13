@@ -398,7 +398,7 @@ export function ActivityDrawer({
         <div id="activity-automation-panel" role="tabpanel" className="activity-list">
           {onStartAutomationSequence ? (
             <div className="activity-history-toolbar">
-              <button type="button" className="mini-command" disabled={automationSequenceLoading || automationHistoryPendingReviewIds.size > 0 || (automationHistoryUnacknowledgedItems === 0 && !automationHistory.some((item) => !item.acknowledgedAt))} onClick={onStartAutomationSequence} title="미확인 기록 전체를 순서대로 검토합니다. 확인 완료하거나 목록에 복원하면 다음 기록으로 이동합니다.">
+              <button type="button" className="mini-command" disabled={automationSequenceLoading || automationHistoryPendingReviewIds.size > 0} onClick={onStartAutomationSequence} title="미확인 항목을 순서대로 검토합니다. 판단을 마치면 다음 항목으로 이동합니다.">
                 {automationSequenceLoading ? <><span className="spinner" /> 검토 목록 준비 중…</> : <><FluentIcon glyph="\uE8FD" /> 미확인 순차 검토</>}
               </button>
             </div>

@@ -1,6 +1,7 @@
 //! One approved, memory-bounded PNG transfer. Never accepts a remote file path.
 use super::{error, now_ms, StreamError};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     fs::{self, OpenOptions},
     io::{Cursor, Write},
@@ -13,8 +14,10 @@ const MAX_BYTES: usize = 16 * 1024 * 1024;
 const MAX_SIDE: u32 = 4096;
 const MAX_PIXELS: u64 = 16 * 1024 * 1024;
 const TTL: Duration = Duration::from_secs(20);
+#[path = "browser_screenshot_library.rs"]
+pub mod library;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedScreenshot {
     pub id: String,
@@ -40,6 +43,7 @@ struct Job {
 pub struct ScreenshotCapture {
     job: Option<Job>,
     pub last: Option<SavedScreenshot>,
+    last_file: Option<(PathBuf, u64, Instant, [u8; 32])>,
 }
 fn invalid() -> StreamError {
     error(
@@ -228,13 +232,14 @@ impl ScreenshotCapture {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let file_name = format!("{id}.png");
         let path = root.join(&file_name);
+        let staging = root.join(format!("{id}.png.part"));
         if job.created.elapsed() > TTL || !current() {
             return Err(stale());
         }
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&path)
+            .open(&staging)
             .map_err(|_| storage())?;
         if file
             .write_all(&transfer.bytes)
@@ -242,7 +247,7 @@ impl ScreenshotCapture {
             .is_err()
         {
             drop(file);
-            let _ = fs::remove_file(&path);
+            let _ = fs::remove_file(&staging);
             return Err(storage());
         }
         let saved = SavedScreenshot {
@@ -251,8 +256,52 @@ impl ScreenshotCapture {
             file_name,
             created_at: now_ms(),
         };
+        drop(file);
+        if fs::rename(&staging, &path).is_err() {
+            let _ = fs::remove_file(&staging);
+            return Err(storage());
+        }
+        if let Err(cause) = library::save_metadata(&root, &saved) {
+            // The PNG is still a valid legacy screenshot discoverable by the library.
+            tracing::warn!(code = cause.code, "screenshot metadata was not saved");
+        }
+        self.last_file = Some((
+            path,
+            generation,
+            Instant::now(),
+            Sha256::digest(&transfer.bytes).into(),
+        ));
         self.last = Some(saved.clone());
         Ok(saved)
+    }
+    /// A remote page may undo only its own last frame, for one minute. Library
+    /// deletion is separately authorized by the trusted main-window command.
+    pub fn undo(&mut self, id: &str, channel: &str, generation: u64) -> Result<(), StreamError> {
+        let saved = self
+            .last
+            .as_ref()
+            .filter(|saved| saved.id == id && saved.channel_id == channel)
+            .ok_or_else(stale)?;
+        let (path, owner, created, digest) = self.last_file.as_ref().ok_or_else(stale)?;
+        if *owner != generation || created.elapsed() > Duration::from_secs(60) {
+            return Err(stale());
+        }
+        let parent = directory(path.parent().ok_or_else(storage)?)?;
+        let meta = fs::symlink_metadata(path).map_err(|_| storage())?;
+        if !meta.is_file() || !regular(&meta) || meta.len() > MAX_BYTES as u64 {
+            return Err(storage());
+        }
+        let bytes = fs::read(path).map_err(|_| storage())?;
+        if <[u8; 32]>::from(Sha256::digest(&bytes)) != *digest {
+            return Err(storage());
+        }
+        fs::remove_file(path).map_err(|_| storage())?;
+        if library::remove_metadata(&parent, &saved.id).is_err() {
+            tracing::warn!("screenshot sidecar cleanup failed after undo");
+        }
+        self.last = None;
+        self.last_file = None;
+        Ok(())
     }
 }
 fn validate_png(bytes: &[u8], width: u32, height: u32) -> Result<(), StreamError> {
@@ -499,5 +548,50 @@ mod tests {
             fs::read(root.path().join("CHZZK")).unwrap(),
             b"existing-user-file"
         );
+    }
+    fn save_frame(capture: &mut ScreenshotCapture, root: &Path) -> SavedScreenshot {
+        let id = capture.arm(root, CHANNEL, 3).unwrap();
+        let bytes = png();
+        capture
+            .begin(&id, CHANNEL, 3, "image/png", bytes.len(), 2, 2)
+            .unwrap();
+        capture.append(&id, CHANNEL, 3, 0, &bytes).unwrap();
+        capture.finish(&id, CHANNEL, 3).unwrap()
+    }
+    #[test]
+    fn undo_removes_only_latest_verified_frame_and_sidecar() {
+        let root = tempfile::tempdir().unwrap();
+        let mut capture = ScreenshotCapture::default();
+        let first = save_frame(&mut capture, root.path());
+        let second = save_frame(&mut capture, root.path());
+        let dir = root.path().join("CHZZK/Screenshots");
+        assert!(capture.undo(&first.id, CHANNEL, 3).is_err());
+        assert!(capture.undo(&second.id, CHANNEL, 4).is_err());
+        assert!(capture
+            .undo(&second.id, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", 3)
+            .is_err());
+        capture.undo(&second.id, CHANNEL, 3).unwrap();
+        assert!(dir.join(first.file_name).exists());
+        assert!(!dir.join(second.file_name).exists());
+        assert!(!dir.join(format!("{}.json", second.id)).exists());
+        assert!(capture.last.is_none());
+    }
+    #[test]
+    fn undo_rejects_modified_or_expired_file() {
+        let root = tempfile::tempdir().unwrap();
+        let mut capture = ScreenshotCapture::default();
+        let saved = save_frame(&mut capture, root.path());
+        let path = root.path().join("CHZZK/Screenshots").join(&saved.file_name);
+        fs::write(&path, b"changed by user").unwrap();
+        assert!(capture.undo(&saved.id, CHANNEL, 3).is_err());
+        assert!(path.exists());
+        let saved = save_frame(&mut capture, root.path());
+        capture.last_file.as_mut().unwrap().2 = Instant::now() - Duration::from_secs(61);
+        assert!(capture.undo(&saved.id, CHANNEL, 3).is_err());
+        assert!(root
+            .path()
+            .join("CHZZK/Screenshots")
+            .join(saved.file_name)
+            .exists());
     }
 }

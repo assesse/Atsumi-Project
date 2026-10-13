@@ -9,11 +9,12 @@ import { LiveChannelPicker } from "./LiveChannelPicker";
 import { LivePaneGrid } from "./LivePaneGrid";
 import { tutorialStepEvent } from "../../tutorial/tourActions";
 import "./MadoWorkspace.css";
+import { usePanelHandleGesture } from "./usePanelHandleGesture";
 
 type MadoLayout = { version: 1; direction: "horizontal" | "vertical"; horizontal: number; vertical: number };
 const layoutKey = "atsumi.mado.layout.v1";
 const defaultLayout: MadoLayout = { version: 1, direction: "horizontal", horizontal: 60, vertical: 50 };
-const boundedRatio = (value: number) => Math.min(76, Math.max(24, Math.round(value)));
+const boundedRatio = (value: number) => Math.min(94, Math.max(10, Math.round(value)));
 export function readMadoLayout(): MadoLayout {
   try {
     const value = JSON.parse(localStorage.getItem(layoutKey) ?? "null") as Partial<MadoLayout> | null;
@@ -86,6 +87,26 @@ export function NativeStreamingPane({ pane, epoch, api, privacy, suspended = fal
     };
     const update = () => {
       if (disposed) return;
+      if (document.hidden && !privacy && !suspended) {
+        // Windows minimize and tray hide both fire visibilitychange. Only the
+        // latter is an explicit audio suspension; keep the receiver on minimize.
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        const hideForTray = () => {
+          if (disposed || !document.hidden) return;
+          const viewport = { ...hidden, suspendAudio: true };
+          const key = JSON.stringify(viewport);
+          if (key === lastKey) return;
+          lastKey = key; latest = null;
+          void send(viewport, ++revision);
+        };
+        void import("@tauri-apps/api/window").then(async ({ getCurrentWindow }) => {
+          const window = getCurrentWindow();
+          const [minimized, visible] = await Promise.all([window.isMinimized(), window.isVisible()]);
+          if (!minimized || !visible) hideForTray();
+        }).catch(hideForTray);
+        return;
+      }
       if (frame) cancelAnimationFrame(frame);
       frame = 0;
       const measured = privacy || suspended || document.hidden || document.fullscreenElement ? hidden : { ...measureOfficialBrowserViewport(element), epoch };
@@ -154,6 +175,21 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
   });
   useEffect(() => { try { localStorage.setItem("atsumi.live.arrangement.v1", arrangement); } catch { /* Optional presentation preference. */ } }, [arrangement]);
   const [selectedChat, setSelectedChat] = useState<string | null>(null);
+  const [chatHidden, setChatHidden] = useState(false);
+  const [connectionDismissed, setConnectionDismissed] = useState(false);
+  useEffect(() => {
+    if (runtime !== "tauri") return;
+    let disposed = false, unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) => listen<{ action: string; channelId: string }>("chzzk-presentation", async ({ payload }) => {
+      if (disposed || !snapshotRef.current.active || !snapshotRef.current.panes.some(p => p.channelId === payload.channelId)) return;
+      if (payload.action === "chat_toggle") setChatHidden(value => !value);
+      if (payload.action === "fullscreen_toggle" || payload.action === "fullscreen_exit") {
+        try { const { getCurrentWindow } = await import("@tauri-apps/api/window"); const window = getCurrentWindow(); await window.setFullscreen(payload.action === "fullscreen_exit" ? false : !await window.isFullscreen()); }
+        catch { setError("전체화면을 전환하지 못했습니다."); }
+      }
+    })).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
+    return () => { disposed = true; unlisten?.(); };
+  }, [runtime]);
   const [resizing, setResizing] = useState(false);
   const [paneResizing, setPaneResizing] = useState(false);
   const captureChat = account.captureChatEnabled !== false;
@@ -162,6 +198,8 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
   const surfaces = useRef<HTMLDivElement>(null), cancelControl = useRef<HTMLButtonElement>(null);
   const settingsClose = useRef<HTMLButtonElement>(null);
   const settingsPanel = useRef<HTMLDivElement>(null);
+  const bottomHandle = useRef<HTMLButtonElement>(null);
+  const restoreHandleFocus = useRef(false);
   const settingsPriorFocus = useRef<HTMLElement | null>(null);
   const focusSettings = useRef(false);
   const drag = useRef<{ pointerId: number; direction: MadoLayout["direction"]; bounds: DOMRect } | null>(null);
@@ -178,7 +216,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
   const canApprove = !!control && !pending && (control.action === "record_stop" ? isRecording(controlPane!) && controlPane!.recordingStatus !== "stopping"
     : !pollError && controlPane!.ready === true && (control.action !== "record_start" || !isRecording(controlPane!)));
   // The guide may explain connection controls without revealing or starting video/chat.
-  const showingConnection = (!privacy || (tutorialActive && settings)) && !control && (settings || inlineDraft || !snapshot.active);
+  const showingConnection = (!privacy || (tutorialActive && settings)) && !control && (settings || inlineDraft || !unifiedLive && !snapshot.active && !connectionDismissed);
   const editDraft = () => { edited.current = true; if (!settings) setInlineDraft(true); };
   const openSettings = () => {
     if (!unifiedLive) setConnectionMode("mado");
@@ -191,11 +229,22 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     setSettings(true);
   };
   const closeSettings = () => {
-    if (settingsPanel.current?.contains(document.activeElement) && settingsPriorFocus.current?.isConnected) settingsPriorFocus.current.focus();
+    setConnectionDismissed(true);
+    if (settingsPanel.current?.contains(document.activeElement)) {
+      if (settingsPriorFocus.current === bottomHandle.current) restoreHandleFocus.current = true;
+      else if (settingsPriorFocus.current?.isConnected) settingsPriorFocus.current.focus();
+    }
     focusSettings.current = false;
     setInlineDraft(false);
     setSettings(false);
   };
+  const handleGesture = usePanelHandleGesture(showingConnection, "y", open => { if (open) openSettings(); else closeSettings(); });
+  useEffect(() => {
+    if (!showingConnection && restoreHandleFocus.current) {
+      restoreHandleFocus.current = false;
+      bottomHandle.current?.focus();
+    }
+  }, [showingConnection]);
   useEffect(() => {
     if (!connectionRequest) return;
     if (settings) closeSettings(); else openSettings();
@@ -205,7 +254,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
   useEffect(() => () => onConnectionOpenChange?.(false), [onConnectionOpenChange]);
   useEffect(() => {
     const advanceGuide = () => {
-      if (document.documentElement.dataset.tutorialStep !== "chzzk-auto") return;
+      if (!["chzzk-connection", "chzzk-more", "chzzk-auto", "chzzk-auto-info"].includes(document.documentElement.dataset.tutorialStep ?? "")) return;
       focusSettings.current = false;
       setInlineDraft(false);
       setSettings(true);
@@ -345,6 +394,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     // restore the just-closed channels over the user's next broadcast selection.
     edited.current = true;
     closeSettings();
+    if (unifiedLive) setSettings(true);
     if (!unifiedLive) onLeave();
   });
   const confirm = (approve: boolean) => {
@@ -394,7 +444,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     const size = current.direction === "horizontal" ? current.bounds.width : current.bounds.height;
     const offset = current.direction === "horizontal" ? event.clientX - current.bounds.left : event.clientY - current.bounds.top;
     if (size > 0) {
-      nextRatio.current = { value: offset / size * 100, direction: current.direction };
+      nextRatio.current = { value: (offset - 5) / Math.max(1, size - 10) * 100, direction: current.direction };
       if (!dragFrame.current) dragFrame.current = requestAnimationFrame(() => { dragFrame.current = 0; const next = nextRatio.current; nextRatio.current = null; if (next) updateRatio(next.value, next.direction); });
     }
   };
@@ -411,17 +461,13 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     const down = layout.direction === "horizontal" ? "ArrowLeft" : "ArrowUp", up = layout.direction === "horizontal" ? "ArrowRight" : "ArrowDown";
     if (![down, up, "Home", "End"].includes(event.key)) return;
     event.preventDefault();
-    updateRatio(event.key === "Home" ? 24 : event.key === "End" ? 76 : layout[layout.direction] + (event.key === down ? -1 : 1) * (event.shiftKey ? 10 : 2));
+    updateRatio(event.key === "Home" ? 10 : event.key === "End" ? 94 : layout[layout.direction] + (event.key === down ? -1 : 1) * (event.shiftKey ? 10 : 2));
   };
   const channels = [...new Set(snapshot.panes.map((pane) => pane.channelId))];
   const activeChat = selectedChat && channels.includes(selectedChat) ? selectedChat : channels[0] ?? "";
   const number = (channelId: string) => channels.indexOf(channelId) + 1;
   const label = (channelId: string) => `${number(channelId)}. ${privacy ? "방송" : channelName(snapshot.panes.find((pane) => pane.channelId === channelId))}`;
   const renderPane = (pane: MultiviewPane) => <NativeStreamingPane key={pane.paneId} pane={pane} epoch={snapshot.epoch} api={api} privacy={privacy} inputBlocked={resizing || paneResizing} onError={setError} />;
-  const warnings = snapshot.panes.filter(pane => pane.kind === "video").flatMap(pane => {
-    const message = [pane.error, chatWarning(pane)].filter(Boolean).join(" · ");
-    return message ? [{ paneId: pane.paneId, label: label(pane.channelId), message }] : [];
-  });
   const connectionSetup = <ConnectionSetup mode={connectionMode} onMode={value => { editDraft(); setConnectionMode(value); }} modeDisabled={pending || layoutLocked}
       runtime={runtime} privacy={privacy}
       knownChannelNames={Object.fromEntries(snapshot.panes.filter(pane => pane.channelName).map(pane => [pane.channelId, pane.channelName!]))}
@@ -432,7 +478,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
       onRemoveChannel={index => { editDraft(); setInputs(rows => rows.length > 1 ? rows.filter((_, i) => i !== index) : rows); setLead(0); }}
       receiverBacked={unifiedLive}
       channelPicker={unifiedLive ? <LiveChannelPicker runtime={runtime} inputs={inputs} multiple privacy={privacy} disabled={pending || runtime !== "tauri"} onInputs={next => { editDraft(); setInputs(next); }} /> : undefined}
-      inputs={inputs} onInput={(index, value) => { editDraft(); setInputs((rows) => rows.map((row, i) => i === index ? value : row)); }} disabled={pending || runtime !== "tauri"} pending={pending} onConnect={apply} onClose={settings ? closeSettings : undefined} closeRef={settingsClose}
+      inputs={inputs} onInput={(index, value) => { editDraft(); setInputs((rows) => rows.map((row, i) => i === index ? value : row)); }} disabled={pending || runtime !== "tauri"} pending={pending} onConnect={apply} onClose={settings || unifiedLive ? closeSettings : undefined} closeRef={settingsClose}
       auth={accountStatus(account)} accountDisabled={pending || account.accountBusy === true || runtime !== "tauri"} logoutDisabled={activeRecording}
       accountReason={activeRecording ? "녹화 중에도 로그인할 수 있습니다. 로그아웃은 녹화 종료 후 가능합니다." : undefined}
       onLogin={() => void run(async () => { const result = await officialApi.login(); if (result.ok) setAccount(result.data); else setError(result.error.message); })}
@@ -454,14 +500,26 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
       <button type="button" data-tour="chzzk-channels" onClick={openSettings}>연결 설정</button>
       {snapshot.active ? <button type="button" onClick={() => setLayout((current) => ({ ...current, direction: current.direction === "horizontal" ? "vertical" : "horizontal" }))} title="영상과 채팅의 배치 방향을 바꿉니다. 분할선은 끌거나 방향키로 조절할 수 있습니다.">{layout.direction === "horizontal" ? "위아래 배치" : "좌우 배치"}</button> : null}
     </header> : null}
-    {!privacy && warnings.length ? <div className="mado-notices">{warnings.map(warning => <span key={warning.paneId} className="mado-chat-warning" role="alert" tabIndex={0} title={`${warning.label} · ${warning.message}`} aria-label={`${warning.label} · ${warning.message}`}>⚠ {warning.label} · 확인 필요</span>)}</div> : null}
-    {showingConnection ? settings ? <div id="chzzk-connection-panel" ref={settingsPanel} className="official-browser-dialog-backdrop mado-connection-panel" role="dialog" aria-modal="false" data-native-overlay="true" data-native-preserve-video="true" data-native-interactive-background="true" aria-label="연결 설정" onKeyDown={(event) => {
+    {unifiedLive ? <div className="mado-connection-dock"><button ref={bottomHandle} type="button" hidden={!!control}
+      className="live-bottom-handle"
+      data-native-overlay="true" data-native-preserve-video="true" data-native-interactive-background="true" data-tour="chzzk-channels"
+      aria-label={`${snapshot.active ? "방송 조작" : "방송 보기"} ${showingConnection ? "닫기" : "열기"}`} aria-expanded={showingConnection} aria-controls={showingConnection ? "chzzk-connection-panel" : undefined}
+      title={showingConnection ? "누르거나 아래로 끌어 닫기" : "누르거나 위로 끌어 열기"} {...handleGesture}
+      onKeyDown={event => { if (event.key === "Escape" && showingConnection) { event.preventDefault(); event.stopPropagation(); closeSettings(); } }}>
+      <svg viewBox="0 0 24 16" aria-hidden="true"><path d={showingConnection ? "m6 5 6 5 6-5" : "m6 11 6-5 6 5"} /></svg>
+    </button>
+    {showingConnection ? <div id="chzzk-connection-panel" ref={settingsPanel} className="official-browser-dialog-backdrop mado-connection-panel" role="dialog" aria-modal="false" data-native-overlay="true" data-native-preserve-video="true" data-native-interactive-background="true" aria-label="연결 설정" onKeyDown={event => {
+      if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); closeSettings(); }
+    }}><div className="live-connection-surface" data-native-dialog-surface="true">{connectionSetup}</div></div> : null}
+    </div> : null}
+    {!unifiedLive && showingConnection ? settings ? <div id="chzzk-connection-panel" ref={settingsPanel} className="official-browser-dialog-backdrop mado-connection-panel" role="dialog" aria-modal="false" data-native-overlay="true" data-native-preserve-video="true" data-native-interactive-background="true" aria-label="연결 설정" onKeyDown={(event) => {
       if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); closeSettings(); }
     }}>{connectionSetup}</div> : <div className="mado-connection-inline">
       <p className="mado-connection-intro">{unifiedLive ? "저장한 채널을 선택하거나 방송 주소를 입력해 시청을 시작하세요. 저장한 영상은 녹화 목록에서 볼 수 있습니다." : "방송 주소를 입력하고 원하는 배치로 시청을 시작하세요."}</p>
       {connectionSetup}
     </div> : null}
     {(error || pollError) && !control ? <div className="mado-error" role="alert" data-native-overlay="true"><span>{error || pollError}</span>{error ? <button type="button" aria-label="오류 닫기" onClick={() => setError(null)}>×</button> : null}</div> : null}
+    <div className={`mado-content-surfaces${chatHidden ? " chat-hidden" : ""}`}>
     {snapshot.active && appliedMode === "paired" && channels.length > 1 && arrangement === "channels" ?
       <LivePaneGrid kind="pair" className={`mado-surfaces live-channel-pairs${paneResizing ? " is-resizing" : ""}`} onResizing={setPaneResizing} accessory={
         <div className="mado-chat-tabs live-pair-tabs" role="tablist" aria-label="볼 채팅" onKeyDown={event => {
@@ -477,7 +535,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
       </div>)}</LivePaneGrid>
     : snapshot.active ? <div ref={surfaces} className={`mado-surfaces is-${appliedMode} direction-${layout.direction}${resizing || paneResizing ? " is-resizing" : ""}`} data-channels={channels.length} style={{ "--mado-main-share": `${layout[layout.direction]}fr`, "--mado-chat-share": `${100 - layout[layout.direction]}fr` } as CSSProperties}>
         <LivePaneGrid kind="video" className="mado-lead" onResizing={setPaneResizing}>{snapshot.panes.filter((pane) => pane.kind === "video").map((pane) => <div className="mado-lead-inner" key={pane.paneId}>{renderPane(pane)}</div>)}</LivePaneGrid>
-        <div className="mado-divider" role="separator" tabIndex={0} aria-label="영상과 채팅 크기" aria-orientation={layout.direction === "horizontal" ? "vertical" : "horizontal"} aria-valuemin={24} aria-valuemax={76} aria-valuenow={layout[layout.direction]} aria-valuetext={`영상 ${layout[layout.direction]}%, 채팅 ${100 - layout[layout.direction]}%`} onKeyDown={dividerKey}
+        <div className="mado-divider" role="separator" tabIndex={0} aria-label="영상과 채팅 크기" aria-orientation={layout.direction === "horizontal" ? "vertical" : "horizontal"} aria-valuemin={10} aria-valuemax={94} aria-valuenow={layout[layout.direction]} aria-valuetext={`영상 ${layout[layout.direction]}%, 채팅 ${100 - layout[layout.direction]}%`} onKeyDown={dividerKey}
           onPointerDown={(event) => { if (event.button !== 0 || !surfaces.current) return; event.preventDefault(); drag.current = { pointerId: event.pointerId, direction: layout.direction, bounds: surfaces.current.getBoundingClientRect() }; event.currentTarget.setPointerCapture?.(event.pointerId); setResizing(true); }}
           onPointerMove={moveDivider} onPointerUp={endDivider} onPointerCancel={endDivider} onLostPointerCapture={endDivider} />
         <div className="mado-chat-area">
@@ -490,7 +548,15 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
           }}>{channels.map(channelId => <button type="button" key={channelId} id={`mado-chat-tab-${channelId}`} role="tab" aria-selected={activeChat === channelId} aria-controls={`mado-chat-panel-${channelId}`} tabIndex={activeChat === channelId ? 0 : -1} title={label(channelId)} onClick={() => setSelectedChat(channelId)}>{label(channelId)}</button>)}</div>
           <LivePaneGrid kind="chat" className="mado-chat-wall" onResizing={setPaneResizing}>{snapshot.panes.filter((pane) => pane.kind === "chat").map((pane) => <div className="mado-chat-cell" key={pane.paneId} id={`mado-chat-panel-${pane.channelId}`} data-chat-selected={activeChat === pane.channelId} aria-label={label(pane.channelId)}>{renderPane(pane)}</div>)}</LivePaneGrid>
         </div>
+    </div> : unifiedLive && !showingConnection && !control ? <div className="mado-live-empty">
+      <div className="live-empty-copy">
+        <svg className="live-empty-icon" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="5" width="26" height="19" rx="3" /><path d="m13 10 8 4.5-8 4.5zM11 28h10" /></svg>
+        <h2>방송을 시청해 보세요</h2>
+        <p>{privacy ? <>프라이버시 모드를 끈 뒤<br />아래 손잡이를 눌러주세요.</> : <>아래 손잡이를 누르거나 끌어올려 방송을 선택하세요.</>}</p>
+      </div>
+      <svg className="live-empty-direction" viewBox="0 0 24 64" aria-hidden="true"><path d="M12 2v56m-7-7 7 7 7-7" /></svg>
     </div> : privacy ? <p className="mado-empty">프라이버시 모드</p> : null}
+    </div>
     {control ? <div className="official-browser-dialog-backdrop" role="alertdialog" aria-modal="true" data-native-preserve-video="true" aria-labelledby="mado-control-title" onKeyDown={controlKeys}>
       <div className="official-browser-dialog" data-native-dialog-surface="true"><h3 id="mado-control-title">화면을 저장할까요?</h3><p>{label(control.channelId)} · 스크린샷을 저장합니다.</p>
         {error || pollError ? <p role="alert" className="official-browser-error">{error || pollError}</p> : null}

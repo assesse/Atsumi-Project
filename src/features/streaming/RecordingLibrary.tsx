@@ -8,6 +8,17 @@ import { groupRecordings, type RecordingGroup } from "./recordingGroups";
 import { FluentIcon } from "../../components/FluentIcon";
 import { emptyRecordingSelection, retainRecordingSelection, selectRecording } from "./recordingSelection";
 
+const expansionStorageKey = "atsumi.recording-library.expanded.v1";
+function readExpandedGroups(): Record<string, boolean> {
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(expansionStorageKey) ?? "null");
+    if (saved && typeof saved === "object" && !Array.isArray(saved)) {
+      return Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, boolean] => typeof entry[1] === "boolean"));
+    }
+  } catch { /* Unavailable or invalid preferences must not block the library. */ }
+  return {};
+}
+
 const duration = (value: number) => {
   const seconds = Math.max(0, Math.floor(value));
   return `${Math.floor(seconds / 3600).toString().padStart(2, "0")}:${Math.floor(seconds / 60 % 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
@@ -47,7 +58,15 @@ function BroadcastGroup({ group, expanded, onToggle, privacy, card }: {
   card(item: BrowserRecording, part?: number): ReactNode;
 }) {
   const contentId = useId();
-  return <section className="recording-broadcast-group" aria-label={privacy ? "방송 녹화 묶음" : `${group.latest.title || group.latest.channelId} 녹화 묶음`}>
+  const root = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!expanded || group.recordings.length === 1) return;
+    const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node) && !(event.target as Element)?.closest('.recording-library-selection,.recording-library-detail,.recording-library-delete-dialog')) onToggle(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") onToggle(); };
+    document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
+  }, [expanded, onToggle, group.recordings.length]);
+  return <section ref={root} className={`recording-broadcast-group${group.recordings.length === 1 ? " is-single" : ""}`} aria-label={privacy ? "방송 녹화 묶음" : `${group.latest.title || group.latest.channelId} 녹화 묶음`}>
     <RecordedChannel id={group.latest.id} privacy={privacy} />
     <button type="button" className="recording-broadcast-heading" aria-expanded={expanded} aria-controls={contentId}
       title={privacy ? undefined : `방송 ${group.broadcastKey?.replace(/^id:/, "")}`} onClick={onToggle}>
@@ -55,13 +74,13 @@ function BroadcastGroup({ group, expanded, onToggle, privacy, card }: {
         <small>파일 {group.recordings.length}개 · {bytes(group.recordings.reduce((sum, item) => sum + (hasCompletedMerge(item) ? item.merge!.bytes! : item.bytesWritten), 0))} <span className={`recording-library-state is-${cardState(group.latest).tone}`}>{cardState(group.latest).label}</span></small></span>
       <FluentIcon glyph="\uE70D" />
     </button>
-    <div id={contentId} className="recording-broadcast-files" hidden={!expanded}>
+    <div id={contentId} className="recording-broadcast-files" role="region" aria-label="묶인 녹화 파일" hidden={!expanded}>
       {expanded ? group.recordings.map((item, index) => card(item, index + 1)) : null}
     </div>
   </section>;
 }
 type Props = {
-  recordings: BrowserRecording[]; selectedId: string | null; onSelect: (id: string) => void;
+  recordings: BrowserRecording[]; selectedId: string | null; onSelect: (id: string | null) => void;
   disabled: boolean; privacy: boolean; retrying: boolean; openingFolder: boolean;
   onFolder: (id: string) => void; onReplay: (id: string) => void;
   onRetryMerge: (id: string) => void | Promise<boolean | void>;
@@ -79,7 +98,11 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
   const [selection, setSelection] = useState(emptyRecordingSelection);
   const checked = selection.ids;
   const setChecked = (update: string[] | ((previous: string[]) => string[])) => setSelection(previous => ({ ...previous, ids: typeof update === "function" ? update(previous.ids) : update }));
-  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [expandedGroups, setExpandedGroups] = useState(readExpandedGroups);
+  useEffect(() => {
+    // Store explicit false values too. Do not prune against a filtered or still-loading list.
+    try { localStorage.setItem(expansionStorageKey, JSON.stringify(expandedGroups)); } catch { /* Optional local presentation preference. */ }
+  }, [expandedGroups]);
   const [showAttempts, setShowAttempts] = useState(false);
   const [resuming, setResuming] = useState(false);
   const [resumeNotice, setResumeNotice] = useState("");
@@ -121,12 +144,13 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
     else if (!confirmIds && node.open) { node.close(); (deleteTrigger.current && !deleteTrigger.current.disabled ? deleteTrigger.current : library.current)?.focus(); }
   }, [confirmIds]);
   useEffect(() => { if (privacy) setQuery(""); }, [privacy]);
-  const selected = [...active, ...filtered, ...attempts, ...diagnostics].find(item => item.id === (checked.length === 1 ? checked[0] : selectedId)) ?? filtered[0] ?? active[0] ?? attempts[0];
-  const isExpanded = (group: RecordingGroup) => expandedGroups[group.key] ?? (group.active || group.recordings.length === 1 || group.recordings.some(item => item.id === selected?.id));
+  const selected = [...active, ...filtered, ...attempts, ...diagnostics].find(item => item.id === (checked.length === 1 ? checked[0] : selectedId));
+  const isExpanded = (group: RecordingGroup) => expandedGroups[group.key] ?? group.recordings.length === 1;
   useEffect(() => {
     if (!selectedId) return;
     const group = groups.find(value => value.recordings.some(item => item.id === selectedId));
-    if (group) setExpandedGroups(previous => previous[group.key] ? previous : { ...previous, [group.key]: true });
+    // A retained selection must not reopen a broadcast the user explicitly closed.
+    if (group) setExpandedGroups(previous => previous[group.key] !== undefined ? previous : { ...previous, [group.key]: true });
   }, [selectedId]);
   const title = (item: BrowserRecording) => privacy ? "녹화 영상" : item.title || item.channelId;
   const visible = [...activeGroups, ...savedGroups.slice(0, limit)].flatMap(group => isExpanded(group) ? group.recordings : [])
@@ -150,7 +174,7 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       setSelection(previous => selectRecording(previous, item.id, eligible, { ctrl, shift }));
       if (!shift && checked.includes(item.id) && (ctrl || checked.length === 1)) event.currentTarget.blur();
     } else if (!ctrl && !shift) clearSelection();
-    if (!ctrl && !shift) onSelect(item.id);
+    if (!ctrl && !shift) onSelect(checked.length === 1 && checked[0] === item.id ? null : item.id);
   };
   const requestDelete = (ids: string[]) => {
     if (busy || !ids.length || ids.some(id => !eligible.includes(id))) return;
@@ -204,7 +228,16 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
     {selecting && item.status !== "recording" ? <input className="recording-library-check" type="checkbox" aria-label={`${title(item)} 선택`} checked={checked.includes(item.id)} disabled={!canDelete(item) || busy} onChange={event => toggle(item.id, (event.nativeEvent as globalThis.MouseEvent).shiftKey)} /> : null}
   </div>;
   };
-  const broadcast = (group: RecordingGroup) => <BroadcastGroup key={group.key} group={group} expanded={isExpanded(group)} onToggle={() => { if (!busy) setExpandedGroups(previous => ({ ...previous, [group.key]: !isExpanded(group) })); }} privacy={privacy} card={card} />;
+  const broadcast = (group: RecordingGroup) => <BroadcastGroup key={group.key} group={group} expanded={isExpanded(group)} onToggle={() => {
+    if (busy) return;
+    const closing = isExpanded(group);
+    // Keep explicit closed states: replacing the map resurrected other single-file groups.
+    setExpandedGroups(previous => ({ ...previous,
+      ...(!closing && group.recordings.length > 1 ? Object.fromEntries(groups.filter(other => other.recordings.length > 1).map(other => [other.key, false])) : {}),
+      [group.key]: !closing,
+    }));
+    if (closing && group.recordings.some(item => item.id === selectedId)) onSelect(null);
+  }} privacy={privacy} card={card} />;
   return <section ref={library} tabIndex={-1} className="recording-library" aria-label="녹화 보관함" onKeyDown={event => {
     if (busy || confirmIds || (event.target as HTMLElement).closest('input:not([type="checkbox"]),textarea,select,[contenteditable="true"]')) return;
     if (event.key === "Escape" && checked.length) { event.preventDefault(); event.stopPropagation(); clearSelection(); }
@@ -227,13 +260,13 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       {savedGroups.length > limit ? <button type="button" className="recording-library-more" onClick={() => setLimit(value => value + 24)}>더 보기 · {savedGroups.length - limit}개</button> : null}
     </div>
     {selected ? <section className="recording-library-detail official-browser-files" aria-label="공식 녹화 파일">
-      <div className="recording-library-detail-heading"><span>선택한 녹화</span><h3>{title(selected)}</h3><p>{date(selected.startedAt)}</p></div>
+      <div className="recording-library-detail-heading"><span>선택한 녹화</span><button type="button" className="recording-library-detail-close" aria-label="녹화 상세 닫기" disabled={busy} onClick={() => { clearSelection(); onSelect(null); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button><h3>{title(selected)}</h3><p>{date(selected.startedAt)}</p></div>
       <RecordedChannel id={selected.id} privacy={privacy} />
       <p className="official-browser-muted" title={recordingChatNote(selected).text}>{duration(selected.durationSeconds)} · {selected.mediaRemovedAt != null ? "영상 없음" : bytes(hasCompletedMerge(selected) ? selected.merge!.bytes! : selected.bytesWritten)} <span className={`recording-library-state is-${cardState(selected).tone}`} title={recordingEndDetail(selected) || undefined}>{cardState(selected).label}</span> <ChatWarning recording={selected} /></p>
       {selected.partial && selected.mediaRemovedAt == null ? <p className="official-browser-note">영상 일부가 저장되지 않았을 수 있습니다.</p> : null}
       {selected.deletionPending ? <p className="official-browser-note">삭제 미완료 · 선택 삭제로 다시 시도해 주세요.</p> : <RecordingPlayback key={selected.id} recording={selected} disabled={busy} privacyMode={privacy} retrying={retrying} onReplay={onReplay} onRetryMerge={onRetryMerge} />}
       {checked.length === 1 && checked[0] === selected.id ? <div className="recording-library-single-actions"><span role="status">1개 선택</span><button ref={deleteTrigger} type="button" className="recording-library-delete" disabled={busy || !canDelete(selected)} onClick={() => requestDelete([selected.id])}>녹화 삭제</button></div> : null}
-    </section> : null}
+    </section> : <div className="recording-library-detail-placeholder" aria-hidden="true" />}
     </div>
     <dialog ref={dialog} className="recording-library-delete-dialog" aria-labelledby={dialogTitle} aria-describedby={dialogDescription} aria-busy={deleting} onCancel={event => { event.preventDefault(); if (!deleteInFlight.current) setConfirmIds(null); }}>
       <h3 id={dialogTitle}>녹화 {confirmIds?.length ?? 0}개를 삭제할까요?</h3>

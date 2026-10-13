@@ -16,6 +16,7 @@ export function RecordingReplay({ recordingId, runtime, privacyMode, liveRecordi
   const [mediaDuration, setMediaDuration] = useState(0), [fullscreen, setFullscreen] = useState(false);
   const [seekVersion, setSeekVersion] = useState(0), [timeline, setTimeline] = useState<ReplayTimeline | null>(null);
   const [wide, setWide] = useState(false);
+  const [playbackEnded, setPlaybackEnded] = useState(false);
   const [refreshing, setRefreshing] = useState(false), [refreshNotice, setRefreshNotice] = useState("");
   const lease = useRef<{ release(token: string): void; add(token: string): void } | null>(null);
   const refreshInFlight = useRef<number | null>(null);
@@ -35,7 +36,7 @@ export function RecordingReplay({ recordingId, runtime, privacyMode, liveRecordi
     };
     lease.current = owner;
     ++sessionGeneration.current; ++timelineGeneration.current; timelineRequested.current = false; previousState.current = null;
-    setSession(null); setTimeline(null); setError(null); setTime(0); setMediaAspect(16 / 9); setMediaDuration(0); offsetSaving.current = false;
+    setSession(null); setTimeline(null); setError(null); setTime(0); setMediaAspect(16 / 9); setMediaDuration(0); setPlaybackEnded(false); offsetSaving.current = false;
     refreshInFlight.current = null; retiredTokens.current.clear(); setRefreshing(false); setRefreshNotice("");
     void api.open(recordingId).then(result => {
       if (result.ok) { owner.add(result.data.token); if (!disposed) setSession(result.data); }
@@ -48,17 +49,24 @@ export function RecordingReplay({ recordingId, runtime, privacyMode, liveRecordi
   useEffect(() => { const change = () => setFullscreen(document.fullscreenElement === dialog.current); document.addEventListener("fullscreenchange", change); return () => document.removeEventListener("fullscreenchange", change); }, []);
   const stateChanged = useCallback((state: OriginalPlayerState) => {
     const previous = previousState.current;
+    // Tail is a separate event: the source adapter deliberately keeps the SDK
+    // out of its blocking live-site end screen. Native seeks/play still clear it.
+    if (playbackEnded && (!state.paused || state.seeking || previous && state.time < previous.time)) setPlaybackEnded(false);
     if (state.seeking && !previous?.seeking || previous && state.time < previous.time) setSeekVersion(value => value + 1);
     previousState.current = state;
     if (!previous || Math.floor(previous.time * 10) !== Math.floor(state.time * 10)) setTime(Math.floor(state.time * 10) / 10);
     if (!previous || previous.aspect !== state.aspect) setMediaAspect(state.aspect);
     if (state.duration > 0 && previous?.duration !== state.duration) setMediaDuration(state.duration);
-  }, []);
+  }, [playbackEnded]);
   const seek = useCallback((target: number) => {
     if (!Number.isFinite(target)) return;
     const next = Math.max(0, Math.min(duration, target));
-    player.current?.seek(next); setTime(next); setSeekVersion(value => value + 1);
+    setPlaybackEnded(false); player.current?.seek(next); setTime(next); setSeekVersion(value => value + 1);
   }, [duration]);
+  const restart = () => {
+    if (privacyMode) return;
+    seek(0); player.current?.toggle(); dialog.current?.focus();
+  };
   const toggleFullscreen = useCallback(async () => {
     try { if (document.fullscreenElement === dialog.current) await document.exitFullscreen(); else if (dialog.current?.requestFullscreen) await dialog.current.requestFullscreen(); }
     catch { setError("전체화면을 전환하지 못했습니다."); }
@@ -123,7 +131,7 @@ export function RecordingReplay({ recordingId, runtime, privacyMode, liveRecordi
       }
       ++timelineGeneration.current; timelineRequested.current = false; setTimeline(null);
       retiredTokens.current.add(old.token);
-      setMediaDuration(0); setSession(result.data); setSeekVersion(value => value + 1);
+      setPlaybackEnded(false); setMediaDuration(0); setSession(result.data); setSeekVersion(value => value + 1);
     } catch { if (generation === sessionGeneration.current) setRefreshNotice("새 저장 구간을 확인하지 못했습니다."); }
     finally { if (refreshInFlight.current === generation) refreshInFlight.current = null; if (generation === sessionGeneration.current) setRefreshing(false); }
   };
@@ -155,16 +163,19 @@ export function RecordingReplay({ recordingId, runtime, privacyMode, liveRecordi
             <OriginalChzzkPlayer key={recordingId} ref={player} runtime={runtime} mediaUrl={new URL(api.mediaUrl(session.token), location.href).href} duration={session.durationSeconds} parts={session.parts} privacy={privacyMode} timeline={timeline} wide={wide} fullscreen={fullscreen}
               recording={{ title: session.title, channelName: session.channelName, recordedAt: session.recordedAt, profileImage: session.channelProfileImage }}
               onState={stateChanged} onError={setError} onFullscreen={() => void toggleFullscreen()} onWide={() => setWide(value => !value)} onClose={close}
-              onTail={() => { if (session.parts?.length) void refresh(); }} onSourceReady={sourceReady}
+              onTail={() => { setPlaybackEnded(true); if (session.parts?.length) void refresh(); }} onSourceReady={sourceReady}
               onChannel={() => { void openRecordingChannel(recordingId).catch(() => setError("채널 페이지를 열지 못했습니다.")); }} />
+            {playbackEnded && !privacyMode ? <button type="button" className="recording-replay-restart" aria-label="처음부터 다시보기" title="처음부터 다시 재생" onClick={restart}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M19.4 12A7.5 7.5 0 1 0 18 17" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>
+              <span>다시보기</span>
+            </button> : null}
             {session.parts?.length ? <div className="recording-replay-saved-range" role="status">
               <span>현재 {savedDuration(session.durationSeconds)}까지 재생 가능{session.recordingActive ? " · 녹화 중" : ""}</span>
               <button type="button" disabled={refreshing} onClick={() => void refresh()} aria-label="새 저장 구간 불러오기" title="새 저장 구간 불러오기">{refreshing ? "확인 중…" : "새로고침"}</button>
               {refreshNotice ? <small>{refreshNotice}</small> : null}
             </div> : null}
-            {!privacyMode ? dismiss : null}
           </div></div></section>
-          <RecordingReplayChat api={api} session={session} time={Math.floor(time * 5) / 5} seekVersion={seekVersion} onSeek={seek} onIndexReady={indexReady} onSetOffset={saveOffset} />
+          <RecordingReplayChat api={api} session={session} time={Math.floor(time * 5) / 5} seekVersion={seekVersion} onSeek={seek} onIndexReady={indexReady} onSetOffset={saveOffset} closeControl={dismiss} />
         </div>
       </>}
     </div>

@@ -45,6 +45,37 @@ const settings: SettingsSnapshot = {
 };
 
 describe("SettingsDialog operational boundaries", () => {
+  it.each([
+    { destinationKind: "ssd", detectedSsds: 1, stagingAvailable: true, text: "이곳에 바로 저장", checked: true, disabled: true },
+    { destinationKind: "hdd", detectedSsds: 1, stagingAvailable: true, text: "다운로드 폴더는 HDD", checked: false, disabled: false },
+    { destinationKind: "hdd", detectedSsds: 0, stagingAvailable: false, text: "사용 가능한 SSD 없음", checked: false, disabled: true },
+    { destinationKind: "unknown", detectedSsds: 0, stagingAvailable: false, text: "디스크 종류를 확인하지 못했습니다", checked: false, disabled: true },
+  ] as const)("reports actual recording storage: $destinationKind / $detectedSsds SSDs", async status => {
+    const previous = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
+    Object.defineProperty(HTMLDialogElement.prototype, "showModal", { configurable: true, value() { this.setAttribute("open", ""); } });
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container), save = vi.fn(async () => true);
+    try {
+      await act(async () => root.render(<SettingsDialog open settings={settings} loading={false} error={null}
+        onClose={vi.fn()} onSave={save} onLoadStorageUsage={async () => ({ ok: true, data: {
+          recordingStorage: status, systemBytes: 10, mediaBytes: 20, memoryCacheBytes: 0,
+          diskCache: { bytes: 0, exists: true, scanComplete: true }, appData: { bytes: 0, exists: true, scanComplete: true },
+          downloads: { bytes: 0, exists: true, scanComplete: true }, volumes: [], warnings: [],
+        } })} onPreviewLayout={vi.fn()} onPreviewFolderName={async () => ({ ok: true, data: "preview" })}
+        onMaintenance={vi.fn()} onCheckForUpdates={vi.fn()} onTagCatalogRefresh={vi.fn()} tagCatalogRefreshing={false}
+        onLoadExplorationExclusions={vi.fn()} onRestoreExplorationExclusions={vi.fn()} />));
+      const toggle = container.querySelector<HTMLInputElement>('[aria-label="CHZZK 녹화에 SSD 사용"]')!;
+      expect(toggle.checked).toBe(status.checked);
+      expect(toggle.disabled).toBe(status.disabled);
+      expect(toggle.closest('.setting-row')).toHaveTextContent(status.text);
+      expect(toggle.closest('.setting-row')).not.toHaveAttribute('title');
+      expect(save).not.toHaveBeenCalled(); // discovery never rewrites the saved preference
+    } finally {
+      await act(async () => root.unmount()); container.remove();
+      if (previous) Object.defineProperty(HTMLDialogElement.prototype, "showModal", previous);
+      else delete (HTMLDialogElement.prototype as { showModal?: () => void }).showModal;
+    }
+  });
   it("exposes preset sizing and only safe, implemented reset operations", async () => {
     const previousShowModal = Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, "showModal");
     const previousClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
@@ -186,7 +217,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(container.querySelector(".settings-scope-intro")).toBeNull();
       expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["다운로드 폴더", "튜토리얼", "Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "설정 초기화"]);
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="튜토리얼 다시 보기"]')!.click());
-      expect([...container.querySelectorAll('[role="option"]')].map(option => option.lastElementChild?.textContent)).toEqual(["선택하여 다시 보기", "Hitomi", "Danbooru", "CHZZK"]);
+      expect([...container.querySelectorAll('[role="option"]')].map(option => option.lastElementChild?.textContent)).toEqual(["다시 체험하기", "Hitomi", "Danbooru", "CHZZK"]);
       await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent === "CHZZK")!.click());
       expect(onReplayTutorial).toHaveBeenCalledWith("chzzk");
       expect(container.textContent).not.toContain("다음 단계");
@@ -194,15 +225,13 @@ describe("SettingsDialog operational boundaries", () => {
       expect(container.querySelector(".settings-dialog > .settings-form")).not.toBeNull();
       const storage = container.querySelector<HTMLElement>(".storage-usage-panel");
       expect(onLoadStorageUsage).toHaveBeenCalledTimes(1);
-      expect(storage).toHaveTextContent("메모리 미리보기 캐시");
-      expect(storage).toHaveTextContent("18 MB");
-      expect(storage).toHaveTextContent("다운로드 폴더");
+      expect(storage?.querySelectorAll(".storage-summary-grid article")).toHaveLength(2);
+      expect(storage).toHaveTextContent("시스템 데이터");
+      expect(storage).toHaveTextContent("170 MB");
+      expect(storage).toHaveTextContent("미디어");
+      expect(storage).not.toHaveTextContent("18 MB");
       expect(storage).toHaveTextContent("37 GB");
-      expect(storage).toHaveTextContent("D:\\ 디스크");
-      expect(storage?.querySelector(".storage-volume-meter")).toHaveAttribute(
-        "aria-label",
-        expect.stringContaining("Atsumi 관리 경로 37 GB"),
-      );
+      expect(storage?.querySelector(".storage-volume-meter")).toBeNull();
       await act(async () => {
         [...storage?.querySelectorAll<HTMLButtonElement>("button") ?? []]
           .find((button) => button.textContent === "새로고침")
@@ -384,9 +413,14 @@ describe("SettingsDialog operational boundaries", () => {
         overlapCopy?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
         await new Promise((resolve) => window.setTimeout(resolve, 200));
       });
+      expect(container.querySelector('[role="tooltip"]')).toBeNull();
+      await act(async () => {
+        overlapHelp?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+        await new Promise(resolve => window.setTimeout(resolve, 200));
+      });
       expect(container.querySelector('[role="tooltip"]')).toHaveTextContent("일반 판본: 포함률 95% 이상");
       await act(async () => {
-        overlapCopy?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
+        overlapHelp?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true }));
       });
       expect(container.querySelector('[role="tooltip"]')).toBeNull();
       const searchCatalog = container.querySelector<HTMLElement>(".search-catalog-panel");

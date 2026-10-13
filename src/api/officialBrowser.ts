@@ -111,6 +111,7 @@ export type OfficialBrowserViewport = {
   preserveBackground?: boolean;
   /** At most eight stage-local popup rectangles subtracted from the scroll clip. */
   occlusions?: { x: number; y: number; width: number; height: number }[];
+  roundedOcclusions?: { x: number; y: number; width: number; height: number; radii: [number, number, number, number] }[];
   epoch?: number;
   /** Native transport assigns a monotonic sequence within this main document. */
   requestSequence?: number;

@@ -29,6 +29,9 @@ pub struct StorageVolumeUsage {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageUsageSnapshot {
+    pub system_bytes: u64,
+    pub media_bytes: u64,
+    pub recording_storage: crate::streaming::browser_store::ssd::RecordingStorageStatus,
     pub memory_cache_bytes: u64,
     pub disk_cache: StorageAreaUsage,
     pub app_data: StorageAreaUsage,
@@ -56,6 +59,16 @@ pub fn collect_storage_usage(
     data_dir: &Path,
     download_root: Option<&Path>,
     memory_cache_bytes: u64,
+) -> StorageUsageSnapshot {
+    let staging = crate::streaming::browser_store::ssd::staging_roots(data_dir);
+    collect_usage_with_staging(data_dir, download_root, memory_cache_bytes, &staging)
+}
+
+fn collect_usage_with_staging(
+    data_dir: &Path,
+    download_root: Option<&Path>,
+    memory_cache_bytes: u64,
+    staging: &[PathBuf],
 ) -> StorageUsageSnapshot {
     let mut warnings = Vec::new();
     let data_usage = directory_usage(data_dir);
@@ -85,6 +98,24 @@ pub fn collect_storage_usage(
         },
         directory_usage,
     );
+    let data_path = normalized_physical_path(data_dir);
+    let mut media_paths = Vec::new();
+    if let Some(root) = configured_download_root {
+        media_paths.push((normalized_physical_path(root), download_usage.bytes));
+    }
+    for root in staging {
+        let path = normalized_physical_path(root);
+        if media_paths.iter().any(|(parent, _)| path == *parent) {
+            continue;
+        }
+        let usage = directory_usage(root);
+        if !usage.complete {
+            warnings.push("일부 녹화 작업 파일의 용량을 확인하지 못했습니다.".into());
+        }
+        media_paths.push((path, usage.bytes));
+    }
+    let (system_bytes, media_bytes) =
+        split_storage_categories(&data_path, data_usage.bytes, &media_paths);
     if configured_download_root.is_some() && !download_usage.exists {
         warnings.push("설정된 다운로드 폴더가 아직 존재하지 않습니다.".into());
     } else if !download_usage.complete {
@@ -116,6 +147,12 @@ pub fn collect_storage_usage(
         .collect();
 
     StorageUsageSnapshot {
+        system_bytes,
+        media_bytes,
+        recording_storage: crate::streaming::browser_store::ssd::inspect(
+            data_dir,
+            configured_download_root,
+        ),
         memory_cache_bytes,
         disk_cache: StorageAreaUsage {
             bytes: disk_cache_usage.bytes,
@@ -138,6 +175,28 @@ pub fn collect_storage_usage(
         volumes,
         warnings,
     }
+}
+
+fn split_storage_categories(data: &Path, data_bytes: u64, media: &[(PathBuf, u64)]) -> (u64, u64) {
+    // Media nested in app data belongs to media. Conversely, a download root
+    // enclosing app data must not count the system files a second time.
+    let nested: Vec<_> = media
+        .iter()
+        .filter(|(p, _)| p != data && p.starts_with(data))
+        .cloned()
+        .collect();
+    let nested_bytes = unique_physical_bytes(&nested);
+    let system = data_bytes.saturating_sub(nested_bytes);
+    let total_media = unique_physical_bytes(media);
+    let encloses_data = media.iter().any(|(p, _)| data.starts_with(p));
+    (
+        system,
+        if encloses_data {
+            total_media.saturating_sub(system)
+        } else {
+            total_media
+        },
+    )
 }
 
 fn directory_usage(root: &Path) -> DirectoryUsage {
@@ -356,6 +415,28 @@ fn disk_capacity(_path: &Path) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_categories_include_staged_media_and_never_double_count_roots() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = temp.path().join("data");
+        let staged = data.join("ssd-recordings");
+        let downloads = temp.path().join("downloads");
+        fs::create_dir_all(&staged).unwrap();
+        fs::create_dir_all(&downloads).unwrap();
+        fs::write(data.join("db"), [0; 5]).unwrap();
+        fs::write(staged.join("video"), [0; 11]).unwrap();
+        fs::write(downloads.join("album"), [0; 7]).unwrap();
+        let usage =
+            collect_usage_with_staging(&data, Some(&downloads), 999, std::slice::from_ref(&staged));
+        assert_eq!((usage.system_bytes, usage.media_bytes), (5, 18));
+        let usage =
+            collect_usage_with_staging(&data, Some(&data), 999, std::slice::from_ref(&staged));
+        assert_eq!((usage.system_bytes, usage.media_bytes), (5, 11));
+        let usage =
+            collect_usage_with_staging(&data, Some(&staged), 999, std::slice::from_ref(&staged));
+        assert_eq!((usage.system_bytes, usage.media_bytes), (5, 11));
+    }
 
     #[test]
     fn splits_persistent_and_transient_caches_app_data_and_download_files() {

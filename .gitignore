@@ -4,6 +4,7 @@ target/
 src-tauri/target/
 .pnpm-store/
 .runtime/
+supabase/.temp/
 # Explicit local checkpoints are preserved separately from runtime/build output.
 checkpoints/
 *.log

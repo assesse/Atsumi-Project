@@ -3043,7 +3043,6 @@ class BrowserMockBackend implements BackendClient {
       || !Number.isInteger(request.sourcePage)
       || request.sourcePage < 1
       || (request.entryId !== undefined && !localEntryId)
-      || (request.entryId === undefined && request.sourcePage !== 1)
     ) {
       return validationError("detailOriginal", "requestId, galleryId, sourcePage, or entryId is invalid");
     }

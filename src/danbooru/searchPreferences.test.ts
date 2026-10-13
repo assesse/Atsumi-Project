@@ -7,21 +7,45 @@ import {
   isDanbooruDate,
   validateDanbooruSearchDates,
   withoutRetiredRelationship,
+  DANBOORU_SORTS,
   type DanbooruSearchFilters,
 } from "./searchPreferences";
 
 describe("Danbooru search preferences", () => {
   it.each([
-    ["newest", ""], ["oldest", "order:id_asc"], ["score", "order:score"],
-    ["favorites", "order:favcount"], ["resolution", "order:mpixels"],
-    ["file_size", "order:filesize"], ["tag_count", "order:tagcount"],
-    ["portrait", "order:portrait"], ["landscape", "order:landscape"],
+    ["newest", ""], ["oldest", "order:id_asc"], ["popular", "order:rank"], ["file_size", "order:filesize"],
+    ["popular_week", "age:<7days order:score"], ["popular_month", "age:<30days order:score"],
   ] as const)("maps %s to the upstream server order without client-side sorting", (sort, metatag) => {
     expect(buildDanbooruSearchQuery("rating:g", { ...defaultDanbooruSearchFilters(), sort })).toBe(["rating:g", metatag].filter(Boolean).join(" "));
   });
 
+  it("removes orders that the anonymous server times out and migrates their saved preferences", () => {
+    expect(DANBOORU_SORTS.map(item => item.value)).toEqual(["newest", "oldest", "popular", "popular_week", "popular_month", "file_size"]);
+    for (const sort of ["score", "favorites", "resolution", "tag_count", "portrait", "landscape"]) {
+      expect(sanitizeDanbooruSearchFilters({ sort }).sort).toBe("newest");
+    }
+  });
+
   it("does not duplicate an explicitly typed order with a settings default", () => {
     expect(buildDanbooruSearchQuery("rating:g order:portrait", { ...defaultDanbooruSearchFilters(), sort: "score" })).toBe("rating:g order:portrait");
+  });
+
+  it.each(["popular_week", "popular_month"] as const)("preserves %s preferences and does not impose its age on an explicit order", sort => {
+    expect(sanitizeDanbooruSearchFilters({ sort }).sort).toBe(sort);
+    expect(buildDanbooruSearchQuery("rating:g order:id_asc", { ...defaultDanbooruSearchFilters(), sort })).toBe("rating:g order:id_asc");
+    expect(buildDanbooruSearchQuery("1234567", { ...defaultDanbooruSearchFilters(), sort })).toBe("1234567");
+    expect(danbooruLimitedTermCount(buildDanbooruSearchQuery("solo", { ...defaultDanbooruSearchFilters(), sort }))).toBe(2);
+  });
+
+  it("intersects a popularity period with explicit date, rating and score filters without silently clearing them", () => {
+    const filters = { ...defaultDanbooruSearchFilters(), sort: "popular_week" as const, ratings: ["g" as const], dateFrom: "2026-10-08", dateTo: "2026-10-10", minimumScore: "20" };
+    expect(buildDanbooruSearchQuery("solo", filters)).toBe("solo rating:g date:2026-10-08..2026-10-10 score:>=20 age:<7days order:score");
+  });
+
+  it("keeps native popularity and the user's explicit dates without silently widening either", () => {
+    const filters = { ...defaultDanbooruSearchFilters(), sort: "popular" as const, dateFrom: "2020-01-01", dateTo: "2020-01-31" };
+    expect(sanitizeDanbooruSearchFilters(filters).sort).toBe("popular");
+    expect(buildDanbooruSearchQuery("rating:g", filters)).toBe("rating:g date:2020-01-01..2020-01-31 order:rank");
   });
 
   it("validates real dates, exact four-digit years and ordered inclusive ranges", () => {
@@ -40,10 +64,10 @@ describe("Danbooru search preferences", () => {
       dateTo: "2026-08-31",
       minimumScore: "20",
       minimumFavorites: "5",
-      sort: "score" as const,
+      sort: "file_size" as const,
     };
     expect(buildDanbooruSearchQuery("sample_artist solo", filters)).toBe(
-      "sample_artist solo rating:g,s filetype:jpg,png date:2026-08-01..2026-08-31 score:>=20 favcount:>=5 order:score",
+      "sample_artist solo rating:g,s filetype:jpg,png date:2026-08-01..2026-08-31 score:>=20 favcount:>=5 order:filesize",
     );
   });
 

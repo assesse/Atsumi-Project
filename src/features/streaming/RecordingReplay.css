@@ -25,6 +25,11 @@
 .recording-replay { position: relative; }
 .recording-replay-heading-actions { display: flex; gap: 6px; align-items: center; margin-left: auto; }
 .recording-replay-original-player { display: block; border: 0; width: 100%; height: 100%; background: #000; }
+.recording-replay .recording-replay-restart { position: absolute; z-index: 2; top: 50%; left: 50%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box; width: 112px; height: 112px; margin: 0; padding: 14px; border: 1px solid #ffffff40; border-radius: 50%; background: #151719; color: #fff; box-shadow: 0 3px 18px #0006; font-size: 15px; line-height: 1.2; animation: recording-replay-restart-in 160ms ease-out; }
+.recording-replay .recording-replay-restart:hover { color: #fff; border-color: #ffffff8a; background: #303336; }
+.recording-replay-restart svg { display: block; flex: none; width: 36px; height: 36px; }
+@keyframes recording-replay-restart-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .recording-replay .recording-replay-restart { animation: none; } }
 .recording-replay-player { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0b1016; }
 .recording-replay-stage { flex: 1; position: relative; min-height: 0; background: #000; overflow: hidden; container-type: size; }
 .recording-replay-visual { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(100cqw, calc(100cqh * var(--video-aspect))); height: min(100cqh, calc(100cqw / var(--video-aspect))); }

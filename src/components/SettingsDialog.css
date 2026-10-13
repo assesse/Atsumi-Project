@@ -60,3 +60,5 @@ dialog.settings-dialog { width: min(616px, calc(100vw - 32px)); }
   .settings-dialog .search-catalog-panel > header,
   .settings-dialog .exclusion-manager-header { flex-wrap: wrap; }
 }
+.settings-dialog .settings-tutorial-row { grid-template-columns:minmax(0,1fr) auto; }
+.settings-dialog .settings-tutorial-select { width:148px; min-width:0; }

@@ -45,6 +45,7 @@ export const workspaceRegistry = {
     description: "공개 라이브 시청·녹화·채팅 보관",
     navigation: [
       { view: "live", label: "라이브", icon: "\uE714" },
+      { view: "screenshots", label: "스크린샷", icon: "\uE722" },
       { view: "recordings", label: "녹화 목록", icon: "\uE8B7" },
     ],
   },

@@ -287,6 +287,15 @@ mod probe {
                         let backward=wait_state(&view,start,|v|v["state"]["time"].as_f64().is_some_and(|n|(1.0..2.0).contains(&n))&&v["state"]["seeking"]==false&&v["diagnostics"]["seeking"]==false&&v["diagnostics"]["rate"]==2)?;
                         thread::sleep(Duration::from_millis(700));
                         let fast=wait_state(&view,start,|v|v["diagnostics"]["rate"]==2&&v["diagnostics"]["time"].as_f64().is_some_and(|n|n>2.0))?;
+                        script(&view,"window.originalSend('seek',7.8);true")?;
+                        let _end=wait_state(&view,start,|v|v["diagnostics"]["time"].as_f64().is_some_and(|n|n>=7.95)&&v["diagnostics"]["paused"]==true)?;
+                        script(&view,"window.originalSend('seek',3);window.originalSend('toggle');true")?;
+                        let _rewound=wait_state(&view,start,|v|v["diagnostics"]["time"].as_f64().is_some_and(|n|(3.05..7.0).contains(&n))&&v["diagnostics"]["paused"]==false)?;
+                        script(&view,"window.originalSend('seek',7.8);true")?;
+                        let _end_again=wait_state(&view,start,|v|v["diagnostics"]["time"].as_f64().is_some_and(|n|n>=7.95)&&v["diagnostics"]["paused"]==true)?;
+                        script(&view,"window.originalSend('toggle');true")?;
+                        let _restarted=wait_state(&view,start,|v|v["diagnostics"]["time"].as_f64().is_some_and(|n|(0.05..3.0).contains(&n))&&v["diagnostics"]["paused"]==false)?;
+                        println!("EOF replay regression: tail -> seek backward -> tail -> restart passed");
                         script(&view,"window.originalSend('privacy',true);true")?;
                         let paused=wait_state(&view,start,|v|v["state"]["paused"]==true&&v["diagnostics"]["paused"]==true)?;
                         thread::sleep(Duration::from_millis(350));

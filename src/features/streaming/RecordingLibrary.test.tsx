@@ -1,10 +1,11 @@
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserRecording } from "../../api/officialBrowser";
 import { RecordingLibrary, recordingChatNote } from "./RecordingLibrary";
 
 const token = "a".repeat(32);
+const expansionStorageKey = "atsumi.recording-library.expanded.v1";
 const item = (id: string, patch: Partial<BrowserRecording> = {}): BrowserRecording => ({ id, channelId: `channel-${id}`, title: `방송 ${id}`, startedAt: 1800000000000, updatedAt: 1800000001000, status: "stopped", mimeType: "video/webm", outputDir: "C:\\SyntheticOnly", segmentCount: 2, bytesWritten: 2000, durationSeconds: 30, lastError: null, segments: [{ index: 0, file: "segment-000000000000.webm", bytes: 1000, durationSeconds: 15 }], ...patch });
 const merged = (id: string) => item(id, { merge: { status: "complete", segmentCount: 2, updatedAt: 1, file: `merged-${token}.webm`, timelineFile: `merged-${token}.timeline.jsonl`, bytes: 1500, durationSeconds: 30 } });
 let root: Root, container: HTMLDivElement;
@@ -18,10 +19,85 @@ const select = async (id: string, modifiers: MouseEventInit = { ctrlKey: true })
 const selectAll = async () => act(async () => container.querySelector('.recording-library')!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a', ctrlKey: true })));
 const deleteSelection = () => button("선택 삭제") ?? button("녹화 삭제");
 const search = async (value: string) => { await act(async () => { const input = container.querySelector<HTMLInputElement>('input[type="search"]')!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); }); };
-beforeEach(() => { vi.clearAllMocks(); callbacks.onDelete.mockResolvedValue({ deletedIds: [], failures: [] }); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); HTMLDialogElement.prototype.showModal = function () { this.open = true; }; HTMLDialogElement.prototype.close = function () { this.open = false; }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
-afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.unstubAllGlobals(); });
+beforeEach(() => { vi.clearAllMocks(); localStorage.removeItem(expansionStorageKey); callbacks.onDelete.mockResolvedValue({ deletedIds: [], failures: [] }); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); HTMLDialogElement.prototype.showModal = function () { this.open = true; }; HTMLDialogElement.prototype.close = function () { this.open = false; }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.removeItem(expansionStorageKey); });
 
 describe("recording library", () => {
+  it("restores each broadcast's last open or closed state after leaving the library", async () => {
+    const records = [merged("a"), merged("b"), ...["c", "d"].map(id => ({ ...merged(id), channelId: "shared", broadcastKey: "id:42" }))];
+    await render(records);
+    const headings = [...container.querySelectorAll<HTMLButtonElement>('.recording-broadcast-heading')];
+    await act(async () => headings[0]!.click());
+    await act(async () => headings[2]!.click());
+    expect(cards().map(card => card.dataset.recordingId)).toEqual(["b", "c", "d"]);
+    await act(async () => root.render(null));
+    await render(records.map(value => ({ ...value })));
+    expect(cards().map(card => card.dataset.recordingId)).toEqual(["b", "c", "d"]);
+    expect(container.querySelector('.recording-library-selection')).toBeNull();
+    expect(container.querySelector('.recording-library-detail')).toBeNull();
+    expect(callbacks.onReplay).not.toHaveBeenCalled();
+  });
+  it("keeps all broadcasts closed across remounts, empty loading snapshots and stale selected IDs", async () => {
+    const records = [merged("a"), merged("b")];
+    await render(records);
+    for (const heading of container.querySelectorAll<HTMLButtonElement>('.recording-broadcast-heading')) await act(async () => heading.click());
+    await act(async () => root.render(null));
+    await render([]);
+    await render(records);
+    expect(cards()).toHaveLength(0);
+    await act(async () => root.render(null));
+    await render(records, "a");
+    expect(cards()).toHaveLength(0);
+    expect(container.querySelectorAll('.recording-broadcast-heading[aria-expanded="true"]')).toHaveLength(0);
+  });
+  it("retains closed states through filters and new files in the same broadcast", async () => {
+    const original = { ...merged("a"), channelId: "shared", broadcastKey: "id:42" };
+    await render([original]);
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+    await search("no match"); await search("");
+    expect(cards()).toHaveLength(0);
+    await act(async () => root.render(null));
+    await render([original, { ...merged("b"), channelId: "shared", broadcastKey: "id:42", title: "새 제목" }, merged("new")]);
+    expect(cards().map(card => card.dataset.recordingId)).toEqual(["new"]);
+  });
+  it.each(["broken", "null", "[]", "123", JSON.stringify({ '["a"]': "false" })])("ignores malformed expansion preferences: %s", async (value: string) => {
+    localStorage.setItem(expansionStorageKey, value);
+    await render([merged("a")]);
+    expect(cards()).toHaveLength(1);
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+    expect(cards()).toHaveLength(0);
+  });
+  it("keeps expansion usable when browser storage is unavailable", async () => {
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("storage unavailable"); });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
+    await render([merged("a")]);
+    expect(cards()).toHaveLength(1);
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+    expect(cards()).toHaveLength(0);
+  });
+  it("allows all broadcasts and the selected detail to close, keeping a reserved empty slot", async () => {
+    const records = [merged("a"), merged("b")];
+    function Controlled() {
+      const [selectedId, onSelect] = useState<string | null>(null);
+      return <RecordingLibrary recordings={records} selectedId={selectedId} privacy={false} disabled={false} retrying={false} openingFolder={false} {...callbacks} onSelect={onSelect} />;
+    }
+    await act(async () => root.render(<Controlled />));
+    expect(container.querySelector('.recording-library-detail')).toBeNull();
+    expect(container.querySelector('.recording-library-detail-placeholder')).not.toBeNull();
+    await select("a", {});
+    expect(container.querySelector('.recording-library-detail')).toHaveTextContent("방송 a");
+    await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="녹화 상세 닫기"]')!.click());
+    expect(container.querySelector('.recording-library-detail')).toBeNull();
+    await select("b", {}); await select("b", {});
+    expect(container.querySelector('.recording-library-detail')).toBeNull();
+    for (const heading of container.querySelectorAll<HTMLButtonElement>('.recording-broadcast-heading')) await act(async () => heading.click());
+    expect(container.querySelectorAll('.recording-broadcast-heading[aria-expanded="true"]')).toHaveLength(0);
+    expect(cards()).toHaveLength(0);
+    await act(async () => root.render(<Controlled />));
+    expect(cards()).toHaveLength(0);
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+    expect(cards().map(card => card.dataset.recordingId)).toEqual(["a"]);
+  });
   it("keeps a plain-clicked card in selection and reveals checkboxes only from the second card", async () => {
     await render([merged("a"), merged("b"), merged("c"), merged("d")]);
     expect(button("선택")).toBeUndefined();
@@ -169,9 +245,10 @@ describe("recording library", () => {
     expect(container.querySelectorAll(".recording-broadcast-group")).toHaveLength(1);
     expect(container.querySelector(".recording-library-active .recording-broadcast-group")).not.toBeNull();
     expect(container.querySelector(".recording-library-browse .recording-broadcast-group")).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
     await selectAll();
     expect(container.querySelectorAll('input[type="checkbox"]')).toHaveLength(0);
-    expect(container).toHaveTextContent("1개 선택");
+    expect(container.querySelector('[data-recording-id="old"]')).toHaveAttribute('aria-pressed', 'true');
     await act(async () => deleteSelection().click());
     callbacks.onDelete.mockResolvedValueOnce({ deletedIds: ["old"], failures: [] });
     await act(async () => button("삭제").click());
@@ -181,6 +258,7 @@ describe("recording library", () => {
     const a = { ...merged("a"), channelId: "channel", broadcastKey: "id:42", title: "일치" };
     const b = { ...merged("b"), channelId: "channel", broadcastKey: "id:42", title: "숨긴 제목" };
     await render([a, b]);
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
     await selectAll(); expect(container).toHaveTextContent("2개 선택");
     await search("일치"); expect(container.querySelector('.recording-library-selection')).toBeNull();
     expect(cards()).toHaveLength(1);
@@ -212,6 +290,8 @@ describe("recording library", () => {
     expect(container.querySelector(".recording-library-attempts")).toBeNull();
     expect(cards()[1]!.querySelector(".recording-library-state.is-waiting")).toHaveTextContent("기록 불러오는 중");
     expect(cards()[0]!.querySelector(".recording-library-state.is-success")).toHaveTextContent("정상");
+    expect(button('재생')).toBeUndefined();
+    await select("cached", {});
     expect(button('재생')).toBeEnabled();
     await act(async () => button("확인 필요").click());
     expect(cards()).toHaveLength(0);
@@ -241,6 +321,7 @@ describe("recording library", () => {
   it("shows confirmed broadcast completion separately from manual stopping", async () => {
     await render([item("ended", { ending: { reason: "broadcast_ended", trigger: "video_ended", stoppedAt: 1, confirmedAt: 2 } }), item("manual", { ending: { reason: "user_stopped", trigger: "user_stop", stoppedAt: 1, confirmedAt: null } })]);
     expect(container.querySelector(".recording-playback-problems")).toBeNull();
+    await select("ended", {});
     expect(container.querySelector('.recording-library-detail .recording-library-state')).toHaveAttribute("title", "방송 종료");
     await render([item("manual", { ending: { reason: "user_stopped", trigger: "user_stop", stoppedAt: 1, confirmedAt: null } })], "manual");
     expect(container.querySelector('.recording-library-detail .recording-library-state')).toHaveAttribute("title", "직접 중지");
@@ -258,6 +339,7 @@ describe("recording library", () => {
     await render([item("ranges", { progressive: { partCount: 1, segmentCount: 1, durationSeconds: 15, lastError: null } }), item("waiting")]);
     await act(async () => button("재생 가능").click());
     expect(cards()).toHaveLength(1); expect(cards()[0]!.closest('.recording-broadcast-group')).toHaveTextContent("방송 ranges");
+    await select("ranges", {});
     expect(button("재생")).toBeEnabled();
   });
   it("selects multiple saved recordings, confirms exact IDs, and never deletes on cancel", async () => {
@@ -347,6 +429,8 @@ describe("recording library", () => {
     await render([item("live", { status: "recording" }), merged("ready")]);
     expect(container.querySelector('.recording-library-active')).toHaveTextContent("방송 live");
     expect(container.querySelector('.recording-library-grid')).not.toHaveTextContent("방송 live");
+    expect(container.querySelector('.recording-library-detail')).toBeNull();
+    await select("ready");
     expect(container.querySelector('.recording-library-detail')).toHaveTextContent("방송 ready");
     expect(container.querySelector("video,iframe,img")).toBeNull();
     expect(callbacks.onReplay).not.toHaveBeenCalled();

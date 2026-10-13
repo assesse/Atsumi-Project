@@ -61,11 +61,11 @@ button:disabled { cursor: default; }
 .recording-replay-user-history p { display:flex; align-items:center; gap:8px; margin:4px 0; }
 .recording-replay-user-history p > span { color:#a0acc0; }
 .recording-replay-user-history > small, .recording-replay-user-unknown { color:#a4acb9; font-size:11px; }
-.recording-replay-notice { margin:6px 0; padding:9px 10px; border:1px solid #326354; border-radius:8px; background:#142b25; }
-.recording-replay-notice[data-notice=mission] { background:#25223b; border-color:#625688; }
-.recording-replay-notice-heading { display:flex; align-items:center; flex-wrap:wrap; gap:7px; margin-bottom:4px; padding-right:10px; color:#9de3c8; font-size:12px; }
-.recording-replay-notice[data-notice=mission] .recording-replay-notice-heading { color:#cfbaf4; }
-.recording-replay-mission-status { margin-left:auto; font-size:11px; }
-.recording-replay-mission-text { margin:5px 0 0; overflow-wrap:anywhere; color:#e2d8f6; font-size:13px; }
+.recording-replay-notice { margin:8px 0; padding:0 10px 10px; border:1px solid var(--sem-color-border-neutral-weak,#343638); border-radius:10px; background:var(--sem-color-surface-neutral-base,#232527); overflow:hidden; }
+.recording-replay-notice-heading { display:flex; align-items:center; flex-wrap:wrap; gap:6px; min-height:34px; margin:0 -10px 8px; padding:6px 10px; background:#ffffff06; border-bottom:1px solid #ffffff0b; color:#00ffa3; font-size:12px; }
+.recording-replay-notice-icon { width:16px;height:16px;flex:none; }
+.recording-replay-notice-amount { margin-left:auto; color:var(--sem-color-content-neutral-primary,#fff);font-size:13px;font-weight:700;font-variant-numeric:tabular-nums; }
+.recording-replay-mission-status { padding:2px 6px;background:#ffffff0b;border-radius:4px;color:var(--sem-color-content-neutral-primary,#fff);font-size:11px; }
+.recording-replay-mission-text { margin:7px 0 0;padding-top:7px;border-top:1px solid #ffffff0b;overflow-wrap:anywhere;color:var(--sem-color-content-neutral-primary,#fff);font-size:13px;font-weight:600; }
 @keyframes replay-card-open { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
 @media (prefers-reduced-motion:reduce) { .recording-replay-user-card { animation:none; } }

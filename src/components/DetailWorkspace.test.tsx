@@ -8,6 +8,7 @@ import { DetailWorkspace } from "./DetailWorkspace";
 import { CommonNavigationContext } from "../app/CommonNavigation";
 import { communityApi } from "../features/community/api";
 import { detailPreviewWindowSize } from "./detailPreviewWindow";
+import { backend as defaultBackend } from "../api/backend";
 
 beforeEach(() => { sessionStorage.clear(); localStorage.removeItem("atsumi.pagePreview.readingDirection"); localStorage.removeItem("atsumi.pagePreview.controlsPinned"); });
 afterEach(() => {
@@ -478,7 +479,8 @@ describe("DetailWorkspace page previews", () => {
       });
       expect(container.querySelector(".page-preview-dialog")).toHaveAttribute("open");
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
-      expect(container.querySelectorAll('[data-thumbnail-kind="source-page"]')).toHaveLength(container.querySelectorAll(".preview-thumb").length + 1);
+      expect(container.querySelectorAll('[data-thumbnail-kind="source-page"]')).toHaveLength(container.querySelectorAll(".preview-thumb").length);
+      expect(container.querySelector('.page-preview-original')).not.toBeNull();
 
       await act(async () => render({ ...gallery, pages: 0 }));
 
@@ -669,6 +671,11 @@ describe("DetailWorkspace page previews", () => {
         ? { kind: "image" as const, url: "https://images.example.test/page-2.jpg", width: 1600, height: 900 }
         : { kind: "image" as const, url: "https://images.example.test/page.jpg", width: 800, height: 1200 },
     });
+    vi.spyOn(defaultBackend, 'detailOriginalPrepare').mockImplementation(async request => ({ ok: true, data: {
+      requestId: request.requestId, galleryId: request.galleryId, sourcePage: request.sourcePage,
+      mediaUrl: `https://images.example.test/original-${request.sourcePage}.jpg`, contentType: 'image/jpeg',
+      width: request.sourcePage === 2 ? 1600 : 800, height: request.sourcePage === 2 ? 900 : 1200,
+    } }));
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);

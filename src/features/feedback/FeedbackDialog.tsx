@@ -5,6 +5,7 @@ import "./FeedbackDialog.css";
 
 export function FeedbackDialog({ source, onClose, api = feedbackApi }: { source: ContentSource; onClose(): void; api?: FeedbackApi }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const done = useRef<HTMLButtonElement>(null);
   const [draft, setDraft] = useState<FeedbackDraft | null>(null);
   const [comment, setComment] = useState("");
   const [preparing, setPreparing] = useState(true);
@@ -15,6 +16,7 @@ export function FeedbackDialog({ source, onClose, api = feedbackApi }: { source:
   const inFlight = useRef(false);
   const [submitted, setSubmitted] = useState(false);
   useEffect(() => { dialog.current?.showModal(); }, []);
+  useEffect(() => { if (receipt) done.current?.focus(); }, [receipt]);
   useEffect(() => {
     let active = true;
     setPreparing(true); setError("");
@@ -29,7 +31,7 @@ export function FeedbackDialog({ source, onClose, api = feedbackApi }: { source:
     finally { inFlight.current = false; setSending(false); }
   };
   return <dialog ref={dialog} className="feedback-dialog" aria-labelledby="feedback-title" data-gallery-shortcuts-suspended="true" onCancel={event => { event.preventDefault(); if (!inFlight.current) onClose(); }}>
-    <header><h2 id="feedback-title">오류·의견 보내기</h2><button type="button" aria-label="닫기" disabled={sending} onClick={onClose}>×</button></header>
+    <header><h2 id="feedback-title">오류·의견 보내기</h2>{!receipt ? <button type="button" className="feedback-close" aria-label="닫기" disabled={sending} onClick={onClose}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg></button> : null}</header>
     {receipt ? <div role="status"><p>개발자에게 비공개로 전달했습니다.</p><p className="feedback-receipt">접수번호 <code>{receipt}</code></p></div> : <>
       <p>어떤 문제가 있었나요? 최근 2시간의 진단 기록을 함께 보냅니다.</p>
       <label htmlFor="feedback-comment">코멘트 <span>선택</span></label>
@@ -40,7 +42,7 @@ export function FeedbackDialog({ source, onClose, api = feedbackApi }: { source:
       {error ? <p role="alert" className="feedback-error">{error}</p> : null}
       {error && submitted ? <p className="feedback-privacy">같은 내용으로 다시 보내면 중복 접수되지 않습니다. 내용을 바꾸려면 닫고 다시 열어 주세요.</p> : null}
     </>}
-    <footer>{receipt ? <button type="button" onClick={onClose}>완료</button> : <>
+    <footer>{receipt ? <button ref={done} type="button" onClick={onClose}>완료</button> : <>
       {!preparing && !draft ? <button type="button" onClick={() => setAttempt(value => value + 1)}>다시 준비</button> : null}
       <button type="button" disabled={!draft || preparing || sending} aria-busy={sending} onClick={() => void send()}>{sending ? "보내는 중…" : "보내기"}</button>
     </>}</footer>

@@ -425,7 +425,7 @@ describe("ActivityDrawer download controls", () => {
 
     const historyTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
       .find((button) => button.textContent?.includes("자동분류 검토"));
-    expect(historyTab).toHaveTextContent("1");
+    expect(historyTab?.querySelector('.activity-tab-count')).toHaveTextContent("1");
     await act(async () => historyTab?.click());
 
     const historyPanel = container.querySelector("#activity-automation-panel");
@@ -452,7 +452,7 @@ describe("ActivityDrawer download controls", () => {
     container.remove();
   });
 
-  it("starts sequential review for all unread records and disables duplicate starts", async () => {
+  it("offers manual review independently of automatic history and disables duplicate starts", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -466,11 +466,14 @@ describe("ActivityDrawer download controls", () => {
       ));
     };
     await render(250);
+    expect(container.querySelector(".activity-history-toolbar")).toBeNull();
     await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
       .find((button) => button.textContent?.includes("자동분류 검토"))!.click());
     const button = container.querySelector<HTMLButtonElement>(".activity-history-toolbar button")!;
     expect(button).toBeEnabled();
     expect(button).toHaveTextContent("미확인 순차 검토");
+    expect(button.closest("#activity-automation-panel")).not.toBeNull();
+    expect(container).not.toHaveTextContent("수동 판단 순차 검토");
     await act(async () => button.click());
     expect(start).toHaveBeenCalledOnce();
     await render(250, true);
@@ -480,7 +483,7 @@ describe("ActivityDrawer download controls", () => {
     await render(250, false, true);
     expect(button).toBeDisabled();
     await render(0);
-    expect(button).toBeDisabled();
+    expect(button).toBeEnabled();
     expect(start).toHaveBeenCalledOnce();
     await act(async () => root.unmount());
     container.remove();

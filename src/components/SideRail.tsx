@@ -102,7 +102,7 @@ export function SideRail<Source extends ContentSource>({
               className={source === option.id ? "is-active" : ""}
               onClick={() => { onSourceChange(option.id); setSourceMenuOpen(false); }}
             >
-              <strong>{option.label}</strong><span>{option.description}</span>
+              <strong>{option.label}</strong>
             </button>
           ))}
         </div>
@@ -111,6 +111,7 @@ export function SideRail<Source extends ContentSource>({
       <nav className="main-nav">
         {visibleItems.map((item) => {
           const count = item.badgeKey ? badgeCounts[item.badgeKey] : 0;
+          const liveDisclosure = source === "chzzk" && item.view === "live" && !!onOpenLiveChannels;
           const navigation = (
             <button
               key={item.view}
@@ -119,22 +120,19 @@ export function SideRail<Source extends ContentSource>({
               aria-current={!personalLibraryOpen && !common?.communityOpen && view === item.view ? "page" : undefined}
               aria-label={item.label}
               data-tour={`${source}-nav-${item.view}`}
-              onClick={() => onNavigate(item.view)}
+              aria-expanded={liveDisclosure ? liveChannelsOpen : undefined}
+              aria-controls={liveDisclosure && liveChannelsOpen ? "chzzk-connection-panel" : undefined}
+              onClick={() => liveDisclosure ? onOpenLiveChannels?.() : onNavigate(item.view)}
             >
               <FluentIcon glyph={item.icon} />
               <span className="nav-label">{item.label}</span>
               {count > 0 ? (
                 <span className={`nav-count${item.badgeWarning ? " warning" : ""}`}>{count}</span>
               ) : null}
+              {liveDisclosure ? <span className="nav-live-disclosure" data-tour="chzzk-channels" aria-hidden="true" data-expanded={liveChannelsOpen}><FluentIcon glyph="\uE76C" /></span> : null}
             </button>
           );
-          return source === "chzzk" && item.view === "live" && onOpenLiveChannels ? <div className="nav-live-item" key={item.view}>
-            {navigation}
-            <button type="button" className="nav-live-disclosure" data-tour="chzzk-channels"
-              aria-label={liveChannelsOpen ? "방송 설정 접기" : "방송 설정 펼치기"} title="방송 보기"
-              aria-expanded={liveChannelsOpen} aria-controls={liveChannelsOpen ? "chzzk-connection-panel" : undefined}
-              onClick={onOpenLiveChannels}><FluentIcon glyph="\uE76C" /></button>
-          </div> : navigation;
+          return liveDisclosure ? <div className="nav-live-item" key={item.view}>{navigation}</div> : navigation;
         })}
         {onOpenPersonalLibrary ? <button type="button" data-tour={`${source}-favorites`} className={`nav-item${personalLibraryOpen ? " is-active" : ""}`} aria-label="내 즐겨찾기" aria-current={personalLibraryOpen ? "page" : undefined} onClick={onOpenPersonalLibrary}><FluentIcon glyph="\uE8A4" /><span className="nav-label">내 즐겨찾기</span></button> : null}
         {common && source !== "chzzk" ? <button type="button" data-tour="community-nav" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}

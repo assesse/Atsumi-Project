@@ -22,21 +22,76 @@ function panel(x: number, y: number, width: number, height: number) {
   result.overlay.dataset.nativeInteractiveBackground = "true";
   return result;
 }
-afterEach(() => { document.body.replaceChildren(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { document.body.replaceChildren(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("native popup occlusion geometry", () => {
+  it("measures the lifting tab instead of erasing its larger stationary hitbox", () => {
+    const { element, viewport } = stage();
+    const { overlay, surface } = popup(420, 656, 170, 58);
+    overlay.remove();
+    // Keep a real button/face hierarchy as rendered by MadoWorkspace.
+    const handle = document.createElement('button'); handle.className = 'live-bottom-handle';
+    handle.dataset.nativeOverlay = handle.dataset.nativePreserveVideo = handle.dataset.nativeInteractiveBackground = 'true';
+    handle.append(surface); document.body.append(handle);
+    vi.spyOn(handle, 'getBoundingClientRect').mockReturnValue(rect(420, 642, 170, 58));
+    expect(nativeModalOcclusion(element, viewport)).toMatchObject({ occluded: false, occlusions: [{ x: 320, y: 556, width: 170, height: 44 }] });
+    vi.mocked(surface.getBoundingClientRect).mockReturnValue(rect(420, 642, 170, 58));
+    expect(nativeModalOcclusion(element, viewport)).toMatchObject({ occluded: false, occlusions: [{ x: 320, y: 542, width: 170, height: 58 }] });
+  });
+  it("bounds one-off surface transitions and ignores repeated animations and child spinners", () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => setTimeout(() => callback(performance.now()), 16));
+    vi.stubGlobal('cancelAnimationFrame', clearTimeout);
+    vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+    const { overlay, surface } = popup(400, 600, 170, 58);
+    const update = vi.fn(), stop = observeNativeOverlayGeometry(update);
+    surface.dispatchEvent(new Event('animationstart', { bubbles: true }));
+    vi.advanceTimersByTime(450); const stopped = update.mock.calls.length;
+    expect(stopped).toBeGreaterThan(0);
+    vi.advanceTimersByTime(1000); expect(update).toHaveBeenCalledTimes(stopped);
+    surface.dispatchEvent(new Event('animationiteration', { bubbles: true }));
+    const spinner = document.createElement('i'); surface.append(spinner);
+    spinner.dispatchEvent(new Event('animationstart', { bubbles: true }));
+    vi.advanceTimersByTime(2000); expect(update).toHaveBeenCalledTimes(stopped);
+    surface.style.animationIterationCount = 'infinite';
+    surface.dispatchEvent(new Event('animationstart', { bubbles: true }));
+    vi.advanceTimersByTime(2000); expect(update).toHaveBeenCalledTimes(stopped);
+    const beforeReveal = update.mock.calls.length;
+    overlay.dispatchEvent(new Event('transitionrun', { bubbles: true }));
+    vi.advanceTimersByTime(32); expect(update.mock.calls.length).toBeGreaterThan(beforeReveal);
+    stop(); const final = update.mock.calls.length;
+    surface.dispatchEvent(new Event('animationiteration', { bubbles: true }));
+    vi.advanceTimersByTime(5000); expect(update).toHaveBeenCalledTimes(final);
+  });
+  it("cuts only the visible pull handle without blocking the remaining video", () => {
+    const { element, viewport } = stage();
+    const handle = document.createElement('button');
+    handle.className = 'live-bottom-handle';
+    handle.dataset.nativeOverlay = handle.dataset.nativePreserveVideo = handle.dataset.nativeInteractiveBackground = 'true';
+    document.body.append(handle);
+    vi.spyOn(handle, 'getBoundingClientRect').mockReturnValue(rect(420, 684, 140, 34));
+    expect(hasBlockingNativeOverlay()).toBe(false);
+    expect(nativeModalOcclusion(element, viewport)).toMatchObject({ occluded: false, preserveBackground: true, occlusions: [{ x: 320, y: 584, width: 140, height: 16 }] });
+  });
+  it("keeps the measured curved outline across native pane edges", () => {
+    const { element, viewport } = stage();
+    const { surface } = panel(80, 660, 760, 80);
+    surface.style.borderTopLeftRadius = '18px'; surface.style.borderTopRightRadius = '18px';
+    expect(nativeModalOcclusion(element, viewport)).toMatchObject({ occluded: false, occlusions: [],
+      roundedOcclusions: [{ x: -20, y: 560, width: 760, height: 80, radii: [18, 18, 0, 0] }] });
+  });
   it("cuts only the popup rectangle, retaining both sides and everything below it", () => {
     const { element, viewport } = stage(); popup(400, 300, 200, 150);
     expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: true, preserveBackground: true, clip: viewport.clip,
-      occlusions: [{ x: 292, y: 192, width: 216, height: 166 }] });
+      occlusions: [{ x: 300, y: 200, width: 200, height: 150 }] });
     expect(viewport).toMatchObject({ width: 800, height: 600, clip: { height: 600 } });
   });
   it("uses each of four panes' local coordinates instead of erasing a shared horizontal strip", () => {
     const panes = [stage(0, 0, 500, 300), stage(500, 0, 500, 300), stage(0, 300, 500, 300), stage(500, 300, 500, 300)];
     popup(450, 250, 100, 100);
     expect(panes.map(({ element, viewport }) => nativeModalOcclusion(element, viewport).occlusions)).toEqual([
-      [{ x: 442, y: 242, width: 58, height: 58 }], [{ x: 0, y: 242, width: 58, height: 58 }],
-      [{ x: 442, y: 0, width: 58, height: 58 }], [{ x: 0, y: 0, width: 58, height: 58 }],
+      [{ x: 450, y: 250, width: 50, height: 50 }], [{ x: 0, y: 250, width: 50, height: 50 }],
+      [{ x: 450, y: 0, width: 50, height: 50 }], [{ x: 0, y: 0, width: 50, height: 50 }],
     ]);
   });
   it("keeps a nonoverlapping pane painted but input-disabled while a global modal is open", () => {
@@ -48,7 +103,7 @@ describe("native popup occlusion geometry", () => {
     expect(hasNativeOverlay()).toBe(true);
     expect(hasBlockingNativeOverlay()).toBe(false);
     expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: false, preserveBackground: true, clip: viewport.clip,
-      occlusions: [{ x: 292, y: 192, width: 216, height: 166 }] });
+      occlusions: [{ x: 300, y: 200, width: 200, height: 150 }] });
   });
   it("does not block a native pane outside the nonmodal panel's bounds", () => {
     const { element, viewport } = stage(); panel(1000, 100, 100, 100);
@@ -80,7 +135,7 @@ describe("native popup occlusion geometry", () => {
   it("intersects holes with an existing scroll clip without changing the original video geometry", () => {
     const { element, viewport } = stage(); viewport.clip = { x: 50, y: 100, width: 500, height: 400 }; popup(100, 100, 200, 200);
     expect(nativeModalOcclusion(element, viewport)).toEqual({ occluded: true, preserveBackground: true, clip: viewport.clip,
-      occlusions: [{ x: 50, y: 100, width: 158, height: 108 }] });
+      occlusions: [{ x: 50, y: 100, width: 150, height: 100 }] });
   });
   it("preserves fail-closed masking for unknown, unmeasured, hidden-workspace and excessive overlays", () => {
     const { element, viewport } = stage(); const { overlay, surface } = popup(200, 200, 200, 200);

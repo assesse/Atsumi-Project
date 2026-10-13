@@ -66,6 +66,61 @@ describe("offline recording replay", () => {
     vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
     vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   };
+  it("offers a centered restart only at EOF and keeps the existing player, chat and keyboard controls", async () => {
+    const api = mockApi(); await render(api);
+    const frame = playerFrame(), chat = chatShadow(), dialog = document.querySelector<HTMLElement>('.recording-replay')!;
+    await act(async () => dispatchPlayer("state", playerState(70, { paused: true })));
+    expect(button("처음부터 다시보기")).toBeUndefined();
+    for (let repeat = 0; repeat < 2; repeat++) {
+      await act(async () => { dispatchPlayer("state", playerState(120, { paused: true })); dispatchPlayer("tail"); });
+      const restart = button("처음부터 다시보기");
+      expect(restart).toHaveTextContent("다시보기");
+      expect(restart.querySelector('svg')).not.toBeNull();
+      expect(restart.closest('.recording-replay-visual')).not.toBeNull();
+      expect(button("다시보기 닫기")).toBeEnabled();
+      expect(button("채팅 메뉴")).toBeEnabled();
+      await act(async () => restart.click());
+      expect(button("처음부터 다시보기")).toBeUndefined();
+      expect(sent.slice(-2).map(({ type, data }) => ({ type, data }))).toEqual([{ type: "seek", data: 0 }, { type: "toggle", data: undefined }]);
+      expect(document.activeElement).toBe(dialog);
+      expect(playerFrame()).toBe(frame); expect(chatShadow()).toBe(chat);
+      await moveVideo(0);
+    }
+    expect(messages("init")).toHaveLength(1);
+    expect(api.open).toHaveBeenCalledTimes(1); expect(api.close).not.toHaveBeenCalled();
+    expect(api.chatAt.mock.calls.at(-1)?.[1]).toBe(0);
+    await act(async () => { dispatchPlayer("state", playerState(120, { paused: true })); dispatchPlayer("tail"); });
+    await act(async () => dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true })));
+    expect(messages("seek").at(-1)).toBe(115);
+    expect(button("처음부터 다시보기")).toBeUndefined();
+  });
+  it("dismisses EOF restart on native seeking/play and conceals it in privacy mode", async () => {
+    const api = mockApi(); await render(api);
+    for (const state of [playerState(10, { paused: true, seeking: true }), playerState(0)]) {
+      await act(async () => { dispatchPlayer("state", playerState(120, { paused: true })); dispatchPlayer("tail"); });
+      expect(button("처음부터 다시보기")).toBeEnabled();
+      await act(async () => dispatchPlayer("state", state));
+      expect(button("처음부터 다시보기")).toBeUndefined();
+    }
+    await act(async () => { dispatchPlayer("state", playerState(120, { paused: true })); dispatchPlayer("tail"); });
+    await render(api, true); expect(button("처음부터 다시보기")).toBeUndefined();
+    await render(api, false); expect(button("처음부터 다시보기")).toBeEnabled();
+    expect(messages("init")).toHaveLength(1);
+  });
+  it("keeps restart at an unchanged saved tail, but clears it when another part arrives", async () => {
+    const api = mockApi(); const next = deferred<ApiResult<ReplaySession>>();
+    api.open.mockResolvedValueOnce(ok(rangeSession("first")))
+      .mockResolvedValueOnce(ok(rangeSession("unchanged")))
+      .mockReturnValueOnce(next.promise);
+    await render(api);
+    await act(async () => { dispatchPlayer("state", playerState(120, { paused: true })); dispatchPlayer("tail"); });
+    expect(button("처음부터 다시보기")).toBeEnabled();
+    expect(api.close).toHaveBeenCalledExactlyOnceWith("unchanged");
+    await act(async () => button("새 저장 구간 불러오기").click());
+    await act(async () => next.resolve(ok(rangeSession("extended", 3))));
+    expect(button("처음부터 다시보기")).toBeUndefined();
+    expect(messages("init").at(-1)).toMatchObject({ duration: 180 });
+  });
   it("keeps the current prefix open when there is no new range and releases only the extra lease", async () => {
     mockRangeVideo(); const api = mockApi();
     api.open.mockResolvedValueOnce(ok(rangeSession("first"))).mockResolvedValueOnce(ok(rangeSession("unchanged")));
@@ -123,7 +178,8 @@ describe("offline recording replay", () => {
     expect(messages("metadata").at(-1)).toMatchObject({ title: session.title, recordedAt: session.recordedAt });
     expect(document.querySelector("h2.recording-replay-sr-only")).not.toBeNull();
     expect(document.querySelector(".recording-replay-heading")).toBeNull();
-    expect(button("다시보기 닫기").closest(".recording-replay-visual")).not.toBeNull();
+    expect(chatShadow().contains(button("다시보기 닫기"))).toBe(true);
+    expect(button("다시보기 닫기").closest(".recording-replay-visual")).toBeNull();
     await render(api, true);
     expect(messages("privacy").at(-1)).toBe(true);
     expect(document.querySelector(".recording-replay-body")).toHaveAttribute("hidden");

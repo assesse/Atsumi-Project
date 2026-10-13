@@ -17,6 +17,8 @@ it("prepares locally and never sends until explicit confirmation", async () => {
   api.send.mockResolvedValue({ receiptId: "receipt-1" });
   await act(async () => button("보내기").click());
   expect(api.send).toHaveBeenCalledExactlyOnceWith(draft.id, ""); expect(node).toHaveTextContent("receipt-1");
+  expect(node.querySelectorAll("button")).toHaveLength(1);
+  expect(node.querySelector('[aria-label="닫기"]')).toBeNull();
   await act(async () => button("완료").click()); expect(close).toHaveBeenCalledOnce();
 });
 it("blocks duplicate clicks and retains the same draft and comment on retry", async () => {
