@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "status": "scoped implementation; actual desktop acceptance pending",
+  "originalRequests": [
+    { "source": "2026-10-14 current user request, item 2", "text": "유튜브는 시청 기능을 플로팅 창에서도 바로 열수 있게 해줘." },
+    { "source": "2026-10-14 current user request, item 3", "text": "각 플랫폼의 영상 재생 기능은 반드시 원래의 인터페이스를 동일하게((거의 완벽히 유사하게) 가져와서 쓰는게 기본 베이스임." },
+    { "source": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "Viewing and recording must not create duplicate video traffic; the original explicitly extends this to SOOP and YouTube." },
+    { "source": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "rule": "Changing tabs keeps playback and audio; do not introduce PIP." },
+    { "source": "01a13142-4c44-7560-bde6-d7e089fd9ea9", "rule": "New platforms preserve existing requests and established similar-platform workflows." }
+  ],
+  "audit": {
+    "policy": "docs/requirements/implementation-policy.json",
+    "mainSnapshot": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshot": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Reuse the fully read main230turns/284messages and other333turns/375messages snapshots after matching their SHA and EOF coverage. Root refreshed the current18turn tail through the snapshot anchor and verified other thread revisions unchanged on2026-10-14. Applicable original turns, current AGENTS, complete implementation policy, YouTube live-shell, platform-media and video-ui-parity contracts were reread before editing.",
+    "unavailable": "The durable old thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae, unnamed analysis1/2 chats and inaccessible historical image pixels remain unavailable; no claim to have reviewed them.",
+    "runtime": "Root identified the running user app as installed release2.2.1, not a source-watched development server. Do not terminate, restart or operate it. Unit tests and TypeScript only are permitted for this batch."
+  },
+  "findings": [
+    "YouTubeWorkspace already offers text-button playback inside its floating detail. This batch improves that existing entry; it is not a claim to add previously absent playback.",
+    "The initial floating preview is an inert thumbnail. The visible central play entry is missing, unlike the expected video interaction.",
+    "VOD uses the original YouTube iframe; live uses the shared local-HLS player. Replacing live with an independent official iframe plus recorder violates the retained single-ingress requirement.",
+    "Before editing YouTubePlayer, two new focused regression tests failed on2026-10-14: a late initialDelivery/onReady erased an already verified onError153, and the600ms subscription continued after its20second timeout (132messages at timeout,200after another10seconds). Latch that attempt's failure until explicit retry and stop its handshake timer; do not replace original controls or assert successful playback from readiness."
+  ],
+  "scope": [
+    "Add a centered native play button over the floating preview. Only its actual button hitbox starts playback; surrounding thumbnail, card single-click, tab changes and focus do not start anything.",
+    "Keep the header play/stop action and all existing favorite/download/detail/minimize actions. Central activation is idempotent and never toggles an already-started stream off after a repeated click.",
+    "Use native button keyboard behavior and the existing dialog focus loop. Privacy disables revealing playback. Preserve the existing4-player cap and show its error inside the floating detail instead of only behind its backdrop.",
+    "Keep the existing official VOD iframe, connection indicator, bounded timeout and retry/error surface. Add focused protocol regressions and only correct an evidenced readiness/error race if reproduced.",
+    "Keep each existing player node/lease across detail minimize, viewing route and platform visibility changes. Do not add another iframe/native receiver for the central button."
+  ],
+  "conflicts": [
+    { "old": "Generic shared live UI is the accepted baseline for every video provider.", "current": "Superseded by the latest original-platform-interface request. Provider-native live UI remains a separate Root-owned batch and is not completed by this small detail-entry change." },
+    { "old": "An iframe plus a separate live downloader satisfies original UI and traffic requirements.", "current": "Rejected: public YouTube IFrame API accepts YouTube IDs/URLs, not the owned local HLS transport; do not silently reintroduce duplicate ingress." }
+  ],
+  "technicalSources": ["https://developers.google.com/youtube/iframe_api_reference", "https://developers.google.com/youtube/player_parameters"],
+  "ownedFiles": ["src/features/youtube/YouTubeWorkspace.tsx", "src/features/youtube/YouTubeWorkspace.css", "src/features/youtube/YouTubeWorkspace.test.tsx", "src/features/youtube/YouTubePlayer.tsx", "src/features/youtube/YouTubePlayer.test.tsx", "docs/requirements/youtube-native-ui.json"],
+  "excluded": ["Shared PlatformLivePlayer and chat", "SOOP", "backend", "frozen screenshot work", "build/release/app operation"],
+  "acceptance": [
+    "Detail opens with an obvious centered play button without playback, download or navigation side effects.",
+    "Clicking the thumbnail outside that button does nothing; native Enter/Space activation and focus visibility remain available.",
+    "Central activation opens one official VOD iframe in the same dialog without changing navigation, and repeated activation does not stop or duplicate it.",
+    "Live central activation mounts exactly one current native receiver; no official iframe or download starts in parallel.",
+    "Privacy disables central/header playback and masks the cover; a fifth stream shows a visible in-detail capacity error and retains the existing four.",
+    "Loading/error/retry are visible inside the player. Spoofed or stale-frame messages cannot clear errors or claim readiness.",
+    "Existing minimize/tab/platform lifecycle tests pass unchanged. Actual app VOD/live playback, original control appearance, pixel hitboxes and keyboard operation remain manual verification gates."
+  ],
+  "verification": {
+    "source": "2026-10-14: centered76x54native button added only to the floating thumbnail. Start is idempotent, existing4-view cap remains, and capacity feedback is inside the visible detail. Existing official VOD iframe and shared live receiver subtree remain unchanged. The player attempt now latches verified errors/timeouts until explicit retry and stops the expired handshake.",
+    "unit": "2026-10-14 17:28 KST: YouTubeWorkspace, YouTubePlayer and YouTubeViewingControls:3files46tests passed. New coverage includes exact button versus cover activation, native keyboard default preserved, repeated-click single VOD/native player ownership, no external/download/navigation side effects, privacy, visible4-view capacity, error/readiness order, bounded timeout and stale-frame retry. Existing background/detail/viewing identity tests pass. Keyboard/pixel tests in jsdom are not real browser interaction evidence.",
+    "typecheck": "npx tsc -b --pretty false passed under normal Windows permissions, exit0. Sandboxed run produced project-wide Vitest/Vite inference errors; the identical normal-permission command passed without modifying those sources or weakening compiler options. First unit attempt also hit sandbox temp-cache rename EPERM; identical scoped test command passed outside that restriction.",
+    "desktop": "pending; no app launch, stop, GUI operation or build performed. Root must verify actual official VOD and native live playback in the floating detail, keyboard activation, exact button geometry and retained playback after minimize/tab changes.",
+    "originalLiveUi": "separate Root-owned work; not complete"
+  }
+}

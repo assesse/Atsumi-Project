@@ -3,6 +3,9 @@ import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { galleryId, type DownloadState, type Gallery } from "../core/types";
 import { ActivityDrawer } from "./ActivityDrawer";
+import { applyDownloadChanged } from "../state/downloadProjection";
+import { mergeDownloadLibraryPage } from "../state/galleryProjection";
+import type { DownloadChangedEvent, DownloadLibraryPage } from "../api/contracts";
 
 const failedGallery: Gallery = {
   id: galleryId(42),
@@ -28,6 +31,32 @@ const failedGallery: Gallery = {
 };
 
 describe("ActivityDrawer download controls", () => {
+  it("moves a reviewed job through verification to completed and ignores late review snapshots, not newer work", async () => {
+    const host=document.createElement("div"), root=createRoot(host);
+    const review: Gallery={...failedGallery,download:{entryId:"manual-review",revision:3,state:"review_required",reviewId:"review-42"}};
+    let galleries: ReadonlyMap<Gallery["id"],Gallery>=new Map([[review.id,review]]);
+    const snapshot: DownloadLibraryPage={page:1,totalItems:1,items:[{gallery:{id:review.id,title:review.title},download:{...review.download!,revision:3,galleryId:review.id}}]};
+    const render=async()=>{await act(async()=>root.render(<ActivityDrawer open galleries={[...galleries.values()]}
+      sessionDownloads={[{galleryId:review.id,occurredAt:1,state:"review_required"}]} {...actions}/>));};
+    const event=async(state:DownloadState,revision:number,entryId="manual-review")=>{
+      galleries=applyDownloadChanged(galleries,{galleryId:review.id,entryId,revision,state,progress:100} as DownloadChangedEvent).galleries;
+      await render();
+    };
+    try {
+      await render(); expect(sessionGroups(host)).toEqual(["검토"]); expect(host.querySelector(".activity-command-buttons")).toHaveTextContent("검토");
+      // Backend resumed is not completion: final manifest verification still runs.
+      await event("verifying",4); expect(sessionGroups(host)).toEqual(["해시 · 검증"]); expect(host.querySelector(".activity-item")).not.toHaveClass("complete");
+      await event("completed",5); expect(sessionGroups(host)).toEqual(["완료"]);
+      galleries=mergeDownloadLibraryPage(galleries,snapshot).galleries; await render();
+      expect(sessionGroups(host)).toEqual(["완료"]); expect(host.querySelector(".activity-item")).toHaveClass("complete");
+      expect(host.querySelector(".activity-command-buttons")).not.toHaveTextContent("검토");
+      expect(host.querySelector('[role="status"]')).not.toHaveTextContent("검토 필요");
+      await event("review_required",6); expect(sessionGroups(host)).toEqual(["검토"]);
+      await event("failed",7); expect(sessionGroups(host)).toEqual(["실패 · 중단"]);
+      await event("queued",1,"new-entry"); expect(sessionGroups(host)).toEqual(["다운로드"]);
+    } finally {await act(async()=>root.unmount());host.remove();}
+  });
+
   it("keeps all navigation buttons before the changing scroll body and collapses technical details", async () => {
     const container = document.createElement("div"); const root = createRoot(container);
     try {

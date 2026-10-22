@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-14",
+  "status": "idle-loop and initial pane-autofocus fixes regression-verified; scoped native pointer routing plus restricted pointer-only fallback implemented; native compile and actual 100% Korean chat acceptance remain pending",
+  "authority": "Latest user asks to fix Atsumi's CHZZK live-chat input focus loss and invisible in-progress Korean composition. Latest correction says live viewing, not recording. Do not stop, restart, focus, or operate the running installed app.",
+  "sourceAudit": {
+    "inventoryOwner": "root refreshed current main conversation through the latest correction; other accessible thread revisions unchanged and archive inventory has no additions",
+    "mainSnapshotSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshotSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "specifications": "All 69 retained specification hashes rechecked. Only the previously known RELEASING.md change differs; that full current document was reread. Direct original requests and full CHZZK_VIEWING_UI.md / CHZZK_CONNECTION_UI.md were reread.",
+    "unavailable": ["Durable thread 01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Referenced Atsumi analysis 1/2 with no accessible identifiers", "Historical image-only visual evidence not retained in text snapshots"]
+  },
+  "originalReferences": [
+    { "source": "2026-10-14 latest request, item 4 and clarification", "rule": "Fix focus loss and Korean composition visibility in the currently viewed CHZZK live chat; do not mistake it for Codex input or recording." },
+    { "source": "2026-10-14 follow-up answers audited by root and relayed to this agent", "rule": "Chat zoom is 100%. Official emoticons can be inserted and the chat caret blinks, but keyboard input including Backspace goes to the video player's shortcuts. Investigate native focus routing; do not label the 50% idle loop as this incident's cause." },
+    { "turnId": "01a11b85-ed1b-78b3-b16a-20fce337f087", "rule": "Allow official chat scaling below 100%; retain chat behavior and visible content." },
+    { "turnId": "01a12bdc-aa77-78c0-930a-a844b5054209", "rule": "A single live view must allow a narrower chat without unnecessary letterboxing." },
+    { "turnId": "01a12e00-087e-75f3-b315-155260efdf35", "rule": "Avoid repeated presentation refresh; persistent handles must not churn the live view." },
+    { "turnId": "01a0fa91-7994-7cf2-8afe-e5140fd67b9c", "rule": "Previously accepted native Alt-Tab focus repair must not be casually rolled back; gallery keyboard behavior remains intact." }
+  ],
+  "evidence": {
+    "productionSourceBefore": "browser_multiview.js SHA256 0B77645B042A868013DCA8C67EF123EBD611164F94902137F45995B7A9774754",
+    "testSourceBefore": "browserMultiviewBridge.test.ts SHA256 BDF83212B0881E56A0BA6A8621AF95D9905E90BA6ACFA4C640E439A1876FBE52",
+    "isolatedReproduction": "Unmodified production script evaluated in an in-memory jsdom official-popup fixture, with no accounts, network, app input or disk writes. At 100%: 1 scheduled update and 0 disabled-attribute mutations. At 50% after 350ms: 4 scheduled updates and 3 mutations. After another idle second: 10 updates and 9 mutations. Reassigning disabled=true retriggers the header MutationObserver every 150ms. This proves an idle layout loop, not the user's native focus-loss or IME cause.",
+    "runningApp": "Root verified installed Atsumi 2.2.1, PID 12272, outside this development source. No dev server or Cargo process. Source edits do not update that running binary."
+  },
+  "proposedChanges": [
+    "Only write scale-control disabled state when the boolean actually changes; preserve 50%-100% custom zoom and original greater-than-100% controls.",
+    "Add regressions proving the minimum and maximum limits become idle, genuine native limit changes propagate, and input/composition elements are not mutated or refocused.",
+    "Do not change focus restoration, native pane creation, clipping, IME internals, original input handlers, chat values, media lifecycle or account state without separate evidence."
+  ],
+  "acceptance": [
+    "The new loop regression must fail against unchanged production source, then pass with the narrow fix.",
+    "Minimum scale and native maximum stop generating further update work after settling.",
+    "Returning from a limit and native scale/disabled changes still update the correct controls.",
+    "Existing multiview presentation, original chat input/menu, scale, audio and viewport tests remain passing.",
+    "Actual Korean composition and focus retention in an updated desktop app remain explicitly pending user validation; unit success cannot close the reported issue."
+  ],
+  "conflicts": [
+    "The old spec's general/mado labels and inline help are superseded by later user requests; this batch restores neither.",
+    "Removing chat zoom to avoid this loop would contradict the user's explicit below-100% request.",
+    "Historical permission to close apps or manipulate recordings is not current authorization."
+  ],
+  "fileOwnership": ["src-tauri/src/streaming/browser_multiview.js", "src-tauri/src/streaming/browser_multiview.rs", "src-tauri/src/streaming/browser_pane_focus.rs", "src-tauri/src/streaming/browser_pane_focus.js", "src/features/streaming/browserMultiviewBridge.test.ts"],
+  "nativeCreationBeforeEdit": {
+    "evidence": "browser_multiview.rs currently calls .focused(!pane.id.starts_with(\"chzzk-auto-\")) for newly created panes, then creates them at 1x1 and immediately hides them. Locally installed Wry 0.55.1 webview2/mod.rs lines 539-548 independently confirms attributes.focused=true directly calls ICoreWebView2Controller.MoveFocus(PROGRAMMATIC), including child WebViews. The existing automatic video path already opts out, but ordinary chat/video creation does not. Thus a delayed pane creation can programmatically take keyboard focus before it is visible. The precise timing of the user's incident remains unproven.",
+    "productionSha256Before": "BC0DE11A530E9EB1B01C7847A3049499BF3210C3EB8ACD4DA69C5C4480A8FAE1",
+    "decision": "Every native embedded video/chat pane starts unfocused. Normal user click/focus routing remains Wry/WebView2-owned. No focus on load, timer, hidden resize, or reconnect is added. Leave native_focus.rs Alt-Tab repair, account popups and requested window activation unchanged.",
+    "acceptance": "An explicit source-contract regression must reject the current conditional focused=true path and accept .focused(false) before add_child/hide. Actual native compilation and user-operated focus/IME checks remain separate; this batch will not rebuild or operate the running app."
+  },
+  "nativeRoutingInvestigation": {
+    "symptomQualification": "The user's follow-up at 100% excludes the independently reproduced 50%/native-max mutation loop as the direct cause. A blinking DOM caret plus working mouse-based emoticons does not establish that keyboard focus is owned by the chat WebView. Root's read-only accessibility snapshot reported the video player as focused; that is corroborating evidence, not a full native message trace.",
+    "localSourceEvidence": "Installed tauri-runtime-wry 2.11.4 lib.rs creates WindowChild through build_as_child (line 5245). Installed Wry 0.55.1 skips its top-level focus-restoring parent subclass for child WebViews; its WRY_WEBVIEW container only forwards WM_SETFOCUS to its first child HWND. Tauri's GotFocus/LostFocus handlers update bookkeeping and synthesized window focus events but do not route a mouse click to another controller. The app currently has no per-pane user-pointer focus repair. The accepted native_focus.rs activation repair deliberately does not override an already-focused child and is not changed by this batch.",
+    "excludedWithoutEvidence": "No evidence that browser_player_ui.js handles keys from the separate chat document, that chat composition content is rewritten, or that a keyboard accelerator handler suppresses chat characters. Main-renderer health records do not contain the native focus ownership data needed to attribute the incident.",
+    "candidateForRootReview": "A narrowly scoped per-pane native pointer-down repair can call MoveFocus(PROGRAMMATIC) only for the user's actual click in a visible enabled foreground pane whose native focus is elsewhere. Do not call from timers, DOM focus observers, GotFocus, generic activation, or keyboard handlers. Preserve composition and original DOM input. WM_PARENTNOTIFY is a documented descendant-pointer path, but real WebView2 forwarding must be validated because WS_EX_NOPARENTNOTIFY can suppress it. browser_host/auto_watch native implementation is root-owned and remains untouched by this agent.",
+    "primaryReferences": [
+      "https://learn.microsoft.com/en-us/windows/win32/inputmsg/wm-parentnotify",
+      "https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.3967.48#movefocus",
+      "https://github.com/tauri-apps/tauri/issues/15624"
+    ],
+    "pendingAcceptance": "After an explicitly authorized updated-app launch: repeatedly click video then chat at 100% and type Korean composition/Backspace without sending; confirm keys reach chat, native controls still work when explicitly clicked, Alt-Tab preserves the intended pane, modal/splitter focus stays safe, and no idle focus loop or background activation occurs. Do not claim an actual-user-flow pass from unit tests."
+  },
+  "nativePointerBeforeEdit": {
+    "authority": "Root authorized this agent to implement a narrow native focus helper after reviewing the latest user clarification and existing code. No running-app interaction or restart is authorized by this implementation step.",
+    "decision": "Install a scoped subclass on each owned official pane container. React only to a native left-button press in that container or its descendants, not hover, focus, activation, timers, keys or window creation. Require the pane's trusted root to be foreground, both windows enabled, pane/controller visible, actual hit-test HWND in that pane, focus outside that pane, and no reentrancy. MoveFocus(PROGRAMMATIC) then resumes normal pointer dispatch. Preserve official DOM/caret/value and main-window Alt-Tab implementation. Remove subclass ownership on WM_NCDESTROY. Because Chromium can suppress WM_PARENTNOTIFY, add a separate exact-URL, per-pane nonce pointer-only message fallback: injected top-frame code reports trusted primary pointerdown, and native additionally requires the physical left button still down. Do not extend the capture/Tauri command bridge. Its callback holds Weak<State>, never a controller reference cycle. Record repair success only when native focus readback is in the intended pane; log no input contents.",
+    "acceptance": [
+      "Regression policy rejects unrelated messages, background windows, hidden/disabled/modal panes, wrong hit target, already-focused pane and reentrancy.",
+      "The valid explicit-click state requests exactly one repair; focus/hover/keyboard events never repair.",
+      "Native compile and existing viewport/pane tests remain passing, without executing or updating the installed application.",
+      "Actual WebView2 descendant notification and Korean IME behavior must be checked in the updated app before claiming completion."
+    ]
+  },
+  "verification": {
+    "beforeFix": "New minimum/native-maximum cases both fail against unchanged production source: expected 0 queued timers, observed 1. Existing 38 tests passed. Initial sandbox invocation could not collect due EPERM cache rename; the same isolated test on normal Windows produced the assertion failures.",
+    "afterFix": "browserMultiviewBridge, browserPlayerUI, MadoWorkspace and nativeOverlayGeometry initially passed 171 tests after the JS loop fix. After the additional native focus-policy regression and one builder change, the same four files pass 172 tests, exit 0. No Vite server, native build, app launch, account or user-input access.",
+    "nativeBeforeFix": "The native child creation source-contract regression failed against the original conditional focused(true) policy, then passed against .focused(false). This is source-policy proof, not native execution evidence.",
+    "diffCheck": "git diff --check passed for the two owned source/test files; only existing LF/CRLF conversion notices.",
+    "productionSha256": "AF2DD5795950B09741528A648CF8BECD6AA64819F6A20BCA0EFA1E985CD07EB6",
+    "nativeProductionSha256": "F0CC7479E5F850CC2AECFEC7D614B20DC3BF43D1A229B7620626CD94F0D7FF6F",
+    "nativePointerSha256": "FFD869C9450AB7BF93D6200730D31DCC470992EA9DCC912C682D4BCC4F8BB5C6",
+    "pointerScriptSha256": "151A256B5FEC65D428869C1DBB4CEF816AFAA2B699EC7E60B838E6C19E873078",
+    "testSha256": "C59FC098371597A8EC909AD1137C8A1BAE7BB789D218E90BDD4910CA8CAF9168",
+    "pointerBridgeTests": "After pointer-only fallback and native source-contract additions, the same four frontend suites pass 175 tests (tool chunk 6978a6, exit 0). Tests cover exact top-frame document, trusted primary pointer only, no input-content access/default-event changes/timers, idempotence, synthetic/secondary pointers, navigation, missing/disposed bridge and native attachment before navigation. Native guard/message tests are added but not yet compiled by this agent; root owns Cargo execution.",
+    "independentReview": "youtube_native_ui reread helper and integration. Confirmed Weak state avoids a controller/core/handler cycle and the capture prefix ignores pointer messages. Incorporated review fixes: guard reentrancy before IsVisible COM; recheck closed and physical button after COM; collect current native focus/hit/foreground after COM. Installation/notification availability and actual typing remain separate validation, not assumed success.",
+    "logQualification": "Existing main-renderer health records last inspected at 2026-10-14 16:37:54 KST show foreground=false, heartbeat silence 1759ms and main renderer lag 10ms. They do not record official chat composition, native focus owner, or current chat zoom, so they cannot confirm the user's focus/IME root cause.",
+    "pending": "User-operated updated desktop typing/composition and focus acceptance. The running installed 2.2.1 binary was not updated or operated."
+  }
+}

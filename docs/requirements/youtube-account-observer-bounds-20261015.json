@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "status": "native suite1478passed including six helper tests; actual retained-session official-home close/destruction and 로그인됨 verified1792009337637; fresh-authentication transition remains unresolved",
+  "authority": "Root explicitly sent 수정 시작 after the serialized example build finished. Ownership is original.rs account observer and a new YouTube-local helper/tests only. Preserve account-refresh recording fences and all recording/scheduler code; no Cargo, UI or authentication input. Root owns actual QA and builds.",
+  "originalRequests": [
+    {
+      "source": "01a13a1f-f808-74a0-85c8-e90aa748a292/01a13a73-72e7-7a60-a097-abedc3cab10a",
+      "text": "앞으로도 이런게 뜨면 너가 브라우저 정상 종료까지 되게 이 프로그램을 만들어줘야해. 뭐가 원인인지는 잡았어?"
+    },
+    {
+      "source": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec",
+      "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."
+    },
+    {
+      "source": "call_f4713ece566a43bf8b5674f35f207e14; call_8765d99511534edb8cfbdcc7460c8423",
+      "scope": "Latest actual user reports require both login and logout completion cleanup. Logout now works; fresh password authentication still stalls before official home. Do not restore the superseded leave-logout-window-open behavior."
+    },
+    {
+      "source": "call_93ce2337ac2e4b63b93700eaf5543f13",
+      "scope": "User opened DevTools and requested no more questions until morning. Preserve the pending authentication window; no automated authentication/security input."
+    }
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Unchanged fully read main230/284 EOF and other333/375 EOF snapshots rehashed in this review. Root refreshed complete50 active/3 archived EOF inventory and69 original specifications; previously changed RELEASING reread. Current AGENTS and relevant account contracts and original request artifacts reread directly; no keyword-only substitution.",
+    "evidence": [
+      ".runtime/requirements-audit/20261014-account-completion-request.json",
+      ".runtime/requirements-audit/20261015-platform-verification-resume.json",
+      "docs/requirements/youtube-account-completion-followup-20261014.json",
+      "docs/requirements/youtube-auth-transition-20261015.json"
+    ],
+    "unavailable": ["Durable source01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Historical attachment pixels already indexed as unavailable"]
+  },
+  "findings": [
+    "probe_account_window begins only on the exact official home. The actual fresh-password stall and denied navigation occur before that point; changing the observer cannot be claimed to fix that earlier transition.",
+    "The current observer stops permanently for its epoch on one two-second eval callback timeout, malformed callback JSON, or main-thread acknowledgement timeout. worker_epoch stays claimed, so a later callback or same-document recovery does not restart observation automatically.",
+    "The current completion branch emits youtube_account_completed before attempting native close, ignores the close result, and stops even if normal close fails. This diagnostic can therefore overstate completion.",
+    "Existing nonce, navigation/intent epoch, one-worker claim, exact-home predicate, fresh public LOGGED_IN observation, noninteractive predicate and120-second/120-observation bounds are essential and must remain."
+  ],
+  "proposedScope": [
+    "Keep a single evaluation or main-thread action in flight. Wait for that same pending result in short bounded slices while checking shutdown, current nonce/epoch, exact home and the original overall deadline. Do not issue overlapping evaluation requests to compensate for a missing callback.",
+    "A missing callback cannot wait beyond the existing overall observer deadline. A returned malformed or unknown observation may be skipped with bounded delay and observation budget, but never treated as authenticated completion.",
+    "Measure the two-second freshness bound from eval issuance, not callback receipt, so a delayed browser callback cannot make an old observation look fresh. A stale observation must not confirm account state or close any window; discard it and obtain a fresh observation only after the previous action has finished and the original deadline still permits it. Recheck freshness before close after any account refresh work.",
+    "Call normal close only on the captured current native window after fresh intent-matching authentication and noninteractive official home. Log youtube_account_close_requested only after close returns Ok; separately log youtube_account_window_destroyed from the exact nonce-bound Destroyed callback without calling that event authentication success. Remove the premature youtube_account_completed event. Do not equate a queued close request with observed destruction.",
+    "On close failure, retain the account window and re-observe within the same deadline rather than reporting completion. Keep authentication confirmation deduplication so a close retry cannot repeatedly refresh playback or revise account state.",
+    "Use only fixed bounded diagnostic enums and booleans for timeout/invalid response/stale observation/dispatch failure/close failure/close-request acceptance. Log no browser callback body, arbitrary error text, raw URL, query, identity, cookie, token, password or authentication value payload. Preserve the existing per-flow diagnostic cap.",
+    "No navigation allowlist change, forced F5, automatic consent/security submission, profile change, CHZZK/SOOP change, or relaxation of the account-change recording admission gate belongs to this batch."
+  ],
+  "conflicts": [
+    "youtube-auth-transition-20261015 supersedes the earlier logoutDecision; both current intents can close only after their own verified home observation.",
+    "Observer deadline expiry leaves the login window available for the user; it is not a login failure timeout and must not close an interactive or unknown page.",
+    "Fresh Google transition remains separately unresolved until its exact denied destination is evidenced and the actual flow succeeds without manual refresh.",
+    "This proposal does not authorize a restart while the user's pending authentication evidence must be preserved."
+  ],
+  "implementation": {
+    "files": ["src-tauri/src/youtube/original.rs account observer/lifecycle only", "src-tauri/src/youtube/original_account_observer.rs"],
+    "behavior": "One outstanding eval/main-thread action is awaited in250ms slices against one absolute120-second deadline; stale eval responses are rejected from issuance time. Invalid completed replies can retry with bounded delay. Normal close failures re-observe; close acceptance and actual window destruction use separate fixed diagnostic stages. Current account-refresh continuation/recording fences are preserved.",
+    "testsAdded": "Six deterministic helper tests: delayed callback/freshness, absolute deadline, invalidation/disconnection, deadline/invalidation after a late successful receive, fresh eligible close retry, and bounded distinct fixed diagnostics.",
+    "validation": "JSON contract parses. Local rustfmt read-only syntax check failed with environment access-denied before parsing; no formatting changes or Cargo/UI/authentication operations performed. Root owns serialized compile, existing account-policy/JS regressions and real completion checks.",
+    "unverified": "Fresh Google authentication still has a separately evidenced blocked transition before this observer starts. This change cannot be reported as resolving that transition."
+  },
+  "acceptance": [
+    "A delayed callback arriving after2 seconds but before the original deadline can finish observation without a second concurrent eval.",
+    "A callback that never arrives exits within the original120-second bound, does not accumulate eval calls or main-thread actions, and leaves the window unchanged.",
+    "Late callbacks after navigation, intent change, destruction, shutdown or nonce replacement cannot confirm or close the replacement window.",
+    "Delayed main-thread work rejects an observation older than the freshness bound; a subsequent valid check can complete without replaying stale work.",
+    "Malformed/unknown data never closes; login requires true and logout requires false, exact official home and interactive=false, regardless of cached account state.",
+    "A close error produces no completion success diagnostic and may retry only after a new fresh observation within the unchanged count/deadline limits.",
+    "One successful close request does not double-confirm the account or reload receivers repeatedly; active recording and pending continuation account fences remain intact.",
+    "Tests assert diagnostic field and enum bounds, no raw callback/error/URL output, one worker per epoch and one outstanding operation.",
+    "Root runs serialized native/frontend tests and actual official-home login/logout completion checks. Mock tests or a successful build do not establish fresh Google authentication transition success."
+  ]
+}

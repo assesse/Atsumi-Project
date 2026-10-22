@@ -1,0 +1,11 @@
+.soop-vod-pair{display:flex;position:relative;min-width:0;min-height:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff}
+.soop-vod-slot{position:relative;flex:1 1 0;min-width:0;min-height:0;background:#000;overflow:hidden}
+.soop-vod-chat{position:relative;flex:0 0 var(--soop-vod-chat-size,240px);width:var(--soop-vod-chat-size,240px);min-width:0;min-height:0;background:#111;overflow:hidden}
+.soop-vod-resize{position:relative;flex:0 0 7px;background:var(--border,#39363e);cursor:col-resize;touch-action:none;outline-offset:-2px}
+.soop-vod-resize:after{content:"";position:absolute;inset:calc(50% - 14px) 2px;border-radius:2px;background:var(--muted,#a9a4b0);opacity:.65;pointer-events:none}
+.soop-vod-resize:hover,.soop-vod-resize:focus-visible{background:var(--primary)}
+.soop-vod-pair.is-compact{flex-direction:column}.soop-vod-pair.is-compact>.soop-vod-chat{width:100%;height:var(--soop-vod-chat-size,44%)}
+.soop-vod-pair.is-compact>.soop-vod-resize{width:100%;height:7px;cursor:row-resize}.soop-vod-pair.is-compact>.soop-vod-resize:after{inset:2px calc(50% - 14px)}
+.soop-vod-status{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);box-sizing:border-box;max-width:90%;display:flex;align-items:center;gap:10px;padding:12px 16px;border-radius:8px;background:#242129ed;font-size:14px}
+.soop-vod-status.is-error{color:#ffc4c7;z-index:2}.soop-vod-status button{flex:none}.soop-vod-privacy{position:absolute;inset:0;display:grid;place-items:center;background:var(--surface);z-index:2}
+.soop-vod-pair.is-native-fullscreen{position:fixed;inset:0;width:100vw;height:100vh;z-index:56;border-radius:0}

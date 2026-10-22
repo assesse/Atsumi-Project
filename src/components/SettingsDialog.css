@@ -1,6 +1,6 @@
 /* 70% of the former 880px dialog; controls keep their own compact layout. */
 dialog.settings-dialog { width: min(616px, calc(100vw - 32px)); }
-.settings-dialog .settings-nav { padding-inline: 20px; }
+.settings-dialog .settings-nav { padding-inline: 20px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .settings-dialog .settings-nav button { min-width: 0; flex: 1; }
 .settings-dialog .settings-layout { position: relative; }
 .settings-dialog .settings-feedback { position: absolute; inset: 8px 12px auto; z-index: 5; padding: 12px; max-height: 40%; overflow: auto; background: var(--surface-raised); border: 1px solid var(--line-strong); border-radius: 8px; box-shadow: 0 4px 16px #0008; }
@@ -62,3 +62,7 @@ dialog.settings-dialog { width: min(616px, calc(100vw - 32px)); }
 }
 .settings-dialog .settings-tutorial-row { grid-template-columns:minmax(0,1fr) auto; }
 .settings-dialog .settings-tutorial-select { width:148px; min-width:0; }
+.settings-dialog .settings-platform-empty { color: var(--muted); margin: 20px 0; }
+@media (max-width: 400px) {
+  .settings-dialog .settings-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

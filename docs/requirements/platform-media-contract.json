@@ -1,0 +1,269 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-13",
+  "scope": [
+    "youtube",
+    "soop"
+  ],
+  "status": "implementation-in-progress; no completed end-to-end claim",
+  "terminalPersistenceBatch": {
+    "originals": ["01a12a4c-724c-7d13-801d-3d92da01fe1e", "01a11672-f428-7850-899b-5155aebb4e8a", "R009", "R015"],
+    "problem": "Terminal journal failure after a real worker ended left stale active DTO state and made quit/reset wait forever; persisted state is not process ownership.",
+    "changes": "Use accepted cancel-token ownership for active work; release queued tokens only while still in the actual queue and running tokens by RAII only after execution/finalization exits, including panic. A worker-claimed item with a still-queued presentation state remains owned through cancellation. Terminal persistence failure leaves an explicit in-memory failed/interrupted result, retains original media and last valid journal, and latches a bounded256 per-job shutdown_error plus sticky overflow summary. Never turn persistence failure into completed.",
+    "quitVersusReset": "Normal quit may proceed after all real workers drain while retaining original files/last journal and logging the persistence warning. FactoryReset must reject marker publication/exit when this persistence error remains. Root owns common quit/reset admission and warning integration.",
+    "checks": ["Synthetic journal path failure cannot strand a dead worker as active", "Panic unwinds real owned thread and releases only its job", "Queued cancellation/shutdown clears only nonrunning ownership, including queue-claim handoff race", "Overflow beyond256 error details remains latched even after all tracked details are cleared", "Live finalizer uses the same terminal error/ownership guard", "No network or app controls; existing active-file recovery and synthetic verification tests retained"],
+    "verification": "2026-10-13 final lib compile exit0; full native suite1200 passed/0 failed/45 opt-in ignored in119.55s. Lifecycle5, commands30/factory_reset7 and isolated scheduled-capture/local-recovery tests passed. Actual-thread panic, failed terminal journal with preserved previous bytes, retry owner fencing, queue-claim cancellation race and257th persistence failure are covered. A prior whole-suite run exposed a fixture race: dropping its synthetic old guard woke a real idle worker, which could claim its manually staged queued item before the test asserted immediate shutdown settlement. The queued-only fixture now closes admission under the same state lock before staging, retaining exact assertions and leaving the separate claimed-worker race test intact. This exact fixture passed10consecutive runs plus the final full suite. Production logic/timeout expectations are unchanged. GUI/reset on user data was not executed."
+  },
+  "evidence": {
+    "policy": "docs/requirements/implementation-policy.json",
+    "mainThread": ".runtime/requirements-audit/main-thread-users.json",
+    "mainCoverage": "230 turns / 284 user messages read to end",
+    "specifications": ".runtime/requirements-audit/specifications.json",
+    "otherThreads": ".runtime/requirements-audit/other-threads.json; 61 requirements / 17 supersessions reviewed, relevant original messages read",
+    "originalRequests": [
+      "01a13363-ef61-71e3-bf03-3babe3f5b5c0",
+      "01a13142-4c44-7560-bde6-d7e089fd9ea9",
+      "01a0862c-6058-7442-a6fe-38d660288ee2",
+      "01a051cd-a457-79f0-a78e-4edcf270fa8c",
+      "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe",
+      "01a0ffb2-7b46-77f1-9970-1c4be0da6a41",
+      "01a10854-707d-7182-97d5-0b5669f92801",
+      "01a10806-d91b-7960-a4a4-09a11e14032d",
+      "01a12a4c-724c-7d13-801d-3d92da01fe1e"
+    ],
+    "requirements": [
+      "R002",
+      "R003",
+      "R004",
+      "R005",
+      "R007",
+      "R008",
+      "R009",
+      "R010",
+      "R011",
+      "R012",
+      "R013",
+      "R014",
+      "R015",
+      "R016",
+      "R017",
+      "R018",
+      "R022"
+    ],
+    "specRequirements": [
+      "DOC-001",
+      "DOC-002",
+      "DOC-005",
+      "DOC-007",
+      "DOC-014",
+      "DOC-015",
+      "DOC-021",
+      "DOC-022",
+      "DOC-023",
+      "DOC-025",
+      "DOC-033",
+      "DOC-034",
+      "DOC-035",
+      "DOC-041",
+      "DOC-043",
+      "DOC-045",
+      "DOC-046",
+      "DOC-048",
+      "DOC-049",
+      "DOC-050",
+      "DOC-058",
+      "DOC-059",
+      "DOC-060",
+      "DOC-066",
+      "DOC-067",
+      "DOC-070",
+      "DOC-071"
+    ]
+  },
+  "conflicts": [
+    {
+      "old": "link-only player is platform support",
+      "resolved": "internal discovery, favorites, cancellable verified storage and offline management are mandatory"
+    },
+    {
+      "old": "inactive platform stops playback",
+      "resolved": "view visibility is separate from playback/recording lifetime; minimize preserves audio, tray mutes"
+    },
+    {
+      "old": "single click opens card or enters checkbox mode",
+      "resolved": "single focus, double-click detail, Ctrl/Shift multi-selection, checkboxes only for multiple selection"
+    },
+    {
+      "old": "separate iframe and recorder share traffic",
+      "resolved": "only a measured single receiver feeding local playback and recording satisfies the contract"
+    },
+    {
+      "old": "network 100 percent or process exit zero is completion",
+      "resolved": "final output, full decode, hash and durable proof must succeed before completion/cleanup"
+    }
+  ],
+  "identity": {
+    "media": [
+      "provider",
+      "kind: video|live",
+      "externalId"
+    ],
+    "job": "random UUID; each attempt separately identified",
+    "playback": "revocable token; no arbitrary path or remote URL"
+  },
+  "limits": {
+    "vodNetworkWorkers": 2,
+    "liveReceivers": 4,
+    "totalLogicalMediaReceivers": 6,
+    "verificationWorkers": 1,
+    "mergeWorkers": 1,
+    "pendingJobs": 128,
+    "metadataBytes": 4194304,
+    "stderrBytes": 65536,
+    "protocolRangeBytes": 1048576,
+    "libraryPageItems": 100,
+    "libraryCursorBytes": 256,
+    "jobSummaries": 256,
+    "deleteBatchItems": 256,
+    "liveSegmentMaxBytes": 33554432,
+    "liveWatchSegmentsPerSession": 18,
+    "liveChatRingItems": 500,
+    "liveChatRingBytes": 1048576,
+    "legacySingleFileChatArchiveBytes": 134217728,
+    "liveChatArchiveBytes": 4294967296,
+    "liveChatPartBytes": 8388608,
+    "liveChatCombinedParts": 512,
+    "liveChatCatalogBytes": 262144,
+    "liveChatReplayIndexBytes": 536870912,
+    "youtubeChatChildLifetimeSeconds": 86400,
+    "youtubeChatSampledTemporaryBytes": 33554432,
+    "chatLimitQualification": "New source only; multipart resource guards are not an unlimited/8hour guarantee. YouTube temporary guard samples100ms and may overshoot; frozen user QA predates this implementation. See platform-long-chat.json for actual test and pending desktop evidence.",
+    "minimumFreeSpaceBytes": 1073741824
+  },
+  "lifecycle": {
+    "states": [
+      "queued",
+      "resolving",
+      "downloading",
+      "recording",
+      "reconnecting",
+      "finalizing",
+      "verifying",
+      "completed",
+      "interrupted",
+      "failed",
+      "cancelled"
+    ],
+    "register": "idempotent requestId and canonical media identity under native quit/update gate",
+    "cancel": "propagate to process tree and verification; wait for termination; preserve unverified files",
+    "restart": "load bounded summaries only; active persisted jobs become interrupted; no silent new broadcast capture",
+    "cleanup": "only exact owned intermediates after full successful verification; final media/chat/proof retained"
+  },
+  "security": [
+    "trusted main WebView and origin only",
+    "managed hash-pinned tools; no PATH/config/plugins/account cookies",
+    "Windows child-process Job Object and bounded output",
+    "sanitize stderr; no titles/queries/chat/secrets/CDN URLs in diagnostics",
+    "native provider reconstructs canonical URL; no arbitrary extractor arguments",
+    "no reparse/hardlink/path traversal or broad recursive deletion",
+    "atomic no-overwrite final publishing; authoritative per-job manifest",
+    "local token transport only; remote pages cannot read native media"
+  ],
+  "batches": [
+    {
+      "id": "youtube-view-context-and-poll-recovery",
+      "requirements": ["R003", "R009", "R010", "R012"],
+      "originals": ["01a051cd-a457-79f0-a78e-4edcf270fa8c", "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "01a10785-1343-76e2-8820-053e98507cbb", "01a10854-707d-7182-97d5-0b5669f92801"],
+      "conflicts": ["Favorites scroll overwrites the current search tab's scroll", "Closing an inactive detail tab unexpectedly changes the foreground detail", "One transient snapshot error remains after healthy polling", "The registered viewing navigation shows the exploration UI"],
+      "design": "Separate favorites/category scroll from each search tab and restore the current context when returning. Closing a background detail changes only that detail. Split transient polling errors from user-operation/playback errors and clear only recovered polling errors. Show the same keyed existing player nodes in the viewing route without destroying or reopening a receiver.",
+      "acceptance": ["Favorites/category scroll cannot alter search return position", "Closing A while C is active preserves C", "Poll failure then success removes only the poll error; failed record remains visible", "Switch explore/viewing/platform preserves exact player node and receiver lease", "Viewing with no running player gives concise next-step guidance", "No desktop success claim while Computer Use remains stopped"]
+    },
+    {
+      "id": "library-keyset-and-bounded-recent-jobs",
+      "originals": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a10785-1343-76e2-8820-053e98507cbb", "01a051cd-a457-79f0-a78e-4edcf270fa8c", "01a1114f-db4b-73b3-908a-c6e3d2a19343", "01a11672-f428-7850-899b-5155aebb4e8a"],
+      "requirements": ["R002", "R009", "R010", "R016"],
+      "audit": "All three fully read evidence snapshot hashes remain unchanged; applicable original messages reread. Inaccessible sources remain recorded in implementation-policy.json.",
+      "conflict": "Offset pagination loses a stable place when another completed download is inserted or a previous card is removed. Jobs already prioritizes active work correctly, but clones all old records and describes the bounded history as exhaustive.",
+      "design": "Keep response models unchanged. A versioned provider-scoped opaque keyset cursor uses completedAt descending and libraryId ascending, with a 256-byte input cap and strict schema/UUID validation. New items ahead of the boundary are found on refresh, not inserted into an in-progress older-page traversal. Select at most page-size plus one references before cloning. Preserve jobs' existing256 total cap and all active jobs first (registration cap128), then newest settled records; clone only the selected results. UI calls this recent work.",
+      "acceptance": ["Insert newer completion/delete earlier or boundary row between pages without duplicate or skipped retained rows", "Equal timestamps use stable UUID tie-break", "Reject oversized, malformed, unknown-version and cross-provider cursors", "Page size clamps to1..100", "All128 older active states remain within the unchanged256 total cap", "Provider isolation and deterministic equal-time job ordering", "Only isolated native tests; desktop validation remains pending"]
+    },
+    {
+      "id": "youtube-discovery-vod",
+      "files": [
+        "src-tauri/src/youtube.rs",
+        "src-tauri/src/platform_media.rs",
+        "src-tauri/src/platform_media/**",
+        "src/features/platforms/platformMedia.ts",
+        "src/features/youtube/**"
+      ],
+      "acceptance": [
+        "anonymous real search/filter/continuation and channel browsing",
+        "stable card selection and right-click actions",
+        "favorite and search context preserved",
+        "isolated real VOD save/full decode/hash",
+        "offline token local playback and replay/seek",
+        "cancellation and process tree exit"
+      ]
+    },
+    {
+      "id": "media-durability",
+      "originals": [
+        "01a12a4c-724c-7d13-801d-3d92da01fe1e",
+        "01a10806-d91b-7960-a4a4-09a11e14032d"
+      ],
+      "design": "A failed/interrupted live job retries finalization of its own durable segment manifest only; never silently records a later broadcast. The same archive job is revision-guarded and queued through bounded workers. Each merge attempt has a fresh filename, existing partial/final files are not overwritten, and published-before-journal crashes revalidate the existing final. Full verification precedes exact-owned segment cleanup; chat is retained and flushed even when its receiver fails.",
+      "acceptance": [
+        "restart interrupted/index recovery",
+        "missing file versus unavailable drive",
+        "pinned owned file deletion",
+        "no cleanup after failed verification",
+        "quit/update fingerprint includes work",
+        "retrying interrupted live work makes no provider/network request",
+        "existing final is decoded and hashed before completion is re-established"
+      ]
+    },
+    {
+      "id": "single-ingress-live-chat",
+      "originals": [
+        "01a0862c-6058-7442-a6fe-38d660288ee2",
+        "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe",
+        "01a12a4c-724c-7d13-801d-3d92da01fe1e",
+        "01a11672-f428-7850-899b-5155aebb4e8a"
+      ],
+      "design": "A single managed yt-dlp process resolves a provider-reconstructed canonical live URL and outputs the received multiplexed stream to a contained FFmpeg pipe. FFmpeg commits local HLS segments atomically. The local viewer reads that playlist; recording copies the very same committed segments into its owned UUID job, never opens another media receiver. Viewer and recorder leases are independent. Four live sessions have a separate admission cap from two VOD workers, avoiding starvation. Each session keeps 12 HLS playlist segments plus six grace segments, at most 32 MiB each (worst-case watch disk budget 2.25 GiB across four sessions), plus one bounded 32 MiB in-progress segment. The chat receiver is session-owned and fans out to a 500-item/1 MiB ring and the current recording archive sink; recording does not create another chat connection. Chat has explicit receipt-time-approximate anchors, missing-anchor fallback, gaps and limits. Watch buffers are disposable after a clean receiver stop; failed archive inputs remain until complete decode/hash verification.",
+      "acceptance": [
+        "validated single receiver to committed local segments",
+        "viewer and recorder leases do not duplicate network media",
+        "four live admissions do not starve VOD or merge",
+        "separate bounded chat-only capture with explicit gaps",
+        "record stop flushes its archive while live chat continues",
+        "late cancellation cannot append into a detached archive",
+        "synthetic discontinuity and disk pressure",
+        "isolated public live playback and finalized file verification"
+      ]
+    }
+  ],
+  "verification": {
+    "readModelsAndViewRecovery": "2026-10-13 15:43 KST: native platform_media33 passed/4 ignored including4 new bounded-keyset/job-query tests. YouTubeWorkspace+PlatformLivePlayer31 tests passed including6 new scroll/detail/view-route/poll-recovery regressions; TypeScript noEmit passed. Queries retain the existing256-total active-first contract. Desktop route and latest UI changes remain unverified while Computer Use is stopped.",
+    "unit": "2026-10-13 final integrated native build: platform_media33 passed/4 ignored (queries4, chat9 and replay10 included), Pixiv23 passed/1 ignored, Pinterest25 passed/2 ignored, portable10 passed/1 ignored, replay IPC admission1 passed. Final Pixiv hardlink guard is included. One compiler-internal check_unsafety panic occurred before tests; identical-source/command retry succeeded without a source workaround. Narrow YouTubeWorkspace/LivePlayer frontend31 passed and TypeScript noEmit passed. Earlier explicit synthetic interrupted recovery1 passed with recorded-attempt cleanup, unknown UUID-shaped file preservation and already-published final revalidation.",
+    "service": "Actual anonymous discovery relevance/popular/channel and subsequent pages verified. Metadata distinguishes public VOD from currently live sample. Actual 19.063583-second public VOD downloaded, fully decoded, SHA-256 checked, published and read through local token Range 206; playing-file deletion refused. Native interrupted synthetic recording recovery passed with nonexistent network-tool paths, including already-published-file revalidation and exact intermediate cleanup.",
+    "sample": {
+      "id": "jNQXAC9IVRw",
+      "bytes": 744412,
+      "sha256": "a521d584e2ad7a8afb39899fe2a9cbdeecbda46c6599a69f15453c72283b60f9"
+    },
+    "desktop": "Root observed native app search cards, detail download and verified media+thumbnail. Root also observed saved VOD progressing 0:09 to 0:19 ended, center Replay to 0:00 and playing again before Computer Use stopped. New HLS/chat and subsequent UI changes remain unverified; do not resume Computer Use without authorization.",
+    "liveSingleIngress": "Anonymous native service: YouTube cswFQYam8Ic (15.007891 sec, 1401571 bytes) and SOOP phonics1 (12.015666 sec, 1875571 bytes), each two viewer tokens to one video receiver, recording copies those same committed segments, full decode/hash + offline thumbnail, recording stop leaves viewer/chat running, close+shutdown drains all active IDs. Four-session concurrency and desktop local-HLS remain unverified. Public service captures ran before the final RAII/owned-attempt hardening; those final changes have native regression coverage, not another public capture.",
+    "chatPreservation": "Shared session chat ring/archive tested: YouTube ring75/events26122 bytes, SOOP ring9/events1419 bytes. YouTube rows were initial historical chat preceding the recorded interval; this fixture is NOT playback synchronization proof. SOOP actual replay parser returned rows5/messages5/total5, malformed0/unsupported0, with receive-time-approximate mapping. Latest native chat9/replay10 units pass. Desktop chat display and long-running alignment remain unverified.",
+    "longRunning": "Not tested; cancellation/discontinuity/disk-pressure and multiple real simultaneous sessions remain acceptance gaps.",
+    "evidenceDirectories": [
+      ".runtime/platform-media-live-tests/fe8dbc3b-bd4f-43e3-8787-a8c982cea295",
+      ".runtime/platform-media-live-tests/6086d286-5ebe-46d2-8908-a760fcc35bf8"
+    ]
+  },
+  "remaining": [
+    "Actual desktop HLS/chat and subsequent UI changes after Computer Use stopped",
+    "Four real simultaneous sessions, long-running reconnect/disk-pressure tests",
+    "Older intermediates without ownership evidence are conservatively retained"
+  ]
+}

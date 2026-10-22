@@ -36,8 +36,11 @@ import type { AppUpdateCheckResult } from "../update/useAppUpdater";
 import { FluentIcon } from "./FluentIcon";
 import { DropdownSelect } from "./DropdownSelect";
 import { AutostartSetting } from "./AutostartSetting";
-import type { ContentSource } from "../app/workspaceRegistry";
+import { isContentSource, workspaces, type ContentSource } from "../app/workspaceRegistry";
 import { useSettingsAutosave } from "../hooks/useSettingsAutosave";
+import { VIDEO_PREVIEW_WIDTHS, saveVideoPreviewWidth, useVideoPreviewWidth, type VideoPreviewSource } from "../features/platforms/previewPreferences";
+import { IMAGE_PREVIEW_WIDTHS, saveImagePreviewWidth, useImagePreviewWidth, type ImagePreviewSource } from "../features/platforms/imagePreviewPreferences";
+import { savePixivSafeOnly, usePixivSafeOnly } from "../features/pixiv/displayPreferences";
 import "./SettingsDialog.css";
 
 type SettingsDialogProps = {
@@ -232,7 +235,7 @@ export function SettingsDialog({
   const [updateCheckBusy, setUpdateCheckBusy] = useState(false);
   const [updateMessage, setUpdateMessage] = useState("");
   const [rebuildOptions, setRebuildOptions] = useState({ thumbnail: true, duplicate: false, internal: false, autoFind: false });
-  const [activeTab, setActiveTab] = useState<"general" | "hitomi" | "danbooru" | "chzzk">("general");
+  const [activeTab, setActiveTab] = useState<"general" | ContentSource>("general");
   const [danbooruDraft, setDanbooruDraft] = useState<DanbooruSearchFilters>(defaultDanbooruSearchFilters);
   const [exclusions, setExclusions] = useState<ExplorationExclusion[]>([]);
   const [exclusionsLoading, setExclusionsLoading] = useState(false);
@@ -638,6 +641,12 @@ export function SettingsDialog({
             className={activeTab === "chzzk" ? "is-active" : ""}
             onClick={() => setActiveTab("chzzk")}
           >치지직</button>
+          {(["youtube", "soop", "pinterest", "pixiv"] as const).map(source => (
+            <button key={source} type="button" role="tab" aria-selected={activeTab === source}
+              className={activeTab === source ? "is-active" : ""} onClick={() => setActiveTab(source)}>
+              {workspaces.find(workspace => workspace.id === source)!.label}
+            </button>
+          ))}
         </nav>
         <div className="settings-layout settings-layout-single">
           {error || validationError || autosave.status === "error" || danbooruSaveError ? <div className="settings-feedback">
@@ -646,6 +655,8 @@ export function SettingsDialog({
             {autosave.status === "error" || danbooruSaveError ? <div className="settings-save-error" role="alert"><span>변경 내용을 저장하지 못했습니다.</span><button type="button" className="text-button" onClick={() => { void autosave.flush(); if (danbooruSaveError) changeDanbooru(danbooruDraft); }}>다시 시도</button></div> : null}
           </div> : null}
           <section ref={scrollRoot} className="settings-content" data-settings-scroll-root="true">
+              {activeTab === "soop" || activeTab === "youtube" ? <VideoPreviewSettings key={activeTab} source={activeTab} /> : null}
+              {activeTab === "pinterest" || activeTab === "pixiv" ? <ImagePreviewSettings key={activeTab} source={activeTab} /> : null}
               {activeTab !== "danbooru" ? <>
                 <div className="setting-row download-folder-setting" data-tour="download-folder" hidden={activeTab !== "general"}>
                   <div><strong>다운로드 폴더</strong><span>앨범·이미지·녹화의 저장 위치</span></div>
@@ -662,9 +673,9 @@ export function SettingsDialog({
                   <div><strong>튜토리얼</strong></div>
                   <DropdownSelect ariaLabel="튜토리얼 다시 보기" className="settings-tutorial-select" menuMinWidth={148} value="" options={[
                     { value: "", label: "다시 체험하기" },
-                    { value: "hitomi", label: "Hitomi" }, { value: "danbooru", label: "Danbooru" }, { value: "chzzk", label: "CHZZK" },
+                    ...workspaces.map(workspace => ({ value: workspace.id, label: workspace.label })),
                   ]} onChange={(source) => {
-                    if (!loading && !saving && !folderChoosing && (source === "hitomi" || source === "danbooru" || source === "chzzk")) { close(); onReplayTutorial(source); }
+                    if (!loading && !saving && !folderChoosing && isContentSource(source)) { close(); onReplayTutorial(source); }
                   }} />
                 </div> : null}
                 <AutostartSetting active={open && activeTab === "general"} />
@@ -1096,6 +1107,58 @@ export function SettingsDialog({
       </div>
     </dialog>
   );
+}
+
+function ImagePreviewSettings({ source }: { source: ImagePreviewSource }) {
+  const width = useImagePreviewWidth(source);
+  const [failedWidth, setFailedWidth] = useState<number | null>(null);
+  const name = source === "pinterest" ? "Pinterest" : "Pixiv";
+  const save = (next: number) => setFailedWidth(saveImagePreviewWidth(source, next) ? null : next);
+  return <div className="settings-image-preview">
+    {source === "pixiv" ? <PixivDisplaySettings /> : null}
+    <div className="setting-row">
+      <SettingCopy title="미리보기 크기" summary="탐색·즐겨찾기·다운로드 카드에 바로 적용" />
+      <div className="range-wrap">
+        <input id={`settings-${source}-preview-width`} aria-label={`${name} 카드 미리보기 크기`} type="range"
+          min="0" max={IMAGE_PREVIEW_WIDTHS.length - 1} step="1" value={IMAGE_PREVIEW_WIDTHS.indexOf(width)}
+          onChange={event => save(IMAGE_PREVIEW_WIDTHS[Number(event.target.value)] ?? 180)} />
+        <output htmlFor={`settings-${source}-preview-width`}>{width}px</output>
+      </div>
+    </div>
+    {failedWidth !== null ? <div className="settings-save-error" role="alert"><span>크기를 저장하지 못했습니다.</span><button type="button" className="text-button" onClick={() => save(failedWidth)}>다시 시도</button></div> : null}
+  </div>;
+}
+
+function PixivDisplaySettings() {
+  const safeOnly = usePixivSafeOnly();
+  const [failedValue, setFailedValue] = useState<boolean | null>(null);
+  const save = (next: boolean) => setFailedValue(savePixivSafeOnly(next) ? null : next);
+  return <div className="settings-pixiv-display">
+    <div className="setting-row">
+      <SettingCopy title="일반 등급만 표시" summary="끄면 로그인한 계정의 열람 범위를 따릅니다. 검색·추천에 적용됩니다." />
+      <label className="setting-checkbox"><input type="checkbox" role="switch" aria-label="Pixiv 일반 등급만 표시" checked={safeOnly} onChange={event => save(event.target.checked)} /></label>
+    </div>
+    {failedValue !== null ? <div className="settings-save-error" role="alert"><span>표시 설정을 저장하지 못했습니다.</span><button type="button" className="text-button" onClick={() => save(failedValue)}>다시 시도</button></div> : null}
+  </div>;
+}
+
+function VideoPreviewSettings({ source }: { source: VideoPreviewSource }) {
+  const width = useVideoPreviewWidth(source);
+  const [failedWidth, setFailedWidth] = useState<number | null>(null);
+  const name = source === "soop" ? "SOOP" : "YouTube";
+  const save = (next: number) => setFailedWidth(saveVideoPreviewWidth(source, next) ? null : next);
+  return <div className="settings-video-preview">
+    <div className="setting-row">
+      <SettingCopy title="미리보기 크기" summary="탐색 카드에 바로 적용" />
+      <div className="range-wrap">
+        <input id={`settings-${source}-preview-width`} aria-label={`${name} 카드 미리보기 크기`} type="range"
+          min="0" max={VIDEO_PREVIEW_WIDTHS.length - 1} step="1" value={VIDEO_PREVIEW_WIDTHS.indexOf(width)}
+          onChange={event => save(VIDEO_PREVIEW_WIDTHS[Number(event.target.value)] ?? 320)} />
+        <output htmlFor={`settings-${source}-preview-width`}>{width}px</output>
+      </div>
+    </div>
+    {failedWidth !== null ? <div className="settings-save-error" role="alert"><span>크기를 저장하지 못했습니다.</span><button type="button" className="text-button" onClick={() => save(failedWidth)}>다시 시도</button></div> : null}
+  </div>;
 }
 
 function DanbooruSettingsPanel({

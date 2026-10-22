@@ -1,0 +1,138 @@
+{
+  "version": 3,
+  "state": "Actual UI verification resumed by the latest explicit user request; completed cases and newly found photo failures are reconciled below. Earlier17:15 deferral is historical, not the current instruction.",
+  "original": [
+    "계정에서 내 프로필이미지 로드 안됨.",
+    "오류 피드백, 프라이버시모드, 설정은 위치 고정이어야함. UI에 따라 원래 기능의 위치가 변하지 않아야하는건 대전제야. 계정 전환은 오류 보고 탭 위에 만들어줘.",
+    "피드에서 광고제거 가능한지? 제재되지 않는 방법의 광고 차단 방법 확인 후 적용.",
+    "추천피드의 개인 관련 추천과 전체 유행 추천을 구분 가능한지, 용도별 계정 관심사 혼합을 줄일 방법을 찾아 보고할 것.",
+    "로컬 저장소 화면 구성은 X공식 웹의 마음함이나 북마크처럼 구성할 것.",
+    "글 저장은 북마크·공유 옆 우측 하단, 미디어 다운로드는 미디어 우측 상단에 웹페이지 내부 버튼으로 구현. 기본 전체 다운로드, 호버로 한 개/전체 선택, 우클릭 개별 다운로드.",
+    "ESC는 마지막 포커스 기준 우선. 피드 이미지 전체화면에서 ESC가 프리뷰를 닫지 않아야 함.",
+    "게시물 없음·스켈레톤도 X 한정 검은톤 배경.",
+    "이미지 미리보기 A/D 및 좌우 방향키 이동."
+  ],
+  "coverage": {
+    "inventory": "Active50/pinned and archived3 EOF refreshed. Other Atsumi main metadata1792473578 and UIUX1792073766 unchanged from previously completely covered snapshots; latest main actual turn was rechecked. Current direct conversation including all nine new requirements read. Current prior181 requirement files reuse previous full audit except this new contract.",
+    "unchangedHashes": {
+      "implementationPolicy": "3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1",
+      "officialSplitV6": "7648801344FCBD0FCB8067B48B57D63F2E7E45DC9612BCC07B11590298BAFC05"
+    },
+    "unavailable": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"],
+    "qualification": "Previously read unchanged snapshots reused; inaccessible evidence is not claimed read."
+  },
+  "preflight": "Computer Use list_windows returned no Atsumi window. Read-only Git status requires elevated sandbox access; inspection confirms large shared dirty tree. No source reset, forced shutdown, account write or deletion authorized.",
+  "decisions": [
+    "Fixed common footer remains anchored at its established bottom position; account slot goes immediately above feedback, not below settings. Remove redundant global save/download actions after native replacements are implemented.",
+    "Profile image and name must come from observed selected-account identity, not guessed avatar URLs or post authors. Preserve legacy account registry and bounded validated image loading.",
+    "Actual QA observed empty own-account presentation before navigating back to home, then the official default portrait was collected. Address the missing late image-attribute/load re-observation with a bounded own-account-only refresh; do not erase caches or guess account names. Test delayed src/loading without requiring a route change.",
+    "Use original native X document for feed and preview. Add bounded per-post/media UI through existing closed native bridge, not a main-page overlay or private API.",
+    "Native action intent binds to current pane/account/generation and exact post/media identity; existing archive sanitization, local-only reader, completeness reporting and cancellation remain enforced.",
+    "Local archive is an X-like centered timeline of saved content with offline media; not a list of URL-only buttons. Remote account/network status cannot prevent reading local records.",
+    "Focus and native image/dialog/fullscreen handling take precedence over outer preview dismissal. Image shortcuts must not consume typing, composition, modifiers or unrelated controls.",
+    "X-only empty/loading/body backgrounds use black; do not change other platforms.",
+    "Advertisement changes are conditional on documented low-risk authorized behavior. No paid purchase, advertiser block, account setting change, anti-detection or penalty-free claim without evidence.",
+    "Recommendation source classification is research/report only; do not guess personal/global labels or send training feedback."
+  ],
+  "acceptance": [
+    "Real current-account avatar displayed; stale other-account data cannot flash.",
+    "Feedback/privacy/settings positions unchanged across X views and account-menu states.",
+    "Post/media actions appear inside native documents and individual/all download targets match the clicked content.",
+    "Saved timeline opens offline captures, preserves incomplete status and safe media protocols.",
+    "Feed image ESC does not close preview; both pane image arrows and A/D work without double stepping.",
+    "Black empty/loading backgrounds; compact centered controls and no clipping at1920x1080 and narrow size.",
+    "Focused tests, typecheck, native build, actual UI evidence and unresolved limits recorded separately.",
+    "Ad and recommendation findings cite current official sources and distinguish unsupported guarantees."
+  ],
+  "scope": "Latest nine requests only. Earlier broader goal remains paused; no commit, push, release, PC shutdown or social write.",
+  "verification": {
+    "asOfLocal": "2026-10-20T17:15:00+09:00",
+    "userDecision": "After renewed input was detected, the user explicitly answered 화면 검증은 나중에. Stop all Computer Use input and app restart. Do not resume on an automation.",
+    "automated": [
+      "Final TypeScript check passed.",
+      "Final frontend X and SideRail: 20 files, 647 tests passed at17:14.",
+      "Native x_feed: 130 tests passed before the final two JavaScript-only refinements.",
+      "Native development build succeeded with devUrl http://127.0.0.1:1420; existing unrelated warnings preserved.",
+      "Earlier layout fixtures covered1920x1080 and960x640 with26 scenes. This is not a substitute for the deferred real-app checks."
+    ],
+    "implemented": [
+      "Own-account portrait uses verified bounded presentation/cache, not an author avatar or a guessed URL. Final source also observes delayed attributes/load only on the currently proved account control.",
+      "Common footer remains fixed; account switch immediately above feedback.",
+      "Local storage is a centered offline timeline with saved text and playable media; duplicate captures and partial status preserved.",
+      "Native document post save and media individual/all hover/context actions; canonical media host avoids duplicate controls and preserves original positioning.",
+      "Photo modal supports only its unique proved current photo; full-post all-media remains available on the post, not fabricated from unloaded slides.",
+      "Last-focused pane ESC honors native photo/dialog/fullscreen first. A/D and arrows recognize actual Korean slide labels.",
+      "Final source keeps A/D working after focus stays on the exact app-owned current-photo download button; menu/editing/other-control exclusions remain.",
+      "X-only black loading/empty/native surface backgrounds."
+    ],
+    "actualPasses": [
+      "Native post save produced capture b656a9fd-b4d4-437a-b071-d48dff7e921a for neutral loading.dev video; selectedContentComplete=true, issues0, all7 asset sizes/SHA256 and index hash matched.",
+      "Local timeline count5 to6, saved video loaded and played to its4.775s end.",
+      "Feed photo ESC closed only the photo while right preview remained open.",
+      "Rebuilt startup displayed the current account's official default portrait; source cache contains that exact default image.",
+      "Rebuilt first native video showed one media download button and one bottom-right post-save button.",
+      "Black preview/loading background observed."
+    ],
+    "foundAndRepaired": [
+      "Document-start action style mounted before a DOM root existed and aborted subsequent initializers; deferred only style mounting.",
+      "Nested media nodes produced duplicate buttons; canonical outer host and hydration cleanup.",
+      "Forcing relative positioning broke original photo layout; zero-specificity relative fallback now applies only to static hosts.",
+      "Detail post timestamp outside User-Name prevented actions; exact current detail route and unambiguous own timestamp fallback.",
+      "Actual 다음 슬라이드 and 이전 슬라이드 labels were missing from key adapter.",
+      "App save gestures could reach source ancestor handlers; exact owned controls now isolate gestures and forward only pane focus.",
+      "Photo modal had no download action; current-photo-only capture/action added with exact owner, route, visible scope and identity checks.",
+      "Cross-review found A/D blocked after current-photo save-button focus; exact ownership integration corrected.",
+      "Late own-account image attribute/load changes could be missed; scoped re-observation added."
+    ],
+    "deferred": [
+      "Real-app confirmation of all four image keys in feed and preview after the slide-label correction.",
+      "Real-app individual/all hover and right-click downloads, modal current-photo capture, file identity verification.",
+      "Recheck original photo layout after the positioning correction and cross-view footer geometry in actual app.",
+      "A cache-empty first-account load was not simulated; no user caches were removed.",
+      "Final two JavaScript refinements (late portrait observation and download-button keyboard ownership) passed automated checks but are not in the currently running executable. Build and graceful restart next time before actual validation."
+    ],
+    "socialState": "A heart changed during overlapping user mouse activity. User could not attribute it. No like/unlike/bookmark/repost/reply was sent or undone by this batch; read-only backend audit found no social mutation in archive path.",
+    "evidenceRoot": "C:/Users/JJH/.codex/visualizations/2026/09/10/01a089ee-56ed-7322-a750-c034423826c2/x-native-actions-20261020/native",
+    "evidence": [
+      "feed-photo-escape-result-0.jpg",
+      "local-native-saved-video-0.jpg",
+      "local-video-played-0.jpg",
+      "rebuilt-feed-avatar-0.jpg",
+      "native-video-duplicate-control-0.jpg",
+      "feed-black-photo-preview-visible-0.jpg",
+      "photo-1-before-d-0.jpg"
+    ],
+    "evidenceCautions": [
+      "unexpected-installed-app screenshot captured a different foreground window; do not cite as app visual evidence.",
+      "Installed app data-preparation failure was separately captured and normally closed; no unrelated data repair attempted.",
+      "A snapshot after input conflict showed an overlapping user window; do not treat it as Atsumi layout failure."
+    ]
+  },
+  "latestResumeVerification": {
+    "authorization": "User now leaves the PC available and explicitly requests all remaining checks. Continue the latest native-actions/archive batch using normal Atsumi restart after safety checks; no social writes, auth/privacy automation, force termination or unrelated older goal resumption.",
+    "reference": "x-archive-browsing-and-actions-20261020.json latestResume/liveChecksSoFar",
+    "currentBuild": "All current source refinements are integrated into the development app at port14201. X frontend782 tests and whole-app typecheck passed; native build succeeded with38 existing warnings. Older17:15 counts/port and not-yet-integrated statements above remain as history.",
+    "actualPassed": [
+      "Native feed and right-preview A/D/Left/Right move exactly one image; last-focused feed photo Escape preserves the right preview.",
+      "Native media actions expand left, disappear on leave and expose individual/all context choices; single/current-photo and multi-image saved files were checked against exact source and hashes.",
+      "Account menu portraits and fixed feedback/privacy/settings positions verified in native bookmarks and local storage without changing authentication or privacy.",
+      "Local saved-body/media tabs preserve selected detail; historical replies and inert reactions are displayed. Native black skeleton observed."
+    ],
+    "actualOutstanding": [
+      "A later full-page two-photo headbutt_bang2112461123048161709 case has no current-photo download control/context option, preventing the download-button-focus key matrix. Bounded debug diagnosis planned without weakening source identity rules.",
+      "One photo became black on a no-input snapshot before saving; D/A then rendered both photos normally. Preserve evidence35-37; source of intermittent blank paint is not proved.",
+      "Completely cache-empty first-account image loading remains synthetic only; user caches are not erased.",
+      "Exact reported YouTube reply audio remains blocked on source URL and actual audible-output confirmation; endpoint mute is preserved."
+    ]
+  },
+  "research": {
+    "advertisements": "Not enabled: no penalty-free guarantee for third-party page filtering could be established. Official Premium reduces ads and Premium+ removes ads in most areas with sponsored-content exceptions; no purchase or account change performed.",
+    "recommendations": "For You mixes followed and out-of-network candidates; the visible page does not provide a trustworthy exclusive personal-versus-global label. Recommend Following or topic Lists for controlled scope and separate trend browsing. Separate local profiles do not guarantee no server-side interest association; no automated feedback/reset performed.",
+    "sources": [
+      "https://help.x.com/en/using-x/x-premium",
+      "https://help.x.com/en/using-x/x-timeline",
+      "https://help.x.com/en/using-x/x-lists",
+      "https://github.com/xai-org/x-algorithm"
+    ]
+  }
+}

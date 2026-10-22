@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "date": "2026-10-16",
+  "originals": [
+    ".runtime/requirements-audit/20261016-night-handoff-original.json",
+    ".runtime/requirements-audit/20261015-live-ui-four-original.json"
+  ],
+  "scope": "Root: rounded drawers and help parity, short image-only screenshot previews, Hitomi completed manual review settlement, CHZZK close/current viewer and actual integrated QA.",
+  "precedence": "New explicit sleep handoff lifts prior pause. Live chat-X superseded by video-X. Recorded replay close unchanged. No goal/push/release.",
+  "sourceCoverage": "Current active/archive tails and hash inventories verified; read applicable originals/contracts, stable prior EOF snapshots reused. Preserve recorded inaccessible sources.",
+  "designReferences": [
+    ".runtime/requirements-audit/20261015-live-drawer-help-proposal.json",
+    ".runtime/requirements-audit/20261015-screenshot-preview-proposal.json",
+    ".runtime/requirements-audit/20261015-live-video-close-draft.json"
+  ],
+  "checks": [
+    "Round actualsurface pixel/input mask with no resize/remount",
+    "Three help buttons stable28square centered",
+    "Screenshot3s and1.5grace with45sbudget/identity/undo protection",
+    "Manualreview movesoutofneedsreview onlyafterbackendacceptedoutcome",
+    "Video-only close preserves recording and other panes",
+    "Actual fullapp operations and honest pendingauthentication report"
+  ]
+}

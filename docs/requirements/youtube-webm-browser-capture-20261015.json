@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "state": "Root approved browser implementation under youtube-webm-native-archive; production readiness remains false until root integration gates.",
+  "audit": {
+    "coverage": "AGENTS and current native-archive/init-admission/continuation-chat contracts directly read. Previously fully read main230/284 EOF SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333/375 EOF SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 rehashed unchanged. Root refreshed active50/archive3EOF,69spec coverage with already read RELEASING delta; documented missing sources remain unchanged.",
+    "originals": ["01a0862c-6058-7442-a6fe-38d660288ee2 full original single-ingress/durable hours/video+chat reread", "01a12a4c-724c-7d13-801d-3d92da01fe1e full original verify-before-cleanup reread", "01a11672-f428-7850-899b-5155aebb4e8a entire27-item original reread; truthful interruption/format handling/opt-in", "20261015-remaining-work-request.json and account-button-request.json fully reread; no new account/UI authority"]
+  },
+  "files": ["src-tauri/src/youtube/original_capture.js", "src-tauri/src/youtube/original_raw_framing.js", "focused YouTube JS tests"],
+  "unchanged": "No Rust, shared capture hooks, CHZZK, SOOP, account/profile data, quality selection, network or raw cleanup. Existing AVC capture behavior stays intact. Native owner injects helper/config and owns native validation.",
+  "wire": {
+    "begin": "Existing fields plus format youtubeVp9AacRawV1, rawMode segments, rawVideoTimestampOffset0, rawAudioTimestampOffset0, rawAppendWindow default. Native ACK must repeat exact format with nativeApproved true and mode encoded.",
+    "init": "Serialized encoded_raw_init {recordingId,trackIndex,unitIndex,startOffset,data}; zero-based per-track unitIndex, accumulated raw startOffset, <=64KiB base64 init. Consume exact accepted true/changed false or accepted false/changed true. Changed ends old capture before new bytes; no raw continuation claim.",
+    "append": "Existing serial128KiB chunks and exact retry fields; first successor video init data chunk adds rawFirstUnitEnd equal to that unit startOffset, once. Native observation/receipt/native scan alone authorize any timeline. No page time supplied."
+  },
+  "rules": [
+    "One existing appendBuffer wrapper calls original first. Source-local framing synchronously observes/copies after success before returning; original return/throw preserved.",
+    "Before begin approval keep only bounded latest initialization and structural state. Approval arms each track at its next newly started structural initialization; even a header that began before approval is excluded. No pre-start media pocket.",
+    "WebM header/finite payload and unknown Segment/Cluster boundary state, MP4 top-level box state only. No signature scan, VP9 decoder or clock guessing. Current init<=64KiB, header<=12B, nesting fixed, per-append4096 headers, accepted browser append<=16MiB; replaying its bounded split-init prefix makes one raw logical append at most16MiB+64KiB (below native32MiB). Queued binary media/metadata<=64MiB, pending entries<=512, and base64 is constructed only at serial dispatch. Failure is latched and stops capture; bounds never grant media correctness.",
+    "Preserve all bytes from the chosen boundary, including repeated init/Void/skip. Init admission precedes its data in the shared serial queue. Exact metadata bytes are copied once; accepted caller buffers never retained. Completion/codec/timebase remain native authority.",
+    "Raw requires exactly VP9 WebM+AAC MP4, same selected source, segments/zero offset/default windows and clear content. MIME is the native-matched120-character ASCII-whitespace/quote normalized vp9 or vp09(.dd){3,8} hint, never codec authority. Configuration/source/ad changes fail closed. Raw automatic readiness uses completed structural units; raw rate control and replay clock remain disabled pending a separate proved source-clock contract.",
+    "Raw status remains starting until both tracks have begun durable appends and the first complete video boundary is acknowledged. Fixed15s startup deadline does not reset on arbitrary bytes. Stop/cancel/late begin cannot start a new track afterward. rawCaptureEnabled defaults false."
+  ],
+  "verification": {
+    "focused": "2026-10-15 20:13 KST: YouTubeOriginalCapture and YouTubeOriginalRawFraming68/68 passed, including exact-hash four original files (no skip in this workspace). Full TypeScript check passed in escalated execution. Sandbox-only runs failed before tests/cache rename or dependency typing; those are not counted as passing.",
+    "review": "Independent platform_chat_followup read the complete framer and capture queue/approval/hint/stop paths; no confirmed blocker. Root separately inspected source diagnostics; raw init counts/readiness now use raw metadata and no AVC initTree is projected for a raw source.",
+    "limits": "Pure framing/bridge tests do not prove actual recording/publication/chat/recovery. Raw remains disabled by default. Raw playback-rate/replay clock and adaptive continuation are intentionally unavailable; actual codec change stops visibly and preserves source. Stop during a not-yet-admitted incomplete init/header is explicitly interrupted, not a falsely complete recording. Cleanup remains out of scope."
+  },
+  "acceptance": [
+    "Existing AVC tests unchanged; one hook and original return/throw preserved.",
+    "Split every header/init, unknown Cluster payload containing fake EBML, finite parent boundaries, malformed/oversize/init cap, preapproval/partial-header exclusion, repeated different Void/skip exactbytes and per-track offsets/order.",
+    "Serialized raw init before bytes, sameconfig/changed response, native denial/no fallback, exact chunk retry/hint once, delayed begin/init, source/DRM/ad/stop/cancel, bothtrack startup/15s timeout and bounded tiny-append queue.",
+    "Read-only exact-hash immutable raw fixtures through the framer when available; never mutate evidence. Root runs actual original-player recording and native/publication/chat/recovery/noninterference gates. JS tests are not recording completion."
+  ]
+}

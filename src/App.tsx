@@ -2,7 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { backend } from "./api/backend";
 import { createDanbooruApi } from "./api/featureClients";
 import { AppShell, useAppShell } from "./app/AppShell";
-import type { ContentSource } from "./app/workspaceRegistry";
+import { hasCommunity, type ContentSource } from "./app/workspaceRegistry";
+import { isPlatformSource, PlatformWorkspace, platformSources, type PlatformSource } from "./features/platforms/PlatformWorkspace";
 import { DanbooruWorkspace } from "./components/DanbooruWorkspace";
 import { HitomiFeature } from "./features/hitomi/HitomiFeature";
 
@@ -19,6 +20,8 @@ const updateGuard = createRecordingUpdateGuard(backend.runtime);
 /** Composition only: shared services outlive presentation; feature rules stay inside features. */
 function Workspaces() {
   const shell = useAppShell();
+  const [visitedPlatforms, setVisitedPlatforms] = useState<ReadonlySet<PlatformSource>>(() => new Set(isPlatformSource(shell.source) ? [shell.source] : []));
+  useEffect(() => { if (isPlatformSource(shell.source)) { const source = shell.source; setVisitedPlatforms(previous => previous.has(source) ? previous : new Set([...previous, source])); } }, [shell.source]);
   const [danbooruVisited, setDanbooruVisited] = useState(shell.source === "danbooru");
   useEffect(() => { if (shell.source === "danbooru") setDanbooruVisited(true); }, [shell.source]);
   const [communityOpen, setCommunityOpen] = useState(false);
@@ -28,7 +31,7 @@ function Workspaces() {
   const selectSource = (source: ContentSource) => { setCommunityOpen(false); setNavigationRequest(null); shell.selectSource(source); };
   const { settings, loading } = shell.settingsStore;
   return (
-    <CommonNavigationContext.Provider value={{ communityOpen, openCommunity: (work) => { if (!work && shell.source === "chzzk") return; if (work && work.source !== shell.source) shell.selectSource(work.source); setReviewWork(work ?? null); setCommunityOpen(true); } }}>
+    <CommonNavigationContext.Provider value={{ communityOpen, openCommunity: (work) => { if (!work && !hasCommunity(shell.source)) return; if (work && work.source !== shell.source) shell.selectSource(work.source); setReviewWork(work ?? null); setCommunityOpen(true); } }}>
     <HitomiFeature active={shell.source === "hitomi" && !communityOpen} navigationRequest={navigationRequest}>
       {(gallery) => {
         const workspaces = {
@@ -56,8 +59,8 @@ function Workspaces() {
             />
           ),
           chzzk: null,
-        } satisfies Record<ContentSource, ReactNode>;
-        return <>{communityOpen && shell.source !== "chzzk" ? <CommunityWorkspace key={shell.source}
+        } satisfies Partial<Record<ContentSource, ReactNode>>;
+        return <>{communityOpen && hasCommunity(shell.source) ? <CommunityWorkspace key={shell.source}
           initialReview={reviewWork}
           privacyMode={shell.privacyMode}
           privacyModePending={shell.privacyModePending || loading}
@@ -82,7 +85,9 @@ function Workspaces() {
           onToggleRail={shell.toggleRail}
           onSourceChange={selectSource}
 
-        /></>;
+        />
+        {platformSources.filter(source => visitedPlatforms.has(source) || shell.source === source).map(source => <PlatformWorkspace key={source} source={source} active={shell.source === source && !communityOpen} runtime={backend.runtime} onSourceChange={selectSource} />)}
+        </>;
       }}
     </HitomiFeature>
     </CommonNavigationContext.Provider>

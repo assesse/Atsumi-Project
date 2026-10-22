@@ -100,7 +100,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
             27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-            49, 50, 51,
+            49, 50, 51, 52,
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -186,7 +186,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
             29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
-            51,
+            51, 52,
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -297,7 +297,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
         ]
     );
     let metadata: (String, String) = connection
@@ -362,7 +362,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
             26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-            48, 49, 50, 51,
+            48, 49, 50, 51, 52,
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -2586,6 +2586,7 @@ fn download_command_payloads_and_results_match_typescript_contracts() {
     );
 
     let entry = DownloadEntry {
+        linked_gallery_id: None,
         entry_id: DownloadEntryId::new("entry-contract").expect("valid entry ID"),
         gallery_id: GalleryId::new(4_051_038).expect("valid gallery ID"),
         revision: 7,

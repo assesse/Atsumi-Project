@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-13",
+  "status": "implemented and source-frozen; focused regression passed; desktop acceptance pending",
+  "audit": "docs/requirements/video-ui-parity-audit.json",
+  "requirements": [
+    "R003",
+    "R009",
+    "R010",
+    "R012",
+    "R014"
+  ],
+  "originals": [
+    {
+      "turnId": "01a11b1f-f3cc-7ba1-9639-902bdb55c6b0",
+      "points": [
+        "All/selected view labels; identify streams by channel name rather than numbers.",
+        "Adding streams must preserve already-playing streams."
+      ]
+    },
+    {
+      "turnId": "01a11bcc-0734-76e2-a4d8-20c73dffc698",
+      "points": [
+        "No persistent live header; sliding all/selected choice and right-aligned watch/change/stop actions."
+      ]
+    },
+    {
+      "turnId": "01a12e00-087e-75f3-b315-155260efdf35",
+      "points": [
+        "Persistent minimal chevron handle supports click and drag; pointer cursor; no attention-loop animation."
+      ]
+    },
+    {
+      "turnId": "01a12e3f-4c09-75f1-9f40-9c593125da8d",
+      "points": [
+        "Help stays within five lines and overlays; change subtle, stop red; handle and drawer centered."
+      ]
+    },
+    {
+      "turnId": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe",
+      "points": [
+        "Tab changes keep playback/audio; do not introduce PIP or unwanted mute."
+      ]
+    },
+    {
+      "turnId": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e",
+      "points": [
+        "All player overlay controls fade together; fullscreen and app chat controls remain intact."
+      ]
+    },
+    {
+      "turnId": "01a13142-4c44-7560-bde6-d7e089fd9ea9",
+      "points": [
+        "New platforms preserve previous behavior and harmonize with existing similar UI."
+      ]
+    }
+  ],
+  "coverage": "Complete original audit hashes and unavailable-source caveats are inherited explicitly from video-ui-parity-audit.json. Applicable originals and current Workspace/Player/SOOP shell sources reread. Root approved this exact narrow contract; immediately before implementation AGENTS and all three snapshot hashes were rechecked unchanged. Shared Player/Chat remain Root-owned; no build/app actions authorized.",
+  "ownedFiles": [
+    "src/features/youtube/YouTubeWorkspace.tsx",
+    "src/features/youtube/YouTubeMultiView.css",
+    "src/features/youtube/YouTubeViewingControls.tsx",
+    "src/features/youtube/YouTubeViewingControls.test.tsx",
+    "src/features/youtube/YouTubeWorkspace.test.tsx"
+  ],
+  "excludedFiles": [
+    "src/features/platforms/PlatformLivePlayer.tsx",
+    "src/features/platforms/PlatformLivePlayer.css",
+    "src/features/platforms/PlatformLiveChat.tsx",
+    "src/features/platforms/PlatformWorkspace.tsx",
+    "src/features/soop/**",
+    "src-tauri/**",
+    "docs/requirements/platform-validation.json"
+  ],
+  "scope": [
+    "Change presentation only for view=live. Ordinary Explore/Favorites VOD detail tabs, title/actions, open/minimize/reopen, shortcut behavior, search and scroll state remain unchanged.",
+    "Remove the dedicated viewing route's always-visible detail header/action row from the video canvas. Keep its actions reachable from a thin persistent bottom chevron and an overlay control sheet.",
+    "The YouTube sheet selects already-open in-app results, not a newly invented external link form. Provide an explicit Explore action for finding more videos; preserve every existing search tab and scroll position.",
+    "Idle viewing shows a short directional instruction toward the bottom handle; the sheet provides a working Explore action instead of passive text alone.",
+    "Use a draft playing selection limited to the existing4-item cap, draft all/selected mode and channel-labeled lead. Apply watch/change explicitly; stop removes current viewer leases but does not issue an unrequested recording-cancel command.",
+    "All view keeps video-chat pairs; selected view shows the chosen video and every other live chat. Channel name is primary, title distinguishes multiple items from one channel.",
+    "Mixed VOD/live viewing is presentation-only: a nonselected VOD iframe has no separate chat, stays mounted/hidden/inert and retains the existing background audio policy. Its normal Explore detail remains unchanged.",
+    "Use stable provider/item keys and one unchanged player host tree across route, sheet, mode and draft changes. Do not portal/reparent the player to implement the sheet; no new media URL or native open/close occurs on mode changes.",
+    "Hide inactive or video-hidden content from pointer/keyboard access without changing the receiver lifetime. PlatformLivePlayer receives its existing active/videoVisible props only; shared resize changes remain Root-owned.",
+    "No new screenshot, profile, recording grouping, authentication, scheduler, source-level mute, fullscreen mechanism, or native service behavior in this batch."
+  ],
+  "controlSheet": {
+    "handle": "Always-visible thin chevron; pointer cursor; keyboard click/Enter/Space; pointer capture with drag threshold and click suppression. Only intentional open/close transitions, no looping pull animation.",
+    "panel": "Centered on the handle, bounded within the viewport, overlays rather than pushes the player; top-right X/Escape closes and restores handle focus. Closing the sheet alone never stops playback.",
+    "help": "Optional precise ? target, hover/focus overlay, four or fewer concise lines. Explain selection leaves other live chats and background audio intact.",
+    "actions": "All/selected sliding choice and channel selector left, watch/change/stop right. Change light; stop red. No top-level duplicate permanent controls.",
+    "privacy": "Mask channel/title and disable revealing/start actions consistently; existing running sessions/privacy mute remain owned by existing Player."
+  },
+  "acceptance": [
+    "Entering view=live removes the persistent detail header/actions from its canvas; returning to Explore restores the unchanged original detail behavior.",
+    "Idle CTA and bottom handle are actionable with pointer and keyboard; drag and click each toggle once, X/Escape restore focus, panel closes on inactive route without stopping media.",
+    "Draft selection does not start/stop players until apply. Existing global4 limit and visible capacity errors remain.",
+    "2→4 keeps the original2 component/iframe nodes; all→selected→different lead→all retains every player identity and native lease. Other live chats remain visible.",
+    "Mixed VOD/live retains the same VOD iframe; no hidden-video selection change calls pause/mute/close beyond existing policy.",
+    "All/selected grid fills bounded available height at4 items; existing Root-owned compact chat resize controls remain usable and unmodified.",
+    "No stale detail/focus or background search/scroll regression; menus/keyboard from inactive views do not intercept current view.",
+    "Whole-player fullscreen retains the exact existing Player subtree. This batch must not forcibly exit fullscreen merely to open the sheet; unrelated global-fullscreen access validation remains separate.",
+    "Run only focused YouTube regression and TypeScript after approval; no Vite/Cargo build, app launch/stop, real media or GUI actions.",
+    "Refreshed real desktop4-view/fade/minimize/tray acceptance is Root-owned and must remain pending until actually observed."
+  ],
+  "integration": "No new parent callback is needed: current onViewChange('explore'), onWatchingChange and existing shared Player props suffice. Root owns compact resizing; communicate only selectors/layout constraints if needed.",
+  "verification": {
+    "code": "2026-10-13 19:09 KST: source frozen. Dedicated viewing route uses a thin click/drag chevron and bounded overlay sheet; persistent detail header/actions remain only in ordinary detail. Draft4-item/all-selected/channel selection applies explicitly. Existing stable cells/native players/VOD iframes retain identity across route/layout changes. Mixed background VOD remains mounted/inert without a new media command. Idle CTA, focus/Escape, privacy, shortened help and download/favorite/close actions are connected. Shared Player/Chat/native/parent source untouched.",
+    "tests": "npx vitest run YouTubeWorkspace.test.tsx YouTubeViewingControls.test.tsx PlatformWorkspace.test.tsx --maxWorkers=1:3files42tests passed, exit0 at19:08:50. Tests include2-to4 retained native ownership, all-selected-all retained chats, mixed VOD iframe/source/postMessage preservation, no draft autoplay,4-itemcap, drag-generated click suppression, keyboard activation after pointer cancellation, Escape shortcut isolation/focus restoration, privacy, route return and existing Favorites/search/selection contracts. Finite-height CSS assertions are source checks, not real pixel rendering.",
+    "typecheck": "19:06 npx tsc -b --pretty false passed before final keyboard fixture. Final19:09 whole-project typecheck found only4 new possibly-undefined indexed mock-call errors in Root-owned PlatformLivePlayer.test.tsx116-119; owner notified, file left untouched. This is not reported as final whole-project typecheck success.",
+    "environment": "First sandbox unit run could not begin because Windows temp-cache rename returned EPERM. Identical scoped tests rerun under approved normal Windows permissions passed; no test expectation was relaxed.",
+    "desktop": "Existing single-stream record/replay and Favorites proofs remain valid. New drawer/multi-view/minimize/tray/fullscreen and exact small-screen geometry need Root's fresh isolated desktop acceptance. No Vite/Cargo build, app/UI action, real media, accounts or original user-file operation was performed."
+  }
+}

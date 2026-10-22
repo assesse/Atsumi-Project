@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "state": "implemented-offline-verified-actual-account-acceptance-pending",
+  "originalSources": [
+    {"turnId":"01a149e3-2612-7f82-aaa3-e9fa0c0f0820","messageId":"01a149e3-267b-7e63-958f-638bc5dc5650","request":"Official-like Home/Illustration/Manga, followed new works, personalized recommendations, tag works, recommended users, search tag panel; preserve cards/favorites/downloads; compare official authenticated responses and screens; investigate artwork144440262 preview."},
+    {"messageId":"01a149e3-b30b-77f2-8c7b-91b28734dd50","request":"Related works and recommended creators continue below the preview."},
+    {"turnId":"01a14a13-0a8e-7af2-9357-ea14c5f67c99","messageId":"01a14a13-0b10-7a91-a807-b92a13ad20a1","request":"Defer distribution risk review and formal release, retain findings internally, implement Pixiv first."}
+  ],
+  "coverage": {
+    "record":".runtime/requirements-audit/20261017-pixiv-discovery-preedit.json",
+    "method":"Current original messages plus refreshed accessible conversation inventory; fully read unchanged EOF snapshots reused only with matching hashes. Changed specification revisions covered by release-before-pixiv-home audit.",
+    "missing":["Historical durable01a03f16","Unidentified analysis1/2","Unretained historical attachment pixels"]
+  },
+  "interactionRules": [
+    "Search stays uppermost; suggestions overlay rather than move results; category tabs and account controls remain visible at narrow sizes.",
+    "Single click focus/select, double-click open, Ctrl/Shift selection, nested action precedence and existing local favorites/download actions remain unchanged.",
+    "Home categories and creator/tag navigation preserve parent result tabs and scroll; related content does not auto-switch the reader.",
+    "Account generation, privacy, optional generic display filter and validated official-server access remain authoritative; never log credentials, account identifiers or raw response content.",
+    "No change to empty-search-page next-button behavior. No remote follow/bookmark writes. No modifications to other platform state or user media.",
+    "Offline local previews remain usable; recommendations are optional and must not block image display or convert a recommendation error to a preview error."
+  ],
+  "proposedChanges": [
+    "Model account-scoped discovery sections separately from flat search pages; independent bounded request and stale-response handling.",
+    "Render Home/Illustration/Manga navigation, categorized work sections, creator cards and an overlay search-tag panel using existing card actions.",
+    "Add related works and creators below the pinned reader, retain return context, and distinguish metadata/original decoding failures from discovery failures.",
+    "Audit preview144440262 using available non-sensitive evidence; do not invent the artwork type or a cause without evidence."
+  ],
+  "conflicts": [
+    "Release-before-implementation order is superseded by latest explicit deferral; no publishing in this batch.",
+    "Past automated Pixiv observation was denied. Do not route around the restriction through another browser, shell HTTP or native WebView. Official pixiv.help documentation can inform general layout; authenticated content parity needs user-provided safe evidence.",
+    "Official endpoint schemas not verified by current permissible evidence must be labelled provisional; fixtures/build alone are not actual acceptance."
+  ],
+  "adapterEvidence": {
+    "officialGeneralLayout":"https://www.pixiv.help/hc/en-us/articles/34189658439321-About-the-Home-tab and https://www.pixiv.help/hc/en-us/articles/34189864850073-About-the-Discover-tab",
+    "landingGraph":"Primary implementation Comic Looms PixivHomeAPI, https://greasyfork.org/en/scripts/397848-comic-looms/code lines7082-7128; independently published PixivFE core Pages/RecommendUserSN types at https://pkg.go.dev/codeberg.org/pixivfe/pixivfe/v3/core",
+    "relatedGraph":"Primary implementation pppixiv DataSourceSimilarArtists at https://greasyfork.org/zh-CN/scripts/537094-pppixiv-for-pixiv/code and API client docs https://github.com/FreeNowOrg/PixivNow/blob/master/docs/pixiv-web-api.md",
+    "qualification":"External client source is endpoint/schema evidence, not official API guarantees or the user's current account response. No source implementation/assets copied. Home/Illustration/Manga currently project one official desktop top/illust graph using server illustType; they are NOT yet verified as the website's independently personalized category feeds. Manga-specific portal/series parity remains pending actual safe response evidence."
+  },
+  "previewQualification":"Original display path had a hard32MiB/24million-pixel bound and OriginalWindow discarded all errors into one generic message. Added a narrowly classified size-only fallback to server-provided regular preview with an explicit quality label; login/access/corruption errors do not trigger fallback. Downloads still receive originals unchanged. This is not proof of artwork144440262's actual cause.",
+  "verificationRecord":".runtime/requirements-audit/20261017-pixiv-discovery-verification.json",
+  "acceptance": [
+    {"check":"Home/Illustration/Manga, personalized/follow/tag/creator sections actually load under the current account","state":"typed adapter and synthetic projection tests passed; actual account response/screen parity pending; categories project one graph, not independent official portals"},
+    {"check":"Search tag overlay includes favorite translations, popular illustration/novel tags and canonical search terms","state":"offline behavior/layout passed; novel tags currently search the existing artwork domain, not a new novel reader; current-account contents pending"},
+    {"check":"Existing card operations, retained scroll/tabs, local favorites and downloads unchanged","state":"Pixiv frontend176/176 passed, including preserved card/local flows; actual user confirmation on the new sections pending"},
+    {"check":"Reader related content scrolls below image; navigation retains parent; media failure isolated from recommendations","state":"offline interaction/layout passed; existing local-download previews deliberately stay offline; actual account-related content pending"},
+    {"check":"Artwork144440262 original preview cause established and fixed, or accurately qualified","state":"exact cause not established; generic size-only labelled fallback and safe error differentiation implemented, not represented as artwork-specific proof"},
+    {"check":"Native/frontend tests, type check and actual app comparison at narrow/large sizes","state":"native61 passed4 intentionally ignored, frontend176 passed, typecheck/production frontend build/debug native build passed;320/720/1280px offline screenshots inspected; actual app comparison pending"}
+  ]
+}

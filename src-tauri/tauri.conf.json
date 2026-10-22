@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Atsumi",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "identifier": "local.atsumi.next",
   "build": {
     "beforeDevCommand": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File ./tools/run_frontend.ps1 dev",
@@ -31,11 +31,11 @@
       "csp": {
         "default-src": "'self'",
         "base-uri": "'self'",
-        "connect-src": "ipc: http://ipc.localhost",
+        "connect-src": "ipc: http://ipc.localhost x-video://localhost http://x-video.localhost https://x-video.localhost x-archive://localhost http://x-archive.localhost https://x-archive.localhost platform-media://localhost/live/ http://platform-media.localhost/live/ https://platform-media.localhost/live/ tauri://localhost/assets/pixiv-reading/ http://tauri.localhost/assets/pixiv-reading/ https://tauri.localhost/assets/pixiv-reading/",
         "font-src": "'self'",
-        "frame-src": "atsumi-player://localhost http://atsumi-player.localhost https://atsumi-player.localhost",
-        "img-src": "'self' blob: data: detail-original://localhost http://detail-original.localhost danbooru-media://localhost http://danbooru-media.localhost atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost",
-        "media-src": "'self' blob: data: https://cdn.donmai.us atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost",
+        "frame-src": "atsumi-player://localhost http://atsumi-player.localhost https://atsumi-player.localhost https://www.youtube.com https://play.sooplive.com",
+        "img-src": "'self' blob: data: x-archive://localhost http://x-archive.localhost https://x-archive.localhost detail-original://localhost http://detail-original.localhost danbooru-media://localhost http://danbooru-media.localhost atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost",
+        "media-src": "'self' blob: data: https://cdn.donmai.us x-video://localhost http://x-video.localhost https://x-video.localhost x-archive://localhost http://x-archive.localhost https://x-archive.localhost atsumi-replay://localhost http://atsumi-replay.localhost https://atsumi-replay.localhost platform-media://localhost http://platform-media.localhost https://platform-media.localhost",
         "worker-src": "'self' blob:",
         "object-src": "'none'",
         "script-src": "'self'",
@@ -47,7 +47,8 @@
     "active": true,
     "targets": ["nsis"],
     "resources": {
-      "../.runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/": "media-tools/"
+      "../.runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/": "media-tools/",
+      "../.runtime/platform-tools/": "media-tools/platform-tools/"
     },
     "icon": ["icons/icon.ico"],
     "createUpdaterArtifacts": true

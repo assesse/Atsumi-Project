@@ -49,6 +49,49 @@ export const workspaceRegistry = {
       { view: "recordings", label: "녹화 목록", icon: "\uE8B7" },
     ],
   },
+  youtube: {
+    id: "youtube", label: "YouTube", subtitle: "YouTube", description: "영상 탐색·즐겨찾기·다운로드",
+    navigation: [
+      { view: "live", label: "라이브", icon: "\uE714" },
+      { view: "screenshots", label: "스크린샷", icon: "\uE722" },
+      { view: "downloads", label: "녹화 목록", icon: "\uE8B7" },
+      { view: "explore", label: "Explore", icon: "\uE80F" },
+    ],
+  },
+  soop: {
+    id: "soop", label: "SOOP", subtitle: "SOOP", description: "방송 탐색·즐겨찾기·다운로드",
+    navigation: [
+      { view: "live", label: "라이브", icon: "\uE714" },
+      { view: "screenshots", label: "스크린샷", icon: "\uE722" },
+      { view: "downloads", label: "녹화 목록", icon: "\uE8B7" },
+      { view: "explore", label: "Explore", icon: "\uE80F" },
+    ],
+  },
+  pinterest: {
+    id: "pinterest", label: "Pinterest", subtitle: "Pinterest", description: "공개 핀 미리보기·원본 보관",
+    navigation: [
+      { view: "explore", label: "Explore", icon: "\uE80F" },
+      { view: "favorites", label: "내 즐겨찾기", icon: "\uE8A4" },
+      { view: "downloads", label: "Downloads", icon: "\uE896" },
+    ],
+  },
+  pixiv: {
+    id: "pixiv", label: "pixiv", subtitle: "pixiv", description: "공개 작품 탐색·미리보기·원본 보관",
+    navigation: [
+      { view: "explore", label: "Explore", icon: "\uE80F" },
+      { view: "favorites", label: "내 즐겨찾기", icon: "\uE8A4" },
+      { view: "downloads", label: "Downloads", icon: "\uE896" },
+    ],
+  },
+  x: {
+    id: "x", label: "X", subtitle: "X", description: "로그인한 계정의 피드 탐색",
+    navigation: [
+      { view: "explore", label: "피드", icon: "\uE80F" },
+      { view: "likes", label: "마음에 들어요", icon: "\uEB51" },
+      { view: "bookmarks", label: "북마크", icon: "\uE734" },
+      { view: "local", label: "로컬 저장소", icon: "\uE8B7" },
+    ],
+  },
 } as const satisfies Record<string, WorkspaceDefinition>;
 
 export type ContentSource = keyof typeof workspaceRegistry;
@@ -56,6 +99,9 @@ export type WorkspaceViewId<Source extends ContentSource = ContentSource> =
   (typeof workspaceRegistry)[Source]["navigation"][number]["view"];
 
 export const workspaces = Object.values(workspaceRegistry);
+
+export const hasCommunity = (source: ContentSource): source is "hitomi" | "danbooru" =>
+  source === "hitomi" || source === "danbooru";
 
 export const isContentSource = (value: unknown): value is ContentSource =>
   typeof value === "string" && Object.prototype.hasOwnProperty.call(workspaceRegistry, value);

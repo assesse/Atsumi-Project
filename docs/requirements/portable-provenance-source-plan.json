@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "date": "2026-10-13",
+  "batch": "PKG-01-02-04-minimum-resolution-read-only-plan",
+  "status": "audit-and-plan-only; no-build-download-or-release; redistribution-review-incomplete",
+  "subsequentImplementation": "The PKG01 plan below is the historical pre-implementation audit. Root later authorized only PKG01; current implemented/synthetic-verified/frozen evidence is in portable-build-receipt.json. PKG02/04 remain unresolved and this audit does not claim real build/release acceptance.",
+  "authority": "Root requested read-only provenance, exact-source and notice coverage review after the approved PKG03/05 synthetic implementation. No production changes in this follow-up. No real package, executable/tool execution, installer, source archive acquisition, publication, app control or deletion.",
+  "audit": {
+    "coverage": "AGENTS.md and current portable contracts reread through EOF. Main230turns/284messages and other333unique-turns/375messages full-read snapshots retain exact SHA256. All69 original specification files were rehashed again at this follow-up:0changed/0missing, prior complete EOF coverage reused. Changed requirements contracts read in the preceding continuous audit are listed below; missing historical evidence remains explicit.",
+    "hashes": {
+      "main": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+      "other": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+      "policy": "3267605CA09E8FBA111BFDC84C840E6856BC8B2E82CEB64F165AC732CA43F914"
+    },
+    "originalsReread": ["01a10593-61fd-70c0-bdd4-f8521107be97", "01a10626-9c92-7d83-8671-485b53b86ca5", "01a1154a-0c82-7993-b06a-01fbb3882406", "01a13363-ef61-71e3-bf03-3babe3f5b5c0"],
+    "changedContractsRead": ["platform-validation.json", "platform-media-contract.json", "soop-auto-recording.json", "youtube-favorites-boundary.json", "platform-rich-chat.json", "platform-live-split.json", "youtube-live-shell.json", "video-ui-parity-audit.json", "portable-manifest-hardening.json", "portable-distribution-audit.json"],
+    "supportingEvidenceRead": ["tools/prepare_media_tools.ps1", "tools/prepare_platform_tools.ps1", "tools/prepare_portable.ps1", "tools/prepare_release.mjs", "tools/package_manifest.ps1", ".github/workflows/windows-release.yml", "src-tauri/build.rs", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock package/version/checksum inventory", "src-tauri/vendor/ATSUMI_PATCHES.md", "package.json", "pnpm-lock.yaml dependency resolution entries", "vite.config.ts", "THIRD_PARTY_NOTICES.md", "public/licenses exact file inventory and selected license texts", "public/original-player/source-manifest.json provenance/rights fields", "src-tauri/src/streaming/original_player.rs embedded resource map", "tools/chzzk-offline-player/README.md", "docs/CHZZK_REPLAY.md", "pinned local FFmpeg/Deno/yt-dlp license texts and yt-dlp third-party notice headings"],
+    "limits": ["Historical thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae and unidentified analysis1/2 unavailable", "Historical attachment pixels not independently reread", "Supporting243550byte yt-dlp multi-platform notice was inventoried, not represented as completed legal review", "Cargo.lock570packages includes other targets/build/dev dependencies;570 is not a shipped-component count", "No dependency executable was run to extract license or build configuration"]
+  },
+  "PKG01": {
+    "state": "unimplemented-release-correctness-gate",
+    "evidence": ["tools/prepare_portable.ps1:9-12", "tools/prepare_portable.ps1:62-64", ".github/workflows/windows-release.yml:63-86", "src-tauri/build.rs:1-15"],
+    "finding": "Version-only admission does not bind the executable to current dirty source/resource inputs; absent ProductVersion is not rejected. CI's build-before-package ordering is useful but no successful-build receipt exists. A signature proves artifact integrity, not that intended source was built.",
+    "hardlinkCompatibility": "Read-only fsutil inspection found the existing Cargo release executable linked at target/release/atsumi.exe and target/release/deps/atsumi.exe. The newly strict package handle boundary correctly refuses this two-link input, so an explicit build-output capture step is required before real packaging. Do not silently weaken the resource boundary, break links or delete Cargo output.",
+    "minimumPlan": [
+      "Add one explicit successful-build wrapper/receipt schema. Before invoking the approved build, snapshot a positive input manifest; after success recheck that manifest unchanged and record output hashes, target, compiler/SDK versions, flags/config and dependency lock/resource manifests. Missing or failed build produces no success receipt.",
+      "Include app/frontend/native sources, public assets, vendor patches/licenses, icons/capabilities, build/config/lock files and the exact approved tool manifests. Record source content digests including dirty files, not only git HEAD or mtime. Include newly added/missing input detection. Never capture the whole environment, user .runtime tree, profile, cookies, DB, media or signing secrets.",
+      "Under a held read-only handle and explicit successful-build ownership, capture the known Cargo output bytes into a new single-link .runtime/release-inputs/<buildUUID>/atsumi.exe. Bind capture hash to the successful output and receipt. This narrowly admits the build tool's known two-link output only for capture; generic resource proof/copy still rejects hardlinks.",
+      "Make portable/installer release admission require the receipt and captured output, recheck source/resource/output bytes immediately before packaging and signing, and retain the receipt as release provenance. Use new stages and fail without replacing existing packages. Actual build and acceptance need separate authority."
+    ],
+    "syntheticAcceptancePlan": ["missing/failed receipt rejected", "absent/mismatched version rejected", "same-version changed executable rejected", "dirty source/public/vendor/resource/config/lock change rejected", "input added or changed during build rejected", "captured bytes differ from successful build rejected", "known owned Cargo output is copied to fresh single-link stage without touching either source name", "arbitrary hardlinked resources remain rejected", "secret/user .runtime files never enter receipt"]
+  },
+  "PKG02": {
+    "state": "exact-source-and-component-review-incomplete",
+    "tools": [
+      {
+        "id": "ffmpeg",
+        "pin": "ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0",
+        "binaryArchiveSha256": "40eec25b2f55dcad7e4d4e640919b920d29818b56fdaf9353ce1fd8adefc9d6b",
+        "localEvidence": ["tools/prepare_media_tools.ps1:34-42", "THIRD_PARTY_NOTICES.md:59-75"],
+        "officialSources": ["https://ffmpeg.org/legal.html", "https://github.com/FFmpeg/FFmpeg/commit/ad500d59cb", "https://github.com/BtbN/FFmpeg-Builds"],
+        "unavailableOrigin": "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-09-11-13-20 returned404 during this read-only review. BtbN README describes finite daily-build retention; the byte-identical project mirror is a binary retention route, not proof of exact dependency/build sources.",
+        "missing": "Need resolve full FFmpeg commit, exact BtbN build recipe revision, configure flags/toolchain, all included library versions/source archives and patches tied to the distributed binary. The filename commit plus upstream LICENSE is insufficient evidence; a current/latest source archive must not substitute for unavailable exact materials.",
+        "smallestResolution": "Retain the existing bytes and license. Recover and hash the exact build materials; if impossible, explicitly review a future reproducible replacement build and compatibility instead of declaring the current binary covered. No version replacement is authorized in this batch."
+      },
+      {
+        "id": "yt-dlp",
+        "pin": "2026.08.19 Windows x64 standalone",
+        "executableSha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+        "localEvidence": ["tools/prepare_platform_tools.ps1:67-70", ".runtime/platform-tools/licenses/yt-dlp-THIRD_PARTY_LICENSES.txt"],
+        "officialSources": ["https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19", "https://github.com/yt-dlp/yt-dlp/tree/2026.08.19", "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/.github/workflows/build.yml", "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/bundle/requirements/pip.txt", "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/bundle/requirements/win-x64-pyinstaller.txt", "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/bundle/requirements/curl-cffi.txt", "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/THIRD_PARTY_LICENSES.txt"],
+        "observation": "The pinned official workflow's Windows x64 build uses Python3.10 and hash-locked pip/PyInstaller/curl-cffi requirements, narrowing dependency acquisition to a versioned source tree. Existing THIRD_PARTY_LICENSES is broad/multi-platform; its component list must not be claimed as an exact inventory of this Windows executable.",
+        "missing": "Retain exact tag source/build files and resolve the actual Windows bundled dependencies, their notices, corresponding-source obligations where applicable and relevant PyInstaller/runtime exceptions. Only upstream source LICENSE and broad third-party notice are currently staged; no reviewed source archive/index is published by the pipeline."
+      },
+      {
+        "id": "deno",
+        "pin": "2.9.7 x86_64-pc-windows-msvc",
+        "binaryArchiveSha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238",
+        "localEvidence": ["tools/prepare_platform_tools.ps1:50", "tools/prepare_platform_tools.ps1:71"],
+        "officialSources": ["https://github.com/denoland/deno/releases/tag/v2.9.7", "https://github.com/denoland/deno/tree/v2.9.7", "https://github.com/denoland/deno/blob/v2.9.7/LICENSE.md", "https://raw.githubusercontent.com/denoland/deno/v2.9.7/Cargo.toml"],
+        "missing": "Only the top-level MIT license is shipped. The pinned source includes deno_v8 and further dependencies; bundled V8/native/Rust third-party license coverage is unverified. Capture the exact tag/lock/native-dependency revisions and their required notices before treating the executable as completely covered. Two attempted deno_v8 source/license page reads failed and are not evidence of absence."
+      }
+    ],
+    "minimumStoragePlan": {
+      "trackedSmallIndex": "Proposed tools/distribution/inputs.json: exact component/version, binary/source digest, official origin, archived source route, build recipe/patch digest, reviewed license/notice locations and review state. Do not invent unavailable source hashes or mark unresolved entries complete.",
+      "localAcquisition": "Future approved acquisition only into a fresh .runtime/distribution-sources/<component-version-hash>/ with positive bounded manifests; existing cache remains immutable. This batch does not download these materials.",
+      "releaseDelivery": "Proposed separate Atsumi-ThirdParty-Sources-v<version>.zip and readable source index beside binary release assets, each hash-bound. Keep source material outside the legacy updater ZIP's512MiB compressed/1GiB expanded/4096entry budget. Include necessary license/notice text and source pointers in the normal installed/portable package.",
+      "reviewBoundary": "This is an engineering completeness plan, not a legal opinion that a particular source-offer/delivery route already satisfies every dependency's license. Determine applicable obligations for the actual binary composition; do not blindly apply FFmpeg's library-linking checklist to every separate CLI use."
+    }
+  },
+  "PKG04": {
+    "state": "notice-aggregation-and-separate-proprietary-asset-rights-gap",
+    "evidence": ["THIRD_PARTY_NOTICES.md:38-53", "public/licenses direct inventory", "package.json:20-39", "src-tauri/vendor/ATSUMI_PATCHES.md", "public/original-player/source-manifest.json:3-5", "src-tauri/src/streaming/original_player.rs:63-83", "tools/chzzk-offline-player/README.md:31-40", "docs/CHZZK_REPLAY.md:92"],
+    "confirmedInventory": {
+      "frontend": ["react19.2.8 MIT", "react-dom19.2.8 MIT", "scheduler0.27.0 MIT via react-dom", "@tauri-apps/api2.11.1 Apache-2.0 OR MIT", "plugin-process2.3.1 MIT OR Apache-2.0", "plugin-updater2.10.1 MIT OR Apache-2.0", "hls.js1.7.2 Apache-2.0, bundled despite devDependency classification"],
+      "publicNoticeFiles": ["Apache-2.0.txt", "chrono-LICENSE.txt", "fs2-LICENSE-MIT.txt", "hls.js-LICENSE.txt", "tauri-MIT.txt", "tungstenite-LICENSE-MIT.txt"],
+      "vendor": "Tauri2.11.5 and Tao0.35.3 are local patched sources rather than registry-checksummed packages; retained license files and ATSUMI_PATCHES must enter provenance/notice review. Lockfile570 total package records are not proof of570 shipped components.",
+      "qualification": "This is a starting set, not exhaustive delivered notice coverage. Build-time-only packages must not automatically be called shipped, and devDependency classification must not exclude code actually bundled."
+    },
+    "minimumOssPlan": [
+      "Derive the selected Windows release dependency graph and actual frontend asset/module graph from the successful locked build; cross-check local package/Cargo source license files, vendor patches and copied icon/decoder assets.",
+      "Create a reviewed version-locked notice index and exact required texts, include it in public/licenses or media-tools/licenses for legacy updater compatibility, and verify its presence/hash in installer and portable outputs. Root THIRD_PARTY_NOTICES is not currently a configured resource, and the claim of automatic full Cargo/pnpm notice delivery lacks evidence in the inspected path.",
+      "Audit final installed/extracted outputs separately from repository presence. Add missing/version-mismatch/changed-license fixture checks without altering third-party license wording."
+    ],
+    "nonOssAssetReleaseGate": {
+      "finding": "THIRD_PARTY_NOTICES.md:38 says CHZZK player assets are not copied, but public/original-player includes preserved original JS/CSS and source-manifest redistributionPermission:not_assumed; Rust also embeds several original assets with include_bytes!. The offline-player README records121 Sandoll Nemony2 WOFF2 files and explicitly calls its bundle local verification only. Existing requirements explain intended UI parity but do not establish third-party redistribution permission.",
+      "smallestSafeDecision": "Correct the inaccurate development notice only as part of an approved notice batch, preserve the evidence, and obtain/document applicable rights or choose a separately approved distribution/implementation route. Merely adding OSS notices, checking a source URL, or excluding a Vite public folder does not solve native embedding or permission. Do not silently delete required functionality/assets or declare public-CDN availability a license.",
+      "notClaimed": "No finding that every copied file is proprietary or that the user lacks any possible license; the repository's own permission state is unresolved. No actual legal compliance assurance is made."
+    }
+  },
+  "recommendedOrder": ["PKG01 receipt and fresh single-link build-output capture with synthetic rejection cases", "PKG04 exact notice/runtime-asset inventory and explicit unresolved CHZZK/font rights decision", "PKG02 exact tool source/build-material index and applicable delivery route", "Only after new authority: fresh build/package, final-artifact notice/source/provenance proof, isolated clean-PC and signed-update acceptance"],
+  "verification": {
+    "productionChangeInThisFollowup": "None. Only this audit/plan JSON is added. Root's requested PKG03 hardlink correction is separately implemented/tested in portable-manifest-hardening.json.",
+    "hardlinkCorrection": "OpenRegularRead now rejects FileInfo.Links !=1. Focused Vitest4 passed, Windows PowerShell5 child50 synthetic checks at19:13:30KST, including hardlinked proof/copy rejection and unchanged source/alias bytes/no destination. Existing Cargo output was inspected read-only; neither link was changed.",
+    "typecheck": "Root separately reported full-project TypeScript19:13 normal Windows execution exit0.",
+    "externalReads": "Official project release/source/license pages only; no archive/executable acquisition to disk. Some inaccessible historical URLs remain explicitly unresolved.",
+    "notRun": ["realpackage", "sourceacquisition", "toolbinaryexecution", "Cargo/Vitebuild", "installer", "cleanPC", "updater", "release", "GUI", "delete"]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "date": "2026-10-13",
+  "state": "before-edit; source-only; current manual QA app frozen",
+  "scope": "VUI-04: YouTube/SOOP shared live capture, review/undo, independent local library. No recorded/VOD capture expansion or CHZZK state coupling.",
+  "audit": {
+    "coverage": "Reuse complete main230turns/284users EOF SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333unique/375users EOF SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 after hashes/inventory checked in this continuation. Active50/archive3 EOF refreshed, no new human requirement beyond manual QA handoff. All69 original spec hashes checked; already-read RELEASING SHA F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0 is the only original snapshot difference.",
+    "reread": ["AGENTS.md", "docs/requirements/video-ui-parity-audit.json", "docs/CHZZK_VIEWING_UI.md", "docs/CHZZK_CONNECTION_UI.md", "applicable original full turns below"],
+    "unavailable": ["old durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unnamed analysis1/2", "unretained historical image pixels"],
+    "authority": "Source and isolated tests only; no running QA executable/static assets/profile modifications, no UI operations, app restart, account/media access, release or push."
+  },
+  "originals": [
+    {"turnId": "01a13142-4c44-7560-bde6-d7e089fd9ea9", "rule": "New platforms preserve prior requests, match existing UI and actively reference similar CHZZK/Danbooru."},
+    {"turnId": "01a12bdc-aa77-78c0-930a-a844b5054209", "items": [2, 10], "rule": "Screenshots collection above recordings, same interaction rules; capture shows frame upper-left once and supports cancel."},
+    {"turnId": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "items": [4, 5, 6], "rule": "Large review preview, added controls fade with original controls, fullscreen remains rightmost."}
+  ],
+  "conflicts": [
+    "Original explicit screenshot scope was CHZZK; R003 makes live capture analogous for new video platforms. It does not authorize shared CHZZK channel/generation/catalog state.",
+    "Existing CHZZK screenshot library uses streaming selection state. Use the already independent platform mediaSelection rules instead.",
+    "Source/tests cannot prove canvas is origin-clean in the real WebView. Keep actual next-build capture/review/undo/offline re-open unverified until manual QA.",
+    "Do not recreate an attention animation, permanent label, auto refresh, or change native live receiver identity to add capture."
+  ],
+  "plan": [
+    "Freeze exact displayed video frame synchronously to bounded canvas before awaiting IPC; encode PNG locally, never recapture desktop or start another media receiver. Camera button and S target only the active visible non-private player. Keep footer/fullscreen alignment and common fade.",
+    "Transient upper-left large preview (CHZZK480px maximum, responsive inside player), saving/error feedback and save-cancel overlay do not move video/chat layout. Stale token/provider/privacy/hidden/unmount replies cannot disclose previous preview or delete unrelated files.",
+    "Native service binds transfer to trusted live viewer token and server-owned reference/title/channel/download root. Accept no renderer paths/URLs. Maximum4 pending captures,128KiB chunks,16MiB PNG/4096side/16M pixels,20second transfer expiry. Validate PNG fully before durable publish; no overwrite.",
+    "Provider-owned screenshot journal and files retain offline metadata after app restart/download-folder changes. Reuse generic safe storage primitives, not CHZZK state. A capture ID is scoped to token; one-minute undo requires same owner and exact unchanged owned file hash. Explicit library deletion is separate and never removes unrelated or replaced files.",
+    "Bound list/image/decode/concurrency and transfer resources. Honor app work admission/shutdown, cleanly release expired transfer memory; unknown/partial files are not silently adopted or deleted. Existing live token close must not restart or terminate unrelated playback.",
+    "Independent screenshot library above downloads/recordings for YouTube/SOOP. Keep player mounted while changing route. Local thumbnail grid with stored channel/title/date, single selection without checkbox, double-click viewer, Ctrl/Shift multiselect, context menu, confirmed delete, folder action, loading/privacy/offline behavior. No network metadata fetch for old screenshots."
+  ],
+  "ownership": {
+    "youtube_platform": "Native screenshot module, PlatformMediaService linkage and lifecycle only; no IPC/lib.rs, builds or app operations.",
+    "pinterest_platform": "Shared player capture controller/API DTO, review CSS and focused tests only; no workspace routes/library/native.",
+    "pixiv_platform": "Independent screenshot library component/CSS/tests after read-only archive check; do not edit shared API/player/routes.",
+    "root": "IPC registrations, workspace routes and integration, requirements evidence, single-owner build/test."
+  },
+  "acceptance": [
+    "Exact displayed player frame, no new receiver/request, same fade, fullscreen last, 240px controls remain usable, preview responsive and no layout displacement.",
+    "Same-token single-flight, repeat clicks, late begin/chunk/finish/undo, privacy/hidden/provider changes and unmount cannot cross session boundaries or leak preview. S ignores editable fields/modifiers.",
+    "Native tests: valid bounded PNG persistence/restart/folder change; bad PNG/size/dimensions/sequence/TTL/token rejected; path replacement/reparse/hardlinks fail closed; undo hash protects changes; missing-file delete permits stale metadata cleanup only for owned entry; unrelated files preserved.",
+    "Frontend tests: preview/cancel/loading/error, exact multiview target, selection/context/double-click/delete confirmation, privacy and stale responses, paginated/lazy images and offline local metadata.",
+    "Source-only focused frontend/native tests and typecheck; QA exe SHA unchanged. Fresh rebuilt actual capture/review/cancel/library acceptance remains pending user test, never marked complete by mocks."
+  ]
+}

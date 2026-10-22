@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "date": "2026-10-15",
+  "state": "parent approved; offline failure reproduced then narrow shared geometry fix implemented and frozen; root full-app verification pending",
+  "originals": [
+    {"turn":"01a13978-c469-7242-9ec2-f065de16743a","items":[2,3],"rule":"YouTube playback opens directly in a floating view and retains the original platform interface."},
+    {"turn":"01a1399c-e7fb-7260-ac09-93bc94288f2f","rule":"SOOP/YouTube shell flows refer to CHZZK, with a complete cross-platform interference audit."},
+    {"turn":"01a13a1f-f808-74a0-85c8-e90aa748a292","text":"이제 SOOP과 유튜브의 내부 플레이어와 채팅도 각 플랫폼 원래 UI로 맞춰줘. 로그인, 시청, 녹화까지 실제로 동작하게 이어서 작업하고, 치지직에 영향 없는지도 확인해."},
+    {"turn":"01a13adc-a040-70f0-97d9-380c5b6ba368","item":4,"rule":"Find and fix YouTube nonloading, incomplete and missing UI paths."},
+    {"turn":"01a12c46-788a-7b00-9f69-e6f1d6f2d53e","rule":"Native overlays must align without unnecessary pixel gaps; preserve player controls and app chat behavior."},
+    {"turn":"01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe","rule":"Tab/platform visibility changes preserve existing playback and audio."},
+    {"turn":"01a13bb3-d33b-7de0-867d-aeae3e3e8bec","rule":"Continue real app verification; mocks/builds alone do not establish completion."}
+  ],
+  "audit": {
+    "reusedCompleteSnapshots":"Rehashed unchanged main-thread-users.json SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 (230turn/284message EOF) and other-threads.json SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 (333turn/375message EOF). Full source reads from prior batches remain applicable; root refreshes complete active/archive/spec inventory.",
+    "read":["AGENTS.md","docs/requirements/youtube-floating-layout-diagnostics-20261015.json","src/features/platforms/nativePlayerGeometry.ts","src/features/platforms/nativePlayerGeometry.test.ts","src-tauri/src/platform_native_geometry.rs","src/features/youtube/YouTubeOriginalPlayer.tsx","src/features/youtube/YouTubeWorkspace.css","src/features/soop/SoopDiscovery.css","src/features/soop/SoopWorkspace.css","src/styles.css app-shell layout","src/test/offlineLayoutBrowser.ts","tools/layout-browser.mjs",".runtime/requirements-audit/20261015-youtube-layout-probe.json"],
+    "unavailable":["Old durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae","Unidentified historical analysis1/2","Previously inaccessible historical attachment pixels"],
+    "scopeAuthority":"Parent read the full contract and approved test-first followed by the narrow shared measured() repair. Root owns actual app/UI/Cargo. Offline browser is a new disposable network-disabled test fixture, not attachment to any user app/browser. CHZZK has a concurrent parent-owned fullscreen call-site change, so do not claim a completely unchanged frozen hash. This batch does not edit CHZZK."
+  },
+  "actualEvidence": [
+    "Root full isolated app YouTube floating LIVE slot starts main-clientx34 but native visible pixels begin aroundx215; stable after45seconds and video advances. Separate original watch-page siblings also leak into the visible player.",
+    "Root full isolated app SOOP original VOD slot startsx50 but native visible pixels again begin aroundx215. Both coincide with the214px app sidebar, so a YouTube-only CSS offset cannot explain or repair the shared failure.",
+    "Independent isolated raw native host probe at5/15/45/50seconds reports requested player/video/chat rectangles aligned, media frames advancing, style sheets applied, and no sidebar. Its explicit occlusions list is empty. Alignment success did not imply watch-page presentation isolation.",
+    "The shared measured() keeps the original slot rectangle but intersects every overflow ancestor, stopping only at an explicit fullscreenOwner. In the full app, fixed .youtube-detail-backdrop and .soop-detail-shade escape the outer .youtube-workspace overflow:hidden and .soop-workspace overflow:auto boxes. The existing walk nevertheless emits a left occlusion strip throughx214. Native geometry faithfully subtracts this erroneous strip from pixels and input."
+  ],
+  "primaryEvidence": [
+    {"url":"https://www.w3.org/TR/css-position-3/#def-cb","basis":"A fixed positioned box uses the nearest fixed-position containing block, otherwise the viewport. Transform, contain and relevant will-change properties can establish a nonviewport containing block."},
+    {"url":"https://www.w3.org/TR/CSS2/visufx.html#overflow-clipping","basis":"Overflow does not clip positioned descendants between them and their containing block. A DOM ancestor walk alone is not a valid clipping chain."}
+  ],
+  "proposedFiles":["src/features/platforms/nativePlayerGeometry.ts (only after actual fixture evidence and approval)","src/features/platforms/nativePlayerGeometry.test.ts","src/features/platforms/nativePlayerGeometry.layout.test.ts (new)","a narrowly bounded offline geometry fixture runner under tools, if existing layout runner cannot exercise the production function","this contract"],
+  "plan":[
+    "First run the existing production geometry function in a new network-disabled own-profile headless browser fixture. Build the module with the installed esbuild to a local IIFE; do not reimplement its algorithm in the test. No external page, session, media, URL or user profile access.",
+    "Reproduce the214px outer overflow box with a viewport-fixed floating detail and a player spanningx34..985. Compare real elementFromPoint visible points against calculated occlusion holes. Before repair, a visible native-slot sample left of214 must be falsely classified as occluded.",
+    "Include a nonfixed scroll case, viewport-fixed slot itself, modal internal scrolling, nested fixed nodes, and transformed/contained/will-change fixed containing-block counterexamples. Browser hit testing, not guessed coordinates, establishes which overflow clips actually apply.",
+    "After approval, make measured() follow the relevant positioned containing-block escape at fixed boundaries. Preserve clipping inside the fixed modal and resume clipping at a genuine fixed containing-block ancestor. Keep original requested rectangles unchanged; do not apply sidebar-specific offsets or change native controller bounds.",
+    "Keep visibility/private/inert/modal ownership/foreign modal/overlay radii/16-hole fail-closed behavior and muting untouched. No player reparenting, recreation, second receiver or recording changes."
+  ],
+  "acceptance":[
+    "Real browser fixture exposes the old erroneous left strip and passes after the minimal fix; correct transformed/contained and ordinary-scroll clips remain.",
+    "Existing native geometry tests plus new direct fixed-boundary cases pass; provider original player lifecycle tests and frontend typecheck remain passing.",
+    "Root full-app YouTube and SOOP floating views visually start at their measured slots rather than the sidebar edge, with clickable original controls preserved. Resize, sidebar state, own modal close, foreign modal and fullscreen must not leak native input/pixels.",
+    "Root records actual screenshots/operation, not merely the offline fixture. CHZZK frozen source/hash check and no provider session coupling remain mandatory.",
+    "YouTube watch sibling/duplicate chat leakage is a separate evidenced presentation defect. Do not claim this geometry fix also repairs it; propose a separate YouTube-only isolation contract."
+  ],
+  "excluded":["CHZZK backend/domain state","Native Rust controller geometry","Account/auth/session logic","Media/capture/chat archives","Arbitrary offset compensation","Running-app CDP/WinAPI access","YouTube sibling CSS changes in this batch"],
+  "verification":{"offlineBefore":"Current production function in real own-profile Chrome produced6 pixel/input mismatches across5 of12 scenes, including visiblex60,y200 falsely clipped by outer workspace. JSON and failed-scene PNG under .runtime/requirements-audit/native-geometry-before/native-fixed-geometry/.","offlineAfter":"20 real-browser scenes passed, including fixed-slot/nested-fixed/modal-internal-scroll and transform, layout/paint containment, will-change transform/filter/perspective/contain, translate/scale/rotate, backdrop-filter, filter, perspective, content-visibility:auto fixed containing blocks. All sampled browser hit-test values match native pixel/input eligibility. After JSON under .runtime/requirements-audit/native-geometry-after/native-fixed-geometry/.","unit":"4 focused files36tests passed, including12geometry tests and both YouTube original/SOOP VOD player lifecycle suites. Full frontend typecheck passed.","actual":"Root latest full-app SOOP floating VOD screenshot confirms native beginsx50 matching the slot, with complete left profile/title; previous sidebarx215 cropping is fixed. Separate vertical crop persisted and has its own SOOP embed-height contract. Root full-app YouTube and broader control/modal/fullscreen checks remain pending; do not infer those from offline fixture success."}
+}

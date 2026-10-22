@@ -1,0 +1,56 @@
+{
+  "state": "approved implementation; root fully approved five-file scope and reporting seams, then released native write gate after successful build; actual validation pending",
+  "originals": [
+    ".runtime/requirements-audit/20261015-manual-eight-feedback-original.json#01a13fdd-06e7-7570-b2a8-e1f1d54d357e item3",
+    ".runtime/requirements-audit/20261016-night-handoff-original.json#01a14102-e856-70f2-943d-6dd2dd3ae4fd",
+    "01a0862c-6058-7442-a6fe-38d660288ee2 single ingress and retained chat",
+    "01a12a4c-724c-7d13-801d-3d92da01fe1e verification before owned-intermediate cleanup"
+  ],
+  "audit": {
+    "main": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676; independently rehashed complete230turn/284message EOF snapshot reused",
+    "other": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; independently rehashed complete333turn/375message EOF snapshot reused",
+    "inventory": "Root current sleep-handoff inventory active50/pinned/archive3EOF and current130 contracts; latest other-main build-only delta and security/focus defer retained. Changed current night integration read. Baseline69 and known RELEASING delta retain prior complete coverage.",
+    "read": ["AGENTS.md", "soop-original-player-20261014.json", "soop-native-integration-20261014.json", "platform-original-runtime-20261014.json", "platform-recording-groups.json", "night-integration-20261016.json", ".runtime/requirements-audit/20261015-manual-eight-proposal.json"],
+    "missing": ["durable01a03f16", "unidentifiedanalysis1/2", "historically inaccessible attachment pixels"]
+  },
+  "evidence": [
+    "Prior root observation records the reported44.107855s and42.102521s SOOP jobs already completed. Their original transient failure is not attributed; this batch does not read, rewrite, remerge or delete those recordings.",
+    "EncodedArchive.finish preserves validated preceding segments, but dispatch returns incoming_error before calling any local finalizer. A stopped/changed original receiver can therefore leave a recoverable prefix indefinitely awaiting manual retry.",
+    "A clean finish with a withheld MP4 box fails the strict muxer before flushing parsed A/V. finish_discontinuity already exists to discard only its incomplete structural tail. No shared parser mutation is needed.",
+    "The current local concat finalizer runs once. A nonzero contained FFmpeg exit ends the job; existing verification, cancellation, chat persistence and ownership checks must remain authoritative."
+  ],
+  "scope": [
+    "src-tauri/src/platform_media/encoded.rs SOOP finish/dispatch only and inline tests",
+    "new src-tauri/src/platform_media/encoded/soop_finalize.rs bounded native stop proof/owner/retry policy and inline tests",
+    "src-tauri/src/platform_media/live.rs SOOP encoded merge loop/cleanup guard only",
+    "src-tauri/src/platform_media/capture_outcome.rs fixed native SOOP interrupted reporting constructor only",
+    "src-tauri/src/platform_media.rs verify_publish_from optional SOOP stop-proof projection and retain-originals only"
+  ],
+  "implementation": {
+    "sourceStop": "Only SOOP live and an unpoisoned native writer. Explicit source interruption or incomplete transport tail may finish_discontinuity once. A clean finish's exact ENCODED_UNSUPPORTED incomplete-final-fragment branch may do the same. Never feed partial IPC bytes, synthesize audio, change codecs or retry arbitrary parsing failures. Commit failure/empty valid prefix remain terminal. A known incomplete A/V tail may preserve only previously committed independently validated segments, with interrupted reporting, not pretend missing tail arrived.",
+    "proof": "Before eligible interrupted finalization, create_new+sync encoded-stop.json inside the exact owned UUID directory. Strict schema<=2048B, version1/job UUID and SHA256 of encoded-owner.json plus encoded-segments.jsonl. Owner proof<=8192B and existing manifest<=32MiB/100000segments limits remain. Revalidate exact provider/live/job/request/broadcast proof and manifest/hash before consuming sidecar. Missing marker is legacy behavior; malformed, linked, mismatched or inaccessible marker fails closed. Marker contains no raw error/account/source URL/chat text.",
+    "truth": "Only after unchanged full final media verification may LibraryItem.captureOutcome become interrupted/source_interrupted. Exclusion counts0 mean no separately quantified complete-unit exclusion, not a claim that no source tail was lost. Preserve all source pieces, attempt files and chat on this interrupted path, including subsequent explicit retry. Normal stop and YouTube/CHZZK remain unchanged. Marker alone never grants completion or deletion authority.",
+    "retry": "Only the SOOP live encoded concat stage may repeat once (two attempts maximum), and only after the process ran to a nonzero exit. Before each attempt/retry verify exact current job reference/request/broadcast/root and Arc cancel ownership, active noncompleted state, no shutdown/cancel, durable segment sequence/hash and disk reserve. Keep same job/receiver lease; no queue reentry, new receiver, catalog scan or retry of old records. Fresh UUID output/list for each attempt, no overwrite;250ms backoff in<=25ms cancellation-aware slices. Tool spawn/containment/timeout, disk, corrupt input, chat proof, decode/hash/publication/journal errors never enter retry.",
+    "guard": "Native worker keeps original RAII JobOwnership through both attempts. Cancellation and shutdown suppress new attempts, including during backoff. A replacement cancel token or completed/newer job state cannot be mutated by the old retry. Existing media publication/cancel checks and verify-before-cleanup remain; this is not a general shared finalizer rewrite."
+  },
+  "beforeHashes": {
+    "encoded.rs": "0F7D24FADEBB0937575BFB4156BE6A36AAF5CC78C8B1C7407A064CE378E7BFF8",
+    "live.rs": "E45EE038A46C064F5202D4AF933E8268D4F9F28D1C205075695CEEC5204B306B",
+    "platform_media.rs": "2232381B309E4094F2FDDF0C47F57F6CCAF55EE7020C1EA66BCFD73E7F31D5AE",
+    "capture_outcome.rs": "3492F30495042C637CE7BC821573E3538F2C841FC358CCA8C5E4997E99E24EDB"
+  },
+  "acceptance": [
+    "Explicit source stop and exact incomplete box preserve validated prefix and durable interrupted proof; forged/poisoned/commit failure/empty prefix never auto-publish.",
+    "First merge nonzero then success performs exactly2 attempts; twice nonzero ends honestly; parser/tool-start/timeout/disk/chat/verify failure does not retry.",
+    "Cancellation/shutdown/replaced cancel/completed job before or during wait suppresses retry and old terminal mutation; another recording remains active.",
+    "Stop proof rejects oversized/schema/version/job/owner/manifest mismatch and survives retry; legacy absence remains compatible; marker and chat are never overwritten/upgraded.",
+    "Isolated root actual fixture must remux, full-decode/hash, reopen and visibly retain interrupted warning/chat/originals. Focused source tests alone do not complete this actual gate.",
+    "No existing user recording touched. No app/account/UI/build/media process by assigned agent. Root owns serial native tests/build/actual operation."
+  ],
+  "implementationNotes": [
+    "SOOP dispatch and merge-entry now validate exact cancel/identity/current active state under the same journal state lock before setting finalizing. Revoked dispatch still transfers detached-chat lifetime to its worker, without downgrading a completed/replacement job.",
+    "The existing encoded recovery wrapper delegates to a cancellation-aware hash reader with the same schema/limits; no shared browser parser changed.",
+    "New ignored synthetic local finalizer fixture generates only a fresh UUID-owned three-second video+audio file, then tests interrupted proof, real verification, retention and restart/open. It does not claim browser capture, historical failure reproduction, or actual one-time nonzero retry (that policy is independently covered by pure closures)."
+  ],
+  "validation": "source diff whitespace check passed; nine new focused regressions plus one ignored synthetic actual fixture authored, not executed by agent; root owns compilation, serial tests and actual app acceptance"
+}

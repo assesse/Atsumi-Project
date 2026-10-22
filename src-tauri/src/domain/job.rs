@@ -170,6 +170,8 @@ pub struct JobEvent {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadChangedEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub linked_gallery_id: Option<i64>,
     pub entry_id: String,
     pub gallery_id: i64,
     pub revision: u64,

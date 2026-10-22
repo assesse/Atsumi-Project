@@ -1,0 +1,114 @@
+import type { OfficialBrowserViewport } from "../../api/officialBrowser";
+
+const selectors = 'dialog[open], [role="dialog"][aria-modal="true"], [role="alertdialog"], [role="menu"], [data-native-overlay="true"]';
+const MAX_OCCLUSIONS = 8;
+// Match the measured surface, not its shadow. An extra gutter leaves a visible
+// blank moat in the native video; physical-pixel rounding belongs to the host.
+const SHADOW_GUTTER = 0;
+function visibleOverlays(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>(selectors)].filter(element => {
+    const style = getComputedStyle(element);
+    return !element.closest('[hidden], [aria-hidden="true"]') && style.display !== "none" && style.visibility !== "hidden";
+  });
+}
+export function hasNativeOverlay(): boolean { return visibleOverlays().length > 0; }
+
+function allowsBackgroundInput(overlay: HTMLElement): boolean {
+  // Opt in only an explicitly nonmodal, app-owned panel. Confirmation dialogs,
+  // menus and native <dialog> elements must keep their existing input barrier.
+  return overlay.tagName !== "DIALOG"
+    && (isPullHandle(overlay) || overlay.getAttribute("role") === "dialog" && overlay.getAttribute("aria-modal") === "false")
+    && overlay.dataset.nativeOverlay === "true"
+    && overlay.dataset.nativePreserveVideo === "true"
+    && overlay.dataset.nativeInteractiveBackground === "true";
+}
+function isPullHandle(overlay: HTMLElement): boolean {
+  return overlay.matches('button.live-bottom-handle,button.live-edge-trigger');
+}
+function overlaySurface(overlay: HTMLElement): HTMLElement | null {
+  // Handles use their own fixed rectangle; dialog wrappers measure their surface.
+  const surface = overlay.querySelector<HTMLElement>('[data-native-dialog-surface="true"]');
+  return surface ?? (isPullHandle(overlay) ? overlay : null);
+}
+export function hasBlockingNativeOverlay(): boolean { return visibleOverlays().some(overlay => !allowsBackgroundInput(overlay)); }
+
+/** Popup text, help expansion and responsive wrapping can resize the dialog
+ * without resizing its native pane. Update the hole during that same layout. */
+export function observeNativeOverlayGeometry(onResize: () => void): () => void {
+  if (typeof ResizeObserver === "undefined") return () => {};
+  let disposed = false;
+  let motionFrame = 0;
+  let motionUntil = 0;
+  const surfaces = new Set<HTMLElement>();
+  const resize = new ResizeObserver(() => { if (!disposed) onResize(); });
+  const sync = () => {
+    const current = new Set(visibleOverlays().flatMap(overlay => { const surface = overlaySurface(overlay); return surface ? [surface] : []; }));
+    for (const old of surfaces) if (!current.has(old)) { resize.unobserve(old); surfaces.delete(old); }
+    for (const surface of current) if (!surfaces.has(surface)) { surfaces.add(surface); resize.observe(surface); }
+  };
+  const mutation = new MutationObserver(sync);
+  mutation.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden", "aria-hidden", "aria-modal", "open", "role", "class", "style", "data-native-overlay", "data-native-preserve-video", "data-native-interactive-background", "data-native-dialog-surface"] });
+  sync();
+  // Follow one-off dialog transforms, never recurring attention animations or
+  // spinners inside a panel: those must not repeatedly reclip native players.
+  const followMotion = () => {
+    motionFrame = 0;
+    if (disposed) return;
+    onResize();
+    if (performance.now() < motionUntil) motionFrame = requestAnimationFrame(followMotion);
+  };
+  const motion = (event: Event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || ![...surfaces].some(surface => surface === target || target.contains(surface))) return;
+    if (isPullHandle(target as HTMLElement) || getComputedStyle(target).animationIterationCount.split(",").some(count => count.trim() === "infinite")) return;
+    motionUntil = Math.max(motionUntil, performance.now() + 400);
+    if (!motionFrame) motionFrame = requestAnimationFrame(followMotion);
+  };
+  document.addEventListener("transitionrun", motion, true);
+  document.addEventListener("animationstart", motion, true);
+  return () => {
+    disposed = true; mutation.disconnect(); resize.disconnect(); surfaces.clear();
+    document.removeEventListener("transitionrun", motion, true);
+    document.removeEventListener("animationstart", motion, true);
+    if (motionFrame) cancelAnimationFrame(motionFrame);
+  };
+}
+
+/** Keep the native viewport and scroll clip unchanged; subtract only the actual
+ * trusted popup rectangles. Nonmodal panels leave the remaining native video
+ * and chat interactive. Unknown/unmeasurable overlays still fail closed. */
+export function nativeModalOcclusion(stage: HTMLElement, viewport: OfficialBrowserViewport): Partial<OfficialBrowserViewport> {
+  const overlays = visibleOverlays();
+  if (!overlays.length) return { occluded: false };
+  const masked = { occluded: true };
+  if (!viewport.visible || overlays.some(overlay => overlay.dataset.nativePreserveVideo !== "true")) return masked;
+  const bounds = stage.getBoundingClientRect();
+  if (![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite) || bounds.width < 1 || bounds.height < 1) return masked;
+  const clip = viewport.clip ?? { x: 0, y: 0, width: viewport.width, height: viewport.height };
+  const occlusions: NonNullable<OfficialBrowserViewport["occlusions"]> = [];
+  const roundedOcclusions: NonNullable<OfficialBrowserViewport["roundedOcclusions"]> = [];
+  for (const overlay of overlays) {
+    const surface = overlaySurface(overlay);
+    const rect = surface?.getBoundingClientRect();
+    if (!rect || ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) || rect.width < 1 || rect.height < 1) return masked;
+    const left = Math.max(clip.x, rect.left - bounds.left - SHADOW_GUTTER);
+    const top = Math.max(clip.y, rect.top - bounds.top - SHADOW_GUTTER);
+    const right = Math.min(clip.x + clip.width, rect.right - bounds.left + SHADOW_GUTTER);
+    const bottom = Math.min(clip.y + clip.height, rect.bottom - bounds.top + SHADOW_GUTTER);
+    if (right <= left || bottom <= top) continue;
+    const style = getComputedStyle(surface!);
+    const radii = [style.borderTopLeftRadius, style.borderTopRightRadius, style.borderBottomRightRadius, style.borderBottomLeftRadius]
+      .map(value => Math.max(0, Math.min(parseFloat(value) || 0, rect.width / 2, rect.height / 2))) as [number, number, number, number];
+    if (radii.some(radius => radius > 0)) {
+      // Keep the original outline across pane boundaries. Clamping it first
+      // would create a new curved corner at each pane/scroll edge.
+      roundedOcclusions.push({ x: rect.left - bounds.left, y: rect.top - bounds.top, width: rect.width, height: rect.height, radii });
+    } else {
+    const hole = { x: left, y: top, width: right - left, height: bottom - top };
+    if (!occlusions.some(old => old.x === hole.x && old.y === hole.y && old.width === hole.width && old.height === hole.height)) occlusions.push(hole);
+    }
+    if (occlusions.length + roundedOcclusions.length > MAX_OCCLUSIONS) return masked;
+  }
+  return { occluded: overlays.some(overlay => !allowsBackgroundInput(overlay)), preserveBackground: true, clip, occlusions,
+    ...(roundedOcclusions.length ? { roundedOcclusions } : {}) };
+}

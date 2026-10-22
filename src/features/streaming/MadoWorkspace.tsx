@@ -10,6 +10,7 @@ import { LivePaneGrid } from "./LivePaneGrid";
 import { tutorialStepEvent } from "../../tutorial/tourActions";
 import "./MadoWorkspace.css";
 import { usePanelHandleGesture } from "./usePanelHandleGesture";
+import { windowFullscreenApi, sameFullscreenGrant, type WindowFullscreenGrant } from "../../api/windowFullscreen";
 
 type MadoLayout = { version: 1; direction: "horizontal" | "vertical"; horizontal: number; vertical: number };
 const layoutKey = "atsumi.mado.layout.v1";
@@ -24,6 +25,27 @@ export function readMadoLayout(): MadoLayout {
   return { ...defaultLayout };
 }
 const isRecording = (pane: MultiviewPane) => !!pane.recordingId || ["armed", "starting", "recording", "stopping"].includes(pane.recordingStatus ?? "");
+// Close notifications can cross after their native mutation locks are released.
+// Apply only the removal, never an older snapshot's surviving panes.
+export function removeClosedViewer(current: MultiviewSnapshot, event: { snapshot: MultiviewSnapshot; channelId: string }): MultiviewSnapshot {
+  if (current.epoch !== event.snapshot.epoch || !current.panes.some(pane => pane.channelId === event.channelId)) return current;
+  const panes = current.panes.filter(pane => pane.channelId !== event.channelId);
+  const survives = (paneId: string) => panes.some(pane => pane.paneId === paneId);
+  return { ...current, panes, active: panes.length > 0,
+    audioOwner: current.audioOwner === event.channelId ? null : current.audioOwner,
+    pendingControl: current.pendingControl && survives(current.pendingControl.paneId) ? current.pendingControl : null,
+    pendingUiAction: current.pendingUiAction && survives(current.pendingUiAction.paneId) ? current.pendingUiAction : null };
+}
+// A control reply updates state, not presentation ownership. Native close events
+// may already have removed panes after this same-epoch snapshot was produced.
+export function projectControlSnapshot(current: MultiviewSnapshot, reply: MultiviewSnapshot): MultiviewSnapshot {
+  if (current.epoch !== reply.epoch || !current.active) return current;
+  const panes = reply.panes.filter(pane => current.panes.some(old => old.paneId === pane.paneId && old.channelId === pane.channelId && old.kind === pane.kind));
+  return { ...reply, panes, active: reply.active && panes.length > 0,
+    audioOwner: panes.some(pane => pane.channelId === reply.audioOwner) ? reply.audioOwner : null,
+    pendingControl: reply.pendingControl && panes.some(pane => pane.paneId === reply.pendingControl!.paneId && pane.channelId === reply.pendingControl!.channelId && pane.kind === "video") ? reply.pendingControl : null,
+    pendingUiAction: reply.pendingUiAction && panes.some(pane => pane.paneId === reply.pendingUiAction!.paneId) ? reply.pendingUiAction : null };
+}
 const channelName = (pane: MultiviewPane | undefined) => {
   const value = pane?.channelName?.trim();
   return value && value.length <= 160 && !/[\u0000-\u001f\u007f]/.test(value) ? value : "방송";
@@ -178,18 +200,68 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
   const [chatHidden, setChatHidden] = useState(false);
   const [connectionDismissed, setConnectionDismissed] = useState(false);
   useEffect(() => {
-    if (runtime !== "tauri") return;
-    let disposed = false, unlisten: (() => void) | undefined;
-    void import("@tauri-apps/api/event").then(({ listen }) => listen<{ action: string; channelId: string }>("chzzk-presentation", async ({ payload }) => {
-      if (disposed || !snapshotRef.current.active || !snapshotRef.current.panes.some(p => p.channelId === payload.channelId)) return;
-      if (payload.action === "chat_toggle") setChatHidden(value => !value);
-      if (payload.action === "fullscreen_toggle" || payload.action === "fullscreen_exit") {
-        try { const { getCurrentWindow } = await import("@tauri-apps/api/window"); const window = getCurrentWindow(); await window.setFullscreen(payload.action === "fullscreen_exit" ? false : !await window.isFullscreen()); }
-        catch { setError("전체화면을 전환하지 못했습니다."); }
-      }
-    })).then(stop => { if (disposed) stop(); else unlisten = stop; }).catch(() => {});
-    return () => { disposed = true; unlisten?.(); };
-  }, [runtime]);
+    if (runtime !== "tauri" || !snapshot.active) return;
+    const owner = crypto.randomUUID(), epoch = Math.max(1, snapshot.epoch);
+    let disposed = false, current: WindowFullscreenGrant | null = null, currentChannel: string | null = null, queue = Promise.resolve();
+    const unlisten: (() => void)[] = [], lost = new Set<string>();
+    const key = (grant: WindowFullscreenGrant) => `${grant.windowKey}:${grant.revision}`;
+    const active = (channel: string) => !disposed && snapshotRef.current.active && snapshotRef.current.epoch === snapshot.epoch
+      && snapshotRef.current.panes.some(p => p.channelId === channel);
+    void import("@tauri-apps/api/event").then(async ({ listen }) => {
+      // Install revocation first: it can arrive before an acquire promise resolves.
+      const stopLost = await listen<WindowFullscreenGrant>("platform-window-fullscreen:lost", ({ payload }) => {
+        if (payload.owner !== owner || payload.documentEpoch !== epoch) return;
+        lost.add(key(payload));
+        if (lost.size > 256) lost.delete(lost.values().next().value!);
+        if (sameFullscreenGrant(current, payload)) current = null;
+      });
+      if (disposed) { stopLost(); return; } unlisten.push(stopLost);
+      const stopPresentation = await listen<{ action: string; channelId: string }>("chzzk-presentation", ({ payload }) => {
+        if (!active(payload.channelId)) return;
+        if (payload.action === "chat_toggle") setChatHidden(value => !value);
+        if (payload.action !== "fullscreen_toggle" && payload.action !== "fullscreen_exit") return;
+        queue = queue.then(async () => {
+          if (!active(payload.channelId)) return;
+          const owned = current;
+          if (owned && await windowFullscreenApi.current(owned)) {
+            await windowFullscreenApi.release(owned);
+            if (sameFullscreenGrant(current, owned)) current = null;
+            return;
+          }
+          current = null;
+          if (payload.action === "fullscreen_exit" || !active(payload.channelId)) return;
+          const result = await windowFullscreenApi.acquire(owner, epoch);
+          if (result.grant) {
+            const grant = result.grant;
+            if (!active(payload.channelId) || lost.has(key(grant))) { await windowFullscreenApi.release(grant); return; }
+            const accepted = await windowFullscreenApi.current(grant);
+            if (!active(payload.channelId) || lost.has(key(grant))) { await windowFullscreenApi.release(grant); return; }
+            if (accepted) { current = grant; currentChannel = payload.channelId; }
+          }
+          if (result.error) throw new Error(result.error);
+        }).catch(() => { if (!disposed) setError("전체화면을 전환하지 못했습니다."); });
+      });
+      if (disposed) stopPresentation(); else unlisten.push(stopPresentation);
+      const stopClosed = await listen<{ snapshot: MultiviewSnapshot; channelId: string }>("chzzk-viewer-closed", ({ payload }) => {
+        if (payload.snapshot.epoch !== epoch || disposed) return;
+        const next = removeClosedViewer(snapshotRef.current, payload);
+        if (next === snapshotRef.current) return;
+        if (current && currentChannel === payload.channelId) {
+          const grant = current; current = null; currentChannel = null;
+          void windowFullscreenApi.release(grant).catch(() => {});
+        }
+        // Fence an older poll without reconfiguring surviving chat/player panes.
+        requestRevision.current++;
+        snapshotRef.current = next; setSnapshot(next);
+      });
+      if (disposed) stopClosed(); else unlisten.push(stopClosed);
+    }).catch(() => {});
+    return () => {
+      disposed = true; unlisten.forEach(stop => stop());
+      const grant = current; current = null;
+      if (grant) void windowFullscreenApi.release(grant).catch(() => {});
+    };
+  }, [runtime, snapshot.active, snapshot.epoch]);
   const [resizing, setResizing] = useState(false);
   const [paneResizing, setPaneResizing] = useState(false);
   const captureChat = account.captureChatEnabled !== false;
@@ -403,7 +475,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     void run(async (isCurrent) => {
       const result = await api.confirmControl({ paneId: intent.paneId, requestId: intent.id, approve, rightsAcknowledged: approve, captureChat, epoch: snapshot.epoch });
       if (!isCurrent()) return;
-      if (result.ok) { setDismissedControl(intent.id); setSnapshot(result.data); snapshotRef.current = result.data; }
+      if (result.ok) { setDismissedControl(intent.id); const next = projectControlSnapshot(snapshotRef.current, result.data); snapshotRef.current = next; setSnapshot(next); }
       else setError(result.error.message);
     });
   };
@@ -431,7 +503,7 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
       void run(async (isCurrent) => {
         const result = await api.requestControl(pane.paneId, "screenshot", snapshot.epoch);
         if (!isCurrent()) return;
-        if (result.ok) setSnapshot(result.data); else setError(result.error.message);
+        if (result.ok) { const next = projectControlSnapshot(snapshotRef.current, result.data); snapshotRef.current = next; setSnapshot(next); } else setError(result.error.message);
       });
     };
     window.addEventListener("keydown", shortcut);

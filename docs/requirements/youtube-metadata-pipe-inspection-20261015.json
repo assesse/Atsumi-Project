@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "state": "Root fully read and approved this test-only implementation before editing. Production changes remain outside this batch.",
+  "authority": "Root approved the new test file and this state update. Root owns module registration, compilation and execution. Current-mode InputIo is diagnostic data only and must not create production source evidence; concurrent native selection changes are consumed through the same guarded visit API.",
+  "audit": {
+    "reuse": "AGENTS directly reread. Previously fully read main230turn/284message and other333turn/375message snapshots retain complete EOF coverage and were rehashed unchanged. Root's current active50/archive3EOF inventory and unchanged source revisions are reused; missing sources remain those explicitly recorded in the production-bridge audit.",
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "originalRefs": ["01a0862c: single official receive path and preserve received video/chat", "01a11672: truthful interrupted/format status", "01a12a4c: do not remove originals before verified video and chat", "01a13a1f: actually working YouTube login/watch/record without CHZZK interference", "01a13e21-d77f-75a2-b34c-5688e605f531: continue remaining work"],
+    "contractsRead": ["youtube-webm-packet-probe-20261015.json including metadataRunnerApproval inherited through the local-finalizer contract", "youtube-webm-local-finalizer-20261015.json metadataRunnerApproval", "youtube-webm-native-archive-20261015.json", "youtube-webm-selected-finalizer-20261015.json"],
+    "packetProbeSha256": "77612702F66D8187FCD972E387EDE3CD7D3646724BCAF40B8D0053BD28FB4C07"
+  },
+  "findingAndLimit": "Actual auto run2 raw job failed with Probe(InputIo) and left no finalized candidate. Current metadata-only ffprobe may stop reading stdin once stream metadata is known; the contained producer deliberately requires exact full input delivery. InputIo also covers source seek/read errors, so the hypothesis is not yet a proven broken pipe or successful child early exit. Never accept InputIo as success or weaken the producer hash/EOF/exit/containment gates.",
+  "files": {
+    "agent": "NEW src-tauri/src/platform_media/youtube_spool/packet_probe/metadata_input_test.rs only, after approval",
+    "root": "Any cfg(test, windows) child module registration in packet_probe.rs; no production function changes as part of this diagnostic test",
+    "contract": "This before-edit JSON only"
+  },
+  "fixedInput": {
+    "root": ".runtime/youtube-auto-record-qa/local.atsumi.youtubeautoqa.aeb71d4637694e9bb3aa16f2ce0605fb/media",
+    "job": "3e5fee79-6417-4c82-9e85-295a72a97675",
+    "files": [
+      ["proof.json", 942, "4c56a1470d38dc13a2b7c235915069f94114117357346132369e89a949251c07"],
+      ["journal.jsonl", 89029, "2c0fbff2566fe6281d861dd91e9c87f744f0d49ae7afc90d8845d2ddc17a561d"],
+      ["video.raw", 1380681, "3bb0b865a31c196591e8f6f1055006059fa1a26a00817e4b3eb9a96dbe391919"],
+      ["audio.raw", 573806, "74430cceecb478bbf2a5d6e39a85d96cfb809a16a2a8199438b132de671f208a"]
+    ],
+    "sealObservation": "stopped; 276 receipts; video nextAppend185 and audio nextAppend91; neither track has a partial append"
+  },
+  "test": {
+    "name": "actual_raw_metadata_pipe_current_vs_count_packets_read_only",
+    "kind": "One ignored Windows test, root execution only. No filesystem writes, temporary media, source copies, remuxing, decoding, network or UI.",
+    "inputAuthority": "Hold fixed ancestors and four GuardedFile read-only handles. Check exact lengths and SHA before and after using bounded128KiB scratch and restored cursors. Recover the exact native identity with recovery_identity and construct CompletedSelection through its normal proof/receipt/scan checks. Reuse its guarded visit for the same selected original UnitSpan ranges; do not invent paths, ranges, configuration or ownership.",
+    "comparison": "For each selected unit, borrow its reader once and run the existing private run_output twice sequentially: current metadata_command; then the identical command with only -count_packets added. Keep fixed METADATA_ENTRIES, JSON64KiB, empty bounded stderr, source/tool guards, full producer hash, joined workers, contained child and exit0 unchanged. Parse every successful result through codec_facts::source against that unit's native configuration. The counted option is expected to force a complete demux read; this is a hypothesis to test, not preapproved production behavior.",
+    "sourceIoDiscriminant": "A test-local forwarding Read+Seek wrapper records only whether the borrowed source returned an I/O error or premature EOF; it does not buffer, change reads, retain bytes or alter the runner. InputIo with no source I/O error is reported as input_io_with_source_io_ok. It does not disclose a Windows error number or establish the child's successful early exit, because current run_output intentionally does not expose those details.",
+    "bounds": "At most16 selected units per track and64 total sequential child invocations, one child at a time; one overall240second deadline, each invocation capped by existing30second METADATA_BUDGET. No retries. ManagedProbe opens the exact managed pinned package once and is checked across every call. No arbitrary executable path or environment inheritance.",
+    "diagnosticFailureHandling": "For the current mode only, retain the fixed InputIo result as a diagnostic observation and continue the read-only visit so full source scanning/postguards still complete. This creates no production evidence or publication capability. Unexpected faults and any counted-mode fault fail the test after normal child cleanup; final source guards/hash checks are still attempted before reporting a failure. Current-mode successes must have identical supported codec facts and exact input hash to the counted mode for the same unit.",
+    "output": "Only bounded fixed mode/track, original unit ordinal, byte length, fixed result category, sourceIoFailed/prematureEof booleans and aggregate counts. Never print ffprobe JSON/stderr, media, paths, account information, URLs or chat. Successful comparisons do not imply codec-packet proof or a completed user recording.",
+    "acceptance": "Counted mode succeeds with unchanged strict metadata parser and source files across every selected unit; current successes agree. If at least one current InputIo occurs with source I/O normal while counted mode succeeds, report evidence supporting the pipe-consumption hypothesis. If current mode also succeeds everywhere, report not reproduced instead of asserting a cause. Any production change requires a separate root decision and regression review."
+  }
+}

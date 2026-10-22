@@ -1532,7 +1532,11 @@ describe("App Phase 3A backend flow", () => {
       await submitExploreSearch(container);
       await act(async () => { container.querySelector('[data-gallery-id="4051038"]')!.dispatchEvent(new MouseEvent("dblclick",{bubbles:true,detail:2})); await settle(); });
       const body=container.querySelector<HTMLElement>(".detail-body")!;
-      body.scrollTop=321;
+      await act(async () => {
+        body.scrollTop=321;
+        // Browsers emit scroll here; jsdom's direct property assignment does not.
+        body.dispatchEvent(new Event("scroll", { bubbles: true }));
+      });
       await act(async () => { container.querySelector<HTMLButtonElement>('.detail-workspace [aria-label^="serein,"]')!.click(); await settle(); });
       expect(container.querySelector(".detail-workspace")).toBeNull();
       expect(container.querySelectorAll(".explore-context-bar [role=tab]")).toHaveLength(2);
@@ -4251,6 +4255,11 @@ describe("App Phase 3A backend flow", () => {
   });
 
   it("recovers a failed snapshot, scans and cancels explicitly, then reviews real evidence with CAS reload", async () => {
+    // The browser scan fixture emits at 45/90 ms. Control only this test's scan
+    // clock so a busy renderer cannot complete it before the 15 ms assertion.
+    const settle = (delay = 20) => vi.isFakeTimers()
+      ? vi.advanceTimersByTimeAsync(delay)
+      : new Promise(resolve => window.setTimeout(resolve, delay));
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await backend.explorationExclusionsRestore([galleryId(4051038), galleryId(4050754)]);
     const seededDownloads = await backend.downloadQueueAdd(
@@ -4279,6 +4288,7 @@ describe("App Phase 3A backend flow", () => {
     document.body.append(container);
     const root = createRoot(container);
 
+    try {
     await act(async () => {
       root.render(<TestApp />);
       await settle();
@@ -4288,6 +4298,7 @@ describe("App Phase 3A backend flow", () => {
       await settle();
     });
     expect(container.textContent).toContain("initial duplicate snapshot unavailable");
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
 
     await act(async () => {
       clickButtonContaining(container, "작가 내 검사");
@@ -4371,8 +4382,16 @@ describe("App Phase 3A backend flow", () => {
     expect(processedActivity?.querySelector('[aria-label="중복 처리 완료 · 목록에서 제외"]')).not.toBeNull();
     expect(processedActivity).not.toHaveTextContent("재시도");
 
-    await act(async () => root.unmount());
-    container.remove();
+    } finally {
+      // A failed assertion must not leave a second app's subscriptions or its
+      // duplicate gallery-search-form ID intercepting later test submissions.
+      await act(async () => {
+        if (scanStart.mock.calls.length) await backend.duplicateScanCancel();
+        root.unmount();
+      });
+      container.remove();
+      vi.useRealTimers();
+    }
   });
 
   it("uses the same aggregate snapshot dialog for tray exit and rejects a stale work set", async () => {
@@ -4904,6 +4923,96 @@ describe("App Phase 3A backend flow", () => {
       await act(async () => root.unmount());
       container.remove();
       window.localStorage.removeItem("atsumi.content-source.v1");
+    }
+  });
+
+  it("opens all four new platforms from the banner without duplicating common subscriptions or losing Hitomi results", async () => {
+    const platforms = [
+      { id: "youtube", label: "YouTube" },
+      { id: "soop", label: "SOOP" },
+      { id: "pinterest", label: "Pinterest" },
+      { id: "pixiv", label: "pixiv" },
+    ] as const;
+    const previousSource = window.localStorage.getItem("atsumi.content-source.v1");
+    const previousTutorials = platforms.map(({ id }) => isTutorialDismissed(id));
+    window.localStorage.removeItem("atsumi.content-source.v1");
+    for (const { id } of platforms) setTutorialDismissed(true, id);
+    const page = explorePage(1, 1);
+    const search = vi.spyOn(backend, "searchSubmit").mockResolvedValue({
+      ok: true, data: { queryId: "new-platform-round-trip", firstPage: page },
+    });
+    const pageGet = vi.spyOn(backend, "searchPageGet");
+    const subscribe = vi.spyOn(backend, "on");
+    const cancel = vi.spyOn(backend, "downloadCancel");
+    const settingsGet = vi.spyOn(backend, "settingsGet");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const activeShell = () => {
+      const shells = container.querySelectorAll<HTMLElement>('.app-shell:not([hidden])');
+      expect(shells).toHaveLength(1);
+      return shells[0]!;
+    };
+    const switchSource = async (id: string) => {
+      await act(async () => activeShell().querySelector<HTMLButtonElement>('.brand[aria-haspopup="menu"]')!.click());
+      const option = activeShell().querySelector<HTMLButtonElement>(`[data-tour="source-${id}"]`);
+      expect(option).not.toBeNull();
+      await act(async () => option!.click());
+      await act(async () => { await vi.dynamicImportSettled(); await settle(); });
+    };
+    const commonEvents = ["settings:changed", "app:exit-requested", "download:changed"] as const;
+    const subscriptionCounts = () => commonEvents.map(event => subscribe.mock.calls.filter(([name]) => name === event).length);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(50); });
+      await submitExploreSearch(container);
+      expect(container.querySelector(`[data-gallery-id="${page.items[0]!.id}"]`)).not.toBeNull();
+      const initialSettingsReads = settingsGet.mock.calls.length;
+      expect(subscriptionCounts()).toEqual([1, 1, 1]);
+
+      for (const { id, label } of platforms) {
+        await switchSource(id);
+        const shell = activeShell();
+        const videoSource = id === "youtube" || id === "soop";
+        if (videoSource) {
+          expect(shell.querySelector(`[data-tour="${id}-nav-live"]`)).toHaveAttribute("aria-current", "page");
+          expect(shell.querySelector(`[data-tour="${id}-nav-favorites"]`)).toBeNull();
+          await act(async () => { shell.querySelector<HTMLButtonElement>(`[data-tour="${id}-nav-explore"]`)!.click(); await settle(); });
+        }
+        expect(shell.querySelector(`[data-tour="${id === "soop" ? "soop-search" : `${id}-input`}"]`)).not.toBeNull();
+        expect(shell.querySelector(".brand")).toHaveAccessibleName(`현재 ${label} 모드. 소스 전환`);
+        expect(shell.querySelector('[data-tour="community-nav"]')).toBeNull();
+        expect(shell.querySelector('[data-tour="privacy-mode"]')).not.toBeNull();
+        expect(shell.querySelector('button[aria-label="설정"]')).not.toBeNull();
+        expect(shell.querySelector('button[aria-label="오류·의견 보내기"]')).not.toBeNull();
+        expect(window.localStorage.getItem("atsumi.content-source.v1")).toBe(id);
+        const nextView = videoSource ? "screenshots" : "favorites";
+        await act(async () => { shell.querySelector<HTMLButtonElement>(`[data-tour="${id}-nav-${nextView}"]`)!.click(); await settle(); });
+        expect(shell.querySelector(`[data-tour="${id}-nav-${nextView}"]`)).toHaveAttribute("aria-current", "page");
+        expect(container.querySelector("iframe")).toBeNull();
+        expect(subscriptionCounts()).toEqual([1, 1, 1]);
+      }
+
+      await switchSource("hitomi");
+      expect(activeShell().querySelector(`[data-gallery-id="${page.items[0]!.id}"]`)).toHaveTextContent("Explore page 1");
+      expect(activeShell().querySelector('[data-tour="community-nav"]')).not.toBeNull();
+      const inactivePlatforms = [...container.querySelectorAll<HTMLElement>(".platform-shell")];
+      expect(inactivePlatforms).toHaveLength(4);
+      for (const shell of inactivePlatforms) {
+        expect(shell).toHaveAttribute("hidden");
+        expect(shell).toHaveAttribute("inert");
+        expect(shell.querySelector("iframe")).toBeNull();
+      }
+      expect(search).toHaveBeenCalledOnce();
+      expect(pageGet).not.toHaveBeenCalled();
+      expect(settingsGet).toHaveBeenCalledTimes(initialSettingsReads);
+      expect(subscriptionCounts()).toEqual([1, 1, 1]);
+      expect(cancel).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+      if (previousSource === null) window.localStorage.removeItem("atsumi.content-source.v1");
+      else window.localStorage.setItem("atsumi.content-source.v1", previousSource);
+      platforms.forEach(({ id }, index) => setTutorialDismissed(previousTutorials[index]!, id));
     }
   });
 

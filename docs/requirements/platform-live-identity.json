@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "date": "2026-10-13",
+  "status": "source implementation and focused verification complete; current manual QA app stays unchanged; desktop acceptance pending",
+  "finding": "VUI-05: live overlay lacks separate channel identity and the already acquired SOOP portrait; hiding chat hides the only channel name.",
+  "originalRequests": ["01a11f1d-e4a6-74f1-b278-f1f1256e9f93", "01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a12c46-788a-7b00-9f69-e6f1d6f2d53e"],
+  "rules": ["R003", "R008", "R009", "R012", "R013", "R014", "R022"],
+  "coverage": {
+    "mainSnapshotSha256": "85487c5f2edcca6d946cd1b9bbbbde9e9142942059fbc44f637954d607615676",
+    "otherSnapshotSha256": "799f75c9037808630eb2a8faf2973c450d16ae9a3c343d12e2b4cf8dbf931a21",
+    "policySha256": "3267605ca09e8fba111bfdc84c840e6856bc8b2e82ceb64f165ac732ca43f914",
+    "method": "Complete previously read snapshots retained identical hashes and EOF coverage; active50/archived3 EOF inventory refreshed, no new Atsumi chat found. All69 original specification hashes checked; only RELEASING changed and was fully reread in the previous batch with current hash f5a49125c16f4cbfff8251d5263cbf0b35b6dcaad33a8f9fc7fdf87b542e12a0. Original profile/parity requests, current policy, video-ui audit, CHZZK_VIEWING_UI and CHZZK_CONNECTION_UI read directly. Latest manual-QA instruction is in current context.",
+    "unavailable": ["Historical durable chat01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unnamed Atsumi 분석1/2", "Historical image pixels not newly inspected"]
+  },
+  "conflicts": [
+    "Old CHZZK source says use its native website header, not duplicate guessed metadata. New platforms use a native HLS player without that website header: display only verified existing title/channel and acquired portrait, never fabricate viewer count/uptime.",
+    "YouTube video thumbnails are not channel portraits. Use a neutral stable fallback until a separate verified channel-avatar source exists.",
+    "User now performs manual QA. No current app operation, Vite build, QA executable rebuild, restart or close is part of this source-only batch."
+  ],
+  "decision": [
+    "Add trusted-main read-only live-profile IPC using the existing live viewer lease token. Clone bounded Status.profile under lock then validate and encode outside lock. No new network, receiver or filesystem writes.",
+    "Frontend optional liveProfile(token) fetches once for active, non-private, visible playing video identity. Discard late responses after token/identity/visibility changes; missing/invalid/error portrait keeps a fixed36px neutral fallback, no remote src.",
+    "Channel name and title stay visible together in the current upper-left fading overlay even when chat is off. Same fade/fullscreen cycle as existing controls; no new header row outside the player.",
+    "Privacy hides identity including accessible image labels and performs no portrait request. Switching chat, split size, provider tab or selected video does not recreate media or live leases."
+  ],
+  "acceptance": [
+    "Native valid owned viewer token reads only its session; unknown/closed token fails, absent portrait returns None and corrupt data cannot become a remote URL.",
+    "No new network calls; same existing validated96px normalized portrait and128KiB cap.",
+    "UI verifies chat-off identity, stable fallback/error/loading dimensions, stale-token response, inactive/privacy suppression and unmount safety.",
+    "Existing media lease identity, resizing, idle fade and fullscreen-last controls remain unchanged.",
+    "Focused source tests/typecheck are not desktop acceptance. Current static QA binary does not contain this batch; user tests next build after finishing current session."
+  ],
+  "ownership": {
+    "native": "youtube_platform: live.rs, profile.rs, platform_media_ipc.rs, lib.rs and focused native tests",
+    "frontend": "pinterest_platform: PlatformLivePlayer.tsx/css/test, platformMedia.ts; no unrelated library changes",
+    "integration": "root: this contract and validation/review"
+  },
+  "verification": {
+    "native": "Lib-only compile session9573 exited0 in1m43s. live_profile filter6passed/1opt-in ignored; profile::tests5passed. One test overlaps:10unique ordinary tests, not11. Includes new owned/missing/unknown/closed/corrupt profile read, bounded snapshot and4-slot/drop tests. No app/example rebuild or external network tests.",
+    "frontend": "Focused PlatformLivePlayer unit and layout:2files/33tests passed at20:21:28KST in5.46s. Added240/480/960px header geometry, unchanged36px portrait slot, title/channel ellipsis and shared opacity checks alongside existing30layout scenes. Includes late replies, privacy/inactive/chat-only suppression, cached reads and unchanged media lease. Root proper tools/run_frontend.ps1 typecheck and git diff --check exited0.",
+    "review": "Root reviewed actual production/tests; pixiv_platform independently reviewed native/frontend and original requests, with no concrete blocker found. This is source review, not desktop acceptance.",
+    "desktop": "Pending. Current manual QA PID23004, launched19:48:29KST, unchanged executable85163520bytes SHA2566a6e3281719de2336be1b37e528e510d9b9cad57892d1f6d29828cfa5714bbf6. No UI input, rebuild, restart or replacement. The live identity batch and previous marker NUL correction are NOT in that app.",
+    "remaining": "Actual updated desktop identity/profile/fade and manual workflow feedback; verified YouTube channel portrait acquisition is not implemented. No new image request is made by this batch."
+  }
+}

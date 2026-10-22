@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "state": "Native publication implemented and verified by472focused/1838full passing tests and3actual captured-file publication/reopen cases. Raw ingress, actual application recording/playback, timeline/recovery/cleanup and frontend outcome remain incomplete. Evidence: .runtime/requirements-audit/20261015-youtube-publication-verification.json.",
+  "request": "Continue active goal and remaining-work turn 01a13e21-d77f-75a2-b34c-5688e605f531; latest account-button reply 01a13e49-660c-7520-8b9c-4fd6813b73b7 is already implemented and is not changed here.",
+  "originals": [
+    "01a0862c-6058-7442-a6fe-38d660288ee2: one incoming video stream for viewing/recording, preserve hours of accepted video and chat after failure, including YouTube/SOOP",
+    "01a12a4c-724c-7d13-801d-3d92da01fe1e: automatic cleanup only after final merge and verification, retain final media and chat",
+    "01a11672-f428-7850-899b-5155aebb4e8a items12/13: concise truthful normal/interrupted status and resilient format changes",
+    "01a1399c-e7fb-7260-ac09-93bc94288f2f and 01a13a1f-f808-74a0-85c8-e90aa748a292: CHZZK flow with isolated provider internals, official player/chat and actual working recording"
+  ],
+  "audit": {
+    "inventory": "Root refreshed active50/archive3 EOF, latest main two-turn overlap through completed01a13e21 and current01a13f09. Other main1791827531/UIUX1791393086 unchanged; no new original request beyond current goal continuation.",
+    "reuse": "Fully read main230turn284message EOF SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333turn375message EOF SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 rehashed unchanged. All69 baseline specs rehashed, only prior fully-read RELEASING F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0 differs from original baseline. Original single-ingress, cleanup and full27-item request directly reread; latest remaining/account originals and changed policy read fully.",
+    "missing": ["durable01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unidentified historical analysis1/2", "historically inaccessible attachment pixels"],
+    "previousTurn": "Progress: authenticated account controls and SOOP retention actually verified; selected finalizer fullnative1808pass and3actual source-preserving samples. This is not production VP9 capture or library completion."
+  },
+  "decisions": [
+    "Consume a native VerifiedCandidate using an exact-file handoff. Do not call the existing path-only verify_publish_from after dropping immutable guards.",
+    "Preserve current legacy publication paths. A YouTube-local child implements the new owned service path; no shared player, account, CHZZK/SOOP, IPC or capture activation in this batch.",
+    "Permit proven complete and selected-partial candidate publication with an optional persisted captureOutcome on LibraryItem. A valid playable partial file may be completed as a file operation, but never presented as a normal full recording. Existing items without this field keep their prior meaning; no migration or guessed normal outcome.",
+    "CaptureOutcome is a closed native summary: complete/partial/interrupted state, fixed reason enums and bounded excluded unit/byte counts. Native validated provenance determines it; no caller-supplied success flag. Preserve original source proof and all raw/intermediate files for this integration stage; later verified cleanup is still required by the user, not silently dropped.",
+    "Under existing service mutex use exact cancel Arc, observed revision, job/request/provider/live/video/broadcast/root identity and no-library/no-shutdown admission. Check every phase and durable journal save before in-memory success; do not overwrite a newer attempt. Hold JobOwnership until worker completion.",
+    "Perform hash/media/chat I/O outside the state mutex. Only bounded guarded rename and final short identity checks happen under the CAS lock. Keep exact installed handle through completed journal commit; failure retains candidate/final and source files without success or rollback deletion.",
+    "Candidate already passed exact2codec/allpacket/fulltwo-trackdecode validation. Reuse it as stronger evidence; no redundant full decode pass solely for legacy parity. Library duration must come from verified packet bounds, not browser/wall time. Optional poster cannot weaken final file guard or abort a valid file; defer poster if the current child process cannot share DELETE access safely.",
+    "Reuse existing chat status recovery without promoting partial/unknown chat to complete. No remux-time timeline creation. Native first-receipt/source clock integration remains a separate necessary recording step."
+  ],
+  "files": {
+    "root": ["src-tauri/src/platform_media.rs", "new src-tauri/src/platform_media/youtube_publication.rs", "associated native constructor fixtures/tests and existing actual-finalizer test helper publication extension"],
+    "outcomePeer": ["new src-tauri/src/platform_media/capture_outcome.rs and inline tests; separately approved full capture-outcome contract, no frontend edits while the app remains running"],
+    "peer": ["src-tauri/src/platform_media/youtube_spool/finalize.rs", "new finalize/publication.rs and tests", "narrow youtube_spool.rs private exposure"],
+    "later": ["captureOutcome frontend display", "raw Archive/begin/append and chat timeline", "actual recording/recovery/cleanup acceptance"]
+  },
+  "checks": [
+    "Real Windows exact-handle no-replace rename and guard sharing tests, including incompatible opens, collision and failed/duplicate phase reuse",
+    "Wrong root/job/request/video/broadcast/source/owner/revision/cancel Arc, cancelled/shutdown, final journal failure cannot complete or modify another file",
+    "Complete and partial actual immutable fixture copies publish with original source hashes unchanged; inspect saved journal/library hash and offline playback",
+    "Old LibraryItem JSON remains readable; native partial/interrupted reasons survive save/load and do not become normal via completed state",
+    "Existing AVC/SOOP publication and CHZZK hashes/regressions unchanged; no production capture claim from helper tests"
+  ]
+}

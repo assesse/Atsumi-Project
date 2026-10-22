@@ -1,6 +1,7 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { readFile } from "node:fs/promises";
+import { pixivReadingNotices, readingAssetName } from "./tools/pixiv-reading-assets.ts";
 
 const runtimeProcess = (globalThis as typeof globalThis & {
   process?: { env?: Record<string, string | undefined> };
@@ -9,7 +10,7 @@ const environment = runtimeProcess?.env ?? {};
 const host = environment.TAURI_DEV_HOST;
 
 export default defineConfig({
-  plugins: [react(), {
+  plugins: [react(), pixivReadingNotices(), {
     name: "isolated-original-player-assets",
     configureServer(server) {
       // Only this directory's public assets are readable by the opaque player frame.
@@ -72,10 +73,13 @@ export default defineConfig({
     },
   },
   build: {
+    assetsInlineLimit: file => file.endsWith(".dat.gz") ? false : undefined,
+    rollupOptions: { output: { assetFileNames: readingAssetName } },
     target: "es2021",
     minify: environment.TAURI_DEBUG ? false : "esbuild",
     sourcemap: Boolean(environment.TAURI_DEBUG),
   },
+  worker: { format: "es", rollupOptions: { output: { assetFileNames: readingAssetName } } },
   test: {
     // Runtime audit snapshots are not another copy of the test suite.
     include: ["src/**/*.{test,spec}.{ts,tsx}"],

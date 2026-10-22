@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "state": "implementation integrated; automated tests and builds passed; actual UI acceptance deferred by latest user",
+  "source": "Current direct user manual results1..7 and six additional requirements, 2026-10-21",
+  "original": [
+    "Enlarged photo has no save button; post-save key check untested; Ctrl+click verified by user; black-photo failure not reproduced, not declared fixed.",
+    "New Tibo partial archive loses quoted post profile and preserves text only. Exact YouTube sound deferred at user's request until later report.",
+    "Preview advertisements intermittently appear/disappear near the visibility boundary.",
+    "Distinguish whole-post archive from media downloads; attached archive media must not be duplicated in the media-download listing.",
+    "Download records need all-account or separate-account selection.",
+    "Top-right media single/all downloads do not work. Replace all-download glyph with two diagonally overlapping single-download icons.",
+    "Show a thin progress line beneath affected media and progress in the existing bottom post-save notification.",
+    "Preserve viewed feed/session when switching tabs and returning.",
+    "Scrolling the feed while preview is open must transfer pane focus/playback ownership without needing a blank-area click."
+  ],
+  "inventory": {
+    "chats": "Refreshed active50 and archived3 EOF. Other main1792473578 and UIUX1792073766 unchanged from fully read EOF snapshots. Current direct conversation read, including latest manual results and UI-verification deferral.",
+    "specs": "Previously fully read policy3A717CA4, official-split76488013, sidebar291E3A9B, native-actions678D6E36 hash matches verified. Archive and menu contracts reread this session; ad-filter contract fully reread. New request overrides overlapping historical listings and stale pending Ctrl-click status.",
+    "missing": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"]
+  },
+  "rules": [
+    "Active2849 only; preserve shared dirty source, immutable archive records/assets, DB and account data. No commit, push, release, deletion, source data rewriting or PC shutdown.",
+    "Implementation and automated tests now; no Computer Use, app launch/restart or account/social actions this batch. No likes/bookmarks/reposts/replies/follows or undo without specific approval.",
+    "Retain account/origin/generation/gesture identity fences, source ownership checks, permitted media URLs, validation and real-byte/hash checks. Never pick first/largest ambiguous media or relax validation to hide failure.",
+    "Read-only local diagnostics/capture metadata may establish actual failure; do not expose credentials or unrelated personal content.",
+    "Retain official X split, source-owned player controls and background tab semantics. No return to superseded clean-room player or old goal.",
+    "Hidden/private/inactive panes remain muted; trusted scroll transfers active pane without source video mute overrides or typing-focus theft.",
+    "Ad suppression is cosmetic, reversible, bounded and X-only. No network rewrite, private-state introspection, author/body keyword classification or broad media blocking. Recycled ordinary posts must be restored.",
+    "Report automated implementation separately from later actual acceptance. Exact original YouTube audio is intentionally deferred, Ctrl-click user-passed, intermittent black photo remains not reproduced."
+  ],
+  "decisions": [
+    "Body tab lists intent archive; media tab lists intent media only. Preserve original post context for media downloads and attached assets for whole-post playback. Do not change existing immutable records, migrate/delete duplicates or invent missing metadata.",
+    "Use recorded accountId to filter all accounts or one account, independent of active login. Resolve display handles through saved account list when available, keep removed/unknown account records accessible with explicit fallback. Legacy summaries missing owner are not assigned current account by inference.",
+    "Progress must originate in actual native capture/save/download stages, scoped request+pane+account+generation. Unknown totals use indeterminate thin animation, not fake percentages. Include pending/start/completion/failure; persist/validate final output before success.",
+    "Keep feed documents and preview state while ordinary view switch hides them. Resume without forced refresh; explicit refresh/account switch/invalidation remains distinct and stale callbacks cannot reveal wrong-account pages.",
+    "Before each repair add realistic regressions for proven source/control/event ownership failures; closed diagnostics may remain for cases that cannot be proved without deferred UI."
+  ],
+  "acceptance": [
+    "Archive and media listings exclude the other intent, preserve immutable legacy access and correct account filters, selection and preview state.",
+    "Both single/all media gestures reach actual save path with exact selected identity and visible pending/progress/error outcomes; current-photo action uses same proof as capture.",
+    "Native progress and UI reject stale request/account/route events, duplicate clicks and post-completion late updates; partial results remain truthful.",
+    "View switches retain original feed scroll/document and preview tabs; account switch/privacy/inactive/explicit refresh remain safe and tested.",
+    "Trusted wheel in visible feed/preview claims that pane, scroll-generated layout events do not steal focus or start unrelated media, hidden pane cannot claim audio.",
+    "Preview ad remains consistently hidden through own CSS visibility changes and restores on proven DOM recycling; normal text/image/video and media controls remain unchanged.",
+    "Quote-avatar repair remains limited to observed exact same-quote visible paint; CSS-hidden, foreign, nested, ambiguous and unsupported sources remain rejected. New actual archive verification deferred.",
+    "Focused, whole-X and typecheck/native tests recorded; no claim that automated tests replace deferred actual UI verification."
+  ],
+  "preflight": "No atsumi/cargo/rustc/ffmpeg/streamlink processes returned at implementation start. No app is launched or restarted in this batch.",
+  "implementation": {
+    "library": "Intent-filtered body/media lists, saved-owner all/per-account selector with unknown/removed owner fallback, scope-specific pagination and scroll, exact summary/manifest owner+intent validation. Native reads remain bounded after UI deadlines until their actual promises settle. Existing archives remain immutable.",
+    "progress": "Native save emits actual received bytes, frozen media entries processed, stage, partial state and monotonic sequence under request/capture/account identity. No guessed totalBytes. Complete follows publication and validated reopen. Inline media line and post notice use current-pane/request/route fencing; selection modal also subscribes to scoped progress.",
+    "media_controls": "All-download uses two diagonally overlapping single-download glyphs. Repeated click during an active save resurfaces that existing job without a second request. Failure/cancel terminal states do not keep animating as running. Capture and action current-photo resolvers are byte-identical.",
+    "retained_documents": "Ordinary view/platform/local switching uses x_surface_suspend to hide and mute native documents while retaining browser scroll/history and preview tabs. Account/privacy resets and explicit refresh stay distinct. Queued viewport/route/selection callbacks are invalidated.",
+    "wheel": "Trusted visible-pane wheel transfers native input/playback ownership. A350ms one-shot current-root/route/history/input/visibility/owner source-play intent avoids first-wheel native-response ordering races. Only an actually presented source media play consumes it. Never synthesize play, source mute changes or DOM/window focus. Native registration/muting checks remain authoritative.",
+    "ads": "On retained-pane visibility restoration, revalidate current cosmetic ad markers synchronously before displaying; repeated own hiding, viewport movement and ordinary-post recycling regressions retained. No network or classification broadening.",
+    "photo": "Latest PID23860 diagnostic establishes fixedAncestor rejection in a normal fixed viewer. Admit only provable viewport-fixed container clipping, not fixed images or transformed/contained ambiguous ancestors. Neighbour exposure and route/counter/list proof still reject ambiguous current photos.",
+    "quote_avatar": "New actual Tibo archive5ded13f1 retains root2112712984644784534 and17 loaded replies. Partial comes from2 truncated replies, separate from missing quote avatar. Quote-only exact loaded-DOM background paint no longer requires viewport intersection; hidden/ownership/URL/rect/multiple-paint checks retained. No old archive rewrite."
+  },
+  "manual_status": {
+    "ctrl_click": "User verified normal operation; do not relabel pending.",
+    "black_photo": "User did not reproduce; not proved fixed.",
+    "youtube_reply_audio": "User explicitly deferred until future reproduction; no further request for old URL.",
+    "photo_and_keys": "Enlarged save control was missing; post-save photo key check remained untested. Actual repaired flow deferred.",
+    "quote_avatar": "Tibo diagnostic proves paintRect rejection, not whether viewport or another geometry mismatch caused it. New actual capture/reopen remains deferred.",
+    "ads": "Intermittent preview boundary flicker observed by user. Automated visibility repair is not actual proof that every source ad shape is recognized."
+  },
+  "automated_verification": {
+    "archive_panel": "145/145 passed, including timeout lane ownership and expanded scope scroll regression.",
+    "rust_x": "176/176 passed with --locked --no-default-features, including separate open_epoch reservation/create-await fencing after suspend; existing unrelated warnings retained.",
+    "capture": "236/236 passed.",
+    "actions_input_capture": "389/389 passed (overlaps capture count, do not sum as independent tests). Independent review terminal cancel-label correction included.",
+    "surface_workspace_ads_api": "310/310 passed, including first-wheel race and security/lifecycle boundaries.",
+    "final_frontend_and_build": "Final whole-X1151/1151 across23 files passed. Full frontend tsc -b and Vite production build passed. cargo build --bin atsumi --locked --no-default-features passed with devUrl127.0.0.1:14201. Existing unrelated warnings retained. No actual app launch, restart, Computer Use, account action or existing archive mutation.",
+    "review": "Independent cross-agent review found and fixed raw-read deadline lane release, expanded pagination restoration, stale open after suspend, first-wheel source-play ordering, terminal cancellation label and animation. Final source hashes matched the frozen reviewed files."
+  },
+  "remaining_actual_acceptance": [
+    "Single/all inline downloads, busy feedback, true byte/stage progress and final saved asset verification in actual source DOM. Existing13:07 actual archives show media save success but retained logs cannot map the user's inert click to its exact rejected path; do not claim that root cause was conclusively identified.",
+    "Enlarged-photo button and post-save AD/arrows on actual carousels; structurally ambiguous5/6-list shapes remain fail-closed, not guessed.",
+    "New Tibo quote avatar capture and offline reopen; exact current paint geometry still requires actual evidence.",
+    "First-wheel autoplay/focus transfer with preview open, tab-return scroll/session retention, account/privacy regression.",
+    "Preview ad at visibility boundaries without ordinary media suppression.",
+    "User intentionally deferred all Computer Use checks; audio is separately postponed until future report."
+  ]
+}

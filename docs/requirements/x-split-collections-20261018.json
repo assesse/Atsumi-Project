@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "state": "implemented, unit/layout/type/build verified; actual authenticated acceptance blocked by desktop helper initialization error",
+  "verification": ".runtime/requirements-audit/20261018-x-split-verification.json",
+  "originals": ["Atsumi 개발 메인 / 01a089ee-56ed-7322-a750-c034423826c2 / current direct user request: 1+4 합친 형태; 집중 타임라인 좌측, 프리뷰 우측; 추천 / 팔로잉 / 가입된 X커뮤니티; 로그인 상태의 마음함과 북마크"],
+  "coverage": ".runtime/requirements-audit/20261018-x-split-preedit.json",
+  "supersedes": ["x-login-feed-20261018 provisional balanced timeline and modal-only image preview. Other security, resource, account and interaction requirements remain applicable."],
+  "decisions": [
+    "Default desktop is a concentrated left timeline and independently scrollable right post/image preview; clicking a post or image selects the preview without replacing the timeline or its scroll. Text-only posts also have a preview.",
+    "Main tabs in exact order: 추천, 팔로잉, 가입된 X 커뮤니티. Interpret communities as the joined-community post timeline, not discovery recommendations or automatic joining.",
+    "Signed-in collections are separate compact 마음함 / 북마크 controls. They read only the current authenticated account's official visible collections, never another profile's private collection.",
+    "Keep feed-specific scroll and preview selection on tab changes. No focus trap/inert background on desktop split view. Local keyboard controls must not steal typing, Ctrl shortcuts or timeline navigation. Escape closes preview and restores its origin.",
+    "Official website login only, no paid API/private GraphQL/credential export/account writes. Native validates feed enum, exact HTTPS origin, closed destination routes, authenticated owner and nonce/generation; projection requires route and selected collection context. Unrecognized joined-community context fails explicitly rather than labeling discovery posts as joined.",
+    "Read-only official navigation/tab selection/scroll only. Bounded loading, cancellation, resource budgets and video-blocked hidden reader remain. Empty states require explicit collection-empty evidence; silence is never completion.",
+    "Privacy and account changes hide or clear every feed and preview; late data cannot populate another account. Small-window layout keeps timeline and preview reachable without horizontal clipping. No unrelated workspace, download or recording changes."
+  ],
+  "plan": ["Extend closed native feed routing and DOM collection proof", "Implement split workspace and retained per-feed preview/scroll", "Add account, routing, privacy, keyboard and empty-state regression tests", "Capture and inspect offline layouts at 1920x1080 and narrow widths", "Typecheck and frontend/native debug build", "Attempt actual app acceptance only through available authorized desktop tools; record any login/tool blocker explicitly"],
+  "acceptance": ["Exact tab order and signed-in-only collection controls", "Left timeline/right preview for text, landscape and portrait media", "Selection and scroll survive feed switches and More", "Foreign owner/route, discovery community feed and stale generation rejected", "Empty collection distinguished from unreadable page", "No credentials, account mutations, background video or unbounded fetching", "Actual authenticated feed/collections/continuation remains separate from synthetic tests"]
+}

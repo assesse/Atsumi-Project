@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "batch": "pixiv-explicit-reader-three-edge-resize",
+  "state": "implemented-focused-regressions-passed-desktop-pending",
+  "audit": {
+    "coverage": "All 69 audited specification hashes remain unchanged. Fully read main230/284 and other333/375 EOF snapshots match SHA256 85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Changed shared policy, validation, SOOP/Pinterest contracts and current Pixiv contract reread; inaccessible sources remain as listed in implementation-policy.json.",
+    "originals": [
+      {"turnId":"01a05eb9-33da-7813-a6d7-54fdc8df0495", "rule":"Explicitly requests right and bottom edge resize in addition to bottom-right corner for PAGE PREVIEW"},
+      {"turnId":"01a0f8ab-e779-7f33-836c-fc747a3b0b35", "rule":"Default hidden reading controls, pointer movement reveal and reading direction"},
+      {"turnId":"01a0fa72-37ba-77f0-9ef5-23187336a5cc", "rule":"Bottom-center numbering, numbered bookmarks, pin, animated arrows, black end slots and mixed orientations"},
+      {"turnId":"01a0fa91-7994-7cf2-8afe-e5140fd67b9c", "rule":"A/D after Alt-Tab must belong to topmost preview; native behavior requires actual desktop verification"},
+      {"turnId":"01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "item":20, "rule":"Original-only nearby page preload"}
+    ],
+    "reference": "Read complete pagePreviewResize.ts/pagePreviewFrame.ts and DetailWorkspace resize lifecycle/handles. Reuse only unchanged pure geometry helpers, not Hitomi component/session state."
+  },
+  "scope": ["src/features/pixiv/PixivPageReader.tsx", "src/features/pixiv/PixivPageReader.css", "src/features/pixiv/PixivPageReader.test.tsx", "docs/requirements/pixiv-reader-resize.json"],
+  "plan": [
+    "Add thin right/bottom hit areas and bottom-right corner to explicit Pixiv reader only; ordinary detail remains unchanged.",
+    "Apply established centered resize geometry and320px minimum subject to viewport bounds; retain initial source-aspect/height-first frame until explicit resize.",
+    "Retain chosen size across page/spread/direction changes; clamp on window/visualViewport resize. Do not reload original pool or alter metadata/navigation state.",
+    "Capture one primary pointer, release on up/cancel/lost capture/window blur/close/unmount. No drag state may stick after Alt-Tab.",
+    "Keyboard-focusable width/height separators use arrows for resize and do not turn pages. Topmost modal, typing and modifier guards remain; UI hide/pin and fixed controls are preserved."
+  ],
+  "acceptance": [
+    "Right affects width only, bottom height only, corner both; min/max viewport containment and center are exact",
+    "Wrong pointer/button ignored; pointerup/cancel/blur/unmount cleans listeners/capture and cannot resize later",
+    "Window shrink reclamps; custom size persists through portrait/landscape, two-page and direction changes",
+    "Focused separator arrows resize, not navigate; Tab stays in topmost reader; ordinary A/D resumes without clicking after returning focus",
+    "Black blank slots, numbered bookmarks,±2 original window, privacy and separate-detail return regressions still pass",
+    "Focused Vitest and full TypeScript check; no GUI/Cargo/app launch/rebuild/exit. Actual pixel and native Alt-Tab verification remains pending root."
+  ],
+  "result": "Explicit reader now provides right/bottom/corner pointer resize with unchanged centered320px-minimum viewport-bounded geometry. Width/height separators support keyboard arrows and remain in the focus cycle; A/D still navigates, while resize arrows do not turn pages. Capture is released on up/cancel/lost capture/blur/close/unmount; stale pointer signals and newer modal takeover are guarded. Manual size persists through page/spread/direction changes and reclamps on window/visualViewport changes. Ordinary detail, bounded original pool and navigation helpers are unchanged.",
+  "verification": {"frontend":"2026-10-13 17:23 KST: five Pixiv test files,53 tests passed,exit0. Eight new resize cases cover three edges, min/max and shrink containment, mixed spread persistence, wrong pointers/buttons, cancel/blur/focus recovery, separator keys/Tab trap, controls during drag, modal/close takeover, obsolete capture and unmount cleanup. Initial sandbox collection failed with temporary-cache EPERM; normal Windows-access rerun passed. No GUI launched.", "typecheck":"Full npx tsc -b --pretty false exited0 after the final capture test", "desktop":"Not performed; actual pixel geometry and native Windows Alt-Tab remain pending root. Synthetic focus/key events are not native focus proof."},
+  "supersedes": "The drag-resize missing item in pixiv-implementation.json previewReadOnlyAudit/previewPlannedBatches is now implemented/unit-verified by this narrow batch, not desktop-complete. Root may reconcile that broader contract during integration."
+}

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "state": "root read full contract and approved diagnostic-only scope; implementation frozen for root native compile and actual observation",
+  "originalReferences": [
+    {"turn":"01a13a1f-f808-74a0-85c8-e90aa748a292","rule":"SOOP/YouTube original player and chat must actually work without CHZZK interference."},
+    {"turn":"01a13978-c469-7242-9ec2-f065de16743a","rule":"Retain each platform's original player interface and fix input/focus interference."},
+    {"turn":"01a12c46-788a-7b00-9f69-e6f1d6f2d53e","rule":"Original fullscreen, seek, replay and control visibility remain usable."},
+    {"turn":"01a13bb3-d33b-7de0-867d-aeae3e3e8bec","rule":"Continue actual operation checks, diagnose demonstrated failures and do not claim completion from build success."}
+  ],
+  "audit": {
+    "reuse":"Fully read original snapshots rehashed unchanged in this batch: main230turn/284message EOF SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333turn/375message EOF SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Root owns refreshed50active/3archive/69baseline coverage; latest changed fullscreen/height/input-diagnostic contracts and current production paths were reread. Indexed historical unavailable sources remain unavailable.",
+    "read":["docs/requirements/soop-vod-original-watch-20261015.json","docs/requirements/soop-vod-embed-height-20261015.json","docs/requirements/native-fullscreen-presentation-owner-20261015.json","docs/requirements/youtube-fullscreen-input-diagnostics-20261015.json","src-tauri/src/soop/original_vod_page.js","src-tauri/src/soop/original_vod.rs","src-tauri/src/platform_native_geometry.rs","src-tauri/src/platform_window_fullscreen.rs","src-tauri/src/diagnostics.rs","current official anonymous SOOP player bundle"],
+    "authority":"Root requested this narrow diagnostic contract after actual failure and normal app shutdown, then read it fully and approved the exact diagnostic-only scope before production editing. Root alone owns native build and actual UI. No account/profile/secret data or user media is read or changed."
+  },
+  "evidence": {
+    "actual":"Root isolated full-app QA2c2d using the06:53 owner/height/single-title build: original VOD209244227 reaches EOF; progress drag fromx800,y600 tox285,y600 correctly seeks9seconds to2seconds, chat also returns to2seconds, and playback resumes and ends. The visible original fullscreen control atx932,y626 failed three clicks after hover. Seeking must not be changed by this batch.",
+    "official":"Anonymous HTTPS200 current https://static.sooplive.com/asset/app/vodplayer/view/static/js/999.e7732e25.chunk.js contains the fullscreen button with type=button, className=btn_fullScreen_mode, id=btnExtendMode and onClickFullScreen. These exactly match the adapter's selector. Public source presence is not proof that the actual pointer hit this node.",
+    "local":"Adapter intercepts trusted original-button pointerdown and suppresses its click, forwarding only fullscreen enabled/inputKey. Native accepts exact source/label/epoch/UUID/type, then calls trusted_input(root,pane,key) and fullscreen. Both the physical gate reason and coordinator Result are currently discarded. If either rejects, the intercepted official action has no fallback and the user sees no response.",
+    "unknown":"Current evidence cannot distinguish no bridge message, release-before-message timing, native focus/region rejection, or presentation-owner rejection. Do not infer the YouTube Escape timing cause applies to SOOP mouse input. The Computer Use surface has no hold API, so no invented press-and-hold experiment is permitted."
+  },
+  "proposal": {
+    "scope":"SOOP VOD native fullscreen diagnostic observation only. Keep exact source admission, allowed input keys, current physical gate, original selector/event handling, fullscreen coordinator calls, epoch/grant checks and all return behavior unchanged.",
+    "input":"For a valid fullscreen envelope with one existing accepted action key, evaluate existing trusted_input_gate exactly once rather than its boolean wrapper. Record only fixed stage=soop_vod_fullscreen_input, fullscreen_key=mouse|f|escape, input_gate from the existing fixed enum and allowed boolean. No URL, titleNo, tokens, HWND, coordinates, typed keys, chat, payload, credential or arbitrary error string is logged.",
+    "result":"When that same already-allowed request has a typed enabled boolean and invokes fullscreen, retain its Result solely to record fixed stage=soop_vod_fullscreen_result and success boolean. Do not retry, change UI status, broaden authority or convert failure to success. Emit the input record before invocation so a missing result remains distinguishable from an input denial; no fabricated definitive cause follows from a missing record.",
+    "bound":"A SOOP-local per-bridge atomic budget admits at most32 recognized fullscreen attempts during its owned lifetime, at most64 fixed diagnostic rows. Unknown keys do not consume the budget and never log. A result record exists only for an attempt that obtained a diagnostic ticket; no independent unbounded result stream. This is not a timer or a general keyboard listener.",
+    "files":["src-tauri/src/soop/original_vod.rs narrow existing fullscreen bridge branch and SOOP-local diagnostic module declaration","new src-tauri/src/soop/original_vod_input_diagnostics.rs with pure budget/projection tests"],
+    "shared":"Reuse already-whitelisted fullscreen_key/input_gate/allowed/success and fixed diag_stage fields. No diagnostics.rs schema change and no import of YouTube-owned state or helper. No CHZZK, SOOP live, YouTube, authentication, capture, scheduling, media, seek or CSS change."
+  },
+  "implementationCheckpoint": "SOOP-local atomic budget and non-cloneable accepted-input result ticket implemented with3 pure regression tests. Existing fullscreen bridge evaluates the unchanged input gate once, then invokes the same original fullscreen operation once only under the same permission and typed-enabled conditions. Exact source admission, original JavaScript, seek, shared fields and all other provider paths are unchanged. No Cargo or UI run by this agent; root must execute the tests and actual failing click before concluding a cause.",
+  "acceptance": [
+    "Pure tests prove only mouse/F/Escape categories,32-attempt cap without wrap under repeated and parallel calls, independent bridge budgets, and result ticket bounded to its corresponding input observation.",
+    "Denied input never invokes fullscreen and never produces a success result; allowed requests preserve one original coordinator call, including typed-enabled validation and unchanged discarded error behavior.",
+    "Existing source/label/epoch/UUID tests and physical-intent policy remain unchanged; no raw source or error strings enter diagnostic calls.",
+    "Root compiles and repeats the actual visible original VOD button action. Inspect only the new whitelisted fixed fields. Classify the observed denial or coordinator failure before proposing any behavior repair.",
+    "If no corresponding record is observed, do not broaden selectors or bypass gates; inspect the exact current source/hit/bridge using a separately reviewed bounded read-only diagnostic.",
+    "No fullscreen success or complete SOOP playback claim follows from this instrumentation alone; actual seek success remains recorded separately and untouched."
+  ]
+}

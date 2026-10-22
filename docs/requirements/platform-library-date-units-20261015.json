@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-15",
+  "state": "approved display conversion implemented; regression and actual isolated saved-card date verified",
+  "requirements": ["R002", "R003", "R008", "R022"],
+  "originals": [
+    {"turnId": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "request": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."},
+    {"turnId": "01a11775-9d47-7280-9431-a4aac2761ccd", "item": 3, "rule": "Saved recordings show their profile image, channel name, broadcast name and file information."},
+    {"turnId": "01a13142-4c44-7560-bde6-d7e089fd9ea9", "rule": "New platforms preserve existing requests and established CHZZK-like workflows without state interference."},
+    {"turnId": "01a1399c-e7fb-7260-ac09-93bc94288f2f", "rule": "Copy current CHZZK UI/composition onto SOOP and YouTube, preserve earlier UI separately and audit unwanted cross-platform interference."}
+  ],
+  "audit": {
+    "coverage": "Reuse the fully read main230turn/284message and other333turn/375message EOF snapshots; independently verified SHA256 values remain85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Parent owns current active/archive/spec inventory refresh. Current implementation policy was read fully in the immediately preceding eligibility batch; applicable original card-identity and platform requests were reread verbatim for this date batch.",
+    "contracts": ["docs/requirements/implementation-policy.json", "docs/requirements/chzzk-ui-clone-20261014.json", "docs/requirements/platform-followup-20261014.json", "docs/requirements/soop-vod-replay-chat-visibility-20261015.json"],
+    "unavailable": ["Old durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified Atsumi analysis1/2", "Unavailable historical image-only attachment pixels"],
+    "authority": "Parent read this full contract and approved only the display seconds conversion plus listed tests/media fixture. Parent owns app/UI/build verification. Existing-media mutation, backend/IPC, screenshot units, chat timing and CHZZK changes remain excluded."
+  },
+  "observedFailure": "Parent actual isolated SOOP download completed1/1 and showed the9.9MB0:09 saved card, but its newly saved date displayed1970.01.22 02:46. This is actual UI failure, not inferred from a fixture.",
+  "rootCause": {
+    "native": "src-tauri/src/platform_media.rs now() uses SystemTime since UNIX_EPOCH.as_secs(). MediaJob.created_at and LibraryItem.completed_at are assigned from this same seconds value; encoded/live creation uses that function as well. Serde camelCase changes field names only, not units.",
+    "ui": "src/features/platforms/PlatformMediaLibrary.tsx savedDate constructs new Date(at), whose numeric input is milliseconds. A current roughly1.792billion-second timestamp becomes roughly20.74days after the epoch, matching the observed1970date.",
+    "testGap": "Existing library fixtures mostly use1 or1000 only and never assert the actual calendar date. PlatformLibraryCloneIsolation.test.tsx incorrectly uses1791800000000 for MediaLibraryItem.completedAt, masking the real seconds DTO. Its screenshot fixture correctly uses milliseconds and must remain unchanged."
+  },
+  "proposal": {
+    "files": ["src/features/platforms/PlatformMediaLibrary.tsx", "src/features/platforms/PlatformMediaLibrary.test.tsx", "src/features/platforms/PlatformLibraryCloneIsolation.test.tsx"],
+    "change": "Convert the proven Unix-seconds completedAt to milliseconds only at savedDate rendering (new Date(atSeconds *1000)), retaining the current Korean locale/local timezone/date format and privacy masking. Add actual-seconds date assertions for both providers and correct only the media fixture in isolation tests to seconds.",
+    "preserve": ["Native journal and DTO units", "createdAt values", "CompletedAt ordering/keyset pagination/grouping", "Existing saved files and metadata", "Screenshot createdAt milliseconds", "Chat/video timeline milliseconds", "Card sizes, selected-state geometry and actions", "The approved VOD replay-chat eligibility fix"],
+    "excluded": ["Backend/IPC/schema changes", "Timestamp migration or unit guessing heuristics", "CHZZK changes", "Avatar/thumbnail acquisition or card redesign", "User media scans/rewrites"]
+  },
+  "portraitReviewOnly": {
+    "existingDesign": "CHZZK UI clone and saved-video-channel-identity contracts intentionally use compact profile-first cards, not poster thumbnails. PlatformMediaLibrary does not call thumbnail(); existing test explicitly checks that. Do not restore posters without a separately evidenced design requirement.",
+    "loading": "SavedChannel requests a local archived portrait lazily near the viewport, retaining a fixed circular first-letter placeholder. It avoids remote fetch and leaves that fallback when no local proof exists or read fails.",
+    "currentProviderLimit": "platform_media.rs profile() returns None unless provider=soop AND kind=live. Therefore an ordinary SOOP VOD card does not currently have a delayed portrait waiting to load; it retains its first-letter fallback. This is a real limited acquisition scope, not proof that the newly requested VOD profile is already supported. Any VOD portrait preservation expansion needs separate approval and bounded original-source evidence."
+  },
+  "acceptance": [
+    "Known native Unix-seconds timestamp renders the corresponding2026 calendar date/time under the existing local Korean formatter for both SOOP and YouTube, not1970.",
+    "The test uses explicit native seconds and Date(timestamp*1000) expected formatting; no millisecond fixture or guessed threshold hides the mismatch.",
+    "Both ordinary video cards and expanded live-recording members use the corrected shared rendering path; raw completedAt ordering and group expansion remain unchanged.",
+    "Privacy mode still hides dates and identities. Screenshot millisecond fixtures/formatters remain unchanged.",
+    "Existing library/replay/clone-isolation regression tests and typecheck pass; parent confirms the same isolated saved card now shows the real date without redownload or metadata rewrite.",
+    "Actual corrected date, optional profile limitations and deliberate no-poster layout are reported separately; test success does not imply newly supported VOD portraits."
+  ],
+  "verification": {
+    "productionEdited": true,
+    "changes": "Only savedDate converts the proven seconds input to milliseconds. Added3date regression cases for both providers/privacy/expanded group, and corrected only the clone-isolation media fixture from milliseconds to native seconds; screenshot fixture remains unchanged.",
+    "tests": "PlatformMediaLibrary, PlatformReplayChat, PlatformLibraryCloneIsolation and PlatformScreenshotLibrary:4suites112passed0failed. Full typecheck exit0 in the normal environment; targeted git diff --check passed.",
+    "actualDesktop": "Parent confirmed the identical saved SOOP card now displays2026.10.15 05:35 in the isolated app. The existing video and metadata were not rewritten or redownloaded. The same saved video additionally passed a whole-file ffmpeg decode to null with exit0. This file validation is separate from the date rendering fix."
+  }
+}

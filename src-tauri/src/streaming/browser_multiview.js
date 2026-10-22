@@ -43,6 +43,7 @@
   let chatScale = 100;
   const clearChatLayout = () => {
     document.body?.removeAttribute("data-atsumi-chat-fit");
+    document.body?.removeAttribute("data-atsumi-chat-compact");
     document.body?.style.removeProperty("--atsumi-chat-zoom");
     for (const element of document.querySelectorAll("[data-atsumi-chat-layout]")) element.removeAttribute("data-atsumi-chat-layout");
     chatScaleOriginal?.removeAttribute("data-atsumi-chat-scale-original");
@@ -51,8 +52,14 @@
   const renderChatLayout = () => {
     if (!chat) return;
     if (!allowed() || !document.body) { clearChatLayout(); return; }
-    const roots = document.querySelectorAll("#aside-chatting._is_popup_chat_b8csn_13");
-    if (roots.length !== 1) { clearChatLayout(); return; }
+    // The official popup's CSS-module hash changes between site deployments.
+    // Keep the exact route/unique ID/type and popup-role token checks, without
+    // tying the layout repair to one obsolete build hash.
+    const roots = document.querySelectorAll("#aside-chatting");
+    if (roots.length !== 1 || roots[0].tagName !== "ASIDE" ||
+        ![...roots[0].classList].some(name => /^_is_popup_chat_[a-z0-9]+_\d+$/.test(name))) {
+      clearChatLayout(); return;
+    }
     const root = roots[0];
     if (!chatLayoutStyle) {
       chatLayoutStyle = document.createElement("style");
@@ -65,6 +72,19 @@
         body[data-atsumi-chat-fit] [data-atsumi-chat-scale-original] {display:none!important;}
         body[data-atsumi-chat-fit] .atsumi-chat-scale {position:absolute;right:40px;top:10px;display:flex;align-items:center;z-index:1001;}
         body[data-atsumi-chat-fit] .atsumi-chat-scale output {min-width:30px;text-align:center;}
+        /* Keep every original control reachable at the user's narrow width.
+           This changes layout only, never native input/menu ownership or zoom. */
+        body[data-atsumi-chat-compact] #aside-chatting > ._container_1e2su_2 {height:72px!important;}
+        body[data-atsumi-chat-compact] #aside-chatting > ._container_1e2su_2 > h2 {height:32px!important;padding-right:0!important;}
+        body[data-atsumi-chat-compact] [data-atsumi-mado-chat-heading] > .atsumi-mado-chat-channel {height:32px!important;width:calc(50% - 36px)!important;}
+        body[data-atsumi-chat-compact] #aside-chatting > ._container_1e2su_2 > ._wrapper_1e2su_28._menu_1e2su_36 {top:32px!important;}
+        body[data-atsumi-chat-compact] .atsumi-chat-scale {top:40px!important;}
+        body[data-atsumi-chat-compact] #aside-chatting > ._area_nu1j9_49 {padding:6px 8px!important;}
+        body[data-atsumi-chat-compact] #aside-chatting ._input_19u4u_59 {max-height:clamp(20px,calc(100dvh / var(--atsumi-chat-zoom,1) - 180px),60px)!important;}
+        body[data-atsumi-chat-compact] #aside-chatting ._tools_19u4u_125 {flex-wrap:wrap;align-items:flex-end;gap:6px;}
+        body[data-atsumi-chat-compact] #aside-chatting ._donation_19u4u_132 {flex:1 1 90px;min-width:0;flex-wrap:wrap;row-gap:4px;}
+        body[data-atsumi-chat-compact] #aside-chatting ._action_19u4u_140 {flex-basis:100%;padding-left:0;}
+        body[data-atsumi-chat-compact] #aside-chatting ._action_19u4u_140:before {display:none;}
       `;
       document.documentElement.appendChild(chatLayoutStyle);
     }
@@ -100,12 +120,20 @@
     }
     const factor = chatScale / 100;
     if (document.body.style.getPropertyValue("--atsumi-chat-zoom") !== String(factor)) document.body.style.setProperty("--atsumi-chat-zoom", String(factor));
+    // clientWidth is logical CSS width after the user's selected zoom. Thus
+    // 175px at 50% can retain the normal 350px layout instead of double-shrinking.
+    const compact = root.clientWidth > 0 && root.clientWidth < 300;
+    if (document.body.hasAttribute("data-atsumi-chat-compact") !== compact) document.body.toggleAttribute("data-atsumi-chat-compact", compact);
     if (chatScaleControl?.isConnected) {
       const nativeScale = Number.parseInt(chatScaleOriginal.querySelector("._scale_text_1e2su_46")?.textContent || "100", 10);
       const value = chatScaleControl.querySelector("output"), text = `${chatScale < 100 ? chatScale : nativeScale}%`;
       if (value.textContent !== text) value.textContent = text;
-      chatScaleControl.firstElementChild.disabled = chatScale <= 50;
-      chatScaleControl.lastElementChild.disabled = chatScale === 100 && chatScaleOriginal.lastElementChild.disabled;
+      const minusDisabled = chatScale <= 50;
+      const plusDisabled = chatScale === 100 && chatScaleOriginal.lastElementChild.disabled;
+      // Reassigning disabled=true emits a mutation even when unchanged. The
+      // header observer would otherwise repaint every 150ms at either limit.
+      if (chatScaleControl.firstElementChild.disabled !== minusDisabled) chatScaleControl.firstElementChild.disabled = minusDisabled;
+      if (chatScaleControl.lastElementChild.disabled !== plusDisabled) chatScaleControl.lastElementChild.disabled = plusDisabled;
     }
   };
   const clearChatHeader = () => {
@@ -386,8 +414,14 @@
     if (chat) {
       // Ignore high-volume message appends; only layout/header replacement and
       // the original scale label need another presentation pass.
+      const rootChanged = records.some(record => record.type === "attributes"
+        ? (record.attributeName === "class" || record.attributeName === "id") &&
+          (record.target === chatScaleRoot || record.target.id === "aside-chatting")
+        : record.type === "childList" && [...record.addedNodes, ...record.removedNodes].some(node =>
+          node.nodeType === 1 && (node.matches(LIVE_CHAT) || node.querySelector(LIVE_CHAT))));
       if (!chatScaleRoot?.isConnected || !chatScaleControl?.isConnected ||
           (chatContext && (!chatHeading?.isConnected || !chatLabel?.isConnected)) ||
+          rootChanged ||
           records.some(record => chatHeading?.parentElement?.contains(record.target) || chatScaleOriginal?.contains(record.target))) schedule();
       return;
     }
@@ -407,7 +441,7 @@
   const observe = () => {
     observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true,
       characterData: chat,
-      attributeFilter: ["class", "style", "hidden", "role", "aria-modal", "aria-label", "disabled"] });
+      attributeFilter: ["class", "style", "hidden", "role", "aria-modal", "aria-label", "disabled", ...(chat ? ["id"] : [])] });
     schedule();
   };
   if (document.documentElement) observe();

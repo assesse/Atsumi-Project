@@ -1,0 +1,41 @@
+{
+  "version": 6,
+  "delegation": "User unavailable and explicitly delegates most testing, information processing and implementation judgments. Continue ordinary scoped local/read-only QA without repeated questions; this does not waive tool prohibitions or authorize unrelated external/account/security changes.",
+  "usageStopCondition": {
+    "source": "Latest user clarification: Codex account PLAN remaining allowance AT OR BELOW 10%; finish only already in-progress work and pause goal, higher priority than completion",
+    "metric": "Minimum known PLAN remaining percentage across applicable account usage windows, not token counts or separately purchased credit balance; missing is unknown, never zero. No credit purchase/reset or limit change authorized.",
+    "lastObserved": { "localDate": "2026-10-20", "windowMinutes": 10080, "usedPercent": 80, "remainingPercent": 20 },
+    "action": "Recheck between substantial work batches. On remaining<=10, stop new assignments; finish/test/checkpoint the current bounded changes, ask subagents to wrap safely, record remaining work, then update_goal paused under this explicit conditional authorization."
+  },
+  "goalAmendment": {
+    "source": "Current user-edited goal received 2026-10-20 after the initial contract",
+    "original5": "X 자체의 기능과는 별개로, 이미지나 영상을 다운로드 할 수 있어야함. 추가로 특정 본문과 댓글의 특정 시점의 보관이 가능해야함. 실제로 웹에서 요청 페이지가 없어지더라도 보관된 페이지는 그대로 그때상태로 볼 수 있어야함.",
+    "original6": "안드로이드 X앱에서는 동영상을 전체보기하면, 아래로 스크롤시 다음 연관 동영상을 바로 볼 숭 있음. 이 기능을 가져와야함. 앱을 해킹하던, 리버스 엔지니어링을 하던, apk 구문 분석을 하던, 이 기능을 이식해야함.",
+    "originalDelegation": "난 당분간 PC 이용이 불가능하니 우선 1~6까지 전체 구현해주고, 6번을 제외한 나머지는 내 요청사항을 완벽하게 구현하기 전까지 계속 작업해. 나는 당분간 PC 사용불가하니까 대부분의 테스트나 정보처리 및 판단은 너에게 명시적으로 위임할게.",
+    "required": ["Official X home in feed", "Corresponding original page in preview", "Concurrent independent use", "No duplicated X/Atsumi navigation", "App-owned image/video download and durable point-in-time body/comment archive, viewable after source deletion", "Investigate and implement Android-style fullscreen related-video next scrolling where supported"],
+    "archiveContract": "A local archive must own its sanitized content and successfully acquired media, with capture time, source URL and explicit completeness/errors. Reopening may not depend on live X, authentication or remote assets. Never label a remote URL bookmark or screenshot-only capture a complete page archive. Preserve multiple captures without silently overwriting.",
+    "relatedVideoContract": "Compare available official X web/mobile public behavior first. Do not bypass login, age, paid, signature or security restrictions, extract application secrets, or misrepresent a local next-video queue as X's related recommendation service. Any unavailable Android-only behavior remains explicitly unverified/incomplete.",
+    "execution": "Continue independently; user unavailable. No new social mutations or authentication/security/privacy UI automation. Finish 1–5 with proportional actual evidence; item 6 has a separate feasibility/verification status."
+  },
+  "state": "Requirements 1–5 implemented and bounded actual native flows verified through PID26780/build58932: original home/following/likes/bookmarks, separate post/profile/replies, quote preservesleft, independent nativevideo/fullscreen, deduplicated navigation/composer removal, durable body/selectedcomment/image/localHLS archives and reproduced fullpagephoto save+reopen. Final scoped frontend213 passed, native archiveIPC31 passed, tsc passed. Explicit limits: populatedcommunities unverified because currentaccountempty;1912/1923x1080 notexact1920;noactualOSoffline or source-deletionexperiment;newphoto notyet retested across anotherprocessrestart. Item6 Androidrelatednextvideo remains separate incomplete and no universal impossibility is claimed. Detailed latest chronology in reportroot/x-official-native-20261020/checkpoint.json. Normative version6 requirements unchanged; this is status/allowance metadata update only.",
+  "original": "2026-10-20 current user: 지금하는거 중단하고 중간에 있었던 웹페이지를 피드란에 그대로 옮기는 쪽으로 가보자. 그걸 기준으로 우측 프리뷰도 해당 페이지를 직접 띄워서 보여주는 쪽으로.",
+  "supersedes": ["Visible clean-room X feed/detail requirement", "Current overnight custom X video/player/image reconstruction work"],
+  "retained": ["Active 2849 shared workspace and existing dirty changes", "Saved account profiles and user-operated authentication", "No reply/repost automation; no new social mutation QA", "One home tab strip, account-specific communities, leading likes/bookmarks icons", "Native X media, images, replies, quotes, reposts and profile navigation", "No app-wide composer or duplicated site navigation", "Feed position retained while post/profile opens in the independent right pane", "Context-menu external opening; account/privacy/generation/origin isolation", "Screenshot retention and no build/test-only completion claim"],
+  "coverage": {
+    "inventory": "Active50/pinned and archived3/EOF re-enumerated. Other main updated1792246235 and UIUX1792073766 match fully read snapshots; current conversation including explicit override read directly.",
+    "mainEOF": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherEOF": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "specifications": "Original69 inventory unchanged except previously read RELEASING F5A49125 revision; current179 contracts versus prior178 adds fully reread x-video-start-deadline. Policy, original official-surface contract, current completion/cleanroom and remaining-fixes records reread.",
+    "unavailable": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"]
+  },
+  "decisions": [
+    "React owns only the Atsumi shell, collection shortcuts and saved-account menu. The left native X home owns recommended/following and its actual joined community tabs; do not mirror a second strip.",
+    "Reuse XOfficialWorkspace/x_surface with current shared browser arguments and exact account directory. Never copy cookies or give remote X documents main IPC capabilities.",
+    "User-selected post/profile paths open a real X document in the right pane. X owns video playback, photo dialogs, reactions and reply content. Keep native media controls instead of the superseded custom XVideo overlay.",
+    "Presentation changes are narrowly scoped to redundant outer site chrome and unnecessary global composer. Do not fabricate content, read private runtime data, reproduce private API calls, or change source authentication/security settings.",
+    "Close or suspend old extracted readers before the official workspace starts, and reject late stale status/viewport responses. Privacy, account switches, overlays and normal shutdown must conceal/revoke native documents.",
+    "No automatic like/bookmark/repost/reply transmission. Actual QA uses viewing, media, navigation, window geometry and existing account collections only."
+  ],
+  "acceptance": ["Actual official feed and separate official detail render", "Single original home tab strip and actual communities", "Photos/video/native controls and scrolling", "Post/quote/repost/profile navigation preserves left position", "Likes/bookmarks and saved account menu retain current context", "1920x1080 and resize/Alt-Tab/overlay correctness", "Focused frontend/native tests and build; actual evidence recorded separately"],
+  "preflight": "2026-10-20 elevated read-only queue snapshot globalActive0; only atsumi process22484, no ffmpeg/streamlink/yt-dlp. Normal exit dialog independently reports no running work; final shutdown still pending at contract creation."
+}

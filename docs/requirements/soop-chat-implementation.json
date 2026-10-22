@@ -1,0 +1,29 @@
+{
+  "version":1,
+  "updatedAt":"2026-10-13",
+  "scope":["src-tauri/src/soop/chat.rs"],
+  "state":"implemented-native-and-public-receive-tested-caller-lifecycle-verification-pending",
+  "audit":"Complete 230 main turns,333 other unique turns,69 specification files previously read; source hashes/accessible inventory refreshed. Latest policy and media/SOOP contracts fully read. Original R013 text reread in both captured chat sources.",
+  "originals":[
+    {"turnId":"01a0862c-6058-7442-a6fe-38d660288ee2","rule":"Viewer+recorder must avoid duplicate video traffic and preserve chat; same request explicitly includes SOOP/YouTube"},
+    {"turnId":"01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe","rule":"Tab switches do not stop background media"},
+    {"turnId":"01a12a4c-724c-7d13-801d-3d92da01fe1e","rule":"Keep final media and chat after verified cleanup"},
+    {"path":"docs/LOCAL_DIAGNOSTICS_20261004.md","rule":"Never log chat text/names/URLs/tokens; bounded fixed diagnostic stages only"}
+  ],
+  "primaryEvidence":{
+    "source":"https://static.sooplive.com/asset/app/liveplayer/player/dist/LivePlayer.js?_=202610071400",
+    "metadata":"POST https://live.sooplive.com/afreeca/player_live_api.php (anonymous public only)",
+    "protocol":"Current official module9243: GS29/TAB,service4,bodyLength6,result2,UUID36;50-byte header;UTF8 form-feed-delimited body;read-only guest LOGIN1,JOIN2,KEEPALIVE0",
+    "actualProbe":".runtime/platform-verification/soop-chat-probe.ps1",
+    "actualResult":{"anonymous":true,"joined":true,"chatFrames":3,"chatService":5,"headerBytes":50,"fields":14,"bodyBytesExample":97,"otherCodes":[1,2,54,90,94],"videoRequests":0,"chatMessagesSent":0,"cookies":0,"error":null},
+    "qualification":"Public phonics1 channel,2026-10-13; no content or nickname retained in evidence. Earlier quiet music room joined but no messages in25seconds. Node default WebSocket failed; explicit Origin .NET succeeded. No general account/login/restricted-broadcast claim."
+  },
+  "design":["Only anonymous HTTPS public metadata and one read-only chat socket; no video requests or account cookies", "Strict official chat host/port and public destination; bounded frame/message/UTF8 decode", "Caller owns validated job file and128MiB total limit via sink; no arbitrary path or IPC command in this module", "Elapsed monotonic timestamp, public text/nickname/flags/messageUUID only; private whispers and user-list packets discarded", "Explicit reconnect gap/status records and bounded retries; stop promptly; broadcast-ID change ends capture rather than following a new show", "No authentication retry/bypass when server refuses anonymous access"],
+  "acceptance":[
+    {"check":"Parser handles Korean UTF8, exact byte lengths, bounds/truncation, no private-message ingestion","state":"passed-native","evidence":"6 unit tests passed,1 opt-in test ignored in regular run; latest integrated native library compiled"},
+    {"check":"Anonymous actual Rust socket joins and receives nonempty messages; only counts printed","state":"passed-public-native","evidence":"2026-10-13 direct integrated test binary public_guest_chat_smoke:connections1,messages3,gaps0,videoRequests0,chatMessagesSent0;0.59seconds;no cookies or user account accessed"},
+    {"check":"Cancellation, terminal restriction, changed broadcast, sink failure and bounded reconnect","state":"partially-verified","evidence":"Already-cancelled path makes zero requests; real callback stops after3messages; restriction/host parser fixtures passed; source audit confirms broadcast lock,static errors,max8consecutive retries. Long-running drop/sink-failure integration pending"},
+    {"check":"Caller creates/syncs chat JSONL and preserves it after media validation","state":"integrated-by-youtube-platform-end-to-end-pending","evidence":"platform_media/live.rs owns create_new file/128MiB limit and final sync; direct capture never owns media/files. No claim that a connection-only file means chat messages were preserved"}
+  ],
+  "limitations":["Text chat and connection gaps first; rich donation/mission/emoticon reproduction not verified","No replay UI verification or long-running disconnection test yet","No app launch, screen control or existing app shutdown in this batch"]
+}

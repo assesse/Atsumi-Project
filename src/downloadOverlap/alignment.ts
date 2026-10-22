@@ -7,6 +7,31 @@ export type DownloadOverlapAlignmentColumn = {
   pair?: DownloadOverlapPagePair;
 };
 
+export type DownloadOverlapPageVisibility = {
+  matched: boolean;
+  unique: boolean;
+  gap: boolean;
+};
+
+/** Filters the view, retaining the shared axis and original thumbnail indices. */
+export const filterDownloadOverlapAlignment = (
+  columns: readonly DownloadOverlapAlignmentColumn[],
+  visibility: DownloadOverlapPageVisibility,
+): {
+  column: DownloadOverlapAlignmentColumn;
+  sourceIndex: number;
+  existingVisible: boolean;
+  incomingVisible: boolean;
+}[] => columns.flatMap((column, sourceIndex) => {
+  const existingVisible = column.pair ? visibility.matched
+    : column.existingPage ? visibility.unique : visibility.gap;
+  const incomingVisible = column.pair ? visibility.matched
+    : column.incomingPage ? visibility.unique : visibility.gap;
+  return existingVisible || incomingVisible
+    ? [{ column, sourceIndex, existingVisible, incomingVisible }]
+    : [];
+});
+
 const appendUnmatched = (
   columns: DownloadOverlapAlignmentColumn[],
   existingStart: number,

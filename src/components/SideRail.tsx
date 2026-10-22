@@ -1,7 +1,8 @@
 import atsumiLogo from "../assets/atsumi.svg";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   workspaceRegistry,
+  hasCommunity,
   workspaces,
   type ContentSource,
   type WorkspaceNavigationItem,
@@ -10,6 +11,15 @@ import {
 import { FluentIcon } from "./FluentIcon";
 import { useCommonNavigation } from "../app/CommonNavigation";
 import { OPEN_FEEDBACK } from "../features/feedback/api";
+import { platformIcons } from "../app/platformIcons";
+
+function XNavigationIcon({view}:{view:string}) {
+  const path=view==="likes"?"M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.6a5.5 5.5 0 0 0 0-7.8Z"
+    :view==="bookmarks"?"M6 3h12v18l-6-4-6 4V3Z"
+    :view==="local"?"M3 4h5v16H3V4Zm7 0h5v16h-5V4Zm7 1 4 15"
+    :"m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9";
+  return <svg className="x-navigation-icon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={path}/></svg>;
+}
 
 type SideRailProps<Source extends ContentSource> = {
   view: WorkspaceViewId<Source>;
@@ -28,6 +38,7 @@ type SideRailProps<Source extends ContentSource> = {
   onOpenPersonalLibrary?: () => void;
   onOpenLiveChannels?: () => void;
   liveChannelsOpen?: boolean;
+  footer?: ReactNode;
 };
 
 export function SideRail<Source extends ContentSource>({
@@ -47,6 +58,7 @@ export function SideRail<Source extends ContentSource>({
   onOpenPersonalLibrary,
   onOpenLiveChannels,
   liveChannelsOpen = false,
+  footer,
 }: SideRailProps<Source>) {
   const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
   const common = useCommonNavigation();
@@ -86,7 +98,7 @@ export function SideRail<Source extends ContentSource>({
         <img src={atsumiLogo} alt="" />
         <div className="brand-copy">
           <strong>Atsumi</strong>
-          <span>{workspace.subtitle}</span>
+          <span className="brand-platform"><span>{workspace.label}</span></span>
         </div>
         <FluentIcon glyph="\uE70D" className="brand-chevron" />
       </button>
@@ -102,6 +114,7 @@ export function SideRail<Source extends ContentSource>({
               className={source === option.id ? "is-active" : ""}
               onClick={() => { onSourceChange(option.id); setSourceMenuOpen(false); }}
             >
+              <img className="platform-icon" src={platformIcons[option.id]} alt="" aria-hidden="true" />
               <strong>{option.label}</strong>
             </button>
           ))}
@@ -124,7 +137,7 @@ export function SideRail<Source extends ContentSource>({
               aria-controls={liveDisclosure && liveChannelsOpen ? "chzzk-connection-panel" : undefined}
               onClick={() => liveDisclosure ? onOpenLiveChannels?.() : onNavigate(item.view)}
             >
-              <FluentIcon glyph={item.icon} />
+              {source==="x"?<XNavigationIcon view={item.view}/>:<FluentIcon glyph={item.icon} />}
               <span className="nav-label">{item.label}</span>
               {count > 0 ? (
                 <span className={`nav-count${item.badgeWarning ? " warning" : ""}`}>{count}</span>
@@ -135,10 +148,11 @@ export function SideRail<Source extends ContentSource>({
           return liveDisclosure ? <div className="nav-live-item" key={item.view}>{navigation}</div> : navigation;
         })}
         {onOpenPersonalLibrary ? <button type="button" data-tour={`${source}-favorites`} className={`nav-item${personalLibraryOpen ? " is-active" : ""}`} aria-label="내 즐겨찾기" aria-current={personalLibraryOpen ? "page" : undefined} onClick={onOpenPersonalLibrary}><FluentIcon glyph="\uE8A4" /><span className="nav-label">내 즐겨찾기</span></button> : null}
-        {common && source !== "chzzk" ? <button type="button" data-tour="community-nav" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
+        {common && hasCommunity(source) ? <button type="button" data-tour="community-nav" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
       </nav>
 
       <div className="sidebar-foot">
+        {footer}
         <button type="button" className="nav-item" title="오류·의견 보내기" aria-label="오류·의견 보내기" onClick={() => window.dispatchEvent(new Event(OPEN_FEEDBACK))}><FluentIcon glyph="\uE8F2" /><span className="nav-label">오류·의견 보내기</span></button>
         {onPrivacyModeToggle ? <button
           type="button" className={`nav-item sidebar-privacy${privacyMode ? " is-active" : ""}`}

@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "state": "Scoped quote-relation and pinned/repost evidence fixes implemented. Four false-relation and six false-repost cases reproduced before repair. Final delegated follow-up passes all 37 projection and 43 workspace tests, with parent-owned UI integration and account-boundary fixes. Actual desktop classification remains parent-agent acceptance.",
+  "originals": [
+    "Current user goal: preview must distinguish replies from related posts; other users' reposts must remain visible and navigable.",
+    "Latest direct restriction: implement and test only like/bookmark account mutations, not sending replies or reposts.",
+    "docs/requirements/x-experience-completion-20261018.json: public rendered evidence only, uncertain posts stay unclassified; no private API, credentials, or relaxed source validation.",
+    "Parent actual CU QA: profile @lucian__03 rendered pinned socialContext '메인에 올림' as '재게시된 게시물 보기'; screenshot x-flow2-problem-pinned-repost.jpg retained by parent."
+  ],
+  "coverage": "Parent current full-source audit is recorded in x-experience-completion-20261018.json. This delegated review read AGENTS.md, that entire contract, implementation-policy.json including all truncated continuations, XCleanWorkspace, XImageViewer, XMedia, XWorkspace.css, active x_projection.js and its complete xCleanProjection.test.ts. No native/CU/network/account mutation is within this delegated scope.",
+  "defect": "relationOf scans all descendant replyingTo/marker text and headings, including nested quoted content. A main timeline card that quotes another user's reply can therefore be mislabeled as a reply itself; a quoted 'Discover more' heading can also falsely classify subsequent cards as related. Separately, every socialContext string was passed as repost even when it denotes a pin or comes from a nested quote.",
+  "decision": [
+    "Bind a reply marker to the current top-level article's own rendered content, excluding recognized nested quote containers and tweetText prose.",
+    "Use related-section headings only when rendered outside any tweet article, so quoted or authored text is not a section boundary.",
+    "Keep known main-post relation null, explicit reply/related facts, and the unknown fallback. Do not infer parentage from author identity, post prose, order alone, or a quote's relation.",
+    "Project repost context only when its own socialContext explicitly uses a recognized Korean, English or Japanese repost/retweet label. Pinned/liked/other context is not a repost. Parent's subsequent explicit integration decision preserves the X pin experience through a distinct pinned boolean and separate frontend pin icon/label, not an interactive repost control; parent owns native type/API/UI changes.",
+    "No social mutation, URL/security/session changes, native build, source-page interactions, or unrelated production edits."
+  ],
+  "verification": {
+    "focused": "XCleanWorkspace36 tests and xCleanProjection37 tests pass together after parent UI repairs. This includes old-account image teardown on signedOut, author return restoring both pane scroll positions, current image ESC/focus trapping, account-switch late profile isolation, append loading status without prepending skeletons, and static pin display without a repost button.",
+    "typecheck": "tools/run_frontend.ps1 typecheck passed after the final added regression tests.",
+    "layout": "5 tests pass across24 synthetic scenes at320x640,720x480,960x640,1920x1080. The720x480 long-duration full-screen control initially clipped; parent flex-wrap repair passes. Final720px and1920px video-control captures and320px image-viewer capture visually inspected.",
+    "artifacts": "C:/Users/JJH/.codex/visualizations/2026/09/10/01a089ee-56ed-7322-a750-c034423826c2/x-flow2-navigation-layout-final; original failing captures remain in x-flow2-navigation-layout, with an intermediate pass in x-flow2-navigation-layout-fixed.",
+    "qualification": "No real account, X endpoint, social action, native build or desktop input performed by this delegated review. Synthetic layout and unit tests do not complete the parent actual-app acceptance goal.",
+    "finalFollowup": {
+      "completedAt": "2026-10-18T22:23:30+09:00",
+      "scope": "Read-only production review of XCleanWorkspace, XImageViewer, XMedia, XVideo and videoFocus, with only delegated regression tests added. Parent owns the three resulting production repairs.",
+      "reproducedDefects": [
+        "A later projection with relation unknown, null or undefined demoted an already known reply during merge. Parent now preserves previous reply/related evidence unless a new explicit classification is present.",
+        "A linkless quote video poster could be opened as an image, but the viewer filtered its only observed image and displayed 0 / 0. Parent now includes observed quote-preview image media without granting that identityless quote native video, detail or mutation capabilities.",
+        "Resuming after status reported a different active account or generation temporarily retained the prior account's feed under the new account header. Parent now clears old views, detail, history, menus, search and pending actions at the identity boundary and hides/disables cards until readiness."
+      ],
+      "focused": "XCleanWorkspace 43 tests + xCleanProjection 37 tests: 80 passed after all three parent repairs. TypeScript typecheck passed.",
+      "layout": "The final layout suite was rerun after the identity-boundary repair: 5 tests passed, with all 24 synthetic scenes retained at 320x640, 720x480, 960x640 and 1920x1080.",
+      "remainingReviewFindings": "No additional concrete P1/P2 conflict found between the reviewed account/privacy fences, centralized video ownership, image modal and ESC handling. This does not replace actual desktop or source-session acceptance."
+    }
+  },
+  "acceptance": [
+    "A quote's explicit replyingTo marker cannot classify the enclosing post as reply.",
+    "A quote's textual reply marker cannot classify the enclosing post as reply.",
+    "An authored tweetText containing 'Replying to' remains unknown absent own metadata.",
+    "A real own reply marker remains reply even when a quote exists.",
+    "An in-article heading cannot classify later top-level posts as related; a genuine outer related heading still can.",
+    "Existing own identity, linked/linkless quote, community, profile route, and private API prohibition tests continue to pass.",
+    "Pinned/liked/unknown socialContext and quote-only repost context do not create a repost field; explicit own repost/retweet labels remain readable. Only explicit own pin labels set pinned=true; quoted pins do not pin the enclosing post.",
+    "Actual source classification in the desktop app is not established by synthetic fixtures."
+  ]
+}

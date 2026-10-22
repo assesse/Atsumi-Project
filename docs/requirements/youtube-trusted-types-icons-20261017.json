@@ -1,0 +1,33 @@
+{
+  "id": "youtube-trusted-types-icons-20261017",
+  "originals": ["01a14358-092b-7a50-a8a5-6211c15170e9 items3,4", "01a13ff3-158e-7822-a5fd-d391c9c9c048 items3,4", "01a13fdd-06e7-7570-b2a8-e1f1d54d357e item2", "active remaining verification goal"],
+  "audit": ".runtime/requirements-audit/20261017-youtube-trusted-types-icons.json",
+  "evidence": "Actual current debug YouTube watch DevTools reports TypeError at renderControls31:167: innerHTML requires TrustedHTML. Read-only DOM query: record and camera exist40x40/displayflex/opacity1 but childElementCount0/noSVG; close exists but noSVG/0x0/displaynone/opacity0. Source stores dataset.icon before the failing assignment, preventing retry on subsequent same-icon renders. This is a confirmed rendering failure, not a missing native bridge or a reason to weaken site policy.",
+  "planBeforeProductionEdit": [
+    "Replace the single YouTube owned-icon HTML sink with fixed createElementNS SVG/shape attributes and replaceChildren. Preserve exact existing four glyphs, dimensions, labels and colors.",
+    "Publish the icon cache marker only after construction/replacement succeeds. Missing SVG must not be accepted as a successfully painted cached icon.",
+    "Do not add a TrustedTypes policy, disable CSP/security, use HTML parsing, force official controls visible, change geometry/anchor selection speculatively, or alter native intent/auth/recording/media ownership.",
+    "Regression tests enforce a throwing owned-button innerHTML setter, then verify all3buttons/4glyphs, recording state update, idempotence, close permission and fade. Preserve all existing control intent and provider isolation checks.",
+    "Normal app exit before source edit; focused tests/typecheck/native rebuild; actual official YouTube DOM icons, preview/hover and close verification afterward. Unit/build success alone is incomplete."
+  ],
+  "files": ["src-tauri/src/youtube/original_page.js", "src/features/platforms/originalLiveControls.test.ts", "src/features/youtube/YouTubeOriginalControls.layout.test.ts"],
+  "sourceBefore": "4C235A60D432F8682DFBBCE9FF0CA63A1D2268F833D519827013DA0F36512C2F",
+  "state": "Both confirmed icon-rendering causes repaired and actual final debug app visually verified. Screenshot photo/edge/top-right dismiss/bottom-right cancel rendered; hover holds beyond3seconds, dismiss hides presentation while saved PNG remains hash-valid. Overall live verification goal remains incomplete.",
+  "paddingAddendum": {
+    "evidence": "Actual rebuilt PID8520 native YouTube DOM: record/camera each have1SVG,40x40buttons, white visible shapes. However official stylesheet adds SVG padding8px12px with content-box; each SVG outer rect24x40 has24pxhorizontal padding and zero content width. Shapes lie outside its clipped content viewport. Close SVG has0padding and paints normally. No remaining owned-icon TrustedHTML error observed in Console.",
+    "planBeforeEdit": "First verify a transient owned-SVG-only padding reset in DevTools; no account/media/bridge action. If confirmed, normalize only record/camera SVG padding/box sizing and24x24size/flex shrink. Preserve close40px clamp, button40pxslots, official anchor/order/fade, intent and recording state. No global official SVG styles or policy changes. Add regression using measured official padding/size rules plus real-browser layout if available. Root normal exit before native source edit/rebuild, then repeat actual app acceptance.",
+    "sourceBefore": "0901E6B9C8AF764497684467DD08E1CB65F33D04D1397FDF0F359C56EE8922C5"
+  },
+  "verification": {
+    "red": "Existing14controls tests passed while3new Trusted Types regressions reproduced the observed renderControls TypeError before the repair.",
+    "green": "Root3focused files51/51passed; agent2focused files36/36passed, typecheck and diff check passed. Tests verify fixed SVG namespaces/attributes,4glyphs, no owned-button HTML writes, commit/cache retry, idempotence, fade, disabled/current-epoch/trusted-input isolation.",
+    "sourceAfter": "42C77BABFED22EF19A07B5F9220C6602EF2E7DD84B7C6D0298CCF2F45E232A9A",
+    "testAfter": "364B7DD30FD60BCD573DC822986E9A6528E148191277E1CF61F9EC2DEB809810",
+    "layoutTestAfter": "D5CDC2D4849E8895A1C389993B12BD75A25A7701A1C00757BE21A1D6642511A4",
+    "finalTests": "6focused frontend files71/71 passed including real offline Chromium measured-cascade layout under Trusted Types. Existing native test harness14/14 intent tests passed without rebuild; these do not replace actual input acceptance. Typecheck passed. Installed Edge headless returned empty output even for about:blank; fixture defaults to installed Chrome, then Edge, with explicit environment override and missing-metrics diagnostic.",
+    "finalRepair": "Only small owned record/camera SVG padding is reset to0. No speculative size/flex/global style changes were needed. Independent review found no blockers; fixed4glyphs/cache/order/clamp/fade/input authority preserved.",
+    "actualFinal": "Normal23.99s native debug rebuild. Official YouTube live shows white record circle, camera and72px top-center X; controls vanish together after idle. Real camera capture shows480px photo preview with subtle edge, top-right dismiss X and lower-right cancel. A single camera-to-preview drag positioned the pointer in the preview during save, allowing hold beyond3seconds; clicking dismiss removed only presentation. Saved86c2c65d-f482-488b-b043-4be0ac7290e6 remains1920x1080/3698140bytes with matching SHA256. Tool roundtrip initially exceeded3second preview lifetime; those attempts were not counted as hover failures.",
+    "app": "Prior debug app normal-exit dialog showed only1test live viewer; no active recording/download. Normal close confirmed by fresh sky windows and host process absence. Existing hidden development launcher started11:29KST, no force termination or account/media changes.",
+    "remaining": "Actual pointer-leave grace, explicit undo (action-time deletion confirmation required), other-provider parity, viewer close survival and broader goal checks remain. S shortcut did not produce a verified saved image under automation; paused state is not a code-level rejection condition, and native key receipt/focus needs evidence before changing it. No claim all3providers or all remaining checks complete."
+  }
+}

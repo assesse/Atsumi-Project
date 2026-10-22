@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "state": "implemented and isolated regression checks passed; actual authenticated acceptance blocked by desktop tool initialization error",
+  "verification": ".runtime/requirements-audit/20261018-x-session-verification.json",
+  "originals": ["Atsumi 개발 메인 / 01a089ee-56ed-7322-a750-c034423826c2 / 2026-10-18 current five numbered requests", "Current reply: 종료"],
+  "coverage": ".runtime/requirements-audit/20261018-x-session-preedit.json",
+  "supersedes": ["Manual login-window closure", "Single shared X account only", "Manual-only More", "Visible 원문 buttons", "Provisional boxed X card styling"],
+  "decisions": [
+    "Keep left timeline/right preview and primary 추천/팔로잉/가입된 X 커뮤니티 order, signed-in likes/bookmarks, privacy and local keyboard scopes.",
+    "Detect official signed-in owner twice on a non-login X page, persist account metadata then close only the owned login window. Human authentication remains required; no credentials read/export, private API, challenge bypass or remote account mutation.",
+    "Independent WebView2 profile per added account; legacy profile retained in place. In-app selection changes active profile and immediately clears old account state/cancels workers; no browser interaction to switch. Switching can require network loading and expired sessions require user reauthentication. Do not promise zero network latency.",
+    "Add real avatar projection and bounded native image decoding; preserve exact HTTPS media allowlist, generation fences, concurrency/cache/size bounds and CSP. Classify image failures rather than pretending unverified network errors are fixed.",
+    "Likes accept selected exact own-profile route in addition to localized label. Community scope must be official joined timeline, not discover/suggested; use bounded rendered navigation evidence and primary region only. Unknown layouts remain explicit errors.",
+    "Near-end auto continuation: one pending request, one attempt per cursor, no background/privacy/error retry loop, retain cards/scroll/preview. Manual retry remains available.",
+    "X-like continuous timeline, avatar gutter, compact author line, rounded media and post-detail preview; no nonfunctional like/reply controls. External open only in bounded right-click/keyboard context menu.",
+    "No downloads/recordings/user DB mutations, commit/release, forced process stops or profile deletion. User confirmed app closed before source edits."
+  ],
+  "references": ["https://help.x.com/en/using-x/communities", "https://help.x.com/en/using-x/liking-posts-and-moments"],
+  "acceptance": ["Auto completion and manual cancel/failed persistence preserve old account", "Profile and popup isolation, account switch/restart/generation races", "Known-only media/avatar paths, bounded decode and errors", "Own likes and joined community context versus foreign/discovery", "Autoload threshold, no retry loop or stale work", "Context menu, keyboard, privacy, scroll and preview invariants", "1920x1080 and narrow synthetic layouts with captures retained", "Native and frontend tests/builds; real authenticated flows separately verified or explicitly blocked"]
+}

@@ -1,7 +1,7 @@
 import type { HTMLAttributes, MouseEventHandler } from "react";
 import type { Gallery } from "../core/types";
 import { useGalleryDownload } from "../state/downloadProgress";
-import { downloadStatus } from "../state/downloadStatus";
+import { downloadStatus, linkedGalleryId } from "../state/downloadStatus";
 import { GalleryStatusIcon } from "./GalleryStatusIcon";
 import "./GalleryProcessingBadge.css";
 
@@ -25,8 +25,10 @@ export function GalleryProcessingBadge({ gallery, overlay = false, duplicateCoun
   const download = useGalleryDownload(gallery.id, gallery.download);
   if (!download && !duplicateCount) return null;
   const duplicate = duplicateCount > 0 || (download?.state === "review_required" && download.reviewKind === "gallery_duplicate");
-  const state = duplicate ? "duplicate" : download!.state;
-  const status = duplicate ? { tone: "review", label: duplicateCount ? `중복 후보 ${duplicateCount}개` : "다운로드 판본 중복" } : downloadStatus[download!.state];
+  const target = linkedGalleryId(download);
+  const state = duplicate ? "duplicate" : target ? "linked" : download!.state;
+  const status = duplicate ? { tone: "review", label: duplicateCount ? `중복 후보 ${duplicateCount}개` : "다운로드 판본 중복" }
+    : target ? { tone: "muted", label: `새 번호 #${target}에 연결됨` } : downloadStatus[download!.state];
   const description = label ?? `${gallery.title}, ${status.label}`;
   const attributes = {
     className: `gallery-processing-badge tone-${status.tone}${overlay ? " is-overlay" : ""}`,

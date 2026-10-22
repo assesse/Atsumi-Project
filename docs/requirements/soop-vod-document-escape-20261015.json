@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "state": "root approved narrow adapter change; implemented and frozen after9 focused tests and frontend typecheck; actual exit pending",
+  "originalReferences": [
+    {"turn":"01a13a1f-f808-74a0-85c8-e90aa748a292","rule":"Original SOOP player/chat must actually function without CHZZK interference."},
+    {"turn":"01a13978-c469-7242-9ec2-f065de16743a","rule":"Original platform controls are the baseline; protect chat focus and Korean IME input."},
+    {"turn":"01a12c46-788a-7b00-9f69-e6f1d6f2d53e","rule":"Fullscreen exit, normal original controls, EOF replay and seeking remain usable."},
+    {"turn":"01a13bb3-d33b-7de0-867d-aeae3e3e8bec","rule":"Continue actual verification and fix demonstrated failures, not merely compile."}
+  ],
+  "audit": {
+    "reuse":"Fully read snapshots independently rehashed unchanged: main230/284EOF SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333/375EOF SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Reuse root current50active/3archive/69baseline inventory and explicit inaccessible-source index. Applicable originals were directly read in the prior fullscreen diagnostic batch. Current original_vod_page.js, native bridge, unchanged gate and new SOOP diagnostic contract were reread; latest YouTube strict Escape-receipt contract was also read as comparison, not imported behavior.",
+    "authority":"Root requested read-only diagnosis and a minimal evidenced Escape proposal, read the full contract and approved only this narrow adapter/test change. Agent does not operate UI, native app, authentication or Cargo."
+  },
+  "evidence": {
+    "actual":"Root latest isolatedQA3d586: visible SOOP VOD209244227 original fullscreen button atx932,y626 while playing entered3440x1440 fullscreen, with input_gate=accepted and result success=true. Same video reached EOF. Escape did nothing and emitted no new SOOP fullscreen diagnostic row. Intermittent prior mouse failure is not proven fixed by this single successful click.",
+    "source":"original_vod_page.js uses playerInput for both pointer and keydown. playerInput requires event.target.closest('#player'), even when handling Escape while the document already represents native fullscreen. A body/html focus target therefore cannot emit the exit request. Native focus validity is already checked separately on a delivered request.",
+    "reproduction":"A read-only Node VM executed the exact current production adapter, configured epoch1/video209244227/fullscreen=true, and sent otherwise identical trusted unmodified Escape fixtures. A body target with no #player ancestor emitted0 envelopes; a #player descendant emitted1 fullscreen envelope. No source files or app state were changed for this proof.",
+    "limits":"The actual EOF activeElement was not captured, so no claim that this actual event target was body or that this is its only cause. No diagnostic row alone cannot prove a particular rejection branch. This patch fixes a deterministic source-level inability to exit from the noneditable document, then root must recheck the real EOF case. The asynchronous physical KeyReleased issue remains possible and is not bypassed here."
+  },
+  "proposal": {
+    "files":["src-tauri/src/soop/original_vod_page.js","src/features/soop/soopOriginalVodPage.test.ts"],
+    "keyboard":"While this adapter's existing fullscreen flag is true, accept only Escape from the exact original VOD document's trusted noneditable, non-chat target, without requiring a #player ancestor. Keep defaultPrevented, repeat, modifier, isComposing and keyCode229 exclusions. Exclude the entire #chatting_area plus input, textarea, select, contenteditable, textbox, combobox and menu roles just as before. The existing bridge still requests only enabled=false and inputKeyEscape.",
+    "preserved":"Keep F and all pointer/click fullscreen input restricted to #player and their exact original button selector. Escape outside fullscreen remains untouched. Do not move focus, synthesize input, modify the site fullscreen API, change native physical intent or copy the YouTube receipt mechanism. Keep original EOF/replay/seek, UI/CSS, timers, metadata observer, accounts, media, scheduling and source/epoch admission unchanged.",
+    "native":"The existing native gate still requires correct source/label/epoch, real physical input and exact focused/visible owned pane before coordinator use. This only removes the extra JavaScript containment condition for an existing fullscreen exit request; it creates no new privileged command or authority.",
+    "isolation":"SOOP VOD adapter/tests only. Do not change SOOP LIVE, YouTube, CHZZK, shared input geometry, fullscreen coordinator, authentication or recording state."
+  },
+  "checkpoint": {
+    "implementation":"Only the original VOD adapter splits the existing safe target check from pointer containment. Existing fullscreen Escape accepts a trusted noneditable/non-chat document target; F/pointer keep their #player requirement. Native gate and receipt behavior are unchanged.",
+    "checks":"9 SOOP VOD adapter tests passed including2 new body/html Escape and all exclusion cases; full frontend typecheck passed. Initial sandbox Vitest cache rename EPERM ran0tests and was not a passing result; identical test command passed in the ordinary host environment. Root owns native rebuild and actual verification.",
+    "latestActualBefore":"Root reports another Escape after exact window reactivation still emitted no envelope. The original fullscreen EOF controls were partly clipped in a screenshot; that separate geometry issue is not repaired or claimed fixed here. Top-right Atsumi viewer close returned the main window to1266x813 and released its fullscreen capability. QA3d586 normally exited at07:12:54 with no jobs."
+  },
+  "acceptance": [
+    "Before/after fixture: fullscreen body/html trusted Escape emits enabled=false exactly once after repair, while ordinary body F and nonfullscreen Escape still emit nothing.",
+    "Existing #player Escape/F/pointer behavior remains unchanged; no document mutation or focus call is added.",
+    "Chat subtree, all editable/control exclusions, IME/composition229, repeated, modified, prevented and untrusted Escape emit nothing and are not prevented by the adapter.",
+    "Original control fixture and metadata/layout tests pass; existing SOOP seek/replay success is preserved.",
+    "Root rebuilds and repeats same-id original VOD playback to EOF in fullscreen, then presses Escape. New fixed diagnostics must show whether a request is delivered and which existing gate/result applies. A delivered but denied key is not completion and requires separately approved evidence-driven native work.",
+    "Actual successful fullscreen exit must preserve video/chat, return to the existing floating slot and allow replay/seek again. Intermittent mouse entry remains open unless repeated actual verification establishes it."
+  ]
+}

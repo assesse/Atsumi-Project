@@ -69,18 +69,21 @@ jobs:
       - name: Prepare pinned recording merge tools
         run: ./tools/prepare_media_tools.ps1
 
+      - name: Prepare pinned platform media tools
+        run: ./tools/prepare_platform_tools.ps1
+
       - name: Build signed installer and portable packages
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
-          pnpm exec tauri build --bundles nsis
-          if ($LASTEXITCODE -ne 0) { throw 'Tauri build failed' }
-          ./tools/prepare_portable.ps1
+          $receipt = ./tools/build_release.ps1
+          if (-not $receipt -or -not (Test-Path -LiteralPath $receipt -PathType Leaf)) { throw 'Successful build receipt missing' }
+          ./tools/prepare_portable.ps1 -BuildReceipt $receipt
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           pnpm exec tauri signer sign --password= ".runtime/portable-v$version/Atsumi-Portable.zip"
           if ($LASTEXITCODE -ne 0) { throw 'Portable signing failed' }
-          node tools/prepare_release.mjs
+          node tools/prepare_release.mjs $receipt
           if ($LASTEXITCODE -ne 0) { throw 'Release verification failed' }
 
       - name: Upload verified draft release
@@ -98,5 +101,5 @@ jobs:
             gh release create "v$version" --verify-tag --draft --title "Atsumi v$version" --notes-file "docs/releases/v$version.md" --repo "$env:GITHUB_REPOSITORY"
             if ($LASTEXITCODE -ne 0) { throw 'Draft creation failed' }
           }
-          gh release upload "v$version" ".runtime/release-v$version/Atsumi-Setup.exe" ".runtime/release-v$version/Atsumi-Portable.zip" ".runtime/release-v$version/latest.json" --clobber --repo "$env:GITHUB_REPOSITORY"
+          gh release upload "v$version" ".runtime/release-v$version/Atsumi-Setup.exe" ".runtime/release-v$version/Atsumi-Portable.zip" ".runtime/release-v$version/latest.json" ".runtime/release-v$version/build-receipt.json" --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw 'Draft upload failed' }

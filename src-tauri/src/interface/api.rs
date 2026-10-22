@@ -60,12 +60,20 @@ pub struct AppActiveRecordingsSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AppActiveLiveReceiversSnapshot {
+    pub active_count: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AppActiveWorkSnapshot {
     pub queried_at: String,
     pub work_set_fingerprint: String,
     pub downloads: AppActiveDownloadsSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recordings: Option<AppActiveRecordingsSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub live_receivers: Option<AppActiveLiveReceiversSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_find: Option<AppActiveAutoFindSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,6 +89,10 @@ impl AppActiveWorkSnapshot {
                 .recordings
                 .as_ref()
                 .is_some_and(|recordings| recordings.active_count > 0)
+            || self
+                .live_receivers
+                .as_ref()
+                .is_some_and(|receivers| receivers.active_count > 0)
             || self.auto_find.is_some()
             || self.duplicate_scan.is_some()
             || self.internal_duplicate_scan.is_some()
@@ -93,6 +105,11 @@ impl AppActiveWorkSnapshot {
                 self.recordings
                     .as_ref()
                     .map_or(0, |recordings| recordings.active_count),
+            )
+            .saturating_add(
+                self.live_receivers
+                    .as_ref()
+                    .map_or(0, |receivers| receivers.active_count),
             )
             .saturating_add(u64::from(self.auto_find.is_some()))
             .saturating_add(u64::from(self.duplicate_scan.is_some()))
@@ -424,6 +441,13 @@ impl From<RepositoryError> for ApiError {
                 action: Some(ApiAction::None),
                 details: None,
             },
+            RepositoryError::GalleryReplacementConflict(message) => Self {
+                code: "SOURCE_REPLACEMENT_REVIEW_REQUIRED".into(),
+                message: format!("새 번호 연결을 확인해야 합니다. 기존 파일과 작업은 보존했습니다: {message}"),
+                retryable: false,
+                action: Some(ApiAction::Review),
+                details: None,
+            },
             RepositoryError::Source(error) => source_error(error),
         }
     }
@@ -644,6 +668,29 @@ mod tests {
     }
 
     #[test]
+    fn live_receiver_snapshot_serializes_only_the_optional_public_count() {
+        let snapshot = AppActiveWorkSnapshot {
+            queried_at: "123".into(),
+            work_set_fingerprint: "receiver-fingerprint".into(),
+            downloads: AppActiveDownloadsSnapshot { active_count: 0 },
+            recordings: None,
+            live_receivers: Some(AppActiveLiveReceiversSnapshot { active_count: 1 }),
+            auto_find: None,
+            duplicate_scan: None,
+            internal_duplicate_scan: None,
+        };
+        assert_eq!(
+            serde_json::to_value(snapshot).unwrap(),
+            json!({
+                "queriedAt": "123",
+                "workSetFingerprint": "receiver-fingerprint",
+                "downloads": { "activeCount": 0 },
+                "liveReceivers": { "activeCount": 1 }
+            })
+        );
+    }
+
+    #[test]
     fn active_work_snapshot_serializes_the_nested_public_contract() {
         let result = AppQuitResult {
             accepted: false,
@@ -653,6 +700,7 @@ mod tests {
                 work_set_fingerprint: "work-set".into(),
                 downloads: AppActiveDownloadsSnapshot { active_count: 2 },
                 recordings: None,
+                live_receivers: None,
                 auto_find: Some(AppActiveAutoFindSnapshot {
                     run_id: "auto-run".into(),
                     completed_favorites: 1,

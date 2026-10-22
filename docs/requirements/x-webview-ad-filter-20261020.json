@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "state": "Implemented and verified in the current development app with the recorded scope qualifications. Final automated regression passed.",
+  "source": "Latest explicit request in Atsumi 개발 메인, 2026-10-20",
+  "original": "그럼 DNS 말고 AdGuard 확장 프로그램처럼 앱 내부 웹뷰에서 X 광고만 차단하는 방식으로 적용해줘. 일반 게시물이나 이미지, 영상 재생에 문제 생기지 않게 검토하고.",
+  "coverage": {
+    "inventory": "Active50/pinned and archived3 EOF refreshed. Other main1792473578 and UIUX1792073766 match previously fully read EOF snapshots; current direct conversation including this override read. Previously read unchanged specifications reused.",
+    "unchanged": {
+      "implementation-policy": "3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1",
+      "x-official-split-return": "7648801344FCBD0FCB8067B48B57D63F2E7E45DC9612BCC07B11590298BAFC05",
+      "x-native-actions-and-focus": "678D6E36BCED414A0D409516A0B89290C10128F84974D7A97BE87B0A6FC50364",
+      "x-sidebar-and-pane-back": "291E3A9B1B55F857A1CB91C123A06E517E4659719AFE1707879D35174FE92694"
+    },
+    "missing": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"],
+    "qualification": "Only accessible evidence is covered. Unreachable history is not claimed read."
+  },
+  "supersedes": [
+    "Earlier X ad research-only/not-enabled decision: user now explicitly authorizes local X WebView ad suppression.",
+    "DNS proposal: no DNS or OS/browser networking setting change."
+  ],
+  "retained": [
+    "Official X document owns timeline, ordinary posts, source image/video controls and preview.",
+    "Account/origin/generation/privacy guards and independent panes remain unchanged.",
+    "No likes, bookmarks, reposts, replies, follows, account preference changes or advertiser blocking without fresh approval.",
+    "No external extension installation, filter-list code execution, private API calls, React-state access, request/response rewriting, DNS changes or broad media-domain blocking.",
+    "No force termination, user-data deletion, commit, push, release or old-goal resumption."
+  ],
+  "evidence": [
+    "Actual current app baseline: native x.com/home contains explicit source 광고 labels on ryoran_ads and RPLAY_m entries. Adjacent ordinary ShimaAnimation/Raj videos, Redwoodinsight text, LidaMidorin quote/media and paid-partnership label remain visible. These are comparison evidence, not account-action targets.",
+    "Public extension source distinguishes outer placementTracking wrapping an entire article from inner placementTracking used by ordinary video players. A bare descendant placementTracking or whole-post Ad/광고 text match is unsafe.",
+    "AdGuard current BaseFilter has X response jsonprune rules; do not transplant that broader network mutation into this cosmetic-only implementation."
+  ],
+  "decisions": [
+    "Add a narrowly scoped document-start X ad helper to the existing native injection chain. Enable only inside a ready, verified X primary pane, not login/security/photo dialogs.",
+    "Classify explicit promoted metadata in DOM or an exclusive outer ad-placement marker in the same single-tweet cell plus that tweet's own metadata badge. The outer marker can be a sibling or ancestor, not necessarily a wrapper. Never use author/body/link advertising words, video-player inner tracking, paid partnerships or quoted/reposted content as evidence.",
+    "Use only reversible app-owned CSS markers; never remove/reparent React nodes or rewrite virtualized layout transforms. Re-evaluate and restore immediately when cells change identity/structure. Fail open on ambiguity.",
+    "Suppress playback only for a currently proven hidden ad-owned HTML media element, including race-time play checks. Preserve all ordinary media src, volume, mute and playback behavior; no iframe scripting or remote requests.",
+    "Bound/coalesce mutation work and avoid self-observer loops. Source attributes and child-list recycling must invalidate the decision.",
+    "App-owned save/context actions recheck blocked ownership at dispatch time. Content-warning automation skips hidden ads.",
+    "No new toolbar or verbose UI. This is X-only; other platforms and local immutable archives are unchanged.",
+    "Cosmetic suppression is not a claim of blocked tracking/network downloads, complete ad coverage or absence of platform sanctions."
+  ],
+  "diagnosticFollowup": {
+    "evidence": "Actual debug app PID26620 initially hid one ad, then restored it: readiness observations1792508729932 (articles9, hidden1) and1792508730217 (articles8, ambiguous2, hidden0). Visible source ads remained. The exact ambiguity cause is not established; multiple markers are only a hypothesis.",
+    "decision": "Keep classification unchanged until measured. Add closed numeric counters multiplePlacements, sharedPlacements, structureLimited and metadataMissing to the debug-only adShape. Each is clamped0..160; reject unknown fields; never record source text, HTML, URLs or identity.",
+    "acceptance": "Synthetic tests independently distinguish these causes without changing filtering behavior. Native serialization accepts only bounded numbers/booleans. Actual restart and observation require a safe idle app and no overlapping user input.",
+    "evidenceCaution": "02-first-filter-incomplete-0.jpg captured an occluding foreground window and is not Atsumi visual evidence. Its accompanying targeted accessibility tree reports source ad labels; a fresh unobscured capture remains necessary."
+  },
+  "singleCellFollowup": {
+    "evidence": "Fresh native UI shows Business and AzurPromiliaKR with explicit own header 광고 badges. Debug observation1792509247289: multiplePlacements2, sharedPlacements0, structureLimited0, ambiguous2, hidden0; prior1792509247043 hidden1. Multiple outer tracking markers, not node/depth limits or shared posts, are established as the restoration trigger.",
+    "decision": "Allow2..16 external placement markers only when all are connected inside the same nearest cellInnerDiv, that cell contains exactly the current single tweet, every marker belongs to that cell and none is inside an article. Reject markers outside that cell, nested different cells, any shared post scope or structural bound violation. Require the independent own-header advertising badge. Hide only the exclusive cell; preserve ordinary inner-video tracking.",
+    "acceptance": "Cover multiple siblings and ancestor+sibling markers, marker lifecycle and recycled cells, missing badges, body/name advertising words, paid partnerships, shared/nested/multi-post placements, ordinary media and stale actions. Repeat actual ad stability, normal video/image and photo-return checks."
+  },
+  "verification": {
+    "implementation": "Independent review accepted same-cell admission and unchanged single-marker/media/observer boundaries. No unrelated source changes, DNS change, social action, release or force termination.",
+    "focused": "70 ad-helper tests;276 combined ad-helper/surface/action tests passed. Final full X frontend regression1008/1008 across23files passed; full frontend typecheck passed.",
+    "native": "Closed numeric diagnostic DTO regression and final full X native regression164/164 passed.",
+    "build": "Debug app built with devUrl14201. SHA256063F59E183E79CD0A6205A812C2EFD1C6936C6630FCD896DA9343595DB7BA2A5.",
+    "actual": [
+      "PID6756 readiness1792509475725 hidden2, then1792509475949 multiplePlacements2/hidden2/ambiguous0: advertisements remain suppressed after hydration.",
+      "Ordinary image opens and Escape returns to same first post. Source new-post banner appeared independently.",
+      "Ordinary feed video visibly progresses0:34→0:22; preview video progresses; quoted video plays after its own play button. Source controls remain.",
+      "Preview replies load; closing the preview retains feed. Scrolling loads more ordinary text, images, quoted posts and videos.",
+      "No likes/bookmarks/reposts/replies/follows sent. App normal exit dialog reported no active work before each restart."
+    ],
+    "evidence": "Local visualization x-ad-filter-20261020/검증결과.txt and screenshots01,03..11. Occluded02 image excluded as visual proof.",
+    "limits": [
+      "No actual advertisement occurred in the inspected preview/reply thread; real ad suppression there is not claimed verified.",
+      "Not a guarantee for all accounts, languages, advertising formats or long-running sessions. Ambiguous layouts fail open.",
+      "Cosmetic-only; no claim of network/tracker blocking or zero platform-sanction risk.",
+      "Prior unrelated archive-avatar and exact YouTube-audio validation remain outside this task."
+    ]
+  },
+  "acceptance": [
+    "Explicit ads hidden in actual feed and any supported preview/reply placement; ordinary neighboring text/image/video remain.",
+    "Inner video tracking, advertisement words in normal text/names/quotes, paid partnerships and ambiguous multi-post containers remain unfiltered.",
+    "Ad-to-normal and normal-to-ad recycled DOM changes restore/reapply correctly; disconnected nodes are released; no endless observer or timer loop.",
+    "Normal feed/preview video playback and images work, photo dialogs and original interaction remain; hidden ad video cannot claim playback/audio.",
+    "Scrolling/additional load, route changes and pane visibility remain functional without stale hiding.",
+    "Automated tests, typecheck/native build, actual UI comparison and any unverified coverage are recorded separately."
+  ]
+}

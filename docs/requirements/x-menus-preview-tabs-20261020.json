@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "resume20261020": {
+    "source": "Latest direct user instruction: 이제 검토 다시 진행해줘. 중단했던 부분부터 이어서 하고, 좋아요나 북마크는 승인 없이 누르지 마.",
+    "scope": "Resume the already approved quote-avatar, current-photo and local archive menu repair/QA. Never send or undo likes, bookmarks, reposts, replies or follows without separate approval. Preserve existing archives and all shared edits.",
+    "audit": "Active50 refreshed; other main1792473578 and UIUX1792073766 remain unchanged with full EOF coverage. Current direct history read. Previously unavailable durable01a03f16, unidentified analysis1/2 and historical missing attachment pixels remain unavailable.",
+    "restart": "Read-only SQLite mode=ro/query_only1 and recording/merge inspection found no active work; native exit dialog independently showed 진행 중인 작업 없음. Normal exit clicked and elevated process inventory confirmed no atsumi.exe before frontend edits.",
+    "nativeCheck": "cargo test --lib x_feed:: --locked --no-default-features with devUrl14201: 163 passed, 0 failed; includes the three immutable-source-opener tests and expanded closed quote diagnostics. First compile attempt hit a local JSON macro recursion limit; resolved with explicit bounded Map insertion, not a global recursion-limit increase. Actual app acceptance remains pending."
+  },
+  "approvedRepairResume": {
+    "source": "Latest user reply call_d522422b30f041678fcfc197db076807 authorizes non-social repair/retest after the previous permission block; likes/bookmarks and other account mutations always require separate approval.",
+    "nativeOpenerPlan": "x_archive_open_source(window, archiveId, postId): trusted main origin, bounded canonical UUID/numeric IDs, existing archive::read hash/schema/path verification, exactly one stored post with matching canonical HTTPS x.com status identity. Open only that observed URL through the existing native shell pattern; no frontend URL, live cache, remote lookup or archive mutation. Register the command and test malformed/foreign/ambiguous identities without launching a browser.",
+    "frontendPlan": "One black portal menu for saved post body/reader/media target, bound to current immutable record/post/API and connected source node; one external-open action. Close on outside pointer, Escape, scroll/resize/blur, record/lifecycle/privacy changes. Preserve current click, media/player, navigation and keyboard behavior.",
+    "integration": "Native-only preparation is safe while the standalone app remains open because Vite ignores src-tauri and no native watcher runs. Frontend production and binary replacement wait for normal Atsumi exit. Root owns native opener/registration, library agent owns quote diagnostic, portrait agent owns photo actions; coordinate shared capture edits sequentially."
+  },
+  "localArchiveBlankContextFallback": {
+    "source": "Same original black-menu consistency request and approvedRepairResume; follow-up source review found that post-target handlers alone leave local archive headers, empty lists, reader information and blank margins eligible for the default grey WebView2 menu.",
+    "plan": "Prevent only the default context menu at the local library section and reader region. Do not create a source action or choose a post for blank/header targets. Existing exact post/media handlers stop propagation and retain their black menu, identity checks and normal activation. Do not install an application-wide suppressor.",
+    "acceptance": "Regressions cover headers, empty lists, empty preview, reader information/margins, dismissing an existing menu by a blank-area right-click, retained exact-post actions, and an unrelated outside element whose default context menu is not prevented. Root still verifies actual local UI separately."
+  },
+  "latestReconciliation": {
+    "source": "User call_18a2a90e0a39482db3562d79861d66d2 renewed all remaining relevant QA and requested obsolete checks and old goal removed.",
+    "retiredFromActiveChecklist": [
+      "Old clean-room XVideo/HLS acquisition, hidden-reader detail preparation, custom reaction latency and preview cropping checks: superseded by official native X documents, not declared repaired.",
+      "Repeated search for one historical Tibo video: superseded by the user's three arbitrary video sample request.",
+      "Single-preview-only header and replacement checks: superseded by retained multiple native tabs.",
+      "Repeat user-operated login cancellation, automatic login-window close, account switching and privacy confirmation: already directly confirmed by the user.",
+      "Exhaustive every-HLS-variant, cache-erasure and artificial poster-only source hunting: retain bounded synthetic limitations, do not destroy user data or make open-ended sample searching a completion condition."
+    ],
+    "resolvedAfterRepair": [
+      "Current linkless quoted navigation: the 22:03:32 build passed actual Yomang quote activation with the left /home rendered feed, recommendation tabs and scroll retained; repeat activation reused the existing right tab without restarting its video. Historical Nokia failure remains recorded below; this is a same-route-class acceptance, not a replay of that exact Nokia post."
+    ],
+    "retainedOutstanding": [
+      "Local saved-body/preview context menus still fall through to the default WebView2 grey menu; actual evidence25 is a failure despite its filename.",
+      "Current full-page photo download control/context action missing; exact active-photo proof and key behavior after save-button focus.",
+      "Intermittent photo black paint: evidence retained, cause unproven, no speculative driver/CSS override.",
+      "Saved quote avatar missing despite source avatar; actual recapture required after any repair.",
+      "Original reported YouTube reply audible output requires the unavailable source URL and non-muted endpoint confirmation; never substitute another video as pass."
+    ],
+    "separateInactiveScope": "Android-style related-video swiping remains separate unfinished work, not an active completion gate for this native menu/tab/photo/archive QA. Historical request retained.",
+    "goal": "Existing goal already PAUSED. Exposed tools have no delete/clear operation. User informed that /goal clear removes it. No false completion or internal-state manipulation.",
+    "planAllowance": "Latest read-only account check: weekly used42%, remaining58%; no limit reset or credit purchase."
+  },
+  "state": "implemented and running with known failures; online menus/tabs and bounded linkless Yomang quote recovery passed scoped actual checks; local archive menus, current-photo saving, quote avatar and audio remain incomplete",
+  "source": "Current direct user request and attached context-menu screenshots 068294e4-b918-4e8d-a374-b3c9630a569c / 5c6ac047-e38a-4b9c-b40e-250676460839",
+  "original": [
+    "우클릭을 어디에 찍냐에 따라서 뜨는 창이 다른거 같음. UI도 다르고, 통일성도 없어. 검은색쪽으로 맞춰줘.",
+    "앱의 다른곳을 찍어서 저걸 없애고 싶어도 그게 안되네. 그 페이지의 내부어딘가를 다시 클릭해야 사라져서 불편한데 어떻게 하면 좋을까?",
+    "피드에서 재게시물을 누르면 피드창에서 열리는데, 이러지말고 프리뷰쪽에서 열리게 해줘. 피드창은 가급적이면 피드 원형을 유지하게.",
+    "프리뷰쪽에 미리보기 문구 탭과 X 버튼이 있는 헤더를 넣을거면 이왕이면 다중탭도 구현해줘."
+  ],
+  "coverage": {
+    "inventory": "Active50/pinned inventory refreshed and other Atsumi main metadata1792473578 / UIUX1792073766 unchanged from fully read EOF snapshots. Archived3 EOF refreshed, no new Atsumi source. Current direct history and latest four requests read. Previously read unchanged specifications retained; current native-actions and sidebar/back and official-split contracts reread.",
+    "policySha256": "3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1",
+    "missing": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"],
+    "qualification": "Accessible-source audit, not a claim to have read unavailable sources. Broader paused goal and previous unverified photo/audio cases are not silently marked complete."
+  },
+  "preflight": {
+    "permission": "Current answer call_4cdc52d867a443de9944f289293ec4cd: 지금 재시작·화면 검증 가능",
+    "safety": "SQLite mode=ro/query_only1: no active download or listed postprocessing. Browser recordings11stopped3interrupted, no ffmpeg/streamlink/yt-dlp processes. Native quit dialog independently reported 진행 중인 작업 없음. Normal Atsumi exit completed; process absent before code integration.",
+    "actualBaseline": "A source role-link quoted post inside reposted Kuuhaku feed item navigated left from /home to /godkillerbard/status/2112281851213803675 while right preview remained empty. No social reaction sent.",
+    "evidence": "reportroot/x-menu-tabs-20261020/01-before-quote-navigates-feed-0.jpg"
+  },
+  "verification": {
+    "localArchiveMenuFollowup": {
+      "originalRequirement": "Original request1: all Atsumi-owned context menus use the same black treatment; original request2: another app-shell location dismisses them. Acceptance explicitly includes local archives.",
+      "actualFailure": "Evidence25-local-archive-black-menu-0.jpg and -1.jpg show the default grey WebView2 Back/Reload/Save/Print/Inspect menu on saved post body, not the intended black menu. Root dismissed it with Escape. Existing live/native menu passes do not cover this local-reader omission.",
+      "cause": "ArchivePost/Reader has no contextmenu handler. Existing live x_post_open resolves session.data.posts and cannot safely open an immutable archive item absent from that cache.",
+      "plan": "Add a narrowly scoped local post context menu with the same black styling and one explicit external-open action. Resolve the exact immutable archive/post identity through the archive API, not arbitrary URLs or the live post cache. Dismiss on outside pointer, Escape, scroll, resize and lifecycle/record changes; fence stale entries. Preserve normal local post/profile/media/preview activation, image keys, inert reactions and local-only media rendering. No capture diagnostics, saved archives or account state changes.",
+      "acceptance": "Targeted tests cover saved timeline and right reader, exact archive/post selection, no navigation or capture on right-click, stale/unmounted/privacy refusal, keyboard dismissal/focus, viewport clamping and existing media/preview interactions. Root will separately repeat actual saved-body/preview UI acceptance; automated tests alone do not close this failure.",
+      "status": "Implementation held: source remains unchanged. A safe immutable archive/post opener is required alongside the frontend menu; do not route through the live cache or arbitrary URLs. Evidence26 separately reproduces the default grey menu inside the right local reader."
+    },
+    "build": "Debug build 2026-10-20 22:03:32.1727735 KST, 97895936 bytes, SHA256 7E3BBF6CF9518128F73F6ABFB462CBC204FCF6CA0AFB8252C74B261AFC9A6F18, devUrl14201. Running PID1800 was observed at launch. Post-repair quote acceptance evidence19/20/21.",
+    "historicalBuild": "Pre-router-repair debug build 2026-10-20 21:31:16 KST, devUrl explicitly14201; SHA256 BE3162315630E11BECE8663B54DE4C1BB8705C2AFE4BA9FF939F41735DB68226. Normal launch PID8248; no process termination, DB edits, account reactions or data deletion.",
+    "automated": "Current post-repair snapshot: whole X frontend862/862 across22 files (start22:02:22 KST,96.92s), strict typecheck passed, native x_feed::surface::tests41/41 and debug build passed. Historical pre-router-repair X frontend849/849, native X158/158 plus hidden-root1/1 and36 synthetic layouts remain historical, not added to the current suite count.",
+    "finalRecheck": {
+      "sourceInventory": "Active50 refreshed after current checks: other main1792473578 and UIUX1792073766 unchanged from fully read EOF snapshots; current direct history includes the renewed all-relevant-QA permission. No newly unavailable host/source was reported.",
+      "photo": "Evidence22/23/24: /ObviousRises/status/2111895089261736025/photo/1 and /photo/2 render; D/A/Right/Left change the visible photo and Escape returns to likes while retaining the right preview. Download control remains absent. Four debug shape observations show candidates2, exactPaint2, directlyShown0, opacityZero2, routeOrdinal1, one list/carousel with2 items, unique ordinal candidate1, counter agrees with route and size, fullyClipped1 and unclipped1. An offscreen clipped neighbouring slide is still counted. No candidate-selection or capture validation was relaxed.",
+      "archive": "Existing Peng saved article and its right local reader both show the grey default WebView2 menu (evidence25/26); source inspection confirms missing contextmenu handlers. Existing quoted avatar still falls back to P. No saved record was changed or deleted.",
+      "permissionBlock": "The quote-avatar diagnostic apply_patch was rejected by auto-review for conflicting with a read-only audit restriction. Its3 source/test hashes stayed unchanged. Root requested explicit diagnostic/repair/retest permission asynchronously and did not retry, use an indirect writer or alter archive capture. Local-menu backend expansion was also held. Current status is not all repaired or all verified.",
+      "limitations": "Intermittent black photo is not reproduced by this sample and not declared fixed; exact original YouTube reply sound remains unverified; physical Ctrl+left is still not replayable with the supported UI input API. Current source-router transition briefly shows a composer before the settled feed is restored."
+    },
+    "actualPassed": [
+      "Plain profile/link and post-action context menus share black background, border, spacing and typography.",
+      "Link menu dismissed by blank main sidebar; post menu dismissed by right shell and independently by opposite native preview document. Settled UIA confirms menu removed; no synthetic content click or social action.",
+      "Normal post text and profile activation open right native previews while left home feed and scroll remain in place.",
+      "Opened three distinct post/profile tabs, selected first tab and retained its exact scrolled reply position. Inactive close retained active tab; active close selected neighbour; final close returned empty preview with feed retained.",
+      "Renewed actual QA: right native menu dismissed by left native page; exact Nokia target reopened without adding a duplicate tab. Photo context menu uses matching black style. Escape first closes its menu, then the last-focused left photo back to likes while both right tabs remain.",
+      "Post-repair 22:03:32 build: activating the linkless Yomang quote inside parent /yomang616/status/2112516658367721535 opens /yomang616/status/2112032810529849488 in the right preview. Settled evidence19/20 preserves the actual original left /home post, recommendation tabs and scroll, not just its URL.",
+      "Activating that same Yomang quote a second time reuses the single existing preview tab. Right video playback continues and the original left feed remains in place in evidence21."
+    ],
+    "actualPending": [
+      "Physical Ctrl+left background gesture not replayed: current Computer Use API has no modifier+click/held-key operation. Synthetic actual modifier-event and native background-selection tests passed; do not label physical gesture actually tested.",
+      "Current-photo menu has no download action on ObviousRises2111895089261736025/photo/1 as well as earlier headbutt_bang sample; separate photo diagnosis retained."
+    ],
+    "interruption": "User renewed permission in call_18a2a90e0a39482db3562d79861d66d2: all remaining relevant verification authorized, obsolete checks to retire, old paused goal deletion requested. No goal deletion tool exists; user advised /goal clear; goal remains paused.",
+    "historicalFailure": "Pre-repair 2026-10-20 acceptance failed: actual linkless Nokia quote from /nokia_yan/status/2112396844714049622 to /nokia_yan/status/2104174746644427175 opened the correct new preview but source React DOM changed to detail/comments while source URL stayed /home. Baseline13 and failure14 are preserved as failure evidence. The later bounded repair passed the same linkless-quote route class with Yomang; the exact historical Nokia post was not replayed in that post-repair acceptance.",
+    "routingRepairAcceptance": {
+      "buildTimeKst": "2026-10-20 22:03:32",
+      "parentPath": "/yomang616/status/2112516658367721535",
+      "quotedTargetPath": "/yomang616/status/2112032810529849488",
+      "sourceBeforeAndSettledAfter": "The left URL remains /home and the rendered first original post, recommendation tabs and scroll position match evidence19 and20.",
+      "repeatActivation": "A second click selects/reuses the one existing target tab rather than adding a duplicate; video playback keeps advancing and the original left feed remains visible in evidence21.",
+      "transientObservation": "One intermediate frame showed a composer before it disappeared. Settled acceptance confirms restoration; this is not a claim that the transition is visually frame-perfect.",
+      "qualification": "Actual same-route-class Yomang test after repair, not an exact Nokia retest or proof of every source router shape. Physical Ctrl+left-click remains unverified as stated in actualPending.",
+      "evidence": [
+        "19-built-quote-baseline-0.jpg",
+        "19-built-quote-baseline.txt",
+        "20-built-quote-feed-preserved-0.jpg",
+        "20-built-quote-feed-preserved.txt",
+        "21-quote-exact-tab-reused-0.jpg",
+        "21-quote-exact-tab-reused.txt"
+      ]
+    },
+    "evidenceDirectory": "C:/Users/JJH/.codex/visualizations/2026/09/10/01a089ee-56ed-7322-a750-c034423826c2/x-menu-tabs-20261020",
+    "evidenceNotes": "02/04 black menus;03/05 shell dismissal;07 immediate cross-pane snapshot may have stale UIA,08 settled confirms removal;10 stored scroll;11 three-tab return;12 last close;13/14 historical Nokia source-DOM divergence;19 Yomang baseline,20 settled source-feed preservation after repaired quote routing,21 exact-target tab reuse with continuing video. Immediate native captures can transiently omit painted content; settled captures used for acceptance. The observed intermediate composer frame is retained as a transition limitation."
+  },
+  "supersedes": ["Single native preview slot and close-only preview header"],
+  "retained": ["Official native X pages and account/session isolation", "Fixed feedback/privacy/settings footer", "Independent left feed state and original media controls", "Last-focused-pane Escape with native photo/dialog priority", "No per-tab close confirmation", "No new social/account/security writes", "Shared dirty workspace and existing diagnostics"],
+  "decisions": [
+    "Nokia actual failure repair: after a proved linkless source activation requests history navigation, retain original full URL and opaque history.state only in memory, history/input/visibility revisions and bounded source feed anchors. After the source handler returns, dispatch one standard popstate to reconcile the router with unchanged browser location. Restore the original scroll once only if actual original feed content and same scroll container reappear. Any new trusted input, unrelated history change, account/visibility epoch change or deadline expiry cancels recovery. No private React state, guessed URLs, thrown sentinel, click synthesis, reload/back loop or repeated retries. Actual visible acceptance remains mandatory.",
+    "All Atsumi-owned native context menus share black background, typography, spacing, border, hover, focus and dismissal behavior. Available actions remain truthful to the clicked target; do not invent unavailable download actions.",
+    "Dismiss menus in all X panes on a new app-shell pointer action, another native pane's trusted focus/pointer action, view/account changes and Escape. Closing must not synthesize page clicks, steal focus or trigger source reactions.",
+    "Route observed feed post/quote/repost target activation to the right preview while retaining original feed position. Preserve in-place source media/photo, native buttons, modifiers and genuine source controls.",
+    "Preview tabs retain independent native documents and scroll/navigation state. Opening a different post/profile adds/selects its tab; opening an already retained exact target selects it. Explicit selection and per-tab close are generation-fenced.",
+    "Retain the prior explicit Ctrl+left-click background-tab rule (the later multi-selection override was for Hitomi cards). X Ctrl activation of a proved source target adds/reuses a background preview without replacing current selection or moving focus; do not infer targets for unavailable source routes.",
+    "Only selected preview is visible and eligible for input/actions/playback; hidden previews are concealed and muted using existing lifecycle rules. Account/privacy/workspace teardown revokes all tabs; stale events may not select or close new tabs.",
+    "Compact horizontally scrollable accessible tab strip; clear active marker and centered close icons. Closing active tab selects an adjacent retained tab; closing last returns to the empty right pane. No silent tab eviction."
+  ],
+  "acceptance": [
+    "Same black menu treatment on plain link, post, image and local archive where owned by Atsumi.",
+    "Click main sidebar/header/tab or the opposite native pane dismisses the old menu without triggering another content action.",
+    "Feed repost/quote body, identity and target links open correct right document without changing feed URL or scroll; image and video source behavior retained.",
+    "Open at least three preview tabs, switch, preserve document state, close inactive/active/last, and verify duplicate target reuse.",
+    "Hidden/stale/account-mismatched panes cannot display, act, own fullscreen or dismiss the wrong tab; Escape follows last focus.",
+    "Targeted tests, whole-X regression, typecheck/native build and actual app acceptance reported separately. Preserve failure screenshots."
+  ]
+}

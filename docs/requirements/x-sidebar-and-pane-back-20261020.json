@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "state": "implemented and built; automated checks passed; actual app observed, remaining interactive checks deferred while user operates it",
+  "source": "Current six numbered user requests and both attached screenshots, 2026-10-20",
+  "original": [
+    "피드, 마음에 들어요, 북마크, 로컬 저장소는 좌측 메뉴에 각각의 탭으로 배치.",
+    "새로 구성한 버튼 아이콘의 중앙재정렬 전수검사.",
+    "아이디 선택은 이미지처럼 별도로 플로팅해서 구성.",
+    "프리뷰에서 웹페이지내의 뒤로가기 누르면 피드가 2개가 되어버림. 뒤로가기 버튼 제거하거나, 기능을 변경해야함.",
+    "마음함이나 프리뷰도 뒤로가기 눌러버리니까 피드가 되어버리고, 복구되지 않음. 이것도 마찬가지.",
+    "기능을 다 옮겼으니 상단의 헤더바는 없애줘."
+  ],
+  "coverage": {
+    "basis": "Previously fully read accessible-chat EOF snapshots and specification inventory retained from preceding logical work; policy SHA256 3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1 and official split v6 SHA256 7648801344FCBD0FCB8067B48B57D63F2E7E45DC9612BCC07B11590298BAFC05 unchanged and reread as applicable.",
+    "refresh": "Active50/pinned and archived3 EOF re-enumerated. Other main metadata updated1792473578 but fetched newest actual turn01a14a13-0a8e-7af2-9357-ea14c5f67c99 completed1792246235 matches the previously covered turn; UIUX1792073766 unchanged. Current direct conversation including this six-item override read. Requirements directory180 files, latest modified split v6 already covered; no newer unrelated specification revision observed.",
+    "missing": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"],
+    "qualification": "Accessible-source coverage only. Prior unreachable sources are not assumed read."
+  },
+  "supersedes": ["Atsumi top X home/collection/account toolbar", "Local archive accessible only through toolbar dialog", "Unrestricted original app-bar Back in a role-scoped native pane"],
+  "retained": ["Official X documents, original media/photo controls and home recommendation/following/community strip", "Independent left/right interaction", "Saved account profiles and user-owned authentication", "Privacy/generation/origin guards", "Local archive security and durable media", "No social writes or unrelated shared-workspace changes"],
+  "decisions": [
+    "Provider-owned left navigation has four views: explore, likes, bookmarks, local. Switching does not remount the provider component.",
+    "Account anchor is in left footer; menu floats above it and retains real saved handles/current selection/add/restore actions. Do not fabricate display names, avatars, unread counts, logout or account-management actions.",
+    "Save/download/refresh remain compact icon actions beside the left account area, not a replacement top header. Preview retains only its compact local capture/close controls.",
+    "Local storage is an inline account-independent list/reader, not a native X page.",
+    "Hide/block only original primary-column app-bar Back outside native photo/modal/media contexts. Guard pane identity: preview cannot become a second home feed; likes/bookmarks recover their own root once, with a bounded explicit error if recovery repeats.",
+    "Use shared explicit square icon hitboxes and block SVG centering; inspect all new controls including collapsed rail, floating account rows and preview close."
+  ],
+  "preflight": "Computer Use list_apps/list_windows returned no Atsumi window; elevated Win32_Process query returned no atsumi/ffmpeg/streamlink/yt-dlp process. No running app to interrupt; no process termination or user data modification.",
+  "verification": {
+    "frontend": "196 tests passed across six scoped files, including four-tab wiring, local library, portal/lifecycle races and source Back presentation.",
+    "native": "27 x_feed::surface tests passed including fullscreen, bounded root recovery and atomic stale close protection.",
+    "typecheck": "Full tsc -b passed.",
+    "build": "cargo build --bin atsumi --locked passed with existing warnings. Development executable SHA256 DF9EAD716697BC35FEF9557D84E2A4607A9A350D5A2C21E8F5C6CADB5FDB90E6; launched through Computer Use and connected to the existing1420 development server.",
+    "actualApp": "Observed four left navigation tabs, absent Atsumi top header, compact sidebar actions/account anchor, original home feed and original recommendation/following/account-community strip. A feed video visibly advanced during read-only observation. Preserved native/01-header-removed-launch.png and native/02-current-sidebar-feed.png under reportroot/x-sidebar-20261020.",
+    "interactiveLimit": "Two consecutive Computer Use input attempts were refused because user input was detected; user resized the app. Further mouse/keyboard input was stopped to avoid interfering. Actual floating-menu interaction, all-tab/local record navigation, preview/collection Back protection and photo close/ESC remain unverified in this batch despite automated coverage. No actual reaction or account change was sent.",
+    "layout": "18 scenes passed: nine each at960x640 and1920x1080. Final captures in reportroot/x-sidebar-20261020/final-layout. Initial collapsed short-height clipping and irrelevant live-status error over local library were reproduced in tests, corrected and retested.",
+    "safety": "No account/social writes, user-data deletion, forced exit, commit, push or release. Read-only SQLite query_only1 snapshot before build has no queued/running downloads or listed postprocessing states.",
+    "additionalRepair": "Preview close IPC now requires the observed generation and checks/takes under one native lock. Late old close commands cannot change new pane/path/playback state.",
+    "accountMetadata": "Saved-account schema currently provides id+handle only; floating rows show real handle and initial placeholder, not fabricated names/photos/unread badges."
+  },
+  "acceptance": [
+    "Four left tabs; no top Atsumi X toolbar and no duplicate home strip.",
+    "Each tab loads its own content; local archives open inline without live X/account dependency.",
+    "Floating menu anchored to left account row, no clipping in expanded/collapsed rail, current account marked, no invented metadata.",
+    "All newly introduced icon-only buttons center within consistent square hitboxes.",
+    "No ordinary Back in preview/collection can produce home; native photo close/ESC and other original interactions preserved.",
+    "Focused regression tests, typecheck, build and actual app checks recorded separately; unverified paths remain explicit."
+  ]
+}

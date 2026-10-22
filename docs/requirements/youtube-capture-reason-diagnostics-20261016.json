@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "state": "Implemented;29native diagnostics tests and serial debug build passed. Fresh actual hidden automatic capture reported queue_overflow/successfalse; old other event remains unknown.",
+  "rootVerification": {"actualJob":"1abba277-1187-48b4-b245-533a5526c588", "finishUnixMs":1792123248806, "capture_reason":"queue_overflow", "limitation":"Finish time follows queue drain, not exact overflow detection. This diagnostics-only change does not repair recording."},
+  "originals": [
+    ".runtime/requirements-audit/20261016-remaining-goal-original.json: actual automatic recording and fix failures, only human authentication excluded",
+    "main-thread-users.json turn01a0862c-6058-7442-a6fe-38d660288ee2: one incoming stream with durable video and chat",
+    "main-thread-users.json turn01a12a4c-724c-7d13-801d-3d92da01fe1e: verify completed media/chat before intermediate cleanup",
+    "docs/requirements/youtube-auto-capture-diagnostics-20261015.json",
+    "docs/requirements/youtube-auto-preparation-retry-20261015.json"
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Both previously fully read EOF snapshots independently rehashed unchanged this batch (main230turn284message; other333turn375message). Current logical-turn root inventory active50/pinned/archive3EOF and latest pages through overlap are reused. Root current141-spec coverage plus new poll-isolation contract is recorded in youtube-resolution-poll-isolation-20261016.json. AGENTS, latest original request, directly referenced original user turns, complete prior diagnostic/retry contracts, current capture failure/finish/listener paths and native projection were directly reread.",
+    "missing": ["durable01a03f16", "unidentifiedanalysis1/2", "historical inaccessible attachment pixels"],
+    "beforeHashes": {
+      "src-tauri/src/diagnostics.rs": "7748C92258CAE73B43BC201A43F473D847A78AB47F7A6C6D6D491EADC063D23C",
+      "src-tauri/src/youtube/original.rs": "83154F6ED17CA090E3ED225EFCE6F00367832D89C6F81272BA65E2E71622DCFF",
+      "src-tauri/src/youtube/original_capture.js": "A16423779E5F9F9087FE0F4EAF909CE95A6A2658F3F0DFB3005D2AF472EDC6FA",
+      "src-tauri/src/youtube/original_page.js": "F272917C7A3C2769809908E8EDE412151892E29A662A84D875F2BAC5E64AC139"
+    }
+  },
+  "actualEvidence": {
+    "source": "Parent's current actual main-app verification, not a new run by this agent",
+    "job": "bc24e8bf-c8b1-4cb9-a608-6b7638be7d29",
+    "observation": "Automatic capture stopped without a stop click about111seconds after start. Kept result was interrupted/source_interrupted with incomplete_structure, excluded534879video bytes and0audio bytes; raw journal sealed interrupted. Existing youtube_capture_finish at1792122368759 retained capture_reason=other and success=false. Parent subsequently confirmed test reservation off.",
+    "limitation": "The discarded original enum cannot be reconstructed from other, duration or excluded-tail bytes. No advertisement, queue, page navigation, transport or visibility cause is claimed. Completed kept file is not proof of uninterrupted automatic capture."
+  },
+  "approvedDelta": {
+    "production": "Only add the eight exact already-emitted strings below to diagnostics::safe_capture_reason. Existing native encoded_finish uses this projection after exact job ownership checks. No new logging callsite or IPC/data field.",
+    "values": ["advertisement_started", "queue_overflow", "bridge_ack_timeout", "bridge_busy", "bridge_post_failed", "channel_changed", "page_hidden", "first_append_timeout"],
+    "proof": "original_capture.js emits these literal values in safetyReason, failure, append error mapping, pagehide and startup watchdog. ended/encrypted listener reasons already survive. Native continuation still matches only init_changed/codec_changed/track_changed, none of the added values; this patch does not grant continuation or change any stop decision.",
+    "sharedPredicateAudit": "All current callsites directly checked: streaming/browser_diagnostics.rs and streaming/browser.rs use the predicate only for bounded diagnostic projection, community/feedback.rs uses it for existing opt-in report sanitization, and YouTube original.rs uses it for finish projection with the separate unchanged three-value continuation test. The shared closed enum therefore preserves those same technical reasons in existing diagnostics/report projection; no upload or behavioral action is added.",
+    "tests": "Inline pure diagnostics tests cover every added literal, reject case/whitespace/suffix/control-character/URL/account-like variants, and exercise SafeFields projection so only exact reason plus existing fixed stage/success remain while private fields and arbitrary reason strings are dropped.",
+    "excluded": "No original.rs/JS changes, no preparation timeout mask, no transport cause reclassification, no stop/retry/SDK policy change, no source/session/auth data, no arbitrary messages/URLs/paths/tokens/media/chat, no per-append or periodic logs. RawQueue currently coalesces some transport errors to native_rejected; that preexisting limitation is not changed or claimed solved."
+  },
+  "acceptance": [
+    "Existing dirty diagnostics changes preserved; rehash before targeted apply_patch and report frozen hash",
+    "Root serial diagnostics tests and native build pass; agent performs no Cargo/app/UI/media execution",
+    "Root fresh actual recording reveals a specific closed reason if it recurs; prior other event remains unknown",
+    "Do not change capture behavior until actual failure evidence justifies a separately approved repair"
+  ],
+  "authority": "Parent approved this exact diagnostics-only batch after direct source review, owns graceful app exit, native tests/build and actual QA. No publish, account/security action, process termination or user-media mutation. Parent owns implementation-policy index."
+}

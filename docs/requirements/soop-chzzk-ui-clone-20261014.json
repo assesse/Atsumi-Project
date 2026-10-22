@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "status": "SOOP presentation implemented; scoped unit and offline drawer geometry passed; parent desktop acceptance pending",
+  "parentContract": "docs/requirements/chzzk-ui-clone-20261014.json",
+  "originalEvidence": {
+    "latestTurn": "01a1399c-e7fb-7260-ac09-93bc94288f2f",
+    "delta": ".runtime/requirements-audit/20261014-chzzk-clone-request.json",
+    "deltaSha256": "F74133B59E5C6B466D94E08C34A0FC16AC07FD6915DD11F9612B85C9B94BA82A",
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Fully read snapshots reused after matching SHA256 and EOF coverage; latest original delta read directly. Parent audited current thread/spec/archive inventory. Missing sources remain explicitly listed in parent contract."
+  },
+  "directlyReadReferences": [
+    "AGENTS.md", "docs/requirements/implementation-policy.json",
+    "docs/requirements/chzzk-ui-clone-20261014.json",
+    "src/features/streaming/StreamingWorkspace.tsx", "src/features/streaming/StreamingWorkspace.css",
+    "src/features/streaming/ConnectionSetup.tsx", "src/features/streaming/ChannelDraftField.tsx",
+    "src/features/streaming/LiveChannelPicker.tsx", "src/features/streaming/LiveChannelPicker.css",
+    "src/features/streaming/ConnectionHelp.tsx", "src/features/streaming/MadoWorkspace.css",
+    "src/features/streaming/LivePaneGrid.tsx", "src/features/streaming/usePanelHandleGesture.ts"
+  ],
+  "rules": [
+    "Latest request overrides original-player-first sequence: current CHZZK composition first; original SOOP engine remains deferred.",
+    "Original 01a0862c single-ingress and 01a0ad1d background playback rules remain: preserve mounted keyed player/session nodes on layout, tab and drawer changes.",
+    "Original 01a12e00 thin persistent click/drag handle, no attention animation, attached to moving sheet; stable toggle positions.",
+    "Original 01a11672 independent favorites/automatic recording in live drawer; no favorites navigation; saved VOD Explore access retained.",
+    "Copy presentation only. No CHZZK domain API, storage, events, fixed IDs, account/session, tutorial targets or commands."
+  ],
+  "conflictsAndResolution": [
+    "SOOP account login and reservation manager are not implemented: retain equivalent control positions, disabled with concise truthful reason; existing per-channel reservation toggle remains operational.",
+    "CHZZK channel+chat geometry cannot use duplicate PlatformLivePlayer receivers: CSS flattening of existing pair nodes only, with fullscreen reset; provider-specific preferences.",
+    "CHZZK has no VOD Explore: retain this existing in-app capability rather than removing saved videos.",
+    "Actual desktop/playback acceptance is parent-owned; unit/layout tests alone do not prove the user's complete flow."
+  ],
+  "changes": [
+    "SOOP-prefixed connection surface with CHZZK 760px/20px/18px geometry, 72x22 attached handle, five-line portal help and close icon.",
+    "88px favorite rows, two columns/four rows then scrolling; 48px avatar and fixed 30x34 star/record actions; three metadata lines.",
+    "Number/profile/link/internal-X/star grid, 32px skeleton avatar, full-width add, account row, bottom slide toggle and start/change/stop controls.",
+    "SOOP-prefixed pane layout and preferences, preserve existing provider API and player instances, reset fullscreen layout.",
+    "Update scoped interaction/lifecycle/isolation tests and offline geometry checks."
+  ],
+  "verification": {
+    "unit": "SOOP six existing suites 95 tests passed after UI clone; additional SoopLivePaneGrid 2 tests passed. Receiver-node identity, no duplicate opens, independent star/reservation, row-removal late response, help portal cleanup and provider preference isolation checked.",
+    "drawerGeometry": "SoopLiveShell.layout.test.tsx: 960x640 and 1440x900, ten scenes per viewport (420/960px shell, 0/2/4/8/10 favorites, four input rows). Installed Chrome headless with disposable offline profile: 2 tests passed, no geometry issues. Test-only aliases feed the existing CHZZK geometry auditor; no CHZZK aliases or stylesheet imports in production.",
+    "environment": "Default Edge exited before DevTools endpoint/measurement. Chrome fallback succeeded; no claim based on the failed Edge run. Browser profiles were disposable and no account/site navigation was used.",
+    "independentAudit": "Parent audit agent reported cross-provider keys/commands/events/CSS/portal/session 4 tests passed; final aggregate execution remains parent-owned.",
+    "notVerifiedHere": ["Actual Tauri desktop appearance and interactions", "Original SOOP player engine", "Authenticated SOOP playback", "Real multi-channel receiving/recording"]
+  },
+  "acceptance": [
+    "No original CHZZK source changed; archived interface remains recoverable.",
+    "SOOP discovery, favorites, reservations, saved videos, downloads, screenshots and privacy behavior retained.",
+    "Selecting a chosen favorite removes its draft; adding a fifth does not overwrite another draft. Extra input X removes that row; last input X clears it.",
+    "Help overlays without reflow; controls match CHZZK geometry; selection toggles do not move star/record buttons; handle follows sheet.",
+    "No duplicate player mounts or foreign provider API/storage/event access during rearrangement/tab changes.",
+    "Scoped tests, layout checks, full parent build and actual desktop review; unresolved original-player/account limitations explicitly reported."
+  ]
+}

@@ -1,0 +1,162 @@
+import atsumiLogo from "../assets/atsumi.svg";
+import { useEffect, useRef, useState } from "react";
+import {
+  workspaceRegistry,
+  hasCommunity,
+  workspaces,
+  type ContentSource,
+  type WorkspaceNavigationItem,
+  type WorkspaceViewId,
+} from "../app/workspaceRegistry";
+import { FluentIcon } from "./FluentIcon";
+import { useCommonNavigation } from "../app/CommonNavigation";
+import { OPEN_FEEDBACK } from "../features/feedback/api";
+import { platformIcons } from "../app/platformIcons";
+
+type SideRailProps<Source extends ContentSource> = {
+  view: WorkspaceViewId<Source>;
+  collapsed: boolean;
+  autoFindCount: number;
+  attentionCount: number;
+  source: Source;
+  onNavigate: (view: WorkspaceViewId<Source>) => void;
+  onSourceChange: (source: ContentSource) => void;
+  onToggle: () => void;
+  onSettings?: () => void;
+  privacyMode?: boolean;
+  privacyModePending?: boolean;
+  onPrivacyModeToggle?: () => void;
+  personalLibraryOpen?: boolean;
+  onOpenPersonalLibrary?: () => void;
+  onOpenLiveChannels?: () => void;
+  liveChannelsOpen?: boolean;
+};
+
+export function SideRail<Source extends ContentSource>({
+  view,
+  collapsed,
+  autoFindCount,
+  attentionCount,
+  source,
+  onNavigate,
+  onSourceChange,
+  onToggle,
+  onSettings,
+  privacyMode = false,
+  privacyModePending = false,
+  onPrivacyModeToggle,
+  personalLibraryOpen = false,
+  onOpenPersonalLibrary,
+  onOpenLiveChannels,
+  liveChannelsOpen = false,
+}: SideRailProps<Source>) {
+  const [sourceMenuOpen, setSourceMenuOpen] = useState(false);
+  const common = useCommonNavigation();
+  const railRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!sourceMenuOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSourceMenuOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    const pointerDown = (event: PointerEvent) => {
+      // The tour's Back/Next controls must not dismiss the menu they are explaining.
+      if (event.target instanceof Element && event.target.closest('[data-tutorial-active="true"]')) return;
+      if (event.target instanceof Node && !railRef.current?.contains(event.target)) setSourceMenuOpen(false);
+    };
+    window.addEventListener("pointerdown", pointerDown);
+    return () => {
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("pointerdown", pointerDown);
+    };
+  }, [sourceMenuOpen]);
+  const workspace = workspaceRegistry[source];
+  const visibleItems = workspace.navigation as readonly WorkspaceNavigationItem<WorkspaceViewId<Source>>[];
+  const badgeCounts = { autoFindCount, attentionCount };
+  return (
+    <aside ref={railRef} className="sidebar" aria-label="주 메뉴" data-collapsed={collapsed}>
+      <button
+        type="button"
+        className={`brand${sourceMenuOpen ? " is-open" : ""}`}
+        data-tour="source-menu"
+        title="Atsumi 소스 전환"
+        aria-label={`현재 ${workspace.label} 모드. 소스 전환`}
+        aria-haspopup="menu"
+        aria-expanded={sourceMenuOpen}
+        onClick={() => setSourceMenuOpen((open) => !open)}
+      >
+        <img src={atsumiLogo} alt="" />
+        <div className="brand-copy">
+          <strong>Atsumi</strong>
+          <span className="brand-platform"><span>{workspace.label}</span></span>
+        </div>
+        <FluentIcon glyph="\uE70D" className="brand-chevron" />
+      </button>
+      {sourceMenuOpen ? (
+        <div className="source-switcher" role="menu" aria-label="콘텐츠 소스 선택">
+          {workspaces.map((option) => (
+            <button
+              key={option.id}
+              type="button"
+              role="menuitemradio"
+              data-tour={`source-${option.id}`}
+              aria-checked={source === option.id}
+              className={source === option.id ? "is-active" : ""}
+              onClick={() => { onSourceChange(option.id); setSourceMenuOpen(false); }}
+            >
+              <img className="platform-icon" src={platformIcons[option.id]} alt="" aria-hidden="true" />
+              <strong>{option.label}</strong>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      <nav className="main-nav">
+        {visibleItems.map((item) => {
+          const count = item.badgeKey ? badgeCounts[item.badgeKey] : 0;
+          const liveDisclosure = source === "chzzk" && item.view === "live" && !!onOpenLiveChannels;
+          const navigation = (
+            <button
+              key={item.view}
+              type="button"
+              className={`nav-item${!personalLibraryOpen && !common?.communityOpen && view === item.view ? " is-active" : ""}`}
+              aria-current={!personalLibraryOpen && !common?.communityOpen && view === item.view ? "page" : undefined}
+              aria-label={item.label}
+              data-tour={`${source}-nav-${item.view}`}
+              aria-expanded={liveDisclosure ? liveChannelsOpen : undefined}
+              aria-controls={liveDisclosure && liveChannelsOpen ? "chzzk-connection-panel" : undefined}
+              onClick={() => liveDisclosure ? onOpenLiveChannels?.() : onNavigate(item.view)}
+            >
+              <FluentIcon glyph={item.icon} />
+              <span className="nav-label">{item.label}</span>
+              {count > 0 ? (
+                <span className={`nav-count${item.badgeWarning ? " warning" : ""}`}>{count}</span>
+              ) : null}
+              {liveDisclosure ? <span className="nav-live-disclosure" data-tour="chzzk-channels" aria-hidden="true" data-expanded={liveChannelsOpen}><FluentIcon glyph="\uE76C" /></span> : null}
+            </button>
+          );
+          return liveDisclosure ? <div className="nav-live-item" key={item.view}>{navigation}</div> : navigation;
+        })}
+        {onOpenPersonalLibrary ? <button type="button" data-tour={`${source}-favorites`} className={`nav-item${personalLibraryOpen ? " is-active" : ""}`} aria-label="내 즐겨찾기" aria-current={personalLibraryOpen ? "page" : undefined} onClick={onOpenPersonalLibrary}><FluentIcon glyph="\uE8A4" /><span className="nav-label">내 즐겨찾기</span></button> : null}
+        {common && hasCommunity(source) ? <button type="button" data-tour="community-nav" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
+      </nav>
+
+      <div className="sidebar-foot">
+        <button type="button" className="nav-item" title="오류·의견 보내기" aria-label="오류·의견 보내기" onClick={() => window.dispatchEvent(new Event(OPEN_FEEDBACK))}><FluentIcon glyph="\uE8F2" /><span className="nav-label">오류·의견 보내기</span></button>
+        {onPrivacyModeToggle ? <button
+          type="button" className={`nav-item sidebar-privacy${privacyMode ? " is-active" : ""}`}
+          title={`프라이버시 모드 ${privacyMode ? "켜짐" : "꺼짐"}`}
+          aria-label="프라이버시 모드" data-tour="privacy-mode" aria-pressed={privacyMode}
+          aria-busy={privacyModePending || undefined} disabled={privacyModePending} onClick={onPrivacyModeToggle}
+        ><FluentIcon glyph="\uE890" /><span className="nav-label">프라이버시 모드</span></button> : null}
+        {onSettings ? <button type="button" className="nav-item" data-tour="hitomi-settings" title="설정" aria-label="설정" onClick={onSettings}><FluentIcon glyph="\uE713" /><span className="nav-label">설정</span></button> : null}
+      </div>
+      <button
+        type="button" className="sidebar-boundary"
+        title={collapsed ? "메뉴 펼치기" : "메뉴 접기"}
+        aria-label={collapsed ? "메뉴 펼치기" : "메뉴 접기"} aria-expanded={!collapsed}
+        onClick={onToggle}
+      ><FluentIcon glyph={collapsed ? "\uE76C" : "\uE76B"} /></button>
+    </aside>
+  );
+}

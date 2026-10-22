@@ -6,6 +6,41 @@ import { CommonNavigationContext } from "../app/CommonNavigation";
 import { OPEN_FEEDBACK } from "../features/feedback/api";
 
 describe("SideRail source switcher", () => {
+  it.each([false,true])("keeps X account immediately above the fixed common footer across views (collapsed=%s)",async collapsed=>{
+    const host=document.createElement("div"),root=createRoot(host);
+    const onSettings=vi.fn(),onPrivacyModeToggle=vi.fn();
+    const commonNodes:Element[]=[];
+    try{
+      for(const view of ["explore","likes","bookmarks","local"] as const){
+        await act(async()=>root.render(<SideRail source="x" view={view} collapsed={collapsed} autoFindCount={0} attentionCount={0} onNavigate={vi.fn()} onSourceChange={vi.fn()} onToggle={vi.fn()} onSettings={onSettings} onPrivacyModeToggle={onPrivacyModeToggle} footer={<div className="x-sidebar-slot"><button aria-label="계정">계정</button></div>}/>));
+        const foot=host.querySelector(".sidebar-foot")!;
+        const children=[...foot.children];
+        expect(children[0]).toHaveClass("x-sidebar-slot");
+        expect(children.slice(1).map(node=>node.getAttribute("aria-label"))).toEqual(["오류·의견 보내기","프라이버시 모드","설정"]);
+        expect(children.at(-1)).toHaveAttribute("aria-label","설정");
+        if(commonNodes.length)children.slice(1).forEach((node,index)=>expect(node).toBe(commonNodes[index]));
+        else commonNodes.push(...children.slice(1));
+        expect(host.querySelector(".sidebar-boundary")?.parentElement).toBe(host.querySelector(".sidebar"));
+      }
+    }finally{await act(async()=>root.unmount());}
+  });
+  it.each([false,true])("keeps the four X destinations in the left rail with one current tab (collapsed=%s)",async collapsed=>{
+    const host=document.createElement("div"),root=createRoot(host),navigate=vi.fn();
+    const entries=[["explore","피드"],["likes","마음에 들어요"],["bookmarks","북마크"],["local","로컬 저장소"]] as const;
+    try{
+      for(const [view] of entries){
+        await act(async()=>root.render(<SideRail source="x" view={view} collapsed={collapsed} autoFindCount={0} attentionCount={0} onNavigate={navigate} onSourceChange={vi.fn()} onToggle={vi.fn()}/>));
+        const buttons=[...host.querySelectorAll<HTMLButtonElement>(".main-nav button")];
+        expect(buttons.map(button=>button.getAttribute("aria-label"))).toEqual(entries.map(([,label])=>label));
+        expect(buttons.filter(button=>button.getAttribute("aria-current")==="page")).toHaveLength(1);
+        expect(host.querySelector(`[data-tour="x-nav-${view}"]`)).toHaveAttribute("aria-current","page");
+        for(let index=0;index<entries.length;index++){
+          navigate.mockClear();await act(async()=>buttons[index]!.click());expect(navigate).toHaveBeenCalledExactlyOnceWith(entries[index]![0]);
+          expect(buttons[index]!.querySelector(".fluent,svg")).not.toBeNull();
+        }
+      }
+    }finally{await act(async()=>root.unmount());}
+  });
   it("opens live settings from the whole navigation row including its disclosure", async () => {
     const host = document.createElement("div"), root = createRoot(host);
     const navigate = vi.fn(), toggle = vi.fn();
@@ -112,7 +147,7 @@ describe("SideRail source switcher", () => {
       const banner = container.querySelector<HTMLButtonElement>('.brand[aria-haspopup="menu"]');
       await act(async () => banner?.click());
       expect(container.querySelector('[role="menu"]')).toBeInTheDocument();
-      expect([...container.querySelectorAll('[role="menuitemradio"]')].map(option => option.textContent)).toEqual(["Hitomi", "Danbooru", "CHZZK"]);
+      expect([...container.querySelectorAll('[role="menuitemradio"]')].map(option => option.textContent)).toEqual(["Hitomi", "Danbooru", "CHZZK", "YouTube", "SOOP", "Pinterest", "pixiv", "X"]);
       const hitomi = [...container.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')]
         .find((button) => button.textContent?.includes("Hitomi"));
       await act(async () => hitomi?.click());
@@ -143,7 +178,7 @@ describe("SideRail source switcher", () => {
         />,
       ));
       expect(container.querySelector(".brand")).toHaveAttribute("aria-label", "현재 Hitomi 모드. 소스 전환");
-      expect(container.querySelector(".brand-copy span")).toHaveTextContent("Hitomi library");
+      expect(container.querySelector(".brand-copy span")).toHaveTextContent("Hitomi");
       const buttons = [...container.querySelectorAll<HTMLButtonElement>(".main-nav button")];
       expect(buttons.map((button) => button.querySelector(".nav-label")?.textContent)).toEqual(["Explore", "Auto Find", "Downloads"]);
       expect(buttons[1]).toHaveAttribute("aria-current", "page");
@@ -177,7 +212,7 @@ describe("SideRail source switcher", () => {
         />,
       ));
       expect(container.querySelector(".brand")).toHaveAttribute("aria-label", "현재 Danbooru 모드. 소스 전환");
-      expect(container.querySelector(".brand-copy span")).toHaveTextContent("Danbooru posts");
+      expect(container.querySelector(".brand-copy span")).toHaveTextContent("Danbooru");
       expect(container.querySelector(".nav-count")).not.toBeInTheDocument();
       const banner = container.querySelector<HTMLButtonElement>(".brand");
       await act(async () => banner?.click());
@@ -186,7 +221,15 @@ describe("SideRail source switcher", () => {
         "Hitomi",
         "Danbooru",
         "CHZZK",
+        "YouTube",
+        "SOOP",
+        "Pinterest",
+        "pixiv",
+        "X",
       ]);
+      expect(choices.every(choice => choice.querySelector<HTMLImageElement>(".platform-icon")?.getAttribute("src")?.startsWith("data:image/"))).toBe(true);
+      expect(container.querySelector(".brand .platform-icon")).not.toBeInTheDocument();
+      expect(container.querySelector(".brand img")).toBeInTheDocument();
       expect(choices[1]).toHaveAttribute("aria-checked", "true");
       await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
       expect(container.querySelector('[role="menu"]')).not.toBeInTheDocument();

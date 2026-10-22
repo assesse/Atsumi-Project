@@ -26,6 +26,7 @@ export function applyDownloadChanged(
     ...gallery,
     download: {
       entryId: event.entryId,
+      linkedGalleryId: event.linkedGalleryId,
       revision: event.revision,
       state: event.state,
       progress: event.progress,

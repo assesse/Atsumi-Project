@@ -1,0 +1,23 @@
+{
+  "state": "in progress; actual verification pending",
+  "sources": [
+    "Current persistent X completion goal: own profile navigation with return context, account isolation, owned video controls, full actual app acceptance.",
+    "User 2026-10-18: actively use sub-agents; current x-experience-completion-20261018.json original source inventory and conflicts remain applicable.",
+    "Navigation sub-agent regression: signedOut during append leaves image viewer; profile return loses right scroll; 720x480 screenshot clips fullscreen control."
+  ],
+  "changesBeforeEdit": [
+    "On signedOut revoke pending read epochs, suspend media, clear image/history/context/selection and action state; retain account choices for explicit reauthentication.",
+    "Persist detail scroll per post view; restore only on detail activation/return; explicit post selection still starts at top. Top-level feed navigation abandons profile back-stack.",
+    "Allow owned video control row to wrap within narrow panes without hiding any controls. Preserve cover/contain image rules and all existing security boundaries.",
+    "Actual CU found append loading inserts two skeleton cards above retained replies and shifts their scroll position. Restrict full skeleton to initial detail load; append progress belongs to the bottom continuation area. Evidence x-flow2-problem-append-skeleton.jpg.",
+    "Actual profile CU found a pinned socialContext labelled as repost. Separate explicit pinned boolean through projection/native/frontend; display a noninteractive pin label, and retain repost navigation only for explicit repost context. Evidence x-flow2-problem-pinned-repost.jpg.",
+    "Existing debug observations reached their 2MiB cap before this run. Preserve the old file and use a per-process bounded debug-only file with timestamps for current verification. Do not collect credentials, raw URLs, media, HTML or post bodies.",
+    "Preserve prior explicit reply/related evidence when same-view append omits classification; new explicit evidence still wins. Identity-less quoted video posters may be enlarged as observed images only, never assigned an inferred post ID or enabled for playback/actions. Avoid zero-of-zero image viewer for this case.",
+    "Regression proves resume status can report account B while retained account A cards remain until the new read finishes. Gate cards/media on status readiness and discard retained views, navigation and pending epochs when status active identity or generation changes."
+  ],
+  "acceptance": [
+    "Two previously failing signedOut and profile-scroll regressions pass.",
+    "720x480, 320x640, 960x640 and 1920x1080 owned control screenshots show all controls within video container.",
+    "Actual image viewer, profile return and video controls checked with Computer Use; mocks alone do not complete acceptance."
+  ]
+}

@@ -2,7 +2,7 @@ import type { ContentSource } from "../app/workspaceRegistry";
 
 export type TourStep = {
   id: string;
-  section: "Hitomi" | "Danbooru" | "CHZZK" | "공통";
+  section: "Hitomi" | "Danbooru" | "CHZZK" | "YouTube" | "SOOP" | "Pinterest" | "pixiv" | "X" | "공통";
   target: string;
   title: string;
   description: string;
@@ -35,7 +35,7 @@ export const hitomiTourSteps: readonly TourStep[] = [
   { id: "activity", section: "공통", target: '[data-tour="hitomi-activity"]', title: "활동 기록", description: "대기 큐 · 작업 중 · 판본 검토", action: "click", hint: "활동 기록 클릭" },
   { id: "activity-info", section: "공통", target: '#activity-panel', title: "작업 상태", description: "탐색·다운로드는 화면을 바꿔도 계속 진행됩니다." },
   { id: "community", section: "공통", target: '[data-tour="community-nav"]', title: "커뮤니티", description: "작품 미리보기와 후기·별점. 내 후기는 따로 모아볼 수 있습니다.", action: "click", hint: "커뮤니티 클릭" },
-  { id: "finish", section: "공통", target: '[data-tour="source-menu"]', title: "서비스 전환", description: "Danbooru·CHZZK 안내는 각 서비스 첫 방문 시 표시. 다시보기는 설정 → 일반." },
+  { id: "finish", section: "공통", target: '[data-tour="source-menu"]', title: "서비스 전환", description: "서비스별 안내는 첫 방문 시 표시. 다시보기는 설정 → 일반." },
 ];
 
 export const danbooruTourSteps: readonly TourStep[] = [
@@ -55,7 +55,35 @@ export const chzzkTourSteps: readonly TourStep[] = [
 ];
 
 export const tutorialStepsBySource: Record<ContentSource, readonly TourStep[]> = {
+  x: [
+    { id: "x-account", section: "X", target: '[data-tour="x-account"]', title: "X 로그인", description: "공식 X 창에서 직접 로그인한 뒤 피드를 불러옵니다." },
+    { id: "x-feeds", section: "X", target: '[data-tour="x-feeds"]', title: "피드와 내 모음", description: "왼쪽에서 추천·팔로잉·가입된 커뮤니티를 탐색하고 오른쪽에서 미리봅니다. 로그인하면 마음함·북마크도 볼 수 있습니다." },
+  ],
   hitomi: hitomiTourSteps,
   danbooru: danbooruTourSteps,
   chzzk: chzzkTourSteps,
+  youtube: [
+    { id: "youtube-explore", section: "YouTube", target: '[data-tour="youtube-nav-explore"]', title: "영상·방송 탐색", description: "앱 안에서 영상·채널·라이브 검색", action: "click" },
+    { id: "youtube-search", section: "YouTube", target: '[data-tour="youtube-input"]', title: "검색 · 저장", description: "카드 더블클릭: 상세 · 우클릭: 다운로드" },
+    { id: "youtube-live", section: "YouTube", target: '[data-tour="youtube-nav-live"]', title: "라이브", description: "하단 꺾쇠: 즐겨찾기 채널 · 방송 선택", action: "click" },
+    { id: "youtube-downloads", section: "YouTube", target: '[data-tour="youtube-nav-downloads"]', title: "녹화 목록", description: "녹화·다운로드한 영상 재생·관리", action: "click" },
+  ],
+  soop: [
+    { id: "soop-explore", section: "SOOP", target: '[data-tour="soop-nav-explore"]', title: "방송·영상 탐색", description: "라이브 · 다시보기 · 채널 검색", action: "click" },
+    { id: "soop-search", section: "SOOP", target: '[data-tour="soop-search"]', title: "검색 · 저장", description: "카드 더블클릭: 상세 · 우클릭: 영상 다운로드" },
+    { id: "soop-live", section: "SOOP", target: '[data-tour="soop-nav-live"]', title: "라이브", description: "하단 꺾쇠: 즐겨찾기 채널 · 자동 녹화 · 시청", action: "click" },
+    { id: "soop-downloads", section: "SOOP", target: '[data-tour="soop-nav-downloads"]', title: "녹화 목록", description: "녹화·다운로드한 영상 재생·관리", action: "click" },
+  ],
+  pinterest: [
+    { id: "pinterest-explore", section: "Pinterest", target: '[data-tour="pinterest-nav-explore"]', title: "공개 핀 탐색", description: "프로필·보드에서 핀 찾아보기", action: "click" },
+    { id: "pinterest-search", section: "Pinterest", target: '[data-tour="pinterest-input"]', title: "탐색 · 저장", description: "@프로필 이름으로 탐색. 카드 우클릭: 원본 저장" },
+    { id: "pinterest-favorites", section: "Pinterest", target: '[data-tour="pinterest-nav-favorites"]', title: "내 즐겨찾기", description: "앨범·페이지를 따로 모아보기", action: "click" },
+    { id: "pinterest-downloads", section: "Pinterest", target: '[data-tour="pinterest-nav-downloads"]', title: "다운로드", description: "저장한 원본 · 제외된 핀 관리", action: "click" },
+  ],
+  pixiv: [
+    { id: "pixiv-explore", section: "pixiv", target: '[data-tour="pixiv-nav-explore"]', title: "작품 탐색", description: "공개 작품 검색·랭킹", action: "click" },
+    { id: "pixiv-search", section: "pixiv", target: '[data-tour="pixiv-input"]', title: "태그·작품 번호", description: "조건 선택 후 검색. 카드 더블클릭: 상세 · 우클릭: 작업 메뉴" },
+    { id: "pixiv-favorites", section: "pixiv", target: '[data-tour="pixiv-nav-favorites"]', title: "내 즐겨찾기", description: "앨범·페이지를 따로 모아보기", action: "click" },
+    { id: "pixiv-downloads", section: "pixiv", target: '[data-tour="pixiv-nav-downloads"]', title: "다운로드", description: "저장한 원본 · 제외된 작품 관리", action: "click" },
+  ],
 };

@@ -9,10 +9,15 @@ Local changes are limited to the IPC boundary:
 - Reject all Tauri invocations from remote document origins before dispatch,
   including the internal `__TAURI_CHANNEL__|fetch` exception. Trusted local app
   command/channel behavior remains unchanged.
-- Ignore the reserved `ATSUMI_BROWSER_CAPTURE:` WebMessage string prefix in the
-  Tauri parser. The independent native recording handler validates the sending
-  URL, one-use user-issued start nonce, recording ID and payload limits. This
-  avoids treating recording fragments as invalid Tauri command envelopes.
+- Ignore only the reserved `ATSUMI_BROWSER_CAPTURE:`, `ATSUMI_SOOP_ACCOUNT_V1:`,
+  `ATSUMI_SOOP_V1:`, `ATSUMI_YOUTUBE_V1:` and `ATSUMI_PANE_POINTER:` WebMessage
+  string prefixes in the Tauri parser. Independent native handlers validate the
+  sending URL, current document/window nonce and epoch, recording ownership,
+  trusted pointer intent and payload limits as applicable. This avoids treating
+  native messages as invalid Tauri command envelopes; it grants no permission
+  and does not replace each native handler's checks. Near matches and ordinary
+  Tauri messages are not excluded. Added after actual SOOP login showed a
+  duplicate-parser console error despite independently verified login success.
 - Treat the `atsumi-player` scheme and its Windows HTTP(S) mapping as untrusted
   for every IPC command, even though its immutable public assets are registered
   as a custom scheme. Its local iframe only receives a narrow parent message

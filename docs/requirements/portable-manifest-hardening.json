@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "date": "2026-10-13",
+  "batch": "PKG-03-exact-positive-manifests-and-PKG-05-artifact-separation",
+  "status": "implemented-synthetic-verified; real-package-and-clean-PC-acceptance-not-run",
+  "audit": {
+    "coverage": "Before production edits AGENTS.md reread; complete main230/284 and other333/375 snapshots SHA256 unchanged; all69 previously fully read specification files rehashed with0changes. Changed platform-validation through EOF and new youtube-favorites-boundary through EOF reread. Prior portable audit and exact4packager source hashes unchanged at admission. Final refresh at19:11KST again found all69 original specification hashes unchanged, complete chat snapshot hashes and policy unchanged; current platform-validation, platform-media-contract, soop-auto-recording, youtube-favorites-boundary, platform-rich-chat, platform-live-split, youtube-live-shell and video-ui-parity-audit were read through EOF. Historical inaccessible evidence remains explicitly listed in portable-distribution-audit.json and implementation-policy.json.",
+    "originalsReread": ["01a10593-61fd-70c0-bdd4-f8521107be97", "01a10626-9c92-7d83-8671-485b53b86ca5", "01a1154a-0c82-7993-b06a-01fbb3882406", "01a13363-ef61-71e3-bf03-3babe3f5b5c0"],
+    "references": ["docs/RELEASING.md", "DOC-049", "DOC-055", "DOC-056", "DOC-080", "docs/requirements/portable-distribution-audit.json PKG-03/05"]
+  },
+  "authority": "Root authorized narrow PKG-03/05 production changes and new pure tools/package_manifest.ps1 helper. No real package generation, download, network execution, build, release or app control. Only isolated synthetic temporary tests. Current static QA and existing centering changes remain untouched.",
+  "hardlinkFollowup": {
+    "status": "implemented-synthetic-verified",
+    "authority": "Root cross-review explicitly requested a single-link handle boundary before continuing the read-only PKG01/02/04 audit.",
+    "evidence": "OpenRegularRead checked actual handle attributes but not FileInfo.Links. A regular hardlink could pass the no-linked-input package boundary even though it shares storage with another path.",
+    "audit": "Complete main/other/policy hashes and all69 original specification hashes rechecked unchanged; original portable-main, portable-operation, updater and whole-requirements turns reread in full, plus current contract and RELEASING. No historical release/app permission is reused.",
+    "plan": "Reject actual handle link count other than1 before reading. Add isolated hardlinked regular source proof/copy rejection, unchanged source/alias bytes and absent destination assertions. Do not break links, replace source files or loosen production validation to make a fixture pass.",
+    "acceptance": ["Hardlinked regular file cannot obtain a proof or enter a copy", "Both source names and bytes remain preserved", "Rejected copy creates no output", "Ordinary single-link manifest/ZIP checks continue passing", "No actual package, tool, app, network or release execution"],
+    "verification": "2026-10-13 19:13:30KST focused Vitest4 passed, including Windows PowerShell5 synthetic50 checks. New4 hardlink assertions pass; original and alias bytes retained, destination absent. Root separately reported whole-project TypeScript19:13 exit0 after concurrent owners resolved their in-progress changes. Real-package acceptance remains unexecuted."
+  },
+  "files": ["tools/package_manifest.ps1", "tools/prepare_media_tools.ps1", "tools/prepare_platform_tools.ps1", "tools/prepare_portable.ps1", "tools/prepare_release.mjs", "tools/test_package_manifest.ps1", "src/features/platforms/platformPackaging.test.ts", "docs/requirements/portable-manifest-hardening.json"],
+  "plan": [
+    "Derive a complete positive file/directory manifest from the approved FFmpeg ZIP and exact pinned platform files, including all license/docs entries. Normalize separators only before strict relative path validation; reject duplicates/case collisions, links/reparse entries, directory/file collisions, unsafe names, size/count bounds and any unlisted/missing/changed extracted entry.",
+    "Existing extracted packages are immutable inputs: missing/modified/unexpected entries fail without repair/deletion/replacement. New packages may be populated once using create-new files only; normal tool acquisition remains version/hash pinned and is never executed by these tests.",
+    "Immediately before portable copy, obtain read-only verified manifests and copy only listed entries to a fresh nonlinked destination. Use regular-file handles, bounded streams, create-new outputs, source/target boundary checks and copied-byte hash verification. Reject changes after validation and preserve all failed output for inspection.",
+    "Build the final ZIP from a complete approved payload manifest and verify exact normalized paths, file hashes, length and directory inventory afterward. Validate updater root/count/size limits. Do not trust recursive wildcard copy or merely executable presence.",
+    "Use a distinct Atsumi-Portable-With-WebView2.zip filename and metadata with updaterCompatible=false for optional-runtime initial installation. Standard updater ZIP metadata must say updaterCompatible=true/bundledWebView2=false and bind its hash; release staging rejects missing/wrong/runtime-inclusive metadata before signing/publication handoff. Retain the existing5root updater policy.",
+    "Keep PKG-01 build provenance and PKG-02/04 source/license coverage explicitly unresolved and design-only. No assertion of legal compliance or newly built current app."
+  ],
+  "acceptance": [
+    "Synthetic source ZIP with executable, nested docs and license creates a manifest; exact source validates and manifest-selected copy/ZIP roundtrip matches every byte",
+    "Missing/modified LICENSE/docs, unexpected root/bin/file/directory, directory/file mismatch, traversal/absolute/ADS/reserved name, duplicate/case-colliding entries and archive symlink/reparse are rejected",
+    "Existing package is not partially repaired and source bytes are unchanged after failure; destination existing files are never overwritten",
+    "Source changed after manifest creation/copy admission, destination injected files or post-copy tamper cannot pass exact manifest/archive verification",
+    "Optional runtime package has distinct filename/metadata and release updater validation rejects it; standard metadata accepts only exact approved archive hash/version/name",
+    "Focused packaging frontend tests and standalone synthetic PowerShell helper tests only; no application, real resource packaging, network, installer or release invocation",
+    "Report Windows filesystem and final real-package acceptance separately from synthetic tests; remain incomplete for provenance/redistribution/clean-PC operation"
+  ],
+  "implementation": [
+    "Complete FFmpeg ZIP and pinned platform resource manifests include every shipped file and empty directory, including licenses/docs. Archive paths, types, normalized duplicates/case collisions, files-versus-directories, total/count/individual-byte caps and SHA256 are verified before admission. Reused extracted trees reject missing/extra/changed entries without repair or deletion.",
+    "Windows ancestor handles refuse rename/reparse replacement throughout each operation; source handles reject reparse/non-file before reading and exclude concurrent write/delete. Manifest-selected create-new copies rehash destination bytes. Failed outputs remain for inspection. Approved acquisition streams are bounded and hash checked into create-new random pending files; source inputs are never overwritten. No HTTP request was made by these tests.",
+    "Portable resource source/target trailing directory separators are normalized before exact approved lookup and relative manifest validation, including the actual Tauri resource mappings. The final ZIP is generated from its combined positive manifest, then checked entry-for-entry and byte-for-byte. No recursive wildcard package copy remains.",
+    "Optional WebView2 runtime is a separately named initial-install ZIP and sidecar with updaterCompatible=false. The ordinary ZIP keeps the five existing updater roots. Release preparation checks sidecar/inner marker/version/name/typed flags/bounds/complete manifest and exact archive hash, then binds the verified proof to the actual signed buffer staged with create-new writes rather than re-reading a possibly changed source during copy."
+  ],
+  "verification": {
+    "synthetic": "2026-10-13 19:08:43KST focused platformPackaging Vitest4 passed, exit0,2.31seconds; its Windows PowerShell5 child passed46 small local manifest/copy/ZIP checks, including source-handle and ancestor lease, traversal/case/type/junction rejection, exact licenses/docs, unknown-length pinned-stream hash/create-new behavior, configured trailing-directory mappings, distinct runtime artifact and verified release proof. Earlier PowerShell7 standalone at19:07 passed45checks before the added pure trailing-directory normalization test; no claim of its latest46 count until rerun. Fixtures are fresh .runtime/package-manifest-tests-GUID paths; no cleanup/delete or executable execution.",
+    "syntax": "PowerShell AST parser passed all five helper/preparation/test scripts; node --check tools/prepare_release.mjs exit0; scoped git diff --check exit0 (LF/CRLF warnings only).",
+    "typecheck": "2026-10-13 19:10 npx tsc -b --pretty false exited1 only on concurrent rich-chat DTO and shared live-player test edits. The packaging test's static Node imports/process error was fixed using the established dynamic Node-import typed boundary; no remaining packaging TypeScript diagnostic. Full-project success is not claimed for this run.",
+    "realPackage": "Not authorized or executed. Real pinned-package extraction, actual source downloader endpoints, actual updater signing/staging/publication and current executable package completeness remain separate acceptance.",
+    "desktop": "No app interaction, installation, clean-PC startup or signed portable updater execution. Existing root-owned QA process/build is untouched.",
+    "counts": {"actualDownloads":0,"mediaToolsExecuted":0,"realPackagesGenerated":0,"releases":0,"deletedFiles":0}
+  },
+  "remaining": [
+    "PKG-01 remains unresolved: version-only executable check can admit a stale same-version binary. A successful-build provenance record must bind dirty source/config/lock/resource inputs and executable hash. This batch deliberately does not claim to solve stale binary mixing.",
+    "PKG-02 remains unresolved: exact third-party corresponding-source/build-material delivery route for redistributed FFmpeg/libraries/yt-dlp and bundled Deno dependencies needs a component inventory and review. Existing license texts are integrity checked, not proof of legal sufficiency.",
+    "PKG-04 remains unresolved: complete shipped frontend/Rust/vendor runtime dependency notices need a version-locked notice inventory and reviewed aggregate in a legacy-compatible resource. Root THIRD_PARTY_NOTICES is not newly included by this batch.",
+    "Optional Microsoft runtime content is only a local manifest snapshot, not an authenticity or redistribution-rights assertion. Initial-install package also retains the conservative1GiB/4096entry helper limits; actual full Fixed Version runtime compatibility and clean-PC behavior have not been tested.",
+    "No actual release/package acceptance was run. Network download behavior now uses bounded create-new stream copying with pinned hashes; only the stream/file boundary has synthetic coverage, not remote HTTP/proxy/TLS behavior.",
+    "The read-only distribution audit remains a historical pre-change finding record; PKG-03/05 implementation evidence is this contract, not a retroactive claim that the audit itself executed tests."
+  ]
+}

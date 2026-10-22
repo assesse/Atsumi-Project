@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "state": "Narrow DOM repair implemented after fixtures reproduced 9 unsafe projection identities, 2 wrong-scope retained posters and 1 missing valid plain-date poster. All 91 focused DOM tests and typecheck passed; native integration and actual playback acceptance remain parent work.",
+  "originals": [
+    "User: preserve X's experience in an app-owned clean-room implementation, with all images/videos and other users' replies/reposts shown accurately.",
+    "Latest user restriction: only like/bookmark mutations; no sending replies or reposts.",
+    "docs/requirements/x-experience-completion-20261018.json: exact identity, owner/generation and observed-media scope limits remain strict; no guessed relationship or private API.",
+    "Parent delegated scope: align x_projection.js and x_rendered_media.js detail fallback with x_video_intent.js's first-outer-article, exact own permalink and author proof. No native source edits, real account operations, network or desktop input."
+  ],
+  "coverage": {
+    "audit": "Current completion contract's main 230-turn/284-message and other 333-turn/375-message EOF audits, specification inventory and explicit missing sources retained. Current AGENTS.md, full completion contract and full implementation-policy.json reread, including truncation continuation.",
+    "policySha256": "3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1",
+    "source": "Read complete x_projection.js, x_rendered_media.js, x_video_intent.js and their three corresponding DOM test files. Shared dirty worktree changes preserved."
+  },
+  "hypothesis": "The detail pathname and being the first rendered article are not sufficient identity evidence after the original article virtualizes away. Fixtures confirmed a timestamp-less first reply inherits the main post ID. A first reply with an unusable or external timestamp link also authorizes its poster under the main ID in retained facts. Separately, pathOf(undefined) became /undefined, hiding the valid plain-date fallback in the ordinary no-time case. These are independently reproduced DOM defects, not an established cause of the actual current playback failure.",
+  "decision": [
+    "First reproduce the unsafe fallback with isolated rendered DOM fixtures, without claiming it is the current real video failure's cause.",
+    "For a missing timestamp permalink, accept the current detail path only for the first outer article when its own author profile matches the path's handle and an exact same-origin permalink occurs outside quotes and nested articles.",
+    "Exclude linkless/partial quote containers from identity proof even when they lack a time element. Preserve normal timestamped identities and bounded observed poster retention.",
+    "No private state, guessed IDs, synthetic media URLs, credentials, social mutations, native policy changes, actual app restart or playback acceptance claim."
+  ],
+  "acceptance": [
+    "After the main article virtualizes away, a timestamp-less first reply with no exact own permalink cannot inherit the detail ID.",
+    "Missing permalink, wrong author, cross-origin or credentialed permalink, quote-only permalink, later article and non-detail document cannot use the fallback.",
+    "A valid first detail article with a plain-text date, matching own author and exact same-origin permalink remains supported.",
+    "A correctly timestamped reply remains identified under its own ID and its poster remains in only that scope.",
+    "Existing detached-quote/attributeOldValue poster guards and all projection relation/quote/pin behavior remain intact."
+  ],
+  "verification": {
+    "at": "2026-10-18T22:40:58+09:00",
+    "tests": "tools/run_frontend.ps1 test: xCleanProjection 49, xRenderedMedia 21, xVideoIntent 12 and xAction 9; all 91 passed. Existing unknown-relation, quote, pinned/repost, detached-poster and single-action guards pass unchanged.",
+    "typecheck": "tools/run_frontend.ps1 typecheck passed.",
+    "projectionSha256": "5E25F20C3498390B2C7611CEE40B580445F7D9A68856ADF8F65BC8DDDCC9C53D",
+    "renderedMediaSha256": "476EE9108CCDC575E4AA66C3F2D9DF5EDF6E9D2FD47C86DDF8F28B0CBE14F749",
+    "limits": "No native file or playback policy changed; no native build, actual desktop operation, network or account write. These fixes are not represented as the observed live video's root cause or as successful actual playback."
+  }
+}

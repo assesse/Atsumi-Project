@@ -177,7 +177,7 @@ describe("SettingsDialog operational boundaries", () => {
 
       expect(container.querySelector(".settings-nav")).not.toBeNull();
       const settingsScroll = container.querySelector<HTMLElement>('[data-settings-scroll-root="true"]')!;
-      for (const category of ["Hitomi", "Danbooru", "치지직", "일반"]) {
+      for (const category of ["Hitomi", "Danbooru", "치지직", "YouTube", "SOOP", "Pinterest", "pixiv", "일반"]) {
         settingsScroll.scrollTop = 300;
         await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
           .find(tab => tab.textContent === category)!.click());
@@ -213,11 +213,74 @@ describe("SettingsDialog operational boundaries", () => {
       expect(autostart).toHaveAttribute("role", "switch");
       expect(autostart).toBeDisabled(); // A browser preview cannot register a Windows startup entry.
       expect(autostart).not.toBeChecked();
-      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru", "치지직"]);
+      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru", "치지직", "YouTube", "SOOP", "Pinterest", "pixiv"]);
+      localStorage.removeItem("atsumi.soop.preview-width.v1");
+      localStorage.removeItem("atsumi.youtube.preview-width.v1");
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "SOOP")!.click());
+      const soopSize = container.querySelector<HTMLInputElement>('[aria-label="SOOP 카드 미리보기 크기"]')!;
+      expect(soopSize.value).toBe("1");
+      const setRangeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      await act(async () => { setRangeValue.call(soopSize, "2"); soopSize.dispatchEvent(new Event("input", { bubbles: true })); });
+      expect(container.querySelector('output[for="settings-soop-preview-width"]')).toHaveTextContent("400px");
+      expect(localStorage.getItem("atsumi.soop.preview-width.v1")).toBe("400");
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "YouTube")!.click());
+      expect(container.querySelector('output[for="settings-youtube-preview-width"]')).toHaveTextContent("320px");
+      const storageFailure = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
+      try {
+        const youtubeSize = container.querySelector<HTMLInputElement>('[aria-label="YouTube 카드 미리보기 크기"]')!;
+        await act(async () => { setRangeValue.call(youtubeSize, "2"); youtubeSize.dispatchEvent(new Event("input", { bubbles: true })); });
+        expect(container.querySelector('.settings-video-preview [role="alert"]')).toHaveTextContent("크기를 저장하지 못했습니다");
+        expect(container.querySelector('output[for="settings-youtube-preview-width"]')).toHaveTextContent("320px");
+      } finally { storageFailure.mockRestore(); }
+      await act(async () => container.querySelector<HTMLButtonElement>('.settings-video-preview [role="alert"] button')!.click());
+      expect(container.querySelector('.settings-video-preview [role="alert"]')).toBeNull();
+      expect(localStorage.getItem("atsumi.youtube.preview-width.v1")).toBe("400");
+      localStorage.removeItem("atsumi.pinterest.preview-width.v1");
+      localStorage.removeItem("atsumi.pixiv.preview-width.v1");
+      for (const [category, source, step, width] of [["Pinterest", "pinterest", "4", "340"], ["pixiv", "pixiv", "2", "220"]]) {
+        await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === category)!.click());
+        expect(container.querySelector('.settings-platform-empty')).toBeNull();
+        expect(container.querySelector('.settings-video-preview')).toBeNull();
+        const imageSize = container.querySelector<HTMLInputElement>(`#settings-${source}-preview-width`)!;
+        expect(imageSize.value).toBe("1");
+        expect(container.querySelector(`output[for="settings-${source}-preview-width"]`)).toHaveTextContent("180px");
+        await act(async () => { setRangeValue.call(imageSize, step); imageSize.dispatchEvent(new Event("input", { bubbles: true })); });
+        expect(container.querySelector(`output[for="settings-${source}-preview-width"]`)).toHaveTextContent(`${width}px`);
+        expect(localStorage.getItem(`atsumi.${source}.preview-width.v1`)).toBe(width);
+      }
+      const pixivSafeOnly = container.querySelector<HTMLInputElement>('[aria-label="Pixiv 일반 등급만 표시"]')!;
+      expect(pixivSafeOnly.checked).toBe(false);
+      await act(async () => pixivSafeOnly.click());
+      expect(pixivSafeOnly.checked).toBe(true);
+      expect(localStorage.getItem("atsumi.pixiv.safe-only.v1")).toBe("true");
+      const displayFailure = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
+      await act(async () => pixivSafeOnly.click());
+      expect(pixivSafeOnly.checked).toBe(true);
+      expect(container.querySelector('.settings-pixiv-display [role="alert"]')).toHaveTextContent("표시 설정을 저장하지 못했습니다");
+      displayFailure.mockRestore();
+      await act(async () => container.querySelector<HTMLButtonElement>('.settings-pixiv-display [role="alert"] button')!.click());
+      expect(pixivSafeOnly.checked).toBe(false);
+      expect(container.querySelector('.settings-pixiv-display [role="alert"]')).toBeNull();
+      const imageStorageFailure = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("quota"); });
+      try {
+        const pixivSize = container.querySelector<HTMLInputElement>('#settings-pixiv-preview-width')!;
+        await act(async () => { setRangeValue.call(pixivSize, "3"); pixivSize.dispatchEvent(new Event("input", { bubbles: true })); });
+        expect(container.querySelector('.settings-image-preview [role="alert"]')).toHaveTextContent("크기를 저장하지 못했습니다");
+        expect(container.querySelector('output[for="settings-pixiv-preview-width"]')).toHaveTextContent("220px");
+      } finally { imageStorageFailure.mockRestore(); }
+      await act(async () => container.querySelector<HTMLButtonElement>('.settings-image-preview [role="alert"] button')!.click());
+      expect(container.querySelector('.settings-image-preview [role="alert"]')).toBeNull();
+      expect(localStorage.getItem("atsumi.pixiv.preview-width.v1")).toBe("280");
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "Pinterest")!.click());
+      expect(container.querySelector('output[for="settings-pinterest-preview-width"]')).toHaveTextContent("340px");
+      expect(container.querySelector('[aria-label="Pixiv 일반 등급만 표시"]')).toBeNull();
+      expect(localStorage.getItem("atsumi.soop.preview-width.v1")).toBe("400");
+      expect(localStorage.getItem("atsumi.youtube.preview-width.v1")).toBe("400");
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "일반")!.click());
       expect(container.querySelector(".settings-scope-intro")).toBeNull();
       expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["다운로드 폴더", "튜토리얼", "Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "설정 초기화"]);
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="튜토리얼 다시 보기"]')!.click());
-      expect([...container.querySelectorAll('[role="option"]')].map(option => option.lastElementChild?.textContent)).toEqual(["다시 체험하기", "Hitomi", "Danbooru", "CHZZK"]);
+      expect([...container.querySelectorAll('[role="option"]')].map(option => option.lastElementChild?.textContent)).toEqual(["다시 체험하기", "Hitomi", "Danbooru", "CHZZK", "YouTube", "SOOP", "Pinterest", "pixiv"]);
       await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent === "CHZZK")!.click());
       expect(onReplayTutorial).toHaveBeenCalledWith("chzzk");
       expect(container.textContent).not.toContain("다음 단계");

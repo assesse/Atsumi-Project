@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "status": "diagnostics-only implementation built; native1478passed including five new tests; independent boundary/privacy/license review passed; admission unchanged and fresh authentication unresolved",
+  "beforeEditApproval": "2026-10-15 Root fully read this contract and primary Chromium list/host-boundary code, then approved original_policy.rs diagnostic classification, fixed SafeFields enums/tests and a diagnostic-only suffix module. original.rs, account observer, Cargo and UI/authentication operations are excluded. This record precedes production edits.",
+  "originalRequests": [
+    {"source": "01a13adc-a040-70f0-97d9-380c5b6ba368", "scope": "Fix Google post-auth automatic transition and verify actual YouTube operation."},
+    {"source": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."},
+    {"source": "call_93ce2337ac2e4b63b93700eaf5543f13", "scope": "User opened DevTools and requested no further questions until morning. Do not automate authentication or security input."}
+  ],
+  "audit": {
+    "coverage": "Rehashed and reused fully read main230/284 EOF and other333/375 EOF snapshots. Root refreshed active50/archive3 EOF and69-original-spec inventory in the resume evidence. This agent reread AGENTS, full current implementation-policy, latest resume and verification evidence, YouTube followup/account-completion/auth-transition/account-observer contracts and current account policy/lifecycle/diagnostic code.",
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "resumeEvidence": ".runtime/requirements-audit/20261015-platform-verification-resume.json",
+    "unavailable": ["Durable original01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Previously indexed inaccessible historical attachment pixels"]
+  },
+  "observedFailure": [
+    "Actual fresh authentication produced google-account then youtube-account then other/allowed=false. This establishes an application navigation denial, not its exact host or path.",
+    "Before this batch, diagnostics classified only www.google.com and www.google.co.kr with /accounts/SetSID as google-transfer. Regional accounts.google.<suffix> destinations remained other. Both existing www SetSID paths remain explicitly not admitted by account_url.",
+    "At05:01KST the user-owned Google challenge independently expired. The later31 DevTools requests contained expiry resources and telemetry, not the original denied destination. No F5, submit or authentication input was performed by the agents for that observation.",
+    "Neither retained-session successful close nor manual-F5 completion proves fresh authentication automatic transition. The new home observer runs only after exact official home, so it cannot resolve an earlier denied navigation."
+  ],
+  "primarySourceEvidence": [
+    {"url": "https://raw.githubusercontent.com/chromium/chromium/main/components/google/core/common/google_tld_list.h", "read": "Complete public file read2026-10-15", "supports": "Chromium enumerates Google-owned suffixes, including co.kr and ro, instead of trusting arbitrary google-like domains. The list alone does not document a particular authentication redirect."},
+    {"url": "https://raw.githubusercontent.com/chromium/chromium/main/components/google/core/common/google_util.cc", "read": "Public host validation functions inspected2026-10-15", "supports": "Google host classification uses an explicit suffix set and canonical host boundaries, not a starts-with/google-substring rule. Its broad utility is not an account-navigation permission specification."},
+    {"url": "https://raw.githubusercontent.com/chromium/chromium/main/google_apis/gaia/gaia_auth_fetcher.cc", "read": "Public Multilogin and connection-info traffic annotations inspected2026-10-15", "supports": "Google authentication involves multiple Google sites including YouTube. The public client obtains connection endpoints from the server; it does not identify this user's denied destination or prescribe a universal regional SetSID admission list."},
+    {"publicHttpProbe": "Anonymous GET without credentials, account profile, cookies, query or body; manual redirect handling", "observed": "accounts.google.co.kr/accounts/SetSID and accounts.google.ro/accounts/SetSID returned400; an unrelated nonexistent /accounts/ path on each returned302. accounts.youtube.com/accounts/SetSID returned400. www.google.com/accounts/SetSID and www.google.co.kr/accounts/SetSID returned404.", "limitation": "This is evidence that the official regional accounts hosts treat the endpoint differently, not an authenticated valid handoff, redirect trace, or proof of the current failure's destination."}
+  ],
+  "proposedDiagnosticsOnly": [
+    "Keep account_url, popup_url, account_entry, account_home and account_completed behavior unchanged. Do not add any country or endpoint to navigation admission.",
+    "In account_stage only, distinguish exact accounts.google.<official suffix> hosts using a frozen, attributed Chromium GOOGLE_TLD_LIST-derived set. This data is diagnostic classification only; it must not be called by account_url or grant account, popup or IPC permissions.",
+    "After the existing exact accounts.google.com category, classify a recognized regional accounts host plus exact case-sensitive /accounts/SetSID as the constant google-regional-transfer. Classify the same recognized regional accounts host with any other path as the constant google-regional-account-other. Never return a suffix, host, path, query, title, identity or user-controlled value.",
+    "Preserve the existing HTTPS/credentials/nonstandard-port guard and the64-event cap. Add only those two fixed strings to SafeFields account_step. Keep existing categories stable, including other for unrecognized hosts and all www transfer denials.",
+    "No forced navigation, response replay, synthetic SetSID request in the user profile, cookie/token extraction, challenge submission, security bypass, changed account profile, new-window admission or browser refresh."
+  ],
+  "testPlan": [
+    "Known co.kr, ro, fr and co.uk regional accounts hosts with exact /accounts/SetSID classify as google-regional-transfer, while account_url remains false for every one.",
+    "The same known hosts with other paths, path case differences, extra trailing slash and percent-encoded spelling classify as google-regional-account-other, never the transfer category and never admitted.",
+    "Foreign suffixes, accounts.google.com.evil.test, accounts.google.evil.test, extra subdomains and user-info tricks do not classify as a trusted regional host. HTTP and nonstandard ports retain rejection.",
+    "Known region classification is independent of opaque query/fragment values; sentinel credentials in test URLs never appear in diagnostic output. Invalid and arbitrary strings are rejected by the SafeFields fixed-enum validator.",
+    "A table snapshots all current account_url positives and negatives, including www SetSID denial, so a diagnostics-only change cannot accidentally widen admission. Existing exact-home/fresh-observation/nonce/epoch/recording fences remain tested.",
+    "Actual later fresh authentication must retain fixed category/allowed/load events and demonstrate official home plus observed native destruction without F5 before reporting the requested problem fixed. No user question is sent overnight."
+  ],
+  "implementation": {
+    "files": ["src-tauri/src/youtube/original_policy.rs: account_stage and tests only", "src-tauri/src/youtube/original_account_regions.rs", "src-tauri/src/diagnostics.rs: fixed account_step enum and tests only"],
+    "sourceData": "All269 Chromium GOOGLE_TLD_LIST entries match the public source exactly, including order. Normalized JSON-array SHA25637949dfb85ad663183e63f710cfa870e0be5ef67643ff697ed6f40ddc9d1bf56. Exact accounts prefix and complete suffix match; com remains the existing google-account category. Copyright, source URL and BSD conditions are retained in the new module.",
+    "checks": "Added five native tests covering plain/unique suffix data, exact host boundaries, fixed diagnostic path cases without navigation/popup/completion permission, unchanged admission table, and actual SafeFields event rejection of raw URLs/host/path/query/cookie/identity fields. Extended the existing fixed-enum test. Source search confirms the diagnostic helper is called only from account_stage and its own tests.",
+    "syntax": "Read-only rustfmt --emit stdout parsed all three files with exit0 after a sandbox canonicalization denial required a normal-permission retry. No source formatting, Cargo, UI, app lifecycle or authentication operation was performed.",
+    "distributionFollowup": "Root will retain Chromium attribution and complete BSD terms in THIRD_PARTY_NOTICES.md and public/licenses/chromium-google-domain-data.txt using the existing packaged public/licenses convention. No new UI control or runtime network request is needed.",
+    "pending": "Root native execution and later user-operated fresh authentication. No successful Google transition is claimed."
+  },
+  "whatCanBeProvedNow": [
+    "The exact policy still denies regional SetSID candidates. A new built application can distinguish the recognized regional transfer category from other paths without retaining a raw destination.",
+    "Primary sources can establish official host membership and the public server endpoint's behavior, but cannot reconstruct an already missed private redirect.",
+    "The existing expired challenge, late DevTools capture and fixed-category logs cannot reliably recover the missing exact target. Do not inspect token-bearing history, cookies, stored credentials or raw auth response bodies to fill that gap.",
+    "Preparing safer fixed classifications and preserving the failure/expiry timeline is possible now. A future user-operated authentication attempt or an independently captured preexisting safe redirect event is needed to identify the actual blocked category. Admission changes remain a separate evidence-backed decision."
+  ],
+  "decisionGate": "Root approved only fixed diagnostic classification and regression tests. No regional navigation admission change is authorized; root owns serialized native tests/build and later user-operated fresh authentication."
+}

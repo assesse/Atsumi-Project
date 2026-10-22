@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
 import type { DownloadState, Gallery, GalleryId } from "../core/types";
 import { runningDownloadStates } from "../state/downloadCancellation";
+import { linkedGalleryId } from "../state/downloadStatus";
 import { DownloadProgressLabel } from "../state/downloadProgress";
 import { FluentIcon } from "./FluentIcon";
 import { GalleryProcessingBadge } from "./GalleryProcessingBadge";
@@ -30,6 +31,7 @@ type ActivityDrawerProps = {
   duplicateExcludedGalleryIds?: ReadonlySet<GalleryId>;
   onClose: () => void;
   onReview: (id: GalleryId) => void;
+  onOpenLinkedGallery?: (id: number) => void;
   onReviewOverlap?: (reviewId: string, galleryId: GalleryId) => void;
   onAcknowledgeAutomationHistory?: (reviewId: string) => void;
   onRestoreAutomationExclusions?: (reviewId: string, galleryIds: GalleryId[]) => void;
@@ -149,6 +151,7 @@ export function ActivityDrawer({
   duplicateExcludedGalleryIds = new Set(),
   onClose,
   onReview,
+  onOpenLinkedGallery,
   onReviewOverlap,
   onAcknowledgeAutomationHistory,
   onRestoreAutomationExclusions,
@@ -341,11 +344,12 @@ export function ActivityDrawer({
               }
               const gallery = item.gallery;
               const download = gallery.download!;
+              const linkedTarget = linkedGalleryId(download);
               const running = runningDownloadStates.has(download.state);
               const duplicateProcessed = duplicateExcludedGalleryIds.has(gallery.id) && !running;
               const complete = ["completed", "cancelled", "quarantined"].includes(download.state) || duplicateProcessed;
               const warning = !duplicateProcessed && ["review_required", "failed", "interrupted"].includes(download.state);
-              const retryable = !duplicateProcessed && ["failed", "interrupted", "cancelled"].includes(download.state);
+              const retryable = !linkedTarget && !duplicateProcessed && ["failed", "interrupted", "cancelled"].includes(download.state);
               const cancellable = !duplicateProcessed && (running || warning);
               const pending = pendingEntryIds.has(download.entryId);
               return (
@@ -368,6 +372,9 @@ export function ActivityDrawer({
                   </div>
                   <div className="activity-actions activity-download-actions">
                     <div className="activity-command-buttons">
+                    {linkedTarget && onOpenLinkedGallery ? (
+                      <button type="button" className="mini-command" onClick={() => onOpenLinkedGallery(linkedTarget)}>새 번호 #{linkedTarget}</button>
+                    ) : null}
                     {!duplicateProcessed && download.state === "review_required" ? (
                       <button type="button" className="mini-command" disabled={pending} onClick={() => onReview(gallery.id)}>검토</button>
                     ) : null}
@@ -380,7 +387,7 @@ export function ActivityDrawer({
                     </div>
                     {!duplicateProcessed && running ? (
                       <DownloadProgressLabel gallery={gallery} />
-                    ) : <small className="activity-outcome">{duplicateProcessed ? "중복 처리 완료" : stateDetail[download.state]}</small>}
+                    ) : <small className="activity-outcome">{duplicateProcessed ? "중복 처리 완료" : linkedTarget ? "새 번호에 연결됨" : stateDetail[download.state]}</small>}
                   </div>
                 </article>
               );

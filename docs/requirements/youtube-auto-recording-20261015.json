@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "state": "implementation and isolated actual-IPC QA fixture ready; parent native/app operation verification pending",
+  "originalRequests": [
+    "01a13adc-a040-70f0-97d9-380c5b6ba368 item4: Youtube도 지금 로드 안되거나, 구현 안되거나 UI가 아직 미구현됐거나 그런거 싹다 찾아서 고쳐줘.",
+    "01a1399c-e7fb-7260-ac09-93bc94288f2f: SOOP/YouTube use the existing CHZZK composition with provider isolation",
+    "01a11672-f428-7850-899b-5155aebb4e8a item14: automatic recording in the Live favorites row, no separate automatic recording tab",
+    "01a11775-9d47-7280-9431-a4aac2761ccd: centered star/record buttons, 녹화 예약 됨 and 예약 꺼짐",
+    "01a0862c-6058-7442-a6fe-38d660288ee2: one incoming stream for watching and recording, retain chat",
+    "01a12a4c-724c-7d13-801d-3d92da01fe1e: verified media/chat before exact-owned intermediate cleanup"
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Independently rechecked both unchanged fully read snapshots. Main230/284 and other333/375 EOF retained; Root refreshed50active/3archiveEOF/latest turn and all69originalspecifications, only RELEASING changed and reread. Original current user message, full applicable original request turns, current implementation-policy, CHZZK automatic/unified-live, extensible architecture, SOOP scheduling, YouTube clone/native/followup contracts reread before production edits.",
+    "unavailable": ["Durable01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Historical unavailable attachment pixels"],
+    "gate": "Root confirmed graceful Atsumi exit before implementation. Root exclusively owns Cargo, native app execution and shared registration/drain integration."
+  },
+  "conflicts": [
+    "The previous disabled automatic-recording control was an explicit unimplemented limitation, not a user-requested permanent restriction.",
+    "A channel favorite does not imply permission to record; only its separate explicit toggle enables a reservation.",
+    "Unlike SOOP a YouTube channel may have multiple simultaneous live video IDs. Schedule and current broadcast identity must remain separate.",
+    "A missing video in a paginated channel listing or network error cannot prove that a recording ended. Preserve original exact-video end detection."
+  ],
+  "proposal": [
+    "Independent YouTube-only native scheduler/configuration and IPC. Canonical UC24 channel identity resolved from official public channel metadata; never treat a videoID or handle as the durable schedule identity.",
+    "Bounded official streams discovery starts each current live video independently under existing global admission. It never creates a second receiver for an already watched video. Only exact scheduled owner may be stopped by off/generation change.",
+    "Durable per-video attempt suppression before start; explicit off/on resets suppression. Existing manual recording remains untouched. CAS revision, atomic bounded storage, corrupt-file preservation, per-channel backoff and bounded metadata workers.",
+    "Default empty/off; no migration from other providers. Restart resumes only explicitly enabled YouTube reservations. Shutdown fences starts and waits for actual workers; no network under configuration/admission locks.",
+    "Replace the existing fixed-size disabled circle with working opt-in control in the same favorite-row position. Keep stable geometry/loading/error, separate star function, union enabled reservations with favorites, concise existing labels. No new navigation tab or background screenshot/account operations."
+  ],
+  "ownership": ["New youtube/auto_record.rs", "New youtube/auto_record_observation.rs", "New api/youtubeAutoRecord.ts and provider-only hook/tests", "Narrow YouTubeViewingControls favorite rows"],
+  "coordination": "YouTube owner supplies exact-channel-bound prepare/start/stop helpers in original.rs and narrow module export. Root supplies AppState/IPC/lib/startup/update/reset/drain integration. No edits to CHZZK, SOOP scheduling or shared recording implementation.",
+  "verification": {
+    "frontend": "20 focused API/hook/ViewingControls tests passed; full TypeScript passed. Sandbox dependency/cache failures were diagnosed separately and identical checks passed with normal permissions.",
+    "native": "11 scheduler unit tests, 3 observation parser tests and 1 explicitly ignored actual public discovery test supplied; root owns Cargo and execution results.",
+    "actual": "examples/youtube_auto_record_qa.rs/js uses full production run_with_context with a new UUID DB/profile/media identity and only existing trusted-main IPC: default off, explicit opt-in, actual scheduler recording ACK, same receiver watch attach, off, fully verified video/chat, library reopen and graceful quit. No credential seeding or production test backdoor. Actual run result pending; fixture is not completion proof."
+  },
+  "reviewConcern": "The conservative per-video failure ledger currently also suppresses native preparation failures that occur before recording arm. Distinguishing proven pre-arm transient failure from uncertain post-arm/ACK failure could permit safe backoff retries without restarting a manually stopped/ambiguous recording. Root requested retaining current source until actual QA evidence; not claimed resolved.",
+  "checks": [
+    "Canonicalchannel validation and official live stream list are tested with actual public responses separately from fixtures",
+    "Multiple simultaneous videos, no implicit opt-in, independent star, no restart of a suppressed broadcast",
+    "Off/generation/shutdown fences stale observation/preparation; manual owner untouched",
+    "Network/partial listing absence never ends capture; capacity remains visible and bounded",
+    "Config corruption/write failure preserves old file; explicit off fences current process even on persistence failure",
+    "UI stable row geometry and async stale-response protection; provider-local commands only",
+    "Parent native compile and actual isolated opt-in -> capture -> attach watch -> off -> verified library/chat required; unit/HTTP success is not completion"
+  ]
+}

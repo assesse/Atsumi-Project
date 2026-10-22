@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "date": "2026-10-14",
+  "state": "implemented-source-only; unit-regressions-passed; actual-updated-app-unverified",
+  "scope": "SOOP navigation and saved-video access only; no player, backend, account, process or app lifecycle changes",
+  "originalRequests": [
+    { "turn": "01a13978-c469-7242-9ec2-f065de16743a", "rule": "Remove the separate SOOP favorites tab and match the existing CHZZK live-viewing flow. Preserve SOOP's original player/chat UI as a separate implementation batch." },
+    { "turn": "01a13979-d90b-7772-a059-d413ab38db04", "rule": "The reported focus/IME problem concerns the currently viewed live CHZZK chat, not a recording. This SOOP batch must not affect that running app." },
+    { "turn": "01a13363-ef61-71e3-bf03-3babe3f5b5c0", "rule": "In-app discovery, favorites, downloads and local management remain required; external links are not a replacement." },
+    { "turn": "01a11672-f428-7850-899b-5155aebb4e8a", "rule": "Favorites and automatic recording belong in the live connection panel; a star and the recording-reservation toggle remain independent." },
+    { "turn": "01a12e00-087e-75f3-b315-155260efdf35", "rule": "Keep the thin persistent bottom click/drag handle, not an extra large navigation button or recurring attention animation." }
+  ],
+  "audit": {
+    "mainSnapshotSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshotSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "policySha256": "3267605CA09E8FBA111BFDC84C840E6856BC8B2E82CEB64F165AC732CA43F914",
+    "coverage": "Previously fully read snapshots reused after independent hash checks: main230turns/284user messages and other333turns/375user messages/EOF. Root refreshed the latest18turns through the prior01a13363 overlap, other thread revisions and archived inventory. Current latest original request was read directly in this agent's context. All69 original specification hashes checked; the already-reviewed RELEASING.md is the only changed original file. This batch reread AGENTS, implementation-policy, SOOP implementation contract and CHZZK viewing/connection/unified-live/extension-boundary specifications.",
+    "unavailable": ["Durable original thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified Atsumi analysis1/2", "Historical attachment-only pixels not reverified"],
+    "runtime": "Root verified the running app is installed release2.2.1, PID12272, with no Vite/dev server. Source-only edits and unit tests do not refresh that app. No app interaction, launch, close, restart or build is authorized by this batch."
+  },
+  "conflicts": [
+    "The older dedicated SOOP favorites navigation/tutorial is superseded by the latest request.",
+    "Removing the navigation must not delete or orphan saved VOD favorites. Channel favorites already exist in the live connection drawer, but stored VOD favorites currently have no other route.",
+    "A legacy favorites view can survive in shared video navigation state after switching from another service. It must normalize to Explore without stopping the existing SOOP player."
+  ],
+  "plan": [
+    "Remove only the SOOP favorites main-navigation entry, retain in-app Explore, live, screenshots and downloads.",
+    "Keep channel favorites and recording reservation controls solely in the existing live drawer.",
+    "Add '저장한 영상' as an option in Explore's existing search-kind filter, using the same cards, detail, context menu and download behavior. Use local submitted title/channel filtering, no network search for this option, and preserve remote search tabs/results/scroll.",
+    "Keep both existing favorites storage keys and all stored records unchanged; no data migration or deletion.",
+    "Normalize legacy favorites view to Explore and open its saved-video option; remove the old separate favorites layout.",
+    "Update only SOOP's tutorial entry to the live drawer flow. Do not alter other platforms, common player, backend or unfinished screenshots."
+  ],
+  "verification": {
+    "date": "2026-10-14",
+    "frontendTests": "9files/98tests passed: all SOOP tests, workspaceRegistry, tutorial actions, SideRail and PlatformWorkspace. New tests cover legacy favorites routing without deleting data/player restart, saved-video open/download/unstar, local submitted search, retained remote query/results/errors and separate scroll positions.",
+    "typecheck": "No SOOP/navigation/tutorial errors. Whole-app noEmit check remains blocked by two unrelated existing TS2348 errors in PlatformLivePlayer.screenshot.test.tsx:27. Root notified; this batch did not alter that shared screenshot file.",
+    "sandbox": "The first sandbox unit-test attempt did not execute any tests because temporary-file rename was denied. The same test commands passed in normal Windows; the normal-Windows type check narrowed the unrelated errors above.",
+    "runtime": "No app launch, input, close, rebuild, restart, real network-media test, user account or stored user data modification. Current running release does not include these source changes.",
+    "qualification": "Mocked component/API tests are not actual desktop acceptance. Original SOOP player UI and grid-free playback are outside this navigation batch and remain separate work."
+  },
+  "acceptance": [
+    "SOOP sidebar has no favorites entry; other platform navigation remains unchanged.",
+    "Existing saved VODs can be opened, unstarred and downloaded from Explore without a service search request.",
+    "Switching between saved and search results preserves current remote results and tab/scroll context; no stale selection or hidden errors leak across lists.",
+    "An incoming legacy favorites view normalizes once to Explore, keeps existing records, and does not recreate a live player.",
+    "Channel favorites and auto-record buttons remain in the drawer with unchanged independent actions and stable geometry.",
+    "SOOP tutorial has no removed navigation target; frontend regression tests pass. Actual desktop appearance and operation remain unverified until the root/user runs an updated app."
+  ]
+}

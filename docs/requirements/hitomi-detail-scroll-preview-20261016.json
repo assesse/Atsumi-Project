@@ -1,0 +1,52 @@
+{
+  "state": "source_implemented_focused_regressions_passed; reported4234573_actual_items1_to4_passed; broader_actual_regression_cases_pending",
+  "original": ".runtime/requirements-audit/20261016-night-handoff-original.json#01a14102-e856-70f2-943d-6dd2dd3ae4fd",
+  "scope": "Hitomi floating detail requests 1-4; request5 has its separately approved hitomi-review-activity-settlement contract. Root owns shared App, builds and actual UI",
+  "audit": {
+    "main": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676; full230turn/284message snapshot EOF reused after rehash",
+    "other": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; full333turn/375message snapshot EOF reused after rehash",
+    "inventory": "root refreshed active50/pinned/archive3 EOF and unchanged130 contract/design hashes; latest original and changed other-main build-only delta directly read in night handoff",
+    "missing": ["durable01a03f16", "unidentifiedanalysis1/2", "inaccessiblehistoricalpixels"],
+    "directSpecs": ["AGENTS.md", "docs/HITOMI_QUEUE_NAVIGATION_20260930.md", "docs/design-system/DECISION_HISTORY.md", "docs/design-system/ATSUMI_INK_V0_1.md"]
+  },
+  "beforeHashes": {
+    "src/components/DetailWorkspace.tsx": "41C85ED23B43CD39F3EA14F000FD4AA0B8C062DBFAEE4F81CE013813B5E4F3A1",
+    "src/components/DetailWorkspace.css": "44F02ACA3C025F8CC0597186C8A1DE04743AAC66A93F774D75D2E52460F64EAC",
+    "src/components/detailScrollSnap.ts": "92F8C25D4BD5DE4117F1F3CF9915E8CBC505364A9ED5158C1EC403646C00C351",
+    "src/components/detailScrollSnap.test.ts": "71B2960B2B423AFDD3E4CDAF2ADF383712F09FE6E76CD09BD235730453C4A46F"
+  },
+  "findings": [
+    "Wheel handler prevents every eligible native wheel and suppresses same-direction momentum while smooth scrolling for up to900ms, so a fast upward burst cannot cross anchors.",
+    "Only related-section heading is measured, not individual card extents; close stops merge only within8px. Variable cover heights expose large jumps.",
+    "Scroll cleanup reads the reused DOM after a tab changes and cancels the250ms pending write; shorter/new content can clamp the old offset to0.",
+    "Main hero is noninteractive, although its displayed cover may be a representative source page other than1. Related rendering also silently caps known items at5."
+  ],
+  "changes": [
+    "Replace wheel interception with passive native scrolling and one proximity settle after180ms wheel/scroll quiet. Only snap ahead in the gesture direction within min(96px,12%viewport); never consume wheel/momentum. Cancel pending/smooth settle on new pointer/key/blur/resize/detach. Preserve nested scroll/edit/modifier guards and reduced motion.",
+    "Measure related-card starts and tall-card lower extent as optional stops; deduplicate near anchors within min(120px,max(48px,15%viewport)), preserve top/bottom. No content removed by anchor deduplication; show all already-resolved related IDs instead of render-only5cap, without new fetches.",
+    "Keep per-gallery synchronous event snapshots with existing bounded session persistence/debounce. Cleanup flushes the recorded snapshot, never a mutated or hidden DOM. Key body by gallery and restore when metadata first becomes available. Preserve background opening, Q/E, minimization and preview window start.",
+    "Add an accessible local hero button using galleryCoverThumbnailKey's actual artifact source page (otherwise1) and existing PAGE PREVIEW flow/opener. Keep original fetch, privacy mask, aspect ratio and preview controls unchanged."
+  ],
+  "conflicts": "Latest softer-snap request supersedes one-wheel-gesture/one-semantic-stop tests. No global wheel, shared platform state, backend/media changes, actual app operation or build by agent.",
+  "files": ["src/components/detailScrollSnap.ts", "src/components/detailScrollSnap.test.ts", "src/components/DetailWorkspace.tsx", "src/components/DetailWorkspace.css", "src/components/DetailWorkspace.navigation.test.tsx"],
+  "acceptance": [
+    "Native fast upward burst reaches0 without prevented wheel; light settle is proximity-only and respects direction/reduced motion.",
+    "Close preview/related anchors merge; variable-height related cards remain reachable, all resolved cards remain rendered.",
+    "Scroll A, open B before debounce, return A; preserve both offsets across smaller content, Ctrl/background opening, close/reopen and minimize/restore.",
+    "Hero source-page1 and non1 representative each open exact existing preview page; normal thumbnail preview/keyboard/privacy behavior stays intact.",
+    "Actual gallery4234573 and variable-aspect gallery inspection are distinct checks; only the observed cases recorded below are accepted. Jsdom/focused tests alone are not actual UI completion."
+  ],
+  "validation": {
+    "focused": "2026-10-16: detailScrollSnap, DetailWorkspace.navigation, DetailWorkspace, DetailWorkspace.preview and ProgressiveDetailHero: 5 files,45 passed. Navigation reran after GalleryId branding fix within the projection/activity suite: 5 passed.",
+    "environment": "Sandbox Vite cache rename initially failed before test execution; normal-environment focused retry succeeded. No agent app operation, native build or real browser inspection.",
+    "actualEvidence": ".runtime/requirements-audit/20261016-night-actual-checkpoint.json#hitomi; root-operated workspace application, directly reconciled with original01a14102-e856-70f2-943d-6dd2dd3ae4fd on2026-10-16",
+    "actual": [
+      "Item1:4234573 from lower related cards, strong upward wheel(-3000) reached main cover/top without the old anchor trap.",
+      "Item2:4234573 at second/third related cards, open1306481 then return to original tab retained its viewport/card positions.",
+      "Item3:main cover click opened the existing Page Preview1/57 and loaded the original image; Escape returned.",
+      "Item4:reported4234573 showed lower related cards1306481 and4210364 completely; the third card was not skipped."
+    ],
+    "build": "Root checkpoint records full frontend typecheck and production build passed. No build or actual UI operation by this agent.",
+    "pending": "Broader actual cases remain unverified: light-wheel proximity/reduced-motion/keyboard interaction, each tab's independent offset across minimize/restore or close/reopen, non1 representative cover source page, and other variable-aspect albums. Do not generalize the4234573 observations to every album or mark the whole overnight batch complete."
+  }
+}

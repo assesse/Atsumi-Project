@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "batch": "factory-reset-shared-platform-drain",
+  "status": "implementation-in-progress",
+  "audit": {
+    "coverage": "Reused fully read main 230 turns/284 user messages and other 333 unique turns/375 messages after SHA256 equality; all 69 specification inventory hashes still match. Re-read changed implementation-policy, Pinterest and SOOP contracts and applicable original requests before this batch. No historical app-control or deletion permission is renewed.",
+    "mainHash": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherHash": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "unavailable": ["Original durable thread 01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified Atsumi analysis 1/2 threads", "Historical attachment pixels not independently re-reviewed"],
+    "originals": ["01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a12a4c-724c-7d13-801d-3d92da01fe1e", "01a10747-ef3d-7d73-9bd6-f839c65b5530"],
+    "requirements": ["R003", "R009", "R015", "R016", "R021", "R022", "DOC023", "DOC041"],
+    "specifications": ["docs/DOWNLOAD_PIPELINE.md", "docs/STARTUP_PERFORMANCE.md", "docs/EXTENSIBLE_ARCHITECTURE.md", "docs/requirements/soop-auto-recording.json", "docs/requirements/implementation-policy.json"]
+  },
+  "confirmedDefect": "FactoryReset stops only the old browser/download/analysis workers, then writes factory-reset.pending and directly exits. It neither closes ManagedWorkGate nor drains Pinterest, Pixiv, platform-media or SOOP admissions. Direct app.exit is not rerouted by ExitRequested. New work can therefore start during reset and accepted media work can be interrupted without the normal shutdown settlement.",
+  "ownership": ["src-tauri/src/interface/commands.rs lifecycle/gate/maintenance sections and focused tests", "src-tauri/src/lib.rs apply_pending_factory_reset and its isolated tests only (root delegated after review)", "docs/requirements/factory-reset-platform-drain.json"],
+  "plan": [
+    "Reserve reset under the same work-gate mutex as all starts and updates, after matching one-shot preview confirmation; reject another reset, update or quit.",
+    "Keep a separate permanently closed maintenance-admission flag. If drain/marker fails or panics, release only quit dispatch, never restart already-stopped services or reopen work admission. Explicit normal quit can retry the idempotent drain.",
+    "Extract the existing complete blocking shutdown drain and use it for normal quit and factory reset: stop SOOP admission, detach official Pinterest surface, cancel Pinterest/Pixiv, shut down platform media, stop CHZZK, observe actual new-platform active counts until settled, then drain legacy analysis/download workers.",
+    "Commit the startup marker only after drain returns, using a same-directory create-new temporary file, full write/sync and no-clobber publication. A failed publication must not leave a partial marker or overwrite an existing marker.",
+    "Return a specific restart-required error on reset failure; do not report successful reset or force app exit. Preserve all original/final/chat media and existing recovery journals.",
+    "Coordinate lib.rs marker validation and SOOP reservation reset semantics with their owners; do not independently widen reset deletion scope."
+  ],
+  "conflicts": [
+    "Reset confirmation authorizes app-state reset, not deleting media or unverified originals.",
+    "Clearing the quit flag alone after a failed marker would falsely reopen already-shut-down services; keep admission closed.",
+    "Keeping the quit flag forever after failure would make explicit normal quit a no-op; allow quit dispatch without allowing new work.",
+    "A timeout is not proof that workers are finished. Do not commit a reset marker or exit while active ownership remains."
+  ],
+  "startupFollowup": {
+    "authorizedScope": "Root delegated the existing startup-reset function only, after reading it and confirming SOOP configuration path. Preserve existing backup semantics rather than deleting data.",
+    "plan": ["Require an exact small regular non-reparse v1 marker before moving anything", "Validate absolute app-data root, immediate children and unique backup destination; reject redirected/non-regular files rather than following them", "Move only existing SQLite/WAL/SHM, thumbnail cache and soop-auto-record.json into the reset backup", "Keep final media, chat, recovery journals and unrelated CHZZK/platform data unchanged", "Any validation/move failure leaves the marker and aborts startup before reservation workers can run"],
+    "checks": ["Missing marker no-op", "Malformed/oversized/linked marker no moves", "SOOP config preserved in backup and absent from fresh app-data root", "Unknown files and all media remain unchanged", "Unsafe source or move failure retains marker and fails closed", "Tests use only fresh isolated fixture directories; never call app.exit or real reset"]
+  },
+  "checks": [
+    "Reset reservation and work registration are mutually exclusive; update and duplicate reset reject without changing prior state.",
+    "Preflight started before reset cannot commit after reservation.",
+    "A reset-owned quit request does not spawn competing shutdown; after failure a fresh normal quit does dispatch.",
+    "Failure/panic keeps starts and updates blocked while explicit quit remains possible; no worker restart claimed.",
+    "Shared drain callbacks occur before marker and exit; a drain panic/error prevents marker publication.",
+    "Isolated temporary marker is complete v1 newline, never overwrites existing paths, and cleans only its own unpublished temporary file on failure.",
+    "No real reset, app launch/control/exit, QA rebuild, user media or account access during tests. Native compile coordinated with the shared owner."
+  ],
+  "verification": {"native": "Parent-coordinated YouTube-agent integrated compile exited0; commands26 and startup factory_reset7 tests passed, including all15 new reset regressions. Subsequent root-owned lazy platform initialization and durable-shutdown error followups are tracked separately and require another shared build.", "sourceReview": "Shared normal/reset drain, RAII closed admission with retryable quit dispatch, atomic/no-clobber marker, strict startup marker/source validation and SOOP reservation backup implemented. SOOP owner added actual metadata-worker RAII drain IDs before this successful integrated run.", "desktop": "not performed and not authorized in this batch"},
+  "remaining": ["Actual reset lifecycle in an isolated desktop instance is not yet verified.", "This narrow batch does not claim that every non-SQLite setting is part of complete reset; no wider CHZZK/account state cleanup is authorized."]
+}

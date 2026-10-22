@@ -577,3 +577,62 @@
     justify-content: flex-end;
   }
 }
+.download-overlap-page-legend > .download-overlap-page-filter {
+  min-height: 26px;
+  padding: 3px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.download-overlap-page-legend > .download-overlap-page-filter.is-matched {
+  border-color: color-mix(in srgb, var(--primary) 48%, var(--line));
+}
+
+.download-overlap-page-legend > .download-overlap-page-filter.is-unique {
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--line));
+}
+
+.download-overlap-page-legend > .download-overlap-page-filter.is-gap {
+  border-style: dashed;
+}
+
+.download-overlap-page-legend > .download-overlap-page-filter[aria-pressed="false"] {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--line-strong);
+  opacity: 0.65;
+}
+
+.download-overlap-page-legend > .download-overlap-page-filter:hover {
+  opacity: 1;
+  filter: brightness(1.15);
+}
+
+.download-overlap-page-filter:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.download-overlap-page-cell.is-filtered {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.download-overlap-hidden-selection {
+  padding: 4px 12px 0;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.download-overlap-page-filter-empty {
+  margin: 0;
+  padding: 20px 8px;
+  color: var(--text-soft);
+  font-size: 12px;
+  text-align: center;
+}

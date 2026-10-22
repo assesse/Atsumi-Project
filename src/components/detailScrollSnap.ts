@@ -5,6 +5,7 @@ type Geometry = {
   scrollHeight: number;
   paddingTop: number;
   relatedTop?: number;
+  relatedCards?: readonly { top: number; height: number }[];
   previewTop?: number;
   previewHeight?: number;
 };
@@ -16,6 +17,12 @@ export function detailScrollStops(geometry: Geometry): DetailScrollStop[] {
   if (geometry.relatedTop !== undefined) {
     candidates.push({ kind: "related", top: geometry.relatedTop - geometry.paddingTop });
   }
+  for (const card of geometry.relatedCards ?? []) {
+    candidates.push({ kind: "related", top: card.top - geometry.paddingTop });
+    if (card.height > geometry.viewportHeight - geometry.paddingTop * 2) {
+      candidates.push({ kind: "related", top: card.top + card.height - geometry.viewportHeight + geometry.paddingTop });
+    }
+  }
   if (geometry.previewTop !== undefined && geometry.previewHeight !== undefined) {
     candidates.push({ kind: "previews", top: geometry.previewTop + (geometry.previewHeight - geometry.viewportHeight) / 2 });
   }
@@ -24,10 +31,14 @@ export function detailScrollStops(geometry: Geometry): DetailScrollStop[] {
   // position. Never make a downward wheel gesture scroll upward in that case.
   const ordered = candidates.map((stop) => ({ ...stop, top: Math.max(0, Math.min(max, stop.top)) }))
     .sort((a, b) => a.top - b.top);
+  const separation = Math.min(120, Math.max(48, geometry.viewportHeight * .15));
   const stops: DetailScrollStop[] = [];
   for (const stop of ordered) {
-    if (!stops.length || stop.top - stops.at(-1)!.top > tolerance) stops.push(stop);
-    else if (stop.kind === "bottom" && stops.length > 1) stops[stops.length - 1] = stop;
+    if (!stops.length || stop.top - stops.at(-1)!.top > separation) stops.push(stop);
+    else if (stop.kind === "bottom") {
+      if (stops.length > 1) stops[stops.length - 1] = stop;
+      else if (stop.top > tolerance) stops.push(stop);
+    }
   }
   return stops;
 }
@@ -49,6 +60,10 @@ export function measureDetailScrollStops(body: HTMLElement): DetailScrollStop[] 
     scrollHeight: body.scrollHeight,
     paddingTop: Number.parseFloat(getComputedStyle(body).paddingTop) || 0,
     relatedTop: relatedRect && relatedRect.top - origin + body.scrollTop,
+    relatedCards: [...body.querySelectorAll<HTMLElement>(".related-card")].map((card) => {
+      const rect = card.getBoundingClientRect();
+      return { top: rect.top - origin + body.scrollTop, height: rect.height };
+    }),
     previewTop: previewRect && previewRect.top - origin + body.scrollTop,
     previewHeight: previewRect?.height,
   });
@@ -65,53 +80,50 @@ function ownsWheel(target: Element, body: HTMLElement, direction: number): boole
   return false;
 }
 
-/** One mouse-wheel / trackpad gesture advances one stop. Native scrollbar,
- * touch, and keyboard scrolling remain free; no document-wide wheel capture. */
+/** Native wheel distance and momentum stay untouched. Only a nearby forward
+ * stop gently settles after the gesture has finished; no hard anchor trap. */
 export function attachDetailScrollSnap(body: HTMLElement): () => void {
-  let gesture: { direction: number; lastAt: number; startedAt: number; top: number } | undefined;
-  let pendingDelta = 0;
-  let deltaAt = -Infinity;
+  let direction = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let settling: number | undefined;
   const stop = () => {
-    if (gesture && Math.abs(body.scrollTop - gesture.top) > 1) {
+    clearTimeout(timer);
+    timer = undefined;
+    direction = 0;
+    if (settling !== undefined && Math.abs(body.scrollTop - settling) > 1) {
       body.scrollTo({ top: body.scrollTop, behavior: "instant" });
     }
-    gesture = undefined;
-    pendingDelta = 0;
+    settling = undefined;
+  };
+  const schedule = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = undefined;
+      const next = nextDetailScrollStop(measureDetailScrollStops(body), body.scrollTop, direction);
+      direction = 0;
+      if (!next || Math.abs(next.top - body.scrollTop) > Math.min(96, body.clientHeight * .12)) return;
+      settling = next.top;
+      body.scrollTo({ top: next.top, behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    }, 180);
   };
   const wheel = (event: WheelEvent) => {
-    if (event.defaultPrevented || !event.cancelable || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey
-      || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
-    const direction = Math.sign(event.deltaY);
-    if (event.target instanceof Element && ownsWheel(event.target, body, direction)) return;
-    if (body.scrollHeight - body.clientHeight <= tolerance) return;
-    event.preventDefault();
-    const now = performance.now();
-    if (gesture && gesture.direction === direction) {
-      const sameGesture = now - gesture.lastAt < 180;
-      const stillMoving = now - gesture.startedAt < 900 && Math.abs(body.scrollTop - gesture.top) > 1;
-      if (sameGesture || stillMoving) {
-        gesture.lastAt = now;
-        return;
-      }
-      gesture = undefined;
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey
+      || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      || (event.target instanceof Element && ownsWheel(event.target, body, Math.sign(event.deltaY)))) {
+      stop();
+      return;
     }
-    if (gesture && gesture.direction !== direction) stop();
-    if (now - deltaAt > 180 || Math.sign(pendingDelta) !== direction) pendingDelta = 0;
-    deltaAt = now;
-    pendingDelta += event.deltaY * (event.deltaMode === 1 ? 32 : event.deltaMode === 2 ? body.clientHeight : 1);
-    if (Math.abs(pendingDelta) < 8) return;
-    pendingDelta = 0;
-    // Only measure layout when advancing, not for every trackpad momentum event.
-    const stops = measureDetailScrollStops(body);
-    const next = nextDetailScrollStop(stops, body.scrollTop, direction);
-    if (!next) return;
-    gesture = { direction, lastAt: now, startedAt: now, top: next.top };
-    body.scrollTo({ top: next.top, behavior: window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    stop();
+    if (body.scrollHeight - body.clientHeight <= tolerance) return;
+    direction = Math.sign(event.deltaY);
+    schedule();
   };
+  const scroll = () => { if (direction) schedule(); };
   const key = (event: KeyboardEvent) => {
     if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) stop();
   };
-  body.addEventListener("wheel", wheel, { passive: false });
+  body.addEventListener("wheel", wheel, { passive: true });
+  body.addEventListener("scroll", scroll, { passive: true });
   body.addEventListener("pointerdown", stop);
   body.addEventListener("keydown", key);
   window.addEventListener("blur", stop);
@@ -119,6 +131,7 @@ export function attachDetailScrollSnap(body: HTMLElement): () => void {
   return () => {
     stop();
     body.removeEventListener("wheel", wheel);
+    body.removeEventListener("scroll", scroll);
     body.removeEventListener("pointerdown", stop);
     body.removeEventListener("keydown", key);
     window.removeEventListener("blur", stop);

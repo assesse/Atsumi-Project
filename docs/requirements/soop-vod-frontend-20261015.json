@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "state": "frontend checkpoint implemented and frozen; root-approved parent contract; actual native playback pending",
+  "parent": "docs/requirements/soop-vod-original-watch-20261015.json",
+  "evidence": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Unchanged fully read main230/284 and other333/375 EOF snapshots rehashed. Root refreshed50active/3archive EOF and unchanged other revisions;69-spec baseline and known reread RELEASING coverage reused. Full parent contract reread; original main turns01a0862c,01a0ad1d,01a12c46 directly reread, native integration/clone original-user delta01a13978/01a1399c/01a13a1f directly reread. Latest original01a13adc and01a13bb3 are present in inherited task history and the original resume artifact. Unavailable sources remain those explicitly listed in parent contract.",
+    "rules": "Use the native original player/chat, not a custom video/iframe; preserve download/favorite/search and isolated platform state; retain playback/sound when changing tabs, privacy hides+mutes, explicit close/replacement releases exact viewer; EOF keeps the original document for seek/replay. No account actions or recording authority added."
+  },
+  "scope": ["src/api/soopVod.ts", "src/features/soop/SoopVodPlayer.tsx", "src/features/soop/SoopVodPlayer.css", "src/features/soop/SoopVodPlayer.test.tsx", "SoopDiscovery.tsx narrow detail/play lifecycle", "SoopDiscovery.css narrow native detail geometry", "separate SoopDiscoveryVod.test.tsx"],
+  "decisions": [
+    "Root-approved Escape arbitration follow-up: with main-renderer splitter focus during native fullscreen, the first Escape exits only the exact VOD fullscreen lease. Discovery's capture handler yields to that owner, preserving the document. After exit, ordinary detail Escape close remains unchanged. Native document keyboard handling is not modified.",
+    "Root review follow-up before edit: fullscreen events are hints only; re-read current exact-token snapshot through the same non-overlapping poll gate, so a delayed old same-video event never applies its enabled value. Retry a failed latest viewport at250/750ms at most twice without reopening; after exhaustion show a dedicated manual viewport retry, preserving one in-flight request and cancelling timers on cleanup.",
+    "Only an explicit play button in an opened video detail mounts the native VOD owner. Merely inspecting a card never starts playback/download. Restricted content remains subject to the original site's login/entitlement UI; it may be viewed via native play but existing download restriction stays unchanged.",
+    "Retain the mounted detail/player when the containing platform/view is hidden or privacy is enabled. Remove the prior filter-change implicit detail close: only explicit close, backdrop/Escape, replacement or explicit channel navigation closes it. Existing remote search tabs and scroll ownership are preserved.",
+    "Available chat adds one native geometry slot plus the existing adjustable split algorithm; pending/unavailable does not reserve a permanently blank pane. No second document or fake replay chat is created.",
+    "Lifecycle open and polling replies must match exact videoId and token; late open is closed by its own token, never the replacement. Visibility changes only update viewport. Successful polling clears transient transport errors, and ended is not treated as a close/error.",
+    "Fullscreen remains native-owned with exact token status/event. Privacy or leaving the visible provider exits fullscreen only, retaining playback. Keep detail close outside native video; no extra fake playback controls.",
+    "The native API is maintained by the YouTube-followup agent; frontend owns no native implementation, account, scheduler, capture or CHZZK modifications. Preserve the concurrent scroll and stale-generation fixes."
+  ],
+  "acceptance": [
+    "Unit: late open/replacement close fences; exact identity; no re-open on hide/privacy; muted only privacy/tray; no overlap polling; poll failure recovery; available/unavailable chat geometry; EOF preserves owner; fullscreen exit hides safely; resize keyboard bounds.",
+    "Discovery: opening detail alone has no VOD/download call; play starts VOD; explicit download still works independently; existing live action unaffected; hidden/privacy retains owner; replacement/close cleans exact lease; no capture/record commands.",
+    "Run focused frontend tests and typecheck; root owns Cargo/actual playback and screenshots. Mock/build success is not remote VOD acceptance."
+  ],
+  "verification": {
+    "focused": "85 passed: SoopVodPlayer13 + SoopDiscoveryVod6 + existing SoopDiscovery25 + SoopWorkspace41. Full project typecheck passed. Scoped diff-check passed. Root-review additions cover exact-token fullscreen refresh singleflight, bounded geometry retry with fresh sequence, explicit viewport-only recovery, hide cancelling stale visible retries, and first Escape exiting fullscreen before second Escape closes detail.",
+    "environment": "Sandbox Vitest failed before tests with temporary-cache EPERM; sandbox typecheck had unrelated project-wide declaration resolution errors. Identical commands under normal read permissions passed; no tests omitted or assertions weakened.",
+    "native": "Peer-owned native host implementation and root-owned actual desktop playback pending; no success claim for actual decoding/chat/geometry.",
+    "fullscreenEvent": "Native broadcasts videoId/enabled because one official document can have viewer aliases. Frontend requires a current lease and matching videoId, then uses the singleflight snapshot controller to read exact-token authoritative state; it never applies event.enabled. Delayed alias events cannot directly mutate presentation. All commands and polling remain exact token-bound.",
+    "nativeCrossReview": "Read the full native VOD host, policy and document-permit modules. Found last-alias-close/reopen gap: release_viewer drops registry gate before dispose marks closed, allowing a replacement alias to reuse a retiring document. Reported to native owner/root; narrow root-owned fix pending at this frontend freeze. Permit capacity and live/VOD API shapes otherwise match."
+  }
+}

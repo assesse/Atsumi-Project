@@ -16,6 +16,7 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
   const playerLeft = options.playerLeft ?? 0, playerWidth = options.playerWidth ?? 960;
   const player = page.querySelector("video")!.parentElement!;
   player.style.position = "relative";
+  Object.defineProperties(player,{clientWidth:{value:playerWidth},clientHeight:{value:options.playerHeight??540}});
   vi.spyOn(player, "getBoundingClientRect").mockReturnValue(rect(playerLeft, 0, playerWidth, options.playerHeight ?? 540));
   const live = page.querySelector("#official-live")!;
   vi.spyOn(live, "getBoundingClientRect").mockReturnValue(rect(options.liveLeft ?? playerLeft + playerWidth - 64, options.liveTop ?? 12, 48, 24));
@@ -58,6 +59,8 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
     requestAnimationFrame: vi.fn((callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; }),
     cancelAnimationFrame: vi.fn((id: number) => { frames.delete(id); }),
     getComputedStyle: window.getComputedStyle,
+    setTimeout, clearTimeout,
+    __atsumiCloseViewerNonce: REQUEST,
     chrome: { webview: { postMessage: (raw: string) => {
       const message = JSON.parse(raw.slice("ATSUMI_BROWSER_CAPTURE:".length)) as Message;
       messages.push(message);
@@ -69,7 +72,7 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
   const windowListener = vi.spyOn(pageWindow, "addEventListener");
   pageWindow.top = options.frame ? {} : pageWindow;
   const objectURLs = { createObjectURL: vi.fn(() => 'blob:synthetic-screenshot'), revokeObjectURL: vi.fn() };
-  const context = { window: pageWindow, document: page, crypto, CustomEvent, Date, setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array, btoa, URL: objectURLs };
+  const context = { window: pageWindow, document: page, crypto, CustomEvent, Date, performance, ResizeObserver:class{observe(){}disconnect(){}}, setTimeout, clearTimeout, setInterval, clearInterval, Uint8Array, btoa, URL: objectURLs };
   runInNewContext(source, context);
   return { page, player, live, video, messages, canvas, capturedTimes, window: pageWindow,
     reply: (index: number, data: Record<string, unknown> = { saved: true }, ok = true) => pageWindow.dispatchEvent(new CustomEvent("atsumi-browser-reply", { detail: { id: messages[index]!.id, ok, data } })),
@@ -84,6 +87,7 @@ function fixture(options: { url?: string; frame?: boolean; strip?: boolean; edit
     setPngSize: (value: number) => { pngSize = value; },
     ready: () => pageWindow.__atsumiPlayerUI?.update({ ready: true, recording: false, detail: "ready" }),
     trustedClick: (name: string) => { const button = page.querySelector(`[aria-label="${name}"]`)!; events.get(button)?.({ isTrusted: true, stopPropagation() {} }); },
+    trustedTarget: (button: Element) => events.get(button)?.({isTrusted:true,preventDefault(){},stopPropagation(){}}),
     key: (fields: Record<string, unknown> = {}) => {
       const event = { isTrusted: true, code: "KeyS", key: "s", target: page.body, preventDefault: vi.fn(), stopPropagation: vi.fn(), ...fields };
       for (const listener of keyListeners) listener(event); return event;
@@ -365,7 +369,7 @@ describe("official player controls", () => {
   it("previews the saved frame at the upper left and undoes only its returned ID", async () => {
     const h = fixture(); h.key(); await flush();
     const preview = h.page.querySelector<HTMLElement>('#atsumi-screenshot-preview')!;
-    expect(preview).not.toBeNull(); expect(preview.style.left).toBe('12px'); expect(preview.style.top).toBe('64px');
+    expect(preview).not.toBeNull(); expect(preview.style.left).toBe('12px'); expect(preview.style.top).toBe('clamp(8px, 12%, 64px)');
     expect(preview.querySelector('img')?.getAttribute('src')).toBe('blob:synthetic-screenshot');
     preview.querySelector<HTMLButtonElement>('button')!.click(); await flush();
     expect(h.messages.some(value => value.kind === 'screenshot_undo')).toBe(false);
@@ -374,6 +378,30 @@ describe("official player controls", () => {
     expect(h.page.querySelector('#atsumi-screenshot-preview')).toBeNull();
     expect(h.objectURLs.revokeObjectURL).toHaveBeenCalledExactlyOnceWith('blob:synthetic-screenshot');
     expect(h.page.querySelector('[role="status"]')?.textContent).toContain('저장 취소됨');
+  });
+  it("dismisses only preview presentation and keeps exact undo separately at bottom-right", async () => {
+    const h=fixture();h.key();await flush();
+    const preview=h.page.querySelector<HTMLElement>('#atsumi-screenshot-preview')!;
+    const close=preview.querySelector<HTMLButtonElement>('[aria-label="스크린샷 미리보기 닫기"]')!;
+    const undo=preview.querySelector<HTMLButtonElement>('[aria-label="스크린샷 저장 취소"]')!;
+    expect(close.style.right).toBe('6px');expect(close.style.top).toBe('6px');expect(undo.style.right).toBe('6px');expect(undo.style.bottom).toBe('6px');expect(undo.textContent).toBe('취소');expect(preview.style.outlineOffset).toBe('-1px');
+    const count=h.messages.length;h.trustedTarget(close);await flush();
+    expect(h.messages).toHaveLength(count);expect(h.page.querySelector('#atsumi-screenshot-preview')).toBeNull();expect(h.objectURLs.revokeObjectURL).toHaveBeenCalledOnce();
+  });
+  it("rejects detached old preview actions and blocks dismissal during undo", async () => {
+    const h=fixture();h.key();await flush();
+    const old=h.page.querySelector('#atsumi-screenshot-preview')!,oldClose=old.querySelector('[aria-label="스크린샷 미리보기 닫기"]')!,oldUndo=old.querySelector('[aria-label="스크린샷 저장 취소"]')!;
+    h.key();await flush();const current=h.page.querySelector('#atsumi-screenshot-preview')!,count=h.messages.length;
+    h.trustedTarget(oldClose);h.trustedTarget(oldUndo);await flush();expect(h.messages).toHaveLength(count);expect(h.page.querySelector('#atsumi-screenshot-preview')).toBe(current);
+    h.trustedClick('스크린샷 저장 취소');h.trustedClick('스크린샷 미리보기 닫기');expect(h.page.querySelector('#atsumi-screenshot-preview')).toBe(current);expect(current.querySelector('[aria-label="스크린샷 미리보기 닫기"]')?.getAttribute('aria-disabled')).toBe('true');
+    await flush();expect(h.messages.filter(message=>message.kind==='screenshot_undo')).toHaveLength(1);expect(h.page.querySelector('#atsumi-screenshot-preview')).toBeNull();
+  });
+  it("doubles the viewer-close without changing PZP fade and clamps a tiny video's paired dimensions",()=>{
+    const h=fixture(),button=h.page.querySelector<HTMLButtonElement>('#atsumi-viewer-close')!;
+    expect(button.style.width).toBe('72px');expect(button.style.height).toBe('72px');expect(button.querySelector('svg')?.getAttribute('width')).toBe('40');
+    const css=h.page.getElementById('atsumi-player-ui-style')!.textContent!;expect(css).toContain('left:50%;transform:translateX(-50%)');expect(css).toContain('.pzp-pc.pzp-pc--controls #atsumi-viewer-close');
+    const tiny=fixture({playerWidth:240,playerHeight:64}),small=tiny.page.querySelector<HTMLButtonElement>('#atsumi-viewer-close')!;expect(small.style.width).toBe('40px');expect(small.style.height).toBe('40px');
+    tiny.window.__atsumiPlayerUI!.configure({automaticWatch:true});expect(small.hidden).toBe(true);
   });
   it.each(['timeout', 'pagehide', 'next capture'])("releases the preview blob on %s without deleting a photo", async reason => {
     const h = fixture(); h.key(); await flush();
@@ -399,8 +427,8 @@ describe("official player controls", () => {
     expect(h.messages[1]).toMatchObject({ kind: "screenshot_begin", requestId: REQUEST });
     h.reply(1); await flush(); h.reply(2); await flush();
     expect(h.messages[3]!.kind).toBe("screenshot_finish");
-    h.reply(3); await flush();
-    expect(h.page.querySelector('[role="status"]')?.textContent).toBe("스크린샷 저장 완료");
+    h.reply(3,{saved:true,id:'a'.repeat(32)}); await flush();
+    expect(h.page.querySelector('#atsumi-screenshot-preview img')?.getAttribute('src')).toBe('blob:synthetic-screenshot');
     expect(h.canvas.width).toBe(0);
     expect(h.video.currentTime).toBe(110); expect(h.video.paused).toBe(false);
   });

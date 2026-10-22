@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-15",
+  "state": "approved narrow eligibility implemented; focused tests and actual isolated SOOP VOD replay passed",
+  "requirements": ["R002", "R003", "R009", "R012", "R013", "R015", "R022"],
+  "originals": [
+    {
+      "turnId": "01a13adc-a040-70f0-97d9-380c5b6ba368",
+      "item": 2,
+      "request": "SOOP 다시보기 채널 영상가면 다운로드 버튼이 있던데, 채팅과 영상 둘다 받을 수 있는건지? 확인해서 안되어잇으면 구현해주고, 어렵다고 판단되면 이유를 브리핑해줘."
+    },
+    {
+      "turnId": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec",
+      "request": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."
+    },
+    {"turnId": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "YouTube/SOOP also preserve replay chat without adding a second video receiver."},
+    {"turnId": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "rule": "Replay and seek remain usable after the end; replay close belongs beside chat controls; minimize preserves audio and tray mutes."},
+    {"turnId": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "rule": "Tab switches retain playback and sound without retaining hidden shortcuts."},
+    {"turnId": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Final video and chat remain after successful verified cleanup."},
+    {"turnId": "01a13142-4c44-7560-bde6-d7e089fd9ea9", "rule": "Preserve established UI and platform-local state; reference CHZZK without interfering with it."}
+  ],
+  "audit": {
+    "inventory": "Parent owns the current source inventory refresh. Existing complete active50/archive3 EOF inventory and original69-specification coverage are retained only where hashes/revisions match; this agent independently rechecked both original snapshot SHA256 values before this proposal.",
+    "main": {"turns": 230, "messages": 284, "paginationExhausted": true, "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676"},
+    "other": {"turns": 333, "messages": 375, "paginationExhausted": true, "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21"},
+    "currentReads": ["AGENTS.md", "docs/requirements/implementation-policy.json", "docs/requirements/platform-followup-20261014.json", "docs/requirements/platform-chat-followup-20261014.json", "docs/requirements/platform-replay-chat.json", "docs/requirements/platform-chat-completion.json", ".runtime/requirements-audit/20261015-platform-verification-resume.json"],
+    "originalEvidence": "The latest item2 and verification-resume requests are present verbatim in the inherited original conversation. Earlier original turns were directly reread in the unchanged complete snapshots during this lifecycle audit, not inferred only from another agent's summary.",
+    "unavailable": ["Old durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified Atsumi analysis1/2", "Unavailable historical image-only attachment pixels"],
+    "authority": "Parent read this full contract and approved only PlatformMediaLibrary.tsx opened-item eligibility plus focused tests. Parent owns actual app operations and serial builds. Backend, IPC, CHZZK, user media, profile and account changes remain excluded."
+  },
+  "confirmedDefect": {
+    "source": "src/features/platforms/PlatformMediaLibrary.tsx:88,279,284",
+    "condition": "hasChat currently requires playback.item.reference.kind === 'live'.",
+    "effect": "A downloaded SOOP VOD remains kind video even when its durable chatArchive summary and timed local chat exist. The player omits PlatformReplayChat and cannot display those downloaded messages.",
+    "qualification": "This is a deterministic UI integration defect. Earlier actual service download/reopen checks proved the stored 9.529-second SOOP file and30 native-offset chat rows, not this omitted rendered pane. Parent is separately verifying the actual isolated desktop replay."
+  },
+  "currentDataContract": {
+    "summary": "MediaLibraryItem.chatArchive is optional/null or a typed object with state complete/partial/unknown. There is no none or unavailable summary enum. These values describe storage evidence, not a positive chat message count or a provider-wide guarantee.",
+    "publication": "platform_media.rs verify_publish inspects the exact owned job chat proof for video downloads. SOOP executes download_with_metadata only when the same official VOD plan declares show_chat=Y. That creates a writing marker and terminal complete/partial proof, then publishes the summary with independently verified video. Ordinary YouTube VOD and SOOP videos without chat have no proof and no summary.",
+    "legacy": "An absent/null summary does not prove no saved chat for older live recordings. Keep their existing replay pane and its truthful missing/empty/unmapped/ready states. Do not backfill, scan, migrate or fabricate summaries.",
+    "partialOrUnknown": "Retain the existing warning and allow the replay pane to read whatever actually survives. A pane with an explicit missing/empty/retry state is appropriate for a declared archive attempt, not a claim that messages exist or were completely preserved."
+  },
+  "proposal": {
+    "files": ["src/features/platforms/PlatformMediaLibrary.tsx", "src/features/platforms/PlatformMediaLibrary.test.tsx"],
+    "eligibility": "Render existing replay chat when the opened playback item is a live recording OR has a non-null chatArchive summary. Read eligibility from the authoritative opened item, not a possibly stale library card. No provider-name heuristic, background archive probe or new backend API.",
+    "table": [
+      {"kind": "video", "summary": "complete", "pane": true},
+      {"kind": "video", "summary": "partial", "pane": true, "warning": "unchanged"},
+      {"kind": "video", "summary": "unknown", "pane": true, "warning": "unchanged"},
+      {"kind": "video", "summary": "null or absent", "pane": false},
+      {"kind": "live", "summary": "any, null or absent", "pane": true}
+    ],
+    "ui": "Reuse existing chat geometry, bounded local replay API, video currentTime seek, privacy handling and close button beside chat controls. Without an eligible archive retain the current video-only close location and full width. No new explanatory text, controls, layout or playback lifecycle.",
+    "excluded": ["Backend and IPC changes", "CHZZK changes", "Provider state coupling", "Download or cleanup changes", "Native timing or archive-completeness changes", "Account/session operations", "Remote chat requests", "Replay component refactoring", "User-media migration"]
+  },
+  "conflicts": [
+    "The original live-only replay eligibility predates requested SOOP VOD chat support. Latest item2 supersedes that type-only assumption; it does not authorize a chat pane for every ordinary video.",
+    "The old completion contract says normal VOD downloads make no new chat claim. That remains true for ordinary VOD without a proof; the newer explicit SOOP timed-chat contract supplies a real summary for eligible VOD.",
+    "Do not restrict eligibility to state complete: doing so hides surviving partial chat and its warning. Do not infer chat from a title, provider, file duration or message count."
+  ],
+  "acceptance": [
+    "SOOP kind-video playback with complete/partial/unknown summaries renders exactly one existing replay pane and calls the existing replay API with that opened library ID; partial/unknown warning remains visible.",
+    "Video items with absent/null summaries in both providers remain video-only and make no replay-chat read. Ordinary YouTube VOD behavior is unchanged.",
+    "Legacy live recordings without summaries retain their existing chat pane and honest missing state; no fabricated completion warning appears.",
+    "Actual opened-item summary wins over a stale list item's summary.",
+    "New SOOP VOD pane uses video position for seek, preserves one video and token on inactive tab, performs no hidden chat polling, hides content during privacy and keeps close/replay controls usable.",
+    "Existing library selection, overlays, background playback, replay-at-end and warning tests remain green. Focused frontend tests are not actual desktop proof.",
+    "Parent opens the actual isolated SOOP VOD download through the rebuilt app, sees saved video plus retained chat and seeks backward/forward. Separately inspect ordinary YouTube VOD has no blank pane, and record any unverified branch honestly."
+  ],
+  "verification": {
+    "productionEdited": true,
+    "changes": "PlatformMediaLibrary.tsx hasChat condition only. Focused tests added to existing PlatformMediaLibrary.test.tsx; no backend, IPC, CSS, replay component or CHZZK change.",
+    "tests": "PlatformMediaLibrary.test.tsx plus PlatformReplayChat.test.tsx:85passed,0failed. Includes SOOP and YouTube video complete/partial/unknown, null/absent ordinary VOD, authoritative opened item versus stale list, legacy live, SOOP VOD forward/backward seek/end replay/inactive retention/privacy/close. Whole-project typecheck exit0 in the normal environment. Targeted git diff --check passed.",
+    "environmentQualification": "Initial sandbox frontend run could not start tests because Vite cache rename was denied (EPERM);0tests ran. Sandbox typecheck emitted widespread existing fixture module/type errors. Identical frontend/typecheck commands were rerun with approved normal execution and passed; no production fallback or weakened test assertion was used.",
+    "actualDesktop": "Parent confirmed the actual newly downloaded SOOP9.9MB0:09 VOD through the isolated full app with a new test profile, not the main user app. Download completed1/1; replay showed video and stored chat; backward seek to1.9seconds, forward seek to7.1seconds, natural end at9.5seconds, center Replay returning to0seconds and a second natural end all worked. No user-profile/media reuse. Ordinary YouTube no-chat pane and partial/unknown paths are covered by regression tests, not newly claimed actual desktop cases.",
+    "separateFinding": "The same actual card exposed an unrelated Unix-seconds date rendering bug (1970.01.22), fixed under platform-library-date-units-20261015.json. Parent confirmed the same card now shows2026.10.15 05:35 without rewriting files/metadata. The saved SOOP video also passed whole-file ffmpeg decode to null with exit0; this is separate validation, not a claim that all provider chat events or exact timing are supported."
+  }
+}

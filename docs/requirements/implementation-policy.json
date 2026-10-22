@@ -1,0 +1,738 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-18",
+  "workspace": "C:/Users/JJH/.codex/worktrees/2849/Atsumi Project",
+  "priority": [
+    "latest explicit user instruction",
+    "latest verified implementation contract",
+    "established common UI/interaction rules",
+    "older specifications retained only where not superseded"
+  ],
+  "audit": {
+    "rawEvidencePublic": false,
+    "productionEditsPausedDuringAudit": true,
+    "main": {
+      "threadId": "01a0493b-9ff4-7c20-bd54-47122b18d211",
+      "turns": 230,
+      "userMessages": 284,
+      "paginationExhausted": true,
+      "evidence": ".runtime/requirements-audit/main-thread-users.json"
+    },
+    "otherEvidence": ".runtime/requirements-audit/other-threads.json",
+    "specificationEvidence": ".runtime/requirements-audit/specifications.json",
+    "otherCoverage": { "uniqueTurns": 333, "uniqueUserMessages": 375, "allAccessiblePagesRead": true },
+    "specificationCoverage": { "files": 69, "lines": 5742, "requirements": 80, "supersededConflicts": 25 },
+    "unavailable": [
+      {
+        "threadId": "01a03f16-5c02-74a3-b49c-2c3a20ccdaae",
+        "reason": "Original durable host unavailable, both implicit and explicit host attempts."
+      },
+      {
+        "names": [
+          "Atsumi 분석 1",
+          "Atsumi 분석 2"
+        ],
+        "reason": "Referenced in design decision history but no accessible task identifier found."
+      }
+    ],
+    "qualification": "This is the full accessible-source audit, not a claim to have read deleted/unreachable chats or inaccessible attachments.",
+    "maintenance": "Before each implementation task re-enumerate accessible sources. Read new/changed sources fully. For each component batch re-check applicable original requests against the current contract and record acceptance evidence. No historical mutation permission is reactivated."
+  },
+  "requirements": [
+    {
+      "id": "R001",
+      "source": "01a13363-ef61-71e3-bf03-3babe3f5b5c0",
+      "requirement": "Service logos appear only inside the platform dropdown, not on the banner.",
+      "acceptance": "Banner keeps Atsumi branding and the selected service label. Dropdown retains all seven service icons."
+    },
+    {
+      "id": "R002",
+      "source": "01a13363-ef61-71e3-bf03-3babe3f5b5c0",
+      "requirement": "Discovery, favorites, download/record and local management must work inside Atsumi.",
+      "acceptance": "A pasted-link wrapper or external website opening is supplemental, never the primary implemented flow."
+    },
+    {
+      "id": "R003",
+      "source": "01a13142-4c44-7560-bde6-d7e089fd9ea9",
+      "requirement": "New platforms must preserve existing requests and fit existing UI; reference CHZZK/Danbooru.",
+      "acceptance": "Platform data/IDs stay isolated; reuse narrow common services, not another platform's internal state."
+    },
+    {
+      "id": "R004",
+      "source": "01a0ffb2-7b46-77f1-9970-1c4be0da6a41",
+      "requirement": "Single-click focus, double-click detail, Ctrl/Shift multi-selection; checkboxes become selected at two or more cards.",
+      "acceptance": "Applies to summary and detail cards. Nested buttons/tags consume their own actions. Deselect removes sticky focus."
+    },
+    {
+      "id": "R005",
+      "source": "01a10854-707d-7182-97d5-0b5669f92801",
+      "requirement": "Card context menus expose opening, downloading and relevant management actions.",
+      "acceptance": "Test the entire card hitbox and nested-action precedence; use overlays rather than pushing lists."
+    },
+    {
+      "id": "R006",
+      "source": "01a10593-61fd-70c0-bdd4-f8521107be97",
+      "requirement": "One unified image favorites list, album/page categories only; remove collections.",
+      "acceptance": "Persistent favorites, no reintroduced collection taxonomy. Video/channel favorites are separate domain records."
+    },
+    {
+      "id": "R007",
+      "source": "01a0fb3e-84f6-7760-b780-98d6d258e8ac",
+      "requirement": "Prioritize Korean title segment in constrained lists and use image overlays to avoid extra height.",
+      "acceptance": "Keep original title in detail. Uniform card heights and existing toolbar positions."
+    },
+    {
+      "id": "R008",
+      "source": "01a10806-d91b-7960-a4a4-09a11e14032d",
+      "requirement": "On/off controls must never move when toggled.",
+      "acceptance": "Reserve stable geometry; all async actions show loading/disabled/error states without displaced controls."
+    },
+    {
+      "id": "R009",
+      "source": "01a10785-1343-76e2-8820-053e98507cbb",
+      "requirement": "Show progress feedback for asynchronous work.",
+      "acceptance": "No indefinite confirming state or fake percentages. Bounded requests, cancellation and retry."
+    },
+    {
+      "id": "R010",
+      "source": "01a051cd-a457-79f0-a78e-4edcf270fa8c",
+      "requirement": "Retain search context/results/scroll when visiting details or creators and returning.",
+      "acceptance": "Same-query tabs must reload/render their retained results; not an empty reused tab."
+    },
+    {
+      "id": "R011",
+      "source": "01a10ac4-0133-7711-8850-ffd7ebcedcc7",
+      "requirement": "Normal exit clears search tabs/results, while favorites and local media remain.",
+      "acceptance": "Recording-group expansion is separately persisted according to the later request."
+    },
+    {
+      "id": "R012",
+      "source": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe",
+      "requirement": "Switching platform tabs must not stop ongoing playback or sound.",
+      "acceptance": "Separate rendering visibility from media lifecycle. Hidden UI has no active shortcuts."
+    },
+    {
+      "id": "R013",
+      "source": "01a0862c-6058-7442-a6fe-38d660288ee2",
+      "requirement": "Viewing and recording share a single incoming video stream, with chat preserved.",
+      "acceptance": "An iframe plus an independent downloader is not a completed single-ingress implementation. Chat-only metadata traffic is separate."
+    },
+    {
+      "id": "R014",
+      "source": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e",
+      "requirement": "Minimizing preserves audio; sending to tray mutes. Player controls fade together.",
+      "acceptance": "Verify actual app lifecycle, not iframe onLoad alone."
+    },
+    {
+      "id": "R015",
+      "source": "01a12a4c-724c-7d13-801d-3d92da01fe1e",
+      "requirement": "Clean source chunks/intermediate files only after merge and validation succeed; keep final media and chat.",
+      "acceptance": "Never clean failed/unverified output; limit cleanup to the specific job's owned files."
+    },
+    {
+      "id": "R016",
+      "source": "01a1114f-db4b-73b3-908a-c6e3d2a19343",
+      "requirement": "Queue labels and fixed status/cancel geometry; canceled/quarantined work counts as settled.",
+      "acceptance": "Do not equate network 100% with finalization/verification completion."
+    },
+    {
+      "id": "R017",
+      "source": "01a105c6-24f6-7792-9fc5-c8bd6309021a",
+      "requirement": "Native folder picker, no upward hover clipping, ten-item removable search history and sorting at search-bar right.",
+      "acceptance": "Apply relevant established list/search interaction, not speculative extra controls."
+    },
+    {
+      "id": "R018",
+      "source": "01a11672-f428-7850-899b-5155aebb4e8a",
+      "requirement": "Actual endpoint response and website comparison are required for advertised search/sort options.",
+      "acceptance": "Unsupported auth/DRM/network limits must be explicit and cannot masquerade as no results."
+    },
+    {
+      "id": "R019",
+      "source": "01a10835-c6c8-7d31-b270-8b32df9a1a94",
+      "requirement": "Community is Hitomi/Danbooru only, scoped to each service.",
+      "acceptance": "Do not add empty community tabs to new platforms."
+    },
+    {
+      "id": "R020",
+      "source": "01a12e00-087e-75f3-b315-155260efdf35",
+      "requirement": "Compact dropdowns without explanatory subtitles; stable thin persistent handles.",
+      "acceptance": "No decorative service live-status footer or duplicated platform branding."
+    },
+    {
+      "id": "R021",
+      "source": "2026-10-13 latest user instruction",
+      "requirement": "Audit all available Atsumi chats/specifications before implementation and trace changes to requests.",
+      "acceptance": "Record exact coverage and unavailable evidence. Latest explicit instructions supersede outdated documents."
+    },
+    {
+      "id": "R022",
+      "source": "active goal",
+      "requirement": "Completion requires actual app operation and no known contradiction with user requirements.",
+      "acceptance": "Build/unit/mock/service success is insufficient; state each verified flow and every remaining gap."
+    }
+  ],
+  "superseded": [
+    {
+      "old": "Image favorites collections",
+      "current": "R006; album/page only"
+    },
+    {
+      "old": "Single click opens detail",
+      "current": "R004; single focus, double-click opens"
+    },
+    {
+      "old": "Sequential review includes already automatically resolved albums",
+      "current": "Manual-judgment candidates only; preserve original button UI/wording per later request"
+    },
+    {
+      "old": "CHZZK excluded from privacy mode",
+      "current": "Later request explicitly includes CHZZK"
+    },
+    {
+      "old": "All recording groups must keep one expanded",
+      "current": "All may close; remember last expansion state"
+    },
+    {
+      "old": "New platform viewer stops on inactive tab",
+      "current": "R012; background playback lifecycle independent of view"
+    }
+  ],
+  "batches": [
+    {
+      "id": "x-experience-completion-20261018",
+      "contract": "docs/requirements/x-experience-completion-20261018.json",
+      "state": "In progress. Current full goal retained; second-account actual verification started. No blanket completion, social writes remain like/bookmark only."
+    },
+    {
+      "id": "x-cleanroom-20261018",
+      "contract": "docs/requirements/x-cleanroom-20261018.json",
+      "state": "App-owned clean-room UI implemented. Latest user override restricts mutations to like/bookmark; both real transitions tested and restored, no repost/reply sent. Current-account feeds, collections, community emoji-label repair, detail media/video and read-only replies verified with Computer Use.98 frontend and19 native tests pass; both builds pass. Multi-account, broad HLS and off-canvas accessibility are not marked complete.",
+      "verification": ".runtime/requirements-audit/20261018-x-cleanroom-verification.json",
+      "supersedes": "x-official-experience-20261018 full official document presentation; preserve session isolation and security guards"
+    },
+    {
+      "id": "x-official-experience-20261018",
+      "contract": "docs/requirements/x-official-experience-20261018.json",
+      "state": "Official native X surfaces implemented; final 48 frontend/15 native tests and 22 offline shell scenes passed. Approved old-cache cleanup resolved disk blocker; updated executable built and launched with main document loaded. Real authenticated acceptance still blocked by Computer Use initialization; not complete.",
+      "verification": ".runtime/requirements-audit/20261018-x-official-verification.json"
+    },
+    {
+      "id": "x-session-media-repair-20261018",
+      "contract": "docs/requirements/x-session-media-repair-20261018.json",
+      "state": "Five requests implemented; 48 frontend, 3 layout and 17 native tests passed. 30 final synthetic scenes plus 11 earlier captures retained. Frontend and native builds passed. Real authenticated acceptance remains blocked by Computer Use initialization os error 3; not marked complete.",
+      "verification": ".runtime/requirements-audit/20261018-x-session-verification.json"
+    },
+    {
+      "id": "chat-status-warning-20261017",
+      "contract": "docs/requirements/chat-status-warning-20261017.json",
+      "state": "Reason-aware presentation repair implemented;113 focused tests/typecheck passed. Actual grouped QA recording and playback show uncertainty warning with neutral detail; final hash preserved. No native/archive/success/cleanup changes. Native disabled-source propagation and wider goal remain pending.",
+      "verification": ".runtime/requirements-audit/20261017-chat-warning-and-hover-actual.json"
+    },
+    {
+      "id": "chzzk-narrow-chat-20261017",
+      "contract": "docs/requirements/chzzk-narrow-chat-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-chzzk-narrow-chat.json",
+      "state": "Actual333px overflow and175px hidden chat reproduced. Official popup hash drift and native220px versus frontend160px mismatch confirmed. Scoped repair and actual post-build validation pending."
+    },
+    {
+      "id": "youtube-trusted-types-icons-20261017",
+      "originalRequests": ["01a14358-092b-7a50-a8a5-6211c15170e9", "01a13ff3-158e-7822-a5fd-d391c9c9c048", "01a13fdd-06e7-7570-b2a8-e1f1d54d357e"],
+      "contract": "docs/requirements/youtube-trusted-types-icons-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-youtube-trusted-types-icons.json",
+      "state": "Actual native YouTube DOM confirmed empty owned controls because TrustedTypes rejects innerHTML. Fixed SVG DOM construction planned without policy, permission or recording changes. Actual post-fix acceptance pending."
+    },
+    {
+      "id": "shared-browser-environment-20261017",
+      "originalRequests": ["01a14575-680f-7fc2-b9ac-93e0d1dfa769", "01a1475e-8adc-7752-b919-abf426c940f9"],
+      "contract": "docs/requirements/shared-browser-environment-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-shared-browser-environment.json",
+      "state": "Actual Pixiv-first YouTube WebView creation regression fixed by identical arguments across ten shared-profile builders. Native90/frontend94 passed; normal dev build1m01s and actual Pixiv home -> YouTube original video/chat document -> Pixiv authenticated98card return passed. No new0x8007139F. Existing profile and service permissions retained. Fresh reverse-start/account-popup, screenshot hover/undo and real IME gates remain independent."
+    },
+    {
+      "id": "pixiv-favorite-tags-20261017",
+      "originalRequests": ["01a1475e-8adc-7752-b919-abf426c940f9"],
+      "contract": "docs/requirements/pixiv-favorite-tags-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-pixiv-favorite-tags.json",
+      "state": "Integrated official account favorite search tags from existing same-session suggestion response, no added request or online mutation. Native55 tests passed3opt-in ignored, production frontend126/126, final6layout cases, typecheck/Vite/native dev build passed; independent schema/fence review passed. AppPID51560 launched2026-10-17T10:10:04+09:00 with136ms healthy pulse. Actual signed-in favorite-tag match and click flow remain pending user acceptance; fixtures/build do not establish that acceptance."
+    },
+    {
+      "id": "pixiv-home-access-20261017",
+      "originalRequests": ["01a1467c-ac3a-7e92-ba3e-f25a3c66c1a1", "01a146a6-f234-7512-a8a5-b68baaf89355", "01a146a9-11a8-70b1-868f-ffc1e465e62e"],
+      "contract": "docs/requirements/pixiv-home-access-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-pixiv-home-access.json",
+      "state": "Item1 diagnosed only: forced safe query plus unconditional age filters; no filter/account change. User rejected first home implementation quantity(5cards). Replaced8ID search-suggestion source with official1000ID recommendation pool,60ID batches and opaque session-scoped continuation. Integrated seven scoped files after confirmed normal shutdown/baseline hash check. Production frontend111/native52 tests, actual60+60 public metadata probe,typecheck/frontend/native builds passed. Normal debugPID15180 healthy. Logged-in actual home quantity/append acceptance remains pending."
+    },
+    {
+      "id": "pixiv-search-header-guest-20261017",
+      "originalRequests": ["01a145d1-c3cb-7190-bd9e-31154eaf8f8d", "01a145d2-3259-7d51-b4c8-29ffd1365477"],
+      "contract": "docs/requirements/pixiv-search-header-guest-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-pixiv-search-header-guest.json",
+      "state": "Scoped fix complete. Search-first toolbar and explicit guest-session proof applied; frontend 85/native 41 passed, 2 opt-in ignored; typecheck/build and public response checks passed. User confirmed guest keyword search and toolbar placement without problems on 2026-10-17 KST (call_00103323dfde43d3a2b0ee0dd6fbcce6). No agent account/UI manipulation."
+    },
+    {
+      "id": "shared-social-login-20261017",
+      "originalRequests": ["01a14573-0864-7a91-8857-2082afb3f47f", "01a14575-680f-7fc2-b9ac-93e0d1dfa769"],
+      "contract": "docs/requirements/shared-social-login-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-shared-social-login.json",
+      "state": "Implementation and actual authentication acceptance in progress. Explicitly requested Google browser identity sharing supersedes physical profile isolation only for YouTube/Pinterest/Pixiv; service authorization and all media state remain separate.",
+      "checks": ["Existing YouTube profile retained without copying or deleting credentials", "Official Google popup opener and same-window redirects", "Service-specific fresh proof and security-screen preservation", "No CHZZK/SOOP profile changes", "Actual user authentication and service workflow still pending"]
+    },
+    {
+      "id": "image-platform-sessions-apply-20261017",
+      "originalRequests": ["01a1455b-9626-7d03-a7f1-4cddb8b9f454"],
+      "contract": "docs/requirements/image-platform-sessions-20261016.json",
+      "verification": ".runtime/requirements-audit/20261017-image-session-apply.json",
+      "state": "Prepared29-file patch applied narrowly, preserving concurrent Hitomi linked_gallery_id event projection. Shared-source frontend194tests, typecheck/frontend and debug builds passed. Exact workspace app running and Pinterest actual shell/login-enabled/signed-out UI observed. User handles account authentication and actual flow acceptance; no duplicate launcher, release or cleanup.",
+      "checks": ["No whole staged-tree overwrite", "No forced stop, profile reset, media cleanup or release", "No social-auth promise", "Actual authenticated home/search/favorite/download/local-reopen remains pending user verification"]
+    },
+    {
+      "id": "image-platform-sessions-staged-20261016",
+      "originalRequests": ["01a1451a-2eff-7341-9100-aafa9089a5d0", "call_5dc9b85551a54e939e889e1fd1f7fe45: code preparation only"],
+      "requirements": ["R002", "R003", "R004", "R005", "R008", "R010", "R011", "R015", "R018", "R022"],
+      "contract": "docs/requirements/image-platform-sessions-20261016.json",
+      "state": "Staged code only under .runtime/image-session-staging. Live app source untouched in this batch; no restart, UI input, actual login or media download. Pinterest native session home/search/original storage, source-order Masonry and isolated Pixiv account transport prepared. Actual app and authenticated flow acceptance remains pending and must not be inferred from fixture tests.",
+      "checks": ["R007 uniform card height superseded only for Pinterest Masonry by latest explicit request", "Original card selection/context/nested-control rules preserved", "Local favorites/downloads survive account changes", "No cookies/tokens exposed through frontend IPC or logs", "Final targeted frontend194 and native81 tests passed;5native real-network/GUI tests intentionally ignored; full typecheck and staged frontend build passed", "Shared app suites85passed1pre-existing Hitomi scroll failure, reproduced identically in unchanged live source", "29-file patch passes apply-check without application; prepared and live-baseline hashes verified", "Prepared patch must recheck live source hashes before later application", "Actual authenticated home/download/rendering and social login are not verified", "No goal, commit, push, release or user-data cleanup"]
+    },
+    {
+      "id": "image-platform-previews-20261016",
+      "originalRequests": ["01a1450b-2076-7293-85ab-d384d54c78cc"],
+      "requirements": ["R003", "R004", "R005", "R008", "R010", "R018", "R022"],
+      "contract": "docs/requirements/image-platform-previews-20261016.json",
+      "state": "Item3 production implementation and automated checks passed; actual Atsumi operation remains unverified. Items1/2/4/5 assessed only, without implementing home feed, masonry, login or another service.",
+      "checks": ["Independent bounded image preview preferences with failed-save retry", "Existing image workspaces/cards/selection retained without extra fetching", "113 focused tests passed", "3 offline browser tests cover30 layout scenes without overflow or clipped controls", "Full TypeScript and frontend build passed; existing chunk warnings retained", "No user account, media, native process, UI automation or release changes"]
+    },
+    {
+      "id": "live-discovery-eight-20261016",
+      "originalRequests": ["01a14358-092b-7a50-a8a5-6211c15170e9"],
+      "contract": "docs/requirements/live-discovery-eight-20261016.json",
+      "componentContracts": ["docs/requirements/live-player-screenshot-controls-20261016.json", "docs/requirements/youtube-channel-favorite-status-20261016.json", "docs/requirements/youtube-manual-recording-status-20261016.json", "docs/requirements/soop-discovery-profile-eight-20261016.json"],
+      "state": "Implementation and actual acceptance in progress; existing media/accounts retained. Latest screenshot controls and larger top-center viewer-close supersede old presentation only.",
+      "checks": ["Three original players visible native controls and synchronized fade", "Screenshot dismiss versus exact-file undo", "YouTube channel-address and truthful colored statuses", "SOOP profiles, official related-streamer ordering, viewer counts and tags", "Actual app operation and cross-provider isolation"]
+    },
+    {
+      "id": "platform-original-runtime-20261014",
+      "requirements": ["R002", "R003", "R008", "R009", "R012", "R013", "R014", "R015", "R022"],
+      "originalRequests": ["01a13a1f-f808-74a0-85c8-e90aa748a292"],
+      "contract": "docs/requirements/platform-original-runtime-20261014.json",
+      "state": "implementation and actual authentication/media acceptance pending",
+      "checks": ["Official provider player/chat", "One ingress for watch and record", "Provider-owned account/profile/session boundaries", "Verified saved media and chat", "CHZZK regression", "Actual desktop login/watch/record"]
+    },
+    {
+      "id": "platform-initializer-and-terminal-drain-ownership",
+      "requirements": ["R003", "R009", "R011", "R015", "R022"],
+      "originalRequests": ["01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a12a4c-724c-7d13-801d-3d92da01fe1e", "01a10ac4-0133-7711-8850-ffd7ebcedcc7", "01a10747-ef3d-7d73-9bd6-f839c65b5530"],
+      "specificationReferences": ["docs/STARTUP_PERFORMANCE.md", "docs/requirements/factory-reset-platform-drain.json"],
+      "evidence": "Independent source review found a lazy OnceLock initializer can still recover journals and spawn workers after quit captured a missing service. It also found terminal journal-write failure can leave a persisted active state after the real worker has ended. Original requests and startup/reset contracts reread; accessible thread inventory rechecked and complete source snapshot hashes unchanged.",
+      "decision": "Register lazy initialization under the existing admission gate with an RAII count, without holding that mutex across I/O. Quit/reset drain waits for admitted initialization before obtaining the final service. Updates see initialization as active work. Separately track actual media work ownership and record terminal persistence errors. Once all workers have really stopped, an ordinary requested quit may preserve the last valid journal and originals for recovery and exit with a diagnostic warning; factory reset must reject that persistence error before publishing its marker. Never infer completed output, cleanup permission, or terminated workers from a timeout.",
+      "checks": ["Quit/update reservation rejects late initialization", "Slow initialization does not hold the UI admission mutex", "Initializers are counted through completion and panic, and drain rereads the service after waiting", "Terminal persistence failure cannot make actual worker drain infinite", "Factory reset does not publish a marker when drained work reports persistence failure", "All tests use isolated fixtures, not real reset or user media"]
+    },
+    {
+      "id": "clean-release-managed-platform-tools",
+      "requirements": ["R002", "R003", "R022"],
+      "originalRequests": ["01a10593-61fd-70c0-bdd4-f8521107be97", "01a13142-4c44-7560-bde6-d7e089fd9ea9"],
+      "evidence": "Root read the entire release workflow, frontend launcher, portable tool preparation and Tauri configuration. A clean CI runner prepares only FFmpeg before tauri build, but bundling now requires .runtime/platform-tools. The portable step prepares those resources only after installer bundling, too late.",
+      "decision": "Prepare the existing hash-pinned platform tools before the first Tauri build. Preserve signing/upload/version conditions and resource paths. No workflow dispatch, credentials, commit, build publication or release.",
+      "checks": ["Static regression checks preparation precedes first installer build", "Nested media-tools/platform-tools remains compatible with the previous portable updater", "Actual clean Windows build and third-party source/notice redistribution review remain release gates"]
+    },
+    {
+      "id": "saved-video-channel-identity",
+      "requirements": ["R003", "R008", "R015", "R022"],
+      "originalRequests": ["01a11775-9d47-7280-9431-a4aac2761ccd", "01a13142-4c44-7560-bde6-d7e089fd9ea9"],
+      "specificationReferences": ["docs/design-system/ATSUMI_INK_V0_1.md", "docs/requirements/platform-media-contract.json"],
+      "evidence": "Isolated desktop SOOP recording card retained thumbnail/title/channel/file information but omitted the requested channel portrait. Existing CHZZK RecordedChannel demonstrates archived identity, not re-querying today's channel during local browsing.",
+      "decision": "Add a lazy local-only optional profile read to the existing library card, with a fixed32px circular fallback slot and the existing channel/title/file information. Native owned profile proof is separate from the unchanged library model. Missing old portraits or YouTube portraits remain a placeholder, not silently fetched from the network. Do not couple to CHZZK state or add a misleading external channel action.",
+      "checks": ["Local optional profile response only; reject remote URLs/oversized data", "Privacy performs no portrait read and hides existing portraits", "Missing/corrupt/failed portrait leaves video playback and stable card geometry intact", "Offscreen cards defer loading; obsolete replies do not replace current identity", "Existing card selection/context menu/replay tests stay intact", "Desktop appearance and newly recorded portrait persistence remain pending"]
+    },
+    {
+      "id": "soop-scheduled-favorite-ui-and-app-admission",
+      "requirements": ["R003", "R008", "R009", "R012", "R013", "R015"],
+      "originalRequests": ["01a09e9d-1dd4-7ae0-8236-312c03285feb", "01a0c28a-ea90-7162-bd24-40dda4a8edb7", "01a11672-f428-7850-899b-5155aebb4e8a", "01a11775-9d47-7280-9431-a4aac2761ccd", "01a10806-d91b-7960-a4a4-09a11e14032d"],
+      "specificationReferences": ["docs/CHZZK_AUTO_RECORDING.md", "docs/requirements/soop-auto-recording.json"],
+      "decision": "Native SOOP scheduler owns opt-in reservations independently of UI. Root integrates a fixed record icon next to favorite star, union of favorites and active reservations, short status text, and no separate auto-record tab. Preserve the session order of surviving union rows and append new IDs, so removing a star from a still-reserved channel cannot move its controls below other favorites. Rows no longer in either source are removed normally. Refresh failure never flips a toggle. Writes carry the observed revision; stale writes refresh status without automatically repeating the user's command. Add lightweight AppState ownership, background start and gated shutdown drain.",
+      "conflicts": ["Old separate automatic-record tab is superseded", "A star is not recording consent", "Manual recording is not stopped by disabling an automatic reservation", "Visibility/privacy/tab changes must not remove reservations", "A damaged configuration blocks new enables, not an explicit stop of an already enabled reservation. Runtime-only off after durable-write failure must remain an error, with no saved-success toast."],
+      "checks": ["No recording on initial load, favoriting or watching", "Record icon stays centered and same size during pending/on/off; favorites remain independently operable", "Unstarred enabled reservation remains visible and manageable", "Old polling reply cannot undo an accepted change", "Conflict/failure stays visible with refreshed current snapshot; no silent repeated mutation", "Startup does not eagerly scan media or resolve tools; quit/update blocks new starts and drains admitted work", "No real schedules, user accounts, existing files or running QA process modified by tests"]
+    },
+    {
+      "id": "desktop-confirmed-live-shell-and-viewer-units",
+      "requirements": ["R003", "R008", "R012", "R020", "R022"],
+      "originalRequests": ["01a11b85-ed1b-78b3-b16a-20fce337f087", "01a12e00-087e-75f3-b315-155260efdf35", "01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a10872-fb3d-7cb0-bd87-e04ce9088717"],
+      "coverage": "Re-enumerated active50 and archived3/EOF. The fully read main230/284 and other333/375 snapshots retain hashes85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. All69 original specification hashes unchanged. Relevant original turns and changed policy/SOOP/Pinterest contracts read fully before production edits. Latest isolated-test authorization does not authorize user accounts or existing media.",
+      "evidence": "Renewed isolated SOOP desktop viewing left the full rail visible and live cards labeled a viewer count as views. PlatformWorkspace has no watching-state connection; SoopDiscovery unconditionally appends 회 and hides zero.",
+      "decision": "Reuse the existing persistent click/drag LiveEdgePanel in video workspaces only while the watching view is active, keeping the rail and media mounted. Expose the rail normally during tutorials/exploration/library. No recurring attention animation. Distinguish live viewer counts from VOD views, preserve zero, and omit channel counts with unverified semantics.",
+      "files": ["src/features/platforms/PlatformWorkspace.tsx", "src/features/platforms/PlatformWorkspace.css", "src/features/platforms/PlatformWorkspace.test.tsx", "src/features/soop/SoopWorkspace.tsx", "src/features/soop/SoopDiscovery.tsx", "src/features/youtube/YouTubeWorkspace.tsx"],
+      "checks": ["Start/stop alone changes watching state; opening controls, changing view/source or privacy never recreates players", "Click/drag/Escape menu behavior and handle following opened rail reuse established component", "Tutorial navigation remains visible; image providers never become immersive", "Null is not zero; live 시청 N명, VOD 조회 N회; channel count omitted", "Focused mocked tests do not substitute for subsequent isolated desktop pixel verification"]
+    },
+    {
+      "id": "duplicate-review-regression-clock-and-teardown",
+      "requirements": ["R009", "R010", "R022"],
+      "originalRequests": ["01a10785-1343-76e2-8820-053e98507cbb", "01a051cd-a457-79f0-a78e-4edcf270fa8c"],
+      "files": ["src/App.test.tsx"],
+      "evidence": "Before editing, the failing integration test was traced to the browser fixture's real 45/90 ms scan events racing its 15 ms assertion under load. A failed assertion then skipped unmount and left a duplicate gallery-search-form and event subscriptions in the document. The unchanged App suite passed 77/77 in isolation, consistent with a timing and cleanup defect rather than proof of a production regression.",
+      "decision": "Control this test's scan clock and always cancel its fixture scan, unmount, remove its DOM and restore real timers in finally. Preserve the exact snapshot count, cancellation and CAS assertions. Do not change production behavior or loosen the five downstream assertions.",
+      "checks": ["Exact two-snapshot pre-progress assertion remains", "Scan cancellation and stale CAS reload remain tested", "Failed assertions cannot leak the app into later tests", "Full integrated suite must pass; a focused pass alone is insufficient"]
+    },
+    {
+      "id": "media-library-pagination-and-active-work-visibility",
+      "requirements": ["R002", "R009", "R010", "R016", "R022"],
+      "originalRequests": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a051cd-a457-79f0-a78e-4edcf270fa8c", "01a1114f-db4b-73b3-908a-c6e3d2a19343"],
+      "files": ["src-tauri/src/platform_media.rs", "src/features/platforms/PlatformMediaJobs.tsx", "src/features/platforms/PlatformMediaJobs.test.tsx", "src/features/platforms/PlatformMediaLibrary.test.tsx"],
+      "evidence": "An offset cursor shifts when a completed file is inserted/deleted ahead of it. The job list already prioritizes active work before its 256-row cap, so active-row loss is not an observed defect. It unnecessarily clones all history before limiting it, while the summary incorrectly says all work.",
+      "decision": "Native bounded keyset pagination retains a stable boundary under concurrent changes. Preserve the existing active-first order and total 256-row cap without cloning all history. Label the UI recent work, retaining the established three tabs and fixed control geometry.",
+      "checks": ["Concurrent insertion/deletion cannot skip or duplicate older pages", "Reject oversized or malformed cursors", "Old pending/active rows remain visible among more than 256 recent settled rows", "Stable opaque cursor is passed back unchanged by the UI", "Existing pause/background, selection, cancellation and settlement animations remain unchanged"]
+    },
+    {
+      "id": "portable-managed-tools-backward-compatibility",
+      "requirements": ["R002", "R003", "R015", "R022"],
+      "originalRequests": ["01a10593-61fd-70c0-bdd4-f8521107be97", "01a10626-9c92-7d83-8671-485b53b86ca5", "01a1154a-0c82-7993-b06a-01fbb3882406", "01a13363-ef61-71e3-bf03-3babe3f5b5c0"],
+      "files": ["src-tauri/tauri.conf.json", "src-tauri/src/interface/commands.rs", "src-tauri/src/portable_update.rs", "tools/prepare_portable.ps1"],
+      "evidence": "Released v2.2.1 portable updater only accepts its established owned top-level paths. A new top-level platform-tools folder would be rejected before installing the update.",
+      "decision": "Bundle managed yt-dlp/Deno beneath existing media-tools/platform-tools. Preserve the old owned-path allowlist and its whole-media-tools backup/rollback; keep the development cache path unchanged.",
+      "checks": ["Installed resource lookup and portable payload use the same nested path", "Old updater path validation accepts every new tool and license file", "Rollback restores the entire prior media-tools directory and preserves unrelated top-level files", "No PATH, Python installation or new dependency download required at runtime", "No user data migration, overwriting an existing portable package, signing or release as part of this verification", "Actual clean portable launch remains unverified"]
+    },
+    {
+      "id": "local-live-hls-transport-policy",
+      "requirements": ["R002", "R003", "R013", "R018", "R022"],
+      "originalRequests": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a0862c-6058-7442-a6fe-38d660288ee2"],
+      "files": ["src-tauri/tauri.conf.json", "src/features/platforms/platformTransport.test.ts"],
+      "evidence": "Hls.js reads the local live playlist/segments via XMLHttpRequest/fetch, but the app policy only permitted these URLs in media-src. connect-src must permit the script request too.",
+      "technicalSources": ["https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/connect-src", "https://github.com/video-dev/hls.js/blob/v1.7.2/src/utils/xhr-loader.ts"],
+      "checks": ["Allow only the owned platform-media local /live/ path variants; no external host, broad scheme or wildcard", "Keep native main-WebView identity, exact Origin and revoked-token validation", "No new iframe, remote script or account access permission", "Configuration/unit verification does not substitute for actual WebView HLS playback"]
+    },
+    {
+      "id": "recorded-platform-chat-integration",
+      "requirements": ["R003", "R008", "R009", "R012", "R013", "R014", "R015", "R022"],
+      "originalRequests": ["01a0862c-6058-7442-a6fe-38d660288ee2", "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "01a12a4c-724c-7d13-801d-3d92da01fe1e"],
+      "specificationReferences": ["docs/CHZZK_REPLAY.md", "docs/CHZZK_CAPTURE_CLOCKS.md", "docs/requirements/platform-replay-chat.json"],
+      "files": ["src-tauri/src/platform_media_ipc.rs", "src-tauri/src/lib.rs", "src/features/platforms/PlatformMediaLibrary.tsx", "src/features/platforms/PlatformMediaLibrary.css", "src/features/platforms/PlatformMediaLibrary.test.tsx"],
+      "checks": ["Trusted main read-only IPC accepts owned library IDs, not filesystem paths; bounded blocking concurrency separate from recording", "Chat is driven by video currentTime and does not recreate media or pause background playback", "Receipt-time approximation or missing mapping is explicit; never claim exact alignment without evidence", "Keep close and chat controls reachable at small window sizes; privacy hides names and text", "Rendered chat is bounded text, never untrusted HTML or remote images", "Actual desktop replay remains pending while Computer Use is stopped"]
+    },
+    {
+      "id": "video-library-interaction-parity",
+      "requirements": ["R003", "R004", "R005", "R008", "R009", "R014", "R016"],
+      "originalRequests": ["01a0ffb2-7b46-77f1-9970-1c4be0da6a41", "01a10854-707d-7182-97d5-0b5669f92801", "01a1114f-db4b-73b3-908a-c6e3d2a19343", "01a1197c-645d-7042-9fc4-b1ba6b18c243"],
+      "files": ["src/features/platforms/PlatformMediaLibrary.tsx", "src/features/platforms/PlatformMediaLibrary.css", "src/features/platforms/PlatformMediaLibrary.test.tsx", "src/features/platforms/PlatformMediaJobs.tsx"],
+      "specificationReferences": ["docs/CHZZK_REPLAY.md:10", "docs/design-system/ATSUMI_INK_V0_1.md:53"],
+      "checks": ["Single focus and deselection blur; Ctrl/Shift multiselection without nested-action propagation", "Only foreground topmost overlay handles keys; modal/menu keyboard focus remains contained", "Read-only summary above waiting/running/settled views uses real job states, with cancelled counted as settled, not failed saves claimed successful", "Status and cancel geometry stays fixed; use existing selected progress design rather than inventing another visual", "Preserve complete files and background player lifecycle", "Playback errors appear inside the visible player; successful polling must not erase an operation failure", "Existing Space/K, five-second arrows, M and F controls respect input fields, privacy, inactive tabs and foreground modals; obsolete wide-view toggle is not restored", "Playback controls fade together without a pointer-click focus leaving only the header visible", "An in-flight pre-mutation poll cannot restore a deleted card or roll job state backwards; late playback-open responses revoke their own token without taking over the newer player", "Unmount teardown handles token-close rejection without an unhandled promise"]
+    },
+    {
+      "id": "native-discovery-tutorials",
+      "requirements": ["R002", "R003", "R021"],
+      "originalRequests": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a1066a-2c56-7f83-a320-c544cfa72190", "01a106dd-da93-7c50-9be7-20cf67345d9c", "01a106e8-cda7-7322-88d5-d26ca8882e4b", "01a10747-ef3d-7d73-9bd6-f839c65b5530"],
+      "conflict": "The new-platform guides still led with pasted external links and omitted local downloads, contrary to the current requested primary workflow.",
+      "files": ["src/tutorial/tourSteps.ts", "src/tutorial/tourActions.test.ts", "src/features/soop/SoopDiscovery.tsx"],
+      "checks": ["Four short source-local steps: Explore, search guidance, favorites, Downloads", "Navigation advances only after the highlighted navigation action", "No forced downloads, recordings, account login or privacy toggles", "Pinterest guidance only promises tested public profile/board discovery, not unavailable keyword search", "Target elements exist in the actual mounted workspace"]
+    },
+    {
+      "id": "isolated-desktop-validation",
+      "requirements": ["R002", "R003", "R021", "R022"],
+      "files": ["src-tauri/examples/platform_app_qa.rs", "src-tauri/src/lib.rs"],
+      "checks": ["Use the same complete production builder, IPC handlers and frontend", "A separate unique test identifier/profile and isolated media root; never copy account cookies or user content", "Seed only a new disposable test database; normal application run remains unchanged", "Computer Use verifies visible actions; service tests are not a substitute"]
+    },
+    {
+      "id": "banner-dropdown-only-icons",
+      "requirements": [
+        "R001",
+        "R008",
+        "R020"
+      ],
+      "files": [
+        "src/components/SideRail.tsx",
+        "src/components/SideRail.test.tsx",
+        "src/components/PlatformMenu.layout.test.tsx"
+      ],
+      "checks": [
+        "Selected banner contains no individual service icon",
+        "Expanded/collapsed dropdown contains seven service icons",
+        "Keyboard/Escape/outside close and layout regressions"
+      ]
+    },
+    {
+      "id": "platform-scroll-owner",
+      "requirements": ["R010"],
+      "originalRequests": ["01a051cd-a457-79f0-a78e-4edcf270fa8c"],
+      "evidence": "Actual wrapper at 960x640 grew to 2552px; Pixiv scrollTop remained zero because the parent scrolled instead.",
+      "files": ["src/features/platforms/PlatformWorkspace.css"],
+      "checks": ["Definite height through reload boundary", "Each provider owns its scroll offset", "Search/tab return restores previous position", "No extra main scrollbar at small window size"]
+    },
+    {
+      "id": "chzzk-ui-clone-20261014",
+      "requirements": ["R002", "R003", "R008", "R010", "R012", "R013", "R014", "R019", "R020", "R022"],
+      "originalRequests": ["01a1399c-e7fb-7260-ac09-93bc94288f2f"],
+      "contract": "docs/requirements/chzzk-ui-clone-20261014.json",
+      "archive": "docs/archives/20261014-pre-chzzk-ui/manifest.json",
+      "state": "UI clone implemented; desktop shell verified; real-service media/account acceptance pending",
+      "verification": ".runtime/requirements-audit/20261014-clone-verification.json",
+      "checks": ["Recoverable old UI", "CHZZK composition copied before player engine changes", "Provider-owned state/API/session boundaries", "Actual desktop and contradiction audit"]
+    },
+    {
+      "id": "platform-account-completion-20261014",
+      "requirements": ["R003", "R009", "R012", "R022"],
+      "originalRequests": ["01a13a72-e762-79f0-93ae-ce146fd3c13c", "01a13a73-72e7-7a60-a097-abedc3cab10a"],
+      "contract": "docs/requirements/platform-account-completion-20261014.json",
+      "state": "implemented and tested; actual SOOP login with session retention and automatic close user-confirmed; YouTube automatic close remains separately pending",
+      "checks": ["Fresh official authentication proof", "Preserve required security steps", "Nonce and epoch fenced close", "Exact native IPC routing without new privileges", "Normal close preserves profile and other providers"]
+    },
+    {
+      "id": "platform-followup-20261014",
+      "requirements": ["R002", "R003", "R004", "R006", "R008", "R009", "R012", "R022"],
+      "originalRequests": ["01a13adc-a040-70f0-97d9-380c5b6ba368"],
+      "contract": "docs/requirements/platform-followup-20261014.json",
+      "state": "implementation and actual acceptance in progress",
+      "checks": ["YouTube initial chat proof and official Google sign-in handoff", "SOOP VOD video plus replay chat", "SOOP home/session and integrated content search", "Provider-local adjustable previews without player remount", "Actual app use and unchanged CHZZK boundaries"]
+    },
+    {
+      "id": "platform-verification-resume-20261015",
+      "requirements": ["R003", "R006", "R009", "R012", "R018", "R022"],
+      "originalRequests": ["01a13bb3-d33b-7de0-867d-aeae3e3e8bec"],
+      "contracts": [
+        "docs/requirements/youtube-auth-transition-20261015.json",
+        "docs/requirements/youtube-auto-resolver-redirect-20261015.json",
+        "docs/requirements/youtube-auto-preparation-retry-20261015.json",
+        "docs/requirements/youtube-auto-capture-diagnostics-20261015.json",
+        "docs/requirements/youtube-init-change-diagnostics-20261015.json",
+        "docs/requirements/youtube-format-continuation-20261015.json",
+        "docs/requirements/youtube-continuation-buffer-20261015.json",
+        "docs/requirements/youtube-continuation-chat-timing-20261015.json",
+        "docs/requirements/youtube-rollover-qa-20261015.json",
+        "docs/requirements/youtube-account-observer-bounds-20261015.json",
+        "docs/requirements/youtube-regional-handoff-diagnostics-20261015.json",
+        "docs/requirements/youtube-regional-account-navigation-20261015.json",
+        "docs/requirements/youtube-hidden-receiver-layout-20261015.json",
+        "docs/requirements/soop-home-mapping-20261015.json",
+        "docs/requirements/soop-vod-replay-chat-visibility-20261015.json",
+        "docs/requirements/discovery-contradiction-audit-20261015.json",
+        "docs/requirements/youtube-discovery-live-resolution-20261015.json",
+        "docs/requirements/soop-search-request-isolation-20261015.json",
+        "docs/requirements/platform-library-date-units-20261015.json",
+        "docs/requirements/soop-discovery-scroll-return-20261015.json",
+        "docs/requirements/soop-vod-original-watch-20261015.json",
+        "docs/requirements/soop-vod-frontend-20261015.json",
+        "docs/requirements/youtube-floating-layout-diagnostics-20261015.json",
+        "docs/requirements/native-floating-containing-block-20261015.json",
+        "docs/requirements/native-fullscreen-presentation-owner-20261015.json",
+        "docs/requirements/soop-vod-single-title-20261015.json",
+        "docs/requirements/youtube-watch-presentation-isolation-20261015.json",
+        "docs/requirements/soop-vod-embed-height-20261015.json",
+        "docs/requirements/youtube-fullscreen-input-diagnostics-20261015.json",
+        "docs/requirements/youtube-chat-theme-diagnostic-20261015.json",
+        "docs/requirements/youtube-chat-official-theme-20261015.json",
+        "docs/requirements/exit-live-receiver-classification-20261015.json",
+        "docs/requirements/youtube-fullscreen-escape-intent-20261015.json",
+        "docs/requirements/layout-test-browser-override-20261015.json",
+        "docs/requirements/youtube-vod-watch-presentation-isolation-20261015.json",
+        "docs/requirements/soop-vod-fullscreen-input-diagnostics-20261015.json",
+        "docs/requirements/soop-vod-document-escape-20261015.json",
+        "docs/requirements/youtube-vod-single-video-20261015.json",
+        "docs/requirements/soop-vod-native-input-intent-20261015.json",
+        "docs/requirements/soop-vod-native-mouse-event-proof-20261015.json",
+        "docs/requirements/soop-vod-click-observation-20261015.json",
+        "docs/requirements/youtube-initial-chat-availability-20261015.json",
+        "docs/requirements/youtube-webm-capture-20261015.json",
+        "docs/requirements/youtube-webm-shape-probe-20261015.json",
+        "docs/requirements/youtube-webm-spool-20261015.json",
+        "docs/requirements/youtube-webm-spool-writer-20261015.json",
+        "docs/requirements/youtube-webm-spool-index-20261015.json",
+        "docs/requirements/youtube-webm-packet-facts-20261015.json",
+        "docs/requirements/youtube-webm-packet-probe-20261015.json",
+        "docs/requirements/youtube-webm-local-finalizer-20261015.json",
+        "docs/requirements/youtube-account-popup-diagnostics-20261015.json",
+        "docs/requirements/youtube-webm-raw-pair-qa-20261015.json",
+        "docs/requirements/youtube-webm-raw-pair-diagnostics-20261015.json",
+        "docs/requirements/youtube-captured-vp9-playback-qa-20261015.json"
+      ],
+      "verification": ".runtime/requirements-audit/20261015-platform-verification-resume.json",
+      "state": "User explicitly stopped the goal; paused, not complete. Main09:57 debug remains open, retained-session automatic login and actual 로그인됨 now confirmed by user and readonly ComputerUse; fresh password/phone challenge transition remains unverified. Earlier actual AVC automatic2file rollover/chat/archive/reopen/off passed with sourcegap0 and approximate relative chat drift94ms. SOOP home/search and original/local replay qualified; repeated single-click hidden-control timing remains unverified. New dormant YouTube-local derived TrackBuilder and pinned FFmpeg fixture preserve fixed continuous300VP9/431AAC packets, exact2codec metadata, all payload/key/side and bounded rational timing; full decode passed. Actual short join is not production VP9 capture, durable finalizer/publication/library-chat/recovery wiring or long recording proof. Final focused159passed6ignored, actualjoin1passed plus prioractual3passed; fullnative1738passed0failed64ignored. Last full frontend242files2507passed remains qualified; no later productionfrontend change. Current production encoded/original_capture/browser_fmp4/process and mainexe hashes unchanged in this last batch. No UI input/restart/auth/privacy/user-media deletion, commit/push/release. Do not resume without new user request.",
+      "checks": ["Fresh Google login/logout automatic transition without F5", "Isolated actual auto opt-in through verified video/chat", "Retained-session SOOP home/search corrected title/thumbnail/duration", "No CHZZK/session/old-media regression"]
+    },
+    {
+      "id": "platform-remaining-work-20261015",
+      "requirements": ["R003", "R006", "R009", "R012", "R018", "R022"],
+      "originalRequests": ["01a13e21-d77f-75a2-b34c-5688e605f531"],
+      "contracts": [
+        "docs/requirements/youtube-webm-production-finalizer-20261015.json",
+        "docs/requirements/youtube-vp9-native-admission-20261015.json",
+        "docs/requirements/youtube-webm-production-bridge-20261015.json",
+        "docs/requirements/platform-authenticated-account-controls-20261015.json",
+        "docs/requirements/soop-account-observation-retention-20261015.json",
+        "docs/requirements/youtube-webm-selected-finalizer-20261015.json",
+        "docs/requirements/youtube-webm-verified-publication-20261015.json",
+        "docs/requirements/youtube-webm-publication-service-20261015.json",
+        "docs/requirements/youtube-webm-init-admission-20261015.json",
+        "docs/requirements/youtube-capture-outcome-20261015.json",
+        "docs/requirements/youtube-webm-native-archive-20261015.json",
+        "docs/requirements/youtube-webm-browser-capture-20261015.json",
+        "docs/requirements/youtube-raw-chat-anchor-20261015.json",
+        "docs/requirements/youtube-aac-boundary-phase-20261015.json",
+        "docs/requirements/youtube-metadata-pipe-drain-20261015.json",
+        "docs/requirements/youtube-raw-automatic-qa-20261015.json",
+        "docs/requirements/youtube-positive-audio-offset-20261015.json",
+        "docs/requirements/youtube-existing-final-recovery-20261015.json",
+        "docs/requirements/youtube-recovery-failure-localization-20261015.json",
+        "docs/requirements/youtube-probe-interval-initialization-20261015.json",
+        "docs/requirements/youtube-automatic-playback-qa-20261015.json"
+      ],
+      "verification": ".runtime/requirements-audit/20261015-manual-validation-handoff.json",
+      "recoveryProbeVerification": ".runtime/requirements-audit/20261015-youtube-probe-recovery-verification.json",
+      "nativeBridgeVerification": ".runtime/requirements-audit/20261015-youtube-native-bridge-verification.json",
+      "previousVerification": ".runtime/requirements-audit/20261015-youtube-publication-verification.json",
+      "state": "Integrated AAC boundary/metadata drain/indexed fragments previously passed264focused/1888full native. Recovery failure localized to intermittent FFprobe0% early end, fixed narrowly with explicit decoder-cap-plus-one interval;270focused tests and3actual complete+partial crash-recovery repetitions now pass, as do20s/35s strict finalization and Whole/Selected/partial publication/reopen. Exact source/final/chat preserved. Guarded main build passed2m34s, SHA BDE882C9D5DE27646C6C5A2BA80D06FF18041098CBFA1D7569AF8BAC1ACD3004; latest fresh AVC auto2file/chat/off evidence remains separate from VP9/playback. No Atsumi process was running before build; no automatic launch/UI/input/close performed. User performs manual acceptance. Fresh Google challenge, actual player/seek/EOF/chat, adaptive raw continuation and cleanup incomplete. No goal completion,commit,push,release or user-media cleanup.",
+      "checks": [
+        "Whole-retained finalizer must keep native admission, exact packet identity, rational timing and full decode gates",
+        "Completed-prefix selection is not packet-subset or codec approval and cannot enable capture",
+        "Fresh Google challenge must complete without F5; retained-session login is separate evidence",
+        "SOOP original player must repeatedly enter and exit fullscreen with actual controls",
+        "No CHZZK/SOOP/AVC state coupling, no unverified source deletion"
+      ]
+    },
+    {
+      "id": "night-handoff-20261016",
+      "originals": [".runtime/requirements-audit/20261016-night-handoff-original.json", ".runtime/requirements-audit/20261015-manual-eight-feedback-original.json", ".runtime/requirements-audit/20261015-live-ui-four-original.json"],
+      "contracts": ["docs/requirements/night-integration-20261016.json", "docs/requirements/hitomi-detail-scroll-preview-20261016.json", "docs/requirements/hitomi-review-activity-settlement-20261016.json", "docs/requirements/live-original-controls-20261016.json", "docs/requirements/soop-finalization-retry-20261016.json", "docs/requirements/platform-local-replay-presentation-20261016.json", "docs/requirements/platform-publication-cancel-fence-20261016.json", "docs/requirements/youtube-profile-thumbnail-queue-20261016.json", "docs/requirements/platform-new-job-profile-snapshot-20261016.json", "docs/requirements/screenshot-browser-timer-receiver-20261016.json"],
+      "verification": ".runtime/requirements-audit/20261016-night-actual-checkpoint.json",
+      "state": "Explicit sleep handoff supersedes earlier preparation-only gate. No goal activated. Hitomi4234573 actual1-4 passed;5 isolated real backend+mocked UI only. SOOP zero-DOM DocumentCreated repaired and actual video/chat/X/drawer/replay/EOF passed. CHZZK single-chat focus checks partially passed. YouTube portrait queue repaired/actualrender passed; actual screenshot preview crash reproduced/native timer receiver fixed, capture/photo-only preview/expiry passed, hover/undo independent. Actual manual20second and90second YouTube raw recordings finalized; localprofile stored/displayed and library/portrait survived normal restart. Short sample all126source timestamps predate video; longer sample42positive offsets and actual chat/EOF→15second seek/replay/fullscreen entry+visiblebutton exit passed. No timestamp workaround. Fresh authentication, actual auto/rollover/recording continuity and remaining acceptance gates are not complete. Idle newest debug app left open; existing user media retained; no commit/push/release.",
+      "checks": ["Actual Hitomi scroll/tab context/hero preview/related card reachability", "Backend-authoritative manual review settlement without stale list regression", "Native official player controls, per-viewer close and recording continuity", "Rounded drawers, help parity, short image-only screenshot preview", "Provider-specific local replay and retained chat", "Authentication and other deferred focus checks remain independently qualified"]
+    },
+    {
+      "id": "youtube-resolution-poll-isolation-20261016",
+      "originals": [".runtime/requirements-audit/20261016-remaining-goal-original.json", ".runtime/requirements-audit/20261016-night-handoff-original.json"],
+      "contract": "docs/requirements/youtube-resolution-poll-isolation-20261016.json",
+      "state": "Implemented and32focused tests plus typecheck passed. Same canonical channel resolves in actual app after fix; favorite/start available. Automatic recording interrupted111seconds later and remains independently unaccepted.",
+      "verification": ".runtime/requirements-audit/20261016-midday-actual-checkpoint.json"
+    },
+    {
+      "id": "youtube-capture-reason-diagnostics-20261016",
+      "originals": [".runtime/requirements-audit/20261016-remaining-goal-original.json"],
+      "contract": "docs/requirements/youtube-capture-reason-diagnostics-20261016.json",
+      "state": "Implemented closed8reason projection;29diagnostics tests and debug build passed. Fresh hidden automatic recording reproduced queue_overflow. No capture stop/retry policy changed; old other event remains unknown."
+    },
+    {
+      "id": "youtube-raw-append-coalescing-20261016",
+      "originals": [".runtime/requirements-audit/20261016-remaining-goal-original.json"],
+      "contract": "docs/requirements/youtube-raw-append-coalescing-20261016.json",
+      "state": "Raw-only staging128KiB/250ms with unchanged limits/durable proofs passed81focused/typecheck/native build/review. Actual hidden automatic195second recording completed with complete video outcome, exact source/hash proofs, full decode and local seek/EOF/replay pass. Preparation-timeout cause and partial/status_unknown chat classification remain pending; same official source later explicitly disabled chat. Auto reservation OFF, all media retained.",
+      "verification": ".runtime/requirements-audit/20261016-midday-actual-checkpoint.json: humanAuthorizedResumption"
+    },
+    {
+      "id": "hitomi-review-app-qa-20261016",
+      "originals": [".runtime/requirements-audit/20261016-night-handoff-original.json", ".runtime/requirements-audit/20261016-remaining-goal-original.json"],
+      "contract": "docs/requirements/hitomi-review-app-qa-20261016.json",
+      "state": "Fresh human input authorization allowed actual isolated app verification: BReviewRequired -> 둘 다 보존 -> completed100%; ActivityDrawer1/1complete,0working,0waiting and close/reopen stable. Readonly DB reviewresolved/revision12/nullreviewpointers, retry reused2checkpoints without new page attempts; source hashes/manifests preserved. QA app normally exited. No user album decision. First-session/stale-event race remains separately mocked."
+    },
+    {
+      "id": "hitomi-verified-replacement-20261017",
+      "originals": [".runtime/requirements-audit/20261016-hitomi-gallery-alias.json"],
+      "contract": "docs/requirements/hitomi-verified-replacement-20261017.json",
+      "verification": ".runtime/requirements-audit/20261017-hitomi-alias-final-verification.json",
+      "state": "Integrated after user-confirmed normal shutdown and two independent idle checks; other chats preserved. 163 backend/45 frontend tests, TypeScript/frontend/native builds and metadata-only real-source4214994->4257035/1468page proof passed. Normal active debug startup and schema52 verified with healthy UI pulse and zero active jobs. Existing user-album states/timestamps unchanged. Actual in-app retry/linked-target interaction remains unverified, not complete; no user-album decision, historical mass retry or forced process stop.",
+      "checks": ["Independent bounded replacement proof while ordinary requested-ID checks stay strict", "Single canonical target under concurrent admission; existing active/completed/review target unchanged", "Preserve immutable editions, partial files and exclusion/quarantine/merge guards", "Truthful linked UI, original request ownership and durable recovery; no false completion", "No blanket retry, user-album decision, recording interruption, commit/push/release"]
+    },
+    {
+      "id": "overlap-page-filters-20261017",
+      "contract": "docs/requirements/overlap-page-filters-20261017.json",
+      "originals": [".runtime/requirements-audit/20261017-overlap-page-filters.json"],
+      "state": "Integrated after user confirmed no unsaved selection and requested immediate application. Three independent view toggles preserve Ctrl selections, Shift anchors and hidden merge selections. 75 regression tests plus 2 offline layout tests passed; TypeScript passed, captures retained. Active app serves new code with same healthy PID/epoch. Actual desktop filter clicks and user-album merge remain unverified; no native restart or data mutation.",
+      "checks": ["All eight filter combinations", "A/B alignment and source identities stable", "Hidden selections and merge payload unchanged", "Existing revision/candidate safety guards retained", "No user data mutation or native restart"]
+    },
+    {
+      "id": "pixiv-preview-first-20261017",
+      "contract": "docs/requirements/pixiv-preview-first-20261017.json",
+      "originals": ["01a149a5-7419-7432-8393-2be8dddecc35 / 01a149a5-74a6-7662-91ad-37aaaf521bfc"],
+      "state": "Implemented and normally restarted retaining the account. Actual ordinary two-page work opens directly in pinned original reader with album/download/web actions, pin-adjacent page bookmark and enlarged centered count; D navigation, spread end-slot and close-to-list passed. Actual account favorite translations4of5 shown without changing names/order. Frontend/native builds and focused tests passed; offline browser-start failures passed in separate final host serial rerun. New multi-tab confirmation/related return and current Downloads direct entry are test-covered but not newly desktop-accepted after user input interrupted further automation; prior human saved reopen/resize/AltTab acceptance retained in its exact scope.",
+      "verification": ".runtime/requirements-audit/20261017-pixiv-preview-first-final.json",
+      "checks": ["Card selection unchanged; direct original reader", "Pin-adjacent page favorite and centered legible counter", "Album/download/web work actions and retained tabs/related search", "Official ko/en translations with canonical search and account isolation", "Actual app acceptance separate from tests"]
+    },
+    {
+      "id": "pixiv-display-preference-20261017",
+      "contract": "docs/requirements/pixiv-display-preference-20261017.json",
+      "originals": ["01a149c6-46d6-7670-8aab-bc9f92432b88 / 01a149c6-476b-7f81-80d8-d1b0bee17995", "01a149c0-59e8-7272-9709-9b7db8f0b86b / 01a149c1-4127-7a53-ab39-5f3f016d4f9a"],
+      "state": "Implemented generic account-scoped display preference and normal debug restart.151 unique frontend tests,57 native tests and one real ordinary public metadata probe passed; typecheck and frontend/native builds passed. Actual retained-session home loaded60 cards. Desktop switch click and account-specific result count remain unverified after user-input conflict; no targeted explicit-content lookup. Historical diagnosis-only filter preservation superseded by new explicit setting request. Empty-page next-button unchanged.",
+      "verification": ".runtime/requirements-audit/20261017-pixiv-display-preference-final.json",
+      "checks": ["Default account scope / optional general-only setting", "Strict server authorization and masked/private denials retained", "Preference-scoped recommendation continuation and stale-response invalidation", "Local library/card behavior preserved", "Actual settings UI and ordinary metadata response verification"]
+    },
+    {
+      "id": "pixiv-discovery-sections-20261017",
+      "contract": "docs/requirements/pixiv-discovery-sections-20261017.json",
+      "originals": ["01a149e3-2612-7f82-aaa3-e9fa0c0f0820 / 01a149e3-267b-7e63-958f-638bc5dc5650", "01a149e3-b30b-77f2-8c7b-91b28734dd50", "01a14a13-0b10-7a91-a807-b92a13ad20a1"],
+      "state": "Implemented and offline verified: Pixiv frontend176/176, native61 passed4 intentionally ignored; typecheck, frontend production build and native debug build passed.320/720/1280px synthetic screenshots inspected. Actual account acceptance pending. Distribution review/formal release explicitly deferred. Authenticated website parity and artwork144440262 diagnosis remain unverified; source-informed desktop category projections are not represented as proven independent official feeds.",
+      "verification": ".runtime/requirements-audit/20261017-pixiv-discovery-verification.json",
+      "checks": ["Retained home categories and section graph", "Overlay canonical search tags with translations", "Related works/creators below pinned preview without replacing images", "Account/privacy fences, existing card and local management behavior", "Size-only labelled display fallback; original downloads preserved", "Actual authenticated comparison and artwork-specific evidence still required"]
+    },
+    {
+      "id": "pixiv-metadata-reading-20261017",
+      "contract": "docs/requirements/pixiv-metadata-reading-20261017.json",
+      "originals": ["01a089ee-56ed-7322-a750-c034423826c2 / 01a14a2e-b520-7740-9195-3a298368fc09"],
+      "state": "Display-only shared Korean/English/romanization tooltip implemented. Existing7280-entry Korean glossary plus133 Japanese aliases; official exact ko/en/romaji projection. Local lazy dictionary worker, no external translation requests. Frontend214 and native65 passed; native4 network/fixture opt-ins remain intentionally ignored. Production/development offline fixtures verify16 scenes each at1920x1080 and320x640, zero initial dictionary fetch and worker termination after idle. Actual account/native desktop acceptance is pending, not claimed complete.",
+      "verification": ".runtime/requirements-audit/20261017-pixiv-metadata-reading-final.json",
+      "checks": ["Exact canonical source hints and old-record compatibility", "No semantic guessing for creator/group/title names", "Explicit estimated or unavailable readings", "Preserve canonical click, Ctrl selection, account/privacy and tab behavior", "Bounded lazy local worker and licensed dictionary packaging", "Actual native account hover still requires acceptance"]
+    },
+    {
+      "id": "pixiv-hover-fields-20261018",
+      "contract": "docs/requirements/pixiv-hover-fields-20261018.json",
+      "originals": ["01a089ee-56ed-7322-a750-c034423826c2 / 01a14a64-889b-7c70-88b6-b046a1a298c4 / 01a14a64-898f-7a41-abf6-da976ad439aa"],
+      "state": "Implemented exact Korean meaning / English meaning / romanized reading headings, superseding source-specific headings from the prior metadata batch. Estimates stay beside values, not in extra headings; no invented proper-name meanings.219 Pixiv tests, typecheck, production build and16 isolated browser scenes passed with retained captures. Running appPID55604 unchanged and updated module served by actual dev server14200. Actual native/account hover acceptance remains pending.",
+      "verification": ".runtime/requirements-audit/20261018-pixiv-hover-fields-final.json",
+      "checks": ["Only 한국어 뜻 / 영어 해석 / 영어 발음 field labels", "Meaning and reading roles remain distinct", "Estimated reading value qualification", "Bounded lazy worker, privacy and canonical interactions retained", "Actual native/account acceptance not inferred from fixtures"]
+    },
+    {
+      "id": "pinterest-preview-boards-x-mockups-20261018",
+      "contract": "docs/requirements/pinterest-preview-boards-x-mockups-20261018.json",
+      "originals": ["01a14c22-aae6-7143-a84d-29b32328dd9f / 01a14c22-ac33-7b50-962c-5c67843ccbd8"],
+      "state": "Implemented preview-first, continuation repair and own boards with local favorites preserved. Offline tests and responsive captures passed; actual signed-in acceptance remains blocked by desktop automation initialization failure. Five synthetic interactive layouts produced, not represented as live feeds.",
+      "verification": ".runtime/requirements-audit/20261018-pinterest-x-verification.json",
+      "checks": ["Preview selection/tab/favorite invariants", "Explicit terminal evidence and native continuation context", "Own-board ownership and generation/privacy fences", "Five tested mockups", "Actual account acceptance still required"]
+    },
+    {
+      "id": "x-login-feed-20261018",
+      "contract": "docs/requirements/x-login-feed-20261018.json",
+      "originals": ["Current user reply to call_124b088b2dd24e9f9739682326d07456: 앱내 로그인 방식으로"],
+      "state": "Implemented bounded read-only official website feed and user-operated login with native media allowlist, resource budgets and cancellation. No paid API, private endpoints or account writes. Actual signed-in owner/DOM/continuation acceptance pending; desktop helper failed to initialize twice. Provisional layout superseded by x-split-collections-20261018 after the user selected1+4.",
+      "verification": ".runtime/requirements-audit/20261018-pinterest-x-verification.json",
+      "checks": ["Exact source/identity/nonce/generation validation", "Semantic links accepted, linked quotes excluded", "Manual More and bounded resource lifetime", "No background video ingress in reader", "Human login and actual desktop acceptance pending"]
+    },
+    {
+      "id": "x-split-collections-20261018",
+      "contract": "docs/requirements/x-split-collections-20261018.json",
+      "originals": ["Current direct user request in01a089ee-56ed-7322-a750-c034423826c2:1+4; left focused timeline/right preview; 추천/팔로잉/가입된 X커뮤니티; signed-in 마음함/북마크"],
+      "state": "Implemented split preview, five independently retained feed views and own-account closed collection routes.48 frontend checks including18 responsive scenes and6 native tests passed; typecheck and frontend/native development builds passed. Actual signed-in acceptance remains blocked by Computer Use kernel initialization os error3; no app input or login performed. One broader existing platformTransport policy test fails because it predates Pixiv's local dictionary routes; those unrelated policy/test files were not changed.",
+      "verification": ".runtime/requirements-audit/20261018-x-split-verification.json",
+      "checks": ["Main tab order and separate account collections", "Independent scrolling and retained per-feed preview; no modal focus trap", "Owner/path/generation validation and no community-discovery fallback", "Explicit empty state versus loading/errors", "Privacy, cancellation and existing resource/security limits", "Actual authenticated collection selectors and More remain unverified"]
+    },
+    {
+      "id": "native-platform-workflows",
+      "requirements": [
+        "R002",
+        "R003",
+        "R004",
+        "R005",
+        "R006",
+        "R007",
+        "R008",
+        "R009",
+        "R010",
+        "R011",
+        "R012",
+        "R013",
+        "R014",
+        "R015",
+        "R016",
+        "R017",
+        "R018",
+        "R019",
+        "R020",
+        "R021",
+        "R022"
+      ],
+      "state": "design-and-verification-required",
+      "checks": [
+        "Actual desktop IPC search response",
+        "Open result, favorite and return without losing context",
+        "Actual download produces verified media",
+        "Reopen saved media offline",
+        "Cancellation and app shutdown leave durable recoverable state",
+        "No extra video ingress while viewing and recording",
+        "Privacy/minimize/tray/tab switching follow existing rules"
+      ]
+    }
+  ]
+}

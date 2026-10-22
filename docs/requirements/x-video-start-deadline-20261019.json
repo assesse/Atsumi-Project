@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "state": "Play-only deadline gap reproduced and repaired; focused38/38, shared X frontend230/230 across13files and typecheck passed; actual app acceptance remains parent-owned",
+  "originals": [
+    "Current direct user request: 남은 것도 전부 수정하고 검증해줘. 로그인 취소처럼 내가 직접 해야 하는 것만 알려주고, 나머지는 끝날 때까지 진행해.",
+    "C:/Users/JJH/.codex/visualizations/2026/09/10/01a089ee-56ed-7322-a750-c034423826c2/x-remaining-fixes-20261019.json, fully read for this batch",
+    "docs/requirements/x-experience-completion-20261018.json and x-cleanroom-20261018.json: inline app-owned video, bounded loading, centered muted autoplay, manual pause and preview priority, account/privacy/generation cancellation",
+    "docs/requirements/x-video-error-intent-20261018.json: fatal errors revoke intent; only explicit retry acquires a new attempt; autoStartLoad:false gives the intent effect exclusive HLS start ownership"
+  ],
+  "coverage": {
+    "instructions": "Active 2849 AGENTS.md reread, shared dirty worktree inspected without modification",
+    "mainSnapshotSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshotSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "specSnapshotSha256": "7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C",
+    "policySha256": "3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1",
+    "reuse": "All four hashes match the previously fully read EOF audit. Current direct requests and the new remaining-fixes contract are separately read; inaccessible historical sources remain explicitly unavailable.",
+    "productionBeforeSha256": "93B52EA434B41366E67C81098C7CB28E43E82134EE3C58B02C3B118A66B30203",
+    "testsBeforeSha256": "4B95043B989350982953FDF306583DF925C59FB03A72E293B248CBF270A3D88F"
+  },
+  "authorization": "Parent confirmed normal Atsumi exit before approving this narrow frontend change. No app launch, native build, account mutation, authentication/privacy UI action, or other agent-owned source edit by this sub-agent.",
+  "scope": ["src/features/x/XVideo.tsx", "src/features/x/XVideo.test.tsx"],
+  "finding": "onPlay and onPlaying share a handler that clears loading. A play event without playing or settled play() can therefore disable the existing 15-second playback deadline. This is a deterministic lifecycle gap to test, not an established cause of the historical Tibo recommendation failure.",
+  "decision": "Preserve the play event's intent guard and paused-state update, but clear loading only for playing or the existing successful play() promise. Keep all timeouts, cancellation, HLS settings, source validation, explicit retry and generation boundaries unchanged.",
+  "acceptance": [
+    "Unresolved play() plus a play-only event retains loading and fails at the existing 15-second deadline, with one source cancellation and disabled ordinary play control.",
+    "Late play/playing/waiting events and the old promise cannot revive the failed attempt or cause automatic retry.",
+    "A genuine playing event before the deadline clears loading and removes the deadline; normal playback is not timed out.",
+    "Existing manual pause, preview takeover, single HLS start, explicit retry and generation/cancellation tests remain green.",
+    "Focused frontend tests and typecheck pass; parent owns integration and actual app acceptance. No claim that this change proves the historical transport root cause."
+  ],
+  "verification": {
+    "before": "2026-10-19 13:32 KST: 38 focused tests, existing36 passed and new2 failed. An unresolved play() plus play-only event had no alert after15001ms; the readiness test also found the loading status prematurely removed.",
+    "after": "2026-10-19 13:32:46 KST: focused XVideo38/38 passed. At13:33:02 the current shared workspace X frontend suite passed230/230 across13files in19.52s; the38 video tests are included. Concurrent typecheck exited0. No native/full frontend build or application operation by this sub-agent.",
+    "actual": "parent-owned, pending; this synthetic lifecycle reproduction does not identify the historical Tibo transport cause"
+  },
+  "ownedPlayerAccessibility": {
+    "state": "Minimal owned-group accessibility repair implemented; focused41/41 passed, actual UIA verification remains parent-owned",
+    "originals": [
+      "Current direct user request to finish all remaining X defects and verification, leaving only policy-required manual authentication checks to the user.",
+      "docs/requirements/x-experience-completion-20261018.json: Atsumi-owned accessible video controls rather than native browser controls, inline media, clear loading and bounded real errors.",
+      "Parent actual Computer Use observation on the newly integrated app: recommendation cold marcus video visibly advances from0 to9.6 of15seconds, while its UIA group371 still exposes a disabled unable-to-play-media name. Parent retains the exact screenshot and build evidence; this is not proof of a transport failure or of the historical Tibo failure cause."
+    ],
+    "auditReuse": "Active AGENTS.md reread and shared dirty workspace inspected. Main, other, specifications and implementation-policy hashes rechecked and match the fully read EOF coverage above. Current X clean-room, completion and error-intent contracts reread in full; latest remaining-fixes contract and direct parent evidence are included. Previously unavailable sources remain unavailable.",
+    "beforeSha256": {
+      "production": "082DCD5A5C9ADE25832D7AF8EF02685622BB924125A65FAD7CF4560AD886911B",
+      "tests": "354DBE01F6C0B1C48DF6341039042F16C64D3029805258F7F70F9BCD0B16F22A"
+    },
+    "evidence": [
+      "XVideo renders a self-closing video element and contains no unable-to-play-media fallback text. It already exposes a complete separate app-owned control group, loading status and actual error alert.",
+      "Chromium AccessibilityMediaElement::TextAlternative prioritizes IDS_MEDIA_PLAYBACK_ERROR over the ordinary accessible name when IsUnplayable is true; Restriction marks it disabled. IsUnplayable includes NETWORK_EMPTY and NETWORK_NO_SOURCE as well as element.error(). A lazy raw media node can therefore advertise an error while the app has not requested its source. The exact reason that the observed playing node retained that name is not established by static review."
+    ],
+    "references": [
+      "https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/renderer/modules/accessibility/ax_media_element.cc",
+      "https://raw.githubusercontent.com/chromium/chromium/main/third_party/blink/public/strings/blink_strings.grd"
+    ],
+    "decision": "Hide only the raw video rendering node from accessibility with aria-hidden=true; move its existing GIF/video name to a role=group on the app-owned player wrapper. Keep custom controls, loading status and the actual error/retry alert accessible. Do not add native controls, CSS hiding, inert, tabindex, source/intent changes, IPC or media-policy changes.",
+    "acceptance": [
+      "Lazy normal-video and GIF players expose the correct named outer group while only the raw media node is aria-hidden; no native controls are added and no source is requested merely for accessibility.",
+      "Existing custom buttons and ranges remain outside aria-hidden ancestors; loading status remains exposed while awaiting a source.",
+      "A real source failure still exposes its role=alert and explicit retry control, with ordinary play disabled; the accessibility change must not hide or relabel a real failure as success.",
+      "Existing GIF loop, playback deadlines, single HLS start, pause/preview priority, cancellation and explicit-retry regressions remain green.",
+      "Parent separately checks actual UIA after hydration and playback: the misleading native disabled media node is absent, the named owned group and controls remain available, and real error reporting is retained. Unit DOM assertions alone are not actual UIA acceptance."
+    ],
+    "scope": "Only XVideo.tsx, XVideo.test.tsx and this pre-edit contract; no application operation, native/full build or account mutation by this sub-agent.",
+    "verification": {
+      "before": "2026-10-19 13:53:28 KST: focused41 tests,37 passed and4 failed on the new owned group/label/raw-media exclusion acceptance. The four failures include the existing GIF test updated to require the name on the owned group.",
+      "after": "2026-10-19 13:53:51 KST: focused XVideo41/41 passed. Tests assert lazy video/GIF ownership, no eager source request or native controls, accessible own controls/loading and accessible real-error alert/retry. Existing deadlines, playback, cancellation and error regressions remain included.",
+      "files": {
+        "src/features/x/XVideo.tsx": "CD0BC59BAA94A253D8E6731BA18165AA435146A777A2020621E8817AFCAAE009",
+        "src/features/x/XVideo.test.tsx": "FE6349842DA07D718C41D5DAFAE3BD0C2B811886570925C340E7AD1486D93D5D"
+      },
+      "actual": "Parent must verify the native UIA tree and playback after frontend HMR/integration. No actual UIA, app operation, full build or native test was performed by this sub-agent; DOM tests alone do not prove the observed UIA defect has disappeared."
+    }
+  }
+}

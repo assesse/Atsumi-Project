@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "state": "root approved the isolated completed-prefix batch; implementation checkpoint ready for root tests; browser/native recording admission remains disabled",
+  "authority": {
+    "user": "01a13e21-d77f-75a2-b34c-5688e605f531: 남은 작업 이어서 수행해줘.",
+    "root": "Prepare the source-local Archive/raw bridge, native first-receipt timeline, explicit completed-prefix/A-V tail policy, recovery and publication contract. Implement missing selection as an independently reviewed batch before connecting an incomplete production branch.",
+    "notAuthorized": "No code changes by this contract alone; no new ingress, authentication automation, app/process/media-tool execution by this author, existing user-media deletion, commit/push/release or goal-state change. Root owns runtime/build and before-edit approval."
+  },
+  "audit": {
+    "requestSnapshot": ".runtime/requirements-audit/20261015-remaining-work-request.json",
+    "requestSha256": "7A37854A557DC3D8928E26D58DA4B40D47F7BFB1EF9901FD6A78038DA93F4B92",
+    "main": { "path": ".runtime/requirements-audit/main-thread-users.json", "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676", "turns": 230, "messages": 284, "pagination": "EOF; fully read original snapshot reused after direct hash check" },
+    "other": { "path": ".runtime/requirements-audit/other-threads.json", "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21", "turns": 333, "messages": 375, "pagination": "EOF; fully read original snapshot reused after direct hash check" },
+    "inventory": "Root refreshed active50/archive3 EOF and latest main overlap. Other main1791827531/UIUX1791393086 unchanged. All69 baseline specifications rehashed; only the previously fully read RELEASING delta F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0.",
+    "directReads": "AGENTS, latest request snapshot, applicable original user texts, capture/spool/encoded-writer/format-continuation/continuation-buffer/continuation-chat contracts and current local-finalizer additions were read directly. Current index/recovery/browser capture/native archive/finish/replay anchor code was inspected; another agent summary is not the requirements source.",
+    "missing": ["durable01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unidentified historical analysis1/2", "historically inaccessible attachment pixels"]
+  },
+  "originals": [
+    { "turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "Viewing and recording share one incoming stream; preserve hours of accepted bytes and chat after browser failure, including YouTube and SOOP." },
+    { "turn": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Remove owned pieces/intermediates automatically only after merge and verification; retain final video and chat." },
+    { "turn": "01a11672-f428-7850-899b-5155aebb4e8a", "items": [12, 13, 14], "rule": "Show truthful normal/interrupted status, handle format changes without avoidable loss, and keep automatic recording an explicit favorite-channel opt-in." },
+    { "turn": "01a1399c-e7fb-7260-ac09-93bc94288f2f", "rule": "Reuse the established CHZZK flow with provider-isolated internals and an interference audit." },
+    { "turn": "01a13a1f-f808-74a0-85c8-e90aa748a292", "rule": "Original provider player/chat and actually working login/watch/record; no CHZZK regression." },
+    { "turn": "01a13adc-a040-70f0-97d9-380c5b6ba368", "item": 1, "rule": "Fix missing initial YouTube chat and verify actual operation; file existence is not completeness." },
+    { "turn": "01a13e21-d77f-75a2-b34c-5688e605f531", "rule": "Resume the remaining scoped work after the previous stop. Retained-session auto-login confirmation does not prove a fresh Google challenge." }
+  ],
+  "parents": [
+    "docs/requirements/youtube-webm-capture-20261015.json",
+    "docs/requirements/youtube-webm-spool-20261015.json",
+    "docs/requirements/youtube-webm-spool-writer-20261015.json",
+    "docs/requirements/youtube-webm-spool-index-20261015.json",
+    "docs/requirements/youtube-webm-packet-probe-20261015.json",
+    "docs/requirements/youtube-webm-local-finalizer-20261015.json",
+    "docs/requirements/platform-encoded-writer-20261014.json",
+    "docs/requirements/youtube-format-continuation-20261015.json",
+    "docs/requirements/youtube-continuation-buffer-20261015.json",
+    "docs/requirements/youtube-continuation-chat-timing-20261015.json"
+  ],
+  "evidenceAndLimits": [
+    "The fixed continuous actual source preserved300 VP9 packets and431 AAC packets over roughly10seconds, with local derived-track/packet/codec/decode checks. It does not prove arbitrary live stop, source changes, long recording, browser failure recovery, production library operation or fresh authentication.",
+    "Current SequentialSource::prepare requires both complete nonempty index outcomes. It cannot honestly accept a typical stop inside a raw unit. Current finalizer retains every packet from both complete sources; it has no approved packet subset/tail trimming behavior.",
+    "Repeated source init units occur around5seconds. The observed video init difference was direct Segment/Void padding only; reconstruct validates that exact tolerated difference. Init recurrence alone is not a format change.",
+    "Current native WebM index reports a container random-access candidate, not in-band VP9 key/dependency proof. A separate bounded VP9 payload-admission batch remains required.",
+    "Current chat timeline v1 derives origin from first segment commit minus duration. Substituting a long raw final-remux completion time would shift the whole chat timeline and is forbidden."
+  ],
+  "conflictsAndDecisions": {
+    "wholeSourceVersusStop": "Do not weaken existing whole-Complete SequentialSource/finalizer semantics. Add a separate, native-constructed selection capability. PartialTail may preserve a proved complete prefix; Failed, corruption or interior discontinuity may never be relabeled as a tail.",
+    "minimalScope": "No new generic recording framework, media decoder, downloader or public range API. Reuse the owned spool, native index, borrowed UnitSpan, reconstruction, managed local tools, packet tape and established publication path.",
+    "rawDurabilityVersusPlayable": "Durable raw bytes, complete structural units, a retained packet plan, successful full decode and final publication remain distinct gates. The first selection batch never publishes or removes source bytes.",
+    "tailPolicyProposal": "Retain the largest contiguous run of whole, structurally complete video units fully covered by the complete contiguous AAC interval. Preserve and explicitly account for excluded startup units, incomplete trailing structure and complete video tail units lacking AAC coverage. Publishing such a shortened result requires the later packet proof and a partial/interrupted presentation; it is not normal full-recording success.",
+    "audioUnitsAreNotOutputPlan": "AAC units intersecting the selected video range are only bounded probe/reconstruction inputs. Their out-of-range packets cannot silently become up to5seconds of extra leading/trailing audio. A later exact packet retain/exclude plan must preserve packets intersecting the selected interval and compare the actual output to that plan."
+  },
+  "firstBatchCompletedPrefixSelection": {
+    "status": "root read the entire contract and approved only selection.rs/selection_tests.rs plus recovery private-child registration and verified incomplete-append track/start projection; no capture/finalizer/full-source changes",
+    "files": {
+      "newOwned": ["src-tauri/src/platform_media/youtube_spool/selection.rs", "src-tauri/src/platform_media/youtube_spool/selection_tests.rs"],
+      "narrowRootSeam": "Register selection as a private child of recovery.rs (path attribute if necessary) so existing private CommittedPrefix guards, ObservationHash, CursorPosition and UnitSpan can be reused without public constructors, cloned handles or broad field visibility. Project verified incomplete-append (track,start) from Progress.partial and checked committed_length-partial.bytes into CommittedPrefix; no serialized proof format change in this batch. Root's independently added SequentialSource::check is preserved.",
+      "unchanged": ["youtube/original.rs", "youtube/original_capture.js", "encoded.rs", "live.rs", "process.rs", "browser_fmp4.rs", "the current whole-retained finalizer", "all frontend/player/account/scheduler code"]
+    },
+    "api": {
+      "prepare": "CompletedSelection::prepare(root: &Path, identity: &SpoolIdentity, cancel: &AtomicBool) -> Result<Self>; root is the existing internally supplied media root, never a browser-supplied arbitrary path. Constructor performs the existing held durability inspection and all scans itself.",
+      "facts": "facts() -> SelectionFacts containing fixed source identity/clock evidence, per-track original committed/physical sizes and terminal classifications, selected ordinal/byte/clock ranges, bounded exclusion summaries and packetSelectionPending=true/codecValidationPending=true. Facts have no constructor that grants file access.",
+      "visit": "visit(track, cancel, higher-ranked synchronous FnMut(UnitSpan) -> Result<()>) -> Result<()>; only selected native units are exposed, file cursor is restored, callbacks are provisional until the full scan/terminal/hash/guard check succeeds. On callback error or unwind poison the capability. No serializable UnitSpan or arbitrary offset selector.",
+      "notCompatibleYet": "Do not pass CompletedSelection to the existing full-retained finalizer or SourceAdmission by pretending it is SequentialSource. Later root-reviewed narrow source iteration adaptation must preserve both distinct authority types and selected-source binding."
+    },
+    "algorithm": [
+      "1. Call existing guarded inspect exactly once. Hold proof, journal, both raw files and directories. Corrupt/Cancelled gives no sink access. Sealed or Interrupted may be inspected, with original seal/torn/incomplete/uncommitted facts retained. Never read physical bytes beyond journal-committed lengths.",
+      "2. Scan each complete committed prefix with the existing native index and verified ClockDescriptor. Accumulate O(1) summaries plus the existing versioned observation digest: first/last eligible unit, count, first/end clocks, semantic configuration and complete byte end. Every emitted unit is provisional until the terminal outcome is checked. Reject any Failed outcome, no units, configuration change, gap, overlap/reset, ordinal/byte discontinuity or arithmetic overflow even if an earlier prefix looked usable.",
+      "3. Complete is eligible; PartialTail is eligible only when its offset is at or after the last emitted complete unit end and within the committed extent. Record the exact unparsed tail. A last CommittedEof unit on the track with a verified incomplete logical append is conservatively withheld unless it ended before that incomplete append began; explicit NextInitialization/FiniteEnd complete units remain eligible. Preserve that withheld unit and bytes as a fixed incomplete_append exclusion. This avoids treating the end of a torn native transfer as an asserted source unit boundary.",
+      "4. The eligible AAC units must form one continuous rational clock interval. Rescan video once, checking the full observation digest and terminal outcome, and choose the first through last consecutive whole video units whose [first,end) are contained in that AAC interval. Use checked i128 cross-products, never float epsilon, wall time or generation numbers. If no whole video unit is covered, return NoCoveredInterval. Initial and trailing complete video units not covered are explicitly excluded; an interior hole is failure.",
+      "5. Rescan audio once and select the consecutive AAC units whose [first,end) intersect the retained video interval. Verify selected audio starts at/before video start and ends at/after video end under checked rational comparisons. Selected AAC unit extents are not an output packet plan. Save only first/last ordinal, byte range, source clocks and bounded counts, not a Vec of every unit/packet.",
+      "6. Check all held identities, physical lengths, proof/journal lengths and cancellation again before returning the capability. Preparation needs at most four structural scans (one per track for summaries, then one per track for selection), independent of unit count. Never perform select_unit N times or collect all raw bytes.",
+      "7. Each visit rescans its original committed prefix, revalidates every unit, same original outcome and observation digest, and invokes work only for the already chosen consecutive ordinal range. The selected range must reproduce exactly. Final guard failure overrides successful callbacks. No omitted malformed or changed tail can be hidden by scanning only a shorter caller-selected prefix."
+    ],
+    "bounds": {
+      "raw": "Existing128GiB/24hour spool and100000-unit/index bounds remain unchanged.",
+      "memory": "O(1) unit summaries and at most two exclusion summaries per track plus fixed scalars. Existing128KiB scratch and64KiB metadata caps; no all-unit or packet allocation.",
+      "cancellation": "Check before held inspection, within existing index/read loops, before each callback, after callback/cursor restore and immediately before successful return. Cancelled never produces a usable selection.",
+      "exclusions": "Each track has at most a leading and trailing byte/ordinal range. Closed reason flags are startup_coverage, audio_coverage_tail, outside_selected_video, incomplete_structure, incomplete_append; the extra outside_selected_video discriminator avoids falsely labeling excluded complete AAC units as audio coverage failure. Interrupted/torn/uncommitted provenance remains independent and sticky; no raw text, URL or media bytes in diagnostics."
+    },
+    "pureAndGuardedTests": [
+      "Both Complete sources select the same all-unit range and keep pending flags true.",
+      "Complete unit followed by partial EBML header/Cluster/block or partial ftyp/moov/moof/mdat preserves only the proved complete prefix and exact excluded bytes.",
+      "An unknown ID, malformed structure, unsupported config, changed clock, missing interior unit or failed final guard after a valid unit returns failure, never a shortened successful plan.",
+      "Both tracks end in partial tails; only one does; no complete unit; no common whole-video interval; fully empty source.",
+      "Audio begins late so the first complete video unit is excluded, audio ends early so the final complete video unit is excluded, and both conditions together. Exact equality and one-tick differences use checked rational arithmetic.",
+      "AAC intersecting units may contain out-of-range packets: facts remain packetSelectionPending and no output command/publication API exists.",
+      "Verified incomplete logical append with a CommittedEof last unit withholds it; a prior NextInitialization unit remains eligible; another track is not mislabeled as incomplete.",
+      "Corrupt receipt/hash/identity, cancelled token, replaced proof/directory, changed physical length, torn journal and uncommitted raw tail retain existing guarded semantics. No uncommitted byte is read.",
+      "Callback failure/unwind poisons the selection, cursor restores even on failure, callbacks cannot retain borrowed handles, repeated visit reproduces exact selection, stale/cancelled visit fails.",
+      "Long repeated-init synthetic input exercises linear bounded scans without accumulating units; instrumentation asserts O(N), not N separate full-source inspections.",
+      "The fixed immutable actual four-file fixture may be read using existing guarded hashes only after root approves an ignored test; it remains structure/selection evidence, not live stop or publication evidence."
+    ],
+    "acceptance": "Root reads the full proposed contract before edits, runs focused native regressions, and reviews the separation from whole-retained finalizer. This batch is complete only as a disabled structural selection capability; it must not make capture_ready true."
+  },
+  "laterProductionConnectionPlan": {
+    "state": "design only, split implementation approvals required after missing selection/packet/codec gates are ready",
+    "archiveAndBackend": {
+      "files": ["src-tauri/src/youtube/original.rs", "src-tauri/src/platform_media/encoded.rs", "src-tauri/src/platform_media/encoded/youtube_raw_archive.rs"],
+      "shape": "YouTube Session.archive becomes source-local Archive::{Encoded(EncodedArchive), YouTubeRaw(YouTubeRawArchive)} forwarding append/snapshot/cancel/finish/format-boundary. A private child of encoded.rs adds begin_youtube_raw using the existing private OfficialReceiverLease/service/receiver and JobOwnership. Existing AVC, SOOP and CHZZK paths stay unchanged.",
+      "begin": "Existing encoded_begin gains only the closed youtubeVp9AacRawV1 format tag. Keep native arm/current owner/request/source/document epoch/account revision gates. Pin browser trackIndex to exactly one VP9 WebM video and one AAC MP4 audio. Native init-only wrappers over current index readers validate <=64KiB init/config/timebases, segments, zero offsets and default append window; they do not claim codec/RAP completion. Native owns document UUID and epoch-bound identity.",
+      "directory": "SpoolWriter::create_new owns exclusive creation of the new job directory. Do not call encoded begin's create_dir_all first. Add the existing immutable owner proof and chat/job state in the same new-job failure scope; invalid raw proof must never be interpreted as legacy encoded segments.",
+      "append": "Reuse existing exact-job/source/epoch encoded_append transport and serial ACK order. Raw branch maps to SpoolWriter.append and ACKs only after raw+journal durability. No AAC normalization, fMP4 adapter or fake e-segment enters this branch. Track/source/config change seals the old job, not a mixed raw stream.",
+      "progress": "Nonzero bytes are not a complete playable interval. Preserve watchdog, cancel, scheduler CAS, active-job shutdown draining and no-progress ceilings; source-local preparation/recording presentation must distinguish waiting for the first complete interval."
+    },
+    "browser": {
+      "files": ["src-tauri/src/youtube/original_capture.js", "source-local browser capture regression tests"],
+      "singleHook": "Extend the existing appendBuffer wrapper only. Invoke original append synchronously first and inspect/copy only after success. Never mutate/detach or retain a caller-owned buffer, consume network responses or issue a second media request.",
+      "startup": "Before native-approved recording retain only bounded init/framing/config metadata. After native begin approval, seek each track's next structurally identified EBML or ftyp initialization boundary and forward accepted owned bytes from it. Never magic-scan payloads for signatures. This bounded startup wait is shown as preparation, not falsely complete capture; no pre-approval media replay.",
+      "steadyState": "Repeated approximately5second initialization units are copied in order unchanged, including init padding and AAC mfhd resets. Same parsed config is not a new job. Real source/init configuration change uses the existing YouTube continuation authority only after a raw-specific bounded pocket is tested.",
+      "bounds": "Keep the existing sender/append/chunk limits and the post-approval15second/32MiB continuation ceiling. Unsupported offset/window/mode, DRM, ads, replaced source/epoch or transport failure fails closed and retains native-owned data. No quality/codec/UA coercion."
+    },
+    "firstReceiptTimeline": {
+      "files": ["new raw archive child", "src-tauri/src/platform_media/replay_chat.rs", "narrow source-local proof/anchor tests"],
+      "nativeEvidence": "Record a native receive or durable-commit wall timestamp tied to the first complete eligible source interval's exact receipt/track end offset/hash. Native container parsing supplies interval ticks/timebase. Browser Date/currentTime or final remux completion is never used as the origin proof. Preserve the actual timestamp, including transfer/commit latency, and label the result receive-time-approximate.",
+      "boundedCollection": "A browser complete-unit boundary hint may trigger one bounded native first-unit validation, but cannot certify its clock, offsets or receipt. Retain only fixed first-anchor evidence per track, not an unbounded receipt-time map. Exact mechanism and schema need approval before implementation.",
+      "mapping": "Origin is anchored native interval-end time minus the proved difference between that interval's source end and retained video source start. If startup selection advances the retained start, adjust by exactly the checked source-clock difference. Persist a narrow YouTube-raw timeline version with explicit origin and evidence; keep all existing timeline v1 and other-platform behavior unchanged.",
+      "chat": "Resolve initial buffer-loss accounting with the exact active job marker and actual selected origin before detach. Never clear sticky partial/unknown loss after detach or certify an approximate origin as exact sync. Finalization can preserve playable video with partial chat, but originals remain and the UI keeps the warning."
+    },
+    "packetSubsetAndCodec": {
+      "gate": "A selected structural capability still requires VP9 in-band first random-access/superframe proof, native/ffprobe full admitted config agreement, per-unit source packet tapes, an exact retained/excluded AAC packet plan, full candidate two-track metadata and full decode. Existing metadata/packet/whole-decode success is reused, not weakened.",
+      "aac": "Use source packet interval facts and existing ordered tape consumer to construct separate retained/excluded folds. Keep a packet that overlaps selected video start/end with its exact priming/skip side data. No -shortest, guessed seek/duration, timestamp clamping or re-encoding. Any chosen local copy command must be verified against the independent retained set.",
+      "vp9": "Minimal prefix/superframe admission is a separate current agent batch, not a handwritten VP9 decoder. Container key flags alone do not prove independence, and actual invisible-key/superframe structure must not be rejected just because show_frame is false. Full payload identity and full decode remain required."
+    },
+    "finalizationRecoveryAndCleanup": {
+      "files": ["src-tauri/src/platform_media/live.rs", "source-local raw finalizer", "src-tauri/src/platform_media.rs narrow publication caller", "existing recording/library outcome mapping"],
+      "publication": "After exact raw selection/packet/config/decode proof, pass the owned merge-attempt MP4 through existing verify_publish_from and media.mp4/library/chat proof persistence. Do not fake an encoded e00000001.mp4: the existing segment size/duration/proof assumptions do not fit long raw captures.",
+      "recovery": "Dispatch raw proof before encoded-owner/TS recovery. Bind it to existing MediaJob/RecordingOwner/receiver identity and use held read-only committed prefix; never fetch the broadcast again. Invalid raw proof is explicit failure, not fallback. Cancelled source is not auto-restarted; later explicit recovery uses the existing job workflow.",
+      "partialPresentation": "A shortened playable result is stored with a separate fixed capture outcome and excluded interval counts. Reuse existing interruption/warning presentation, with concise text such as 일부 종료 구간 제외 (or 중단됨 when interrupted); normal/green completion is reserved for the independently proved full intended retained interval. Do not let libraryComplete alone erase source incompleteness. Exact frontend mapping is a later approved narrow change.",
+      "cleanup": "Only after durable media publication, verified chat-retention policy and persisted exclusion/outcome proof may known owned source/intermediate files be cleaned. A partial/interrupted/excluded result conservatively retains source bytes for review/recovery. Preserve final media/chat and unknown files. Failed attempts retain all original accepted data; no broad recursive removal."
+    }
+  },
+  "handoffAndVerification": {
+    "ownership": "This author proposes selection and bridge seams only. Root owns module declarations, production integration, final approval, Cargo and actual app. Peer finalizer owns its current whole-retained implementation; peer VP9 admission owns in-band source proof. No parallel edits to these files without an exact ownership handoff.",
+    "sequence": [
+      "Approve and implement the isolated completed-prefix selection plus regressions; keep admission disabled.",
+      "Approve packet retain/exclude and selected-source codec/derived finalizer adaptation; verify bounded fixed partial-tail fixtures.",
+      "Approve native init/Archive/raw bridge and first-receipt timeline; test native ownership, durable ACK, cancellation, browser stop/crash and recovery without real accounts.",
+      "Approve the source-local browser hook branch and guarded continuation; build and actually record the public VP9 broadcast from the official player, then stop in several unit positions and verify files/chat/library/reopen/seek/replay.",
+      "Repeat AVC and provider-isolation regressions, actual automatic off/manual overlap and graceful shutdown. Only then claim the user recording flow works."
+    ],
+    "actualRequired": "Fresh production recording with VP9+AAC, at least one multi-unit stop with raw tail, initial chat on a chat-enabled broadcast, explicit no-chat outcome on the disabled broadcast, local replay and restart recovery, exact original/source hashes, and normal-versus-partial UI state. Fixed10second join or unit tests alone are not these checks."
+  }
+}

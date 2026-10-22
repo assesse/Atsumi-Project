@@ -25,6 +25,7 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 // Public emoji uploads can be 2000px. Decode only a bounded static source, then
 // archive a small rendition; do not increase the limits of replayed images.
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
+const MAX_GIF_SOURCE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SOURCE_DIMENSION: u32 = 2048;
 const MAX_DIMENSION: u32 = 1024;
 const MAX_FRAMES: usize = 256;
@@ -426,6 +427,20 @@ fn animation_frames(
     Ok(frames)
 }
 
+/// Validate a bounded GIF source before first-frame normalization.
+/// This is not permission to display/archive the original bytes: the caller
+/// must decode with its own allocation limits and emit a small static raster.
+/// Existing chat/replay raster admission retains its separate 1MiB limit.
+pub(crate) fn validate_gif_source(bytes: &[u8]) -> Result<(), StreamError> {
+    if bytes.is_empty()
+        || bytes.len() > MAX_GIF_SOURCE_BYTES
+        || !(bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"))
+    {
+        return Err(invalid_asset());
+    }
+    validate_gif(bytes)
+}
+
 fn validate_gif(bytes: &[u8]) -> Result<(), StreamError> {
     // GIF decoding is not an enabled image-crate feature. Check the complete
     // bounded container without allocating frame buffers; the webview decodes it.
@@ -717,6 +732,74 @@ mod tests {
         }
         animated.push(0x3b);
         assert!(validate_raster(&animated, None).is_err());
+    }
+
+    fn gif_with_source_comment(minimum_bytes: usize) -> Vec<u8> {
+        let mut bytes = GIF[..GIF.len() - 1].to_vec();
+        bytes.extend_from_slice(&[0x21, 0xfe]);
+        while bytes.len() <= minimum_bytes {
+            bytes.push(255);
+            bytes.extend_from_slice(&[b'x'; 255]);
+        }
+        bytes.extend_from_slice(&[0, 0x3b]);
+        bytes
+    }
+
+    #[test]
+    fn gif_source_limit_is_distinct_from_original_raster_admission() {
+        let bytes = gif_with_source_comment(MAX_BODY_BYTES);
+        assert!(bytes.len() > MAX_BODY_BYTES && bytes.len() <= MAX_GIF_SOURCE_BYTES);
+        assert!(validate_gif_source(&bytes).is_ok());
+        assert!(validate_raster(&bytes, None).is_err());
+        assert!(prepare_raster(bytes, None).is_err());
+        assert!(validate_gif_source(GIF).is_ok());
+    }
+
+    #[test]
+    fn gif_source_keeps_complete_container_and_fixed_byte_cap() {
+        for bytes in [
+            &[][..],
+            b"GIF89a".as_slice(),
+            b"<svg/>".as_slice(),
+            b"\x89PNG\r\n\x1a\n".as_slice(),
+        ] {
+            assert!(validate_gif_source(bytes).is_err());
+        }
+        let valid = gif_with_source_comment(MAX_BODY_BYTES);
+        for length in [valid.len() - 3, valid.len() - 2, valid.len() - 1] {
+            assert!(validate_gif_source(&valid[..length]).is_err());
+        }
+        let mut trailing = valid.clone();
+        trailing.push(0);
+        assert!(validate_gif_source(&trailing).is_err());
+        let oversized = gif_with_source_comment(MAX_GIF_SOURCE_BYTES);
+        assert!(oversized.len() > MAX_GIF_SOURCE_BYTES);
+        assert!(validate_gif(&oversized).is_ok());
+        assert!(validate_gif_source(&oversized).is_err());
+    }
+
+    #[test]
+    fn gif_source_keeps_canvas_frame_and_accumulated_pixel_limits() {
+        let mut wide = GIF.to_vec();
+        wide[6..8].copy_from_slice(&1025u16.to_le_bytes());
+        assert!(validate_gif_source(&wide).is_err());
+        let mut outside = GIF.to_vec();
+        outside[20] = 1;
+        assert!(validate_gif_source(&outside).is_err());
+        let repeated = |width: u16, height: u16, frames: usize| {
+            let mut bytes = GIF[..19].to_vec();
+            bytes[6..8].copy_from_slice(&width.to_le_bytes());
+            bytes[8..10].copy_from_slice(&height.to_le_bytes());
+            for _ in 0..frames {
+                bytes.extend_from_slice(&GIF[19..GIF.len() - 1]);
+            }
+            bytes.push(0x3b);
+            bytes
+        };
+        assert!(validate_gif_source(&repeated(1, 1, 256)).is_ok());
+        assert!(validate_gif_source(&repeated(1, 1, 257)).is_err());
+        assert!(validate_gif_source(&repeated(1024, 1024, 16)).is_ok());
+        assert!(validate_gif_source(&repeated(1024, 1024, 17)).is_err());
     }
 
     #[test]

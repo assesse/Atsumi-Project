@@ -74,6 +74,29 @@ const props = {
 };
 
 describe("ExitConfirmDialog", () => {
+  it("labels live receivers separately without inventing a download and keeps quit confirmation", async () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      const watching: AppActiveWorkSnapshot = { ...noWorkSnapshot, liveReceivers: { activeCount: 1 } };
+      await act(async () => root.render(<ExitConfirmDialog {...props} snapshot={watching} />));
+      expect([...container.querySelectorAll(".exit-work-list li")].map((row) => row.textContent)).toEqual(["라이브 시청·채팅 1개"]);
+      expect(container).not.toHaveTextContent("다운로드");
+      expect(container.querySelector(".quit-choice")).toHaveTextContent("작업을 중단하고 종료");
+
+      await act(async () => root.render(<ExitConfirmDialog {...props} snapshot={{ ...watching, downloads: { activeCount: 2 }, liveReceivers: { activeCount: 3 } }} />));
+      expect([...container.querySelectorAll(".exit-work-list li")].map((row) => row.textContent)).toEqual(["라이브 시청·채팅 3개", "다운로드 2개"]);
+
+      await act(async () => root.render(<ExitConfirmDialog {...props} snapshot={{ ...noWorkSnapshot, liveReceivers: { activeCount: 0 } }} />));
+      expect(container).toHaveTextContent("진행 중인 작업 없음");
+      expect(container.querySelector(".exit-work-list")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
   it("renders loading and no-work states with a semantic status", async () => {
     const container = document.createElement("div");
     document.body.append(container);

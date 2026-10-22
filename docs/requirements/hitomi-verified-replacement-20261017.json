@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "status": "integrated after user-confirmed normal shutdown and two idle checks; 163 backend and 45 frontend tests, TypeScript/frontend/native builds and metadata-only real-source proof passed; normal app startup and migration 52 verified, actual in-app retry/linked-target interaction remains unverified",
+  "originalRequest": "그럼 기존 검증은 유지하면서 새 번호로 바뀐 앨범은 확인 후 자동으로 연결되게 개선해줘. 이미 다운로드 중이거나 완료된 건 중복으로 받지 말고, 지금 진행 중인 작업은 중단하지 마.",
+  "evidence": ".runtime/requirements-audit/20261016-hitomi-gallery-alias.json",
+  "scope": "Hitomi download admission. Ordinary requested-ID validation in gallery details, preview and page fetching stays strict.",
+  "rules": [
+    "A replacement is accepted only after independently fetching the old and canonical fixed-origin metadata endpoints. The canonical document must identify itself. All gallery identity metadata and ordered page names/hashes/dimensions/counts must match. Only image-rendition availability flags may differ.",
+    "No redirects to arbitrary origins, title-only matching, multi-hop chaining, unverified saved aliases or old-ID cache poisoning. IDs must fit the existing JavaScript-safe integer contract.",
+    "One immediate SQLite transaction fences source entry/attempt/state, checks protection rules, reuses a compatible active/completed/review target or admits one canonical job, and records proof and target-entry linkage.",
+    "The obsolete request is terminal linked, not downloaded, with SOURCE_GALLERY_LINKED and linkedGalleryId. Its original ID, request history and attempts are retained. UI exposes the target and hides retry for the linked row. Review-required targets remain review-required.",
+    "Existing fully received immutable editions resume their local verified checkpoints before network resolution. Partial old artifacts, excluded/quarantined pages, pending relocation/merge and changed canonical snapshots fail closed with SOURCE_REPLACEMENT_REVIEW_REQUIRED.",
+    "A newly admitted canonical target inherits only the original request's effective queue ownership. Reusing somebody else's existing target does not transfer cancellation ownership. Transactional admission prevents concurrent old/new requests from creating duplicate workers.",
+    "Verified ordered source-page revisions are pinned before canonical preparation. Startup recovery resumes a newly admitted linked target even if no artifact was prepared before interruption.",
+    "No live DB patching, blanket retry of historical failures, fabricated completed states, file relabeling/deletion or interruption of existing workers. This change requires the normal next application startup to install migration 52 after a safe backup."
+  ],
+  "supersession": "The old blanket mismatch rejection is superseded only in the explicit independently verified download-resolution path. All unproved mismatches remain errors; image integrity and duplicate decision policy are unchanged.",
+  "acceptance": [
+    "Strict mismatch and forged/changed/order/owner/cycle/cached-identity/cancellation negatives.",
+    "Concurrent old and canonical admission, unchanged active/completed/review targets, partial old artifact and exclusion/quarantine guards, cancellation/attempt fencing, pinned target content and interrupted admission recovery.",
+    "Worker-level file/manifest completion only under canonical ID with no old-ID image calls; an already running canonical worker continues without restart or cancellation.",
+    "Truthful linked UI and target action, monotonic revisions, no retry/false success. Existing frontend and migration regression tests.",
+    "Metadata-only real-source probe is not full app acceptance. The current user request 4214994 remains failed until a normal request/retry; the already received canonical 4257035 remains review_required. No user-album decision was made."
+  ],
+  "verification": {
+    "backend": "163 passed, 0 failed, 5 opt-in network tests ignored across source parser/resolution/cache, download worker, replacement repository, queue ownership and migrations.",
+    "frontend": "45 passed across five focused test files; full TypeScript check and production frontend build passed.",
+    "build": "Active workspace cargo build --bin atsumi --locked --offline -j 2 passed. Existing unrelated warnings were not changed.",
+    "realSource": "New resolver independently fetched metadata only: requested 4214994, canonical 4257035, 1468 ordered pages; content SHA256 89cc92f5faf1c12cf0719c2c39053749bdabae636016f50003b8f79c335437ff. No images downloaded.",
+    "startup": "Normal existing launcher started active debug Atsumi PID41928 at2026-10-17 00:45:20 KST. Read-only status: nativeUnresponsive=false, reloadPending=false, pulseAgeMs1253. SQLite mode=ro/query_only confirmed schema52,zero active jobs and unchanged states/timestamps for4180352,4214994,4257035; zero persisted links. No user request was retried.",
+    "concurrentChanges": "A concurrent chat added Pinterest session detach and Pixiv account shutdown to interface/commands.rs outside the owned link hunk. Preserved unchanged; normal startup rebuild succeeded. No overlap with replacement resolution.",
+    "remaining": "Actual in-app retry/linked-target interaction remains unverified and is not marked complete. Existing failed4214994 uses the new path on a normal retry; no automatic historical backfill or forced duplicate-review decision."
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "state": "Implemented latest like/bookmark-only interaction contract and verified real current-account add/remove/restoration. Clean-room single-account UI, feeds, collections, community emoji repair and inline detail video verified. Multi-account switching, broad HLS and off-canvas accessibility remain explicitly unverified or open; not blanket full-X acceptance.",
+  "verification": ".runtime/requirements-audit/20261018-x-cleanroom-verification.json",
+  "originals": [
+    "Latest direct user override: 좋아요, 북마크만 검사하고 재게시나 답글을 전송하는 기능은 필요없음. 다른 사람이 재게시한 게시물이 내 피드에서 제대로 보이면 됨. Prior direct reply authorizes current-account like/bookmark QA with test-added changes restored afterwards.",
+    "Current direct user request: 웹을 그대로 로드하면 안되고, 클린룸 방식으로 가져와야함. 다시 작업. 내가 요구한 명세를 완료할때까지.",
+    "Current direct user request: duplicated 추천/팔로잉 header; no unnecessary post composer; account-specific joined communities; leading icons for 마음함/북마크.",
+    "Prior direct requests retained: left focused timeline/right preview, avatars/images/reposts/quotes, inline video, skeleton, full post detail/replies/actions, automatic paging, saved account switching, context-menu external opening only.",
+    "Latest gate: make Computer Use usable before resuming; user restarted Codex and then confirmed installed Atsumi closed. Supported Computer Use actual window capture now succeeds."
+  ],
+  "coverage": {
+    "mainSnapshotSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshotSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "specSnapshotSha256": "7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C",
+    "conversationInventory": "Active50 and archived3/EOF re-enumerated. Other Atsumi source revisions unchanged; fully read paginated snapshots reused. Current direct messages read including latest clean-room override and closure.",
+    "contracts": "166 fully read baseline contracts compared to172 current; changed policy and six new contracts read in full before production edits.",
+    "missing": ["Unreachable durable01a03f16 source", "Unidentified analysis1/2 chats", "Historical attachments whose pixels were not retained"]
+  },
+  "supersedes": [
+    "Prior request for full X actions insofar as it included sending reposts or replies; preserve read-only repost context, counts and thread replies instead",
+    "x-official-experience-20261018 decision to display complete official X documents as native child WebViews",
+    "Fixed 가입된 X 커뮤니티 placeholder tab",
+    "Legacy omission of media, repost/quote context, replies and interactions"
+  ],
+  "decisions": [
+    "Final community QA reproduced a rendered-label hydration mismatch: app tab Hentai Heaven versus actual accessible Hentai 🔞 Heaven. Text emoji changes into an img[alt] after hydration; textContent alone loses it. Canonicalize only rendered text plus image alternatives identically for discovering and validating account home tabs. Preserve exact owner/ordinal/name validation, reject changed names, and regress both emoji representations before accepting the actual named-community retry.",
+    "Final actual acceptance found a valid video poster visible in the timeline but lost when the same post's detail projection temporarily omitted it. Preserve only previously validated video-poster facts for the identical post/handle/current owner, at most5min and200 entries; never carry ordinary photos, invent URLs or renew the timestamp from a carried value. Re-key image cache entries by validated source as well as generation/post/index so refreshed metadata cannot reuse unrelated pixels. Regress owner/handle/expiry and non-video cases.",
+    "Actual Windows accessibility still exposes the off-canvas transport document although the screen is app-owned. Hide its body as well as its document root from accessibility; do not affect the Atsumi document or visible rendering, and verify the real app tree after rebuilding.",
+    "Real approved QA on neutral post2111521027914436723 confirms like/unlike and bookmark transitions, but exposes two independent bugs: stale automatic continuation after a reader expires and animated counters concatenating old/new digits. Recover a stale read cursor at most once through a newly validated reader, preserving same-generation view context; never retry social mutations. Prefer the observed accessible counter label over animated DOM text and regress both failures.",
+    "Restrict app, typed API, native boundary and DOM action adapter to like/bookmark only. Remove the reply composer and repost mutation button; keep a reply-thread viewing button and read-only repost count/context. Add regressions proving reply/repost never dispatch. Test only unselected reactions on a neutral current-account post and restore both to their original state; never remove existing likes/bookmarks.",
+    "The new clean-room layout regression passes 1920x1080 and 960x640 but reveals collection buttons clipped at320px because their flex container can shrink below content. Preserve the failure screenshots and prevent that container shrinking; allow a new row on narrow windows without changing desktop layout.",
+    "Retain the user's per-post sensitive-content reveal request in the clean-room adapter, using the prior exact contentWarning/sensitiveMediaWarning rule. Only ordinary Show/View controls inside a post qualify; never age, authentication, subscription, account privacy or browser safety gates. Do not call social action controls while loading.",
+    "Public DOM inspection confirms linkless quoted cards: visible User-Name spans, time and tweetText but no href/post ID. Preserve those as a separate validated quote preview, not a fabricated Post identity; image leases remain bound to the enclosing verified post. Do not silently omit the quote or enable mutations for an unknown ID.",
+    "Actual off-canvas rendering now hydrates video but blocked media requests immediately remove the native video/poster. Preserve only bounded publicly rendered poster facts before removal, keyed by exact post identity and current owner, and validate again in the native projection. Do not allow background streams, guess URLs, or read site internal state. Add regression for transient posters and cross-owner rejection.",
+    "Actual video failure remains after localized play intent: hidden reader never creates a video element. Adopt the already audited off-canvas child-renderer pattern (streaming/browser_auto_surface.rs) without coupling X to CHZZK state: fixed negative client-relative bounds, no auto-resize/focus/popups, native mute and media interception before navigation, close on privacy/suspend/account switch. Do not display the official document, invent resources, or keep a second background player streaming.",
+    "Actual app acceptance now confirms account Bookmarks at /i/history and a named home community tab load, including avatar and bookmark/repost state. Video still fails: rendered X uses the Korean play label 플레이하기 and only creates video/poster after playback intent. Inspect that public DOM, never guess video URLs; refresh the bounded post projection after explicit playback intent before matching an observed media resource.",
+    "StrictMode startup/re-entry must await native suspension completion before new loads or account status. Preserve invalidation guards rather than disabling StrictMode, relaxing owner validation, or masking stale failures. Add delayed-suspension regressions before actual cold-start verification.",
+    "Actual 19:56 KST inspection: account home tabs are DIV role=tab without href, not anchor links. Bind those tabs by native-known account, ordinal and exact observed label, and revalidate before selecting. Never invent a public community ID or replace these with recommended communities.",
+    "Actual projection diagnostics reproduced text-first hydration: the first snapshot has zero image elements, a later snapshot has avatar/media/bookmark controls. Wait for bounded settled rendered data and traverse the viewport without skipping unhydrated posts. Retain explicit timeouts and cancellation on tab changes.",
+    "Render Atsumi-owned React/CSS timeline and detail UI. No official-site DOM/CSS/whole-page embedding, no duplicate site header, no global post composer.",
+    "Use user's existing isolated official browser session as data/interaction transport only. Do not expose cookies/tokens, use guessed private API routes, weaken origin/owner/nonce/generation guards, bypass authentication or change account security/privacy settings.",
+    "Inspect real account behavior via supported Computer Use before treating selectors, media delivery, own collections or communities as working. Preserve failures and screenshot evidence.",
+    "One header: 추천, 팔로잉, then actual joined community names available for current account; leading heart/bookmark icons on own collections. Account switches clear all account-specific data and pending work.",
+    "Retain native login/profile registry and human authentication, context-menu external open, feed scroll/selection, local keyboard scopes and privacy masking. Do not automate social mutations during QA without confirmation.",
+    "Typed bounded projection of own official rendered data, including media/avatar, repost/quote, action state/counts and thread content. Distinguish denied/unavailable/empty/loading, with bounded cancellation and no indefinite retry.",
+    "Expose inline playback only for observed and validated media; do not guess media sources or claim external playback meets the request. Preserve exact host/resource/size/range validation.",
+    "Keep existing user DB/media and other chats' changes. No release, commit, force termination or cache cleanup. Only the newly approved current-account like/bookmark test and restoration are authorized account mutations."
+  ],
+  "acceptance": [
+    "Real signed-in ForYou/Following and multiple pages, no missing observed media/repost context",
+    "Real current-account Likes/Bookmarks/joined communities, no discovery list mislabeled as joined",
+    "App-owned post detail, replies/related content and working action routes, no fake success/counts",
+    "Images/avatar in both panes and inline video, skeleton and explicit bounded errors",
+    "Account switching, stale responses, privacy, tab return/scroll/keyboard and 1920x1080/narrow geometry",
+    "No full official website in the visible X workspace; one header; no global composer",
+    "Frontend/native regressions/build and actual Computer Use verification reported separately"
+  ]
+}

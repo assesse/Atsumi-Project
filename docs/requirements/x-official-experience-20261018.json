@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "state": "Source implemented; final 48 frontend/15 native tests and executable builds passed after approved old-cache cleanup. Updated executable launched and main document loaded. Actual authenticated acceptance remains unverified; not complete.",
+  "original": "Current user five-item request and supplied actual Atsumi appshot at2026-10-18T07:42:11.500Z; closure reply 종료",
+  "audit": ".runtime/requirements-audit/20261018-x-official-preedit.json",
+  "precedence": "Preserve X experience first, adapt to Atsumi second. Supersedes read-only extracted cards, external-only videos and absent post interaction/detail content; previous tests are not actual acceptance.",
+  "decisions": [
+    "Use same-account official X documents as native child WebViews for left timeline and right full post detail. Preserve actual media, repost/quote context, reactions, reply composer, replies and related posts rather than extracting a subset. Remote pages receive no Atsumi main IPC privileges.",
+    "Keep existing official human login auto-completion and separate saved-account profiles. Never copy cookies/tokens. Switching or privacy closes surfaces and fences stale work; no third-party account actions are performed by the agent.",
+    "Primary tabs remain recommended, following, joined communities; own Likes and Bookmarks route to the active saved identity. Render official collection pages, not a language/title heuristic with a false empty result. Native action controls remain real site controls for the user, not fabricated local counts.",
+    "User post selection routes to right detail without replacing left scroll. At most five cached feed surfaces and one preview for the active account; inactive surfaces hidden/muted with playback paused. No five-minute visible-feed cursor expiration. Account/privacy/shutdown drops them.",
+    "Remove empty-preview arrow, keep concise empty state. Show skeleton during initial connection and native X loading thereafter. Site infinite scrolling and inline video remain functional.",
+    "Expose content permitted by the account, including ordinary per-post sensitive-media reveal controls where unambiguously scoped. Never change account privacy settings, bypass login/age/access restrictions or automate restricted challenges.",
+    "External opening remains a right-click action only. Restricted navigation bridge permits closed local presentation messages bound to current surface nonce/profile/generation, not arbitrary native commands. Do not automate likes/reposts/comments during QA.",
+    "Preserve global overlays, privacy, typing, window resizing and other platform sessions; use measured native geometry and hide occluded panes. Do not force-stop the app, delete data, commit, release or reactivate shutdown automation."
+  ],
+  "acceptance": ["Actual images/avatars/video/reposts/quotes", "Actual own Likes/Bookmarks/joined Communities", "Actual post detail controls/replies/related posts", "Feed scroll retained across detail and tab changes", "Session expiry versus source UI errors", "Skeleton and empty preview", "Account/privacy/stale-generation/overlay isolation", "Native/frontend tests, screenshots and actual verification distinguished"],
+  "currentBlocker": "Disk blocker resolved: user approved deletion of46 enumerated old test-symbol PDB files (15495561216bytes), previous executable separately preserved. New executable launched2026-10-18T17:40:50+09:00 using existing14200 dev server; no process terminated. Computer Use initialization still fails os error3 after reset/retry; authenticated photos/videos/collections/interactions remain unverified.",
+  "verification": ".runtime/requirements-audit/20261018-x-official-verification.json",
+  "report": ".runtime/x-official-20261018/index.html"
+}

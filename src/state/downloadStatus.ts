@@ -1,4 +1,10 @@
-import type { DownloadState } from "../core/types";
+import type { DownloadState, Gallery } from "../core/types";
+
+export function linkedGalleryId(download: Gallery["download"]): number | undefined {
+  const id = download?.linkedGalleryId;
+  return download?.state === "cancelled" && download.errorCode === "SOURCE_GALLERY_LINKED"
+    && id !== undefined && Number.isSafeInteger(id) && id > 0 ? id : undefined;
+}
 
 /** Shared by Explore, related albums, detail tabs, and the durable queue. */
 export const downloadStatus: Record<DownloadState, { label: string; tone: string; symbol: string }> = {

@@ -1,0 +1,71 @@
+{
+  "state": "limited actual Tauri review-to-completed activity flow and persisted file/DB verification passed; initial pending-feed and deterministic stale-response race remain separately mocked coverage",
+  "rootRun": {
+    "operatingException": "After this preparation and new-executable UI approval timeout, root allowed already-authorized ordinary debug Atsumi to run independent YouTube QA while this isolated app stays completely idle. Read-only source review confirmed identifier-based Windows -sim/-sic/-siw single-instance ownership, DB/cache/profile/control endpoints and recording journal separation. This relaxes conservative serial UI operation only; never operates/restarts the unapproved QA window, shares its account/media, builds its running executable or treats its UI acceptance as done.",
+    "identity": "local.atsumi.hitomireviewqa.e737c904e827494d9eef665cb8860e70",
+    "constructorTest": "1passed/0failed2010filtered;54.13second build, test0.00second",
+    "exampleBuild": "cargo build --locked --offline --example hitomi_review_app_qa -j2 passed in2m19s; existing20lib warnings",
+    "preparation": "Actual A completed revision7, B review_required revision6; one pending near_equivalent candidate,2exactpages;4synthetic page calls/2metadata calls/13real native events. Completed A manifest and verified B checkpoints checked by example before opening renderer.",
+    "ui": "Initial get_window/get_window_state for example process26708/window396542 timed out awaiting Computer Use app approval; no input or bypass occurred then. After the human authorized UI resume and app access worked, root used the actual B review UI and clicked 둘 다 보존 at 2026-10-16 14:04:38 KST. Root observed A/B completed, B100%, ActivityDrawer 완료1/1 with 작업중0/대기0 and B in 완료. Closing and reopening the drawer kept the completed state. Root then used normal quit, saw no ongoing work, and confirmed this QA window disappeared. These UI observations belong to root; the storage-verification agent did not operate the UI.",
+    "evidence": ".runtime/hitomi-review-app-qa/local.atsumi.hitomireviewqa.e737c904e827494d9eef665cb8860e70/preparation.json",
+    "retained": "QA app normally exited; both completed fixture albums, manifests, DB and diagnostic evidence retained. No existing account/profile/user album/media modified. The immutable preparation.json still says preparationOnly/uiAcceptance pending because it records preparation, not the later UI outcome."
+  },
+  "originals": [
+    ".runtime/requirements-audit/20261016-night-handoff-original.json#01a14102-e856-70f2-943d-6dd2dd3ae4fd/item5",
+    ".runtime/requirements-audit/20261016-remaining-goal-original.json",
+    "docs/requirements/hitomi-review-activity-settlement-20261016.json"
+  ],
+  "audit": {
+    "coverage": "Root's complete active50/pinned/archive3 EOF inventory and refreshed141-specification/15-delta read coverage reused only after main85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 rehash matched. This agent directly read the latest originals, both Hitomi contracts, night-integration, AGENTS and every directSpec below completely; this is not a claim of independently paginating all historical chats again.",
+    "directSpecs": ["AGENTS.md", "docs/HITOMI_QUEUE_NAVIGATION_20260930.md", "docs/DUPLICATE_FLOWS.md", "docs/design-system/DECISION_HISTORY.md", "docs/design-system/ATSUMI_INK_V0_1.md", "docs/requirements/night-integration-20261016.json"],
+    "missing": ["durable01a03f16", "unidentifiedanalysis1/2", "inaccessiblehistoricalpixels"],
+    "verificationRecordUpdate": "For this evidence-only contract update, the agent reread the latest two Hitomi verification contracts and original night/remaining requests. main-thread-users.json and other-threads.json were rehashed and still exactly match the full snapshots above. The previously fully read direct-specification/EOF coverage is reused within this unchanged requirement scope; no fresh full conversation pagination or newly implemented behavior is claimed. Both destination contract hashes were checked immediately before apply_patch to avoid overwriting concurrent edits."
+  },
+  "authority": "Root explicitly approved a new hitomi_review_app_qa debug example, then the same new-UUID Roaming DB and LocalAppData WebView profile exception as platform_app_qa because Windows KnownFolder APIs ignore APPDATA redirection. Existing paths must fail closed; never use local.atsumi.next. Media and diagnostic output remain under workspace .runtime. Root also approved exactly one debug_assertions-gated raw DownloadPagePayload constructor; its private decoder proof must always remain None. No other production hook/private visibility change, known-folder mutation, junction, account/profile copy, SQL state patch, launch, build or UI operation by agent.",
+  "cause": "Existing real native fixture ends without the Tauri renderer. platform_app_qa creates an empty isolated app but cannot prepare review state. External example cannot construct DownloadPagePayload because its private digest proof has no public raw constructor. Normal app initializes its own DownloadSupervisor; fully received durable checkpoints can resume verification without remote gallery/page fetch.",
+  "changes": [
+    "Add only a debug raw payload constructor that never sets or exposes the decoder proof; production storage decode/hash/manifest checks stay unchanged and the constructor does not exist in release builds.",
+    "New isolated example creates two tiny synthetic PNG albums through real ApplicationService, SqliteRepository, DownloadSupervisor and FilesystemArtifactStore; waits for A Completed and B ReviewRequired, preserves pending review, then gracefully drains the preparation supervisor before running the exact production app composition on that DB.",
+    "Preflight canonical UUID data paths and reject any existing root/DB/profile. No user path, account session, media or existing QA run is reused or deleted.",
+    "Use a process-local rejecting loopback proxy for normal HTTP clients and isolated WebView proxy args. The fixture itself performs no HTTP. Stay within Hitomi Downloads/review/activity; unrelated providers with explicit no_proxy transports are outside this harness and must not be opened.",
+    "Print/write only isolated identity, exact owned paths and synthetic entry/review identifiers with preparation evidence. Do not claim app/UI acceptance from preparation or process exit. Preserve all files for root inspection."
+  ],
+  "files": ["src-tauri/examples/hitomi_review_app_qa.rs", "src-tauri/src/application/download_pipeline.rs", "docs/requirements/hitomi-review-app-qa-20261016.json"],
+  "beforeHashes": {
+    "src-tauri/src/application/download_pipeline.rs": "14914803051EEDE788F057107B3689CDD2B18CCF52AF0EDBC58F09AFB9DB5E14",
+    "src-tauri/src/application/download_supervisor.rs": "198BE7E8F2C068E2174592D1ED9D3D636FA06486E4D01992E2473157AC3D5BFC",
+    "src-tauri/examples/platform_app_qa.rs": "92D3D542334BA1F9AE18F8596937683D4A4CFDC6C52DC5F10FDB2A7DEB2E1F58"
+  },
+  "acceptance": [
+    "Root builds/runs serially. Synthetic preparation requires real completed manifest A and present/verified checkpoints B with a pending one-candidate review, no final B manifest and no fabricated completed state.",
+    "Actual app Downloads opens B review and KeepBothContinue; resumed is not completion. Await verified completed event and ActivityDrawer completed group, reopen panel and confirm no return to review.",
+    "The seeded review predates this UI session. Source inspection confirmed JobState::is_retryable only permits Interrupted/Failed/Cancelled, not ReviewRequired; normal retry cannot safely republish this pending item. Do not manufacture a session event or cancel the review to obtain one. Accept only Downloads review-to-native completion-to-ActivityDrawer completion and retain the initial pending-feed transition as mocked regression coverage.",
+    "Read the isolated final manifest/DB and verify both original albums remain, B completed and review resolved; no re-download or new synthetic source calls after preparation. Fail or retain pending if any external source request is required.",
+    "Delayed older list response/revision race remains separately covered by regression tests; this harness does not create a deterministic Tauri transport delay or prove that race occurred.",
+    "Constructor proof is None for PNG and WebP-labelled bytes, including malformed data. Debug-only cfg is required; release absence checked by source guard plus root's release compilation when practical, never inferred from debug test success."
+  ],
+  "validation": {
+    "agent": "Agent performed read-only API/type/path review, exact isolated manifest/media hash checks, diagnostic interpretation and SQLite readOnly:true SELECTs, then updated only the two technical verification contracts. No build, Rust test execution, app execution, UI operation, DB mutation or user-file write was performed by this agent. Existing supervisor and platform_app_qa source hashes stayed unchanged.",
+    "rootTestCommand": "cargo test --locked --offline --lib isolated_qa_payload_never_claims_a_decoder_proof -- --nocapture",
+    "rootBuildCommand": "cargo build --locked --offline --example hitomi_review_app_qa -j 2",
+    "launch": "src-tauri/target/debug/examples/hitomi_review_app_qa.exe <workspace Vite loopback port>; use approved normal launch workflow, with other app verification serialized. Each invocation creates a new UUID and never reopens an older QA run.",
+    "networkBoundary": "The synthetic source never uses a network. The local rejecting proxy prevents the expected Hitomi reqwest/WebView paths from forwarding traffic; this is not a machine firewall and is not evidence that unrelated explicit-no_proxy transports are blocked. UI gallery_summary_get probes were attempted and failed with HTTP_CONNECT/NETWORK_OFFLINE, so do not claim zero HTTP attempts. The actual download resumed durable page checkpoints and performed no new page download. Do not switch platforms or open external/account routes during this acceptance."
+  },
+  "actualStorageEvidence": {
+    "observer": "hitomi_acceptance_gap agent, directly read after root's actual UI decision; final SQLite confirmation after root reported normal exit",
+    "database": "C:/Users/JJH/AppData/Roaming/local.atsumi.hitomireviewqa.e737c904e827494d9eef665cb8860e70/atsumi-next.sqlite3",
+    "mediaRoot": ".runtime/hitomi-review-app-qa/local.atsumi.hitomireviewqa.e737c904e827494d9eef665cb8860e70/media",
+    "diagnosticLog": ".runtime/hitomi-review-app-qa/local.atsumi.hitomireviewqa.e737c904e827494d9eef665cb8860e70/diagnostics-local/Atsumi/Logs/diagnostics/application-3.jsonl",
+    "readMethod": "Exact UUID only. Powershell Get-Content/Get-Item/Get-FileHash checked manifests/files. Node24.19.0 DatabaseSync({readOnly:true}) queried schema and SELECTs; sandbox attempts returned SQLITE_CANTOPEN even after normal exit, then the same read-only UUID scope succeeded through tool-reviewed require_escalated. No SQL writes, DB copy, checkpoint command or production database access.",
+    "entries": [
+      { "galleryId": 9900000501, "entryId": "entry-0e3569ee-c56c-4471-9bbe-919ecc9495a6", "revision": 7, "state": "completed", "progress": 100, "reviewKind": null, "reviewId": null },
+      { "galleryId": 9900000502, "entryId": "entry-9ea6297c-4d63-4773-b4e5-f292e2adb116", "revision": 12, "state": "completed", "progress": 100, "reviewKind": null, "reviewId": null }
+    ],
+    "review": { "reviewId": "download-overlap-21668439-1e38-4c85-a977-3c4c40c5652a", "revision": 1, "state": "resolved", "resolvedAt": "2026-10-16T05:04:38.489Z", "decision": "keep_both_continue", "recordedActor": "human", "actorMeaning": "Production UI decision classification; root actually operated the UI, not a claim that the end user clicked this fixture." },
+    "artifacts": "Both download_artifacts rows are complete with expectedPageCount2 and existing manifest.json. A artifact revision1, B revision2. All four WebP files are present, each166bytes, excluded=false/quarantined=false; manifest SHA256, DB SHA256 and actual Get-FileHash agree. Original page mtimes remain 2026-10-16 13:21:11 KST. A manifest is preserved and B manifest was normally finalized at14:04:38.",
+    "pageHashes": ["ab8a9e1afea295d19c6baa50c4a935ee95dd91e3f83c2a179df4948ccc631fc2", "44eeb129c3b6837d9036142a028c9131bdf4b007146232b4567b2b5e7098eb4c"],
+    "noRedownload": "download_page_attempts contains exactly4 successful original PNG input attempts, all job_attempt1 at04:21:11Z; no page attempts were added for B's resumed job_attempt2. B worker attempt2 completed at05:04:38.539Z. This is resumed verification/finalization, not another download. Preparation's SyntheticSource is drained/dropped before the production app composition, so it cannot receive later calls.",
+    "nativeTrace": "At05:04:38.478Z download_overlap_decision_apply began, resolved successfully; line1391 of download_supervisor.rs emitted2pages from pipeline_received_snapshot at.492Z, followed by verify_files, overlap_review, write_manifest at.518Z and completed success at.539Z. No source payload was needed to complete this flow.",
+    "limits": "This actual run proves Downloads review→real verified completion→ActivityDrawer completed and panel reopen. The prepared review predates the UI session, so an initial review-required session-feed entry was not demonstrated. No deterministic delayed stale-list response was induced; that race remains covered by focused mocked regression tests, not this actual run."
+  }
+}

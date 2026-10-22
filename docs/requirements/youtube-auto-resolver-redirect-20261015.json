@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "state": "narrow implementation ready; actual public identity/streams response verified; native compile and isolated scheduler rerun pending",
+  "request": {
+    "turn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec",
+    "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."
+  },
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Independently rehashed fully read main230/284 EOF and other333/375 EOF snapshots; current original user turn read via read_thread, prior latest turn also read. Root/YouTube owner refreshed inventories and original69specification hashes; known RELEASING change reread. AGENTS, complete implementation-policy, SOOP discovery contract, YouTube auto-recording contract and actual verification record reread. Previously inaccessible original thread01a03f16, unidentified analysis1/2 and historical attachment pixels remain unavailable.",
+    "gate": "Root explicitly approved observation.rs and this contract only. No Cargo, UI, credentials, shared client policy, scheduler or other provider edits. Root owns running app/build and actual validation."
+  },
+  "originalRules": ["Original latest item4 and CHZZK clone require working automatic recording, not only a placeholder", "Existing R003 provider state isolation", "Existing R009 bounded errors/retry; R018 verify actual official response; R022 actual app acceptance", "Canonical channel identity and exact scheduled ownership remain mandatory; network/empty data never prove end"],
+  "evidence": {
+    "actualQa": ".runtime/youtube-auto-record-qa/local.atsumi.youtubeautoqa.243146fc84a1428b9909210f73a2401c failed at identity before any reservation",
+    "publicHttp": "Cookie-free HTTP with application's exact Mozilla/5.0 UA: https://www.youtube.com/@KitkatPlayroom?hl=ko returns303 Location https://www.youtube.com/kitkatplayroom?hl=ko. Destination returns200, canonical channel UCrNicqyCSAUuxSzUi6VChvw. The /@handle/streams form also returns303 to the corresponding legacy alias/streams.",
+    "cause": "The shared client deliberately has redirect Policy::none. New automatic-recording resolver accepts only immediate200, rejecting a valid official channel alias redirect."
+  },
+  "conflicts": ["Do not weaken the shared client or use unrestricted redirects to fix a provider-specific read", "Do not turn login/consent/error redirects into false offline status", "Do not solve authentication or expose cookies for public channel metadata"],
+  "proposal": "Locally follow at most3 HTTP301/302/303/307/308 channel redirects with total12sec network deadline, only exact HTTPS www.youtube.com, no credentials/port/fragment/encoded path, only valid handle/channel/user/c or a legacy alias matching the requested handle/c/user alias, preserve requested base or streams shape and language query. Detect repeated URLs. Final metadata externalId/channelUrl must agree and canonical requestedUC must still match.",
+  "publicVerification": {"canonical":"UCrNicqyCSAUuxSzUi6VChvw","selectedStreamsEndpoint":"/@KitkatPlayroom/streams","lockupCards":30,"currentLiveIds":["cswFQYam8Ic","Wfgx1Z39fcU","opBN74JPmW8"],"method":"Independent anonymous official HTTP with existing exact UA and same recognized lockupViewModel LIVE-badge structure; not claimed native Rust or scheduler proof"},
+  "acceptance": ["Actual public @KitkatPlayroom identity and streams return canonicalUC and current live IDs", "Reject external, http, auth/consent/error/watch/redirect/search paths, unexpectedquery, empty/unbounded alias and loop/hoplimit", "Keep final requested canonicalUC mismatch rejection", "Pure fixture tests and official HTTP probe first; root Cargo plus actual isolated scheduler rerun required before completion"],
+  "remaining": ["SOOP session-aware preferred-feed actual screen verification root-owned", "Scheduler proven-pre-arm transient failure retry classification is read-only reviewed separately and not changed by this batch"]
+}

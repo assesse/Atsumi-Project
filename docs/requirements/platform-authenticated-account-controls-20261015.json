@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "state": "Login-button predicates implemented and actually observed on2026-10-15:57focused tests, TypeScript/frontend/debug builds passed, both authenticated main-app panels show disabled Login/enabled Logout. The additionally found SOOP stop-viewing loss was fixed and actually rechecked by soop-account-observation-retention-20261015.json on binary ED461381DDBF6B86F7418CCB8F8EAB54D93000C558BAF557B93EB7BEE7BF8618; state stays authenticated after last viewer closes and multiple polls. No authentication, logout, credential, cookie or privacy action was automated.",
+  "actualVerification": {
+    "binarySha256": "5E9E3E8F6C60721F32FFF4869254C9319299D7D02E0FD88222AF7B3C823BB364",
+    "binaryBuiltLocal": "2026-10-15T15:50:18+09:00",
+    "youtube": "Opened an ordinary public NASA VOD in the official embedded player, then closed it and opened the live control drawer. UI Automation reported Login disabled, Logout enabled and 로그인됨. Positions and labels were unchanged.",
+    "soop": "Opened an ordinary recommended LIVE using the official player, selected the site's offered low-quality playback instead of installing software, and opened the control drawer. UI Automation reported Login disabled, Logout enabled and 로그인됨. Ended only this agent-started viewing session after verification; no recording was started.",
+    "startupQualification": "Both hosts initially return an unknown in-memory account observation after restart, even with a retained browser session. This is not a cookie/logout failure. An ordinary official YouTube VOD/LIVE or SOOP LIVE updates the verified state. This batch does not persist a guessed authenticated flag or introduce a hidden authentication probe.",
+    "freshChallenge": "Still unverified: this real UI check used retained sessions and must not be described as a fresh password/phone security-challenge test."
+  },
+  "request": {
+    "artifact": ".runtime/requirements-audit/20261015-account-button-request.json",
+    "turn": "01a13e21-d77f-75a2-b34c-5688e605f531",
+    "message": "01a13e49-660c-7520-8b9c-4fd6813b73b7",
+    "exact": "인증없이 로그인됨. 브라우저 세션이 남아있어서 그런걸까? 아무튼 로그인은 잘됐어. 그리고 로그인중일때는 로그인 버튼 비활성화하고 로그아웃만 되게 해줘야지. 이건 soop 도 마찬가지야.",
+    "interpretation": "The current request means already authenticated, not only an in-flight login request. Confirmed authenticated=true disables Login for both YouTube and SOOP. Keep Logout in its existing fixed slot and retain its current availability/busy/privacy guards. Retained-session login is confirmed; a new password/security challenge is not thereby verified. The separate SOOP original-player fullscreen round trip was user-confirmed and needs no speculative fix in this batch."
+  },
+  "audit": {
+    "coverage": "Root refreshed active50/archive3 EOF and latest two main turns including this message; other Atsumi/UIUX timestamps unchanged. Author directly read the latest original user reply through read_thread and the local exact-request artifact, AGENTS, account-completion contract and current account UI/tests. Existing fully read snapshots reused only after independent SHA checks; main230turn284message EOF85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676, other333turn375message EOF799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Baseline69 has only the previously read RELEASING delta F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0.",
+    "originalRules": ["01a10806-d91b-7960-a4a4-09a11e14032d: on/off controls must never move; exact original reread", "01a1399c-e7fb-7260-ac09-93bc94288f2f: CHZZK-like composition with independent platform state", "platform-account-completion-20261014.json: verified native account state, required security steps and provider profiles preserved"],
+    "missing": ["durable01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unidentified historical analysis1/2", "historically inaccessible attachment pixels"]
+  },
+  "evidence": {
+    "youtube": "YouTubeViewingControls owns its account snapshot. Login currently checks only API/busy/privacy, so it remains enabled when authenticated=true. Logout already requires authenticated=true and must retain that predicate. changeAccount has a busy guard but no authenticated-login guard.",
+    "soop": "SoopWorkspace owns the native SOOP account snapshot. SoopConnectionSetup receives only accountLabel and busy, not the authenticated boolean, so its Login cannot reflect verified login state. Both buttons already have separate fixed DOM slots; no shared cross-provider account component is needed. SOOP Logout currently checks callback availability/privacy/busy; preserve those conditions rather than introduce an unrelated logout policy."
+  },
+  "approvedScopeProposal": {
+    "production": ["src/features/youtube/YouTubeViewingControls.tsx", "src/features/soop/SoopWorkspace.tsx", "src/features/soop/SoopConnectionSetup.tsx"],
+    "tests": ["src/features/youtube/YouTubeViewingControls.test.tsx", "src/features/soop/SoopWorkspace.test.tsx"],
+    "change": "Add account?.authenticated===true only to YouTube Login disabled predicate and the login-only branch of changeAccount. Pass SOOP's verified authenticated===true as a dedicated presentation boolean; add it only to Login disabled and the workspace login callback guard. Do not infer authentication from label, open window, polling error or busy state.",
+    "unchanged": "Keep existing Logout predicates, button text/order/elements/classes/geometry, account polling and error presentation, profile/session/native IPC, authentication policies and native window completion. No CHZZK, CSS, shared component, player/recording, account cookie/storage or unrelated backend changes. Root owns app restart and actual account UI checks. No automated logout/login or credential/security action by this agent."
+  },
+  "acceptance": [
+    "For each provider, native authenticated=true yields disabled Login and existing-enabled Logout; clicking disabled Login does not invoke login IPC.",
+    "After the existing Logout action reports authenticated=false, Login is available again without replacing or moving either button. YouTube's existing unauthenticated Logout-disabled rule remains unchanged; SOOP's existing Logout availability remains unchanged.",
+    "Pending account action, unavailable runtime/API and privacy keep their existing disabling rules; unknown/null authentication is not treated as authenticated.",
+    "Failed login does not show 로그인됨 or disable retries solely because a window is open. Authenticated state from a polling update also disables Login; no cross-provider state store is introduced.",
+    "Focused existing and new account UI tests plus typecheck; root actual UI observes authenticated YouTube and SOOP controls in the running app. Mock tests alone do not establish actual login completion.",
+    "No authentication/refresh implementation is marked solved by this UI change; retained-session and fresh-challenge evidence remain explicitly distinct."
+  ]
+}

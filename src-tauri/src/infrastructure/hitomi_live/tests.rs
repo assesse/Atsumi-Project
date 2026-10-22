@@ -162,6 +162,129 @@ fn download_decode_accepts_empty_or_octet_stream_only_when_magic_matches() {
 const GALLERY_SCRIPT: &str = include_str!("../../../fixtures/hitomi/galleryinfo-normal.js");
 const GG_SCRIPT: &str = include_str!("../../../fixtures/hitomi/gg-current.js");
 
+#[test]
+fn replacement_requires_two_fresh_documents_and_never_weakens_strict_fetch() {
+    let transport = Arc::new(FakeTransport::default());
+    let old = galleryinfo_script_url(7001).unwrap();
+    let canonical = galleryinfo_script_url(7002).unwrap();
+    let body = gallery_script(7002, "Replacement fixture", "[]");
+    for _ in 0..3 {
+        transport.respond(old.clone(), "text/javascript", body.as_bytes().to_vec());
+    }
+    transport.respond(
+        canonical.clone(),
+        "text/javascript",
+        body.as_bytes().to_vec(),
+    );
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone());
+    let cancel = CancellationToken::new();
+    let old_id = GalleryId::new(7001).unwrap();
+    assert_eq!(
+        adapter.gallery_snapshot(old_id, &cancel).unwrap_err().code,
+        SourceErrorCode::InvalidData
+    );
+    let result = adapter.resolve_gallery(old_id, &cancel).unwrap();
+    assert!(
+        matches!(result,crate::application::DownloadGalleryResolution::Replacement(proof) if proof.canonical_id()==7002)
+    );
+    assert_eq!(transport.call_count(&canonical), 1);
+    assert_eq!(
+        adapter.gallery_snapshot(old_id, &cancel).unwrap_err().code,
+        SourceErrorCode::InvalidData
+    );
+    // The independent canonical document is safe to cache under its own ID only.
+    assert_eq!(
+        adapter
+            .gallery_snapshot(GalleryId::new(7002).unwrap(), &cancel)
+            .unwrap()
+            .gallery
+            .id
+            .get(),
+        7002
+    );
+    assert_eq!(transport.call_count(&canonical), 1);
+}
+
+#[test]
+fn replacement_resolution_preserves_the_ordinary_exact_id_cache() {
+    let transport = Arc::new(FakeTransport::default());
+    let url = galleryinfo_script_url(7002).unwrap();
+    transport.respond(url.clone(), "text/javascript", gallery_script(7002,"Exact cache fixture","[]").into_bytes());
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(),transport.clone());
+    let id = GalleryId::new(7002).unwrap();
+    let token = CancellationToken::new();
+    adapter.gallery_snapshot(id,&token).unwrap();
+    assert!(matches!(adapter.resolve_gallery(id,&token).unwrap(),crate::application::DownloadGalleryResolution::Exact(_)));
+    assert_eq!(transport.call_count(&url),1);
+}
+
+#[test]
+fn replacement_rejects_changed_content_recursive_alias_and_cached_identity() {
+    for (target_id, title) in [
+        (7002, "Different content"),
+        (7003, "Replacement fixture"),
+        (7001, "Replacement fixture"),
+    ] {
+        let transport = Arc::new(FakeTransport::default());
+        let old = galleryinfo_script_url(7001).unwrap();
+        let canonical = galleryinfo_script_url(7002).unwrap();
+        let body = gallery_script(7002, "Replacement fixture", "[]");
+        transport.respond(
+            canonical.clone(),
+            "text/javascript",
+            body.as_bytes().to_vec(),
+        );
+        let adapter =
+            HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone());
+        let cancel = CancellationToken::new();
+        adapter
+            .gallery_snapshot(GalleryId::new(7002).unwrap(), &cancel)
+            .unwrap();
+        transport.respond(old.clone(), "text/javascript", body.into_bytes());
+        transport.respond(
+            canonical.clone(),
+            "text/javascript",
+            gallery_script(target_id, title, "[]").into_bytes(),
+        );
+        assert!(adapter
+            .resolve_gallery(GalleryId::new(7001).unwrap(), &cancel)
+            .is_err());
+        assert_eq!(
+            transport.call_count(&canonical),
+            2,
+            "cached canonical data cannot validate replacement"
+        );
+        assert_eq!(
+            transport.calls.lock().unwrap().len(),
+            3,
+            "only two new requests; no chain following"
+        );
+    }
+    let transport = Arc::new(FakeTransport::default());
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone());
+    let cancellation = CancellationToken::new();
+    cancellation.cancel();
+    assert!(adapter
+        .resolve_gallery(GalleryId::new(7001).unwrap(), &cancellation)
+        .is_err());
+    assert!(transport.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+#[ignore = "opt-in metadata-only verification; no images, database or running app access"]
+fn live_replacement_4214994_metadata_only() {
+    assert_eq!(std::env::var("ATSUMI_ALLOW_LIVE_SMOKE").as_deref(), Ok("1"));
+    let adapter = HitomiLiveAdapter::new(HitomiLiveConfig::default()).unwrap();
+    let resolution = adapter.resolve_gallery(GalleryId::new(4_214_994).unwrap(), &CancellationToken::new()).unwrap();
+    let crate::application::DownloadGalleryResolution::Replacement(proof) = resolution else {
+        panic!("the source no longer reports the observed replacement");
+    };
+    assert_eq!(proof.requested_id(),4_214_994);
+    assert_eq!(proof.canonical_id(),4_257_035);
+    eprintln!("verified requested={} canonical={} pages={} contentSha256={}",
+        proof.requested_id(),proof.canonical_id(),proof.page_revisions().len(),proof.content_sha256());
+}
+
 #[derive(Default)]
 struct FakeTransport {
     responses: Mutex<HashMap<String, VecDeque<Result<HttpPayload, SourceContractError>>>>,

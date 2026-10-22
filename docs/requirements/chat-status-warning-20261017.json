@@ -1,0 +1,22 @@
+{
+  "id": "chat-status-warning-20261017",
+  "state": "Narrow presentation repair implemented;113 focused tests/typecheck passed. Actual existing QA grouped card and replay title/description verified, decoded playback advances. No archive/native changes. Overall verification goal and native disabled-chat propagation remain incomplete.",
+  "verification": ".runtime/requirements-audit/20261017-chat-warning-and-hover-actual.json",
+  "originals": ["01a0862c-6058-7442-a6fe-38d660288ee2", "01a12a4c-724c-7d13-801d-3d92da01fe1e", "01a10785-1343-76e2-8820-053e98507cbb", ".runtime/requirements-audit/20261016-remaining-goal-original.json"],
+  "evidence": ".runtime/requirements-audit/20261017-youtube-watch-record-continuity.json",
+  "audit": {
+    "inventory": "Current active50/pinned plus archived3 EOF; same three accessible Atsumi development chats. Main latest/current and previous continuation contain no newer user request. Other-main3/UIUX3 original messages read through covered overlap. Existing full EOF snapshots main230turn284messages SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333turn375messages SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 unchanged. Oversized multi-turn read retried successfully one turn at a time; command history is not user requirements.",
+    "specifications": "All69 original document hashes rechecked: only RELEASING differs oldest snapshot, at previously fully read F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. All145 baseline contract records compared.17 differences fully read this logical turn or reused exact immediately previous-turn read hash: chzzk-narrow-chat,hitomi-verified-replacement,image-platform-previews,image-platform-sessions,implementation-policy,live-discovery-eight,live-player-screenshot-controls,overlap-page-filters,pixiv-favorite-tags,pixiv-home-access,pixiv-search-header-guest,shared-browser-environment,shared-social-login,soop-discovery-profile-eight,youtube-channel-favorite-status,youtube-manual-recording-status,youtube-trusted-types-icons. Truncated reads repeated to cover omitted sections. Relevant original user texts directly reread, not just agent summaries.",
+    "missing": ["durable01a03f16", "unidentified analysis1/2", "unretained historical attachment pixels"],
+    "rules": ["R003 platform boundaries", "R009 truthful status", "R013 retained chat", "R015 no cleanup without proof", "R022 actual app acceptance"]
+  },
+  "finding": "Actual official source explicitly disables chat, but persisted partial/status_unknown is rendered as proven missing chat. Native first-reason latch means status_unknown is not proof of no later failure. Replay partialFile also includes unconfirmed preservation and its current tooltip falsely claims unreadable records were skipped.",
+  "decision": [
+    "Presentation only: partial/unknown without a known failure remains a visible 채팅 상태 확인 필요 warning. Never infer complete or disabled from zero rows or status_unknown; unknown future reasons remain uncertain.",
+    "archive_limit/write_failed/flush_failed/interrupted retain 채팅 일부 누락, including mixtures with status_unknown and contradictory complete state. Fixed reason-specific plain text; do not expose raw errors. Asset warning is appended to detail without replacing text warning. Null legacy summary remains unchanged.",
+    "Replay partialFile alone uses neutral unverified-preservation explanation; malformedLines>0 explains unreadable records were skipped. Retain conditional short body, controls and media lifecycle.",
+    "No native/schema, archive rewrite, success/cleanup, job aggregation, source-unavailable classification, receipt handling or CHZZK changes. This does not repair or prove original chat completeness."
+  ],
+  "files": ["src/features/platforms/PlatformMediaLibrary.tsx", "src/features/platforms/PlatformMediaLibrary.test.tsx", "src/features/platforms/PlatformReplayChat.tsx", "src/features/platforms/PlatformReplayChat.test.tsx"],
+  "acceptance": ["partial/status_unknown card and replay title", "Known failures dominate either reason ordering", "Assets/legacy/contradictory states", "Latest playback summary and grouped cards", "Partial-only versus malformed replay detail", "Focused tests/typecheck", "Actual existing QA recording displays uncertainty without changing stored media/proofs"]
+}

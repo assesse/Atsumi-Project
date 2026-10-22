@@ -1,0 +1,31 @@
+{
+  "status": "evidence captured; narrow fix and actual revalidation pending",
+  "requestTurn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec",
+  "originalEvidence": [
+    "Latest request: remaining actual Google automatic continuation, YouTube auto recording and SOOP UI verification, fix failures; ask only when authentication is needed.",
+    "User reply call_f4713ece566a43bf8b5674f35f207e14: logout returns to YouTube home but window remains; password completed, loading does not advance, app remains logged out.",
+    "User reply call_1c7263023cd648f7b089fa7a883295b7: opened DevTools and permits app/browser handling. Authentication input remains user-operated."
+  ],
+  "audit": "Reuse verified full conversation snapshots and69 specification coverage recorded in .runtime/requirements-audit/20261015-platform-verification-resume.json; newest original replies read directly. Reread account-completion-followup contract and current exact production account/diagnostic files before editing. Historical unavailable sources remain as indexed.",
+  "findings": [
+    "Logout close is deliberately excluded by !sign_out branch and sign_out&&!value ends observation without closing, even while interactive.",
+    "Fresh login current page remains accounts.google.com/v3/signin/challenge/pwd with loading=true and no password error; application diagnostics report a denied navigation. Exact denied destination has not yet been verified.",
+    "SafeFields drops account_step and page event booleans, reducing persistent failure evidence. No raw auth URL, query, credential, token or identity should be logged."
+  ],
+  "conflicts": [
+    "Supersedes youtube-account-completion-followup-20261014.json recordingRaceBatch.logoutDecision: latest actual user report requires logout window cleanup too.",
+    "Preserve security/challenge/consent interaction and fresh nonce/epoch guards; no forced refresh, security bypass or cached-session-based close.",
+    "Do not widen account navigation speculatively; verify official destination first."
+  ],
+  "changes": [
+    "Close on exact verified official home, noninteractive document and authenticated value matching current intent, for login and logout alike.",
+    "Keep observing an interactive/unknown logout home within existing bound instead of stopping early.",
+    "Persist only fixed safe account-stage categories and event booleans if needed for reproducible diagnostics."
+  ],
+  "acceptance": [
+    "Login closes only on true and logout only on false; interactive/unknown/foreign/challenge states never close.",
+    "Stale nonce/epoch and replaced window remain protected.",
+    "No raw account URL/query/identity/credential logging.",
+    "Actual fresh Google authentication and logout must advance and close without F5 before claiming complete."
+  ]
+}

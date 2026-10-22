@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "status": "before-edit contract; implementation and actual acceptance pending",
+  "originalRequest": {
+    "turn": "01a13a1f-f808-74a0-85c8-e90aa748a292",
+    "text": "이제 SOOP과 유튜브의 내부 플레이어와 채팅도 각 플랫폼 원래 UI로 맞춰줘. 로그인, 시청, 녹화까지 실제로 동작하게 이어서 작업하고, 치지직에 영향 없는지도 확인해."
+  },
+  "audit": {
+    "delta": ".runtime/requirements-audit/20261014-native-integration-request.json",
+    "policy": "docs/requirements/implementation-policy.json",
+    "reuse": "Previously fully read main230turn/284message and other333turn/375message snapshots retain exact SHA256. New latest3 page overlaps clone tail. Other main1791827531/UIUX1791393086 unchanged; archive3/EOF. All69 original specification hashes unchanged except previously reread RELEASING.md. Current relevant contracts and native source reread before this batch.",
+    "limitations": "Old durable source thread, unnamed analysis1/2 and historical unavailable pixels remain inaccessible as recorded in policy. No historical shutdown/release/data deletion authorization is renewed."
+  },
+  "governingOriginals": [
+    { "turn": "01a13978-c469-7242-9ec2-f065de16743a", "rule": "Use original platform player/chat, nearly identical interface; preserve floating YouTube playback and fix native chat focus." },
+    { "turn": "01a1399c-e7fb-7260-ac09-93bc94288f2f", "rule": "Archived old UI and copied CHZZK shell must remain; now implement the underlying provider engine, not redesign the shell again." },
+    { "turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "Viewing and recording share one video ingress, including SOOP/YouTube. Retain chat." },
+    { "turn": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "rule": "Platform/tab switching preserves playback and sound." },
+    { "turn": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "rule": "Minimize keeps audio; tray mutes; original and added controls fade together; native chat toggles the existing pane." },
+    { "turn": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Delete only job-owned intermediates after successful final verification; keep final media and chat." }
+  ],
+  "decisions": [
+    "Host official remote documents in provider-specific unprivileged WebViews with separate profiles, labels, session registries and exact navigation policy. Never widen CHZZK origins or reuse its account/capture state.",
+    "Do not run official playback beside the legacy extractor. Reserve a single receiver identity under the existing native media limit before opening either path. Existing sessions must drain, not be silently replaced.",
+    "Record only supported clear bytes already accepted by the original player. Never request encrypted media keys, bypass access controls, pretend unsupported transport is recorded, or launch a hidden second video receiver.",
+    "Native-created arms and label/origin/source/generation checks precede bounded append sequencing; durable jobs and independent final decode/hash verification determine completion.",
+    "Original chat remains the platform UI. Saved chat uses bounded provider-specific archive data without exposing cookies, tokens or contents in diagnostic output.",
+    "Google embedded OAuth restrictions are a potential real limitation, not proof that all web login fails. System-browser API OAuth does not create official player web cookies. Do not substitute browser-cookie extraction or user-agent evasion. Ask user for interactive credentials/security verification only when a supported window is ready.",
+    "No app process was running at the start of this batch. No process was terminated. User will enter login credentials/security answers directly. No posting messages, subscribing, payment or destructive media actions are part of verification."
+  ],
+  "ownership": {
+    "root": "Shared trusted-main IPC registration, application lifecycle/visibility integration, cross-provider checks and actual app verification",
+    "soop_native_ui": "SOOP-only native host/page adapter/frontend and provider contract",
+    "youtube_native_ui": "YouTube-only official runtime capability probe and supported provider integration",
+    "chzzk_focus": "Provider-neutral encoded archive/receiver admission, existing media journal/finalizer integration; no CHZZK production source changes"
+  },
+  "geometryBatch": {
+    "files": ["src-tauri/src/platform_native_geometry.rs", "src/features/platforms/nativePlayerGeometry.ts", "src/features/platforms/nativePlayerGeometry.test.ts"],
+    "reference": "Existing CHZZK requests for independently resizable video/chat, overlay holes without pixel gaps, rounded handles, hidden-tab playback and pointer-only focus repair.",
+    "decision": "One official document can expose separated player/chat rectangles using the union of two native regions. Subtract measured app-owned overlays with four actual corner radii; modal dialogs hide native pixels/input without changing receiver or audio. Presentation and mute remain independent. No periodic focus repair or attention animation; pure existing pointer helper code is reused without CHZZK registry/state.",
+    "checks": ["Hidden is not muted", "Disjoint video/chat gap never intercepts input", "Rounded overlay outline has no artificial gutter", "Foreign hidden overlays ignored", "Geometry limits and stale render revisions enforced", "A floating detail dialog that owns all visible native slots must not occlude its own player; unrelated foreground dialogs still hide native input", "Actual resize/fullscreen/input verification remains required"]
+  },
+  "nativeCaptureBatch": {
+    "original": "Prior screenshot request: video-only capture, large upper-left preview, cancel saved capture, retain screenshot library. Preserved under current latest original-platform runtime replacement request.",
+    "files": ["src-tauri/src/platform_native_capture.rs", "src-tauri/src/platform_media/encoded.rs", "provider-owned original commands/components"],
+    "decision": "Only trusted main-renderer intent on an active visible pane starts a bounded original-video canvas capture. Exact URL and native session epoch must match before and after. No additional media request, desktop/chat capture, cookies or account extraction. Native-owned official lease supplies storage context to the existing PNG verification/catalog. Privacy, inactive panes, stale documents, oversized data or cross-origin canvas rejection fail closed.",
+    "checks": ["No removed screenshot feature hidden by the player migration", "No fake save on native/canvas failure", "Preview and undo use existing catalog", "Added controls leave no black clipping hole at zero opacity", "Partial clipping does not resize original player aspect"]
+  },
+  "acceptance": [
+    "Actual original non-ad video time/decoded frames advance; original chat visible and input reaches chat rather than player shortcuts.",
+    "Interactive login succeeds and persists only in the intended provider profile; no account success inferred from page load or cookies alone.",
+    "Record a bounded public sample through the same receiver, stop without stopping viewing, fully decode/hash/reopen saved output with chat status retained.",
+    "Stop viewing does not destroy opted-in recording; tab/layout/privacy/minimize/tray/reload and graceful quit preserve established ownership rules.",
+    "SOOP reservations and existing local library/download actions remain correct; YouTube native login limits are explicit rather than disabled controls described as implemented.",
+    "CHZZK source hashes/critical regressions unchanged; provider A cannot mutate B through labels, origin, storage, commands, leases, keyboard or late replies.",
+    "Unit/build/probe success is not end-to-end completion. Report unverified paths and any unsupported platform restriction."
+  ]
+}

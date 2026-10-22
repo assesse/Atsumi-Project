@@ -1,0 +1,23 @@
+{
+  "id": "overlap-page-filters-20261017",
+  "originals": ["Current chat 01a089ee-56ed-7322-a750-c034423826c2: three independent page-list toggles; retain Ctrl selections when showing only some pages", "User follow-up: no unsaved review; apply now; preservation refers to selections made during actual review", "01a0f8ab-e779-7f33-836c-fc747a3b0b35: mixed A/B per-pair Ctrl/Shift selection"],
+  "audit": ".runtime/requirements-audit/20261017-overlap-page-filters.json",
+  "rules": [
+    "일치 / 한쪽에만 있음 / 대응 없음 are independent view toggles, initially enabled.",
+    "Filters do not modify selection, range anchor or submitted merge pages. Hidden selections remain included and their count is indicated.",
+    "Columns disappear only when neither side is visible; invisible placeholders preserve A/B alignment otherwise. Original keys, source page numbers and thumbnail indices remain stable.",
+    "Unfiltered validation, per-pair selection exclusivity and candidate/revision reset guards are unchanged.",
+    "All-off is recoverable; hidden images do not load; filter changes dismiss stale hover previews.",
+    "No backend, album, file or database mutation; no native rebuild or forced application stop is needed."
+  ],
+  "verification": {
+    "state": "source-integrated-automated-checks-passed-desktop-interaction-pending",
+    "regressionTests": 75,
+    "layoutTests": 2,
+    "typecheck": "passed",
+    "layoutViewports": ["1920x1080", "1280x720"],
+    "screenshots": ".runtime/overlap-filters-20261017/screenshots/overlap-page-filters",
+    "actualApp": "Updated development module served, same native PID and UI epoch, healthy pulse; no native restart. Actual desktop filter clicking/merge not tested and not claimed complete.",
+    "liveDataMutation": false
+  }
+}

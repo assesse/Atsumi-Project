@@ -248,6 +248,22 @@ pub(crate) fn database_profile(_: &str, duration: Duration) {
 struct SafeFields(Map<String, Value>);
 impl SafeFields {
     fn number(&mut self, field: &Field, value: Value) {
+        // Paired init diagnostics contain only bounded technical integers.
+        // Decoder configuration bytes and arbitrary strings are never admitted.
+        let init_limit = match field.name() {
+            "timescale" => Some(1_000_000_000),
+            "audio_channels" => Some(32),
+            "audio_sample_rate" => Some(768_000),
+            "codec_family" => Some(3),
+            "codec_profile" | "codec_compatibility" | "codec_level" | "init_change_mask" => Some(255),
+            _ => None,
+        };
+        if let Some(limit) = init_limit {
+            if self.0.len() < 24 && value.as_u64().is_some_and(|n| n <= limit) {
+                self.0.insert(field.name().into(), value);
+            }
+            return;
+        }
         if matches!(
             field.name(),
             "elapsed_ms"
@@ -307,6 +323,9 @@ impl Visit for SafeFields {
                 | "foreground"
                 | "allowed"
                 | "incremental"
+                | "finished"
+                | "completion_candidate"
+                | "receipt_used"
         ) {
             self.0.insert(f.name().into(), json!(v));
         }
@@ -326,6 +345,9 @@ impl Visit for SafeFields {
             }
             "diag_work" => v.len() == 16 && v.bytes().all(|b| b.is_ascii_hexdigit()),
             "capture_reason" => safe_capture_reason(v),
+            "account_step" => safe_account_step(v),
+            "fullscreen_key" => safe_fullscreen_key(v),
+            "input_gate" => safe_input_gate(v),
             "capture_mime" => safe_capture_mime(v),
             _ => false,
         };
@@ -335,6 +357,13 @@ impl Visit for SafeFields {
     }
     fn record_debug(&mut self, _: &Field, _: &dyn std::fmt::Debug) {}
 }
+
+fn safe_account_step(value: &str) -> bool {
+    matches!(value, "youtube-home" | "youtube-signin" | "youtube-logout" | "youtube-connection" | "google-transfer" | "google-account" | "google-regional-transfer" | "google-regional-account-other" | "youtube-account" | "consent" | "other" | "non-https")
+}
+
+fn safe_fullscreen_key(value:&str)->bool {matches!(value,"mouse"|"escape"|"f")}
+fn safe_input_gate(value:&str)->bool {matches!(value,"invalid_input"|"window_unavailable"|"key_released"|"focus_mismatch"|"pointer_outside"|"accepted")}
 
 pub(crate) fn safe_capture_reason(value: &str) -> bool {
     matches!(
@@ -372,6 +401,14 @@ pub(crate) fn safe_capture_reason(value: &str) -> bool {
             | "renderer_failed"
             | "window_closed"
             | "native_rejected"
+            | "advertisement_started"
+            | "queue_overflow"
+            | "bridge_ack_timeout"
+            | "bridge_busy"
+            | "bridge_post_failed"
+            | "channel_changed"
+            | "page_hidden"
+            | "first_append_timeout"
             | "unsupported"
             | "other"
     )
@@ -734,6 +771,100 @@ mod tests {
         );
     }
     #[test]
+    fn account_diagnostics_allow_fixed_categories_not_locations_or_identities() {
+        for value in ["youtube-home", "youtube-signin", "youtube-logout", "youtube-connection", "google-transfer", "google-account", "google-regional-transfer", "google-regional-account-other", "youtube-account", "consent", "other", "non-https"] {
+            assert!(safe_account_step(value));
+        }
+        for value in ["https://accounts.google.com/?token=secret", "accounts.google.com", "accounts.google.co.kr", "/accounts/SetSID", "google-regional-transfer?token=secret", "google-regional-account-other/private", "/v3/signin/challenge/pwd", "private@example.test", "cookie=secret", ""] {
+            assert!(!safe_account_step(value));
+        }
+    }
+    #[test]
+    fn fullscreen_input_diagnostics_allow_only_exact_enum_values() {
+        for value in ["mouse","escape","f"] {assert!(safe_fullscreen_key(value));}
+        for value in ["invalid_input","window_unavailable","key_released","focus_mismatch","pointer_outside","accepted"] {assert!(safe_input_gate(value));}
+        for value in ["s","Enter","Escape","key_released?secret=1","https://www.youtube.com/watch?v=private","private@example.test","","accepted "] {
+            assert!(!safe_fullscreen_key(value));assert!(!safe_input_gate(value));
+        }
+    }
+    #[test]
+    fn fullscreen_input_projection_drops_arbitrary_keys_and_page_values() {
+        struct Capture(std::sync::Arc<std::sync::Mutex<Value>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self,event:&Event<'_>,_:Context<'_,S>){let mut fields=SafeFields::default();event.record(&mut fields);*self.0.lock().unwrap()=json!(fields.0);}
+        }
+        let captured=std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
+        tracing::subscriber::with_default(tracing_subscriber::registry().with(Capture(captured.clone())),||tracing::info!(
+            diag_stage="youtube_fullscreen_input",fullscreen_key="escape",input_gate="key_released",allowed=false,receipt_used=false,
+            raw_key="private text",url="https://www.youtube.com/watch?v=private",source_id="private",hwnd=123u64));
+        assert_eq!(*captured.lock().unwrap(),json!({"diag_stage":"youtube_fullscreen_input","fullscreen_key":"escape","input_gate":"key_released","allowed":false,"receipt_used":false}));
+        tracing::subscriber::with_default(tracing_subscriber::registry().with(Capture(captured.clone())),||tracing::info!(fullscreen_key="private",input_gate="cookie=private"));
+        assert_eq!(*captured.lock().unwrap(),json!({}));
+    }
+    #[test]
+    fn regional_account_diagnostics_drop_raw_endpoints_and_auth_values() {
+        struct Capture(std::sync::Arc<std::sync::Mutex<Value>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+                let mut fields = SafeFields::default();
+                event.record(&mut fields);
+                *self.0.lock().unwrap() = json!(fields.0);
+            }
+        }
+        for stage in ["google-regional-transfer", "google-regional-account-other"] {
+            let captured = std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(Capture(captured.clone())),
+                || tracing::info!(
+                    diag_stage = "youtube_account_navigation", account_step = stage, allowed = false,
+                    host = "accounts.google.co.kr", path = "/accounts/SetSID",
+                    url = "https://accounts.google.co.kr/accounts/SetSID?token=private",
+                    query = "token=private", cookie = "secret", identity = "private@example.test"
+                ),
+            );
+            assert_eq!(*captured.lock().unwrap(), json!({
+                "diag_stage": "youtube_account_navigation", "account_step": stage, "allowed": false
+            }));
+        }
+    }
+    #[test]
+    fn account_popup_diagnostics_retain_fixed_denial_only() {
+        struct Capture(std::sync::Arc<std::sync::Mutex<Value>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+                let mut fields = SafeFields::default();
+                event.record(&mut fields);
+                *self.0.lock().unwrap() = json!(fields.0);
+            }
+        }
+        for stage in ["google-account", "google-regional-transfer", "other", "non-https"] {
+            let captured = std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(Capture(captured.clone())),
+                || tracing::info!(
+                    diag_stage = "youtube_account_popup_denied", account_step = stage, allowed = false,
+                    url = "https://accounts.google.co.kr/accounts/SetSID?token=private#secret",
+                    host = "accounts.google.co.kr", path = "/accounts/SetSID", query = "token=private",
+                    fragment = "secret", window_features = "private", window_label = "private",
+                    nonce = "private", identity = "private@example.test", cookie = "secret", token = "secret"
+                ),
+            );
+            assert_eq!(*captured.lock().unwrap(), json!({
+                "diag_stage": "youtube_account_popup_denied", "account_step": stage, "allowed": false
+            }));
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(Capture(captured.clone())),
+                || tracing::info!(
+                    diag_stage = "youtube_account_popup_denied",
+                    account_step = "https://accounts.google.com/?token=private", allowed = false
+                ),
+            );
+            assert_eq!(*captured.lock().unwrap(), json!({
+                "diag_stage": "youtube_account_popup_denied", "allowed": false
+            }));
+        }
+    }
+    #[test]
     fn capture_fields_accept_technical_enums_but_never_tokens_or_urls() {
         assert!(safe_capture_reason("track_changed"));
         assert!(safe_capture_reason("init_changed"));
@@ -748,5 +879,86 @@ mod tests {
             assert!(!safe_capture_reason(value));
             assert!(!safe_capture_mime(value));
         }
+    }
+    #[test]
+    fn youtube_capture_terminal_reasons_are_closed_exact_literals() {
+        for reason in [
+            "advertisement_started", "queue_overflow", "bridge_ack_timeout", "bridge_busy",
+            "bridge_post_failed", "channel_changed", "page_hidden", "first_append_timeout",
+        ] {
+            assert!(safe_capture_reason(reason));
+            for changed in [
+                format!("{reason} "), format!(" {reason}"), format!("{reason}\n"),
+                format!("{reason}?token=private"), format!("{reason}/private"),
+                reason.to_ascii_uppercase(),
+            ] {
+                assert!(!safe_capture_reason(&changed));
+            }
+        }
+        for value in ["", "advertisement", "queue_full", "page_hidden_private",
+            "https://www.youtube.com/watch?v=private", "private@example.test", "cookie=private"] {
+            assert!(!safe_capture_reason(value));
+        }
+    }
+    #[test]
+    fn youtube_capture_terminal_projection_never_retains_arbitrary_payloads() {
+        struct Capture(std::sync::Arc<std::sync::Mutex<Value>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+                let mut fields = SafeFields::default();
+                event.record(&mut fields);
+                *self.0.lock().unwrap() = json!(fields.0);
+            }
+        }
+        for reason in [
+            "advertisement_started", "queue_overflow", "bridge_ack_timeout", "bridge_busy",
+            "bridge_post_failed", "channel_changed", "page_hidden", "first_append_timeout",
+        ] {
+            let captured = std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(Capture(captured.clone())),
+                || tracing::info!(diag_stage = "youtube_capture_finish", capture_reason = reason,
+                    success = false, url = "https://www.youtube.com/watch?v=private",
+                    source_id = "private", cookie = "secret", path = "C:/private",
+                    chat_text = "private chat", "private message"),
+            );
+            assert_eq!(*captured.lock().unwrap(), json!({
+                "diag_stage": "youtube_capture_finish", "capture_reason": reason, "success": false
+            }));
+            let arbitrary = format!("{reason}?token=private");
+            tracing::subscriber::with_default(
+                tracing_subscriber::registry().with(Capture(captured.clone())),
+                || tracing::info!(diag_stage = "youtube_capture_finish", capture_reason = arbitrary.as_str(), success = false),
+            );
+            assert_eq!(*captured.lock().unwrap(), json!({"diag_stage": "youtube_capture_finish", "success": false}));
+        }
+    }
+    #[test]
+    fn init_change_diagnostics_allow_only_bounded_technical_integers() {
+        struct Capture(std::sync::Arc<std::sync::Mutex<Value>>);
+        impl<S: Subscriber> Layer<S> for Capture {
+            fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+                let mut fields = SafeFields::default();
+                event.record(&mut fields);
+                *self.0.lock().unwrap() = json!(fields.0);
+            }
+        }
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(Value::Null));
+        tracing::subscriber::with_default(
+            tracing_subscriber::registry().with(Capture(captured.clone())),
+            || {
+                tracing::info!(timescale=90_000u64, audio_channels=2u64, audio_sample_rate=48_000u64,
+                    codec_family=1u64, codec_profile=100u64, codec_compatibility=0u64,
+                    codec_level=42u64, init_change_mask=16u64,
+                    decoder_config="private", asc_config_hex="private", init_hash="private");
+                assert_eq!(*captured.lock().unwrap(), json!({"timescale":90000,"audio_channels":2,
+                    "audio_sample_rate":48000,"codec_family":1,"codec_profile":100,
+                    "codec_compatibility":0,"codec_level":42,"init_change_mask":16}));
+                tracing::info!(timescale=-1i64, audio_channels=33u64, audio_sample_rate=768_001u64,
+                    codec_family=4u64, codec_profile=256u64, codec_compatibility=0.5f64,
+                    codec_level="42", init_change_mask=256u64);
+                assert_eq!(*captured.lock().unwrap(), json!({}));
+            },
+        );
     }
 }

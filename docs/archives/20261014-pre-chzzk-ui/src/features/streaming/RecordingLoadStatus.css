@@ -1,0 +1,28 @@
+.recording-notice {
+  --notice-color: var(--muted, #aaa4ae);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line, #3b3541);
+  border-left: 3px solid var(--notice-color);
+  border-radius: 7px;
+  background: var(--surface, #211e26);
+  color: var(--notice-color);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.recording-notice.is-loading { --notice-color: var(--source-teal, #63b7b4); }
+.recording-notice.is-warning { --notice-color: var(--warning, #e6aa58); }
+.recording-notice.is-error { --notice-color: var(--danger, #f08386); }
+.recording-notice > strong { font-weight: 600; overflow-wrap: anywhere; }
+.recording-notice-icon { flex: 0 0 16px; width: 16px; height: 16px; display: grid; place-items: center; border: 1.5px solid currentColor; border-radius: 50%; font-weight: 700; line-height: 1; box-sizing: border-box; }
+.recording-notice.is-loading .recording-notice-icon { border-right-color: transparent; animation: recording-notice-spin .85s linear infinite; }
+.recording-notice-help { display: inline-flex; cursor: help; padding: 3px; }
+.recording-notice-help:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.recording-notice-detail { display: none; position: absolute; z-index: 20; inset: calc(100% + 4px) 0 auto; padding: 10px 12px; border: 1px solid var(--line, #3b3541); border-radius: 7px; background: var(--surface, #211e26); color: var(--text, #f2eff3); box-shadow: 0 6px 18px #0006; overflow-wrap: anywhere; }
+.recording-notice-help:hover .recording-notice-detail, .recording-notice-help:focus .recording-notice-detail { display: block; }
+@keyframes recording-notice-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .recording-notice.is-loading .recording-notice-icon { animation: none; } }

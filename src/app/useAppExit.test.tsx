@@ -85,6 +85,17 @@ afterEach(async () => {
 });
 
 describe("useAppExit", () => {
+  it("still requires confirmation for watch-only live receivers", async () => {
+    const fake = fakeApi();
+    fake.api.appActiveWorkSnapshot.mockResolvedValue(success({ ...idleSnapshot, workSetFingerprint: "receiver-1", liveReceivers: { activeCount: 1 } }));
+    const hook = await mountExit(fake.api);
+    await act(async () => { fake.requestExit(); });
+    expect(hook.current.dialogProps.snapshot?.downloads.activeCount).toBe(0);
+    expect(hook.current.dialogProps.snapshot?.liveReceivers?.activeCount).toBe(1);
+    await act(async () => { await hook.current.dialogProps.onQuit(); });
+    expect(fake.api.appQuit).toHaveBeenCalledExactlyOnceWith({ expectedWorkSetFingerprint: "receiver-1", confirmActiveWork: true });
+  });
+
   it("requires confirmation for recording-only work", async () => {
     const fake = fakeApi();
     fake.api.appActiveWorkSnapshot.mockResolvedValue(success({ ...idleSnapshot, workSetFingerprint: "recording-1", recordings: { activeCount: 1 } }));

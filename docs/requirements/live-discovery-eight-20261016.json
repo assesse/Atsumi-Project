@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "state": "current request; implementation split by ownership; actual acceptance pending",
+  "original": ".runtime/requirements-audit/20261016-live-discovery-eight-original.json",
+  "turnId": "01a14358-092b-7a50-a8a5-6211c15170e9",
+  "audit": ".runtime/requirements-audit/20261016-live-discovery-eight-spec-inventory.json",
+  "rules": [
+    "Latest explicit eight-item request overrides old single preview-undo X, borderless preview and small/right-aligned viewer-close presentation only.",
+    "Keep short preview/hover hold, exact capture identity, fixed on/off geometry, shared official control fade and single-ingress media ownership.",
+    "Preview top-right X dismisses presentation only; bottom-right 취소 retains exact saved-capture undo semantics. No timer expiry may delete files.",
+    "All three original video surfaces use a larger top-center conditional viewer-close. Closing viewing does not implicitly stop independent recording/reservations.",
+    "SOOP viewer count uses top-right as latest explicit text requests, despite attached official screenshot placing its count at top-left. Use actual count, circular channel identity and actual tags; never invent metadata.",
+    "YouTube channel address question does not authorize migrating/deleting old video favorites. Add only exact supported channel-path normalization and truthful presence/recording presentation.",
+    "Search uses official related-streamer semantics, not a nickname heuristic. Preserve bounded requests, privacy, cancellation, search scroll context, card selection and source-local state.",
+    "Historical missing portraits may use an explicitly current public portrait fallback; never silently fabricate historical snapshots or rewrite old media. Native host/raster/size/ownership gates remain."
+  ],
+  "ownership": {
+    "platform_chat_followup": "items1/3/4 screenshot and native original controls; narrow owned sources only",
+    "youtube_followup": "items2/6 exact URL parser, help and favorites status presentation",
+    "hitomi_acceptance_gap": "items5/7/8 SOOP public profile/discovery/search mapping and UI",
+    "root": "source audit, contract approvals, integration/policy, normal app lifecycle, serial Cargo/build and actual acceptance"
+  },
+  "runtimeGate": "Root used actual normal AltF4 exit dialog. Only one live viewing/chat session listed, no recording/download. Normal work-stop-and-exit clicked; subsequent Get-Process atsumi empty. No process termination or user data deletion.",
+  "verifiedSoFar": {
+    "soopPortraitUnit": "cargo test --locked --offline --lib soop::tests:: -j2: 8 passed,4 ignored; source/output caps and malformed raster guards retained.",
+    "soopTownboyPublic": "Exact ignored native public portrait probe initially failed in restricted-network sandbox, then the unchanged command succeeded on the normal host: townboy96x83 normalized PNG19844bytes. No cookie, login or historical media write. Actual app display still pending.",
+    "officialSoopComparison": "Read-only rendered official total search for 곰이 in an agent-created background browser: relatedstreamers 거대별→뽀린걸→마이곰이_, then LIVE, related content and later Catch. This is website evidence, not Atsumi acceptance."
+  },
+  "acceptance": [
+    "Each actual original player shows visible record/camera and72px top-center X, native controls fade together, recording and screenshot still work and close affects only correct viewer.",
+    "Each screenshot preview has subtle image highlight, top-right dismiss preserving stored file and bottom-right 취소. Hover/leave/lifetime and error states retained; UI deletion requires action-time confirmation.",
+    "YouTube fixed channel live URL resolves to channel identity/current live; existing saved video/channel records unchanged; live/record/error statuses are text+color with stable buttons.",
+    "SOOP actual existing townboy favorites and recordings display a valid portrait or truthful unavailable state; new media immutable snapshot separately checked.",
+    "SOOP actual Explore and 곰이 search compare related streamers/LIVE/related content/Catch with official response; actual viewer count and tags visible; ordinary viewer accounts not misrepresented as ranked related streamers.",
+    "Focused regressions/full TypeScript/build are distinct from actual app checks. Record unverified paths, no completion based on mocks alone. No push/release/PC shutdown/goal activation."
+  ]
+}

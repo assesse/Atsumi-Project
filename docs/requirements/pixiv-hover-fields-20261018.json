@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "state": "implemented-and-offline-verified; actual native/account hover acceptance pending",
+  "verification": ".runtime/requirements-audit/20261018-pixiv-hover-fields-final.json",
+  "original": {
+    "threadId": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turnId": "01a14a64-889b-7c70-88b6-b046a1a298c4",
+    "messageId": "01a14a64-898f-7a41-abf6-da976ad439aa",
+    "request": "pixiv 발음이라는게 뭐야? 뭐가 다른거야? 읽는 법때문에 그런가? 난 마우스 호버하면 한국어 뜻, 영어해석, 영어 발음 이렇게만 나오면 좋겠어."
+  },
+  "audit": ".runtime/requirements-audit/20261018-pixiv-hover-fields.json",
+  "supersedes": [
+    "Source-specific heading labels in pixiv-metadata-reading-20261017 only; all resource/security/canonical-input guards retained."
+  ],
+  "fields": [
+    {
+      "label": "한국어 뜻",
+      "meaning": "Korean semantic translation, when known"
+    },
+    {
+      "label": "영어 해석",
+      "meaning": "English semantic translation, when known"
+    },
+    {
+      "label": "영어 발음",
+      "meaning": "Japanese reading in Latin letters (romanization); not English semantic translation or IPA"
+    }
+  ],
+  "rules": [
+    "Use only 한국어 뜻 / 영어 해석 / 영어 발음 as field labels; available values only, no fabricated translation.",
+    "Use shared reading label for official romaji, Kana and estimated Kanji; show 추정/일부 추정 beside estimated values.",
+    "Keep meaning and reading even when text happens to match; omit redundant original-language rows, retain original header.",
+    "Same lazy worker and privacy/input guards, no dependency/native/API/DB changes or restart."
+  ],
+  "acceptance": [
+    "Exact label and same-text meaning/reading unit tests",
+    "No guessed proper-name semantics; readable original not mislabeled as translation",
+    "Local Kanji tag reading despite an existing meaning, no worker when reading supplied",
+    "Estimated and partial-value notices, privacy/target/click/selection safeguards",
+    "Typecheck, Pixiv regression suite and isolated browser geometry/screenshots; actual account UI acceptance explicitly separate"
+  ]
+}

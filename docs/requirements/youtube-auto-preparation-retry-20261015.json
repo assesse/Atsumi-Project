@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "state": "narrow implementation ready; native tests and actual scheduler verification pending",
+  "request": {"turn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."},
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Both fully read EOF snapshots independently rehashed again in this batch. Latest original user turn and previous applicable original turns read directly in the continued task. Root/YouTube owner refreshed active/archive inventories and original69 specifications, known RELEASING delta reread. Original policy and earlier auto-recording/redirect contracts reread. Previously inaccessible durable01a03f16, unidentified analysis1/2 and historical attachment pixels remain unavailable.",
+    "gate": "Root released Cargo49065 source freeze and approved auto_record.rs typed pre-arm retry/manual conflict correction. Original host type change coordinated with its owner. No Cargo, native UI, credentials, shared provider state, or publishing by this agent."
+  },
+  "originalRules": [
+    "01a13adc item4: fix incomplete YouTube behavior; actual service and app operation required",
+    "01a11672 item14: explicit favorite-row opt-in; no separate auto-record tab",
+    "01a0862c: single receiver, watching must not replace a manual recording",
+    "01a12a4c: retain verified video/chat and preserve failed material",
+    "Existing auto-record contract: exact canonical channel/video/generation ownership, durable suppression before arm, no ending from missing/network observations, default off and off/shutdown fences"
+  ],
+  "evidence": [
+    "NativeHost::start can fail in prepare_scheduled before scheduler.reserve; cycle previously called record_failed_intent on all non-capacity errors, permanently suppressing a never-started video.",
+    "Original arm busy message is '이미 녹화 중이거나 준비 중입니다.' while scheduler recognized only '이미 녹화 중입니다.'; strings must not define ownership state.",
+    "Metadata-success resets observation.errors, so safe preparation backoff requires its own bounded per-video retry state."
+  ],
+  "conflicts": [
+    "Retry proven-before-reservation preparation failures; never remove a durable intent after reserve or uncertain ACK.",
+    "Existing manual/other-owner busy result is a suppressed/skipped broadcast, not permission to stop or restart it.",
+    "A real channel/page preparation error must remain visible with bounded retry, not be reported as offline or complete."
+  ],
+  "proposal": [
+    "Local typed failure stages distinguish preparation, reservation rejection, busy and post-reservation/ACK failure.",
+    "Preparation failures keep no durable intent and receive per-video30s exponential backoff capped at480s, unaffected by successful metadata polls; other current streams can continue independently.",
+    "Preparation state is bounded to current discovered videos and cleared on explicit reservation state change or successful admission. Retry does not bypass canonical identity, global capacity, owner or shutdown validation.",
+    "Native original host returns a typed Busy at the existing atomic arm guard. Manual API keeps existing UI messages. All reserve-success outcomes preserve the intent, including Busy, timeout, eval failure and ambiguous ACK."
+  ],
+  "implementation": "Added typed local preparation/reservation/busy/reserved failures, bounded per-video retries measured after actual preparation, independent discovery backoff, no intent deletion after reserve, and native exact-guard typed Busy with unchanged manual UI message. Existing11 scheduler tests updated and4 new retry/independent-video/ambiguous-ACK/bounded-off tests added. Rustfmt owned scheduler and diff-check passed; root owns Cargo and actual QA.",
+  "acceptance": [
+    "Proven preparation failure leaves persisted seen empty, retries after deadline, increments despite successful metadata, and eventually starts once.",
+    "One failed preparation does not block another current video; repeated failure and disappearance remain bounded.",
+    "Busy keeps manual receiver untouched and remains skipped after manual finishes; no string matching.",
+    "Post-reservation errors and ambiguous ACK remain suppressed across process restart, including errors textually identical to a preparation failure.",
+    "Off/generation/shutdown blocks pending retries; exact-owner stale ACK cleanup and existing corruption/drain tests still pass.",
+    "Root focused Cargo and actual isolated automatic opt-in -> capture -> off -> verified media/chat required; mocked tests alone are not completion."
+  ]
+}

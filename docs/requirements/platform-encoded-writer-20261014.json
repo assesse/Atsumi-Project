@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "status": "184 platform-media tests passed; actual SOOP and YouTube official-player recordings passed full verification/library reopen; SOOP chat complete, YouTube initial chat coverage partial; latest main debug app deployed2026-10-14 22:57KST; remaining interactive/long-duration checks separate",
+  "originals": [
+    { "turn": "01a13a1f-f808-74a0-85c8-e90aa748a292", "text": "이제 SOOP과 유튜브의 내부 플레이어와 채팅도 각 플랫폼 원래 UI로 맞춰줘. 로그인, 시청, 녹화까지 실제로 동작하게 이어서 작업하고, 치지직에 영향 없는지도 확인해." },
+    { "turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "Viewing and recording share one incoming video stream, including SOOP and YouTube." },
+    { "turn": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Clean exact-owned intermediates only after merge and full verification; preserve final video and chat." },
+    { "turn": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "rule": "Tab/provider visibility is independent of playback lifetime." },
+    { "turn": "01a11672-f428-7850-899b-5155aebb4e8a", "rule": "Favorite and automatic-recording ownership remain independent." }
+  ],
+  "audit": {
+    "policy": "docs/requirements/implementation-policy.json",
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Previously fully read main230turn/284user and other333turn/375user snapshots independently rehashed. Latest original request read directly via read_thread with prior clone-turn overlap; parent refreshes complete source inventory and changed69spec hashes. Applicable original single-ingress/cleanup/lifetime turns and current platform-media, original-player and CHZZK capture-clock specifications reread.",
+    "unavailable": ["Durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2 threads", "Unavailable historical attachment pixels"]
+  },
+  "ownership": ["src-tauri/src/platform_media/encoded.rs", "Required integration only in src-tauri/src/platform_media.rs and src-tauri/src/platform_media/live.rs", "Approved narrow exact-broadcast chat binding in src-tauri/src/platform_media/live_chat.rs and src-tauri/src/soop/chat.rs", "Approved narrow native-lease adapter in src-tauri/src/platform_media/screenshots.rs"],
+  "youtubeObservedAacPaddingBatch": {
+    "beforeEdit": "2026-10-14; reread latest original turn01a13a1f-f808-74a0-85c8-e90aa748a292 and full current writer contract. Main/other fully read snapshots independently rehashed unchanged. Parent maintains full inventory and confirmed98 CHZZK production files unchanged. Root and YouTube owner grant encoded.rs plus a new pure YouTube-only normalizer; no concurrent edits to these files.",
+    "evidence": "Actual original-player QA: clear audio/mp4 mp4a.40.2 init632bytes/esds53. Native rejects before creating any job with '초기 버전은 AAC-LC만 지원합니다.'. Bounded scalar diagnosis confirms descriptor tag5, ASC length16, AOT2, frequency index4, channel configuration2, and exact bytes12100000000000000000000000000000. This is a two-byte AAC-LC configuration followed by14 zero bytes, not an observed HE-AAC stream.",
+    "change": "Before immutable mux admission, only YouTube audio/mp4 mp4a.40.2 init may canonicalize the observed16-byte ASC to its original two-byte LC configuration. Require ES/decoder/ASC tag nesting, zero ES flags, object type64/audio stream5, AOT2, standard frequency index, mono/stereo and zero GA flags, with all14 trailing bytes zero. Rebuild bounded descriptor and ancestor box sizes, leave source playback/init buffers and encoded sample bytes unchanged. Unsupported/malformed/nonzero extension configurations remain unchanged and fail the existing strict parser. SOOP/CHZZK paths do not normalize.",
+    "checks": ["Observed16-byte zero-padded LC becomes equivalent2-byte LC and passes unchanged strict mux validator", "Original buffers and media offsets remain unchanged", "Nonzero tail, HE-AAC/PS, other lengths, GA flags, unsupported tags/lengths and malformed boxes are not normalized", "Non-YouTube providers and nonaudio MIME remain byte-identical", "Parent native tests plus actual YouTube record/full verification/local reopen required; no completion claim from synthetic checks"]
+  },
+  "nativeScreenshotBatch": {
+    "beforeEdit": "2026-10-14; original native-player replacement and retained-feature requests reread; main/other source snapshot hashes unchanged; parent owns native exact-document/epoch canvas capture and grants this local archive adapter.",
+    "originalRefs": ["01a13a1f-f808-74a0-85c8-e90aa748a292", "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "User screenshot request: captured frame preview in player with undo, later enlarged twofold"],
+    "change": "Lease derives provider/reference/download root from native reservation, never page input. Independent private screenshot ownership token cannot serve as receiver/source/recording token. Reuse existing PNG bounds/full decode, durable Store catalog, exact-file identity and time-bounded undo; no new remote IPC or alternate store. Parent supplies bounded captured bytes, backend derives PNG dimensions itself.",
+    "checks": ["Native screenshot uses existing provider-scoped library and same durable Item", "Malformed/oversized/closed receiver rejects before publication", "Identical request retry is idempotent but changed bytes reject", "Cross-receiver undo rejects, original owner undo remains available after receiver close", "No changes to CHZZK screenshots/auth or extra media ingress"],
+    "actual": "Parent must verify native capture, preview and undo in actual official players; backend tests are not actual UI proof."
+  },
+  "broadcastChatBatch": {
+    "beforeEdit": "2026-10-14; original latest native-player request and single-ingress/retained-chat contract reread; parent grants these two files; no other owner edits them",
+    "finding": "Existing SOOP public chat capture pins whichever broadcast metadata first returns, not the already verified native-player broadcast. A channel can change broadcasts before the first handshake. Async connection can also finish after a short recording has already declared an empty chat archive complete.",
+    "change": "Optional exact broadcast binding rejects a first/reconnected different broadcast before connecting. Existing unbound legacy callers retain their contract. Bound shared-chat archives retain explicit unknown initial coverage if a verified connection has not occurred yet; late errors remain latched before detach.",
+    "checks": ["Exact first broadcast, later change, malformed binding and cancelled-before-connect", "No unverified connection can result in complete empty chat proof", "Legacy APIs remain source-compatible and CHZZK unchanged"]
+  },
+  "soopObservedChatPortBatch": {
+    "beforeEdit": "2026-10-14; parent actual official-player QA recorded 20.013604s but chat was empty/partial interrupted. Read-only current public metadata for the same phonics1 broadcast297833919 returned public/identity-matching fields and CHPT8040, while existing Rust code accepted only9000 and connected9001. This is an evidenced parser rejection, not a speculative empty-room explanation.",
+    "primarySource": "https://static.sooplive.com/asset/app/liveplayer/player/dist/LivePlayer.js?_=202610071400",
+    "officialRule": "Official nChatPort getter uses supplied _nChatPort+1 for HTTPS; existing local public guest probes also already use CHPT+1. Earlier fixed9000 policy is superseded by the actual server-issued nonprivileged port.",
+    "change": "Validate an integer metadata CHPT1024..65534, derive secure port+1 for both pinned TCP destination and WSS authority. Keep strict official host/public-address/TLS/origin/anonymous-public/broadcast identity restrictions; no arbitrary URL or cookie input. Parent approved fixed-enum failure diagnostic reason only, never remote payloads/account/chat information.",
+    "checks": ["8040 maps8041 and9000 maps9001", "Reject malformed, privileged, negative, zero and overflow ports", "Actual anonymous Rust chat probe must join and receive before claiming preservation fixed", "No previously partial QA data is rewritten or reclassified"]
+  },
+  "youtubeChatAdapterBatch": {
+    "beforeEdit": "Parent approved native exact-document public identity adapter; original current native-player request remains authoritative. The successful isolated official-player probe is separate playback evidence, not archival evidence.",
+    "change": "Use public videoId/channelId/isLive/chatAvailable fields bound by the native host to its exact canonical document and epoch. Reconstruct only a sanitized existing Descriptor via from_metadata; never pass arbitrary URLs, headers, account cookies or extractor JSON. Start one separate public chat-only archival receiver and no extra video stream. Missing/logged-in-only chat remains partial or unknown while verified video can still publish with originals retained.",
+    "checks": ["Reject wrong provider/video/channel/nonlive fields and changed duplicate bindings", "Same identity is idempotent; no second chat worker", "Pending connection before archive attachment cannot be complete", "No private session extraction or second video receiver"]
+  },
+  "conflicts": [
+    "Latest native-player request supersedes the old generic-HLS player choice, not single-ingress. Never start a simultaneous extractor for an official receiver.",
+    "Reusing the pure strict fMP4 parser source does not authorize importing CHZZK mutable browser/auth/channel/capture state or editing CHZZK production files.",
+    "A parsed append or successful merge is not completion. Existing durable job/full-decode/hash/publication and honest chat proof remain mandatory.",
+    "Unsupported codecs, encryption, missing source binding or failed chat capture remain explicit errors/partial evidence, never silently reported as normal completion."
+  ],
+  "plan": [
+    "Register provider-scoped official receiver leases under the existing live-admission lock, sharing the four-receiver cap and rejecting same-source legacy extractor starts in both directions.",
+    "Bound opaque source/generation/request archive handles, strict init tracks and 128KiB chunks/32MiB appends, exact ordering and immediate byte-identical duplicate acknowledgement.",
+    "Write separate e########.mp4 segments, versioned ownership proof and encoded-segments.jsonl. Reuse immutable fMP4 parser source in a separate module instance without modifying it.",
+    "Use existing public chat-only receiver and archive sink; retain receive-time-approximate clock metadata and missing/partial state. No second video process.",
+    "Use existing journal/cancel RAII ownership and finalizer verification. Retry reads only the encoded manifest; retain all unverified/unknown inputs. Close/shutdown cancels admission and drains existing ownership."
+  ],
+  "acceptance": [
+    "Reject wrong provider/reference/broadcast/source/generation, duplicate request, unordered/oversized/changed duplicate chunks and poisoned partial state.",
+    "Official and legacy admission are mutually exclusive for one reference; combined cap four and isolated provider identities.",
+    "No yt-dlp or second video process in encoded path; retry works with nonexistent extractor paths.",
+    "Dropped/cancelled/failed writers settle interrupted/failed without false completion; graceful host close retains source until finalizer ownership transfers.",
+    "Native tests and actual official-player watch/record/local replay are separate proof levels. Parent owns app operation; do not claim real runtime success from tests."
+  ],
+  "verification": {
+    "format": "Owned Rust files formatted with skip_children=true; immutable CHZZK parser source not rewritten.",
+    "newTests": "12 encoded writer/admission/identity/order/dedup/poison/cancel/RAII/recovery/ownership regressions,1 native screenshot lease regression,1 screenshot Store adapter regression,3 bound-chat completeness regressions,1 exact SOOP broadcast-binding regression,1 real-server port mapping regression. Strict parser tests compile in their independent module instance.",
+    "soopChatPort": ".runtime/requirements-audit/20261014-soop-original-public-qa.json retest: actual native SOOP archive e68eecbd-1159-49a7-bd41-0f9c4d6cc7ce has complete chat proof, no reasons/assets incomplete, verified 22.050938s MP4 and library reopen. Previous partial archive retained unchanged.",
+    "native": "Latest Root cargo test --offline --config build.incremental=false --lib platform_media:184 passed,12 opt-in ignored,0 failed. Includes YouTube observed AAC padding, tfhd description and exact first-sample compatibility plus incomplete-stream/dedup regressions. Earlier screenshot owner/PNG/catalog and chat port/binding checks remain included. Additional native capture/geometry9 tests previously passed. No claim that these are full UI proof.",
+    "actual": "Actual isolated native original-player short recordings passed production full-decode/hash/publication/library reopen: SOOP22.050938s with complete chat, YouTube20.011022s with partial initial chat coverage. Latest main debug binary built and visibly launched2026-10-14 22:57KST; deployment evidence is .runtime/requirements-audit/20261014-main-debug-deployment.json. Long-running recording, all codecs and remaining interactive paths remain separate acceptance. Public chat archival is separate read-only chat traffic, never a second video ingress. Private/login-only chat may remain partial or unknown.",
+    "independentReview": "SOOP host owner informed of natural-end classification, BRIDGE_BUSY retry, actual current broadcast identity and premature scheduled-completion findings. Writer exposes encoded_scheduled_state with immutable owner/session proof so finalizer state remains authoritative after native-view disposal."
+  }
+}

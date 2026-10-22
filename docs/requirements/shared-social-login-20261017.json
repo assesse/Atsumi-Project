@@ -1,0 +1,36 @@
+{
+  "id": "shared-social-login-20261017",
+  "originals": ["01a14573-0864-7a91-8857-2082afb3f47f: Pinterest/Pixiv official Google login", "01a14575-680f-7fc2-b9ac-93e0d1dfa769: reuse existing YouTube Google session across app browsers"],
+  "audit": ".runtime/requirements-audit/20261017-shared-social-login.json",
+  "state": "Google session/profile and account-window/fallback popup integration implemented;54 native and295 frontend tests passed. Debug build in progress, actual user authentication acceptance pending.",
+  "conflicts": [
+    "Earlier image-platform-sessions social-login exclusion is superseded by explicit current request.",
+    "Earlier physical profile isolation is superseded ONLY for YouTube/Pinterest/Pixiv browser identity. Service authorization, query generations, media and UI state remain isolated.",
+    "Sharing a Google browser session is not permission to connect accounts or skip official consent/security screens. Google embedded OAuth policy may still reject a flow; do not spoof or bypass it."
+  ],
+  "decisions": [
+    "Reuse exact existing youtube-original-profile through a neutral browser-profile resolver. Do not copy, export, merge, rename or delete cookies/profiles. Preserve old Pinterest/Pixiv directories; a one-time service relogin may be required.",
+    "Pinterest account, official fallback and hidden query documents, plus Pixiv holder/account, must use the same profile as YouTube. New-window features preserve opener/environment for official GIS callbacks.",
+    "Permit exact verified official provider HTTPS hosts only in owned login windows. Normal search, metadata transport, player and IPC allowlists stay narrow. No foreign host can acquire privileged app commands.",
+    "Bound popup count/depth; parent flow owns child lifetime, deny stale/shutdown creation, no downloads and no remote script injection. Close only owned children when parent closes, never unrelated windows.",
+    "Pinterest official fallback keeps service-only main navigation while allowing the same owned GIS popup. New searches/detach/failure revoke only their own popup owner atomically; weak current-owner callback avoids a reference cycle.",
+    "Keep fresh service-specific authentication proof and original completion URL checks. Google presence is never Pinterest/Pixiv success; security/consent pages remain visible.",
+    "Service logout uses that service's official route, never clears shared storage. Google account logout/switch may affect Google/YouTube identity according to official behavior; no claim of absolute logout isolation and no forced player reload.",
+    "Existing favorites, saved originals, card rules and session-generation guards unchanged. CHZZK/SOOP profiles and business state unchanged.",
+    "Normal development restart allowed only after safe app drain, no forced kill. User performs authentication and account linking. No goal, commit, release or data cleanup."
+  ],
+  "checks": [
+    "Exact HTTPS origins, fake subdomains, userinfo/ports, non-web schemes and unrelated platform navigation rejected",
+    "Profile resolver retains existing YouTube path and all three provider surfaces use it",
+    "Popup opener/environment, bounded ownership, parent close and stale/shutdown checks",
+    "Google/Apple security pages cannot trigger service auto-close or login success",
+    "Focused native/session/frontend tests and normal debug build",
+    "Actual user Google login with retained YouTube session, service return/autoclose/status, native feed and original download remain explicit acceptance gates"
+  ],
+  "technicalSources": [
+    "https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/user-data-folder",
+    "https://developers.google.com/identity/protocols/oauth2/policies",
+    "https://help.pinterest.com/en/article/log-in-and-out-of-pinterest",
+    "https://accounts.pixiv.net/login"
+  ]
+}

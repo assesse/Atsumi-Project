@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-21",
+  "status": "automated_checks_passed_native_ui_acceptance_pending",
+  "source": "Current chat: media queue appears limited to one; one file displays 0/3; show received/total MB; simplify whole/individual wording and remove redundant media-saving phrase. User subsequently confirmed Atsumi closed.",
+  "audit": {
+    "direct_chat": "Full current conversation reviewed, including latest shutdown confirmation.",
+    "accessible_chats": "Reused full-EOF snapshots after checking main revision 1792473578 and UIUX revision 1792073766 unchanged; archived inventory exhausted (3 results, null cursor).",
+    "specifications": "Inventory refreshed; implementation-policy, native-actions, archive, receipt-repair and lifecycle/profile/library contract hashes unchanged; save-session-followup and receipt-repair fully reread.",
+    "unavailable": ["historical durable chat 01a03f16", "unidentified analysis 1/2 chats", "historical lost attachment pixels"],
+    "preserve": "Shared worktree 2849 and unrelated dirty changes; 3b2a remains backup. No commit/push/release/data deletion/social reactions."
+  },
+  "evidence": {
+    "frontend": "x_surface_actions.js pending.size >= 1 rejects any second in-document save, not only duplicates.",
+    "native": "x_surface_actions.rs Semaphore(2).try_acquire_owned and x_archive.rs reserve limit 2 reject additional work; no waiting queue exists.",
+    "count": "ProgressReporter totals post.media entries including avatar/poster; not the number of selected pictures/videos.",
+    "bytes": "fetch already reads Content-Length and counts actual chunks, but totalBytes remains null; HLS whole transfer size is not known in advance."
+  },
+  "decisions": [
+    "Supersede one-pending UI admission with bounded application-wide FIFO admission: at most 2 executing saves and 22 total admitted requests including capture preparation and waiting. With 2 executing, 20 more may wait. Native media buttons and the explicit chooser use the same FIFO. Repeated identical pending actions reuse their state instead of submitting duplicates; equivalent cross-pane requests are rejected with an explicit existing-work explanation.",
+    "Freeze and validate selected content at request time, release temporary draft after owning the snapshot, never recapture a different page after waiting. Pending work participates in graceful shutdown/update/cancel and account epoch invalidation. No automatic resend after uncertain acknowledgement.",
+    "Keep provenance, allowed resource URLs, exact selectors, bounded requests, receipt tombstones, sequence validation, file integrity and publication verification intact.",
+    "Displayed total/processed media counts cover image/video/unavailable image/video only. Avatar/poster remain saved as contextual assets but do not inflate visible media count. HLS graph is one video, not many files. Processed is not a success assertion.",
+    "Retain cumulative downloadedBytes semantics as actual received bytes. Add current transfer received/total bytes when known, separately from unknown whole-job total. No guessed HLS size, no extra HEAD or speculative URL requests. Show current-file ratio when known, received-only otherwise.",
+    "Use compact whole/individual labels (전체/개별), truthful waiting/capture/writing/error states, and remove redundant 미디어 저장 중. Multi-job status must not oscillate or cancel the wrong request."
+  ],
+  "validation": {
+    "frontend": "23 X suites, 1206 tests passed. Strict TypeScript and Vite build passed.",
+    "native": "222 X tests passed with --test-threads=1 (shared application-wide admission registry). Covers capacity, real concurrent FIFO scheduling, cancellation, epoch invalidation, frozen snapshots, chooser waiting, progress and publication verification.",
+    "review": "Independent read-only reviews of progress/queue/UI completed. Fixed premature 100-percent chooser display; chooser now participates in FIFO too.",
+    "repairs_during_checks": "Used pinned-future timeout instead of unavailable tokio select macro without adding dependencies. Updated pre-cancel regression to require terminal cancellation without claiming preparation started.",
+    "diff_check": "git diff --check passed for touched implementation and regression files.",
+    "native_build": "Debug atsumi executable build passed with TAURI_CONFIG devUrl http://127.0.0.1:1420; no commit, release or installation performed.",
+    "gui": "Not verified: Computer Use kernel-assets initialization fails with os error 3. No live downloads, likes or bookmarks were triggered by this task."
+  },
+  "checks": [
+    "22 admitted work slots, next request rejected clearly; FIFO execution at 2; pending/running cancellation; epoch invalidation; registration in app active-work gate.",
+    "Frozen pending snapshot survives ordinary navigation and draft lifetime but not account invalidation; duplicate ID/absence tombstones/ack-loss never cause duplicate writes.",
+    "One image plus helper assets shows 0/1, one video plus poster/avatar shows 0/1, multiple media show logical total; partial/error/cancel not presented as success.",
+    "Content-Length current-file ratio, missing lengths, HLS, truncated responses and actual byte counters remain truthful; closed bounded payload validation preserved.",
+    "Multi-job status, individual bars, cancellation, progress ordering, concise labels, chooser progress compatibility; targeted and full X automated tests plus debug build.",
+    "Actual native UI acceptance separate from automated checks. Computer Use currently blocked by kernel-assets os error 3; do not claim visual verification without evidence."
+  ]
+}

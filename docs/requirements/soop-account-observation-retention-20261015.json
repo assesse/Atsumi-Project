@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "state": "Implemented and root-verified on2026-10-15. Five new regressions included in full native1791passed0failed66ignored; independent read review found no confirmed blocker. Debug build passed and actual official LIVE -> stop last viewer -> more than two polling periods retained 로그인됨, disabled Login and enabled Logout. No authentication, logout, privacy or credential automation.",
+  "rootVerification": {
+    "binarySha256": "ED461381DDBF6B86F7418CCB8F8EAB54D93000C558BAF557B93EB7BEE7BF8618",
+    "builtLocal": "2026-10-15T16:22:43+09:00",
+    "nativeFull": { "passed": 1791, "failed": 0, "ignored": 66, "seconds": 140.56 },
+    "actual": "Opened recommended ordinary SOOP LIVE dlsn9911/297856369 in the main debug app. Official player/chat loaded; drawer showed Login disabled, Logout enabled and 로그인됨. Stopped only this agent-started viewing. After more than two poll intervals the original-player child was gone, 시청 시작 returned and the same authenticated controls remained. No recording was started.",
+    "scope": "Retained current-process account observation verified. New process still begins unknown until official evidence. Explicit logout/stale callback races are deterministic regression evidence, not an automated real logout test. User's separate original VOD fullscreen test passed."
+  },
+  "request": {
+    "artifact": ".runtime/requirements-audit/20261015-account-button-request.json",
+    "message": "01a13e49-660c-7520-8b9c-4fd6813b73b7",
+    "exact": "인증없이 로그인됨. 브라우저 세션이 남아있어서 그런걸까? 아무튼 로그인은 잘됐어. 그리고 로그인중일때는 로그인 버튼 비활성화하고 로그아웃만 되게 해줘야지. 이건 soop 도 마찬가지야.",
+    "rules": ["01a10806-d91b-7960-a4a4-09a11e14032d: on/off controls retain their positions", "01a1399c-e7fb-7260-ac09-93bc94288f2f: similar platform flows with independent domain state", "platform-account-completion-20261014.json: native verified state and current account nonce/epoch only; preserve security steps and profiles"],
+    "interpretation": "Closing a viewing session is not logout. Preserve a still-valid native SOOP account observation across normal viewer disposal, without inventing startup authentication or touching persisted session data."
+  },
+  "audit": {
+    "coverage": "Root refreshed active50/archive3 EOF and latest two main turns. Author reread exact latest request artifact, AGENTS, full current account-controls and account-completion contracts, SOOP AccountFlow policy and native status/account/refresh/lifecycle paths. Independently rehashed the previously fully read main230turn284message EOF snapshot85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333turn375message EOF799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Both unchanged. Baseline69 only previously read RELEASING delta F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0 remains unchanged.",
+    "missing": ["durable01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unidentified historical analysis1/2", "historically inaccessible attachment pixels"]
+  },
+  "actualEvidence": {
+    "binarySha256": "5E9E3E8F6C60721F32FFF4869254C9319299D7D02E0FD88222AF7B3C823BB364",
+    "rootObserved": "Ordinary SOOP LIVE reported 로그인됨 with Login disabled and Logout enabled. After root ended only that agent-started viewer, the next drawer poll reverted to 계정 확인 전 and enabled Login. No authentication, logout or profile mutation occurred. YouTube ordinary VOD retained its verified account state after close.",
+    "qualification": "The previous account-controls contract's authenticated rendering checks passed. Its end-viewing account retention was not verified and is superseded by this actual failure. Retained-session observations do not establish fresh Google security-challenge completion."
+  },
+  "cause": {
+    "nativeGetter": "soop/original.rs account() prioritizes active registry session authenticated flags, then falls back to account_state. dispose() removes the last session. account_state is updated only by the explicit login window callback, never by a verified LIVE status, so a retained browser login observed through LIVE disappears from the getter when that viewer closes.",
+    "trustedObservation": "original_page.js reads the official liveView.isLogin() result and posts status every1.5s. Native bridge already validates exact official broadcast URL, native view label, bounded envelope and document epoch before queueing, then process() rechecks epoch/closed/account_refreshing under the arm gate.",
+    "staleRisk": "Copying every old player flag into account_state is unsafe: an accepted logout callback increments AccountFlow.observation_revision and starts asynchronous/deferred document refresh. An old player status queued before logout must never overwrite the callback's confirmed false. The current active-session-first getter can also temporarily prefer a stale true before refresh flags are installed."
+  },
+  "proposal": {
+    "files": ["src-tauri/src/soop/original.rs", "src-tauri/src/soop/original_policy.rs: optional narrow pure retention helper and inline tests"],
+    "observation": "Retain only a non-null boolean from an already accepted current LIVE status in SOOP's existing process-local account_state. Make account() return this retained native observation instead of recomputing precedence from disposable viewer objects. Null/loading/error observations do not erase an already verified value; a valid current false does replace true.",
+    "revision": "Add a native-only per-document account revision to Session. Capture AccountFlow.observation_revision at the exact official PageLoad Started boundary together with the new document epoch. Never retag an old loaded document merely because account state changed. Before a status may update account_state, require its document account revision equal the current AccountFlow revision as well as current epoch/not-closed/not-refreshing and no pending deferred account refresh. Existing explicit account begin/opposite-intent and accepted callback revision increments invalidate older documents. A fresh reloaded document can observe at the new revision.",
+    "ordering": "Use the existing account flow lock as the revision fence and keep flow -> session arm -> session status/account_state order, matching sync_account. Page-start revision/epoch stamping uses flow before arm; status validation and retained commit must be atomic against callback acceptance. Do not acquire flow while holding arm/status/registry in an opposing order. The getter only reads account_state, avoiding registry/session precedence races. Preserve existing account callback arrival-order commit and refresh scheduling.",
+    "lifetime": "Viewer close, tab changes and normal account window close do not clear the retained observation. New process starts unknown as before. Only validated native official observations update it; no frontend cache, persisted bool, cookie reading, hidden browser/network probe, automatic login/logout or altered account completion/navigation policy.",
+    "unchanged": "No YouTube, CHZZK, SOOP VOD account authority, JavaScript status protocol, button/CSS/IPC, recording admission/finalization, download state or user files. Existing session playback status may continue updating; only eligibility to overwrite the host account observation is revision-fenced. Root owns app restart and all actual UI/auth operations."
+  },
+  "acceptance": [
+    "Initial host state remains unknown; missing/null official status is never authenticated proof.",
+    "A current exact-source LIVE true observation is retained after the final viewer closes; polling still reports true and UI keeps Login disabled/Logout available in fixed slots.",
+    "Current false replaces retained true; current null leaves the last verified boolean unchanged.",
+    "Old source/label/document epoch, closed/refreshing or deferred-refresh session cannot update retention.",
+    "Confirmed logout false wins over queued old true even before asynchronous receiver refresh runs, while recording defers refresh, after old viewer closes and after a newer account intent. Late old false similarly cannot replace newer confirmed true.",
+    "Reopened/reloaded original document at the new account revision may publish a new verified boolean. A normal close alone must not create a new observation or change account revision.",
+    "Regression tests cover revision mismatch, null, explicit callback ordering and both sides of the account flow/arm race without real credentials. Existing SOOP recording/account-refresh tests remain unchanged and passing.",
+    "Root actual: ordinary SOOP LIVE with retained login -> drawer disabled Login/enabled Logout -> stop only that viewer -> wait at least two polling periods -> same authenticated controls. No automated logout is needed for this actual check; stale-logout rejection is verified with deterministic native tests unless user separately performs logout."
+  ]
+}

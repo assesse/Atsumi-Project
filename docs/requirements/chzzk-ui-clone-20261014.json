@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "status": "UI clone implemented; actual desktop shell interactions verified; real-service media/account acceptance still unverified",
+  "originalRequests": [
+    {
+      "turn": "01a1399c-e7fb-7260-ac09-93bc94288f2f",
+      "text": "SOOP과 유튜브는 지금 만들어져있는 인터페이스 이런거 분리보관해두고, 사용의도상 동일한 현재 치치직의 UI와 구성을 완전히 복제해와서 일단 사용하고, 그 이후에 그 내부 플레이어나, 동작 구조나 이런걸 수정하도록해. 그리고 작업이 완료될때는 복사로 인해서 서로 불필요한 간섭이 생기지 않는지 전수조사하도록해."
+    },
+    {
+      "turn": "01a13978-c469-7242-9ec2-f065de16743a",
+      "rule": "SOOP no separate favorites navigation, CHZZK flow; YouTube floating-detail playback; eventual original platform player/chat."
+    },
+    {
+      "turn": "01a13363-ef61-71e3-bf03-3babe3f5b5c0",
+      "rule": "In-app discovery, favorites, download/recording and local management, not link wrappers."
+    },
+    {
+      "turn": "01a0862c-6058-7442-a6fe-38d660288ee2",
+      "rule": "Viewing and recording share one incoming video stream, explicitly including SOOP and YouTube."
+    },
+    {
+      "turn": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe",
+      "rule": "Switching platform or tabs must retain playing video/audio; no automatic PIP."
+    },
+    {
+      "turn": "01a12e00-087e-75f3-b315-155260efdf35",
+      "rule": "Thin persistent click/drag handles, no repeated attention animations; close all archive groups and retain expansion state."
+    },
+    {
+      "turn": "01a11672-f428-7850-899b-5155aebb4e8a",
+      "rule": "Favorites and automatic recording belong in live controls, independent star/record actions."
+    }
+  ],
+  "audit": {
+    "policy": "docs/requirements/implementation-policy.json",
+    "main": {
+      "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+      "turns": 230,
+      "userMessages": 284,
+      "EOF": true
+    },
+    "other": {
+      "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+      "turns": 333,
+      "userMessages": 375,
+      "EOF": true
+    },
+    "delta": ".runtime/requirements-audit/20261014-chzzk-clone-request.json",
+    "coverage": "Previously fully read snapshots reused after hashes/pagination checks. Fresh latest5turn page overlaps previous fully read 20261014 tail. Other known threads unchanged; archives3/EOF, no new Atsumi conversations. Original69spec hash inventory unchanged except already-read RELEASING.md. Applicable changed contracts and actual CHZZK source read before editing.",
+    "unavailable": [
+      "Durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae",
+      "Unidentified Atsumi analysis1/2",
+      "Unavailable historical attachment pixels"
+    ]
+  },
+  "runtime": {
+    "permission": "call_66b98def442342cf84a42368d2591a97 answer 정상 종료하고 진행",
+    "state": "debug PID31776 exited normally; development app relaunched through existing launcher and left running; no forced kill",
+    "notAuthorized": [
+      "commit",
+      "push",
+      "release",
+      "user data removal",
+      "authentication input"
+    ]
+  },
+  "archive": {
+    "path": "docs/archives/20261014-pre-chzzk-ui",
+    "manifest": "manifest.json",
+    "files": 176,
+    "verification": "All byte-for-byte copies verified by SHA256 before production edits; contains old SOOP/YouTube/shared UI and frozen CHZZK reference; outside src/build inputs."
+  },
+  "conflicts": [
+    "Latest request changes sequence: UI clone first, original platform player engine later. Prior original-player probe/engine contracts remain evidence but are deferred, not silently represented as implemented.",
+    "CHZZK has no Explore/VOD collections. Preserve existing in-app Explore and saved VOD access after the three CHZZK-aligned navigation entries; no separate favorites main tab. This is the minimal retained platform capability exception.",
+    "Exact visual reproduction does not authorize CHZZK API/account/data reuse. Unsupported YouTube account/auto-reservation controls must be visibly unavailable with concise reason, never report false success; existing SOOP reservation remains functional.",
+    "Current shared media player owns one video/chat/session pair. Preserve mounted keyed player/session tree. Do not duplicate player receivers to reproduce pane positions.",
+    "CHZZK ScreenshotLibrary/RecordingLibrary have hidden fixed CHZZK APIs. Copy presentation and interaction rules onto existing provider media adapters, never import those domain-bound components."
+  ],
+  "plan": [
+    "Clone provider-specific connection drawer, favorite cards(88px/two columns/four rows), numbered profile/link/internalX/star fields, fullwidth+, five-line hover help, account row, footer slider and start/change/stop layout.",
+    "Clone idle state, thin handle attached to drawer top, click+drag, no header during viewing, left edge rail and provider-specific layout preferences.",
+    "Order live/screenshots/recording list like CHZZK and retain Explore afterward. Preserve saved videos in Explore filters; normalize legacy favorites routes without deleting keys.",
+    "Match recording/screenshot surface geometry and overlays with provider-filtered existing APIs and local selection; no backend change in UI-first stage.",
+    "Audit CSS/DOM IDs/storage/events/commands/tutorial/account/session lifetimes, late replies, background keys, archive grouping and hidden surfaces. Shared tray mute/privacy remain intentional."
+  ],
+  "ownership": {
+    "soop": "src/features/soop UI and tests only",
+    "youtube": "src/features/youtube UI and tests only",
+    "audit": "new cross-provider isolation tests; existing platform library/screenshot presentation files if separately coordinated",
+    "root": "registry,PlatformWorkspace,SideRail,tutorial,shared media presentation integration,archive,contract,build and actual app"
+  },
+  "verification": {
+    "record": ".runtime/requirements-audit/20261014-clone-verification.json",
+    "aggregate": "Final stable-source run:30 test files,439 tests passed. Full frontend build passed. Incremental native build passed before actual desktop checks.",
+    "desktop": "Actual SOOP/YouTube navigation, bottom drawer click/drag/X and successful empty library IPC verified; SOOP help overlay does not reflow fields. Existing privacy setting preserved.",
+    "boundaries": "Archive176 files verified; frozen CHZZK98 UI files unchanged. Provider-specific API/storage/CSS/DOM/event/selection/session and stale-reply checks passed within tested paths.",
+    "remaining": "Real live playback/recording/download, account flows and data-filled native library acceptance remain unverified. Original provider player/chat replacement is deferred by latest requested sequence."
+  },
+  "acceptance": [
+    "Old interface recoverable and not bundled or imported.",
+    "CHZZK UI source unchanged; SOOP/YouTube isolated prefixes/IDs/storage/events and provider-only APIs.",
+    "Live shell and connection controls follow frozen CHZZK DOM geometry and wording; toggles fixed position, help overlays, thin handle aligned to sheet and draggable.",
+    "SOOP favorites/reservations and YouTube existing favorites/play/download remain usable; no duplicated receiver on layout/tab/provider switch.",
+    "Library cards/groups/selection/screenshots retain prior actions and privacy/keyboard rules with CHZZK-like composition.",
+    "Scoped tests, full frontend build, actual desktop navigation/screenshots and requirement-by-requirement contradiction review. Unverified playback/account paths explicitly reported; build alone not completion."
+  ]
+}

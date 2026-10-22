@@ -1,0 +1,19 @@
+.live-edge-panel:not(.is-enabled),.live-edge-panel:not(.is-enabled)>.live-edge-overlay,.live-edge-panel:not(.is-enabled) .live-edge-mask,.live-edge-panel:not(.is-enabled) .live-edge-content{display:contents}
+.live-edge-panel.is-enabled{position:absolute;inset:0;z-index:35;pointer-events:none;--live-rail-width:214px}
+.streaming-shell>.live-edge-panel.edge-left.is-enabled{z-index:40}
+.live-edge-panel.is-enabled>.live-edge-trigger{position:absolute;z-index:2;display:grid;place-items:center;margin:0;padding:0;min-width:0;min-height:0;border:1px solid var(--line);background:var(--surface);color:var(--text-soft);pointer-events:auto;cursor:pointer;touch-action:none;user-select:none;transition:none}
+.live-edge-panel.edge-left>.live-edge-trigger{top:50%;left:0;transform:translateY(-50%);width:20px;height:64px;border-left:0;border-radius:0 6px 6px 0}
+.live-edge-panel.edge-left.is-open>.live-edge-trigger{left:var(--live-rail-width)}
+.live-edge-trigger svg{width:14px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.live-edge-panel.edge-top>.live-edge-trigger{top:0;left:50%;transform:translateX(-50%);width:64px;height:20px;border-top:0;border-radius:0 0 6px 6px}
+.live-edge-panel.edge-top>.live-edge-trigger svg{transform:rotate(90deg)}
+.live-edge-panel.is-enabled>.live-edge-trigger:hover,.live-edge-panel.is-enabled>.live-edge-trigger:focus-visible{background:var(--surface-soft);color:var(--text)}
+.live-edge-panel.is-enabled>.live-edge-overlay{position:absolute;pointer-events:none}
+.live-edge-panel.is-enabled>.live-edge-overlay[hidden]{display:none}
+.live-edge-panel.edge-left.is-enabled>.live-edge-overlay{top:0;left:0;bottom:0;width:var(--live-rail-width)}
+.live-edge-panel.edge-top.is-enabled>.live-edge-overlay{top:0;left:0;right:0}
+.live-edge-panel.is-enabled .live-edge-mask{height:100%;overflow:hidden;pointer-events:auto}
+.live-edge-panel.is-enabled .live-edge-content{height:100%}
+.live-edge-panel.edge-left.is-enabled .sidebar{height:100%;overflow:auto}
+.live-edge-panel.edge-left.is-enabled .sidebar-boundary{display:none}
+.live-edge-panel.edge-top.is-enabled .mado-toolbar{padding:12px 16px;background:var(--surface);border-bottom:1px solid var(--line)}

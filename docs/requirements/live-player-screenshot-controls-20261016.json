@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "date": "2026-10-16",
+  "state": "approved known-layout implementation frozen;156focused regressions and typecheck passed; actual acceptance and YouTube invisibility diagnosis pending",
+  "implementationApproval": "Root fully read CC794A682EEF820EC997396F10E74EABD21873612665556BBB42134759CBFD33 and approved known5production files plus tests after graceful app exit. Root owns builds/UI. Focused frontend tests/typecheck allowed. YouTube invisibility remains a separate actual evidence gate. Clamp paired72px close dimensions to the current small video rectangle without changing input authority.",
+  "scope": "Latest live/discovery eight-item request items1,3,4 only: saved screenshot presentation and owned live-player controls. Root owns actual app operation, build and integration.",
+  "audit": {
+    "rules": "AGENTS.md and implementation-policy.json reread fully. No historical account, cleanup or external operation authorization is renewed.",
+    "main": { "file": ".runtime/requirements-audit/main-thread-users.json", "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676", "turns": 230, "messages": 284, "eof": true },
+    "other": { "file": ".runtime/requirements-audit/other-threads.json", "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21", "turns": 333, "messages": 375, "eof": true },
+    "reuse": "Both complete snapshot hashes rechecked unchanged. Root refreshed Active50/archive3 EOF, latest main5/other4/UIUX2 pages through previously covered overlap. Agent independently rehashed all69 original specification paths: only previously read RELEASING F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0 differs. Root latest145-contract coverage is recorded in .runtime/requirements-audit/20261016-live-discovery-eight-spec-inventory.json; batch integration docs/requirements/live-discovery-eight-20261016.json reread in full. This batch directly rereads its applicable current contracts below.",
+    "missing": ["historical durable thread01a03f16", "unidentified analysis1/2", "unretained historical attachment pixels"],
+    "attachments": "All3 current attached images inspected directly. They show SOOP discovery/search references, not the reported YouTube transparent controls. Do not infer a YouTube CSS cause from these images.",
+    "contractsRead": ["docs/requirements/implementation-policy.json", "docs/requirements/live-original-controls-20261016.json", "docs/requirements/platform-screenshots.json", "docs/CHZZK_SCREENSHOT_20260921.md", ".runtime/requirements-audit/20261015-screenshot-preview-proposal.json", "docs/requirements/screenshot-browser-timer-receiver-20261016.json"]
+  },
+  "originals": [
+    { "file": ".runtime/requirements-audit/20261016-live-discovery-eight-original.json", "sha256": "B6692834122B264F99BD93086740B4F1116C097104C77EF57F2604A87D5AD248", "turn": "01a14358-092b-7a50-a8a5-6211c15170e9", "items": [1,3,4], "request": "Keep current screenshot hover style, upper-right dismiss X and lower-right 취소, subtle image edge highlight; roughly double all3 conditional video close buttons and center them at the video top; investigate invisible YouTube record/camera/X; SOOP record icon matches CHZZK." },
+    { "file": ".runtime/requirements-audit/20261015-live-ui-four-original.json", "sha256": "B0D3CBAEDA943213F198C8DE2134B8A1152EE7AE8641597D392869E44B053B0F", "items": [3,4], "retained": "Owned video close follows original controls, not chat close; short image preview with hover extension and no card/footer chrome." },
+    { "file": ".runtime/requirements-audit/20261015-manual-eight-feedback-original.json", "sha256": "52ADEEA0149C6057D4AF5E279468487739E7EC723E060B5CC14BE95BF665001F", "items": [2,3], "retained": "Record/camera live inside original player, not a separate app-level hover hole; keep original media/recording lifecycle." }
+  ],
+  "superseded": [
+    "Previous borderless single upper-left X-as-undo presentation is replaced by a subtle image edge, upper-right dismiss-only X and lower-right visible 취소 text. No new card/footer.",
+    "Current36px video close and SOOP/YouTube top-right placement become72px top-center. Existing fade and native close authority are retained, not superseded."
+  ],
+  "findings": [
+    "ScreenshotPreview.tsx and CHZZK showScreenshotPreview currently have only an upper-left X calling undo. Their lifetime already supports separate dismiss callbacks; SOOP/YouTube wrappers already pass exact-ID dismiss and undo independently, so no hook/IPC change is needed.",
+    "CHZZK browser_player_ui.js has36px top-center viewer-close with20px icon. SOOP/YouTube original_page.js each have36px top-right close. browser_multiview.js has no separate current video-close UI requiring a position change; shared browser_player_ui owns each native viewer button.",
+    "CHZZK record glyph uses an outer radius8 ring plus radius4.5 idle circle, or8x8 stop square. SOOP currently uses a filled radius6 circle/12x12 square and a different recording color. This is a source-confirmed visual mismatch.",
+    "YouTube renderControls requires current live native controls projection, #movie_player and .ytp-fullscreen-button. Record/camera inherit ytp-button CSS and have no explicit height; close additionally depends on canClose and computed .ytp-chrome-bottom opacity. Native controls refuses unavailable/current-other-presenter binding. These branches are not themselves proof of the reported transparent UI cause. Existing mocked DOM lacks official CSS and cannot establish the actual cause."
+  ],
+  "proposedFiles": {
+    "production": ["src/features/platforms/ScreenshotPreview.tsx", "src/features/platforms/PlatformLivePlayer.css", "src-tauri/src/streaming/browser_player_ui.js", "src-tauri/src/soop/original_page.js", "src-tauri/src/youtube/original_page.js"],
+    "tests": ["src/features/platforms/ScreenshotPreview.test.tsx", "src/features/platforms/PlatformScreenshot.layout.test.tsx", "src/features/platforms/screenshotPreviewBrowser.test.ts", "src/features/platforms/originalLiveControls.test.ts", "src/features/platforms/PlatformLivePlayer.screenshot.test.tsx", "src/features/streaming/browserPlayerUI.test.ts"],
+    "unchangedUnlessSeparatelyApproved": ["browser_multiview.js", "SoopOriginalPlayer.tsx", "YouTubeOriginalPlayer.tsx", "screenshotPreviewLifetime.ts", "all screenshot hooks and APIs"],
+    "excluded": "No backend/focus/input receipts, account, provider playback controls, capture bytes/queue/recording ownership, original chat, media library, discovery/status/channel/favorites, fullscreen permission, or playback rate changes. No shared platform domain state."
+  },
+  "decisions": [
+    "React preview: add top-right32px dismiss X with distinct accessible label. Calls onDismiss(preview.id) only, never undo or delete. Disable while undo is in flight; explicit dismiss may close a failed/expired presentation without claiming rollback success. Existing error state remains independently visible through its hook. Keep bottom-right 취소 text button with existing exact undo guard, disabled/busy/expired labels and single-flight behavior.",
+    "CHZZK native preview mirrors those two actions inside the same popup. Dismiss requires current popup/page generation/channel and genuine click, disposes only popup lifetime/observer/blob URL, and never emits screenshot_undo. Undo keeps existing screenshotId, channel/revision, native60second receipt, single-flight and error notice. No input proof expansion.",
+    "Use a subtle1px inset image-edge outline without changing fitted image dimensions. Preserve480px maximum,320px height clamp, responsive upper-left position, native occlusion marking and photo-only composition. Keep3second initial/1.5second leave grace/45second conservative maximum and hover-or-focus hold, pending/error handling, arrow-wrapped Window timers, stale capture disposal. Do not restart or extend the lifetime when moving focus between the two buttons.",
+    "Make owned video close72x72 with40px X,12px top inset and left50%/translateX(-50%) on all3 providers. Keep translucent circle, focus outline, existing native click handlers and conditional controls fade. CHZZK PZP/fallback class policy, SOOP clipped-original-control visibility sampling and YouTube presentation sampling remain unchanged in this known-layout portion.",
+    "SOOP uses CHZZK ring/idle-circle/stop-square geometry and recording color in only its owned record button; labels, stable slot, disabled state, uiPending, pointer proof and record commands remain unchanged.",
+    "YouTube invisible control fix is not yet approved as a guessed CSS repair. Root will inspect the freshly built actual live view: distinguish missing owned nodes/projection/anchor, hidden parent/close canClose, and nonzero geometry but invisible computed paint. If additional repair is required, record precise evidence and a narrow addendum before changing rendering/admission beyond the agreed size/position. Never force all original controls visible or bypass current presenter/native receipt."
+  ],
+  "acceptance": [
+    "React and CHZZK fixtures: dismiss sends no undo/delete; bottom-right 취소 calls existing exact capture once; stale popup/capture cannot dismiss or undo successor; pending undo blocks dismissal/new capture; error/expiry has explicit status and no generic delete fallback.",
+    "Timer/focus regressions remain: initial3s, hover/focus hold, button-to-button focus does not reset/release hold, last leave1.5s,45s cap, object URL disposal, old timers and unmount; real browser Window timer binding unchanged.",
+    "Layout fixture: only subtle image outline, top-right X/bottom-right 취소 inside preview at small/large player sizes without a footer or image displacement; close72px centered on video rather than combined video+chat surface.",
+    "Original-adapter fixtures: close follows existing opacity/slide/hidden policy; native canClose false/epoch mismatch/private/hidden remain blocked; original fullscreen remains rightmost; SOOP record glyph idle/recording matches CHZZK; no altered media/capture protocol.",
+    "Root actual: each provider capture displays both controls; dismiss retains saved image, explicit undo removes only that newly approved image; hover/focus duration and idle fade; each72px close visible at video top-center and releases only exact viewer while other viewers/recording continue. YouTube record/camera/X visibility must be verified on its real current official DOM; mocks/build do not satisfy this gate."
+  ],
+  "sourceBefore": {
+    "src/features/platforms/ScreenshotPreview.tsx": "B25D0526D384EB8EB93A975D0A5235950466D9DF6BF0B4BC7DF7CF0509A8507B",
+    "src/features/platforms/PlatformLivePlayer.css": "03A22E14070ECB5602EE3496A304C939DA55D37D233691A8773173A9171D55D0",
+    "src/features/platforms/screenshotPreviewLifetime.ts": "F05CFF8D44236A8900030B58F5A9D08DB13F5B5E928C7DA26AC4FE429970F621",
+    "src-tauri/src/streaming/browser_player_ui.js": "8F71368D01BF853FA2B9B091F86BED86B941E046D6C504BC5A2C81CCB400EE5E",
+    "src-tauri/src/streaming/browser_multiview.js": "AF2DD5795950B09741528A648CF8BECD6AA64819F6A20BCA0EFA1E985CD07EB6",
+    "src-tauri/src/soop/original_page.js": "2393C7A547445C5F2A2AF6B2AE85867AD8D311FD856AF798D4286BED24CB86BB",
+    "src-tauri/src/youtube/original_page.js": "F272917C7A3C2769809908E8EDE412151892E29A662A84D875F2BAC5E64AC139"
+  },
+  "validation": {
+    "productionEdited": true,
+    "testsRun": "11focused files156passed0failed, maxWorkers2, including network-disabled disposable Chrome layout and native timer/React adapter regression; full tools/run_frontend.ps1 typecheck exit0. Sandbox cache rename EPERM prevented first run before tests; normal approved development environment used afterward.",
+    "testAdjustments": "Existing screenshot integration now selects the explicit cancel class rather than first button. CHZZK fixture now provides native performance/Window timers/ResizeObserver and a genuine saved-id reply so preview assertions exercise the current presentation instead of relying on a missing-browser-API fallback. Added exact dismiss/no storage action, stale popup rejection, undo pending/error/expiry, internal focus,72px/tiny geometry and SOOP glyph regressions.",
+    "unchanged": "screenshotPreviewLifetime.ts F05CFF8D44236A8900030B58F5A9D08DB13F5B5E928C7DA26AC4FE429970F621 and browser_multiview.js AF2DD5795950B09741528A648CF8BECD6AA64819F6A20BCA0EFA1E985CD07EB6 rehashed unchanged. No wrapper/hook/backend/receipt/capture transport or byteflow changes by this agent.",
+    "actualApp": false,
+    "pending": "Root actual3provider preview/undo/close/fade checks. YouTube invisible record/camera/X cause remains unconfirmed and is not claimed repaired by size/position changes. No build, app UI, account actions or user-media mutation performed by this agent."
+  },
+  "frozenProduction": {
+    "src/features/platforms/ScreenshotPreview.tsx": "94BBB2D1B4D0CA871789ADE461905B1763BB2032D1DC7BC9E1DB8C107B7A3A5C",
+    "src/features/platforms/PlatformLivePlayer.css": "19DFA568B7621170ABACFCFEF6A2159A966BF571131B5C5B73D4DABEA2625BD5",
+    "src-tauri/src/streaming/browser_player_ui.js": "A339EBD4F03EF74914957077AF78A9D98F22600BFBFD5D7932BA9CC51223AAA0",
+    "src-tauri/src/soop/original_page.js": "B253E6ADB7EFAF042440C97F9BAEB12867880BE6322766B1614A590DEAB1954C",
+    "src-tauri/src/youtube/original_page.js": "4C235A60D432F8682DFBBCE9FF0CA63A1D2268F833D519827013DA0F36512C2F"
+  }
+}

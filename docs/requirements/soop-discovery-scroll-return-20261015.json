@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-15",
+  "state": "approved minimal scroll batch implemented and frozen; actual home→library→home restoration verified, additional search/provider route pending",
+  "requirements": ["R003", "R010", "R012", "R022"],
+  "originals": [
+    {"turnId": "01a051cd-a457-79f0-a78e-4edcf270fa8c", "request": "원래 검색, 탐색중이던 내용이 다른 작가로 새로 검색하면서 다시 처음부터 그 중단 지점을 찾고 이러는게 불편해.", "rule": "Return to retained exploration/search content and position instead of starting from the top."},
+    {"turnId": "01a13adc-a040-70f0-97d9-380c5b6ba368", "item": 3, "rule": "SOOP native home, integrated search and existing saved-video management must actually work."},
+    {"turnId": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "rule": "Continue actual SOOP/YouTube verification and fix observed defects."},
+    {"turnId": "01a13142-4c44-7560-bde6-d7e089fd9ea9", "rule": "New providers retain earlier requests and consistent workflows without unrelated platform interference."},
+    {"turnId": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "rule": "Platform/tab visibility changes do not stop playback or sound."}
+  ],
+  "audit": {
+    "snapshotReuse": "The complete main230turn/284message and other333turn/375message EOF snapshots were independently rehashed in this continuation and remain85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Parent owns latest active/archive/spec inventory refresh. R010 original was reread verbatim directly from the main snapshot; latest original requests remain available in the inherited conversation.",
+    "currentReads": ["AGENTS.md", "docs/requirements/implementation-policy.json", "docs/requirements/discovery-contradiction-audit-20261015.json", "docs/requirements/soop-discovery-followup-20261014.json", "docs/requirements/chzzk-ui-clone-20261014.json", "src/features/soop/SoopDiscovery.tsx scroll/home/search paths", "src/features/soop/SoopWorkspace.tsx retained view wrappers", "src/features/soop/SoopWorkspace.css scroll owner", "src/features/soop/SoopDiscovery.test.tsx existing scroll test"],
+    "unavailable": ["Old durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified Atsumi analysis1/2", "Unavailable historical image-only attachment pixels"],
+    "authority": "Parent read this full contract and approved the exact minimal source-local scroll behavior plus listed regression. Root owns actual UI and builds. Preserve all concurrently implemented YouTube resolution files and existing SOOP request-generation fix; no other production scope is authorized."
+  },
+  "actualFailure": {
+    "id": "SOOP-SCROLL-RETURN",
+    "observation": "Root scrolled actual SOOP Explore home until the search bar was offscreen and the second/third content rows were visible, switched to Recording Library and returned to Explore. The page reset to the top while saved files and search tabs remained. This confirms the previously source-only discovery audit finding.",
+    "source": "SoopDiscovery.tsx scroll useLayoutEffect at76-84 subscribes to the shared .soop-workspace scroller regardless of active and restores only on selectedTab/savedOnly. SoopWorkspace hides Explore while retaining Discovery and shares that same scroller with archive/live layouts. Hiding long content or setting live overflow:hidden can clamp scrollTop to0 and emit scroll; the inactive listener writes that0 into the exploration cache. Returning active does not rerun restoration.",
+    "testGap": "The existing test switches search/saved modes in one always-active synthetic scroller. It never hides Explore, clamps the parent range or emits inactive scroll, so it cannot catch the actual loss."
+  },
+  "proposal": {
+    "files": ["src/features/soop/SoopDiscovery.tsx", "src/features/soop/SoopDiscovery.test.tsx", "src/features/soop/SoopWorkspace.test.tsx only if needed for a retained receiver integration assertion"],
+    "behavior": [
+      "Retain the existing source-local map of home, each search/channel tab and saved-video offset; do not persist it across normal app exit or rewrite search contents.",
+      "Capture only genuinely active, visible Explore scroll events. Keep an up-to-date render-time visibility guard so queued events from a just-hidden view cannot overwrite a valid prior position.",
+      "Subscribe/restore when Explore becomes active as well as when its local list key changes; suspend the listener while inactive. Restore the saved position in a layout phase after the retained Explore content is visible.",
+      "Do not read and save current scrollTop in cleanup after the parent has hidden/clamped the DOM. Use the last valid visible event snapshot plus explicit pre-switch snapshot where already available; cleanup only detaches observers/listeners.",
+      "Keep existing key semantics and explicit list-switch snapshot, guarded against inactive/hidden state. Preserve legitimate0/top positions; do not guess that every0is a clamp or impose a new minimum scroll.",
+      "No native player/receiver mount changes, extra home/search fetch, global scroll owner, CSS redesign or archive scroll mutation. If existing parent ownership proves insufficient in the actual test, return for a separate proposed source-owned scroller change rather than expanding this batch silently."
+    ],
+    "excluded": ["YouTube production files", "Native player/API/backend", "Account/session/profile operations", "Search response generation/error/privacy redesign", "Automatic recording", "New scroll animations", "History persistence changes", "CHZZK source/state"]
+  },
+  "acceptance": [
+    "Home scroll340→Explore inactive→shared parent clamps0 and emits scroll→active returns340; completed home is retained without a new request.",
+    "Search and creator tab offsets remain independent from home/saved-video offsets across active/inactive transitions, with unchanged query/results and no duplicate search.",
+    "Inactive scroll events and cleanup after hidden layout cannot overwrite the last visible snapshot, including rapid deactivate/reactivate and provider switches.",
+    "A user deliberately scrolling to0while Explore is active saves0and restores0; no nonzero-only heuristic.",
+    "Existing pending-home cancellation and stale search response handling remain intact. Return restores only position, not a closed detail or changed active tab.",
+    "Retained native live player keys/lifetimes remain untouched, and archive/live visibility changes do not create another receiver.",
+    "Focused Discovery/Workspace regression and typecheck pass. Root repeats the actual home→Recording Library→home route and a populated search→live/other platform→search route, checking both position and retained content. Mocks do not prove browser layout clamping is fixed."
+  ],
+  "verification": {
+    "productionEdited": true,
+    "productionScope": "SoopDiscovery.tsx only: render-current active/key guard, visible-only scroll snapshots, cleanup that only detaches, restore on active/privacy/local-list transitions, guarded explicit tab-switch snapshot. No workspace layout, request generation, native player, backend, CSS or CHZZK production changes.",
+    "tests": "2026-10-15 KST focused SoopDiscovery + SoopWorkspace suites: 66 passed, 0 failed. Added 3 discovery cases and 1 retained-player workspace case for hidden/clamped/rapid return, independent home/search/creator/saved offsets, legitimate visible0/privacy clamp, and archive/live/provider navigation without duplicate native receiver or home request. Initial new-test selector used an incomplete tab label and was corrected to the actual '음악 · 통합검색'; no production workaround was introduced for that test issue.",
+    "typecheck": "Full frontend typecheck passed in the normal environment. git diff --check for scoped files returned0; files remain untracked within the concurrent parent batch, so that is not a substitute for source/test inspection.",
+    "actualDesktop": "Root actual isolated full app QA5538… at2026-10-15 approximately05:54KST: SOOP home scrolled1040pixels with searchbar offscreen and later card rows visible, switched to empty recording library, then returned to Explore. Exact same visual rows/scroll restored without a refresh spinner or a new home view. Search/provider-return route remains pending; unit mocks are not substituted for that remaining actual check.",
+    "concurrentWork": "SOOP VOD agent may independently edit detail/player integration in SoopDiscovery.tsx; this scroll section is frozen and they were told to preserve it and its tests. No VOD playback completion claim is included in this scroll batch."
+  }
+}

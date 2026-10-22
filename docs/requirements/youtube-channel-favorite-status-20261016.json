@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "state": "Approved six-file implementation complete; focused/frontend geometry and typecheck passed; actual app acceptance remains pending",
+  "implementationApproval": "2026-10-16: Root approved proposal CB18FCB15555331FA0DE0964BAA11812773C7B33F88F049DA90D8BB868B43EB9, confirmed normal app exit, and permits focused frontend tests/typecheck only. Before-edit six source hashes match the recorded baseline. Current complete inventory is .runtime/requirements-audit/20261016-live-discovery-eight-spec-inventory.json. No migration, native behavior, app/UI/Cargo or build authorization.",
+  "original": ".runtime/requirements-audit/20261016-live-discovery-eight-original.json",
+  "turnId": "01a14358-092b-7a50-a8a5-6211c15170e9",
+  "requestItems": {
+    "2": "라이브 탭 방송 보기에 일반 영상을 즐겨찾기하는 불편과 유튜브 라이브 채널 주소가 고정되는지 질문.",
+    "6": "YouTube 즐겨찾기의 방송 중/녹화 중 상태를 CHZZK처럼 색상으로 구별."
+  },
+  "audit": {
+    "instructions": "AGENTS.md fully reread. Root refreshed active50/pinned and archive3 EOF, latest main5/other-main4/UIUX2 through prior overlap for this request. No new implementation authority is inferred from historical account, release or deletion instructions.",
+    "main": "main-thread-users.json SHA256 85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676; matching fully read230turn/284message EOF snapshot",
+    "other": "other-threads.json SHA256 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; matching fully read333turn/375message EOF snapshot",
+    "directOriginals": [
+      "Current eight-item original above, read in full",
+      "01a11672-f428-7850-899b-5155aebb4e8a full original:14 independent auto-record toggle in live favorites;19 show current broadcasting state",
+      "01a11775-9d47-7280-9431-a4aac2761ccd full original+answer: fixed centered star/record, 녹화 예약 됨 and 예약 꺼짐",
+      "01a13142-4c44-7560-bde6-d7e089fd9ea9 full original: preserve old flows and reference CHZZK without cross-provider coupling",
+      "01a1399c-e7fb-7260-ac09-93bc94288f2f exact original in chzzk-ui-clone contract: copy established CHZZK composition"
+    ],
+    "contracts": [
+      "docs/requirements/implementation-policy.json",
+      "docs/requirements/chzzk-ui-clone-20261014.json",
+      "docs/requirements/youtube-chzzk-ui-clone.json",
+      "docs/requirements/youtube-favorites-boundary.json",
+      "docs/requirements/youtube-live-shell.json",
+      "docs/requirements/youtube-native-ui.json",
+      "docs/requirements/youtube-auto-recording-20261015.json",
+      "docs/requirements/youtube-resolution-poll-isolation-20261016.json"
+    ],
+    "missing": ["durable01a03f16", "unidentified analysis1/2", "historical unavailable attachment pixels; new attached SOOP images are unrelated to these two assigned items"]
+  },
+  "primaryEvidence": [
+    {
+      "url": "https://support.google.com/youtube/answer/6180214?hl=ko",
+      "observed": "2026-10-16 official help identifies /channel/ID as the standard unique-channel URL. Handle URLs are created when the owner chooses or changes the handle; personalized URLs are not a guarantee that the spelling never changes."
+    },
+    {
+      "url": "https://developers.google.com/youtube/data/guides/working_with_channel_ids",
+      "observed": "Official API guidance uses unique channel IDs, not display names/usernames, as channel identity."
+    },
+    {
+      "url": "https://support.google.com/youtube/answer/11585688?hl=en",
+      "observed": "Official handle guidance distinguishes handles from channel names and allows handle changes/reclamation."
+    }
+  ],
+  "anonymousResponseEvidence": {
+    "method": "Read-only HttpClient, UseCookies=false, no user profile/auth/credentials or media download. Exact www.youtube.com HTTPS requests only; redirect cap4/exact host; timeout12s; body cap2MiB; only bounded public identity/path/status facts projected. No response body persisted. Web tool /live fetch had cache miss; ordinary sandbox DNS failed; same authorized read-only request succeeded with normal host permissions.",
+    "results": [
+      {"path": "/channel/UC83RKJs4eKHVE9v0YUyqzgg/live", "http": 200, "bytes": 1293877, "canonicalPath": "/watch", "videoId": "T4XZmMPQ9Kw", "channelId": "UC83RKJs4eKHVE9v0YUyqzgg"},
+      {"path": "/@KittenAcademy/live", "http": 200, "bytes": 1290087, "canonicalPath": "/watch", "videoId": "T4XZmMPQ9Kw", "channelId": "UC83RKJs4eKHVE9v0YUyqzgg"},
+      {"path": "/@KittenAcademy/streams", "http": 200, "bytes": 1305447, "canonicalPath": "/channel/UC83RKJs4eKHVE9v0YUyqzgg", "videoId": "T4XZmMPQ9Kw", "channelId": "UC83RKJs4eKHVE9v0YUyqzgg"}
+    ],
+    "limits": "These prove observed public endpoint behavior, not a permanent /live service contract, future availability, or a unique selected stream when a channel has multiple simultaneous lives. Do not interpret string presence/absence of isLiveNow in full HTML as a trusted live-state observation. App must keep its existing bounded channel streams lookup and exact-video metadata check."
+  },
+  "findings": [
+    "Workspace persists kind-specific video and channel favorites with targetKey. ViewingControls passes all saved favorites through automatic.rows, so live drawer intentionally currently mixes both kinds. Its input star saves row.item; video input therefore saves the exact video, while channel input saves the channel. Creator context-menu favorite already offers a separate channel bookmark.",
+    "model.ts recognizes base channel/handle URLs and /live/VIDEO_ID, but rejects /@handle/live and /channel/UC.../live. Normalize only supported channel subpaths to the existing channel target; do not turn them into a fixed video bookmark.",
+    "ViewingControls renders two unclassified small elements; Connection.css colors every small with muted. It also has no color for the enabled automatic-record icon. CHZZK uses green #63dca8 for current live, red #ff939d plus a dot for recording, warning for a problem, and #f06f7e for an enabled reservation icon.",
+    "Existing auto snapshots describe automatic-record state. They are not comprehensive manual-record state and no new manual-record polling or cross-provider store is authorized by this presentation proposal. Cached item.isLive is a saved video classification, not current channel presence."
+  ],
+  "decision": {
+    "channelQuestion": "Answer that a stable unique channel-ID address exists; handle spelling can change; /live is a current-entry convenience and /streams lists broadcasts. Keep channel identity distinct from each video. Do not migrate/delete/filter existing video favorites or change existing star semantics in response to a question.",
+    "urlSupport": "In frontend parseYouTubeTarget, recognize exact /channel/UC[22 allowed ID chars]/live or /streams and exact existing @handle/live or /streams, with optional final slash. Normalize to the existing base channel URL/id before existing native APIs. Preserve host, protocol, credentials and port checks, reject extra path segments/encoded separators. /live/11-char-video remains a video. No backend or account navigation allowlist change.",
+    "clarity": "Keep the existing five-line help and fixed numbered field layout. Briefly distinguish channel addresses (follow current live) from video addresses (that one video), without a new permanent header or new help lines. Existing Explore creator context-menu channel favorite remains available. No network lookup merely for rendering or starring a saved row.",
+    "presence": "Use current reservation liveStatus only for green ● 방송 중 or muted 방송 종료. Unknown explicitly remains 방송 상태 미확인, not a false offline or indefinitely active loading claim. Without reservation evidence, retain a neutral channel or saved-video classification; never paint stale saved isLive as proven current live.",
+    "recording": "Separate second-line auto-record status from live presence. recording gets CHZZK red and a dot; failed/확인 필요 gets warning; preparation/finalization/wait/skipped/idle/off keep accurate existing wording. Enabled reservation icon gets CHZZK pressed color, but its color alone never means recording. Keep visible text/aria-pressed so state is not color-only.",
+    "geometry": "Retain two status lines,88px card rows, two columns/four-row scroll,30x34 action slots, star order and positions. No polling-effect dependencies, timer intervals, scheduling, playback or recording owners change."
+  },
+  "proposedFiles": [
+    "src/features/youtube/model.ts",
+    "src/features/youtube/model.test.ts",
+    "src/features/youtube/YouTubeViewingControls.tsx",
+    "src/features/youtube/YouTubeConnection.css",
+    "src/features/youtube/YouTubeViewingControls.test.tsx",
+    "src/features/youtube/YouTubeLiveShell.layout.test.tsx (only if required to cover state geometry)"
+  ],
+  "baselineSha256": {
+    "model.ts": "CC362DA46B146B30305C89DD6F4F4D86A3B064D5290535C291B4D5DB15B21E75",
+    "model.test.ts": "95351391BC5FF3398A84492E1F51E4B13F61D5AF1225D4EB46B278F48D722F4B",
+    "YouTubeViewingControls.tsx": "10CFABD036373CFDB0F75EFF793A4432AA7711B1B07BD016AACEBAF49CD9B255",
+    "YouTubeConnection.css": "06D37D1BB7B88BCD78EC50A0E302DF0467137A7A1CF877E4DE7823F50C6372E6",
+    "YouTubeViewingControls.test.tsx": "1C7488A1FE8A088E04EFEC32E7D2BA7472E3393040D2B70F8C42CD63DE8984DC",
+    "YouTubeLiveShell.layout.test.tsx": "88814683357472970D59C270BB06B95A2761AE5DEEB8A0E4802E29CEBACC0E21"
+  },
+  "excluded": ["Existing favorites bulk migration/removal", "Workspace/player mounting changes", "OriginalPlayer/original_page.js and screenshot preview peer ownership", "Native capture/auth/security/scheduler/SDK/timers", "CHZZK or SOOP production files", "App/lib/shared state", "User accounts/media/data operations, app control, build or release"],
+  "acceptance": [
+    "Allowed channel subpaths normalize to channel keys; video /live/ID remains a video. Host/userinfo/port/path spoof negatives and old video/playlist/base-channel behavior remain intact.",
+    "A /live channel input resolves through existing streams lookup, stars the channel, and starts only the exact verified live after explicit apply; no autoplay from parsing or starring.",
+    "Existing video and channel saved records/order stay unchanged. Do not silently promote one kind to the other.",
+    "Live-only, recording, multiple recordings, offline, unknown, failed, stopping and enabled-idle statuses have distinct correct classes/text; cached saved-live video does not claim current green live presence.",
+    "Successive equal-revision reservation polls update labels/colors without re-resolving or flickering the numbered input. Privacy suppresses names/status and stale async results remain fenced.",
+    "Star/auto nodes and geometry stay fixed during status changes. Existing focused YouTube tests and full TypeScript, plus state-populated offline geometry if added, must pass after approval.",
+    "Root separately verifies actual drawer colors, fixed slots, channel-address favorite/current-broadcast flow and preserved existing favorites. Static/HTTP/unit results do not count as app acceptance."
+  ],
+  "verification": {
+    "red": "Before production edits: tools/run_frontend.ps1 test src/features/youtube/model.test.ts src/features/youtube/YouTubeViewingControls.test.tsx --maxWorkers=1; session89944 exit1,54passed/5expected failures across59tests. Missing channel-live/streams parsing and missing separate status selectors were reproduced.",
+    "green": "The same two-file command passed59/59. Expanded focused run with YouTubeLiveShell.layout.test.tsx and ATSUMI_TEST_BROWSER=C:/Program Files/Google/Chrome/Application/chrome.exe passed3files/61tests; offline disposable-profile geometry covers mixed states/privacy at960x640 and1440x900,420/960panel widths. Final exact-source rerun recorded separately by root handoff.",
+    "typecheck": "tools/run_frontend.ps1 typecheck passed exit0 after an explicit video-kind narrowing corrected a new TS2339. No compiler setting was weakened; no unrelated files changed.",
+    "actual": "Not run by this agent. Root must verify current-live channel favorite behavior, status colors and fixed action slots in the app. Public HTTP, mocked UI and offline geometry do not prove the full user flow.",
+    "manualRecordingGap": "Native youtube/auto_record.rs snapshot iterates configured channels and core.running ScheduledCapture only. Existing original player snapshot has recordingJob/recordingStopping but no callback to Workspace. This batch colors verified automatic statuses; manual recording is not claimed complete. Root requested a separate no-new-poll callback proposal before implementation."
+  },
+  "authority": "Root approved exact scoped frontend implementation after normal exit. Root owns runtime UI/Cargo/build; no user authentication or stored-favorite migration."
+}

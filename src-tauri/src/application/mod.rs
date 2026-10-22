@@ -30,7 +30,7 @@ pub(crate) use download_overlap::{
 };
 pub use download_pipeline::{
     ArtifactLayout, ArtifactStore, DownloadArtifactPlan, DownloadCheckpoint,
-    DownloadGallerySnapshot, DownloadOverlapRepository, DownloadPageAttempt,
+    DownloadGallerySnapshot, DownloadGalleryResolution, DownloadGalleryLink, DownloadOverlapRepository, DownloadPageAttempt,
     DownloadPageAttemptOutcome, DownloadPageAttemptResult, DownloadPagePayload,
     DownloadPipelineError, DownloadPipelineErrorCode, DownloadPipelineRepository, DownloadPrepared,
     DownloadRootPicker, DownloadSourceImageFormat, DownloadSourcePage, DownloadSourcePort,

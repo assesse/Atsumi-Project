@@ -161,6 +161,128 @@ const pageMergeFixture = (): DownloadOverlapReview => {
 };
 
 describe("DownloadOverlapReviewDialog", () => {
+  async function mountPageFilters() {
+    const review = pageMergeFixture();
+    const onMergePages = vi.fn();
+    const resolve = vi.fn(() => ({ kind: "missing" as const, reason: "fixture" }));
+    const client = new ThumbnailClient({ resolve });
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    await act(async () => root.render(<DownloadOverlapReviewDialog open={false} review={review} previewWidth={220}
+      thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onMergePages={onMergePages} />));
+    const page = (side: "기존 A" | "신규 B", number: number) =>
+      container.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="${side} ${number}페이지"]`);
+    const button = (label: string) => [...container.querySelectorAll<HTMLButtonElement>(".download-overlap-page-filter")].find(item => item.textContent === label)!;
+    const toggle = async (label: string) => act(async () => button(label).click());
+    const select = async (side: "기존 A" | "신규 B", number: number, shiftKey = false) => act(async () =>
+      page(side, number)!.dispatchEvent(new MouseEvent("click", { bubbles: true, button: 0, ctrlKey: !shiftKey, shiftKey })));
+    const dispose = async () => {
+      await act(async () => root.unmount());
+      client.dispose();
+      container.remove();
+    };
+    return { container, onMergePages, resolve, page, button, toggle, select, dispose };
+  }
+
+  it("toggles matched, unique and gap displays independently while retaining aligned cells", async () => {
+    const ui = await mountPageFilters();
+    try {
+      for (const label of ["일치", "한쪽에만 있음", "대응 없음"]) {
+        expect(ui.button(label)).toHaveAttribute("type", "button");
+        expect(ui.button(label)).toHaveAttribute("aria-pressed", "true");
+      }
+      const uniqueCell = ui.page("신규 B", 11);
+      const originalRequests = ui.resolve.mock.calls.length;
+      await ui.toggle("일치");
+      expect(ui.button("일치")).toHaveAttribute("aria-pressed", "false");
+      expect(ui.container.querySelectorAll(".download-overlap-page-cell.is-matched")).toHaveLength(0);
+      expect(ui.page("신규 B", 11)).toBe(uniqueCell);
+      expect(ui.container.querySelectorAll(".download-overlap-page-cell.is-gap")).toHaveLength(2);
+      expect(ui.container.querySelectorAll(".download-overlap-page-cell.is-unique")).toHaveLength(2);
+      await ui.toggle("대응 없음");
+      expect(ui.container.querySelectorAll(".download-overlap-page-cell.is-gap")).toHaveLength(0);
+      expect(ui.container.querySelectorAll('.download-overlap-page-cell.is-filtered[aria-hidden="true"]')).toHaveLength(2);
+      expect(ui.page("신규 B", 11)).toBe(uniqueCell);
+      expect(ui.resolve.mock.calls).toHaveLength(originalRequests);
+      const grid = ui.container.querySelector<HTMLElement>(".download-overlap-alignment-grid")!;
+      expect(grid.style.getPropertyValue("--overlap-page-columns")).toBe("2");
+      expect([...grid.children].map(node => node.classList.contains("download-overlap-row-label") ? node.textContent : node.getAttribute("aria-label") ?? "hidden"))
+        .toEqual(["기존 A", "hidden", "hidden", "신규 B", expect.stringContaining("신규 B 11페이지"), expect.stringContaining("신규 B 12페이지")]);
+      await ui.toggle("한쪽에만 있음");
+      expect(ui.container.querySelector(".download-overlap-alignment-grid")).toBeNull();
+      expect(ui.container.querySelector(".download-overlap-page-filter-empty")).toHaveTextContent("표시할 페이지가 없습니다.");
+      await ui.toggle("대응 없음");
+      expect(ui.container.querySelectorAll(".download-overlap-page-cell.is-gap")).toHaveLength(2);
+      expect(ui.page("신규 B", 11)).toBeNull();
+      expect(ui.container.querySelectorAll(".download-overlap-page-cell.is-filtered")).toHaveLength(2);
+      await ui.toggle("한쪽에만 있음");
+      await ui.toggle("일치");
+      expect(ui.container.querySelectorAll(".download-overlap-page-cell.is-matched")).toHaveLength(20);
+    } finally { await ui.dispose(); }
+  });
+
+  it("keeps hidden Ctrl selections in the unchanged merge payload, including when all filters are off", async () => {
+    const ui = await mountPageFilters();
+    try {
+      await ui.select("기존 A", 3);
+      await ui.select("신규 B", 11);
+      await ui.toggle("일치");
+      expect(ui.container.querySelector(".download-overlap-hidden-selection")).toHaveTextContent("선택 1장 숨김");
+      expect(ui.page("신규 B", 11)).toHaveAttribute("data-merge-state", "source");
+      await ui.toggle("한쪽에만 있음");
+      await ui.toggle("대응 없음");
+      expect(ui.container.querySelector(".download-overlap-hidden-selection")).toHaveTextContent("선택 2장 숨김");
+      expect(ui.container.querySelector(".download-overlap-action-note")).toHaveTextContent("A 1장 · B 1장 선택");
+      const merge = [...ui.container.querySelectorAll<HTMLButtonElement>(".download-overlap-merge-apply")].find(b => b.textContent === "B에 병합")!;
+      await act(async () => merge.click());
+      expect(ui.onMergePages).toHaveBeenCalledExactlyOnceWith({ reviewId: "review-overlap", expectedRevision: 4, candidateId: "candidate-1",
+        sourceSide: "existing", sourcePages: [3], selectedPages: { existing: [3], incoming: [11] } });
+      await ui.toggle("일치");
+      await ui.toggle("한쪽에만 있음");
+      expect(ui.page("기존 A", 3)).toHaveAttribute("data-merge-state", "source");
+      expect(ui.page("신규 B", 3)).toHaveAttribute("data-merge-state", "target");
+      expect(ui.page("신규 B", 11)).toHaveAttribute("data-merge-state", "source");
+      expect(ui.container.querySelector(".download-overlap-hidden-selection")).toBeNull();
+      await ui.select("신규 B", 3);
+      expect(ui.page("기존 A", 3)).toHaveAttribute("data-merge-state", "target");
+      expect(ui.page("신규 B", 3)).toHaveAttribute("data-merge-state", "source");
+      expect(ui.page("신규 B", 11)).toHaveAttribute("data-merge-state", "source");
+    } finally { await ui.dispose(); }
+  });
+
+  it("preserves the original Shift anchor and source-page range across hidden matches", async () => {
+    const ui = await mountPageFilters();
+    try {
+      await ui.select("신규 B", 1);
+      await ui.toggle("일치");
+      await ui.select("신규 B", 12, true);
+      expect(ui.container.querySelector(".download-overlap-action-note")).toHaveTextContent("A 0장 · B 12장 선택");
+      expect(ui.container.querySelector(".download-overlap-hidden-selection")).toHaveTextContent("선택 10장 숨김");
+      await ui.toggle("일치");
+      expect(ui.container.querySelectorAll('[data-merge-state="source"]')).toHaveLength(12);
+      expect(ui.container.querySelectorAll('[data-merge-state="target"]')).toHaveLength(10);
+      for (let page = 1; page <= 12; page++) expect(ui.page("신규 B", page)).toHaveClass("is-merge-source");
+    } finally { await ui.dispose(); }
+  });
+
+  it("clears a hover preview when filtering and still allows explicit clearing of hidden selections", async () => {
+    const ui = await mountPageFilters();
+    try {
+      await ui.select("기존 A", 2);
+      await act(async () => ui.page("기존 A", 2)!.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })));
+      expect(ui.container.querySelector(".download-overlap-page-hover-preview")).not.toBeNull();
+      await ui.toggle("일치");
+      expect(ui.container.querySelector(".download-overlap-page-hover-preview")).toBeNull();
+      const clear = [...ui.container.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "선택 해제")!;
+      await act(async () => clear.click());
+      expect(ui.container.querySelector(".download-overlap-hidden-selection")).toBeNull();
+      await ui.toggle("일치");
+      expect(ui.container.querySelectorAll('[data-merge-state="source"]')).toHaveLength(0);
+      expect(ui.onMergePages).not.toHaveBeenCalled();
+    } finally { await ui.dispose(); }
+  });
+
   it("keeps processed evidence read-only and explains unavailable historical images", async () => {
     const requests: ThumbnailRequest[] = [];
     const client = new ThumbnailClient({ resolve: (request) => {

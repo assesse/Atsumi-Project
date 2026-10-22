@@ -524,6 +524,8 @@ mod tests {
             "Atsumi/media-tools/CON.txt",
             "Atsumi/atsumi.exe.",
             "Atsumi/downloads/file",
+            "Atsumi/platform-tools/bin/yt-dlp.exe",
+            "Atsumi/media-tools/platform-tools/../../../user-data.txt",
             "Atsumi/\\other",
         ] {
             assert!(zip_path(path).is_err(), "{path}");
@@ -575,6 +577,9 @@ mod tests {
         let zip = archive(&[
             ("Atsumi/atsumi.exe", b"program"),
             ("Atsumi/media-tools/bin/ffmpeg.exe", b"tool"),
+            ("Atsumi/media-tools/platform-tools/bin/yt-dlp.exe", b"extractor"),
+            ("Atsumi\\media-tools\\platform-tools\\bin\\deno.exe", b"runtime"),
+            ("Atsumi/media-tools/platform-tools/licenses/deno-LICENSE.txt", b"license"),
             (
                 "Atsumi/atsumi-portable.json",
                 br#"{"distribution":"portable"}"#,
@@ -587,6 +592,74 @@ mod tests {
             fs::read(payload.join("media-tools/bin/ffmpeg.exe")).unwrap(),
             b"tool"
         );
+        for (path, bytes) in [
+            ("bin/yt-dlp.exe", &b"extractor"[..]),
+            ("bin/deno.exe", &b"runtime"[..]),
+            ("licenses/deno-LICENSE.txt", &b"license"[..]),
+        ] {
+            assert_eq!(fs::read(payload.join("media-tools/platform-tools").join(path)).unwrap(), bytes);
+        }
+    }
+
+    #[test]
+    fn new_platform_resources_stay_compatible_with_the_released_update_roots() {
+        // Released 989da16 (2.2.1) has these same roots and extraction/replacement
+        // logic. Keep new resources nested instead of requiring a bridge release.
+        assert_eq!(OWNED, ["atsumi.exe", "media-tools", "atsumi-portable.json", "Start-Atsumi.cmd", "Readme.txt"]);
+        let config: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(config["bundle"]["resources"]["../.runtime/platform-tools/"], "media-tools/platform-tools/");
+        let destination = config["bundle"]["resources"]["../.runtime/platform-tools/"].as_str().unwrap();
+        assert_eq!(zip_path(&format!("Atsumi/{destination}bin/yt-dlp.exe")).unwrap(), PathBuf::from("media-tools/platform-tools/bin/yt-dlp.exe"));
+    }
+
+    fn platform_payload(root: &Path) {
+        payload(root);
+        let bin = root.join("media-tools/platform-tools/bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(bin.join("yt-dlp.exe"), b"new extractor").unwrap();
+        fs::write(bin.join("deno.exe"), b"new runtime").unwrap();
+    }
+
+    #[test]
+    fn nested_platform_update_keeps_unowned_roots_and_complete_managed_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("app");
+        payload(&root); // A released installation has no platform tool subtree.
+        fs::write(root.join("media-tools/my-notes.txt"), b"manual managed-tree note").unwrap();
+        fs::create_dir(root.join("platform-tools")).unwrap();
+        fs::write(root.join("platform-tools/user-file.txt"), b"unowned folder").unwrap();
+        fs::write(root.join("download.mp4"), b"user media").unwrap();
+        let stage = dir.path().join("stage");
+        let new = stage.join("payload");
+        platform_payload(&new);
+        replace(&root, &stage, &new).unwrap();
+        assert_eq!(fs::read(root.join("media-tools/platform-tools/bin/yt-dlp.exe")).unwrap(), b"new extractor");
+        assert_eq!(fs::read(root.join("platform-tools/user-file.txt")).unwrap(), b"unowned folder");
+        assert_eq!(fs::read(root.join("download.mp4")).unwrap(), b"user media");
+        // Existing policy moves the entire old managed root to backup, including
+        // manually-added files; it never deletes or copies them over new tools.
+        assert_eq!(fs::read(stage.join("backup/media-tools/my-notes.txt")).unwrap(), b"manual managed-tree note");
+        assert!(!root.join("media-tools/my-notes.txt").exists());
+    }
+
+    #[test]
+    fn nested_platform_failure_restores_the_entire_previous_managed_tree() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("app");
+        platform_payload(&root);
+        fs::write(root.join("media-tools/platform-tools/bin/yt-dlp.exe"), b"old extractor").unwrap();
+        fs::write(root.join("media-tools/manual.txt"), b"manual file").unwrap();
+        fs::write(root.join("user-file.txt"), b"unowned").unwrap();
+        let stage = dir.path().join("stage");
+        let new = stage.join("payload");
+        platform_payload(&new);
+        // Fail after both the executable and the entire media-tools tree moved.
+        fs::remove_file(new.join("atsumi-portable.json")).unwrap();
+        assert!(replace(&root, &stage, &new).is_err());
+        assert_eq!(fs::read(root.join("media-tools/platform-tools/bin/yt-dlp.exe")).unwrap(), b"old extractor");
+        assert_eq!(fs::read(root.join("media-tools/manual.txt")).unwrap(), b"manual file");
+        assert_eq!(fs::read(root.join("user-file.txt")).unwrap(), b"unowned");
+        assert_eq!(fs::read(stage.join("unapplied/media-tools/platform-tools/bin/yt-dlp.exe")).unwrap(), b"new extractor");
     }
 
     #[cfg(windows)]

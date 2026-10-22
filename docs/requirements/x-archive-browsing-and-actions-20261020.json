@@ -1,0 +1,189 @@
+{
+  "version": 1,
+  "resume20261020": {
+    "source": "Latest direct user instruction: 이제 검토 다시 진행해줘. 중단했던 부분부터 이어서 하고, 좋아요나 북마크는 승인 없이 누르지 마.",
+    "scope": "Resume approved repairs and actual checks after normal idle-app shutdown. No social reactions, archive rewrites/deletion, force exit, commit, push, release or PC shutdown.",
+    "acceptance": "Current source tests and correct devUrl14201 build followed by actual local black menu dismissal, exact current-photo saving/key behavior, closed quote diagnostic and proof-driven recapture. Preserve prior failures and do not mark unverified original YouTube audio or intermittent source paint complete."
+  },
+  "approvedRepairResume": {
+    "source": "User reply call_d522422b30f041678fcfc197db076807: 상대쪽에 하트나 북마크 이런거 막 누르지 마라. 항상 승인받고 그거 말고는 다시 진행해줘.",
+    "authorization": "Explicitly resumes the previously blocked quote-avatar diagnostic/necessary repair/retest and other current non-social remaining work. No social reaction is authorized; obtain separate action-time approval before any like/bookmark/repost/reply/follow mutation. No old goal resumption, data deletion or account changes.",
+    "audit": "Active50 refreshed: other main1792473578 and UIUX1792073766 unchanged from fully read EOF snapshots. Current original native-actions/archive/menu requirements fully read; unchanged policy/official-split hashes verified. Historical inaccessible sources remain listed, not claimed read.",
+    "plan": [
+      "Quote avatar: apply the bounded closed ancestor-rejection diagnostic previously blocked, without changing capture admission. Use the observed result to choose and test the narrow same-quote exact-painted-image repair, then create a new capture and verify actual avatar bytes/hash. Never rewrite old captures.",
+      "Current photo: implement tri-state current-carousel proof (absent / proven / contradictory). Require one bounded nonnested source carousel/list, matching source counter and route ordinal/total, exactly one current item candidate visibly inside ancestor clipping, other candidates fully clipped, and no contradictory explicit semantics. Actions and capture must use the same predicate. Retain noncarousel unique fallback; reject transition/stale/hidden/owner mismatch.",
+      "Local menus: original all-menu black treatment includes the saved timeline and reader. Add black local context menu plus narrow immutable archiveId/postId external opener, not arbitrary frontend URLs or live session cache. Preserve image/player/preview and inert social controls."
+    ],
+    "acceptance": "Regression tests and native build are separate from real visible acceptance. Confirm current-photo1/2 saved identities, save-button-focus keys, quote-avatar new capture versus source, local menu appearance/outside/Esc dismissal, no social-write calls and old immutable data unchanged. Preserve any remaining failures/screenshots.",
+    "runtimeSafety": "Root read-only DB snapshot query_only1 shows all active download/postprocessing0. Recordings11stopped3interrupted with all merge/sourceCleanup complete, deletionPendingfalse; platform media9completed; auto-record enabled0. App PID1800 still runs. Native src-tauri files are explicitly ignored by Vite and no cargo/rustc watcher was observed, so native-only source/test preparation cannot live reload it; frontend production integration and executable replacement wait for graceful exit."
+  },
+  "quoteAvatarProofFollowup": {
+    "actualEvidence": "Current PID8248 fresh Peng capture35c74fcc: selected known avatar1/inScope1, no nested/alias/conflicting/card or media-cap failure; image itself hidden0/ariaHidden0/opacityZero1, ancestorHidden1 and paintParent1 reject it before exact paint evaluation. Three admitted asset sizes/hashes, manifest and HTML verify; quote avatarUrl absent.",
+    "decision": "Add debug-only closed counts/flags decomposing the selected avatar ancestor rejection within the same quote (aria-hidden versus hidden/inert/display/visibility/opacity). Preserve all capture behavior until actual proof. A later quote-only repair may treat a purely accessibility-hidden decorative wrapper as painted only if exact observed allowed URL, same geometry and actual visible paint are proved, without changing global visibility, hidden/CSS opacity rules, identity or media ownership.",
+    "acceptance": "Diagnostic DTO is closed, bounded and never persisted to archives; recapture actual visible quote after any repair, compare avatar asset/hash/position, retain historical immutable captures."
+  },
+  "currentPhotoProofFollowup": {
+    "request": "Latest renewed all-remaining-QA instruction; existing native single-photo download requirement remains active.",
+    "actualFailure": "Current PID8248 ObviousRises2111895089261736025/photo/1 has no save control/context item. Four closed samples show two exact-painted/loaded viewport candidates and reason ambiguous. Photo itself visibly renders; no black-photo conclusion from this sample.",
+    "decision": "Actions and capture must agree on the proved current photo. First add bounded closed diagnostics for standard carousel/listitem semantics, selected/current/position/size flags and agreement with route ordinal. No source text, URL, arbitrary DOM/private state or credentials. If actual structure proves one current slide, admit exactly one same-slide permitted exact-painted image; preserve existing truly unambiguous fallback and fail closed on conflicting proof. Re-evaluate only on bounded source load/transition/resize, cancelling stale/hidden owner/route. Do not pick first/largest/guessed image or relax identity validation.",
+    "acceptance": "Actual new sample must establish semantic slide association before repair; fixtures cover adjacent sliver, conflicting/current/hidden/nested owners; verify saved image exact identity/hashes and A/D/arrows after control focus. Existing immutable captures remain unchanged."
+  },
+  "state": "Initial integration and actual app acceptance performed; live findings under guarded repair and repeat verification on 2026-10-20",
+  "source": "Current six-item user request, two attached screenshots ca76189d and888cd48c, and clarification: possible automated verification now, Computer Use only when user sleeps.",
+  "original": [
+    "Local storage header tabs saved body / media like original X recommendation/following.",
+    "Remove explanatory archive UI. Reproduce historical post and loaded replies as read-only original-like UI, keeping left feed/right preview. Save only replies already loaded when save was pressed.",
+    "Media hover controls disappear on leave, expand left with two icons, tooltips only 전체 다운로드 / 단건 다운로드.",
+    "Correct preview post-save position and match X icon appearance.",
+    "Brief ad-blocking approaches without assuming penalty-free; research only.",
+    "Current 토끼잡이 post reply YouTube embed has no audio unlike the web; diagnose and repair proven cause."
+  ],
+  "latestResume": {
+    "request": "인터넷에 보면 adguard쪽 dns를 사용하게 하면 알아서 차단된다는데 검토해보고, 타당하면 적용해줘. 추가로 지금 pc 사용하지 않을거니까 남은 검토 전부 처리해줘.",
+    "authorization": "Replaces this batch's earlier no-input/deferred-restart instruction. Check running work first, use normal Atsumi restart only, integrate guarded staged files and perform the remaining X UI/archive/audio checks. No force termination, social actions, user-data deletion, privacy/authentication automation, release or PC shutdown.",
+    "sourceRefresh": "Active50/pinned and archived3 EOF inventory refreshed; other Atsumi main1792473578 and UIUX1792073766 remain unchanged. Policy and official-split SHA256 still match the fully read snapshot. Current native-actions, sidebar and archive contracts reread.",
+    "dnsDecision": "Do not change Windows DNS for X sponsored-post removal: AdGuard's own FAQ explicitly lists X sponsored posts as impossible to distinguish through DNS when served from the same domain as ordinary content. DNS settings, extensions, certificates and response filters remain unchanged.",
+    "dnsEvidence": "https://adguard-dns.io/kb/adguard-home/faq/#are-there-any-known-limitations",
+    "acceptance": [
+      "Recheck no active downloads/postprocessing/recording/merge before graceful restart.",
+      "Integrate only the eight listed staged files with all destination baseline hashes checked before any copy; preserve concurrent changes.",
+      "Build against the current observed development URL, currently http://127.0.0.1:14201/, not a historical port.",
+      "Complete deferred actual UI cases, preserve failures and distinguish visual/audio telemetry from actual audible output."
+    ]
+  },
+  "audit": {
+    "inventory": "Active50/pinned and archived3 EOF refreshed. Other Atsumi main metadata1792473578, newest actual turn01a14a13 completed1792246235, and UIUX1792073766 match previously fully read snapshots. Current full direct conversation and both screenshots read.",
+    "reuse": "Unchanged previously fully read specification snapshots; policy SHA256 3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1 and official split SHA256 7648801344FCBD0FCB8067B48B57D63F2E7E45DC9612BCC07B11590298BAFC05 verified. Current native-actions v3 and sidebar contract read.",
+    "unavailable": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"]
+  },
+  "decisions": [
+    "Superseded by latestResume: earlier no-input window required isolated frontend staging. Now normal app restart and actual UI verification are permitted after checking ongoing work; stage integration still requires destination hash guards.",
+    "Keep immutable captures, source/owner/generation validation, hash checks, local-only reader protocols, bounded resource loading and truthful partial status. Hide routine provenance behind an optional compact affordance, never erase errors or falsely claim complete threads.",
+    "Default post save includes already-loaded records belonging to the exact current detail conversation. Do not scroll/fetch additional replies or include unrelated background feed as replies. Freeze source/generation/account and use semantic role/order metadata with backward-compatible defaults.",
+    "Historical counters and reaction icons are inert; local navigation/media playback/image viewer remain interactive. No remote authentication, network embeds, social actions or source scripts in offline rendering.",
+    "Keep saved body/media selection and split feed/preview; preserve selected item and scroll where practical. Old captures lacking replies or structured fields remain readable without invented data.",
+    "Use X-like inline icons and expandable media controls, pointer/focus leave and Escape cleanup, exact target identity and own-control gesture isolation.",
+    "Audio correction must preserve intentional user mute and hidden/privacy pane muting. No blanket unmute or guessed iframe messages. Distinguish code-proven defect from deferred acoustic confirmation.",
+    "Ad blocking is a briefing only: distinguish cosmetic hiding, request filtering, extension/network/DNS approaches, effectiveness and breakage. Do not silently enable filtering or purchase services."
+  ],
+  "acceptance": [
+    "Two header tabs, original-like inert post/reply presentation and persistent left feed/right preview in local storage.",
+    "Exact main post plus already-loaded replies survive save/read; unrelated items excluded; legacy archives safe.",
+    "Two icon hover expansion leftward disappears on pointer/focus leave, preserves right-click individual download and avoids accidental social actions.",
+    "Post save aligns with detail action row without reflowing original layout.",
+    "Audio regression tests demonstrate correct visible/hidden/user mute policy; distinguish active audio stream from audible output and exact reported embed.",
+    "Actual current-account UI checks are now authorized by latestResume; do not automate authentication/privacy or send social reactions."
+  ],
+  "implementation": {
+    "frontendStaging": ".runtime/x-archive-v2-staging/src/features/x",
+    "integrationBaseline": ".runtime/x-archive-v2-staging/integration-baseline.json",
+    "preservation": "Initial eight-file frontend integration completed after safe normal shutdown and all destination hash checks; existing files backed up in .runtime/x-archive-v2-before-integration-20261020-1914. Actual app restarted on port14201. Existing immutable archives, accounts and other chats' changes preserved. Newly created QA captures are retained. Subsequent repair uses fresh per-file baselines.",
+    "archive": "Saved body/media header tabs; persistent left list/right 600px detail; original-like historical author, quote, counts and loaded reply rows; inert reaction icons and disabled reply composer; local-only images/videos. Routine provenance collapsed into info; errors remain visible. A/D/arrows image navigation and library-scoped exclusive local video playback preserve external/native media and intentional mute. Files whose quote identity cannot be proved remain visible in a separate unassigned-media group, without inventing an author/quote relationship or duplicating already assigned occurrences.",
+    "capture": "Optional backward-compatible presentation data including own/quote avatar and media occurrence references and observed historical timestamp labels. Shared files keep each visual occurrence without duplicate asset downloads. Exact current detail root plus already-loaded same-conversation replies in DOM order; unknown reply relations, ancestors and unrelated cards excluded. No extra scrolling or remote reply fetch.",
+    "nativeActions": "Two-icon left expansion, hover/focus/escape cleanup, separate all/single media intents, compact post-save icon aligned to the original reaction row.",
+    "audio": "Browser-owned audio observation covers descendant frames omitted by top-document play events. Automatic claims preserve existing manual priority. A visible known embedded player can claim manual audio only with current user activation and document focus. No source player mute/volume changes, iframe message injection or broader bridge capability."
+  },
+  "automatedVerification": {
+    "date": "2026-10-20",
+    "xFrontendSuite": "Active integrated diagnostic source run20:47:09 KST: 19 files, 804 tests passed. Whole-app no-emit typecheck passed. X native suite149/149 including all new closed diagnostic tests passed; development build completed on port14201 with38 existing warnings. Synthetic duplicate-wrapper avatar tests pass but actual capture80e0f83e still misses its quote avatar, so this is not accepted as a completed repair.",
+    "nativeSuite": "Active cargo test --lib display_only_quote: all four new tests actually executed and passed. cargo test --lib x_feed::: 144 passed, 0 failed. Ten pre-existing unrelated test compiler warnings unchanged. Initial incorrect module filter ran zero tests and is not counted as verification.",
+    "typescript": "Whole active application type check passed after integration with no emit and incremental disabled.",
+    "staticLayout": "15 local archive fixture scenes across 360x640, 960x640 and 1920x1080 passed, including unassigned quote media. Eight native-action fixture scenes across 960px/1920px and static/relative/absolute positioning passed. Final 1920px split, unassigned-media and native-action captures inspected. These are isolated synthetic fixtures, not actual X/account or audible playback acceptance.",
+    "independentReview": "Found and fixed omitted rendering for saved linkless/ambiguous quote media. Added capture and reader regressions. Also replaced all same-post poster assumptions with exact stored video-to-poster references in the reader and media tab; unrelated posters remain visible rather than being hidden or used for another video.",
+    "artifacts": [
+      ".runtime/x-archive-v2-staging/layout-artifacts",
+      ".runtime/x-archive-v2-staging/x-actions-layout-artifacts"
+    ],
+    "activeFrontendGuard": "Initial integration and subsequent seven-file live repair completed only after all applicable active baseline hashes matched and original copies were hash-verified. Backups: .runtime/live-frontend-repair-before-20261020 and .runtime/live-capture-repair-before-20261020. Five-file quote/avatar/timestamp repair integrated19:57 after fresh guards and normal exit, originals preserved in .runtime/quote-avatar-timestamp-before-20261020-1958. No other chat's mismatched file was overwritten; existing captures/account data preserved.",
+    "changedStagedFiles": [
+      "src/features/x/xArchiveApi.ts",
+      "src/features/x/xArchiveCapture.test.ts",
+      "src/features/x/XArchivePanel.css",
+      "src/features/x/XArchivePanel.test.tsx",
+      "src/features/x/XArchivePanel.tsx",
+      "src/features/x/XArchivePost.tsx",
+      "src/features/x/xSurface.test.ts",
+      "src/features/x/xSurfaceActions.test.ts"
+    ],
+    "changedNativeFiles": [
+      "src-tauri/src/x_archive_capture.js",
+      "src-tauri/src/x_archive.rs",
+      "src-tauri/src/x_surface_actions.js",
+      "src-tauri/src/x_surface_actions.rs",
+      "src-tauri/src/x_surface.js",
+      "src-tauri/src/x_surface.rs"
+    ]
+  },
+  "knownLimits": [
+    "Older archives cannot gain missing historical replies, names or counters. They remain readable without invented content.",
+    "New captures preserve a quote with no observed canonical identity as display-only structured content, without invented ID/navigation. Legacy captures remain unchanged; a reply without provable conversation membership is not silently grouped.",
+    "selectedContentComplete means the selected captured content, never an entire thread. Source/owner/media and local playback have been checked on actual captures; final quote-avatar/emoji repair still needs a newly captured real source.",
+    "The code-proven audio observation gap has a regression-tested correction, but the currently reported YouTube embed's actual audible output is not yet verified."
+  ],
+  "liveQaRepairBatch": {
+    "source": "Current original six-item request item2: reproduce saved-time source post and already-loaded replies in persistent feed/preview. Live source/capture comparison on 2026-10-20, evidence05/06/08.",
+    "verified": "Actual saved archive34088c4c-d027-4115-aba0-446359bb2d70 contains exact root2112296921964699753 and loaded reply2112431073775001690 only; unrelated recommendations excluded. All124 assets, manifest/HTML hashes and local HLS references verified.",
+    "failures": [
+      "Emoji-only display name is lost because image alt is omitted by text extraction.",
+      "Quote lacking a canonical link loses observed structured author/avatar and source media-before-quote order.",
+      "View count label repeats 조회수 in detail.",
+      "Portrait detail video is much taller than the observed original detail layout."
+    ],
+    "plan": "Preserve observed emoji alt; preserve a display-only quote presentation without inventing canonical ID or granting navigation/selection authority; store observed media/quote order; avoid repeating localized count labels; bound only detail-video height. Prepare isolated stage, preserve immutable old captures, integrate after graceful safe restart.",
+    "acceptance": "Add realistic capture/reader regressions for linkless quotes, emoji names, order, labels and legacy compatibility; all X tests plus native schema tests; recapture same source and compare actual local result. Media hover left expansion and disappearance on leave were already observed working in the native feed.",
+    "review": "Independent review additionally reproduced emoji-only linkless quote names being discarded and the timestamp separator entering the name. Both corrected and independently rechecked in staged DOM fixtures. No authority is inferred from the display-only card.",
+    "restartSafety": "Read-only mode=ro/query_only DB snapshots19:34:26 and19:36:12 KST: all active download and postprocessing states0; CHZZK14 records stopped/interrupted with merge/cleanup complete, platform-media9 completed, auto-record enabled0, external writer processes0. Normal app exit dialog also reported no ongoing work. Normal exit completed; no force termination.",
+    "lightboxRepair": "Evidence16 and original item2 require source-like photo viewing. Confirmed CSS only max-width/max-height preserves intrinsic292x360 size. Integrated bounded viewport width/height100% with contain, matching existing Pixiv/screenshot viewer layout. No inferred higher-resolution URLs or replaced captured bytes. Panel+Choose115 tests, whole staged typecheck and33 static scenes passed, including15 small/large portrait/landscape lightbox scenes across360/960/1920 widths. Actual repaired local viewer now fits portrait/square/landscape without clipping; D/Right/A and Escape-to-existing-preview passed. Evidence21 retained.",
+    "timestampOpenRepair": "Post2112210286124122176 has empty body and an observed combining-mark-only name. Local name button744 has no bounds, preventing normal feed-to-preview opening. Under original item2 retain historical actions inert but make the saved timeline timestamp an accessible button opening the same local record, as X's timestamp opens detail. Preserve author/body/media actions and no external navigation; add a combining-mark regression and validate real reopening via timestamp.",
+    "quoteAvatarRepair": "Source evidence17 shows zeya quote avatar and trailing emoji; new archive81b8a0f2 has structured quote but no quote avatarUrl, and visible emoji omitted from quote text. Under original item2 capture only an unambiguous visible observed pbs.twimg.com/profile_images descendant inside the same quote when X omits known avatar test IDs; do not guess URLs or infer canonical identity. Preserve bounded visible Unicode emoji alt in post/quote text without script/hidden/image-description text. Stage tests for ambiguous/foreign/emoji images and missing avatar wrappers; do not rewrite existing immutable archives.",
+    "quotePaintFollowup": "Actual new capture76b16995 preserves both main emoji and quote emoji but still misses the observed quote avatar. Do not declare prior avatar fallback verified. Inspect the existing exact same-URL/same-geometry paintedBackground path used for native photo sizing images; extend only that existing proof to a quote's unique permitted profile image, including known-wrapper path. No new URL construction, generic hidden-node bypass or inferred identity. Stage positive exact paint and negative foreign/layered/hidden/displaced/ambiguous fixtures and recapture a real quote after safe restart. If this narrow paint form does not reproduce, record unresolved instead of guessing a source.",
+    "posterEmptyState": "Independent final requirements review found media-only saved poster tiles render while the empty-message predicate omits poster, contradicting original item1. Make the empty-state predicate match the existing renderable media kinds and add poster-only regression; preserve missing-video issue reporting and do not invent a playable video. Integrated20:12 under fresh two-file guards; no old archive changes. Poster-only acceptance is synthetic, as no actual poster-only archive was present.",
+    "finalIntegration": "20:10-20:12 read-only safety snapshot: all active DB downloads/postprocessing0; recordings14 stopped/interrupted with merge/cleanup complete, media9 completed, automatic recording0, external writers0. storageCheckPending is a startup disk-check marker, not active work. Normal exit confirmed no work. Four source/test files integrated only after all active hashes matched; originals preserved at .runtime/quote-paint-poster-before-20261020-2013. Full X756 and whole-app no-emit typecheck passed. Existing immutable captures preserved.",
+    "quoteScopeFollowup": "Actual new Peng capturee2e655fc still lacks quote avatarUrl although source evidence29 shows it. Three saved assets and source/order/emoji hashes are correct; folded body is truthfully partial. Examine duplicate outer quote wrapper and inner role-link candidates versus actual nested quotes: current quoteImageScope may exclude every avatar under the same card's inner wrapper. Preserve genuine nested-card exclusion and ambiguous identity fail-closed. Record reproducible fixture before staged correction; if actual source shape remains unclear, use only bounded closed-category transient app diagnostics (no URLs, text, HTML, credentials or private state), never broaden capture by guessing. Integrate only after safe graceful exit and fresh hash guards; actual new capture required.",
+    "quoteDiagnosticsPlan": "20:28 actual new capture80e0f83e-c89b-4338-9b60-77c5e9841471 still lacks quotePresentation.avatarUrl after the guarded duplicate-wrapper repair. Preserve failure evidence34 and all immutable captures. Next batch adds debug-only closed numerical/boolean diagnostics for exactly the canonical-detail record, or the first captured record if no detail route: quote candidate scope, known/fallback profile candidates, visibility and exact paint gates. Native DTO denies unknown fields, bounds counts, never serializes diagnostics into drafts/IPC/archives. Capture admission and account/identity rules remain unchanged. Reproduce with the same native bookmarks first Peng post before selecting a further repair.",
+    "photoDiagnosticsPlan": "Actual headbutt_bang2112461123048161709/photo/1 showed one blank photo snapshot before any save, then D to2 and A to1 rendered normally. Hover and context menu still have no current-photo download option. Evidence35-37 retained. Existing ready state proves a source image URL, not rendered pixels. Add bounded debug-only closed photo/action shape counters in isolated staging to distinguish candidate ambiguity, CSS/paint/geometry and source image loading. At most four samples per current visible photo route at0/300/1000/3000ms; cancel stale/hidden routes. Use a separate closed photoProbe message after existing current/account/visibility fencing, logging only: do not replay status because that handler can paint/show/set_bounds and perturb the failure. No source strings, identity, URLs, HTML, speculative CSS override, hidden-image bypass, driver or system setting change.",
+    "diagnosticIntegrationPreflight": "20:38 read-only check: recordings14 stopped/interrupted, all merge/cleanup complete; platform media9 complete; auto-record enabled0. Latest active download/postprocessing snapshot0. Current main/UIUX metadata unchanged1792473578/1792073766. At20:41 native normal-close dialog reported no ongoing work and app exited normally. Quote3/photo5 reviewed diagnostic files integrated after all destination/stage hashes matched, source backups in .runtime/quote-diagnostic-before-20261020-2044 and .runtime/photo-diagnostic-before-20261020-2047. Reviewer found action metrics must stay outside normal status and transient readiness must not rearm probes; both corrected and independently tested149 cases before integration. Actual diagnosis, not synthetic pass count, must select the next repair.",
+    "photoDiagnosticFinding": "Fresh app PID30152: photoProbe repeatedly reports full-page route, dialogs0/articlefalse, two allowed/loaded/complete in-viewport transparent images, two exact matching paint layers, candidates2/reasonambiguous/controlPresentfalse. One sample becomes candidates1/ready after the other leaves the viewport but controlPresent remainsfalse. Evidence38 shows current photo with adjacent-photo sliver. This proves strict unique-viewport candidate rejection, not the black-paint cause. Investigate explicit native current-slide identity and settle/reconcile scheduling, never choose arbitrary first/largest image or weaken account/source checks. UI input paused after uncommanded source navigation while user might be examining the app; asked whether continuing input is safe.",
+    "audioExactCase": "User replied that the original 토끼잡이 URL is unknown and they must reopen the app to find it. Keep exact reply-embed audible-output acceptance pending, preserve endpoint mute, do not substitute another video as a pass."
+  },
+  "liveChecksSoFar": {
+    "evidenceDirectory": "C:/Users/JJH/.codex/visualizations/2026/09/10/01a089ee-56ed-7322-a750-c034423826c2/x-archive-qa-20261020",
+    "passed": [
+      "Native media hover expands left into individual/all icons, hides on leave; context menu individual/all present; post-save remains at reaction-row right end.",
+      "Single-photo archive12d8cd3e-52c2-416d-ba69-233b62fa4ebb contains exactly one image43006 bytes, correct post2112317031521677380 and owner; file/manifest/HTML hashes all pass. No social-write path in this save.",
+      "Native photo A/D and Left/Right move between photos1/2 of1871186774564950201. Maximize and restore reflow correctly after layout settles.",
+      "With right detail open, Escape closes the last-focused left photo back to bookmarks while preserving right detail. Escape first dismisses context menu and then photo, preserving preview.",
+      "Three-photo media-all capture9429d4f6 appears in local storage. All four assets, manifest/HTML hashes and exact source/account pass; no unrelated image selected. Local viewer A/D and Left/Right work; repaired fit matches viewport; Escape preserves the preview and prior list position.",
+      "New repaired capture81b8a0f2-bd1a-4ecd-a9ee-5035d7bf4e00 preserves exact root2112210286124122176, excludes unrelated recommendations, stores observed media-before-quote order and structured display-only quote without invented ID. All186 assets/37644077 bytes and manifest/HTML hashes pass. Six complete84-second local HLS playlists have only valid owned local references; actual local playback progressed.",
+      "Old archive34088c4c reopens its already-loaded reply2112431073775001690 in the right preview; historical reactions and reply composer remain inert. Immutable old capture content is not rewritten.",
+      "19:55:15-17 repeat safety check: active downloads/postprocessing0, all14 recordings stopped/interrupted with merge/cleanup complete, platform media9 completed, enabled auto-record0, external writer processes0. Normal exit dialog confirmed no work; normal exit completed before the final five-file integration.",
+      "Evidence22: empty-body/combining-mark author archive opens correctly through its timeline timestamp. New76b16995 capture preserves both Unicode emoji and three already-loaded replies; all189 assets and local HLS references verify.",
+      "Evidence26-28: native right-preview ScarletKc2112406550186967218 photo sequence1→2(D)→3(Right)→2(Left)→1(A), exactly one slide per key; Escape returns to the same right detail, leaves the feed unchanged. Native black skeleton observed.",
+      "Evidence30/32: current-account portrait and three saved account entries render; account popup opens above the account button without moving feedback/privacy/settings in native bookmarks and local storage. No account selection/authentication/privacy change performed.",
+      "Evidence33b: switching local body to media retains the selected Peng detail and scroll. Immediate capture33 was transiently unpainted; the next no-input capture shows the retained detail, so it is not treated as a persistent lost-preview defect."
+    ],
+    "notPassed": [
+      "A native photo alone became black after one save although its controls and ready state remained; saved bytes are intact. No proven DOM removal, routing, privacy or pane-visibility cause. Evidence11/12 retained; later native photo interactions did not reproduce it.",
+      "The new native portrait preview initially displayed a spinner; manual play started it. This does not prove all native autoplay/network-buffering paths are fixed.",
+      "Atsumi CoreAudio stream was active, unmuted and producing nonzero peaks, but the Windows output endpoint is muted. No system audio setting changed; this is not proof of the original YouTube reply embed being audible.",
+      "Original reported 토끼잡이 reply-embed URL has not been recovered from available app diagnostics; exact case remains unverified. A non-blocking request for the exact post URL was sent; no output mute setting changed.",
+      "Evidence29/31/34: native Peng quote avatar still omitted by captures e2e655fc and80e0f83e after paint/duplicate-wrapper repairs. Latest exact root, two images/root avatar, hashes, quote emoji and media order pass. Folded body truthfully partial. Closed diagnostic investigation remains active.",
+      "Evidence35-37: native full-page two-photo headbutt_bang2112461123048161709 has no current-photo download button or context download option. One stable no-input snapshot was black before any save; D and A restored normal rendered photos. Ready status alone is not proof of paint. Download-button-focus matrix cannot pass while that button is absent."
+    ]
+  },
+  "deferredComputerUse": [
+    "Completed prior five-file rebuild, timestamp reopening and actual emoji capture. Quote avatar still needs a new actual capture after duplicate-wrapper repair; prior avatars must not be declared repaired.",
+    "Native current-photo-download-button focus followed by all four image keys and a truly cache-empty first-account avatar were not comprehensively replayed; caches are preserved. Common regressions pass but this does not prove every focus/cache combination.",
+    "Exact original YouTube reply embed cannot yet be replayed because its URL is unavailable; Windows output endpoint is muted and must not be silently overridden. Actual sound, source mute/unmute, Alt-Tab and resize for this exact case remain unverified."
+  ],
+  "research": {
+    "adBlocking": "Brief only; no ad filtering, extension installation, DNS change or response rewriting enabled.",
+    "references": [
+      "https://github.com/gorhill/uBlock/wiki/Static-filter-syntax",
+      "https://github.com/gorhill/uBlock/wiki/Per-site-switches",
+      "https://docs.pi-hole.net/",
+      "https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2_8",
+      "https://developer.mozilla.org/en-US/docs/Web/API/Document/activeElement"
+    ]
+  }
+}

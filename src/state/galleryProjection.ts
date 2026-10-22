@@ -166,6 +166,7 @@ export function mergeDownloadEntries(
       ...current,
       download: {
         entryId: entry.entryId,
+        ...(entry.linkedGalleryId !== undefined ? { linkedGalleryId: entry.linkedGalleryId } : {}),
         revision: entry.revision,
         state: entry.state,
         ...(entry.progress !== undefined ? { progress: entry.progress } : {}),
@@ -217,8 +218,12 @@ export function mergeDownloadLibraryPage(
       languageKnown: item.gallery.language !== undefined
         || (current !== undefined && current.languageKnown !== false),
       tagsKnown: currentTagsKnown || savedTags !== undefined,
-      download: {
+      // Manual review can finish while this list request is in flight. Its
+      // older snapshot must not resurrect review/error state after the event.
+      download: current?.download?.entryId === item.download.entryId
+        && item.download.revision <= (current.download.revision ?? -1) ? current.download : {
         entryId: item.download.entryId,
+        ...(item.download.linkedGalleryId !== undefined ? { linkedGalleryId: item.download.linkedGalleryId } : {}),
         revision: item.download.revision,
         state: item.download.state,
         ...(item.download.progress !== undefined ? { progress: item.download.progress } : {}),

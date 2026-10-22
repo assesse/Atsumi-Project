@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-13",
+  "state": "implemented-focused-tests-and-one-public-asset-verified-desktop-pending",
+  "audit": {
+    "main": "230 turns/284 messages EOF snapshot unchanged SHA256 85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "other": "333 unique turns/375 messages EOF snapshot unchanged SHA256 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "policy": "Previously fully read implementation-policy hash unchanged 3267605CA09E8FBA111BFDC84C840E6856BC8B2E82CEB64F165AC732CA43F914; current replay-chat/SOOP-chat contracts reread in full",
+    "originals": ["01a0862c-6058-7442-a6fe-38d660288ee2", "01a094fe-9050-7d73-9a55-dee4ea6d4ca3", "01a10baf-818f-75e1-8051-cee48512ffbf", "01a12a4c-724c-7d13-801d-3d92da01fe1e", "01a13142-4c44-7560-bde6-d7e089fd9ea9"],
+    "specs": ["docs/CHZZK_REPLAY.md", "docs/CHZZK_CHAT_ENHANCEMENTS.md", "docs/LOCAL_DIAGNOSTICS_20261004.md", "docs/requirements/platform-replay-chat.json", "docs/requirements/platform-media-contract.json"],
+    "unavailable": "Old durable thread, unidentified analysis1/2 and unretained historical image pixels remain unavailable; not represented as reviewed.",
+    "latestAuthority": "Parent approved narrow rich-chat code/tests; no GUI, account access, QA example rebuild or Vite build. Existing QA binary/front are distinct."
+  },
+  "evidence": {
+    "sample": "Isolated fa0e0692 profile YouTube shared raw chat snapshot, read-only aggregate counts; no chat text/names retained here",
+    "bytes": 173078, "completeLines": 71, "malformedLines": 0,
+    "emojiNodes": 135, "emojiWithImage": 135,
+    "publicImageHosts": {"yt3.ggpht.com": 136, "fonts.gstatic.com": 67},
+    "cause": "Current rich() flattens ordered runs to shortcut/accessibility text and discards image thumbnails. Native raw source contains images; this is not demonstrated upstream image absence."
+  },
+  "conflicts": ["Earlier initial replay contract text-only/no-images was a documented limitation, not a superseding request.", "No shared Naver allowlist/state expansion; new provider-scoped asset acquisition reuses only existing pure raster validation.", "Old normalized archives remain text-only; no raw backfill or original archive rewrite in this batch.", "SOOP donation/mission/emoji rich events and user-avatar acquisition remain pending, not inferred from YouTube shapes."],
+  "planBeforeEdit": [
+    "Keep atsumi-chat-v1 and text fallback, add optional ordered text/emoji parts with opaque asset IDs only; image sources remain native transient data.",
+    "Exact HTTPS yt3.ggpht.com/fonts.gstatic.com, no credentials/query/fragment/custom port/redirect/proxy; bounded DNS workers and public IP pinning, body/time/raster limits; no SVG/HTML.",
+    "One bounded worker per shared session, deduplication, finite session byte/item/RAM caps; queue/drop/failure retains text and does not stop media or raw chat.",
+    "Recording-specific immutable assets and append-only manifest; only assets referenced in that recording. Detach closes the archive asset target under its lock so delayed fetches cannot write to a finalized/new recording; unresolved assets remain explicit text fallback. Session stop cancels queue and exposes actual asset-worker drain.",
+    "Trusted-main IPC accepts only existing session token or completed owned library ID plus opaque asset ID; no arbitrary URLs/paths. Replay is local-only, manifest/hash/raster checked, no remote retry.",
+    "Live/replay React renders ordered safe nodes using a bounded per-mounted-chat data URL cache and limited IPC concurrency. Privacy/inactive scopes do not start reads; stale completions ignored."
+  ],
+  "bounds": {"queue": 64, "sessionObservedAssets": 2048, "sessionDownloadedBytes": 134217728, "recordingAssets": 2048, "recordingBytes": 134217728, "memoryEntries": 256, "memoryBytes": 8388608, "assetBytes": 1048576, "requestSeconds": 5, "dnsSeconds": 2, "dnsWorkersGlobal": 4},
+  "acceptance": ["Ordered mixed text/emoji and typed shortcut remain distinct; legacy v1 safe fallback", "Disallowed host/credentials/redirect/private IP/SVG/body/path/hardlink rejection", "Dedupe and budgets, failure keeps live/chat/recording running", "Immutable manifest/read integrity and detach-late-worker fence", "Session shutdown observes asset worker completion", "Local replay makes zero network requests", "Bounded safe renderer handles failure/privacy/stale scope", "Focused native/frontend tests plus typecheck; actual app rich live/replay remains pending until rebuilt QA is explicitly tested"],
+  "fairPendingBatchBeforeEdit": {
+    "source": "Original R009 bounded performance, R013 preserved rich chat and parent cross-review: 64 serialized native fetches can exceed the initial 5-second renderer retry window.",
+    "plan": "Asset IPC distinguishes pending/ready/missing. UI releases its two IPC slots immediately per read, schedules only pending entries fairly at1/2/5/10seconds, terminal ready/missing never retries. One timer,256current IDs,512attempt records,maximum6minutes (native maximum64*5sec queue). Scope/privacy/unmount cancels scheduling; stale responses discarded. Offline replay one local read only.",
+    "checks": ["Asset ready after5seconds still appears", "Pending first IDs do not starve later ready IDs", "Two actual in-flight reads across changing scopes", "Terminal missing and offline replay do not poll", "Privacy/unmount clears timer and ignores late result"]
+  },
+  "verification": {
+    "native": "2026-10-13 latest lib-only no-run72921 exit0, atsumi_lib-2b66da7a3e959767.exe:chat_assets7 passed/1 opt-in ignored, replay_chat12 passed/1 opt-in ignored, live_chat9 passed. Total28 ordinary focused tests; no existing QA example rebuild.",
+    "frontend": "3 focused files/24 tests passed: safe ordered parts9, real live/replay component wiring3, existing replay12. Whole-project typecheck exit0. First sandbox frontend test attempt had EPERM rename before any tests; normal-Windows isolated rerun passed, not a production failure.",
+    "publicAsset": {"host":"fonts.gstatic.com","assets":1,"bytes":781,"localOnlyReplays":2,"originalSourceHashUnchanged":true,"result":"Explicit ignored Rust smoke passed using read-only .runtime/platform-media-live-tests/fe8dbc3b-bd4f-43e3-8787-a8c982cea295/media/YouTube/80e17a74-1e49-4473-9b82-25287b89564d/chat.source.jsonl. Output counts only; temporary asset/manifest fixtures disposed by test."},
+    "qualifications": ["Earlier watch-only fa0e0692 raw included both exact hosts but was normally cleaned after session close; available older isolated recording contains only fonts.gstatic.com. yt3.ggpht.com live fetch remains unverified, not claimed from its validator tests.", "Actual rebuilt desktop live and recording replay with image assets is pending. Running QA app/front are older than this code.", "No real user account/session, existing recording, or production download directory modified; no raw message, nickname or image URL included in evidence output.", "Final whole-suite regression remains parent-owned; these are focused unit/component/service checks, not proof of whole app completion."]
+  },
+  "remaining": ["Old text-only archive backfill intentionally excluded", "SOOP rich events intentionally excluded", "Actual desktop live-to-recording-to-offline emoji flow not yet verified", "Full long-broadcast asset/ring/archive budgets and network outage endurance not soak-tested"],
+  "assetCloseDurabilityBeforeEdit": {
+    "source": "R013 preserved chat and R015 validation-before-cleanup, original turns01a0862c/01a12a4c reread; EOF snapshots/policy hashes unchanged; parent explicitly approves only native asset-close P2.",
+    "finding": "Boolean short-circuit skipped final manifest sync when assets were already incomplete. Manifest sync failure occurred after status incomplete was computed, so status could say false while close returned true. A second close also forgot status-write/sync failure.",
+    "plan": "Always attempt manifest sync before constructing status; latch failure in archive state. Publish incomplete status based on both missing assets and manifest outcome. Latch status-write failure for repeated close; an unwritable status is not claimed as durable evidence. Keep bool API and non-fatal recording warning behavior; no UI or media finalization edits.",
+    "checks": ["Incomplete archive still calls sync", "Injected manifest sync failure produces incomplete status and sticky repeated-close warning", "Status publication failure is sticky and never overwrites unknown existing files", "Existing immutable archive/read/detach tests remain passing"],
+    "qualification": "Text archive128MiB/video finalization P1 is separately owned by youtube_platform; this change does not claim to fix that path.",
+    "verification": "Lib-only compile22092 exit0; current atsumi_lib-2b66da7a3e959767.exe chat_assets10 passed/1 public opt-in ignored, including the3new close durability regressions. No frontend, QA example, real archive or UI action in this follow-up. A status file that itself cannot be durably published remains a warning outcome, not proof of complete assets."
+  }
+}

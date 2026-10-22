@@ -1,5 +1,6 @@
-param()
+param([switch]$VerifyOnly, [switch]$ReturnManifest)
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'package_manifest.ps1')
 
 function Assert-MediaToolPath {
   param([string]$Path, [switch]$AllowMissing)
@@ -19,21 +20,14 @@ function Assert-MediaToolPath {
   }
 }
 
-function Assert-MediaToolBinary {
-  param($Entry, [string]$Path)
-  Assert-MediaToolPath $Path
-  $item = Get-Item -LiteralPath $Path -Force
-  if ($item.PSIsContainer -or $item.Length -ne $Entry.Length) {
-    throw "Media tool binary size mismatch. Preserved package requires inspection."
-  }
-  $stream = $Entry.Open()
-  $sha = [Security.Cryptography.SHA256]::Create()
+function Receive-MediaArchive([string]$Source, [string]$Destination, [string]$Hash) {
+  $request = [Net.HttpWebRequest]::Create($Source)
+  $request.Timeout = 180000; $request.ReadWriteTimeout = 180000
+  $response = $request.GetResponse()
   try {
-    $expected = [BitConverter]::ToString($sha.ComputeHash($stream)).Replace("-", "")
-  } finally { $stream.Dispose(); $sha.Dispose() }
-  if ((Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash -ne $expected) {
-    throw "Media tool binary checksum mismatch. Preserved package requires inspection."
-  }
+    $stream = $response.GetResponseStream()
+    try { Copy-AtsumiVerifiedStream $stream $Destination @{length=-1;sha256=$Hash} } finally { $stream.Dispose() }
+  } finally { $response.Dispose() }
 }
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
@@ -50,56 +44,38 @@ $ffmpeg = Join-Path $packageRoot "bin\ffmpeg.exe"
 $ffprobe = Join-Path $packageRoot "bin\ffprobe.exe"
 # Build-time dependency only: never install a global program or alter PATH.
 Assert-MediaToolPath $runtimeRoot -AllowMissing
-New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
+if (-not $VerifyOnly) { New-AtsumiSafeDirectory $runtimeRoot }
 Assert-MediaToolPath $archive -AllowMissing
 if (-not (Test-Path -LiteralPath $archive)) {
+  if ($VerifyOnly) { throw 'Missing approved media archive; verification never downloads or repairs.' }
+  $pending = $archive + '.download-' + [Guid]::NewGuid().ToString('N')
+  Assert-MediaToolPath $pending -AllowMissing
+  $lease = Lock-AtsumiPackageDirectories @($archive)
   try {
-    Invoke-WebRequest -Uri $url -OutFile $archive
+  try {
+    Receive-MediaArchive $url $pending $expectedHash
   } catch {
     Write-Warning "Upstream pinned media archive is unavailable; trying the byte-identical Atsumi release mirror."
-    Invoke-WebRequest -Uri $mirrorUrl -OutFile $archive
+    # Preserve a failed partial download, including when retrying the mirror.
+    $pending = $archive + '.download-' + [Guid]::NewGuid().ToString('N')
+    Receive-MediaArchive $mirrorUrl $pending $expectedHash
   }
+  [IO.File]::Move($pending, $archive)
+  } finally { $lease.Dispose() }
 }
-if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedHash) {
+if ((Get-AtsumiFileProof $archive).sha256 -cne $expectedHash) {
   throw "Media tool archive checksum mismatch. The downloaded file was preserved; do not execute it."
 }
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = [IO.Compression.ZipFile]::OpenRead($archive)
-try {
-  $allowedRoot = [IO.Path]::GetFullPath($packageRoot)
-  $allowedPrefix = $allowedRoot + [IO.Path]::DirectorySeparatorChar
-  $binPrefix = [IO.Path]::GetFullPath((Join-Path $packageRoot "bin")) + [IO.Path]::DirectorySeparatorChar
-  $paths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
-  $binaries = @{}
-  # Validate the ZIP even when reusing an already extracted package.
-  foreach ($entry in $zip.Entries) {
-    if ([IO.Path]::IsPathRooted($entry.FullName) -or $entry.FullName.Contains(":")) {
-      throw "Unsafe archive path."
-    }
-    $entryPath = [IO.Path]::GetFullPath((Join-Path $runtimeRoot $entry.FullName))
-    if (($entryPath -ne $allowedRoot -and -not $entryPath.StartsWith($allowedPrefix, [StringComparison]::OrdinalIgnoreCase)) -or -not $paths.Add($entryPath)) {
-      throw "Unsafe or duplicate archive path."
-    }
-    if ($entryPath.StartsWith($binPrefix, [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetExtension($entryPath) -in @(".exe", ".dll")) {
-      $binaries[$entryPath] = $entry
-    }
-  }
-  if (-not $binaries.ContainsKey($ffmpeg) -or -not $binaries.ContainsKey($ffprobe)) {
-    throw "Approved archive is missing required media tools."
-  }
-  Assert-MediaToolPath $packageRoot -AllowMissing
-  if (-not (Test-Path -LiteralPath $packageRoot)) {
-    Expand-Archive -LiteralPath $archive -DestinationPath $runtimeRoot
-  }
-  foreach ($path in $binaries.Keys) {
-    Assert-MediaToolBinary $binaries[$path] $path
-  }
-  # Extra local DLLs could load even when all approved files match.
-  foreach ($item in (Get-ChildItem -LiteralPath (Join-Path $packageRoot "bin") -Force)) {
-    Assert-MediaToolPath $item.FullName
-    if ($item.PSIsContainer -or ($item.Extension -in @(".exe", ".dll") -and -not $binaries.ContainsKey($item.FullName))) {
-      throw "Unexpected media tool entry. Preserved package requires inspection."
-    }
-  }
-} finally { $zip.Dispose() }
-Write-Output "Recording merge tools ready: $packageRoot"
+$manifest = Get-AtsumiArchiveManifest $archive $packageName $expectedHash
+foreach ($required in @('bin/ffmpeg.exe','bin/ffprobe.exe','LICENSE.txt')) {
+  if ($required -cnotin @($manifest.files | ForEach-Object { $_.path })) { throw 'Approved media archive is incomplete.' }
+}
+Assert-MediaToolPath $packageRoot -AllowMissing
+if (-not (Test-Path -LiteralPath $packageRoot)) {
+  if ($VerifyOnly) { throw 'Missing media package; verification never downloads or repairs.' }
+  Expand-AtsumiPackageArchive $archive $packageName $packageRoot $manifest
+}
+# Every shipped entry, including license/docs/headers, is immutable and exact.
+Assert-AtsumiPackageTree $packageRoot $manifest
+if ($ReturnManifest) { return [pscustomobject]@{ package=$packageRoot; manifest=$manifest } }
+Write-Output "Recording merge tools verified: $packageRoot"

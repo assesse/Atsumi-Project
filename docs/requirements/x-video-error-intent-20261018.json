@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "state": "Error-intent and single-owner HLS start repairs implemented after parent-confirmed normal shutdown; 36 focused tests and typecheck pass. Actual playback/error acceptance remains parent-owned and Tibo root cause is not established by these changes.",
+  "originals": [
+    "Current direct user requirements in 01a089ee-56ed-7322-a750-c034423826c2: X experience first, Atsumi-owned clean-room UI, inline video, explicit loading feedback, work until requested behavior is verified.",
+    "Current goal retained in docs/requirements/x-experience-completion-20261018.json: centered muted autoplay, user pause respected, preview pauses timeline, clean-room controls, bounded loading and actual app acceptance.",
+    "Latest direct user restriction: test likes/bookmarks only; no sending replies or reposts. This batch does not perform any account mutation.",
+    "Parent actual Computer Use evidence on D048D145 build: the 1:23 Tibo video raised a fatal HLS error while its control still said pause. One explicit retry recovered playback for 15 seconds. The misleading control is a separate confirmed UI defect; the transport failure cause remains under native investigation."
+  ],
+  "coverage": {
+    "sharedInstructions": "AGENTS.md reread fully before this batch; implementation-policy.json and both current X contracts reread with truncated sections continued.",
+    "mainSnapshotSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshotSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "specSnapshotSha256": "7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C",
+    "snapshotReuse": "Hashes rechecked and match the fully read parent audit and recorded EOF coverage in x-experience-completion-20261018.json; current direct instructions and parent actual evidence also read. No claim to recover unavailable historical chats or attachment pixels.",
+    "productionBeforeSha256": "15DC7DAA177EDA3D8FE30BFFA8F655BDF2E9E3E968905647E8D8365FCD4E8313",
+    "testsBeforeSha256": "E6C8CAA315F5E48FE6784A049A581F20C0D905AEA59104434CF516A7F3478B50"
+  },
+  "scope": ["src/features/x/XVideo.tsx", "src/features/x/XVideo.test.tsx"],
+  "findings": [
+    "fail() clears loading/sourceReady but relies on an eventual native pause event to change paused; a destroyed HLS source does not guarantee that event.",
+    "wantsPlay and the intent ref currently ignore error, so delayed playing/waiting events can revive misleading presentation. Scrolling away and back can also start a fresh request without the explicit retry button.",
+    "The existing frontend diagnostics bridge accepts a closed five-value UiMark enum, not HLS type/detail data. This batch adds neither a new IPC nor a wider diagnostic enum."
+  ],
+  "decisions": [
+    "A fatal failure immediately revokes the playback intent and explicitly sets paused=true, then preserves the existing one-shot cancellation and source teardown.",
+    "Error blocks automatic playback, source acquisition and ordinary video/play-button activation. The ordinary play button remains in its stable position but disabled; the visible error overlay's explicit retry is the sole recovery action.",
+    "Explicit retry clears the error and creates one new attempt. Do not add automatic retry loops, source-policy relaxation or a second media transport.",
+    "Preserve existing generation/post keys, source URL validation, cancellation, preview priority, muted start, manual pause, HLS bounds and GIF behavior. No CSS, native/API, account, media-data, application lifecycle or other agent-owned source changes."
+  ],
+  "acceptance": [
+    "A fatal HLS event after playing, without any pause event, immediately shows a disabled play control rather than pause; no loading indicator remains.",
+    "Late playing/waiting/manifest/play-Promise events cannot revive the failed player, remove its error or start another source request.",
+    "Scroll-away/return, preview revoke/return and ordinary play/video clicks cannot retry a failed attempt.",
+    "One explicit retry acquires exactly one fresh source; successful manifest/play resumes normal controls and subsequent manual pause/play reuses that source.",
+    "A second fatal failure remains stopped without further acquisition until another explicit retry; cancellation and HLS destruction remain once per attempt.",
+    "Focused frontend regression tests and typecheck pass. Parent separately verifies the actual app error-control and explicit-retry flow; tests are not actual HLS transport acceptance."
+  ],
+  "autostartRepair": {
+    "state": "Implemented one production option autoStartLoad:false; final 36/36 focused tests and typecheck passed",
+    "evidence": [
+      "Installed node_modules/hls.js/package.json version is 1.7.2; src/config.ts:445 defaults autoStartLoad=true.",
+      "Hls src/controller/level-controller.ts:387 emits MANIFEST_PARSED before the src/hls.ts:358-363 MANIFEST_LOADED autostart listener calls src/loader/playlist-loader.ts:398 startLoad(). Atsumi then commits sourceReady and its previous effect cleanup calls stopLoad(), followed by its new startLoad(-1).",
+      "Hls src/loader/playlist-loader.ts:141-150 destroys and removes pending playlist loaders on stopLoad, and src/controller/base-stream-controller.ts:176-194 aborts current fragments. The restarted request therefore need not be suppressed as an already-running identical URL.",
+      "Native x-video protocol uses four immediate-acquisition slots and a blocking fetch/read with a 20-second bound. Browser abort is not linked to that blocking request, so overlapping canceled and replacement requests can retain multiple slots. This establishes a code-level contention possibility, not the observed Tibo failure cause.",
+      "Parent actual evidence: Tibo failed on initial timeline playback but explicit retry and preview succeeded. Tibo root cause and any slot-exhaustion contribution remain unconfirmed; no transport-policy change is authorized by this batch."
+    ],
+    "decision": "Set only autoStartLoad:false in the existing Hls constructor so the current intent effect is the sole start owner. Preserve explicit restart after pause, all timeout/retry limits, generation/source validation, native code and prior error handling.",
+    "verification": {
+      "before": "36 tests: 33 passed, 3 failed. The new config assertion and both manifest-commit pause/preview cases caught implicit automatic loading.",
+      "after": "36/36 passed on 2026-10-18 at23:14KST, plus successful typecheck. No application launch, full build, native/API or timeout/retry modification performed by this agent.",
+      "qualification": "The sequence mock models the installed Hls1.7.2 event order. It proves the app's option/intent contract, not real transport performance or the cause of the Tibo initial failure. Parent actual app verification remains required."
+    },
+    "checks": [
+      "Assert the constructor disables automatic start, no startLoad occurs before manifest readiness, and the initial allowed manifest transition starts exactly once.",
+      "Model the installed event order in the Hls mock: after the manifest callback, automatic start occurs only if enabled. Initial manual pause or preview takeover must prevent a background start, including takeover during the manifest-to-React-commit interval.",
+      "Late manifests after initial pause/preview cancellation cannot restart a destroyed instance.",
+      "Existing pause/resume, source cancellation, explicit retry and GIF regressions plus typecheck must remain green. Actual Tibo playback is a separate parent verification gate."
+    ]
+  }
+}

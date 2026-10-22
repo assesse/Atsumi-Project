@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "state": "root read complete contract and approved bounded Escape-only implementation; actual verification pending",
+  "originalReferences": [
+    {"turn":"01a13adc-a040-70f0-97d9-380c5b6ba368","request":"Find and fix nonworking YouTube behavior and verify actual operation."},
+    {"turn":"01a13978-c469-7242-9ec2-f065de16743a","request":"Preserve the platform original player interface and fix focus/IME interference."},
+    {"turn":"01a12c46-788a-7b00-9f69-e6f1d6f2d53e","request":"Normal fullscreen/player controls and minimize/tray/audio behavior must remain usable."},
+    {"turn":"01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe","request":"Other tabs retain playback/audio without taking over the new page."}
+  ],
+  "audit": {
+    "mainSha256":"85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256":"799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage":"Both original fully read snapshots rehashed unchanged in this batch: main230/284 EOF and other333/375 EOF. Reuse root refreshed active50/archive3 EOF and69 specification coverage, with all known changed contracts read. AGENTS, implementation-policy, native-fullscreen-presentation-owner and youtube-fullscreen-input-diagnostics contracts directly reread; applicable original messages reread in preceding diagnostic batch. Root alone owns actual UI/native builds. Missing original thread01a03f16, unidentified analysis1/2 and inaccessible historical pixels remain unavailable.",
+    "scope":"YouTube LIVE/VOD player controller only. No CHZZK/SOOP behavior, main-renderer input, account, capture, scheduler, layout, navigation or focus changes."
+  },
+  "evidence": {
+    "actual":"Root isolatedQAa2fad,06:36build: application-3.jsonl mouse1792014213731 accepted=true; Escape1792014233358 input_gate=key_released allowed=false. The fullscreen screenshot remains unchanged. Mouse exit succeeds. The actual dropped Escape is now traced to the release-before-bridge timing check, not a guessed DOM target restriction.",
+    "primarySources":["https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate","https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/javascript/webview","https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.3537.50#add_acceleratorkeypressed"],
+    "supportedMechanism":"WebView2 controller AcceleratorKeyPressed always includes Escape; in windowed mode it is a synchronous focused-controller event. Native event args expose key kind and WasKeyDown for filtering repeat. Plain character F is not guaranteed to be an accelerator, so this fix is explicitly Escape-only."
+  },
+  "proposal": {
+    "receipt":"Observe only nonrepeated plain Escape KEY_DOWN on the exact official player controller. Do not set Handled or prevent its delivery to the page. Record at most one in-memory receipt with creation Instant, current source document epoch and exact opaque fullscreen Grant. Receipt exists for at most500ms and one consumption. No ordinary keys, typed text, DOM input or arbitrary identifiers are recorded/logged.",
+    "nativeObservation":"Only a live weak source session with a current fullscreen grant, visible/enabled exact pane and foreground main window/focus inside that pane may mint a receipt. Read modifier state only to deny modified Escape. This event callback never changes fullscreen, captures media, performs disk IO, evaluates page code, moves focus or blocks waiting for the UI thread.",
+    "delivery":"Keep the page's existing trusted-event, nonrepeat, modifier, editable, IME and separate-chat exclusions unchanged. The existing source URL, bridge prefix, UUID, label and epoch checks remain prerequisites. Only Escape with enabled=false can use the receipt. At delivery recheck same epoch, same exact grant, foreground/enabled/visible native pane and focus. Take/clear the receipt once whether validation succeeds or fails. A keyup does not erase it before its asynchronous corresponding message; LostFocus does erase it.",
+    "exitIdentity":"Release the exact validated grant, never read the latest session grant after queuing. Both held and released Escape require a valid exact native receipt. Missing, mismatched, expired, consumed or LostFocus-cleared receipts cannot fall back to the currently-down bit: that would let an old press for Grant A close newly acquired B. The main-window coordinator rejects stale capabilities and serializes OS mutation. Mouse/F/screenshot keep their existing physical-key gate unchanged. If the Escape observer cannot install, Escape fails closed with fixed unavailable diagnostics while the original mouse exit remains usable.",
+    "invalidation":"LostFocus clears the slot. Epoch/grant replacement or closed/hidden session makes it unusable; native callback lifetime is tied to the owned controller with Weak provider state. No cross-provider or cross-pane global keyboard hook. All player controllers install the observer so a hidden scheduled receiver later attached to a viewer also works, but a hidden/recording-only player cannot mint an intent. The separate chat controller never installs this listener.",
+    "diagnostics":"Retain bounded fixed action/gate logs. A successful valid receipt maps to accepted plus a fixed receipt-used boolean or fixed reason, never exposing the capability or timing payload. Expired/missing/foreign receipt leaves the original denied key_released result. No raw key logs.",
+    "files":["new src-tauri/src/youtube/original_escape_intent.rs","src-tauri/src/youtube/original.rs exact player bridge integration","src-tauri/src/youtube/original_vod.rs exact player bridge integration","src-tauri/src/platform_native_geometry.rs narrowly factored foreground/pane/focus checks for an already verified Escape receipt","YouTube original adapter tests only to lock existing editable/IME/chat exclusions"]
+  },
+  "acceptance":[
+    "Native receipt pure tests: one use,500ms expiry, wrong epoch, wrong owner/revision/window incarnation, lost focus, repeated/modifier/key-up/non-Escape deny, independent panes; old held press A cannot release B and missing/consumed/expired receipts cannot use held-key fallback",
+    "Same old receipt cannot authorize a newer fullscreen grant or enabled=true, F, screenshot or arbitrary bridge action",
+    "Existing mouse/F physical-intent admission and source/label/epoch/visibility guards stay unchanged",
+    "Existing page adapter tests verify Escape body handling and no bridge emission for chat, editable fields, IME/composition or modified/repeated/untrusted events",
+    "Root actual mouse enter then quick Escape exits while playback/chat remain active; repeat LIVE and VOD; mouse exit remains normal",
+    "Actual chat entry does not trigger fullscreen exits and no focus is moved automatically",
+    "No claim of complete fullscreen or F quick-tap coverage without actual verification; fresh Google authentication remains unrelated and unresolved"
+  ],
+  "checkpoint": {
+    "state":"strict receipt source frozen for root Cargo and actual desktop validation",
+    "review":"Peer found the initially proposed held-key fallback could allow old receipt A to close newer grant B, and clearing on LostFocus would create another missing-receipt fallback. Root approved requiring a valid exact receipt for both held and released Escape. Production now rejects all absent/foreign/expired/consumed/cleared receipts and releases only the returned exact native Grant.",
+    "verified":"Rust parsing and git diff --check passed. Both original page adapters passed17 tests, including two added body Escape and chat/IME/editable exclusions. Initial sandbox Vitest cache EPERM was an execution failure; the unchanged test command passed with ordinary host permissions. No production page JS, ordinary-key handling, layout or media behavior was edited.",
+    "pending":"Seven receipt pure tests plus existing input/diagnostic suites await root Cargo. Actual quick Escape LIVE/VOD, mouse exit and unchanged playback/chat remain to verify. This checkpoint does not claim completion; fresh Google authentication remains separately unresolved."
+  },
+  "risks":"A native Escape event alone cannot inspect the page's editable/IME state; it merely stores a short-lived receipt. The unchanged source-local JS exclusion is still required to request exit. Admission remains bounded to an actual native event and exact current presentation capability. This must not become a general delay grace period or blind trust of JS isTrusted claims."
+}

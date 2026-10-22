@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-15",
+  "status": "implemented; native tests and corrected retained-session desktop home user-confirmed",
+  "originalRequests": [
+    {"turn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."},
+    {"turn": "01a13adc-a040-70f0-97d9-380c5b6ba368", "item": 3, "requirement": "SOOP native default main using retained session, integrated search, official-style channel/media cards and adjustable size"}
+  ],
+  "audit": {
+    "mainSHA256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSHA256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Matched and reused fully read main230/284 and other333/375 EOF snapshots. Root refreshed active50/archive3 EOF and69 original specs; only known RELEASING differs. Reread AGENTS, implementation-policy, latest original resume record, platform-followup and SOOP discovery-followup contracts fully before editing.",
+    "unavailable": ["Durable original01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Historical inaccessible attachment pixels"]
+  },
+  "actualEvidence": [
+    "Parent native retained-session main returned20 LIVE and18 VOD rows. VOD titles fell back to channel names; raw duration11109467/12789784 was rendered; LIVE titles displayed literal &lt;. These numbers were duration, not VOD IDs. Anonymous metadata tests against those numbers do not establish an ID defect.",
+    "Official main renderer aY maps VOD e.titleNo,e.title,e.thumbnail,e.vodDuration,e.userId,e.userNick,e.viewCnt,e.ppv. aF maps LIVE e.broadNo,e.broadTitle,e.broadThumb,e.userId,e.userNick,e.totalViewCnt.",
+    "Current browser projection omits title,thumbnail,vod_duration,ppv and only exports alternate search fields title_name,thumb,duration. Native parser therefore substitutes channel name and leaks unrelated raw duration values into the display.",
+    "Official7043.vK accepts colon-formatted string or nonnegative seconds Number; anonymous search exposes duration0:28 alongside vod_duration28676 milliseconds. Field units differ by endpoint; do not guess numeric duration units from magnitude."
+  ],
+  "officialSources": [
+    "https://www.sooplive.com/_next/static/chunks/app/(main)/layout-f80c95bfb9c4542b.js",
+    "https://www.sooplive.com/_next/static/chunks/6358-15a65f8a51f90cf1.js",
+    "https://www.sooplive.com/_next/static/chunks/7043-a98e5dbd7bd4067e.js",
+    "https://sch.sooplive.com/api.php?m=vodSearch&v=5.0&l=DF&c=UTF-8&w=webk&isMobile=0&szType=json&szKeyword=music&nListCnt=1&nPageNo=1&szFileType=ALL"
+  ],
+  "decision": "Project only additional bounded public card fields using exact snake/uppercase/camel aliases. Preserve exact ID fields and existing per-platform session boundary. Choose strict colon duration strings, prioritizing official preferred vod_duration and retaining normal search duration; the official preferred Number type is seconds, while ambiguous numeric strings and unrelated raw duration numbers remain hidden. Decode common/numeric entities once into plain text in native discovery without HTML execution. Thumbnail still passes the existing strict HTTPS/CDN allowlist. Preserve selection, downloads, card geometry, saved session and all CHZZK/YouTube code.",
+  "conflicts": ["Do not relabel a failed image or video as verified", "No raw personal recommendation payload, cookie, session, account identity or auth fields may leave the dedicated metadata view", "Do not infer numeric duration unit from value or convert a duration into an ID", "Unit fixtures are not proof of actual updated desktop rendering"],
+  "checks": ["Official camel and original snake/uppercase fields project titles/thumbnails/duration/PPV, with private-field omission and bounds unchanged", "Zero/invalid/malicious rows remain bounded", "VOD title differs from channel name and canonical ID stays unchanged", "Formatted duration stays readable; raw milliseconds never display as a duration", "LIVE entities become literal text, not markup; unknown entities retained and no recursive decode", "Existing search card parser, thumbnails and preferred empty/error behavior remain valid", "Parent serial Cargo tests and real retained-session main/search/card opening after build"],
+  "verification": {"frontend": "soopDiscoverySession.test.ts5/5 passed at2026-10-15 03:49KST. First sandbox attempt failed before loading tests due temporary-cache EPERM; same focused test passed outside sandbox.", "native": "Root native1448passed/0failed/58ignored, debug build applied. Actual retained-session home20LIVE/18VOD and integrated search20/20/20 plus card-size320->400 responsive4->3columns were directly verified before mapping patch. User call_c4f5f63bcf90471591ed7306ad4bf483 confirms the rebuilt home now correctly shows broadcast title, thumbnail and duration. No claim that every provider endpoint or paid/account-only VOD has been verified."}
+}

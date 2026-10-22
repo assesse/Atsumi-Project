@@ -112,6 +112,7 @@ mod tests {
         DownloadJobProjection {
             job,
             download: DownloadChangedEvent {
+                linked_gallery_id: None,
                 entry_id: entry.to_string(),
                 gallery_id: entry as i64,
                 revision,

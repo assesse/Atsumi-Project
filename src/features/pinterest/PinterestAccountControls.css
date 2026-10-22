@@ -1,0 +1,5 @@
+.pinterest-account { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:6px; margin-left:auto; font-size:12px; }
+.pinterest-account > [role="status"] { display:inline-flex; align-items:center; gap:5px; min-width:64px; color:var(--muted,#b8b0be); }
+.pinterest-account > .is-connected { color:#82cfaa; }
+.pinterest-account > button { min-width:64px; min-height:32px; }
+.pinterest-account-error { flex-basis:100%; color:var(--danger,#e799a9); text-align:right; }

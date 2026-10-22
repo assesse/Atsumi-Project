@@ -110,6 +110,7 @@ export type AppActiveWorkSnapshot = {
     activeCount: number;
   };
   recordings?: { activeCount: number };
+  liveReceivers?: { activeCount: number };
   autoFind?: {
     runId: string;
     completedFavorites: number;
@@ -136,6 +137,7 @@ export type AppActiveWorkSnapshot = {
 export const hasActiveWork = (snapshot: AppActiveWorkSnapshot): boolean =>
   snapshot.downloads.activeCount > 0
   || (snapshot.recordings?.activeCount ?? 0) > 0
+  || (snapshot.liveReceivers?.activeCount ?? 0) > 0
   || snapshot.autoFind !== undefined
   || snapshot.duplicateScan !== undefined
   || snapshot.internalDuplicateScan !== undefined;
@@ -415,6 +417,7 @@ export type JobEvent = {
 };
 
 export type DownloadChangedEvent = {
+  linkedGalleryId?: number;
   entryId: string;
   galleryId: number;
   revision: number;
@@ -1038,6 +1041,7 @@ export type GalleryDetail = GallerySummary & {
 };
 
 export type DownloadEntry = {
+  linkedGalleryId?: number;
   entryId: string;
   galleryId: GalleryId;
   revision: number;

@@ -21,6 +21,8 @@ pub enum RepositoryError {
     Other(String),
     #[error("operation is active: {0}")]
     OperationActive(String),
+    #[error("gallery replacement requires review: {0}")]
+    GalleryReplacementConflict(String),
     #[error(transparent)]
     Source(#[from] SourceContractError),
 }
@@ -34,6 +36,7 @@ impl RepositoryError {
             Self::MigrationBackup(_) => "DATABASE_BACKUP_FAILED",
             Self::Other(_) => "DATABASE_ERROR",
             Self::OperationActive(_) => "OPERATION_ACTIVE",
+            Self::GalleryReplacementConflict(_) => "SOURCE_REPLACEMENT_REVIEW_REQUIRED",
             Self::Source(error) => error.code.as_str(),
         }
     }

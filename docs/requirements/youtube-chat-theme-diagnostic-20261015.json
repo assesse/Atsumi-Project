@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "state": "root-approved diagnostics-only example extension; no production/theme/account changes",
+  "parent": "docs/requirements/youtube-floating-layout-diagnostics-20261015.json",
+  "originals": [
+    {"turn":"01a13a1f-f808-74a0-85c8-e90aa748a292","request":"Original SOOP/YouTube player and chat UI must actually work, without CHZZK interference."},
+    {"turn":"01a1399c-e7fb-7260-ac09-93bc94288f2f","request":"Keep independent platform internals within the copied established flow."},
+    {"turn":"01a13bb3-d33b-7de0-867d-aeae3e3e8bec","request":"남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."}
+  ],
+  "audit":"Main85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 rehashed unchanged; reuse independently fully read main230/284 and other333/375 EOF with root50active/3archive/69baseline coverage. Direct original native-integration artifact and complete latest20261015-platform-verification-resume reread, along with complete parent contract, example, projection/test, original_page.js and native create/paint path. Historical unavailable sources remain indexed. No user account/profile inspection.",
+  "actualEvidence":"Root latest actual full isolated application shows separate original live_chat cswFQYam8Ic with white background, visible avatars/names/emoji/login footer but ordinary message and header text apparently invisible in both windowed/fullscreen. This agent has not read the running page's computed colors; source hypothesis is not yet runtime proof.",
+  "officialAnonymousEvidence":{
+    "method":"Read-only public HTTPS requests with a browser User-Agent, no Cookie/Authorization/profile; printed only status/size/static CSS rules and fixed theme flags, no chat content or initial data.",
+    "baseline":"Official live_chat without theme and theme=light return html without dark and live_chat_base CSS variant am=AAAAAAAwAJAC. Renderer background uses the new hashed background token which resolves to #fff, while message/header use legacy live-chat primary-text variable.",
+    "runtimeTheme":"Official live_chat_polymer setGlobalDarkTheme toggles html[dark] after site/system-theme selection. Legacy html[dark] primary chat text resolves to overlay white. This can disagree with a light-only server CSS token sheet.",
+    "darkUrl":"Official theme=dark response sets html[dark] and serves CSS variant am=AAAAAAAwggAC, adding the hashed background token's #0f0f0f definition. This is evidence of an original supported theme path, not approval to force it or change an account preference.",
+    "qualification":"Computed style in the actual isolated native document is still required to distinguish this mismatch from transparent native composition or another hidden style. The fixed body background alone does not set either site's variable family."
+  },
+  "proposal":{
+    "files":["src-tauri/examples/youtube_layout_probe.js","src/features/youtube/YouTubeLayoutProbe.test.ts"],
+    "reuse":"Existing youtube_layout_qa.rs already includes this probe and samples only its own disposable anonymous documents. Preserve its own profile, mute, no jobs/no auth and75second cleanup boundary; no production diagnostic API.",
+    "projection":"Add numeric RGBA arrays only for computed foreground/background and a fixed small allowlist of background/primary token values. Preserve existing rootDark boolean; add prefers-dark boolean, renderer/header and at most three message element metric entries. Unknown color formats become null. No CSS strings, text, HTML, identifiers, URLs, cookies, storage, account state or message content. No style writes, reload, navigation or setting changes.",
+    "checks":["White foreground/background mismatch is measurable without reading content","RGB/hex/transparent conversions bounded and unknown values null","Message node projection capped at three","Existing foreign-origin/account-path refusal and no-mutation tests stay valid","Root builds/runs actual anonymous example and reads resulting colors before any production fix"]
+  },
+  "conflicts":"Do not replace the platform theme or rewrite arbitrary color CSS from an unproven screenshot. Do not read/change the user's account, local storage or theme preferences. Preserve source-owned player/chat and hidden receiver/capture behavior."
+}

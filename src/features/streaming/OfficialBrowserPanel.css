@@ -115,7 +115,7 @@
 .connection-setup-heading .streaming-watch-modes { margin:0 auto 0 0; }
 .connection-setup .streaming-watch-modes { display:flex; gap:6px; }
 .connection-setup .streaming-watch-modes [aria-pressed=true] { color:var(--primary); border-color:var(--primary); }
-.connection-help { width:28px; height:28px; border-radius:50%; padding:0 !important; }
+.connection-setup-heading > .connection-help { display:grid; place-items:center; box-sizing:border-box; flex:0 0 28px; width:28px; min-width:28px; height:28px; min-height:28px; margin:0; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--surface-soft); color:var(--text); font:inherit; font-size:15px; line-height:1; text-align:center; cursor:pointer; }
 .connection-help-popover { position:fixed; z-index:1200; width:min(400px,calc(100vw - 24px)); color:var(--text); }
 .connection-help-content { box-sizing:border-box; max-height:calc(100dvh - 24px); overflow:auto; padding:12px 14px; border:1px solid var(--line-strong); border-radius:8px; background:var(--surface); box-shadow:0 8px 28px #0005; color:var(--text-soft); font-size:12px; }
 .connection-help-content p { margin:4px 0; line-height:1.6; }

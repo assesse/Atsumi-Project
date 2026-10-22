@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "status": "implemented and scoped tests verified; actual desktop playback acceptance remains Root-owned",
+  "parentContract": "docs/requirements/chzzk-ui-clone-20261014.json",
+  "original": "01a1399c-e7fb-7260-ac09-93bc94288f2f; original current message directly read through read_thread, not only another agent's interpretation",
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Reused fully read main230turn/284message and other333turn/375message EOF snapshots after hash verification. Root refreshed latest inventory/tail and all retained specification hashes; directly read current CHZZK StreamingWorkspace, MadoWorkspace, ConnectionSetup, ConnectionHelp, ChannelDraftField, LiveChannelPicker, LivePaneGrid and their styles, plus complete current implementation-policy, platform-media-contract, youtube-live-shell and video-ui-parity contracts. Old unavailable chats/attachment pixels remain unavailable as recorded by the parent contract.",
+    "archive": "Root verified 176 byte-identical files in docs/archives/20261014-pre-chzzk-ui before edits. Debug app normal exit confirmed by Root."
+  },
+  "changes": [
+    "Clone CHZZK drawer DOM geometry with provider-specific classes: attached72x22handle, min760/100%-32dock,18pxuppercorners,20pxpadding, exact heading/help/X, two-column88pxfavorite rows up to4rows, numbered32pxprofile/URL/internalX/36x38star fields, fullwidth+, account row and footer184pxslider/rightaligned38pxactions.",
+    "Copy hover-help behavior into a YouTube-only portal, never generic CHZZK selectors. Reuse only the state-free handle gesture helper; no CHZZK domain component or API.",
+    "Resolve pasted YouTube links with existing YouTube metadata/search APIs. Channel targets resolve actual currently-live search results; failures and zero-live are explicit. No external browser is required and no playback begins during draft editing.",
+    "Clone pane-grid resizing with atsumi.youtube.live.* storage. Preserve the existing keyed PlatformLivePlayer/YouTubePlayer host tree across mode, route and detail changes.",
+    "Preserve all VOD discovery/detail/favorite/download actions. Saved items remain in Explore's local saved filter; legacy favorites navigation normalizes without deleting stored records.",
+    "Unsupported YouTube login and automatic reservation controls occupy the corresponding CHZZK positions but stay disabled with concise reasons. Do not invoke CHZZK account/scheduler commands or imply success."
+  ],
+  "supersedes": [
+    "youtube-live-shell.json restriction to selecting already-open items: current user explicitly requests the current CHZZK connection structure first.",
+    "Prior original player engine changes are deferred; this batch retains the current single-ingress live engine and official VOD iframe."
+  ],
+  "owned": ["src/features/youtube/** UI/tests only", "docs/requirements/youtube-chzzk-ui-clone.json"],
+  "excluded": ["shared PlatformLivePlayer/backend", "CHZZK production sources", "SOOP", "Root registry/SideRail/tour changes", "archive snapshots"],
+  "verification": {
+    "focused": "2026-10-14 18:29:52 KST final rerun: all 6 YouTube suites / 71 tests passed after original CHZZK visual/style re-comparison, including 2 real Chrome offline geometry cases covering20 drawer scenes, 2 grouped resize/identity tests, VOD iframe identity, live2-to4/all-selected lifetimes, privacy, async/stale replies, and portal help cleanup. Post-native-attribute cleanup 16 focused/cross-provider tests also passed at18:27.",
+    "geometry": "Chrome override used with existing offlineLayoutBrowser runner. 960x640 and1440x900, panel420/960, favorites0/2/4/8/10. Found and corrected narrow footer wrapping; only options may wrap, session actions stay right-aligned on same footer.",
+    "isolation": "Namespaced CSS, useId IDs, atsumi.youtube.live.* layout keys, existing atsumi.youtube.favorites.v1 retained. Removed native CHZZK overlay data attributes from copied help. Shared player sideBySide/flattened are presentation-only; no backendcommands/receiverengine/account changes. Independent agent PlatformLiveCloneIsolation4tests passed.",
+    "desktop": "Root reported actual debug Tauri source switching, live default, upward handle drag, X close and screenshot library checks. Actual screenshots prompted final circle-help/neutral-slider/input/star/account/selector style corrections. Privacy stayed enabled, so real-service playback and recording were not tested in this desktop pass. No real-service playback or account acceptance is claimed from unit/offline tests."
+  },
+  "remaining": [
+    "YouTube account connection and automatic scheduling have no existing matching backend API. Their copied controls are disabled with concise honest reason; manual live recording remains in existing player.",
+    "Current YouTube channel metadata has no profile portrait. UI uses bounded backend raster portrait when supplied on channel metadata, otherwise skeleton/initials; video thumbnails are not misrepresented as channel portraits.",
+    "Original provider player engine parity is deferred by latest user sequence; existing official VOD iframe and single-ingress live player retained.",
+    "Actual desktop new channel resolution, multiple real live playback, drag/fullscreen, recording and provider-return flows require Root acceptance."
+  ],
+  "acceptance": [
+    "Drawer follows actual CHZZK geometry/order and remains nonmodal; drag/click/X/Escape close does not stop media.",
+    "Metadata resolution is bounded and stale-reply fenced; privacy, inactivity, replacement and close cannot apply stale playback. Explicit apply starts at most4uniquevideos.",
+    "Favorite toggle stays in place, saved VOD access remains, draft changes never start media/download/recording.",
+    "All/selected and resize preserve existing native leases and official iframe nodes; no provider storage/API/event/DOM collision.",
+    "Unsupported account/reservation shows no fake connected/recorded state.",
+    "Focused tests and typecheck, then Root's actual app geometry/interaction checks; unit/source parity alone does not mean completed."
+  ]
+}

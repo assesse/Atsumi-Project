@@ -20,6 +20,33 @@ const summary = (idValue: number, title = `Gallery ${idValue}`): GallerySummary 
 });
 
 describe("gallery API projection", () => {
+  it.each([4,5])("keeps newer completed evidence through a revision%s library snapshot while enriching metadata", (revision) => {
+    const gallery = projectGallerySummary(summary(1));
+    const current: Gallery = { ...gallery, download: { entryId:"review-entry",revision:5,state:"completed",progress:100 } };
+    const loaded = mergeDownloadLibraryPage(new Map([[current.id,current]]), {page:1,totalItems:1,items:[{
+      gallery:{id:current.id,title:"Refreshed saved title",artist:"saved artist"},
+      download:{galleryId:current.id,entryId:"review-entry",revision,state:"review_required",reviewId:"old-review",errorMessage:"old error"},
+    }]}).galleries.get(current.id)!;
+    expect(loaded.title).toBe("Refreshed saved title");
+    expect(loaded.download).toBe(current.download);
+    expect(loaded.download).not.toHaveProperty("reviewId");
+    expect(loaded.download).not.toHaveProperty("errorMessage");
+  });
+
+  it("accepts a newer revision and a replacement entry rather than pinning completed forever", () => {
+    const gallery = projectGallerySummary(summary(1));
+    const current: Gallery = {...gallery,download:{entryId:"old-entry",revision:99,state:"completed"}};
+    for (const download of [
+      {entryId:"old-entry",revision:100,state:"review_required" as const},
+      {entryId:"new-entry",revision:1,state:"queued" as const},
+    ]) {
+      const loaded = mergeDownloadLibraryPage(new Map([[current.id,current]]), {page:1,totalItems:1,items:[{
+        gallery:{id:current.id},download:{...download,galleryId:current.id},
+      }]}).galleries.get(current.id)!;
+      expect(loaded.download).toMatchObject(download);
+    }
+  });
+
   it("carries participant artists without changing the primary artist or sharing source arrays", () => {
     const artists = ["serein", "favorite collaborator", "another artist"];
     const projected = projectGallerySummary({ ...summary(1), artists });

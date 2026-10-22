@@ -36,7 +36,7 @@ describe("tutorial action results", () => {
   });
   it("keeps guides short, source-local and free of forced service switches", () => {
     expect(Object.fromEntries(Object.entries(tutorialStepsBySource).map(([source, steps]) => [source, steps.length])))
-      .toEqual({ hitomi: 15, danbooru: 4, chzzk: 6 });
+      .toEqual({ hitomi: 15, danbooru: 4, chzzk: 6, youtube: 4, soop: 4, pinterest: 4, pixiv: 4, x: 2 });
     for (const [source, steps] of Object.entries(tutorialStepsBySource)) {
       expect(new Set(steps.map(step => step.id)).size).toBe(steps.length);
       for (const step of steps) {
@@ -45,5 +45,20 @@ describe("tutorial action results", () => {
         expect(step.target).not.toMatch(/data-tour="source-(?:hitomi|danbooru|chzzk)"/);
       }
     }
+  });
+  it("introduces native discovery and saved media without forcing a download or account action", () => {
+    for (const source of ["youtube", "soop", "pinterest", "pixiv"] as const) {
+      const steps = tutorialStepsBySource[source];
+      expect(steps[0]).toMatchObject({ id: `${source}-explore`, action: "click" });
+      expect(steps[1]!.action).toBeUndefined();
+      expect(steps[2]).toMatchObject({ id: `${source}-${source === "soop" || source === "youtube" ? "live" : "favorites"}`, action: "click" });
+      expect(steps[3]).toMatchObject({ id: `${source}-downloads`, action: "click" });
+      expect(steps.filter(step => step.action).every(step => step.target.includes(`${source}-nav-`))).toBe(true);
+      expect(steps.every(step => step.description.length <= 65)).toBe(true);
+    }
+    expect(tutorialStepsBySource.pinterest[0]!.description).toContain("프로필·보드");
+    expect(tutorialStepsBySource.pinterest[0]!.description).not.toContain("키워드");
+    expect(tutorialStepsBySource.soop.some(step => step.target.includes("soop-nav-favorites"))).toBe(false);
+    expect(tutorialStepsBySource.soop[2]!.description).toContain("하단 꺾쇠");
   });
 });

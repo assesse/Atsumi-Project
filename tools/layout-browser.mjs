@@ -3,12 +3,25 @@ import * as path from "node:path";
 import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 import { spawn } from "node:child_process";
-const { scenes, css, width, height, browser, artifacts, captureAll } = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+const { scenes, css, width, height, browser, artifacts, captureAll, nativeGeometry } = JSON.parse(fs.readFileSync(process.argv[2], "utf8"));
+// Only the offline fixture uses this fixed repository module. No app/browser
+// connection, user profile or externally supplied script can enter this path.
+const geometryBundle = nativeGeometry ? (await (await import("esbuild")).build({entryPoints:[path.resolve("src/features/platforms/nativePlayerGeometry.ts")],bundle:true,write:false,format:"iife",globalName:"AtsumiNativeGeometry"})).outputFiles[0].text : "";
 const directory = fs.mkdtempSync(path.join(tmpdir(), "atsumi-global-layout-browser-")), profile = path.join(directory, "profile");
 if (artifacts) fs.mkdirSync(artifacts, { recursive: true });
 const child = spawn(browser, ["--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--disable-background-networking", "--disable-component-update", "--disable-sync", "--host-resolver-rules=MAP * ~NOTFOUND", "--user-data-dir="+profile, "--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1", "about:blank"], { windowsHide: true, stdio: "ignore" });
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 let socket, closeBrowser; const pending = new Map();
+const geometryScript = `(async()=>{const results=[];
+  for(const scene of scenes){document.documentElement.className=scene.rootClass||'';document.body.innerHTML=scene.html;await new Promise(resolve=>setTimeout(resolve,50));
+    const player=document.getElementById('player');
+    const geometry=AtsumiNativeGeometry.measureNativePlayerGeometry(player,null,{sequence:1,visible:true,muted:false});
+    const inside=(r,p)=>!!r&&p.x>=r.x&&p.x<r.x+r.width&&p.y>=r.y&&p.y<r.y+r.height;
+    const samples=(scene.samples||[]).map(p=>({x:p.x,y:p.y,browserVisible:player.contains(document.elementFromPoint(p.x,p.y)),nativeVisible:geometry.visible&&inside(geometry.player,p)&&!geometry.occlusions.some(h=>inside(h,p))}));
+    const rect=el=>{if(!el)return null;const r=el.getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};};
+    const nodes={video:rect(player.querySelector('video')),controls:rect(player.querySelector('.player_ctrlBox'))};
+    results.push({name:scene.name,width:innerWidth,height:innerHeight,geometry,samples,nodes,issues:samples.filter(p=>p.browserVisible!==p.nativeVisible).map(p=>'pixel/input mismatch at '+p.x+','+p.y+': browser='+p.browserVisible+' native='+p.nativeVisible)});
+  }return results;})()`;
 const script = `
     (async()=>{const results=[];
     for(const scene of scenes){
@@ -61,6 +74,13 @@ const script = `
           if(parseFloat(style.borderTopWidth)!==0||style.backgroundColor!=='rgba(0, 0, 0, 0)')issues.push('channel clear must be borderless');
         }
       }
+      // These are explicit square icon hitboxes or icon slots, not labelled
+      // navigation rows; their SVG/Fluent box must share the control centre.
+      for(const el of scope.querySelectorAll('[data-x-sidebar-audit] .x-icon-button,[data-x-sidebar-audit] .x-archive-tools>button,[data-x-sidebar-audit] .x-account-more,[data-x-sidebar-audit] .x-account-current,[data-x-sidebar-audit].sidebar-collapsed .main-nav .nav-item,[data-x-sidebar-audit].sidebar-collapsed .sidebar-foot>.nav-item')){
+        const icon=el.querySelector('.fluent,svg');if(!visible(el)||!icon||!visible(icon))continue;
+        const a=bounds(el),b=bounds(icon);
+        if(Math.abs(a.x+a.width/2-b.x-b.width/2)>1||Math.abs(a.y+a.height/2-b.y-b.height/2)>1)issues.push('off-center X control: '+label(el));
+      }
       for(const item of scope.querySelectorAll('.nav-live-item')){
         const main=item.querySelector('.nav-item'),arrow=item.querySelector('.nav-live-disclosure');
         if(!main||!arrow||!visible(item))continue;
@@ -85,7 +105,22 @@ const script = `
         if(!visible(el))continue;const r=bounds(el),hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
         if(!el.contains(hit))issues.push('covered live edge control: '+label(el));
       }
-      results.push({name:scene.name,width:innerWidth,height:innerHeight,issues:[...new Set(issues)]});
+      for(const toolbar of scope.querySelectorAll('.pixiv-toolbar')){
+        const form=toolbar.querySelector('.pixiv-search'),account=toolbar.querySelector('.pixiv-account-controls'),input=form?.querySelector('input');
+        if(!form||!input||!visible(toolbar))continue;
+        const r=bounds(toolbar),s=bounds(form);
+        if(toolbar.firstElementChild!==form||Math.abs(s.top-r.top)>1)issues.push('Pixiv search must be first at toolbar top');
+        if(bounds(input).width<64)issues.push('Pixiv search input too narrow');
+        if(account){const a=bounds(account);if(a.top<s.top-1)issues.push('Pixiv account controls above search');if(a.top<s.bottom-1&&a.left<s.right-1)issues.push('Pixiv account controls overlap search');}
+      }
+      let xSidebarGeometry;
+      if(document.querySelector('[data-x-sidebar-audit]')){
+        const rect=el=>{if(!el)return null;const r=bounds(el);return{x:r.x,y:r.y,width:r.width,height:r.height};};
+        const xSidebarFooter=Object.fromEntries([...document.querySelectorAll('[data-x-sidebar-audit] .sidebar-foot>.nav-item')].map(el=>[label(el),rect(el)]));
+        const blackSurfaces=Object.fromEntries(['.x-official-workspace','.x-body','.x-native-feed','.x-native-preview','.x-preview','.x-skeleton','.x-archive-library-view'].map(selector=>[selector,document.querySelector(selector)]).filter(([,el])=>el).map(([selector,el])=>[selector,getComputedStyle(el).backgroundColor]));
+        xSidebarGeometry={xSidebarFooter,account:rect(document.querySelector('[data-x-sidebar-audit] .x-account-anchor')),blackSurfaces};
+      }
+      results.push({name:scene.name,width:innerWidth,height:innerHeight,issues:[...new Set(issues)],...(xSidebarGeometry?{geometry:xSidebarGeometry}:{})});
     }
     return results;})();
   `;
@@ -119,7 +154,7 @@ try {
   const fixture=path.join(directory,"fixture.html");
   fs.writeFileSync(fixture,html(scenes));
   await page("Page.navigate",{url:pathToFileURL(fixture).href});await pause(200);
-  const evaluate=async frames=>{const result=await page("Runtime.evaluate",{expression:"(()=>{const scenes="+JSON.stringify(frames)+";return "+script.trim()+"})()",awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw Error(JSON.stringify(result.exceptionDetails));return result.result.value;};
+  const evaluate=async frames=>{const result=await page("Runtime.evaluate",{expression:"(()=>{"+geometryBundle+";const scenes="+JSON.stringify(frames)+";return "+(nativeGeometry?geometryScript:script.trim())+"})()",awaitPromise:true,returnByValue:true});if(result.exceptionDetails)throw Error(JSON.stringify(result.exceptionDetails));return result.result.value;};
   const results=await evaluate(scenes);
   if(!results?.length||results.some(r=>r.width!==width||r.height!==height))throw Error("Requested viewport was not applied");
   if(artifacts){

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "state": "implemented-and-offline-verified; actual desktop account acceptance pending",
+  "original": {"threadId":"01a089ee-56ed-7322-a750-c034423826c2","turnId":"01a14a2e-b520-7740-9195-3a298368fc09","request":"pixiv 작가명, 그룹명, 태그 전체 번역본. 호버에서 가능하면 한국어 번역, 고유명사는 최소한 영어 발음."},
+  "audit": ".runtime/requirements-audit/20261017-pixiv-metadata-reading.json",
+  "decisions": [
+    "One display-only glossary/reading pipeline for Pixiv tag groups, cards, creators, title, detail, reader and related works. Original labels, IDs, canonical searches, ordering, Ctrl/Shift, tabs, favorites and downloads remain unchanged.",
+    "Prefer bounded same-response official Korean tag translations. Otherwise use the existing Korean glossary (7280 entries) with exact official English aliases, then official English/romaji. Keep translation distinct from pronunciation.",
+    "Supplement common Japanese tags with a small explicit Korean alias dictionary. Do not substitute speculative translations for creator/group/work proper names.",
+    "Kana reading and lazy local Japanese morphological reading supply romanization when official text is absent. Label dictionary-derived Kanji readings as estimated; unknown readings are explicitly unavailable, never fabricated or reported as a complete Pixiv-wide corpus.",
+    "No bulk crawling, paid provider, online machine translation, cookie export, account write or metadata sent to another service. Local reading dictionaries are bundled, loaded only on deliberate hover/focus in one disposable worker, bounded by text/queue/cache/time limits and released when idle. No analysis on every card render.",
+    "No global account-content translation cache or persisted browsing history. Work-owned official tag hints persist only with the existing explicit local favorite/download record. Legacy records deserialize without hints. Do not edit stored albums or filename/manifest identity.",
+    "Validate untrusted translation schemas, exact tag joins, Unicode lengths/control characters and field count. Plain text rendering only. Account/privacy/current-surface fences remain; privacy removes tooltip content and cancels pending readings.",
+    "Hover/focus tooltip is compact, clamped to the viewport, does not move the card or steal clicks/keyboard shortcuts. Preserve existing inline favorite-tag translations. Latest request supersedes earlier favorite-only translation scope.",
+    "No invented Pixiv group taxonomy: group names contained in ordinary metadata use the same reading component; unsupported standalone group entities are not fabricated.",
+    "Preserve staged changes and the concurrent Pixiv discovery batch. No commit, push, release, user-media cleanup or process termination. Native restart only after a fresh safe idle check, through the existing normal path. Actual app acceptance remains separate from fixtures/builds."
+  ],
+  "acceptance": [
+    "Official ko/en/romaji projection for exact canonical tags in home/search/work/detail, malformed/oversize/privacy/guest boundaries and old saved-record compatibility",
+    "Korean glossary preference, proper-name non-translation, kana and Kanji estimated reading, unknown Unicode preservation and bounded worker failure/timeout/cancellation",
+    "All metadata surfaces show the same hover behavior without changing click/selection/return/download state",
+    "Hidden/private/unmounted surfaces and rapid target changes cannot display stale readings",
+    "Narrow/1920x1080 tooltip geometry and long-text wrapping, no new bulk network traffic or initial dictionary load",
+    "Focused frontend/native regressions, typecheck and builds; actual desktop validation or clearly documented pending acceptance"
+  ],
+  "verification": ".runtime/requirements-audit/20261017-pixiv-metadata-reading-final.json",
+  "limitations": ["Pixiv metadata is open-ended, not a finite downloadable all-name translation corpus.","Dictionary pronunciation is not confirmation of a creator's chosen reading.","No arbitrary title-to-Korean machine translation service is configured.","Real account/native desktop hover acceptance remains unverified; isolated browser fixtures are explicitly not represented as actual account verification."]
+}

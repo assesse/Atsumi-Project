@@ -182,16 +182,15 @@ pub fn get<R: Runtime>(manager: Arc<AppManager<R>>) -> UriSchemeProtocolHandler 
   })
 }
 
-fn is_atsumi_browser_capture_message(body: &str) -> bool {
-  // Fixed-length comparison only: never parse, allocate, or scan the payload.
-  body.starts_with("ATSUMI_BROWSER_CAPTURE:")
-}
+#[path = "native_bridge.rs"]
+mod native_bridge;
+use native_bridge::is_atsumi_native_bridge_message;
 
 fn handle_ipc_message<R: Runtime>(request: Request<String>, manager: &AppManager<R>, label: &str) {
   // Atsumi's separate native WebMessage listener owns this string envelope.
   // Ignoring it here grants no Tauri permission; that listener must still check
   // the browser-supplied source URL, message size, and recording state itself.
-  if is_atsumi_browser_capture_message(request.body()) {
+  if is_atsumi_native_bridge_message(request.body()) {
     return;
   }
 
@@ -571,41 +570,6 @@ mod tests {
   use http::header::*;
   use serde_json::json;
   use tauri_macros::generate_context;
-
-  #[test]
-  fn atsumi_browser_capture_prefix_is_exact_and_payload_agnostic() {
-    for body in [
-      "ATSUMI_BROWSER_CAPTURE:",
-      "ATSUMI_BROWSER_CAPTURE:{}",
-      "ATSUMI_BROWSER_CAPTURE:{\"kind\":\"chunk\"}",
-      "ATSUMI_BROWSER_CAPTURE:not JSON",
-      "ATSUMI_BROWSER_CAPTURE:{\"cmd\":\"settings_factory_reset\"}",
-    ] {
-      assert!(is_atsumi_browser_capture_message(body));
-    }
-    // The independent native bridge rejects malformed/oversized bodies. Tauri
-    // must merely ignore them rather than reinterpret their contents as IPC.
-    let body = format!("ATSUMI_BROWSER_CAPTURE:{}", "x".repeat(128 * 1024));
-    assert!(is_atsumi_browser_capture_message(&body));
-  }
-
-  #[test]
-  fn atsumi_browser_capture_prefix_does_not_match_regular_ipc_or_near_misses() {
-    for body in [
-      "",
-      "ATSUMI_BROWSER_CAPTURE",
-      "ATSUMI_BROWSER_CAPTUREX:{}",
-      "ATSUMI_BROWSER_CAPTURE :{}",
-      "atsumi_browser_capture:{}",
-      " ATSUMI_BROWSER_CAPTURE:{}",
-      "\nATSUMI_BROWSER_CAPTURE:{}",
-      "{\"cmd\":\"atsumi_test_ping\"}",
-      "{\"payload\":\"ATSUMI_BROWSER_CAPTURE:{}\"}",
-      "\"ATSUMI_BROWSER_CAPTURE:{}\"",
-    ] {
-      assert!(!is_atsumi_browser_capture_message(body), "{body}");
-    }
-  }
 
   #[test]
   fn parse_invoke_request() {

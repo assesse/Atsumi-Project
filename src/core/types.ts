@@ -75,6 +75,7 @@ export type Gallery = {
   relatedIds?: GalleryId[];
   favorite?: boolean;
   download?: {
+    linkedGalleryId?: number;
     entryId: string;
     revision?: number;
     state: DownloadState;

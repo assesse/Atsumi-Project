@@ -23,6 +23,11 @@ foreach ($root in @($appRoot,$payload)) {
     [IO.File]::WriteAllText((Join-Path $root 'Readme.txt'), 'synthetic fixture only', $utf8)
 }
 [IO.File]::WriteAllText((Join-Path $appRoot 'user-data-sentinel.txt'), 'preserve me', $utf8)
+[IO.File]::WriteAllText((Join-Path $appRoot 'media-tools/manual-sentinel.txt'), 'preserve in managed backup', $utf8)
+New-Item -ItemType Directory -Path (Join-Path $payload 'media-tools/platform-tools/bin'),(Join-Path $appRoot 'platform-tools') | Out-Null
+[IO.File]::WriteAllText((Join-Path $payload 'media-tools/platform-tools/bin/yt-dlp.exe'), 'synthetic extractor, never executed', $utf8)
+[IO.File]::WriteAllText((Join-Path $payload 'media-tools/platform-tools/bin/deno.exe'), 'synthetic runtime, never executed', $utf8)
+[IO.File]::WriteAllText((Join-Path $appRoot 'platform-tools/user-sentinel.txt'), 'unowned root remains', $utf8)
 New-Item -ItemType Directory -Path (Join-Path $appRoot 'WebView2') | Out-Null
 [IO.File]::WriteAllText((Join-Path $appRoot 'WebView2/sentinel.txt'), 'preserve runtime', $utf8)
 $archive = Join-Path $stage 'update.zip'
@@ -53,8 +58,12 @@ try {
     }
     if ((Get-Content -LiteralPath (Join-Path $appRoot 'user-data-sentinel.txt') -Raw) -ne 'preserve me') { throw 'User file changed.' }
     if ((Get-Content -LiteralPath (Join-Path $appRoot 'WebView2/sentinel.txt') -Raw) -ne 'preserve runtime') { throw 'Fixed runtime changed.' }
+    if ((Get-Content -LiteralPath (Join-Path $appRoot 'platform-tools/user-sentinel.txt') -Raw) -ne 'unowned root remains') { throw 'Unknown top-level tool folder changed.' }
+    if ((Get-Content -LiteralPath (Join-Path $stage 'backup/media-tools/manual-sentinel.txt') -Raw) -ne 'preserve in managed backup') { throw 'Managed-tree manual file was not backed up.' }
+    if ((Get-Content -LiteralPath (Join-Path $appRoot 'media-tools/platform-tools/bin/yt-dlp.exe') -Raw) -ne 'synthetic extractor, never executed') { throw 'Nested platform extractor missing.' }
+    if ((Get-Content -LiteralPath (Join-Path $appRoot 'media-tools/platform-tools/bin/deno.exe') -Raw) -ne 'synthetic runtime, never executed') { throw 'Nested platform runtime missing.' }
     if (-not (Test-Path -LiteralPath (Join-Path $stage 'backup/atsumi.exe'))) { throw 'Rollback backup missing.' }
-    [pscustomobject]@{ passed=$true; signedZip=$true; waitedForNormalExit=$true; restarted=$true; userDataPreserved=$true; optionalRuntimePreserved=$true; retainedFixture=$testRoot } | ConvertTo-Json -Compress
+    [pscustomobject]@{ passed=$true; signedZip=$true; waitedForNormalExit=$true; restarted=$true; userDataPreserved=$true; optionalRuntimePreserved=$true; nestedToolsPreserved=$true; managedUnknownFilesBackedUp=$true; retainedFixture=$testRoot } | ConvertTo-Json -Compress
 } finally {
     # Release only this test's waiting process. No real app is touched or killed.
     [IO.File]::WriteAllText((Join-Path $appRoot 'exit-parent'), 'normal exit', $utf8)

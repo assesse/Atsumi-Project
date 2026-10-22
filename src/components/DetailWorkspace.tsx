@@ -221,6 +221,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
   };
   const workspace = useRef<HTMLElement>(null);
   const scrollSaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const scrollPositions = useRef(new Map<GalleryId, number>());
   const restoreButton = useRef<HTMLButtonElement>(null);
   const previousVisible = useRef(false);
   const previousTabCount = useRef(0);
@@ -336,18 +337,27 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     const panel = body?.querySelector<HTMLElement>(".detail-layout");
     const motion = !minimized && panel?.animate && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
       ? panel.animate([{ opacity: .65, translate: "0 4px" }, { opacity: 1, translate: "0 0" }], { duration: 130, easing: "ease-out" }) : null;
-    if (body && activeId !== null) body.scrollTop = readDetailPositions().get(activeId)?.scrollTop ?? 0;
+    if (body && activeId !== null && !minimized) {
+      const top = scrollPositions.current.get(activeId) ?? readDetailPositions().get(activeId)?.scrollTop ?? 0;
+      scrollPositions.current.delete(activeId);
+      scrollPositions.current.set(activeId, top);
+      while (scrollPositions.current.size > 96) scrollPositions.current.delete(scrollPositions.current.keys().next().value!);
+      body.scrollTop = top;
+    }
     if (!minimized && activeId !== null) {
       window.requestAnimationFrame(() => {
-        selectedDetailTab(workspace.current)?.focus();
+        selectedDetailTab(workspace.current)?.focus({ preventScroll: true });
       });
     }
     return () => {
       motion?.cancel();
       clearTimeout(scrollSaveTimer.current);
-      if (body && activeId !== null && !minimized) saveDetailPosition(activeId, { scrollTop: body.scrollTop });
+      // React may already have replaced/removed the old content. Persist the
+      // last event snapshot, never a now-clamped or hidden body's scrollTop.
+      const top = activeId === null ? undefined : scrollPositions.current.get(activeId);
+      if (activeId !== null && !minimized && top !== undefined) saveDetailPosition(activeId, { scrollTop: top });
     };
-  }, [activeId, minimized]);
+  }, [activeId, minimized, tabs.length > 0, activeId !== null && galleries.has(activeId)]);
 
   useEffect(() => {
     if (minimized || activeId === null) return;
@@ -414,6 +424,8 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     setPreviewPage(request.page > 0 && request.page <= totalPageCount ? request.page : null);
   }, [props.pageOpenRequest, activeId, minimized, gallery, totalPageCount]);
   const pageOneDimension = gallery?.pageDimensions?.find((page) => page.sourcePage === 1);
+  const heroKey = gallery ? galleryCoverThumbnailKey(gallery) : undefined;
+  const heroPage = heroKey?.kind === "artifact-page" ? heroKey.page : 1;
   const metadataReady = gallery?.pageDimensions !== undefined;
   const metadataLayout = gallery && metadataReady
     ? detailPreviewLayout((gallery.pageDimensions ?? []).slice(0, 8))
@@ -849,6 +861,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
             </button>
           </div>
           <div
+            key={gallery.id}
             className="detail-body"
             data-thumbnail-scroll-root
             id={`detail-panel-${gallery.id}`}
@@ -856,13 +869,18 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
             aria-labelledby={`detail-tab-${gallery.id}`}
             onScroll={(event) => {
               const scrollTop = event.currentTarget.scrollTop;
+              scrollPositions.current.set(gallery.id, scrollTop);
               clearTimeout(scrollSaveTimer.current);
               scrollSaveTimer.current = setTimeout(() => saveDetailPosition(gallery.id, { scrollTop }), 250);
             }}
           >
             <div className="detail-layout">
               <section className="detail-media">
-                <ProgressiveDetailHero gallery={gallery} pageDimension={pageOneDimension} client={thumbnailClient} backend={backend} />
+                <button type="button" className="detail-hero-trigger" title={`${heroPage}페이지 확대`}
+                  aria-label={`표지 ${heroPage}페이지 확대`} disabled={heroPage > totalPageCount}
+                  onClick={(event) => { previewOpener.current = event.currentTarget; setPreviewPage(heroPage); }}>
+                  <ProgressiveDetailHero gallery={gallery} pageDimension={pageOneDimension} client={thumbnailClient} backend={backend} />
+                </button>
                 {!metadataReady ? (
                   <div className="detail-preview-loading" role="status" aria-label="추가 페이지 미리보기 준비 중">
                     <span className="spinner" aria-hidden="true" />
@@ -1059,7 +1077,6 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                         const item = galleries.get(id);
                         return item ? [item] : [];
                       })
-                      .slice(0, 5)
                       .map((item) => { const title = splitGalleryTitle(item.title, item.subtitle); return (
                         <GalleryProcessingSurface
                           key={item.id}

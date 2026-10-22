@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "status": "implemented and built; root full native1574passed0failed58ignored including three popup tests; actual fresh authentication still unresolved",
+  "authority": "Root fully read and approved this minimal batch: original.rs account-window nonce captures and always-Deny fixed event; original_policy.rs tiny diagnostic helper/tests only; diagnostics.rs tests only. No separate first-denial slot, budget reset or permission widening. Root owns serialized Cargo/build and later actual authentication. No account inspection, authentication input, UI, network or process control by this agent.",
+  "originalRequests": [
+    {
+      "source": "01a13adc-a040-70f0-97d9-380c5b6ba368",
+      "scope": "Resolve Google post-authentication automatic transition and verify actual operation."
+    },
+    {
+      "source": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec",
+      "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."
+    },
+    {
+      "source": "call_93ce2337ac2e4b63b93700eaf5543f13",
+      "scope": "User opened DevTools and requested no additional questions until morning. No automated authentication/security input is inferred."
+    }
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Rehashed unchanged fully read main230/284 EOF and other333/375 EOF snapshots for this proposal. Reuse the root-maintained active50/archive3 EOF and69 original-specification inventory in the resume evidence, with the already reread RELEASING delta. Read AGENTS, the entire current implementation-policy, all three account contracts below, direct latest request/completion evidence, and the exact account-window/policy/SafeFields code before drafting. No claim that a keyword search replaces the completed audit.",
+    "directEvidence": [
+      ".runtime/requirements-audit/20261014-account-completion-request.json",
+      ".runtime/requirements-audit/20261015-platform-verification-resume.json: original request and authentication observations"
+    ],
+    "contractsReadInFull": [
+      "docs/requirements/youtube-auth-transition-20261015.json",
+      "docs/requirements/youtube-account-observer-bounds-20261015.json",
+      "docs/requirements/youtube-regional-handoff-diagnostics-20261015.json"
+    ],
+    "unavailable": [
+      "Durable original01a03f16-5c02-74a3-b49c-2c3a20ccdaae",
+      "Unidentified analysis1/2",
+      "Previously indexed inaccessible historical attachment pixels"
+    ]
+  },
+  "evidenceAndLimitations": [
+    "Current original.rs account_window installs on_new_window with unconditional NewWindowResponse::Deny and no diagnostic. A denied popup does not necessarily pass through the existing on_navigation/page-load callbacks, so this path can be invisible to current fixed-stage evidence.",
+    "This is a deterministic diagnostic blind spot, not evidence that a popup caused the observed fresh-authentication stall. The actual earlier denied destination remains unavailable after the challenge expired. Retained-session normal close and manual-F5 completion are not fresh-authentication automatic-transition proof.",
+    "AccountFlow has a deliberate64-event lifetime budget for one nonce. Only begin(new nonce) resets it; navigation and same-window intent changes do not. Exhaustion is intentional, not a defect to bypass.",
+    "SafeFields already retains bounded lowercase diag_stage, fixed account_step categories and boolean allowed. The proposed event requires no new production field, raw endpoint or diagnostic permission."
+  ],
+  "proposedImplementation": [
+    "Capture the host and newly created account-window nonce in the existing on_new_window closure. Use the same current-nonce AccountFlow gate and shared64-event lifetime budget as navigation/page-load/observer diagnostics. Do not obtain a new nonce from a replacement window inside this callback.",
+    "For an admitted diagnostic only, emit the fixed diag_stage youtube_account_popup_denied, account_step from the existing account_stage(destination) classifier, and allowed=false. The destination is classified in memory only. Never retain or emit the URL, host, path, query, fragment, window features, window label, nonce, identity, callback error, cookie, token or credential.",
+    "Keep the current-nonce/budget check and event emission serialized by the same AccountFlow lock, matching on_navigation's existing pattern. No navigation, epoch advance, observer start, account-state refresh, callback evaluation or window operation is performed by this diagnostic.",
+    "The callback always returns NewWindowResponse::Deny, including stale nonce, invalidated window, exhausted budget and unrecognized destination. account_url, popup_url, account_home, account_completed and navigation admission remain byte-for-byte unchanged.",
+    "If needed for deterministic regression, add only a tiny YouTube-local diagnostic helper that combines the existing AccountFlow::diagnostic gate with the existing fixed account_stage classification. Its result conveys a diagnostic category, never permission. No new cross-provider or generic authentication abstraction."
+  ],
+  "firstDenialDecision": {
+    "considered": "A reserved first-denial slot could fit within64 by reducing ordinary-event capacity to63, but it would change the established budget allocation and would require integrating both navigation and popup denials. A separately emitted65th event or a reset on intent/navigation is not acceptable.",
+    "chosen": "Do not add a separate slot in this minimal batch. Existing trace events are appended, not a last-event field that later callbacks overwrite. Repeated callbacks consume the existing finite budget; they do not replace an already emitted first denial. A future reserved-slot proposal would need separate approval and tests proving total events remain at most64. This proposal makes no guarantee against global diagnostic-file rotation.",
+    "verificationCondition": "For a later user-operated fresh authentication investigation, use a newly created account window/nonce with its normal fresh64-event budget. Do not automatically close, reopen or restart the user's existing challenge merely to replenish diagnostic capacity."
+  },
+  "filesIfApproved": [
+    "src-tauri/src/youtube/original.rs: account_window nonce captures and on_new_window diagnostic only",
+    "src-tauri/src/youtube/original_policy.rs: optional diagnostic-only helper and deterministic nonce/budget tests; no admission/classification changes",
+    "src-tauri/src/diagnostics.rs: tests only proving the actual SafeFields projection"
+  ],
+  "deterministicAcceptance": [
+    "An actual tracing event sent through SafeFields yields exactly {diag_stage:youtube_account_popup_denied, account_step:<existing fixed category>, allowed:false}. Test at least google-account, google-regional-transfer, other and non-https categories; do not merely test string predicates.",
+    "Sentinel raw URL/query/host/path/window-feature/nonce/identity/cookie fields in the test event are absent from the captured projection. Arbitrary account_step strings are dropped. No SafeFields production allowlist widening is needed.",
+    "Current nonce can emit the diagnostic; a replaced or destroyed nonce cannot emit or consume the new flow's budget. Destroy-then-begin and delayed-old-popup cases are exercised through the same diagnostic helper used by the closure if one is introduced.",
+    "Mixed page/navigation/observer/popup events together remain at most64 for one nonce. navigate() and intent() do not replenish the budget. Only explicit begin(new nonce) supplies the ordinary new-flow budget. Exhausted/stale callbacks still return Deny.",
+    "Existing account navigation positive/negative policy tables, exact-home completion, nonce/epoch observer and logout/login cleanup tests remain unchanged and pass. No challenge, consent, profile, account data, player, scheduler, SOOP or CHZZK behavior changes.",
+    "Root runs serialized focused native tests/build after implementation approval. The document and source reasoning alone are not reported as passing test evidence."
+  ],
+  "implementationCheckpoint": {
+    "files": [
+      "src-tauri/src/youtube/original.rs: two captured nonce/host clones and fixed event in always-Deny account on_new_window callback",
+      "src-tauri/src/youtube/original_policy.rs: four-line diagnostic-only helper and two deterministic tests",
+      "src-tauri/src/diagnostics.rs: one SafeFields projection regression; production filtering unchanged"
+    ],
+    "nativeTestFilter": "account_popup",
+    "tests": [
+      "account_popup_diagnostics_reject_stale_nonce_without_affecting_replacement",
+      "account_popup_diagnostics_share_lifetime_budget_without_intent_or_navigation_reset",
+      "account_popup_diagnostics_retain_fixed_denial_only"
+    ],
+    "checksPerformed": "Original snapshot hashes rechecked and matched. Existing untracked/modified concurrent work preserved through exact-context patches; no whole-file formatter. Contract JSON parses and git diff --check for the tracked diagnostics file exits0. Source inspection confirms unconditional Deny and unchanged admission/home/observer/SafeFields production logic. Native tests have not been executed by this agent; root owns that gate.",
+    "pending": "Root full native session97654 passed1574failed0ignored58; latest main build77173 exited0. Exact workspace debug executable SHA256E8B76F5727C6645C0F7D9965E03F1C27D60D98E028763BE882D076EDED780773 launched normally and actual main window287706924 opened. Later user-operated fresh authentication remains required. No claim that the actual stalled flow used a popup or is fixed."
+  },
+  "actualAcceptanceAndReporting": [
+    "A later genuine user-operated challenge may reveal a popup-denied fixed category. Its presence proves that path occurred, not that allowing it is safe or that it caused the whole stall; absence is inconclusive if the64-event budget was exhausted.",
+    "A fresh-authentication fix still requires independently evidenced destination/admission reasoning and actual progression to verified official home plus normal window destruction without F5. This diagnostic-only batch cannot satisfy that acceptance by itself.",
+    "Keep fresh Google authentication unresolved in the handoff. No raw expired authentication traffic reconstruction or speculative allowlist widening is authorized."
+  ]
+}

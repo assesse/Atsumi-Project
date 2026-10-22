@@ -349,7 +349,7 @@ fn community_encrypted_identity_survives_factory_reset_and_detects_corruption() 
     let temp = tempfile::tempdir().unwrap();
     let data_dir = temp.path().join("roaming");
     std::fs::create_dir_all(&data_dir).unwrap();
-    std::fs::write(data_dir.join("factory-reset.pending"), b"reset").unwrap();
+    std::fs::write(data_dir.join("factory-reset.pending"), b"v1\n").unwrap();
     std::fs::write(data_dir.join("atsumi-next.sqlite3"), b"synthetic DB").unwrap();
     let path = temp
         .path()

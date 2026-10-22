@@ -27,6 +27,9 @@ function ActiveWorkStatus({ snapshot }: { snapshot: AppActiveWorkSnapshot }) {
         {(snapshot.recordings?.activeCount ?? 0) > 0
           ? <li>CHZZK 시청·녹화 {snapshot.recordings!.activeCount}개 — 종료하면 수신을 멈추고 저장한 구간을 보존합니다.</li>
           : null}
+        {(snapshot.liveReceivers?.activeCount ?? 0) > 0
+          ? <li>라이브 시청·채팅 {snapshot.liveReceivers!.activeCount}개</li>
+          : null}
         {snapshot.downloads.activeCount > 0
           ? <li>다운로드 {snapshot.downloads.activeCount}개</li>
           : null}

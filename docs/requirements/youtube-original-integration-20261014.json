@@ -1,0 +1,92 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-14",
+  "status": "native public feasibility passed; provider-only production integration in progress",
+  "original": "01a13a1f-f808-74a0-85c8-e90aa748a292, directly read from read_thread and .runtime/requirements-audit/20261014-native-integration-request.json: original YouTube player/chat plus actual login, viewing and recording, without affecting CHZZK",
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Previously fully read main230turn/284message and other333turn/375message EOF snapshots reused after matching hashes. Latest3turn delta directly read. Root refreshed accessible inventory/revisions and69specifications, with the known changed release document handled by Root. Current native-ui, platform-media and CHZZK-clone contracts are retained.",
+    "unavailable": ["durable01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unidentified analysis1/2", "historically unavailable image pixels"]
+  },
+  "rules": [
+    "01a0862c-6058-7442-a6fe-38d660288ee2: one incoming media receiver shared by watch and record, including YouTube; do not quietly pair an official iframe and a second yt-dlp stream.",
+    "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe: changing tabs preserves video/audio; no automatic PIP.",
+    "01a1399c-e7fb-7260-ac09-93bc94288f2f: retain cloned CHZZK shell and archived prior UI, isolate provider state/commands/profile.",
+    "Preserve in-app discovery, saved videos, download and verified local archive flows. No fake login or recording success."
+  ],
+  "findings": [
+    "Existing YouTubePlayer uses the official iframe for VOD. Live PlatformLivePlayer instead consumes local HLS from one managed receiver, with recording copying the same committed segments.",
+    "The IFrame API accepts YouTube IDs/player URLs, not an arbitrary local HLS source; switching live to an iframe while leaving the recorder running would violate the retained single-ingress rule.",
+    "Existing CHZZK encoded observer is explicitly top-level chzzk.naver.com/live/{channel}, supports clear AVC/AAC fragmented MP4 only and rejects encrypted media. It cannot be imported into YouTube as-is; public YouTube codec/worker/MSE feasibility must be measured first.",
+    "Google's installed-app OAuth requires the system browser and desktop client registration, and embedded user agents may be rejected. OAuth API authorization does not supply an authenticated official YouTube website session. No UA spoofing, cookie extraction/import or authentication bypass is proposed."
+  ],
+  "sources": [
+    "https://developers.google.com/identity/protocols/oauth2/native-app",
+    "https://support.google.com/accounts/answer/7675428",
+    "https://developers.google.com/youtube/iframe_api_reference",
+    "https://support.google.com/youtube/answer/2524549"
+  ],
+  "probeScope": [
+    "Only new disposable diagnostic example and offline observer tests; Root coordinates compile/run. No production player, account, backend or CHZZK edits in this batch.",
+    "Independent temporary WebView2 profile; canonical validated11-character public video ID; top-level official watch and live_chat popout panes; default real browser identity.",
+    "Observe MIME declarations, accepted append counts/byte totals, bounded non-sensitive video progress/control/chat geometry. Never copy media bytes, chat text, page content, network URLs, cookies, identifiers or credentials into diagnostic output.",
+    "Passive account-entry availability only. Do not open auth, submit anything, import cookies, record media or touch Atsumi/user data. Hard70second deadline."
+  ],
+  "implementationBatch": {
+    "approval": "Root2026-10-14: original public probe passed and no Atsumi process; implement provider-only native host and frontend. Root owns shared commands/geometry; encoded writer owned by separate agent.",
+    "evidence": ".runtime/requirements-audit/20261014-youtube-original-public-probe.json: cswFQYam8Ic, default UA, isolated profile, non-ad video advanced to46837.217s and1420decodedframes; AVC video and AAC audio MP4, original controls and360x900chat displayed. This is anonymous playback evidence, not account or recording success.",
+    "design": [
+      "Independent YouTube native watch and chat children use provider-specific profile, labels, tokens, epochs and message prefix. Reuse only pure clipping/focus helpers and immutable muxing algorithm; never CHZZK mutable host/account/capture state.",
+      "Keep original YouTube controls/chat DOM and dialogs. Position player/chat roots into existing cloned shell geometry without starting another player. Preserve native receiver when route or grid presentation changes.",
+      "Archive clear already-appended AVC/AAC fMP4 through bounded observer and provider-neutral encoded writer. No second media receiver, fallback re-encode or codec coercion. Unsupported/encrypted media remains visible but cannot falsely claim recording readiness.",
+      "Google login uses separate YouTube-owned profile window, default browser identity and no script/secret collection. Confirm account only from official page account state; unsupported embedded sign-in remains explicit, never forged.",
+      "VOD discovery, detail, favorites, downloads and official iframe remain unchanged. Switch current live subtree only. Commands need trusted-main validation. Root must verify actual login/watch/record and cross-provider noninterference."
+    ],
+    "ownedFiles": ["src-tauri/src/youtube/original*", "src/api/youtubeOriginal.ts", "src/features/youtube/YouTubeOriginalPlayer*", "src/features/youtube/YouTubeWorkspace.tsx", "src/features/youtube/YouTubeViewingControls.tsx", "provider-only tests", "this contract"],
+    "acceptance": ["Default-UA original playback and chat; explicit account status and manual user authentication", "One official video receiver serves viewing and original compressed recording", "No foreign-provider token/profile/commands/DOM callbacks", "Inactive and all/selected changes preserve live receiver and audio; privacy/tray mute while ordinary minimize preserves audio", "Native clipping leaves drawers/splitters usable; popup closable/fullscreen restores geometry", "Generation/UUID/bounded admission, record acknowledgement and storage checks; only verified files count as complete", "Unit and native tests plus Root actual login/watch/record. Do not assert completion from source/build alone"]
+  },
+  "acceptance": [
+    "Observer wrappers preserve native return values, receiver and exceptions, count only successful calls and do not retain incoming buffers.",
+    "Unapproved origins and child frames do not install. MIME output is bounded and schema-restricted; no raw URLs/content in snapshot.",
+    "Disposable native run proves currentTime advances and reports original player/control/chat availability; metadata/DOM alone is not playback success.",
+    "Record technical limitations explicitly before proposing provider-only host/record integration; anonymous playback does not prove authenticated account/chat acceptance."
+  ],
+  "diagnosticBatch": {
+    "beforeEdit": "2026-10-14 Root actual QA: skip padding fixed captureReady, but no recording ACK within20s. Before further parser changes, persist a bounded safe start-failure code and only explicitly allowlisted static native error text. Inspect init FourCC/size tree only (depth8,total96nodes,64KiB); never output init/sample payload, page/account values or URLs. Also resynchronize native fullscreen bool during configure after page reload. Follow-up exact failure is AAC-LC validation despite MIME40.2; inspect only bounded esds descriptor tags/lengths and ASC objectType/frequencyIndex/channelConfig before any codec admission change.",
+    "acceptance": ["Failure survives normal status ticks and clears on explicit new start", "Unknown error text is not exposed in diagnostics", "Init tree is bounded, read-only, excludes raw payload. Root explicitly approved max32-byte ASC codec-configuration hex only, no audio/media/account data, to classify legitimate AAC extensions in one run.", "Original MSE inputs remain unchanged; no CHZZK/shared parser changes", "Root reruns actual recording and saved-file verification"]
+  },
+  "accountRevisionBatch": {
+    "beforeEdit": "Root requested correction after source audit confirmed old anonymous recording document status overwrites a newly verified account-window login every1.5s. Preserve recording receiver, but version confirmed account observations and bind each watch document to the account revision at its page-load epoch. Old receiver observations must not override a newer explicit account confirmation; actual reload at the latest revision may report logout/expiry again. Account-window navigation epoch also rejects stale async bool callbacks.",
+    "acceptance": ["Old anonymous document cannot undo newer verified login", "Recording does not reload on account changes", "Newly loaded current-generation document can report signed-out accurately", "No permanent authenticated latch, cookie reads or auth bypass", "Pure revision tests plus Root manual account verification"]
+  },
+  "fragmentDiagnosticBatch": {
+    "beforeEdit": "Root actual QA after the verified AAC zero-padding fix admitted recording, but job1171 failed with receivedBytes0 and no committed media segments. Existing diagnostics were captured before failure and append error detail was discarded. Root approved only static fragment parser error allowlist expansion and lastTransportFault persistence; no MP4 admission broadening, sample/URL/account output or unrelated changes. Parent adds finalFacts inspection and owns Cargo/actual run.",
+    "acceptance": ["Native fixed rejection survives append failure and finalization", "Unrecognized raw error text is absent from diagnostics", "No payload/URL/credentials retained", "Observer forwarding and immutable parser behavior unchanged"]
+  },
+  "fragmentShapeDiagnosticBatch": {
+    "beforeEdit": "Root actual QA now reaches encoded begin, but the first completed fragment is rejected with the fixed message 절대 offset 또는 지원하지 않는 tfhd입니다. This combines nonzero version, unsupported flags and multi-traf base rules; it does not prove absolute offsets. Root approved provider-only numeric diagnostics before any admission change. Reused the directly read native-integration request and account-completion audit delta with unchanged snapshot hashes/coverage.",
+    "limits": ["Observe only complete moof boxes up to64KiB, maximum64 nodes, two trafs and four fragment summaries per append. Never inspect mdat or variable sample arrays.", "Retain only moofBytes/trafCount, tfhd version/flags/trackId/optional descriptionIndex/baseOffsetPresent/defaultBase and trun version/flags/sampleCount/optional signed dataOffset. Invalid or oversized structure yields a fixed dropped reason.", "Drop temporary moof bytes after numeric extraction. Freeze the bounded summary at each queued append so later incoming fragments cannot overwrite the failure evidence. No raw media, chat, URLs, identifiers or account values in diagnostics.", "Original SourceBuffer arguments, forwarded bytes and shared native parser acceptance remain unchanged."],
+    "acceptance": ["Split moof headers/payloads and mdat-only continuations retain the correct summary", "Multiple adjacent fragments and delayed ACK do not replace earlier append facts", "Malformed/oversized/node-count/traf-count bounds produce fixed reasons without changing playback or forwarding", "No raw bytes in returned diagnostics; Root owns actual QA and saved-file verification"]
+  },
+  "recordStartDiagnosticBatch": {
+    "beforeEdit": "Root postTfhdActual QA623db01c: original watch advanced21.5s with chat, no transport rejection, but no committed segments and mux finish reports 완전한 영상·음성 시작 구간을 받지 못했습니다. Root approved bounded numeric evidence, not further parser changes. Re-read original native-integration request and existing account-completion delta; fully read main/other snapshot hashes remain unchanged and Root retains current inventory coverage.",
+    "reason": "Immutable mux waits for a video RAP (non-sync bit clear and depends_on=2) plus an audio DTS at or after that RAP and no more than100ms later. Existing moof diagnostics appear only when a native append fails, so successful appends currently leave no timing evidence.",
+    "fields": ["Bounded init mdhd timescale/handler and trex default duration/size/flags by numeric track ID", "tfdt version/base decode time; tfhd default duration/size/flags; trun first-sample flags and first sample duration/size/flags/CTS only, never iterate sample arrays", "Per recording track complete moof/mdat counters, successfully acknowledged append counters and first/last complete fragment summaries only. Counters saturate; reset on explicit start and preserve after stop."],
+    "limits": ["Existing64KiB moof/init and64-node/two-traf bounds; exact offset/version bounds and safe-integer decode time", "No media/NAL content, account/chat/URL data or variable sample-array logs", "Unknown/malformed structure uses fixed dropped reason; diagnostics must not alter source input, forwarding, timing, recording admission or immutable CHZZK parser"],
+    "acceptance": ["Successful capture retains bounded summaries after stop and resets for a new recording", "Split moof/mdat counters count completed forwarded fragments only", "Flags precedence and version0/1 tfdt/CTS are represented without reading sample payload", "Malformed/truncated/oversized scalars fail diagnostically, not operationally", "Root owns native execution and actual file validation"]
+  },
+  "accountCompletionBatch": {
+    "originals": ["01a13a72-e762-79f0-93ae-ce146fd3c13c: 다음에 변경하기 눌렀는데 안닫히니까 그러지. 로그인 세션 넘어간거 확인됐으면 다른창은 안보이게 너가 닫아줘.", "01a13a73-72e7-7a60-a097-abedc3cab10a: 앞으로도 이런게 뜨면 너가 브라우저 정상 종료까지 되게 이 프로그램을 만들어줘야해. 뭐가 원인인지는 잡았어?"],
+    "audit": "Directly read .runtime/requirements-audit/20261014-account-completion-request.json in full: refreshed50threads+archived3EOF/latest3pages overlap unchanged main/other SHA256 snapshots, all69specification hashes accounted for. Unavailable sources remain unchanged.",
+    "beforeEdit": "Only current YouTube account window closes normally after its actual official home document freshly reports LOGGED_IN=true, document complete and no visible dialog/editable focus. Cached host authentication never authorizes closure. Bound current navigation epoch, destroyed lifetime and original window handle; mandatory Google/consent/security pages, active inputs, unknown states and logout flow remain open. No forced refresh or unobserved navigation allowlist widening.",
+    "acceptance": ["Fresh verified home may close only its own login window", "Visible auth dialog/active editable/unknown state/logged-out page stays open", "Old callbacks cannot close a replacement window", "Session/profile preserved; CHZZK/SOOP unaffected", "Unit/policy tests separate from Root actual post-auth close validation"]
+  },
+  "verification": {
+    "unit": "2026-10-14 21:06 KST:96 tests pass across9 non-layout YouTube files; a further unsupported-recording-tooltip test passed separately. Includes existing workspace/VOD/favorites flows, native-only lease/layout retention, privacy/tray, record token, screenshot/undo, fullscreen background/IME, actual chat document, public descriptor, original control opacity, bounded observer and skip-padding fixtures. Node-only utilities do not widen production Node globals.",
+    "native": "Root default-UA feasibility and production host QA confirmed advancing original playback/readyState4/original chat. Production recorder initially rejected top-level skip boxes: audio init632 then skip333; video init703 then skip294. YouTube-only adapter now drops this explicit padding only outside moof→mdat boundaries, preserving original SourceBuffer inputs, offsets, and bounded parsing. Unknown boxes and in-fragment skip remain rejected. Next actual begin rejection was AAC-LC validation: exact ASC16bytes12100000000000000000000000000000, AOT2/frequencyIndex4/channelConfig2, esds53/decoder31/es39/esFlags0/objectType64/streamType5. Only ASC length>8 rejects this zero-padded legal LC configuration. Writer owner now implements an independent YouTube-only bounded normalizer for the observed16byte shape, preserving original playback/init and recalculating enclosing descriptor/box lengths before unchanged strict parser admission. Nonzero tails, alternate lengths, SBR/PS and invalid structure stay rejected; no CHZZK/shared parser modification. Actual saved-file revalidation remains Root-owned and pending.",
+    "account": "2026-10-14 Root/user actual test: user approved phone challenge in provider-isolated default-UA account window. Progress indicator continued without automatic redirect; user manually pressed F5, then original YouTube home was authenticated and Root observed Atsumi account label 로그인됨. Basic authentication succeeded, but post-challenge automatic transition remains unverified/needs diagnosis. No security-screen screenshot, cookie import, credential read, security bypass, forced refresh or automatic logout was performed. New account-revision fence prevents old recording-document login state from overwriting this newer verified account observation; Root rebuild verification remains pending.",
+    "lifecycle": "No-viewer hidden capture is muted; inactive view preserves audio; tray/privacy explicitly mute. Shutdown stop/drain5s then interrupted fallback. Begin-without-first-append25s and stop-without-finish15s watchdogs prevent ACK-loss orphan archives. Old-generation finalization cannot clear a new archive. Token-local monotonic viewport sequence fences stale visible/unmuted updates. Native end is normal only after exact official video identity/isLiveNow=false/valid endTimestamp confirmation; uncertain ends remain interrupted.",
+    "sourceFreeze": "Provider-only production host integrated; Root owns compile, native execution and final acceptance. Parser diagnosis remains active. No account input or desktop operation performed by this subagent."
+  }
+}

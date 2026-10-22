@@ -4,6 +4,7 @@ mod galleryinfo;
 mod model;
 mod nozomi;
 mod routing;
+mod replacement;
 mod tag_catalog;
 
 /// Increment when a parser change alters the typed meaning of saved source fixtures.
@@ -21,6 +22,7 @@ pub(crate) use gallery_index::{
     GALLERIES_INDEX_NODE_BYTES,
 };
 pub use galleryinfo::parse_galleryinfo_script;
+pub use replacement::{verify_gallery_replacement, GalleryReplacementProof};
 pub use model::{
     HitomiGalleryDetail, HitomiGalleryMetadata, HitomiGallerySummary, HitomiPageFile, HitomiTag,
     HitomiTagKind, SourceRevision, HITOMI_CONTENT_DOMAIN, HITOMI_ORIGIN,

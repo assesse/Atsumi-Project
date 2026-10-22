@@ -4724,7 +4724,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           closeActivity();
           void hydrateDownloadOverlapReview(reviewId);
         }}
-        open={shell.activityOpen && shell.source !== "chzzk"}
+        open={shell.activityOpen && (shell.source === "hitomi" || shell.source === "danbooru")}
         galleries={allGalleries}
         sessionDownloads={sessionDownloadActivities}
         automaticOverlapActivities={automaticOverlapActivities}
@@ -4740,6 +4740,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
         onClose={closeActivity}
         onReview={openReview}
+        onOpenLinkedGallery={(id) => { closeActivity(); openDetail(galleryId(id)); }}
         onReviewOverlap={openAutomaticOverlapReview}
         onAcknowledgeAutomationHistory={(reviewId) => void acknowledgeDownloadOverlapAutomationHistory(reviewId)}
         onRestoreAutomationExclusions={(reviewId, galleryIds) => void restoreDownloadOverlapAutomationExclusions(reviewId, galleryIds)}

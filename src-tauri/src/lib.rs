@@ -1,5 +1,6 @@
 pub mod application;
 mod autostart;
+mod browser_identity;
 mod community;
 mod diagnostics;
 pub mod domain;
@@ -10,8 +11,22 @@ pub mod interface;
 mod local_control;
 mod native_focus;
 mod personal_library;
+pub mod pinterest;
+pub mod pixiv;
+pub mod platform_media;
+mod platform_media_ipc;
+pub(crate) mod platform_native_geometry;
+pub(crate) mod platform_native_capture;
+pub(crate) mod platform_native_player_intent;
+pub(crate) mod platform_window_fullscreen;
+mod platform_window_fullscreen_commands;
 #[path = "portable_update.rs"]
 mod portable;
+pub mod soop;
+pub mod pinterest_browser;
+pub mod pinterest_session;
+pub mod x_feed;
+pub mod youtube;
 pub use portable::run_helper as run_portable_update_helper;
 mod renderer_recovery;
 pub mod source;
@@ -104,28 +119,295 @@ mod download_request_config_tests {
 }
 
 fn apply_pending_factory_reset(data_dir: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Read;
     let marker = data_dir.join("factory-reset.pending");
-    if !marker.exists() {
-        return Ok(());
+    match std::fs::symlink_metadata(&marker) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+        Ok(_) => {}
+    }
+    if !data_dir.is_absolute() {
+        return Err(std::io::Error::other("factory reset requires an absolute app-data directory"));
+    }
+    for ancestor in data_dir.ancestors() {
+        if !factory_reset_plain_metadata(ancestor)?.is_dir() {
+            return Err(std::io::Error::other("factory reset parent is not a directory"));
+        }
+    }
+    let root = data_dir.canonicalize()?;
+    let _root_guard = factory_reset_pin_directory(&root)?;
+    let marker = root.join("factory-reset.pending");
+    let mut marker_file = factory_reset_open_regular(&marker)?;
+    if marker_file.metadata()?.len() != 3 {
+        return Err(std::io::Error::other("invalid factory reset marker"));
+    }
+    let mut content = [0u8; 3];
+    marker_file.read_exact(&mut content)?;
+    if &content != b"v1\n" {
+        return Err(std::io::Error::other("invalid factory reset marker"));
+    }
+    let entries = [
+        ("atsumi-next.sqlite3", false),
+        ("atsumi-next.sqlite3-wal", false),
+        ("atsumi-next.sqlite3-shm", false),
+        ("thumbnail-cache", true),
+        // This standalone opt-in config must not reactivate after settings reset.
+        ("soop-auto-record.json", false),
+        ("youtube-auto-record.json", false),
+    ];
+    // Validate every existing source before the first move. A later I/O failure
+    // keeps the marker and all completed backup moves; startup must abort.
+    for (name, directory) in entries {
+        factory_reset_validate_entry(&root.join(name), directory)?;
     }
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let backup = data_dir.join(format!("factory-reset-backup-{stamp}"));
-    std::fs::create_dir_all(&backup)?;
-    for suffix in ["", "-wal", "-shm"] {
-        let source = data_dir.join(format!("atsumi-next.sqlite3{suffix}"));
-        if source.exists() {
-            std::fs::rename(&source, backup.join(format!("atsumi-next.sqlite3{suffix}")))?;
+    let backup = root.join(format!("factory-reset-backup-{stamp}-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&backup)?;
+    let _backup_guard = factory_reset_pin_directory(&backup)?;
+    for (name, directory) in entries {
+        let source = root.join(name);
+        let target = backup.join(name);
+        if source.parent() != Some(root.as_path()) || target.parent() != Some(backup.as_path()) {
+            return Err(std::io::Error::other("factory reset path escaped its owned directory"));
+        }
+        if factory_reset_validate_entry(&source, directory)? {
+            factory_reset_move_no_replace(&source, &target)?;
         }
     }
-    let thumbnail_cache = data_dir.join("thumbnail-cache");
-    if thumbnail_cache.exists() {
-        std::fs::rename(&thumbnail_cache, backup.join("thumbnail-cache"))?;
-    }
+    drop(marker_file);
     std::fs::remove_file(marker)?;
     Ok(())
+}
+
+fn factory_reset_plain_metadata(path: &std::path::Path) -> std::io::Result<std::fs::Metadata> {
+    let metadata = std::fs::symlink_metadata(path)?;
+    let mut redirected = metadata.file_type().is_symlink();
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        redirected |= metadata.file_attributes() & 0x400 != 0;
+    }
+    if redirected {
+        return Err(std::io::Error::other("factory reset refuses redirected paths"));
+    }
+    Ok(metadata)
+}
+
+fn factory_reset_pin_directory(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    if !factory_reset_plain_metadata(path)?.is_dir() {
+        return Err(std::io::Error::other("factory reset path is not a directory"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Hold the immediate move boundaries without permitting rename/delete.
+        options.share_mode(3).custom_flags(0x0220_0000);
+    }
+    options.open(path)
+}
+
+fn factory_reset_open_regular(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    if !factory_reset_plain_metadata(path)?.is_file() {
+        return Err(std::io::Error::other("factory reset source is not a regular file"));
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.share_mode(1).custom_flags(0x0020_0000);
+    }
+    let file = options.open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::other("factory reset source changed"));
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::{fs::MetadataExt, io::AsRawHandle};
+        use windows::Win32::{Foundation::HANDLE, Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION}};
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+            .map_err(|error| std::io::Error::other(error.to_string()))?;
+        if metadata.file_attributes() & 0x400 != 0 || info.nNumberOfLinks != 1 {
+            return Err(std::io::Error::other("factory reset refuses linked files"));
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 {
+            return Err(std::io::Error::other("factory reset refuses linked files"));
+        }
+    }
+    Ok(file)
+}
+
+fn factory_reset_validate_entry(path: &std::path::Path, directory: bool) -> std::io::Result<bool> {
+    match factory_reset_plain_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
+        Ok(metadata) if directory && metadata.is_dir() => Ok(true),
+        Ok(_) if !directory => factory_reset_open_regular(path).map(|_| true),
+        Ok(_) => Err(std::io::Error::other("factory reset cache is not a directory")),
+    }
+}
+
+fn factory_reset_move_no_replace(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::{core::PCWSTR, Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH}};
+        let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+        let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe { MoveFileExW(PCWSTR(source.as_ptr()), PCWSTR(target.as_ptr()), MOVEFILE_WRITE_THROUGH) }
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+    #[cfg(not(windows))]
+    {
+        // App is Windows-only; retain fail-closed behavior for fixture builds.
+        if std::fs::symlink_metadata(target).is_ok() {
+            return Err(std::io::Error::new(std::io::ErrorKind::AlreadyExists, "reset backup target exists"));
+        }
+        std::fs::rename(source, target)
+    }
+}
+
+#[cfg(test)]
+mod factory_reset_tests {
+    use super::*;
+
+    fn pending(root: &std::path::Path) {
+        std::fs::write(root.join("factory-reset.pending"), b"v1\n").unwrap();
+    }
+
+    fn backups(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        std::fs::read_dir(root).unwrap().map(|entry| entry.unwrap().path())
+            .filter(|path| path.file_name().unwrap().to_string_lossy().starts_with("factory-reset-backup-"))
+            .collect()
+    }
+
+    #[test]
+    fn missing_marker_is_a_noop_even_before_app_data_exists() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("not-created");
+        apply_pending_factory_reset(&missing).unwrap();
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn reset_backs_up_app_state_and_provider_reservations_without_touching_media() {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["atsumi-next.sqlite3", "atsumi-next.sqlite3-wal", "atsumi-next.sqlite3-shm", "soop-auto-record.json", "youtube-auto-record.json"] {
+            std::fs::write(root.path().join(name), name.as_bytes()).unwrap();
+        }
+        let cache = root.path().join("thumbnail-cache");
+        std::fs::create_dir(&cache).unwrap();
+        std::fs::write(cache.join("thumbnail"), b"cache").unwrap();
+        let media = root.path().join("media");
+        std::fs::create_dir(&media).unwrap();
+        std::fs::write(media.join("final.mp4"), b"final").unwrap();
+        std::fs::write(media.join("chat.jsonl"), b"chat").unwrap();
+        std::fs::write(root.path().join("platform-journal.json"), b"recovery").unwrap();
+        pending(root.path());
+        apply_pending_factory_reset(root.path()).unwrap();
+        let backups = backups(root.path());
+        assert_eq!(backups.len(), 1);
+        for name in ["atsumi-next.sqlite3", "atsumi-next.sqlite3-wal", "atsumi-next.sqlite3-shm", "soop-auto-record.json", "youtube-auto-record.json"] {
+            assert!(!root.path().join(name).exists());
+            assert_eq!(std::fs::read(backups[0].join(name)).unwrap(), name.as_bytes());
+        }
+        assert_eq!(std::fs::read(backups[0].join("thumbnail-cache/thumbnail")).unwrap(), b"cache");
+        assert_eq!(std::fs::read(media.join("final.mp4")).unwrap(), b"final");
+        assert_eq!(std::fs::read(media.join("chat.jsonl")).unwrap(), b"chat");
+        assert_eq!(std::fs::read(root.path().join("platform-journal.json")).unwrap(), b"recovery");
+        assert!(!root.path().join("factory-reset.pending").exists());
+    }
+
+    #[test]
+    fn invalid_markers_leave_every_source_untouched() {
+        for bytes in [b"".as_slice(), b"v2\n", b"v1\nextra", b"v1 "] {
+            let root = tempfile::tempdir().unwrap();
+            let marker = root.path().join("factory-reset.pending");
+            std::fs::write(&marker, bytes).unwrap();
+            std::fs::write(root.path().join("atsumi-next.sqlite3"), b"database").unwrap();
+            assert!(apply_pending_factory_reset(root.path()).is_err());
+            assert_eq!(std::fs::read(&marker).unwrap(), bytes);
+            assert_eq!(std::fs::read(root.path().join("atsumi-next.sqlite3")).unwrap(), b"database");
+            assert!(backups(root.path()).is_empty());
+        }
+    }
+
+    #[test]
+    fn linked_marker_or_config_is_rejected_before_any_move() {
+        for linked_name in ["factory-reset.pending", "soop-auto-record.json", "youtube-auto-record.json"] {
+            let root = tempfile::tempdir().unwrap();
+            let outside = tempfile::tempdir().unwrap();
+            let linked = outside.path().join("keep");
+            std::fs::write(&linked, b"v1\n").unwrap();
+            if linked_name != "factory-reset.pending" { pending(root.path()); }
+            std::fs::hard_link(&linked, root.path().join(linked_name)).unwrap();
+            std::fs::write(root.path().join("atsumi-next.sqlite3"), b"database").unwrap();
+            assert!(apply_pending_factory_reset(root.path()).is_err());
+            assert_eq!(std::fs::read(&linked).unwrap(), b"v1\n");
+            assert_eq!(std::fs::read(root.path().join("atsumi-next.sqlite3")).unwrap(), b"database");
+            assert!(root.path().join("factory-reset.pending").exists());
+            assert!(backups(root.path()).is_empty());
+        }
+    }
+
+    #[test]
+    fn unexpected_source_type_is_rejected_before_database_move() {
+        let root = tempfile::tempdir().unwrap();
+        pending(root.path());
+        std::fs::write(root.path().join("atsumi-next.sqlite3"), b"database").unwrap();
+        std::fs::write(root.path().join("thumbnail-cache"), b"not a directory").unwrap();
+        assert!(apply_pending_factory_reset(root.path()).is_err());
+        assert_eq!(std::fs::read(root.path().join("atsumi-next.sqlite3")).unwrap(), b"database");
+        assert!(root.path().join("factory-reset.pending").exists());
+        assert!(backups(root.path()).is_empty());
+    }
+
+    #[test]
+    fn reset_move_does_not_replace_an_existing_backup_file() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("target");
+        std::fs::write(&source, b"source").unwrap();
+        std::fs::write(&target, b"target").unwrap();
+        assert!(factory_reset_move_no_replace(&source, &target).is_err());
+        assert_eq!(std::fs::read(source).unwrap(), b"source");
+        assert_eq!(std::fs::read(target).unwrap(), b"target");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn move_failure_keeps_marker_and_all_partial_backups_for_safe_retry() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let root = tempfile::tempdir().unwrap();
+        pending(root.path());
+        std::fs::write(root.path().join("atsumi-next.sqlite3"), b"database").unwrap();
+        let config = root.path().join("soop-auto-record.json");
+        std::fs::write(&config, b"reservation").unwrap();
+        let lock = std::fs::OpenOptions::new().read(true).share_mode(1).open(&config).unwrap();
+        assert!(apply_pending_factory_reset(root.path()).is_err());
+        assert!(root.path().join("factory-reset.pending").exists());
+        let previous = backups(root.path());
+        assert_eq!(previous.len(), 1);
+        assert_eq!(std::fs::read(previous[0].join("atsumi-next.sqlite3")).unwrap(), b"database");
+        assert_eq!(std::fs::read(&config).unwrap(), b"reservation");
+        drop(lock);
+        apply_pending_factory_reset(root.path()).unwrap();
+        assert!(!root.path().join("factory-reset.pending").exists());
+        assert!(!config.exists());
+        assert_eq!(std::fs::read(previous[0].join("atsumi-next.sqlite3")).unwrap(), b"database");
+        assert_eq!(backups(root.path()).len(), 2);
+    }
 }
 
 const TRAY_WORK_STATUS_ID: &str = "tray-work-status";
@@ -411,6 +693,14 @@ fn restore_main_window(app: &tauri::AppHandle, action: &str) -> Option<tauri::Wi
     };
     if let Err(error) = window.show() {
         tracing::warn!(error = %error, "could not show Atsumi from the tray");
+    } else {
+        let _ = window.emit("platform-media:tray-muted", false);
+        if let Some(host) = app.try_state::<soop::original::SoopOriginalHost>() {
+            host.set_tray_muted(app, false);
+        }
+        if let Some(host) = app.try_state::<youtube::original::YouTubeOriginalHost>() {
+            host.set_tray_muted(app, false);
+        }
     }
     if let Err(error) = window.unminimize() {
         tracing::warn!(error = %error, "could not unminimize Atsumi from the tray");
@@ -916,6 +1206,8 @@ fn initialize_backend(
         return Ok(());
     }
     startup::mark("workers_resumed");
+    app.state::<AppState>().soop_auto_recorder().start(app.clone());
+    app.state::<AppState>().youtube_auto_recorder().start(app.clone());
     app.state::<AppState>()
         .deferred_browser()
         .start(app.clone(), data_dir, media_tools);
@@ -960,15 +1252,62 @@ pub fn initialize_startup_metrics() {
 
 #[inline(never)]
 pub fn run() -> tauri::Result<()> {
+    run_with_context(tauri::generate_context!())
+}
+
+/// Uses the identical app/IPC composition with an isolated context for desktop QA.
+/// Ordinary launches always use the embedded production context through `run`.
+#[doc(hidden)]
+pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()> {
     startup::init_metrics();
     diagnostics::init();
     startup::mark("process_entry");
     infrastructure::telemetry::init();
 
     let result = tauri::Builder::default()
+        .manage(pinterest_browser::PinterestBrowser::default())
+        .manage(pinterest_session::PinterestSession::default())
+        .manage(x_feed::XSession::default())
+        .manage(pixiv::account::PixivAccount::default())
+        .manage(soop::original::SoopOriginalHost::default())
+        .manage(youtube::original::YouTubeOriginalHost::default())
         .manage(Arc::new(startup::Startup::default()))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .register_asynchronous_uri_scheme_protocol("x-archive", |context, request, responder| {
+            let app = context.app_handle().clone();
+            let label = context.webview_label().to_owned();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(x_feed::archive_ipc::respond_async(app, label, request).await);
+            });
+        })
+        .register_asynchronous_uri_scheme_protocol("x-video", |context, request, responder| {
+            let session=context.app_handle().state::<x_feed::XSession>().inner().clone();
+            let label=context.webview_label().to_owned();
+            let Ok(permit)=session.media_slots.clone().try_acquire_owned() else {
+                x_feed::video::note_slot_unavailable();
+                responder.respond(tauri::http::Response::builder().status(503).body(Vec::new()).expect("static response"));return;
+            };
+            tauri::async_runtime::spawn_blocking(move||{
+                let _permit=permit;
+                responder.respond(x_feed::video::respond(&session,request,&label));
+            });
+        })
+        .register_asynchronous_uri_scheme_protocol("platform-media", |context, request, responder| {
+            let Ok(permit)=platform_media::protocol::try_io_permit()else{
+                responder.respond(tauri::http::Response::builder().status(503).header("Retry-After","1").body(Vec::new()).expect("static response"));return;
+            };
+            let service = context.app_handle().try_state::<AppState>().and_then(|state| state.existing_platform_media());
+            let label = context.webview_label().to_owned();
+            tauri::async_runtime::spawn_blocking(move || {
+                let _permit=permit;
+                let response = match service {
+                    Some(service) => platform_media::protocol::respond(&service, &label, request),
+                    None => tauri::http::Response::builder().status(404).body(Vec::new()).expect("static response"),
+                };
+                responder.respond(response);
+            });
+        })
         .register_uri_scheme_protocol("atsumi-player", |context, request| {
             streaming::original_player::response(&request, context.webview_label(), context.app_handle().config().build.dev_url.as_ref())
         })
@@ -1116,6 +1455,15 @@ pub fn run() -> tauri::Result<()> {
                 ui_diagnostics::start_sampling(view);
             }
             if view.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
+                if let Some(host) = view.app_handle().try_state::<soop::original::SoopOriginalHost>() {
+                    host.detach_views(view.app_handle());
+                }
+                if let Some(host) = view.app_handle().try_state::<youtube::original::YouTubeOriginalHost>() {
+                    host.detach_views(view.app_handle());
+                }
+                if let Some(browser) = view.app_handle().try_state::<pinterest_browser::PinterestBrowser>() {
+                    browser.detach(view.app_handle());
+                }
                 if let Some(diagnostics) = view.app_handle().try_state::<Arc<ui_diagnostics::UiDiagnostics>>() { diagnostics.document_started(); }
                 if let Some(state) = view.app_handle().try_state::<AppState>() {
                     state.thumbnail_transport.reset_document();
@@ -1222,6 +1570,151 @@ pub fn run() -> tauri::Result<()> {
             Ok(())
         })
         .invoke_handler(startup::gate(tauri::generate_handler![
+            youtube::youtube_metadata,
+            youtube::search::youtube_search,
+            youtube::search::youtube_thumbnail,
+            youtube::youtube_open_external,
+            soop::soop_channel_inspect,
+            platform_media_ipc::soop_auto_record_snapshot,
+            youtube::auto_record::youtube_auto_record_snapshot,
+            youtube::auto_record::youtube_auto_record_set,
+            youtube::auto_record::youtube_auto_record_resolve,
+            soop::original_commands::soop_original_open,
+            soop::original_commands::soop_original_snapshot,
+            soop::original_commands::soop_original_viewport,
+            soop::original_commands::soop_original_close,
+            soop::original_commands::soop_original_record,
+            soop::original_commands::soop_original_login,
+            soop::original_commands::soop_original_logout,
+            soop::original_commands::soop_original_account,
+            soop::original_commands::soop_original_screenshot,
+            soop::original_commands::soop_original_screenshot_undo,
+            soop::original_commands::soop_original_fullscreen,
+            soop::original_commands::soop_original_controls,
+            soop::original_commands::soop_original_resume,
+            soop::original_commands::soop_vod_open,
+            soop::original_commands::soop_vod_snapshot,
+            soop::original_commands::soop_vod_viewport,
+            soop::original_commands::soop_vod_close,
+            soop::original_commands::soop_vod_fullscreen,
+            platform_window_fullscreen_commands::platform_window_fullscreen_acquire,
+            platform_window_fullscreen_commands::platform_window_fullscreen_release,
+            platform_window_fullscreen_commands::platform_window_fullscreen_current,
+            youtube::original_commands::youtube_original_open,
+            youtube::original_commands::youtube_original_snapshot,
+            youtube::original_commands::youtube_original_viewport,
+            youtube::original_commands::youtube_original_close,
+            youtube::original_commands::youtube_original_record,
+            youtube::original_commands::youtube_original_login,
+            youtube::original_commands::youtube_original_account,
+            youtube::original_commands::youtube_original_fullscreen,
+            youtube::original_commands::youtube_original_logout,
+            youtube::original_commands::youtube_original_screenshot,
+            youtube::original_commands::youtube_original_screenshot_undo,
+            youtube::original_commands::youtube_original_controls,
+            youtube::original_commands::youtube_original_resume,
+            platform_media_ipc::soop_auto_record_set,
+            pinterest_browser::pinterest_browser_open,
+            pinterest_browser::pinterest_browser_snapshot,
+            pinterest_browser::pinterest_browser_set_viewport,
+            pinterest_browser::pinterest_browser_select_current,
+            pinterest_browser::pinterest_browser_action,
+            pinterest_session::pinterest_account_status,
+            pinterest_session::pinterest_account_open,
+            x_feed::x_account_status,
+            x_feed::x_account_open,
+            x_feed::x_account_select,
+            x_feed::x_feed_load,
+            x_feed::x_feed_cancel,
+            x_feed::x_feed_suspend,
+            x_feed::x_image_get,
+            x_feed::x_post_open,
+            x_feed::video::x_video_open,
+            x_feed::action::x_post_action,
+            x_feed::surface::x_surface_open,
+            x_feed::surface::x_surface_status,
+            x_feed::surface::x_surface_suspend,
+            x_feed::surface::x_surface_viewport,
+            x_feed::surface::x_surface_close_preview,
+            x_feed::surface::x_surface_select_preview,
+            x_feed::surface::x_surface_dismiss_menus,
+            x_feed::surface::search::x_media_search_status,
+            x_feed::surface::search::x_media_search_confirm,
+            x_feed::surface::search::x_media_search_resume,
+            x_feed::surface::search::x_media_search_cancel,
+            x_feed::surface::search::x_media_search_reset_consent,
+            x_feed::surface::search::x_media_search_open_result,
+            x_feed::archive_ipc::x_archive_inspect,
+            x_feed::archive_ipc::x_archive_release,
+            x_feed::archive_ipc::x_archive_save,
+            x_feed::archive_ipc::x_archive_cancel,
+            x_feed::archive_ipc::x_archive_list,
+            x_feed::archive_ipc::x_archive_read,
+            x_feed::archive_ipc::x_archive_open_folder,
+            x_feed::archive_ipc::x_archive_open_source,
+            pinterest::pinterest_pin_get,
+            soop::discovery::soop_home,
+            soop::discovery::soop_search,
+            soop::discovery::soop_thumbnail,
+            platform_media_ipc::platform_media_download,
+            platform_media_ipc::platform_media_download_batch,
+            platform_media_ipc::platform_media_jobs,
+            platform_media_ipc::platform_media_cancel,
+            platform_media_ipc::platform_media_retry,
+            platform_media_ipc::platform_media_library,
+            platform_media_ipc::platform_media_library_groups,
+            platform_media_ipc::platform_media_library_group_members,
+            platform_media_ipc::platform_media_thumbnail,
+            platform_media_ipc::platform_media_profile,
+            platform_media_ipc::platform_media_replay_chat,
+            platform_media_ipc::platform_media_live_open,
+            platform_media_ipc::platform_media_live_close,
+            platform_media_ipc::platform_media_live_snapshot,
+            platform_media_ipc::platform_media_live_profile,
+            platform_media_ipc::platform_media_live_chat,
+            platform_media_ipc::platform_media_live_chat_asset,
+            platform_media_ipc::platform_media_replay_chat_asset,
+            platform_media_ipc::platform_media_live_record,
+            platform_media_ipc::platform_media_open,
+            platform_media_ipc::platform_media_close,
+            platform_media_ipc::platform_media_open_folder,
+            platform_media_ipc::platform_media_delete,
+            platform_media_ipc::platform_media_screenshot_begin,
+            platform_media_ipc::platform_media_screenshot_chunk,
+            platform_media_ipc::platform_media_screenshot_finish,
+            platform_media_ipc::platform_media_screenshot_abort,
+            platform_media_ipc::platform_media_screenshot_undo,
+            platform_media_ipc::platform_media_screenshot_list,
+            platform_media_ipc::platform_media_screenshot_image,
+            platform_media_ipc::platform_media_screenshot_delete,
+            platform_media_ipc::platform_media_screenshot_folder,
+            pinterest::pinterest_discover,
+            pinterest::pinterest_library_action,
+            pinterest::pinterest_removed_list,
+            pinterest::pinterest_preview_get,
+            pinterest::pinterest_download,
+            pinterest::pinterest_download_batch,
+            pinterest::pinterest_downloads_list,
+            pinterest::pinterest_cancel,
+            pinterest::pinterest_open_external,
+            pixiv::pixiv_search,
+            pixiv::pixiv_discovery,
+            pixiv::account::pixiv_account_status,
+            pixiv::account::pixiv_account_login,
+            pixiv::account::pixiv_account_logout,
+            pixiv::pixiv_local_work,
+            pixiv::pixiv_local_media,
+            pixiv::pixiv_page_media,
+            pixiv::pixiv_page_preview,
+            pixiv::pixiv_download_batch,
+            pixiv::pixiv_library_action,
+            pixiv::pixiv_work,
+            pixiv::pixiv_media,
+            pixiv::pixiv_download,
+            pixiv::pixiv_downloads_list,
+            pixiv::pixiv_download_progress,
+            pixiv::pixiv_download_cancel,
+            pixiv::pixiv_open,
             work_console::work_queue_snapshot,
             interface::commands::download_popularity_snapshot,
             local_control::work_checkpoint_get,
@@ -1388,7 +1881,7 @@ pub fn run() -> tauri::Result<()> {
             portable::app_update_mode,
             portable::app_update_portable,
         ]))
-        .build(tauri::generate_context!())
+        .build(context)
         .map(|app| {
             let mut normal_exit = true;
             app.run(move |handle, event| match event {

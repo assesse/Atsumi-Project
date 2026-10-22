@@ -7431,6 +7431,8 @@ dialog::backdrop {
   display: grid;
   gap: 6px;
   width: calc(100% - 28px);
+  max-height: calc(100dvh - 160px);
+  overflow-y: auto;
   box-sizing: border-box;
   transform-origin: top center;
   animation: source-menu-drop 180ms ease-out;
@@ -7446,6 +7448,7 @@ dialog::backdrop {
   min-width: 0;
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 9px 12px;
   color: #dcebee;
   text-align: left;
@@ -7491,9 +7494,13 @@ dialog::backdrop {
   width: calc(100% - 8px);
   padding: 3px;
 }
-.sidebar-collapsed .source-switcher button { padding: 9px 2px; justify-content: center; text-align: center; }
+.sidebar-collapsed .source-switcher button { padding: 8px 2px; flex-direction: column; gap: 4px; justify-content: center; text-align: center; }
 .sidebar-collapsed .source-switcher strong { font-size: 10px; }
 .sidebar-collapsed .source-switcher span,.sidebar-collapsed .source-switcher button::after { display: none; }
+.source-switcher .platform-icon { width: 22px; height: 22px; flex: 0 0 22px; object-fit: contain; }
+.brand-copy .brand-platform { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.brand .brand-platform .platform-icon { width: 18px; height: 18px; flex: 0 0 18px; object-fit: contain; }
+.brand-platform > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes source-menu-drop { from { opacity: 0; transform: translateY(-8px) scaleY(.94); } to { opacity: 1; transform: none; } }
 @media(prefers-reduced-motion:reduce) { .source-switcher { animation: none; } }
 

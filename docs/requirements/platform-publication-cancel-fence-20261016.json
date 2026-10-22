@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "state": "narrow implementation frozen; five deterministic native tests authored; root execution and actual verification pending",
+  "originals": [
+    ".runtime/requirements-audit/20261015-manual-eight-feedback-original.json#01a13fdd-06e7-7570-b2a8-e1f1d54d357e item3",
+    ".runtime/requirements-audit/20261016-night-handoff-original.json#01a14102-e856-70f2-943d-6dd2dd3ae4fd",
+    ".runtime/requirements-audit/main-thread-users.json#01a12a4c-724c-7d13-801d-3d92da01fe1e: only after successful merge and verification clean intermediates, retain completed media and chat"
+  ],
+  "audit": {
+    "main": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676; independently rehashed full230turn/284message EOF snapshot reuse",
+    "other": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; independently rehashed full333turn/375message EOF snapshot reuse",
+    "inventory": "Root current active50/pinned/archive3EOF and130 baseline contracts; latest night handoff, eight/four originals, current night/retry/publication source and contracts directly read. No new human operation permission inferred.",
+    "missing": ["durable01a03f16", "unidentifiedanalysis1/2", "unavailablehistoricalpixels"]
+  },
+  "confirmed": "verify_publish_from checks cancel before chat proof, then calls unconditional update(completed). cancel() and shutdown() can acquire state first and revoke the token between those steps; completion then overwrites the accepted cancellation and reaches clean-input cleanup. Existing JobOwnership does not correct an already inactive completed job. This predates the SOOP retry batch.",
+  "approval": "Root explicitly approved this one completion commit and deterministic native regressions. No UI, app control, build, media process or real recording mutation by assigned agent.",
+  "scope": ["src-tauri/src/platform_media.rs verify_publish_from final completed publication, one private completion helper and inline tests", "src-tauri/src/platform_media/live.rs non-encoded legacy caller snapshot and inline tests only"],
+  "sourceBefore": "D3C18319A675A837219CAC8BEA9B151DAEFF511190D7FEBB93E57CA105896CC4",
+  "decision": [
+    "Under the same state mutex used by cancel/shutdown, reject cancellation, shutdown, foreign/missing current Arc, inactive/completed or already-library-bearing state, and changed immutable job/request/reference/broadcast/root/creation identity. Only the exact finalizing attempt may commit.",
+    "Keep the verified LibraryItem construction, chat/capture truth and journal-before-memory semantics. Increment revision with checked arithmetic. Retain the mutex through final journal save and in-memory replacement, making cancel-versus-completion ordering explicit.",
+    "Failure returns before the existing cleanup block; preserve source, already renamed verified media, chat and existing job/journal. A successful commit that wins the lock precedes later cancel, which sees completed and remains a no-op.",
+    "No changes to generic update, earlier verify/rename stages, verification rules, cleanup eligibility, raw YouTube publication CAS, CHZZK, auth or retry policy. This is not a whole-pipeline ownership rewrite or proof of cleanup cancellation after completion."
+  ],
+  "tests": [
+    "Deterministic last-check-to-publication interleaving: worker passes prior cancel check and waits; public cancel succeeds before release; completion helper returns error, does not run publication callback or subsequent cleanup, and source/journal remain unchanged.",
+    "Current Arc replaced/missing, shutdown, inactive states, existing library and each immutable identity mismatch reject before callback/journal mutation. Another job remains byte-identical.",
+    "Normal finalizing commit durably publishes once with current metadata/revision and supplied partial chat/interrupted truth; subsequent public cancel and duplicate commit cannot change it.",
+    "Journal write failure preserves previous in-memory state and returns before cleanup. No media executables or user files in focused fixtures."
+  ],
+  "legacyCallerAddendum": {
+    "approval": "Root explicitly approved the confirmed stale legacy caller compatibility repair, with no final completion guard relaxation.",
+    "evidence": "live.rs inspect_segments persists broadcast_id on the current state job after first committed source, but keeps Recorder.job's original None. Existing broadcast_identity_is_durable_before_first_copy_and_manual_record_inherits_it deliberately asserts this stale clone. finalize_recording_as forwarded it to final publication, so the new exact fence would reject a legitimate bound recording.",
+    "before": "live.rs SHA7426B768CA0F9612A2B7FD880090A86658F874AA792A8FD7DDB438283D1CA630; platform_media.rs B929142259E7F5330CD87CEC32AF7EFC781314FE146230F51FB9410FFBA131D0",
+    "decision": "Only the non-encoded caller obtains a current native job snapshot before finalization. Under state lock require same job/request/reference/root/created identity, exact active Arc, active/no library, no shutdown/cancel and exact owned recording directory. Existing Some broadcast must match; None may only acquire a valid current native-bound Some. Preserve legacy None/None as unknown, not invented identity. Pass this frozen snapshot to the unchanged strict final completion fence; later changes remain rejected. Encoded and raw callers unchanged.",
+    "tests": "Extended existing real inspect_segments fixture to assert stale recorder refresh obtains the persisted123 and unchanged source clone; added one15case exact owner/identity/cancel/shutdown/broadcast rejection and legacy None/None preservation regression. No tools, network, UI or user recordings.",
+    "checkpoint": "live.rs SHAEB34BA0DF3B37C1D81ABA86B0C9D8F0DE4CA70BBB581E6CA7591FF7FE4C87586; source coherent/frozen; new caller regressions not executed by agent or root yet."
+  },
+  "acceptance": "Root serial native tests/build and previously scoped isolated interrupted finalizer regression; no claim of original44second failure reproduction or actual user cancel-at-publication operation from these deterministic fixtures.",
+  "validation": "Root reports original five completion_fence_tests passed0failed in0.38s after2m01 build. New legacy caller regression remains pending. JSON parse and diff whitespace check passed; no Cargo/test/media/UI executed by agent. Production platform_media.rs SHA B929142259E7F5330CD87CEC32AF7EFC781314FE146230F51FB9410FFBA131D0. Independent peer identified stale Recorder compatibility and root approved the addendum above; amended caller re-review pending."
+}

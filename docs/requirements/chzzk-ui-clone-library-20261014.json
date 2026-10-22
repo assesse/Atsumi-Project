@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "status": "presentation implemented; 104 scoped unit checks and three real-Chrome geometry cases passed; actual Atsumi desktop acceptance pending",
+  "parentContract": "docs/requirements/chzzk-ui-clone-20261014.json",
+  "owner": "chzzk_focus",
+  "originalRequests": [
+    "01a1399c-e7fb-7260-ac09-93bc94288f2f: archive the existing SOOP/YouTube interface, clone current CHZZK composition first, audit cross-provider interference",
+    "01a0ffb2-7b46-77f1-9970-1c4be0da6a41: single focus, double open, Ctrl/Shift multi-selection, checkbox only for two or more",
+    "01a12e00-087e-75f3-b315-155260efdf35: grouped recordings overlay, all groups may close, preserve expansion",
+    "01a11775-9d47-7280-9431-a4aac2761ccd: recording channel profile/name/title/file information",
+    "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe: switching provider/view must retain media playback"
+  ],
+  "evidence": {
+    "originalLatest": ".runtime/requirements-audit/20261014-chzzk-clone-request.json fully read, original turn also directly read",
+    "mainSnapshotSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshotSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Previously fully read snapshots reused after SHA256 checks; parent refreshed current accessible source inventory and unchanged conversation pagination. Original69spec hashes checked; only already-read RELEASING change. AGENTS, implementation-policy, parent clone contract and applicable CHZZK docs reread.",
+    "unavailable": ["durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unidentified Atsumi analysis1/2", "unavailable historical attachment pixels"],
+    "reference": ["src/features/streaming/RecordingLibrary.tsx", "src/features/streaming/RecordingLibrary.css", "src/features/streaming/ScreenshotLibrary.tsx", "src/features/streaming/ScreenshotLibrary.css"],
+    "archive": "docs/archives/20261014-pre-chzzk-ui; parent verified176 byte-exact files before edits"
+  },
+  "files": [
+    "src/features/platforms/PlatformMediaLibrary.tsx",
+    "src/features/platforms/PlatformMediaLibrary.css",
+    "src/features/platforms/PlatformMediaLibrary.test.tsx",
+    "src/features/platforms/PlatformMediaLibrary.layout.test.tsx",
+    "src/features/platforms/mediaGroupPaging.ts (groupPanelPosition only)",
+    "src/features/platforms/PlatformScreenshotLibrary.tsx",
+    "src/features/platforms/PlatformScreenshotLibrary.css",
+    "src/features/platforms/PlatformScreenshotLibrary.test.tsx",
+    "src/features/platforms/*CloneIsolation.test.tsx"
+  ],
+  "changes": [
+    "Clone CHZZK compact profile-first recording group/file cards, 22px heading and count, common folder action, stable separate selection bar, reserved selected-file detail column, short status and decimal GB. Use neutral 저장됨 rather than inventing 정상 proof absent from this provider model.",
+    "Keep existing provider API, selection implementation, paging, portal bounds, stored expansion, replay sessions and background audio unchanged; no CHZZK RecordedChannel or ScreenshotLibrary domain imports.",
+    "Clone screenshot 260px-min grid/12px gap, caption typography/padding and bounded viewer; retain local provider-tagged image reads and cancellation.",
+    "Do not fabricate CHZZK merge/original diagnostics or import its account/profile API; existing platform job retries remain separate.",
+    "Audit isolated DOM IDs, CSS selectors, storage, events, commands, account state, sessions, stale replies and hidden keyboard handlers. Shared privacy/tray mute remain intentional."
+  ],
+  "acceptance": [
+    "SOOP/YouTube cards carry own provider identity and never query CHZZK data.",
+    "Same-id opposite-provider fixtures cannot cross-read, delete, open, select or overwrite expansion state.",
+    "Grouping stays overlay-based, bounded at small windows, retains all-close state and does not move adjacent cards.",
+    "Single selection, double replay, Ctrl/Shift, context actions, privacy and background sessions retain existing behavior.",
+    "Scoped tests and actual desktop visual check required; mocked data/build do not establish actual playback or account correctness."
+  ],
+  "verification": {
+    "geometryFollowupPlan": "Root authorized a Chrome retry after another agent established that installed Chrome runs the same offline fixture. Add only ATSUMI_TEST_BROWSER override to the existing library layout test, retain Edge default and all assertions; no app/account/network access or production code changes.",
+    "at": "2026-10-14T18:19:06+09:00",
+    "passed": "PlatformMediaLibrary.test.tsx, PlatformScreenshotLibrary.test.tsx, mediaGroupPaging.test.ts, PlatformLibraryCloneIsolation.test.tsx and PlatformLiveCloneIsolation.test.tsx: 104 tests in five files, normal Windows permissions",
+    "isolated": [
+      "Matching file and screenshot IDs cannot cross provider API calls, selections, delete targets, expansion keys or group portal IDs.",
+      "Inactive library keeps its receiver DOM and lease; explicit close releases only the owning provider token.",
+      "Same-layout SOOP/YouTube pane resizing reads and persists only its own keys; grouped/hidden changes retain the existing receiver elements.",
+      "Both provider drawers can coexist without cross-triggering stop or mode actions. Help portal IDs differ and close when inactive.",
+      "New shell CSS selectors and animation names are provider-prefixed. UI source imports no CHZZK domain component/API/event/storage; only the stateless handle gesture helper is intentionally shared."
+    ],
+    "geometry": "PlatformMediaLibrary.layout.test.tsx: all three cases passed in isolated Chrome at 2026-10-14 18:21:48 KST (640x640, 960x800 and reduced-motion 640x640; four top/bottom/narrow/wide scenes each, 12 total). Confirmed fixed portal bounds, unchanged sibling positions, toolbar visibility, scrollability, last-file reachability and reduced motion. Only ATSUMI_TEST_BROWSER selection was added; Edge remains default and every original assertion was retained. Earlier Edge exit0/empty output was a capture failure, not evidence of layout correctness. Actual Atsumi desktop acceptance remains separate.",
+    "limitations": [
+      "No actual installed/debug-app user operation performed by this agent. Root owns desktop acceptance.",
+      "Provider media metadata does not prove CHZZK-equivalent merge/validation status; cards say 저장됨, not 정상.",
+      "Existing provider replay engines, account limitations and unsupported native original-player behavior are not changed or claimed complete by this presentation batch."
+    ]
+  }
+}

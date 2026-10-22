@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "date": "2026-10-13",
+  "status": "source implementation and focused verification complete; updated desktop acceptance pending while user tests unchanged QA app",
+  "originalRequests": ["01a11f1d-e4a6-74f1-b278-f1f1256e9f93", "01a13142-4c44-7560-bde6-d7e089fd9ea9"],
+  "rules": ["R003", "R008", "R009", "R012", "R013", "R015", "R018", "R022"],
+  "coverage": {
+    "method": "Re-enumerated active50/archived3 EOF; no new Atsumi chat. Reused complete EOF snapshots after hash verification: main85487c5f2edcca6d946cd1b9bbbbde9e9142942059fbc44f637954d607615676, other799f75c9037808630eb2a8faf2973c450d16ae9a3c343d12e2b4cf8dbf931a21, policy3267605ca09e8fba111bfdc84c840e6856bc8b2e82ceb64f165ac732ca43f914. All69 original spec hashes checked; RELEASING is the only changed original and retains the already fully read f5a49125c16f4cbfff8251d5263cbf0b35b6dcaad33a8f9fc7fdf87b542e12a0. Original profile/parity turns reread directly; current live-identity contract, YouTube parsers, live resolver and media contract reviewed.",
+    "unavailable": ["Historical durable chat01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unnamed Atsumi 분석1/2", "Historical image pixels not newly inspected"]
+  },
+  "evidenceBeforeImplementation": {
+    "currentSource": "YouTube search DTO drops portrait data; i.ytimg.com image is the video cover, not channel identity. Pinned yt-dlp metadata provides channel_id but no owner portrait. Existing detail watch response is not retained for native live resolution, so zero additional requests cannot be claimed.",
+    "actualAnonymousProbe": "Native owner agent verified jNQXAC9IVRw and live cswFQYam8Ic. Requested video ID equals player.videoDetails.videoId; player.videoDetails.channelId equals the exact video's videoOwnerRenderer browseEndpoint.browseId. Owner thumbnail arrays contain48/88/176px pictures. HTTPS yt3.ggpht.com image responses both200, JPEG48x48,1863/2544bytes. HTML1324976/1318667bytes. Four GETs total:2watch+2image, no account/cookies/video requests/file writes/app inputs.",
+    "technicalSources": ["https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/yt_dlp/extractor/youtube/_video.py", "https://developers.google.com/youtube/v3/docs/channels?hl=en"],
+    "qualification": "Official channel API documents channel thumbnails separately from video thumbnails, but this implementation uses observed public watch metadata, not an undocumented claim of API stability or an API key. Endpoint observations must be repeated after implementation."
+  },
+  "decision": [
+    "Add a private YouTube portrait reader called from the existing resolving worker after requested-video and resolver channel_id validation. At most one watch HTML and one exact owner image request,5second total optional budget. No new video receiver, account access, replay network, IPC or frontend API.",
+    "Validate requested video ID, strict UC channel ID, exact player video/channel identity and exact videoOwnerRenderer browseId. Never use recommended-video, commenter, collaboration-card or generic recursive thumbnail matches. Missing/mismatch means no portrait.",
+    "Exact HTTPSwww.youtube.com watch URL constructed internally; portrait only observed HTTPSyt3.ggpht.com with no credentials/port/query/fragment/redirect. No proxy or cookies. Public DNS validation and pinned connection addresses; bounded DNS helper concurrency4 and at most2seconds/remaining deadline. OS DNS can outlive a timeout within that fixed cap; no detached portrait/media worker or writes.",
+    "Bound watch body4MiB and raster body128KiB. Decode only allowed raster formats with dimension/allocation bounds, normalize first frame to <=96pxPNG, validate through existing Profile path. No SOOP service-state coupling.",
+    "Resolve optional portrait beforeplaying so current once-per-playing-token cache cannot freeze an earlyNone. Any failure preserves placeholder and does not fail healthy playback. Cancel/deadline checks gate each phase; no retry loops.",
+    "Store in existing session Status.profile and existing recording-time immutable profile file path. No migration/backfill of older media, no acquisition during local replay, no change to media/chat cleanup rules."
+  ],
+  "files": ["src-tauri/src/youtube/portrait.rs", "src-tauri/src/youtube.rs", "src-tauri/src/platform_media/live.rs"],
+  "acceptance": [
+    "Pure fixtures reject wrongvideo, wrongchannel, unrelatedowner, missingfields, malformed/oversizedHTML, remote/credential/private/redirect targets and oversized/nonraster images.",
+    "Deadline/cancel prevents subsequent requests; failure leaves portraitNone and existing playback path continues. No unbounded dynamic URLs or detached acquisition tasks.",
+    "Actual anonymous VOD and live portrait reads prove identity binding, decoded dimensions and bounded output. No actual media download/record or user account used.",
+    "Focused native lib tests and existing profile/live boundary regressions pass; no QA example or Vite rebuild while user tests.",
+    "Updated desktop portrait appearance and newly recorded local profile replay remain pending until user finishes current manual session."
+  ],
+  "verification": {
+    "native": "Latest lib-only compile and portrait filter session19546 exited0:6ordinary tests passed,1opt-in ignored. Final compile includes the immediate stop check after optional portrait acquisition, preventing chat.start after cancellation. Exact owner/three-way identity, URL/IP/body/raster limits, response status denial and deadline/request-count boundaries are covered. No full-suite result is claimed for these later source changes.",
+    "actualPublic": "Latest compiled public_vod_and_live_owner_portraits exact opt-in passed in2.06s. VOD output PNG96x96,21196bytes,1119ms,2GETs; live output PNG96x96,18038bytes,940ms,2GETs. Video requests0,accounts0,writes0. These are real anonymous metadata/image responses, not a desktop display test.",
+    "review": "Root read the complete module and narrow live integration. Independent Pinterest agent confirmed exact owner binding, bounded public pinned requests, before-playing profile settlement and the final cancel-before-chat correction; no additional concrete blocker found.",
+    "desktop": "Pending. Running isolated QA PID23004/profile3cc9c52c20b0428db04f8c5efceb7ae8 remains the19:48 manual-handoff build. Executable85163520bytes/SHA2566a6e3281719de2336be1b37e528e510d9b9cad57892d1f6d29828cfa5714bbf6 unchanged. No app input, example/Vite rebuild or restart performed. Updated live portrait and new-recording local profile replay still require actual next-build acceptance."
+  }
+}

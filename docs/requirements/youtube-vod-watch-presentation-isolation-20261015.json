@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "state": "root approved; source frozen after focused regression and typecheck; actual app verification pending",
+  "parent": "docs/requirements/youtube-watch-presentation-isolation-20261015.json",
+  "originals": [
+    {"turn":"01a13978-c469-7242-9ec2-f065de16743a","items":[2,3],"rule":"Open YouTube playback from a floating view using the original platform player UI."},
+    {"turn":"01a1399c-e7fb-7260-ac09-93bc94288f2f","rule":"Independent provider internals within the existing CHZZK-derived use flow; verify interference."},
+    {"turn":"01a13a1f-f808-74a0-85c8-e90aa748a292","request":"이제 SOOP과 유튜브의 내부 플레이어와 채팅도 각 플랫폼 원래 UI로 맞춰줘. 로그인, 시청, 녹화까지 실제로 동작하게 이어서 작업하고, 치지직에 영향 없는지도 확인해."},
+    {"turn":"01a13adc-a040-70f0-97d9-380c5b6ba368","item":4,"rule":"Find and fix nonworking YouTube functionality, including UI."},
+    {"turn":"01a13bb3-d33b-7de0-867d-aeae3e3e8bec","rule":"Resume actual verification and repair observed defects; do not claim success from unit tests alone."}
+  ],
+  "audit":"Both independently fully-read original snapshots rehashed unchanged: main230/284EOF SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676, other333/375EOF SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Reuse current root50active/3archive/69baseline coverage plus directly reread parent contract, original native-integration requests, VOD adapter/tests and LIVE presentation-only solution. Inaccessible sources remain indexed. This contract adds the newly observed path rather than claiming the prior LIVE fix covered VOD.",
+  "actualEvidence":"Root actual isolated QA2c2d: ordinary VOD jNQXAC9IVRw opened through Explore exact URL then explicit Play. The original VOD player has right-side watch recommendations painting over its surface. LIVE player/chat is now correct. The separate original_vod_page.js stylesheet lacks the sibling isolation and opaque player background already added to original_page.js for LIVE.",
+  "proposal": {
+    "files":["src-tauri/src/youtube/original_vod_page.js","src/features/youtube/YouTubeOriginalVodPage.test.ts"],
+    "presentation":"Copy the same bounded CSS purpose into the independently owned VOD stylesheet: hide only evidenced watch secondary/chat/below/metadata/masthead subtrees with visibility:hidden and pointer-events:none, excluding any matching subtree that contains #movie_player. Add opaque black background to #movie_player. Keep receiver/layout alive and original controls, popups, inactive fade, natural EOF/replay and seek semantics intact.",
+    "isolation":"No import or dependency on LIVE state/bridge/capture. Do not change original_page.js, native host, account, source policy, recording, scheduler, fullscreen receipt, shared geometry or other providers. No display:none, DOM reparenting, synthesized controls, media access or new request/timer.",
+    "checks":["Existing exact-page/no-media-extraction/status/EOF/IME/Escape tests remain valid","CSS fixture hides recommendation/chat/metadata descendants even when those explicitly set visibility:visible","Original player controls and open popup remain visible, inactive controls retain opacity0 and closed menus remain display:none","A matching container holding #movie_player is excluded, with no forced visibility on player descendants","Repeated layout preserves receiver and only dispatches one resize; production script remains watch-only"]
+  },
+  "conflicts":"The user's original-interface requirement does not mean exposing unrelated full website recommendations over the app's scoped player. Preserve the original player interface itself. The previous LIVE-only fix did not establish VOD success; this distinct path must receive actual verification.",
+  "actualAcceptance":"Root rebuilds and repeats exact VOD open in the actual app: no unrelated watch siblings over video, original controls and fullscreen/Escape usable, video reaches EOF and original replay/seek still work. Root owns UI/Cargo. Unit CSS fixture/typecheck are regression evidence only, not actual completion.",
+  "exclusions":"No account actions, profile preference writes, media mutation, user-data deletion, release or restart by this subagent. Existing concurrent Escape changes in tests must be preserved.",
+  "verification":"LIVE/VOD adapter19tests passed including2new VOD CSS cases; full TypeScript check passed; git diff --check passed. Initial sandbox Vitest cache EPERM and sandbox-wide dependency type errors did not pass; identical commands succeeded in the ordinary host environment without source changes. Root actual rebuilt VOD appearance/controls/fullscreen/replay remains pending. The observed post-EOF sponsored clip is not classified as autoplay or modified by this batch."
+}

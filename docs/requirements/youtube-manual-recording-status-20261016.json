@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "state": "Scoped native/frontend implementation frozen; focused regressions and typecheck passed; independent review and root actual acceptance pending",
+  "implementationApproval": "Root fully read EB074257147529A09A338517CD3D3392DD3EF80A3D8D17436A75F568CC8EAC46 and approved the named native2/frontend/test scope. No original JS, input, recording lifecycle or new polling. Failed observation becomes unknown with existing auto fallback; current-instance fencing required. Root owns all Cargo/build/UI. Other agent confirmed OriginalPlayer/API files unedited.",
+  "original": ".runtime/requirements-audit/20261016-live-discovery-eight-original.json item6, turn01a14358-092b-7a50-a8a5-6211c15170e9",
+  "request": "방송 중과 녹화 중을 CHZZK처럼 색상과 문구로 구분. Root clarified that this includes manual recording, not only scheduled recording.",
+  "audit": {
+    "reuse": "AGENTS and the full parent channel-favorite-status contract reread. Root current active50/archive3EOF and main5/other4/UIUX2 coverage remains applicable; current145-spec inventory is .runtime/requirements-audit/20261016-live-discovery-eight-spec-inventory.json. Main/other complete snapshots rehashed unchanged in this proposal turn:85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21,230/284 and333/375 EOF. Applicable original text is directly covered by the parent contract audit; latest eight-item original was reread verbatim.",
+    "directContracts": ["docs/requirements/youtube-channel-favorite-status-20261016.json", "docs/requirements/youtube-auto-recording-20261015.json", "docs/requirements/youtube-native-ui.json", "docs/requirements/youtube-live-shell.json", "docs/requirements/youtube-resolution-poll-isolation-20261016.json"],
+    "missing": ["durable01a03f16", "unidentified analysis1/2", "unavailable historical image pixels"],
+    "runtime": "Root confirmed normal app exit for the parent batch. This proposal does not itself authorize further production edits, native execution, accounts, new media ingress or data changes."
+  },
+  "findings": [
+    "auto_record.rs snapshot() iterates configured channels and ScheduledCapture runs only. A manually recording viewer cannot appear there, so colors alone leave item6 incomplete.",
+    "YouTubeOriginalPlayer already reads open/snapshot through one existing1500ms single-flight poll. OriginalSnapshot contains current recordingJob and recordingStopping; native controls already use these values. No second poll, recording command or job enumeration is needed for an attached viewer.",
+    "OriginalSnapshot.channelId and broadcastId are both the exact video ID, not a UC channel ID. Native Session.canonical_channel is already validated by lease.bind_youtube_chat for the current video under the arm/epoch gate. It is reset on original-document load. metadata.authorUrl often carries an @handle, so treating that as equivalent to a saved UC ID would be a guess.",
+    "The source recording job becomes null after encoded_finish dispatches finalization. Therefore recordingStopping supports only the observed stop/drain phase, not a claim that all later finalization is complete. Once the native observation is absent, keep automatic status where available and otherwise honest unknown/off reservation wording; never report recording success from this UI projection."
+  ],
+  "alternatives": {
+    "frontendRelationshipMap": "Remember channel-to-video relationships from channel search/input resolution and public authorUrl. This adds a second provenance map, may miss a live opened from general Explore, and cannot equate changed handle spelling with a canonical UC identity. Not chosen.",
+    "chosenNativeProjection": "Add optional canonicalChannelId to the existing original snapshot as a read-only mirror of the already validated canonical_channel, then project the existing player observation into Workspace. Root explicitly offered this alternative for comparison. It requires a tiny original.rs/original_vod.rs/API type delta, but no new request, cookie, authority, capture behavior or scheduler mutation."
+  },
+  "proposedFiles": {
+    "native": ["src-tauri/src/youtube/original.rs: snapshot field, mirror assignment only after existing successful bind, and reset inside existing document-start status reset; focused inline regressions", "src-tauri/src/youtube/original_vod.rs: existing snapshot constructors set canonical_channel_id=None only"],
+    "frontend": ["src/api/youtubeOriginal.ts: optional nullable canonicalChannelId only", "src/features/youtube/YouTubeOriginalPlayer.tsx: optional onObservation callback using existing accepted open/poll replies and cleanup", "src/features/youtube/YouTubeWorkspace.tsx: bounded current-viewer observation map and prop wiring", "src/features/youtube/YouTubeViewingControls.tsx: exact identity matching and manual/scheduled status precedence", "src/features/youtube/useYouTubeAutoRecord.ts: expose existing idFor lookup read-only if required; do not change effects or resolve calls"],
+    "tests": ["src/features/youtube/YouTubeOriginalPlayer.test.tsx", "src/features/youtube/YouTubeWorkspace.test.tsx", "src/features/youtube/YouTubeViewingControls.test.tsx", "src/features/youtube/YouTubeLiveShell.layout.test.tsx only if a new label needs a fixture"],
+    "excluded": "Capture/bridge handlers except readonly snapshot mirror, authentication, native input, player JS, timers/intervals, recording owner/lifecycle, media API/jobs polling, storage/favorite migration, CSS geometry, other providers."
+  },
+  "nativeProjection": [
+    "OriginalSnapshot canonical_channel_id:Option<String>, serde camelCase; initialize None for live and VOD. The existing status branch stores Some(channel) only after existing bind_youtube_chat returns success under unchanged arm/current-epoch checks. Never derive from title, author, URL guesses or fallback metadata.",
+    "Clear the mirror in the same existing status-reset block on document-start which clears recordingJob and captureReady. Use no new lock order: keep existing arm -> canonical -> status order and mirror when status is already locked; snapshot_locked continues cloning a single status mutex. This keeps the returned job/channel fields coherent and does not nest status -> canonical.",
+    "The field is presentation-only. No native admission/scheduler/input branch reads it. VOD remains None. Wrong-video/malformed/wrong-epoch/failed bind must not populate it; existing canonical identity remains immutable under the lease rules."
+  ],
+  "currentPresenceAddendum": {
+    "approval": "Root approved exact live observation -> video favorite green on 2026-10-16 before implementation. A cached saved isLive flag remains insufficient.",
+    "evidence": "original_page.status only creates chatDescriptor for exact current videoId, valid UC identity and details.isLive===true. Its playing state alone only means a ready non-ended video, so the new mirror represents successful descriptor binding in the current status message, not the indefinitely retained Session.canonical_channel. No descriptor projects None while the existing lease/canonical identity remains untouched; document-start also clears the mirror.",
+    "projection": "Matched current mounted live observation with canonicalChannelId and state playing may display green 방송 중 for video or channel favorites. Loading/ended/error, failed poll or missing descriptor removes this evidence and falls back to existing automatic status or neutral/unknown. No offline inference, current live assertion for an unviewed saved video, or extra query is added.",
+    "frontendClearShape": "clear carries a local detached boolean: false removes only observed facts after failure; true retires this exact instance/attempt registration. No new native or external field/authority."
+  },
+  "observationProtocol": {
+    "callback": "Optional onObservation(event), with closed frontend shape: instanceId (per mounted component), attempt (existing open generation), videoId, token, state, canonicalChannelId, recordingJob, recordingStopping; event kinds begin/update/clear. It is local React data, not new IPC. No account or error text is propagated.",
+    "source": "Publish only existing open/snapshot replies that pass current generation/gone checks plus exact token and channelId/broadcastId==requested videoId. Poll is already single-flight; do not add timers or queries. Callback stored in a ref so parent updates do not reopen the native receiver. VOD publishes no live recording observation.",
+    "lifetime": "Begin registers the exact mounted instance/attempt before opening. Update requires the currently registered instance/attempt/token and currently playing video membership. Cleanup clears only the exact instance/attempt/token; an old close or late reply cannot delete/repopulate a replacement viewer. Failed poll clears known recording observation for that attempt until a later accepted reply; it must not leave a stale red badge indefinitely. Changing a callback prop must not change source lifetime.",
+    "transitions": "Keep only the latest accepted job state per viewer; job A->null->job B cannot be regressed by an old attempt or older response. No optimistic recording from a button click. Parent keeps at most4 current viewer observations; removing a viewer removes its display observation, never stops its recording or clears scheduled state. Privacy masks all new status text/colors while retained playback/poll behavior remains unchanged."
+  },
+  "identityAndStatus": [
+    "Video favorite matches exact video ID. Canonical channel favorite matches optional validated UC ID. Handle-form favorite may match exact normalized public authorUrl of the already verified playing metadata, or the existing automatic alias idFor lookup if available. No name-based equivalence, new alias fetch, or implicit favorite conversion. Missing identity evidence means no manual association.",
+    "For a matched row, observed recordingJob with recordingStopping=false gives red 녹화 중. Any recording dominates observed stopping; observed stopping gives 마무리 중 and dominates waiting/idle/error. Existing automatic recording/stopping is combined with the same priority. Automatic preparation/wait/skipped/failure/off wording remains otherwise unchanged.",
+    "Do not count the same job twice when it is both viewed and scheduled. If automatic count and observed jobs cannot be fully deduplicated because auto snapshot exposes only one jobId, use generic 녹화 중 rather than invent a sum. Preserve exact N개 only when justified by one source's complete known count. Enabled reservation remains a separate button property, never implied by manual recording.",
+    "Current channel presence continues using existing verified live observation; manual recording color does not make cached saved isLive current presence. No false completed/verified-media label is added.",
+    "A hidden automatic receiver with no mounted viewer continues using existing automatic state. An unmounted manual receiver has no current snapshot callback; report that limitation honestly instead of caching red forever or starting another poll. Likewise the interval after encoded_finish clears source recordingJob is not proven terminal by this projection."
+  ],
+  "tests": [
+    "Native mirror only after validated current bind, failed/wrong-epoch identity unchanged, document reset removes channel+job, VOD serialization None; existing bind/security tests retained.",
+    "Player exact open/poll callback, no callback for VOD/wrong video/wrong token, delayed old open/poll after replacement suppressed; cleanup A cannot clear B; no extra open/close/snapshot calls beyond existing1500ms schedule; callback identity changes do not remount.",
+    "Workspace mount A->remove->same video B: stale A updates/clear cannot revive or erase B. Existing playback/background/privacy and4-view identity remain.",
+    "Controls manual job red despite reservation off, stopping clears red, new job replaces old; manual+scheduled duplicate count and concurrent priority; exact canonical/handle/video mapping and wrong-channel negatives; missing channel proof never name-matches. No new api.resolve/metadata/poll calls for display.",
+    "Root actual manual recording start/stop while drawer visible, concurrent channel states, reservation button unchanged, same viewer retained, cleanup/reopen and hidden automatic row. Focused tests/typecheck/native tests are necessary but not actual app proof."
+  ],
+  "sourceBefore": {
+    "original.rs": "83154F6ED17CA090E3ED225EFCE6F00367832D89C6F81272BA65E2E71622DCFF",
+    "original_vod.rs": "9396E0B211269E01EE88FCE48B49923239A8BF57BC72660F45F2CA07FC7F25D1",
+    "youtubeOriginal.ts": "9B05DA34551648A749987E6D619512FA631A056C88A668C039788F4DD1CB4FE8",
+    "YouTubeOriginalPlayer.tsx": "7624969C3BE8F72D1BFCCDD11CE7373B8AC26716E723D37287A3D5D735513D13",
+    "YouTubeWorkspace.tsx": "619F2A94C581633BB341C088A13A61F4AA977F13E252217573E1B159581D8E83",
+    "YouTubeViewingControls.tsx": "86D48D0594DC9C818158694803959D0C2D9FB9159BDA89136CA7AC011E45DF74",
+    "useYouTubeAutoRecord.ts": "A523F7C3B92C2C8CA51088DF490E95BDAF1A7FCE839013029341A1FE6B79F344"
+  },
+  "implementationCheckpoint": {
+    "native": "Added nullable camelCase canonicalChannelId to existing snapshots. The status arm/epoch/bind sequence and retained canonical lease identity are unchanged. Only a successful current-message descriptor contributes the presentation mirror; missing descriptor and document reset clear it. All3 live/VOD constructors covered. Added serialization/job-preservation regression; existing native descriptor/binding/security tests remain. Root reported youtube::original 56/56 passed; agent ran no Cargo or native process.",
+    "frontend": "Existing open/1500ms single-flight snapshot flow emits begin/update/clear through a callback ref. Workspace registers mounted instance+attempt, pins first token, rejects foreign/stale/memberless updates, removes only exact ownership on detached clear, and prunes removed viewers. No new timer, native command, network, recording mutation or API alias resolution. Existing idFor is exposed read-only. Canonical/handle/video identity matching, current live green, manual/scheduled priority, no duplicate job count, separate reservation control and privacy masking implemented.",
+    "focused": "2026-10-16 15:47:16 command: & .\\tools\\run_frontend.ps1 test src/features/youtube/YouTubeOriginalPlayer.test.tsx src/features/youtube/YouTubeWorkspace.test.tsx src/features/youtube/YouTubeViewingControls.test.tsx --maxWorkers=1 ; exit0,3files102passed,8.58s. No UI/server launched.",
+    "finalFocused": "After both fixture type fixes, same command plus src/features/youtube/model.test.ts, --maxWorkers=1:2026-10-16 15:49:13,4files137passed,0failed,9.84s. Production source remained frozen.",
+    "typecheck": "Initial full typecheck found only2 new test-fixture annotations (literal liveStatus and favorite savedAt); corrected those. Final & .\\tools\\run_frontend.ps1 typecheck exit0. Owned-file diff whitespace check exit0.",
+    "review": "Independent read-only review requested directly from /root/platform_chat_followup after coherent freeze; not counted as complete until reviewer responds.",
+    "remaining": "Root actual manual start/stop visible favorite badges, current video green, concurrent source/automatic rows and receiver preservation remain unverified. No mounted manual viewer means no display observation. Source recordingJob clearing only means source drain dispatch ended, not finalized-media success. No current state inferred for an unviewed saved video."
+  },
+  "frozenProduction": {
+    "src-tauri/src/youtube/original.rs": "60C4329BC91F5490872F955ED43D98E2785C3D857D39DB50FD66E66C9DC3B84D",
+    "src-tauri/src/youtube/original_vod.rs": "9A8A77640DEA64554E54A82EC95E130C09AE2886E2D0FBDEE8FB7CD8BE17A174",
+    "src/api/youtubeOriginal.ts": "AF8B7ED8C519875919606F2EB50D83F6B0699429586E0FD75F27B2AF4BB522C5",
+    "src/features/youtube/YouTubeOriginalPlayer.tsx": "8B5F6E69F421141BB0511AA19861FF0D9A9AA4512DEBA8FA1F189CD70C97D641",
+    "src/features/youtube/YouTubeWorkspace.tsx": "24DC58EE34D807431B9D7B189F442FB5B49E8A99B7E3057E2440F91985CB08AB",
+    "src/features/youtube/YouTubeViewingControls.tsx": "76821D08434AF72587663287E8D27BB1D4A3A1B82CD91A120A07BF83804845D1",
+    "src/features/youtube/useYouTubeAutoRecord.ts": "87E1CBDFF24B06F8995B26D755EB46ECBCF4932C451E56B7BF44D16CB97E2228"
+  },
+  "authority": "Approved exact scoped implementation; source hashes must be rechecked and dirty changes retained. Root owns all Cargo/build/actual UI."
+}

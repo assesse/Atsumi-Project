@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "date": "2026-10-14",
+  "state": "implementation written; root owns compilation and actual validation, still pending",
+  "original": {
+    "turn": "01a13adc-a040-70f0-97d9-380c5b6ba368",
+    "requests": [
+      "남은 유튜브 초기 채팅 누락이랑 구글 인증 후 자동 화면 전환도 이어서 해결해줘. 실제로 정상 동작하는 것까지 확인해.",
+      "SOOP 다시보기 채널 영상가면 다운로드 버튼이 있던데, 채팅과 영상 둘다 받을 수 있는건지? 확인해서 안되어잇으면 구현해주고, 어렵다고 판단되면 이유를 브리핑해줘."
+    ],
+    "scope": "This batch owns chat preservation only. Google/account and discovery/UI are separately owned."
+  },
+  "audit": {
+    "mainSnapshotSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSnapshotSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Inherited fully read conversation evidence and prior EOF audit: main230turn/284message, other333turn/375message. Both raw snapshot hashes independently rechecked. Root refreshed50threads/archive3EOF/current delta, original69 specifications with only RELEASING changed and reread. Latest direct user message and original native-integration request reread; current chat-completion, replay, long-chat, rich-chat, SOOP chat, encoded-writer contracts constrain this implementation.",
+    "unavailable": ["Durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Unavailable historical attachment pixels"],
+    "permission": "Root confirmed graceful Atsumi exit and no process. Source edits allowed after this contract; Root exclusively owns Cargo, actual native QA and desktop/user authentication. No release, commit, user-data rewrite or deletion."
+  },
+  "retainedRules": [
+    "Original01a0862c: watch and record share one video ingress and preserve chat, explicitly including SOOP/YouTube.",
+    "Original01a12a4c: only verified completed media plus durably complete chat may authorize exact-owned source cleanup; partial/unknown preserves originals.",
+    "Original01a10baf: replay actual provided chat content/rich fields, never fabricate missing provider data.",
+    "Original01a10785: expose actual pending/failure status; tests/build or empty success are not actual user-flow acceptance."
+  ],
+  "findings": [
+    "Actual YouTube3518d71b recording video is verified but chat-status reason status_unknown latched because recording attached before first parsed chat event. Existing public chat bind occurs during watch setup, but original chat DOM visibility is independent of archive readiness.",
+    "Pinned yt-dlp public downloader receives initial liveChatContinuation then sleeps its timeoutMs before appending actions to stdout. Empty valid responses emit no line. First-message readiness is therefore not reliable connection readiness.",
+    "SOOP VOD execute explicitly disables subtitles and publishes no chatArchive for kind video. It currently saves video only.",
+    "Actual public SOOP metadata for REVIEW209244227 duration9500ms and209671169/209755973 advertises show_chatY and files[].chat. Direct base ChatLoadSplit requests return404; official ChatCore requests startTime in hourly seconds.",
+    "Official ChatCore uses fileInfoKey+'_c', hourly startTime and highlight_start scalar seconds. Actual 209244227 metadata file_info_key20261007_1B642A33_297660553_18, duration9500ms, public exact chat URL plus startTime0 returned HTTP200 with31root children:1version+30chat, offsets0.05..8.85sec. No account, cookie, nickname or transcript was exposed.",
+    "YouTube existing --Frag1 is committed before pinned yt-dlp sleeps timeoutMs, then flushed to stdout. Readiness proof can be read from the exact owned completed file while actions have not been emitted. Only validated liveChatContinuation with a timed/invalidation continuation is accepted; unknown DOM or .part existence is not proof."
+  ],
+  "primarySources": [
+    "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/yt_dlp/downloader/youtube_live_chat.py",
+    "https://static.sooplive.com/asset/app/vodplayer/view/static/js/main.7f883468.js",
+    "https://static.sooplive.com/asset/app/vodplayer/view/static/js/323.48c1ab61.chunk.js",
+    "https://static.sooplive.com/asset/app/vodchat/public/chat.min.js",
+    "https://api.m.sooplive.com/station/video/a/view"
+  ],
+  "plan": [
+    "Keep one existing YouTube chat producer. Determine readiness from a validated completed initial response, including zero actions, not only the first message. Preserve bounded initial data and exact source timestamps; no historical archive reclassification or invented coverage.",
+    "Expose native chat readiness distinctly from video capture readiness. Coordinate bounded preparation/timeout behavior with the YouTube host; never silently drop video or claim missing chat complete.",
+    "Implement SOOP VOD chat only from official metadata-bound public endpoints using finite request/body/time/disk limits and strict provider URL validation. Do not extract user credentials or bypass restricted VOD access.",
+    "Persist raw plus normalized public chat through existing multipart proof machinery. Keep exact VOD media offsets rather than live receive-time approximation, and preserve per-file cumulative offsets for multipart VOD.",
+    "Independent verified video remains playable if provider chat is absent/unavailable; store explicit incomplete/unknown state where attempted. No fabricated complete empty archive on API errors. Final video and chat are retained."
+  ],
+  "ownership": ["src-tauri/src/platform_media/live_chat.rs", "src-tauri/src/platform_media/youtube_chat.rs", "src-tauri/src/platform_media/encoded.rs narrow readiness methods", "src-tauri/src/platform_media/soop_vod_chat.rs new", "src-tauri/src/platform_media/replay_chat.rs narrow VOD offset parser", "src-tauri/src/platform_media.rs narrow module/execute/VOD chat summary integration"],
+  "implemented": [
+    "SOOP VOD post-download chat acquisition uses the SAME official metadata Value as root's video plan (download_with_metadata), exact provider host/path/key, HTTPS-only, no redirect/proxy/account, bounded public DNS pinning, request count/body/deadline/duration/parts and multipart limits; HTTP206 rejected. Existing chat_assets bounded address helper visibility widened only.",
+    "Streaming quick-xml0.41 parser rejects DTD/external entities, invalid timing, arbitrary attributes and over-limit text/depth/rows. Version marker required; error envelope is not complete empty chat. Exact original XML child records retained, preserving nested/repeated fields. Ordinary chats have exact metadata-based videoOffsetMs, cumulative ordered file offsets and official highlight_start correction. Additional rich/nested event kinds are raw-preserved and explicitly keep the archive partial until a renderer mapping is verified, not fabricated as ordinary chat.",
+    "Cross-review follow-ups: hourly interval compared before rounding3599.9999sec; mismatched/repeated previous-hour chat data fails rather than claiming empty coverage. Multi-video media concatenation and exact yt-dlp file-key identity are root-owned, not claimed by this chat implementation.",
+    "VOD partial/unavailable chat cannot invalidate independently verified video. New markers are inspected during verified publication, unavailable chat stays explicit partial/unknown and preserves original files.",
+    "YouTube first completed server-response proof includes zero-action valid replies; bounded initial actions are normalized before stdout, duplicates deduplicated using original IDs. A1MiB/1000entry recent raw+normalized ring copies a bounded initial overlap into a newly attached archive, retaining source timestamps and copying known asset references.",
+    "Existing receive-time-approximate video anchor remains explicit; pre-anchor historical messages are filtered at replay. Delayed/unverified attachment and actual gap/error still latch partial; no old archive is upgraded. Initial native QA intentionally did not change admission.",
+    "Second pre-edit contract for actual QA58d3f72e: archive attached00:10:04.044, first chat response/events00:10:05.760; video verification passed while honest status_unknown remained. Add typed nonblocking readiness gate to native record admission/capture_ready, bounded15seconds from existing watch-time chat start. Normal video viewing continues uninterrupted. No extra receiver, sleep on UI thread, invented missing coverage or rewriting old files. After timeout/unavailable, video recording may proceed but durable chat proof remains explicitly partial. Test verified zero messages, pending, timeout and cancellation.",
+    "Cross-review follow-up pre-edit contract, parent approved20261015: reread root SOOP official-ID/ordered receipts/cleanup integration and provider-specific owner validation against pinned AfreecaTVIE/FFmpegConcatPP primary source. Preserve exact-owned cleanup and cross-platform isolation requirements; clamp SOOP intermediate indices to1..32 (metadata part cap), and independently compare YouTube Scheduled.schedule_id to already-verified UC binding before creating any encoded job. No broader refactor, account/UI edits or Cargo; negative boundary/cross-channel tests required."
+  ],
+  "acceptance": [
+    "Normal empty bootstrap, initial history, delayed connect, malformed/partial response, cancellation, timeout and real gap preserve honest status.",
+    "Bounded first-response processing does not add another media/chat receiver, copy credentials or leak content to diagnostics.",
+    "SOOP actual short public REVIEW download contains verified playable video and nonempty correctly timed replay chat when the upstream sample provides it; absence or errors remain explicit.",
+    "Fake or mismatched metadata, arbitrary host/path/query, redirects, private targets, oversize data, duplicate pages and invalid timing fail safely without deleting source.",
+    "Focused native tests then Root actual production host/download/library replay; no completion from mock/test alone."
+  ],
+  "validationSoFar": {
+    "officialPublicResponse": "SOOP209244227 metadata+official hourly chat endpoint returned200,30ordinary rows across0.05..8.85seconds,9.5second declared VOD. This alone is not application acceptance.",
+    "firstNativeQa": "Root QA58d3f72e-527f-4ab7-b70f-f675b275a7f1: video verified, chat partial status_unknown. Actual start preceded first response by about1.7seconds. Existing file retained unchanged; nonblocking readiness gate added afterward and requires a new run.",
+    "firstSoopPipelineQa": "Root actual video+chat attempt failed safely on existing metadata.id expectation: official canonical VOD209244227 maps to yt-dlp filekey20261007_1B642A33_297660553_18, not the numeric VOD ID. Root now owns exact official metadata-bound video plan/ordered concatenation; chat consumes that same metadata.",
+    "remaining": "Root final serialized build/tests and remaining YouTube second-source/capture-ready diagnosis. Unsupported rich SOOP VOD events remain explicit partial with exact raw XML retained.",
+    "parentReportedActualFollowup": "Root reports actual production SOOP single VOD roundtrip success:9.529sec,30replay rows,native-offset,complete. Root reports actual YouTube cswFQYam8Ic recording20.005sec with both verified video and complete chat after readiness fix. Second T4X source failed capture_ready and remains under diagnosis; do not claim all sources verified. Ordinary public YouTube download example added separately and awaits root run.",
+    "youtubeDownloadQaBeforeEdit": "Latest original request item4 requires actual working YouTube flows, not mocked services. Parent assigns isolated public jNQXAC9IVRw ordinary19sec VOD example derived from production SOOP QA. Use fresh UUID-owned data/media only; no browser/account/profile and no production source changes. Require service completed full decode/hash, library reopen/range serving, correct duration/source identity and absence of invented live chat archive. Root alone builds/runs it; preserve generated evidence."
+  }
+}

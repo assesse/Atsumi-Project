@@ -1,0 +1,27 @@
+.pixiv-home-categories{display:flex;gap:6px;align-items:center;margin:0 0 18px;border-bottom:1px solid var(--border,#47414e);min-width:0}
+.pixiv-home-categories>button{border:0;border-radius:0;background:transparent;min-width:70px;padding:10px 14px;border-bottom:2px solid transparent}
+.pixiv-home-categories>button[aria-current=page]{border-bottom-color:var(--accent,#df91ac);color:var(--accent,#df91ac);font-weight:600}
+.pixiv-home-categories>.pixiv-home-refresh{margin-left:auto;min-width:34px;width:34px;padding:6px;border:0}
+.pixiv-discovery-sections{min-width:0}
+.pixiv-discovery-section{margin:0 0 32px;min-width:0}
+.pixiv-discovery-section>header{display:flex;align-items:center;justify-content:space-between;gap:12px;min-width:0;margin:0 0 14px}
+.pixiv-discovery-section h2{font-size:17px;line-height:1.4;margin:0;overflow-wrap:anywhere}
+.pixiv-discovery-section>header>button{width:auto;min-height:30px;height:auto;padding:4px 10px;font-size:12px;white-space:nowrap}
+.pixiv-section-empty,.pixiv-discovery-issues{font-size:13px;color:var(--text-muted,#b9b0c3);line-height:1.6}
+.pixiv-section-empty{margin:0;padding:20px 0}
+.pixiv-discovery-issues p{margin:0 0 8px}
+.pixiv-creator-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(300px,100%),1fr));gap:18px}
+.pixiv-creator{min-width:0;padding:14px;border:1px solid var(--border,#47414e);border-radius:10px;background:var(--surface-raised,#26222d)}
+.pixiv-workspace .pixiv-creator-heading,.pixiv-reader .pixiv-creator-heading{display:flex;width:100%;height:auto;min-width:0;padding:0;margin:0 0 12px;gap:10px;border:0;background:transparent;justify-content:flex-start}
+.pixiv-creator-heading .pixiv-image{width:40px;height:40px;flex:0 0 40px;border-radius:50%}
+.pixiv-creator-heading strong{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pixiv-creator-heading>span{margin-left:auto}
+.pixiv-creator-works{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.pixiv-creator-works .pixiv-card-info{padding:30px 5px 5px}.pixiv-creator-works .pixiv-card-info strong{font-size:11px;-webkit-line-clamp:1}.pixiv-creator-works .pixiv-card-info .pixiv-artist,.pixiv-creator-works .pixiv-card-info small{display:none}
+.pixiv-search-panel{position:absolute;z-index:10;top:calc(100% + 6px);left:0;width:min(760px,calc(100vw - 50px));max-width:max(100%,min(760px,calc(100vw - 50px)));box-sizing:border-box;max-height:min(560px,70vh);overflow:auto;padding:18px;border:1px solid var(--border,#54475f);border-radius:10px;background:var(--surface-raised,#25202b);box-shadow:0 12px 35px #0007}
+.pixiv-search-panel .pixiv-history{position:static;box-shadow:none;border:0;padding:0;margin:0 0 14px}
+.pixiv-search-panel .pixiv-discovery-tags{margin:0;gap:18px}
+.pixiv-search-panel .pixiv-discovery-tags>div{display:block}
+.pixiv-search-panel .pixiv-discovery-tags>div>span{display:block;margin-bottom:8px;color:inherit;font-weight:600}
+.pixiv-search-panel .pixiv-panel-empty{margin:0;font-size:13px;color:var(--text-muted,#b9b0c3)}
+@media(max-width:600px){.pixiv-discovery-section{margin-bottom:24px}.pixiv-home-categories>button{min-width:56px;padding:10px}.pixiv-search-panel{padding:12px;width:calc(100vw - 44px);max-width:calc(100vw - 44px)}}

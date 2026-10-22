@@ -1,0 +1,59 @@
+.pixiv-original-pages{display:flex;width:100%;height:100%;min-height:0;min-width:0;background:#000;overflow:hidden}
+.pixiv-reader-scroll{height:100%;width:100%;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin}
+.pixiv-reader-page{position:relative;width:100%;height:100%;min-height:100%}
+.pixiv-reader-related{padding:0 20px 22px;background:var(--surface,#17151b);min-height:140px;box-sizing:border-box}
+.pixiv-reader-related-nav{position:sticky;top:0;z-index:3;display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;background:var(--surface,#17151b);margin-bottom:10px}
+.pixiv-reader-related-nav>button:first-child,.pixiv-reader .pixiv-related-more,.pixiv-reader-related .pixiv-selection-bar button{width:auto;height:auto;min-height:34px;padding:6px 12px;font-size:13px}
+.pixiv-reader .pixiv-reader-related-hint{position:absolute;bottom:82px;left:50%;transform:translateX(-50%);width:auto;height:28px;gap:6px;padding:3px 10px;font-size:11px;border-radius:14px;background:#17121cbb}
+.pixiv-reader .pixiv-discovery-sections button.pixiv-bookmark{width:32px;height:32px;padding:5px}
+.pixiv-reader-related .pixiv-card-info .pixiv-artist{width:max-content;height:20px;max-width:100%;min-height:0;font-size:12px;background:none;border:0;padding:0;border-radius:0;pointer-events:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block}
+.pixiv-reader-related .pixiv-selection-bar{top:54px;z-index:4}.pixiv-related-loading{display:flex;align-items:center;justify-content:center;gap:8px;padding:20px;font-size:13px;color:#b9b0c3}
+.pixiv-original-slot{position:relative;display:flex;align-items:center;justify-content:center;min-width:0;min-height:0;height:100%;color:#bbb;background:#000}
+.pixiv-original-slot img{display:block;width:100%;height:100%;min-width:0;object-fit:contain!important;user-select:none}
+.pixiv-display-preview-label{position:absolute;right:10px;top:50%;max-width:calc(100% - 20px);padding:4px 8px;border-radius:5px;background:#111b;color:#ddd;font-size:11px;pointer-events:none}
+.pixiv-original-slot>div[role=alert]{display:grid;gap:8px;justify-items:center;text-align:center;font-size:12px;padding:12px}
+.pixiv-reader-backdrop{position:fixed;inset:0;z-index:4700;display:flex;align-items:center;justify-content:center;background:#000c;animation:pixiv-reader-in 140ms ease-out}
+.pixiv-reader{position:relative;box-sizing:border-box;min-width:0;max-width:calc(100vw - 24px);max-height:calc(100vh - 24px);overflow:hidden;outline:none;background:#000;border:1px solid #39363c;border-radius:5px;box-shadow:0 16px 60px #0009;color:#f6f3f6;container-type:inline-size}
+.pixiv-reader button{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;flex:none;min-width:0;width:34px;height:34px;margin:0;padding:6px;background:#16131ac2;color:#f6f3f6;border:1px solid transparent;border-radius:5px;cursor:pointer}
+.pixiv-reader button svg{width:22px;height:22px;flex:none}
+.pixiv-reader button:focus-visible{outline:2px solid var(--accent,#d98199);outline-offset:-2px}
+.pixiv-reader button:hover{background:#302832e6}
+.pixiv-reader button[aria-pressed=true]{color:var(--accent,#e29aac);border-color:currentColor}
+.pixiv-reader button:disabled{opacity:.25;cursor:default}
+.pixiv-reader-chrome{opacity:0;pointer-events:none;transition:opacity 180ms ease}
+.pixiv-reader[data-controls-visible=true] .pixiv-reader-chrome{opacity:1;pointer-events:auto}
+.pixiv-reader-header{position:absolute;top:0;left:0;right:0;z-index:2;display:grid;gap:6px;padding:10px;background:linear-gradient(#000e 0%,#000b 70%,transparent);box-sizing:border-box;max-height:calc(100% - 88px);overflow:auto}
+.pixiv-reader-title{display:flex;align-items:center;gap:10px;min-width:0}
+.pixiv-reader-header strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;text-shadow:0 1px 3px #000}
+.pixiv-reader-toolbar,.pixiv-reader-navigation{display:flex;align-items:center;gap:6px;flex-wrap:wrap;min-width:0;max-width:100%}
+.pixiv-reader-toolbar button,.pixiv-reader-navigation button{width:auto;max-width:100%;height:auto;min-height:30px;padding:5px 8px;font-size:12px;overflow-wrap:anywhere}
+.pixiv-reader-footer{position:absolute;bottom:0;left:0;right:0;height:76px;background:linear-gradient(transparent,#000c)}
+.pixiv-reader-page-status{position:absolute;bottom:16px;left:50%;transform:translateX(-50%);font-size:18px;font-weight:600;line-height:24px;white-space:nowrap;font-variant-numeric:tabular-nums;text-shadow:0 1px 3px #000}
+.pixiv-reader-left-tools{position:absolute;left:10px;bottom:10px;display:flex;align-items:center;gap:6px}
+.pixiv-reader-page-favorites{display:flex;align-items:center;gap:4px;height:34px}
+.pixiv-reader button.pixiv-reader-bookmark{position:relative;width:26px;height:30px;padding:0;background:transparent;border:0}
+.pixiv-reader-bookmark svg{width:24px;height:28px}
+.pixiv-reader-bookmark span{position:absolute;top:8px;left:0;right:0;text-align:center;font-size:9px;font-weight:700;line-height:12px}
+.pixiv-reader-bookmark-blank{width:26px}
+.pixiv-reader-tools{position:absolute;right:10px;bottom:10px;display:flex;gap:4px}
+.pixiv-reader button.pixiv-reader-pin{opacity:.55}
+.pixiv-reader button.pixiv-reader-pin:hover,.pixiv-reader[data-controls-visible=true] .pixiv-reader-pin{opacity:1}
+.pixiv-reader button.pixiv-reader-arrow{position:absolute;top:50%;transform:translateY(-50%);width:60px;height:104px;border:0;border-radius:0;padding:4px;background:transparent;color:#fff;filter:drop-shadow(0 1px 3px #000)}
+.pixiv-reader-arrow svg{width:42px!important;height:64px!important}
+.pixiv-reader-arrow.is-left{left:0}.pixiv-reader-arrow.is-right{right:0}
+.pixiv-reader-arrow .is-turning{animation:pixiv-reader-right 280ms ease-out}
+.pixiv-reader-arrow.is-left .is-turning{animation-name:pixiv-reader-left}
+.pixiv-reader-resize{position:absolute;z-index:5;touch-action:none;user-select:none;opacity:0;transition:opacity 180ms ease}
+.pixiv-reader-resize.is-right{top:0;right:0;bottom:12px;width:8px;cursor:ew-resize}
+.pixiv-reader-resize.is-bottom{left:0;right:12px;bottom:0;height:8px;cursor:ns-resize}
+.pixiv-reader-resize.is-corner{right:0;bottom:0;width:12px;height:12px;cursor:nwse-resize;background:linear-gradient(135deg,transparent 48%,#888 49%,#888 55%,transparent 56%,transparent 68%,#888 69%,#888 75%,transparent 76%)}
+.pixiv-reader[data-controls-visible=true] .pixiv-reader-resize,.pixiv-reader.is-edge-resizing .pixiv-reader-resize,.pixiv-reader-resize:focus-visible{opacity:.8}
+.pixiv-reader-resize:focus-visible{outline:2px solid var(--accent,#d98199);outline-offset:-2px}
+.pixiv-reader.is-edge-resizing{user-select:none}
+.pixiv-reader-backdrop.is-closing{animation:pixiv-reader-out 140ms ease-in forwards;pointer-events:none}
+@container (max-width:480px){.pixiv-reader-page-status{bottom:50px}.pixiv-reader-header{padding:8px;gap:4px}}
+@keyframes pixiv-reader-in{from{opacity:0;transform:scale(.99)}to{opacity:1;transform:scale(1)}}
+@keyframes pixiv-reader-out{to{opacity:0;transform:scale(.99)}}
+@keyframes pixiv-reader-left{50%{transform:translateX(-5px)}}
+@keyframes pixiv-reader-right{50%{transform:translateX(5px)}}
+@media(prefers-reduced-motion:reduce){.pixiv-reader-backdrop,.pixiv-reader-arrow .is-turning{animation:none!important}.pixiv-reader-chrome,.pixiv-reader-resize{transition:none}}

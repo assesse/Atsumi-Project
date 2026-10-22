@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "state": "implemented and offline-verified; authenticated desktop acceptance blocked by desktop helper initialization failure",
+  "originals": ["01a14c22-aae6-7143-a84d-29b32328dd9f / 01a14c22-ac33-7b50-962c-5c67843ccbd8: X 피드 탐색 and five mockups", "Current reply to call_124b088b2dd24e9f9739682326d07456: 앱내 로그인 방식으로. 아니 하루 100개의 게시물을 로드하는데 저 가격이라고?"],
+  "coverage": ".runtime/requirements-audit/20261018-pinterest-x-preedit.json; unchanged fully read source inventory reused within this turn, new cost/connection replies read directly",
+  "decisions": [
+    "User chose official website login after official API costs were reported. No paid API, account enrollment, tokens, cookie export or API credit purchases.",
+    "Add independent X native feed workspace. Default balanced timeline pending five-layout preference; not a wrapper represented as native feed.",
+    "Login stays in an official isolated-capability account window using the existing browser profile; user authenticates. Service-specific HTTPS navigation; remote documents receive no main-window IPC.",
+    "Read only bounded rendered home articles. No private GraphQL endpoints, credential reads, challenge bypass, automatic posting/liking/reposting/following or unrestricted link navigation. Explicit visible login proof and owner identity fence; site changes fail clearly.",
+    "Manual refresh and bounded More advance official document scroll. Deduplicate IDs, preserve cards/scroll on append and errors, never infer completion from silence. Account switch, cancel, privacy, source deactivation and shutdown revoke requests and close background reader.",
+    "Only remembered post media can be read by native image command. Exact pbs.twimg.com media paths, HTTPS, no credentials/redirects, size/decode limits, two concurrent images,64 queued frontend images, offscreen image release and small bounded cache. Reader video requests blocked; reader closes after5 minutes idle. Feed workers are serialized while cancellation remains immediate. No CSP widening or arbitrary frontend URL fetch.",
+    "Image preview closes back to current feed. Keep shortcuts local, do not steal text input. No unsupported downloads or video playback claimed. Five mockups are synthetic; real signed-in acceptance must be reported separately."
+  ],
+  "acceptance": ["Trusted-origin/owner/generation/nonce/URL guards", "Projection excludes recommended account identity and quoted article identity confusion", "Source switch/privacy/cancel invalidate late requests", "Bounded continuation, explicit errors, no infinite polling", "Native feed UI and preview preserve context", "Unit/type/build and responsive fixtures", "Actual official login and authenticated feed/More remain pending until independently operated"],
+  "authorization": "Current source changes and normal development restart authorized, app confirmed closed; do not automate login, modify remote accounts or publish releases."
+}

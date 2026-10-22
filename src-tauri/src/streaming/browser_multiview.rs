@@ -1,5 +1,5 @@
 //! Official panes with isolated capture controllers and a shared catalog.
-//! Chat panes never receive the capture bridge.
+//! Chat panes never receive the capture bridge; native focus has a pointer-only notification.
 use super::*;
 use std::collections::HashSet;
 use tauri::{LogicalPosition, LogicalSize, WebviewBuilder, WebviewUrl};
@@ -9,6 +9,10 @@ mod auto_surface;
 pub mod auto_watch;
 #[path = "browser_multiview_controls.rs"]
 mod controls;
+#[path = "browser_pane_focus.rs"]
+mod pane_focus;
+#[path = "browser_viewer_close.rs"]
+mod viewer_close;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -235,7 +239,7 @@ fn exact_navigation(url: &tauri::Url, channel: &str, kind: PaneKind) -> bool {
 fn fits(kind: PaneKind, viewport: &BrowserViewport) -> bool {
     let (w, h) = match kind {
         PaneKind::Video => (160.0, 90.0),
-        PaneKind::Chat => (220.0, 200.0),
+        PaneKind::Chat => (160.0, 200.0),
     };
     viewport.width >= w
         && viewport.height >= h
@@ -885,14 +889,21 @@ impl OfficialBrowser {
         let popup = pane.clone();
         let popup_host = self.clone();
         let popup_app = app.clone();
+        let pointer_nonce = uuid::Uuid::new_v4().simple().to_string();
+        let close_nonce = uuid::Uuid::new_v4().simple().to_string();
+        let pointer_url = pane_url(&pane.channel, pane.kind);
         let builder = WebviewBuilder::new(
             &pane.id,
             WebviewUrl::External("about:blank".parse().map_err(|_| unavailable())?),
         )
         .data_directory(profile)
-        // Background recording must not MoveFocus on a minimized/hidden parent.
-        // WebView2 rejects that focus operation with E_INVALIDARG at creation.
-        .focused(!pane.id.starts_with("chzzk-auto-"))
+        // Every pane starts hidden at 1x1 until its verified viewport arrives.
+        // A delayed chat/video creation must not steal an existing editor's
+        // focus or interrupt IME composition. User clicks retain normal focus.
+        // This also avoids MoveFocus(E_INVALIDARG) on a minimized parent.
+        .focused(false)
+        .initialization_script(pane_focus::initialization_script(&pointer_url, &pointer_nonce))
+        .initialization_script(if pane.kind == PaneKind::Video { viewer_close::script(&close_nonce) } else { String::new() })
         .browser_extensions_enabled(!super::super::browser_compat::GRID_FREE_PLAYBACK)
         .initialization_script(if pane.kind == PaneKind::Video {
             super::super::browser_video_ads::initialization_script()
@@ -1020,6 +1031,8 @@ impl OfficialBrowser {
             )
             .map_err(|_| unavailable())?;
         view.hide().map_err(|_| unavailable())?;
+        pane_focus::install(&view, pointer_url, pointer_nonce).map_err(|_| unavailable())?;
+        if pane.kind == PaneKind::Video { viewer_close::install(&view, pane.clone(), close_nonce)?; }
         super::super::browser_compat::configure(&view)?;
         initialize_native_pane(&view, pane.clone(), loaded_ids)?;
         #[cfg(windows)]
@@ -2026,15 +2039,39 @@ mod tests {
         }
     }
     #[test]
+    fn chat_width_matches_single_view_minimum_at_height_boundary() {
+        for (width, wide_enough) in [
+            (159.0, false),
+            (160.0, true),
+            (175.0, true),
+            (219.0, true),
+            (220.0, true),
+        ] {
+            for height in [199.0, 200.0] {
+                let viewport = BrowserViewport {
+                    width,
+                    height,
+                    visible: true,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    fits(PaneKind::Chat, &viewport),
+                    wide_enough && height >= 200.0,
+                    "chat viewport {width}x{height}"
+                );
+            }
+        }
+    }
+    #[test]
     fn undersized_chat_is_hidden_not_scaled_over_input() {
         let mut v = BrowserViewport {
-            width: 219.0,
+            width: 159.0,
             height: 600.0,
             visible: true,
             ..Default::default()
         };
         assert!(!fits(PaneKind::Chat, &v));
-        assert!(fits(PaneKind::Video, &v));
+        assert!(!fits(PaneKind::Video, &v));
         v.width = 300.0;
         v.height = 199.0;
         assert!(!fits(PaneKind::Chat, &v));

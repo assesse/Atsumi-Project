@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "state": "repair implemented, automated checks/build passed and corrected app relaunched; actual single-image save/reopen QA remains deferred",
+  "source": [
+    "Current user: 이미지 다운로드 진행중인지 내가 어떻게 알아? 진행중인거 있다고 추가 다운로드만 막고 있어.",
+    "Current user: 고작 이미지 하나 받게 시켰고, 거의 5분이 지났는데 아직도 보관함에 없어.",
+    "Latest user: 종료했고 수정해서 다시 켜줘."
+  ],
+  "inventory": {
+    "chats": "Active50 and archived3 EOF refreshed 2026-10-21. Other Atsumi main1792473578 and UIUX1792073766 remain unchanged from fully read EOF snapshots; current direct history read.",
+    "specifications": "Previous full unchanged inventory reused. Policy3A717CA4, official-split76488013, sidebar291E3A9B, native-actions678D6E36 hashes reverified; archive F6E50272 and menus5A79E0C3 reread; latest save-session followup BC1DD78F fully read. No newer requirement files appeared after the preceding batch.",
+    "missing": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"]
+  },
+  "preflight": "User confirmed normal exit; process inventory found no Atsumi/cargo/rustc/ffmpeg/streamlink. Current large shared dirty tree preserved. Prior PID28508 was responsive but had no new archive or partial folder since launch; this proves no observed transfer-stage output, not that a native pre-transfer task was impossible.",
+  "findings": [
+    "JS sets pending before native acknowledgement; rejection and lost terminal delivery can leave an indefinite busy lock.",
+    "Progress notice incorrectly shares source-node/route validity with inline media bars. Scrolling/recycling/navigation removes the only status UI while the pending lock remains.",
+    "Old diagnostics lack admission/outcome evidence, so the exact dropped branch of the reported click is not retrospectively established.",
+    "Encoded bridge envelopes can exceed the native transport bound even when the unencoded media selector passes its own bound. Check before submission instead of leaving a pending lock.",
+    "The old common readiness gate could silently discard an exact pending cancellation after navigation. Cancellation must resolve the original registered request, not require the original media DOM."
+  ],
+  "rules": [
+    "Active2849 only, preserve shared edits and all archives/account data. No deletion, forced stop, commit, push, release or PC shutdown.",
+    "Implement, run automated regression/build and launch corrected app as explicitly requested. Computer Use and actual account download/reaction testing remain deferred; never like/bookmark/repost/reply/follow without separate approval.",
+    "Retain source origin/nonce/current registered account and pane checks, exact post/media ownership and frozen capture guards. Status receipt is opaque request-scoped scalar data, not remote file/network authority.",
+    "No automatic resubmission or duplicate save. Silence/elapsed time alone cannot mean completed, failed or safe to unlock an accepted job.",
+    "No fake percentage. Only known counters/bytes/stages; completion requires existing validated publication."
+  ],
+  "decisions": [
+    "This repair supersedes the prior route/generation fence only for opaque status of an already admitted request in its same registered account/pane. Capture/new work admission remains frozen to original source/owner/generation; unrelated media lines and cross-account UI never inherit that job.",
+    "Add bounded native acceptance/progress/terminal receipts and a closed UUID-only status query; keep active jobs from eviction and stale/cross-account replies from affecting current jobs.",
+    "A definitive absent receipt must also prevent a delayed original request with that identity from starting after the UI releases it. Bound retained state and reject capacity rather than guessing or erasing live jobs.",
+    "Rejected valid same-pane submissions receive a terminal failure without bypassing readiness/capture validation. Malformed/foreign messages remain rejected.",
+    "Poll only status while a visible document has unresolved jobs; recover lost acknowledgement/result from native state. Missing transport fails before submission; no-response remains explicit status-unknown rather than asserted downloading.",
+    "Separate persistent same-account pane notice from exact media-element progress. Route change/recycled media removes only stale inline bars; hidden/private panes expose no status UI until safely shown again.",
+    "Fixed-category admission/outcome diagnostics must not contain source text, URLs, credentials or private page data.",
+    "Publish terminal counters, worker outcome and its explanatory message as one terminal receipt. An intermediate terminal counter alone must not release ownership or claim the final outcome.",
+    "If an exact cancellation remains unconfirmed and native status still says active, offer an explicit user cancellation retry. Never automatically retry the save or infer cancellation from transport silence."
+  ],
+  "automatedVerification": {
+    "frontend": "Final source: 23 X test files, 1168 tests passed; strict TypeScript and frontend production build passed.",
+    "native": "Final source: cargo test --lib x_feed:: --locked --no-default-features passed 183/183 with devUrl http://127.0.0.1:1420.",
+    "review": "Independent read-only review found no additional blocking defect in receipt identity, tombstones/capacity, stale response, terminal publication or manual cancellation retry.",
+    "frozenSources": {
+      "src-tauri/src/x_surface_actions.js": "9F0A38587E8E147BC136ADD8D74E49E914FD522594DE41779E27D42A2BDB71DD",
+      "src-tauri/src/x_surface_actions.rs": "401080BA921F17662086E0C0B18D42A22843C29D94F0B393C270C613E98B824F",
+      "src-tauri/src/x_surface.rs": "272E0D6DDCC5C66D96D684948FD4B5E8F856C493A410BB6EB76293C03E62A600",
+      "src/features/x/xSurfaceActions.test.ts": "0A3130A2695CC325499344D845D4F6BF03339D3FAFFA55305BE998B6283D343B"
+    },
+    "executable": "cargo build --bin atsumi --locked --no-default-features passed with devUrl http://127.0.0.1:1420; existing unrelated warning set retained.",
+    "startup": "2026-10-21 15:04 KST: all four frozen source hashes rechecked; existing hidden development launcher started corrected active2849 debug executable PID1488 on port1420. Read-only health returned nativeUnresponsive=false, reloadPending=false, pulseAgeMs=136, lagMs=8 and inputCount=0. No Computer Use or live save/social-action test was performed.",
+    "remaining": "Actual single-image download, elapsed-time observation and reopening in the live library are deferred; automatic fixtures and healthy startup are not live acceptance. Original reported delivery-loss branch remains unproved. No old image request was automatically resubmitted."
+  },
+  "acceptance": [
+    "Missing/throwing bridge, rejected submission, lost acknowledgement/terminal callback, delayed original after absence, duplicate IDs, capacity and stale/cross-account receipt tests.",
+    "Actual phase/byte progress survives route changes and recycled cards in DOM fixtures, while bars never attach to a different media item. Terminal status releases only the matching pending job.",
+    "No duplicate transmission or social action; cancellation remains exact active request identity.",
+    "Focused and whole-X tests plus frontend/native builds. Launch on the actual selected development port and verify process/health without screen manipulation.",
+    "Report implementation/build/startup separately from deferred actual single-image save/reopen acceptance."
+  ]
+}

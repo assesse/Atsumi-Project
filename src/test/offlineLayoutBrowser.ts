@@ -5,15 +5,15 @@ const {tmpdir}=await import(osName) as {tmpdir():string};
 const {execFile}=await import(childName) as {execFile(file:string,args:string[],options:{timeout:number;maxBuffer:number;encoding:"utf8";windowsHide:boolean},callback:(error:Error|null,stdout:string,stderr:string)=>void):void};
 const {env,execPath,cwd}=await import(processName) as {env:Record<string,string|undefined>;execPath:string;cwd():string};
 export const layoutBrowser=[env.ATSUMI_TEST_BROWSER??"","C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe","C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"].find(candidate=>fs.existsSync(candidate));
-export type LayoutScene={name:string;html:string};
-export type LayoutResult={name:string;width:number;height:number;issues:string[]};
+export type LayoutScene={name:string;html:string;samples?:{x:number;y:number}[];rootClass?:string};
+export type LayoutResult={name:string;width:number;height:number;issues:string[];samples?:{x:number;y:number;browserVisible:boolean;nativeVisible:boolean}[];geometry?:unknown;nodes?:{video:{x:number;y:number;width:number;height:number}|null;controls:{x:number;y:number;width:number;height:number}|null}};
 /** Native WebSocket and Event constructors run outside jsdom's DOM realm. */
-export async function auditLayouts(scenes:LayoutScene[],css:string,width:number,height:number,group?:string):Promise<LayoutResult[]>{
+export async function auditLayouts(scenes:LayoutScene[],css:string,width:number,height:number,group?:string,nativeGeometry=false):Promise<LayoutResult[]>{
   const directory=fs.mkdtempSync(path.join(tmpdir(),"atsumi-global-layout-input-"));
   try {
     const fixture=path.join(directory,"input.json");
     const artifacts=env.ATSUMI_LAYOUT_ARTIFACTS;
-    fs.writeFileSync(fixture,JSON.stringify({scenes,css,width,height,browser:layoutBrowser,artifacts:artifacts&&group?path.join(artifacts,group):artifacts,captureAll:env.ATSUMI_LAYOUT_CAPTURE_ALL==="1"}));
+    fs.writeFileSync(fixture,JSON.stringify({scenes,css,width,height,browser:layoutBrowser,artifacts:artifacts&&group?path.join(artifacts,group):artifacts,captureAll:env.ATSUMI_LAYOUT_CAPTURE_ALL==="1",nativeGeometry}));
     const stdout=await new Promise<string>((resolve,reject)=>execFile(execPath,[path.join(cwd(),"tools","layout-browser.mjs"),fixture],{timeout:150000,maxBuffer:8*1024**2,encoding:"utf8",windowsHide:true},(error,output,stderr)=>error?reject(new Error(stderr||error.message)):resolve(output)));
     return JSON.parse(stdout) as LayoutResult[];
   } finally {

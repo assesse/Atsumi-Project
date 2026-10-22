@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "state": "implementation frozen; focused mocked regression and typecheck passed; native build and actual operation are root-owned and pending",
+  "authority": "Root assigned this batch after explicit current sleep handoff; root exclusively owns builds and actual UI. No release, account challenge or data deletion.",
+  "originals": [
+    ".runtime/requirements-audit/20261016-night-handoff-original.json",
+    ".runtime/requirements-audit/20261015-manual-eight-feedback-original.json items2,3,7",
+    ".runtime/requirements-audit/20261015-live-ui-four-original.json item3",
+    "docs/requirements/platform-original-runtime-20261014.json governingOriginals",
+    "docs/requirements/soop-original-player-20261014.json",
+    "docs/requirements/youtube-native-ui.json"
+  ],
+  "audit": {
+    "main": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676; fully read230turn284message EOF snapshot reused",
+    "other": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; fully read333turn375message EOF snapshot reused",
+    "latest": "Root refreshed active50/pinned/archive3EOF and current130 specification inventory. Night handoff and applicable latest user originals reread directly; prior other-thread defer/security delta remains, operation defer superseded by handoff.",
+    "missing": ["durable01a03f16", "unidentified analysis1/2", "historical unavailable attachment pixels"]
+  },
+  "supersession": "Prior8 chat-header close requirement is superseded: remove only live chat-header close actions; add video-top translucent circle X following official controls. Recorded replay close is not changed.",
+  "documentCreatedRepair": {
+    "authority": "Root approved narrow source repair after current actual SOOP Explore→live remained loading for more than2minutes; native helper/account security unchanged.",
+    "evidence": "New SOOP top-level chatCloseStyle unconditionally dereferences document.head||document.documentElement before the adapter object/heartbeat are installed. Microsoft ICoreWebView2 AddScriptToExecuteOnDocumentCreated runs before HTML parsing, so both nodes may be null. Actual failing document exception has not been inspected; this is a deterministic initialization defect and plausible explanation, not yet actual root-cause proof.",
+    "primary": "https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2#addscripttoexecuteondocumentcreated",
+    "scope": "Guard and idempotently install SOOP styles once a root exists; retry at DOMContentLoaded via existing layout lifecycle. Audit YouTube newly added DOM access and add zero-head/documentElement regressions for both adapters. No new input authority, navigation, auth, media, native host or startup timeout policy.",
+    "acceptance": "Adapters exist without head/root at DocumentCreated, retain native binding/configure, install exact scoped styles once after DOMContentLoaded, and keep repeated layout idempotent. Root rebuild/restart and actual live playback still required.",
+    "verification": "SOOP pre-fix regression reproduced TypeError appendChild on null at line50 (11existing pass/1new fail). After repair SOOP+YouTube watch/chat zero-DOM and existing control tests3files40pass; typecheckpass. YouTube production unchanged because its applyLayout root guard already protects the new chat style. SOOP script frozenSHA5F610E5A8452B038BB46E8508E1BFA7DCD83699C79589D3AD1457856DC62A55F. Actual app root-cause confirmation remains pending."
+  },
+  "ownership": {
+    "agent": "SOOP/YouTube original live page adapters, native source-local presenter and intent bridge, corresponding commands/APIs/player/workspace and direct tests; new neutral native player input helper",
+    "root": "CHZZK exact viewer close + browser_player_ui, all screenshot preview markup/style, shared registration/builds/UI",
+    "excluded": "Recording transport/archive/scheduler ownership, account policy/profile, VOD/replay controls, App and lib edits"
+  },
+  "chzzkLateControlRepair": {
+    "authority": "Root transferred only MadoWorkspace.tsx and its direct tests for this narrow repair; current idle main HMR allowed, no agent app/build actions.",
+    "original": ".runtime/requirements-audit/20261015-live-ui-four-original.json item3, current night-handoff resumes deferred work; exact viewer close must remain monotonic and preserve other receivers/recordings.",
+    "evidence": "Close events fence polls with requestRevision, but requestControl/confirmControl await callbacks guard only component lifetime and then replace the whole snapshot. A same-epoch response captured before close can restore closed pane membership.",
+    "sourceHashesBefore": { "MadoWorkspace.tsx": "67BC28D380043F7F51556057D9FFAEB1EC63AE653667DC64D4CADEA8DF5D73FA", "MadoWorkspace.test.tsx": "8BE3694EABF820DB2C964B1F497E4D5B7CF04BE75BAE5FB1537B7D2BF5359581" },
+    "decision": "Project only successful control snapshots onto the current exact epoch and paneId/channelId/kind membership. Remove pending control/action and audio owner references for removed panes; never re-add membership from a control response. Keep valid survivor status/control updates. Apply to requestControl and confirmControl, synchronously update snapshotRef and React state; leave run lifetime/finally unchanged so pending always clears. Configure/poll/native capture authority unchanged.",
+    "acceptance": "Deferred screenshot request/confirmation then reverse close events cannot resurrect panes; surviving pane/control updates remain; stale epoch or reused pane id with different source/kind is rejected; pending clears and subsequent action is possible. Mock-only proof, no actual app claim.",
+    "verification": "Pre-fix focused regression: 72 passed,2 new request/confirm tests failed because stale responses restored5 panes instead of2. After repair: tools/run_frontend.ps1 test src/features/streaming/MadoWorkspace.test.tsx src/features/streaming/browserMultiviewBridge.test.ts --maxWorkers=2 passed2 files120 tests; tools/run_frontend.ps1 typecheck exit0. No app or native build was run by this agent.",
+    "frozenHashes": { "MadoWorkspace.tsx": "7794800B498CFA7691D90746509F7565E13DBF876E5AEF92D5F06E151D0AF69F", "MadoWorkspace.test.tsx": "32A2052CA0C51135A81062BB73F145E1EA288B23A4A5141E85C2179FD208C16A" }
+  },
+  "soopSlideVisibilityRepair": {
+    "authority": "Root requested read-only diagnosis then narrow repair for actual SOOP live controls hidden but video-top X still visible after60seconds; root owns native rebuild/actual input.",
+    "original": ".runtime/requirements-audit/20261015-live-ui-four-original.json item3, night handoff; X must appear together with original video controls, exact viewer-close authority unchanged.",
+    "audit": "Current AGENTS/night-handoff/latestfour originals and this full contract reread; prior full original snapshot hash/EOF and root inventory remain as audit above. No account/media/profile reads.",
+    "evidence": "Root rebuilt live sksyoom/297874625 now plays with chat but idle X persists. Anonymous current official https://res.sooplive.com/css/global/player/player.css read2026-10-16: .player_ctrlBox uses bottom:-160px while opacity stays1; #player.mouseover,ctrl_output,blind_ctrn_output restore bottom0, with.2s transition. Existing SOOP sample checks only opacity/display/visibility and cannot see this slide-clipped state.",
+    "sourceBefore": "src-tauri/src/soop/original_page.js SHA5F610E5A8452B038BB46E8508E1BFA7DCD83699C79589D3AD1457856DC62A55F",
+    "scope": "SOOP original_page.js existing control-visibility sampling and originalLiveControls.test.ts fixture only. Multiply existing ancestor alpha by the current original fullscreen button's visible rectangle fraction inside player. Empty/nonfinite/no-overlap geometry is hidden; original animation/state remains untouched. Existing600ms frame follower handles.2s official slide. No independent timer, focus, native receipt, capture, CSS geometry, chat, account or YouTube changes.",
+    "acceptance": "Fixture original alpha1 plus off-player button must hide X; partial intersection yields boundedalpha; restored button reveals X; hidden ancestor remainshidden. No style/class mutation to force original controls visible. Focused mock tests/typecheck, then root actual idle/hover/fullscreen/record/camera checks; camera input/clipping issue remains independent and unproven.",
+    "verification": "RED:9passed/1failed because off-player originalbutton left Xvisible. GREEN:3files41passed; typecheckexit0, exact --maxWorkers=2. Only SOOP page plus mocked sharedcontrolfixture changed. Native rebuild and actual hover/idle are root pending.",
+    "frozenHashes": { "original_page.js": "2DDD3973AA09AC4D99B831E96FEAFEF587E0C32D8F8AA0A49FC881CCD62FC0D0", "originalLiveControls.test.ts": "7C943DD31A62191666B1312D5AAFA258CD20A55A4D4FCEE4402923A60423A01E" }
+  },
+  "decisions": [
+    "Record/camera controls become original-page descendants beside original controls, before fullscreen, with original fade/hover behavior. Existing preview/save/undo hook remains in trusted main.",
+    "Native-owned current presenter token and document epoch bind new page intents. Exact owned WM_PARENTNOTIFY/LEFTDOWN with visible player rect excluding chat/occlusions yields one consumable500ms receipt. No GetAsyncKeyState grace, no JS-only trust, no page-authorized IPC or paths; source/label/epoch closed-schema checks remain.",
+    "Receipt invalidates on lost focus, hidden/replaced presenter, changed geometry, close and document epoch. Queue dispatch rechecks binding and closed/account/tray state before action. Chat controller has no action producer. Enter/Space is not granted by pointer proof and remains a separately unverified keyboard path.",
+    "Record uses existing native record/stop and work admission; viewer close only releases exact viewer alias and leaves recording/reservation lease intact. Exact-token event updates trusted frontend state; screenshot uses existing hook.",
+    "Trusted-main resume occurs only after explicit same-live foreground open and successful visible viewport ACK; native queued execution rechecks current presenter/epoch. No tab/layout/poll-triggered play, reload, duplicate receiver or automatic recording ownership change.",
+    "Initial chat width240 becomes480; stored user changes, current clamps and grouped fractions are preserved."
+  ],
+  "implementationCheckpoint": {
+    "native": "platform_native_player_intent.rs plus SOOP/YouTube live original adapters/commands; closed-schema exact native pointer receipt and current presenter queue recheck. Root owns shared registration and CHZZK reuse.",
+    "frontend": "Source API controls/resume, source OriginalPlayer event routing/480 default, explicit foreground reopen counters and target-only viewer removal. Existing screenshot preview/save hooks remain root-owned and retained.",
+    "officialSoopHeaderEvidence": "Anonymous official embed HTML read-only verification found #chatting_area #chatbox > .area_header > .chat_title #setbox_close as the header '채팅 영역 숨기기' control. Only this exact live header selector is hidden, not dialogue close controls. No profile/auth/media was accessed.",
+    "verification": [
+      "7 focused frontend files149 tests passed before final workspace additions; subsequent2 workspace files99 tests passed including3 new reverse-close/explicit-resume regressions. Unique focused coverage152 tests across7 files.",
+      "Final tools/run_frontend.ps1 typecheck passed. All test calls used --maxWorkers=2; mocked frontend only, no app/vite/native process started.",
+      "Native helper has4 authored pure receipt regressions; native execution/build is exclusively root-owned. Actual pointer/fade/record/screenshot/close/resume geometry remains unverified by this agent."
+    ],
+    "limitations": [
+      "New official-DOM actions currently require a genuine primary native pointer receipt. Enter/Space activation is not implemented or claimed; no JS-only fallback is admitted.",
+      "Native resume acknowledges queued execution, not actual playback success. The actual platform player must be verified by root.",
+      "Recorded replay UI and VOD close controls are unchanged by this batch."
+    ],
+    "frozenNativeHashes": {
+      "src-tauri/src/platform_native_player_intent.rs": "A864A44587B67C41493E79CFD6DE61F6581763864C6938EECC0DD5DE3CEE046D",
+      "src-tauri/src/youtube/original.rs": "83154F6ED17CA090E3ED225EFCE6F00367832D89C6F81272BA65E2E71622DCFF",
+      "src-tauri/src/soop/original.rs": "F9900D5F8DF4653C98065FE8D8DA04C76E93107E3B86BF2C0BA0FB1F0AD8485C"
+    }
+  },
+  "acceptance": [
+    "Pure receipt tests reject replay, stale epoch/presenter, expiry, hide and reentrancy; native actual click proof remains root QA.",
+    "Original adapter tests cover owned buttons, no chat action authority, fade, replacement DOM, bound resume and no media reload.",
+    "Explicit same live reopen resumes once after visible ACK; tab selection alone does not; close removes one viewer only.",
+    "Existing recording, screenshot hooks, saved media, chat typing/IME, fullscreen and original UI remain unchanged outside scoped controls.",
+    "Actual root test must click record/camera/X while native controls visible, confirm no fade hole, background recording survives close, same paused live resumes and480 default fits. Test/build success alone is not completion."
+  ]
+}

@@ -26,8 +26,10 @@ import type {
 import type { GalleryId } from "../core/types";
 import {
   buildDownloadOverlapAlignment,
+  filterDownloadOverlapAlignment,
   formatPageRanges,
   uniquePagesForSide,
+  type DownloadOverlapPageVisibility,
 } from "../downloadOverlap/alignment";
 import { galleryPreviewPreset } from "../layout/galleryPreviewPresets";
 import { selectMergePages, emptyMergeSelection, mergeOutputPages, type MergeSelection } from "../downloadOverlap/mergeSelection";
@@ -571,7 +573,7 @@ type PageMergeSelection = {
   anchor: { side: MergePageSide; page: number };
 };
 
-function PageCell({ entryId, review, candidateId, page, side, pair, index, mergeEnabled, mergeDisabled, mergeSourceBlocked, mergeSelection, thumbnailClient, onPreviewOpen, onPreviewClose, onMergeToggle }: {
+function PageCell({ entryId, review, candidateId, page, side, pair, index, visible = true, mergeEnabled, mergeDisabled, mergeSourceBlocked, mergeSelection, thumbnailClient, onPreviewOpen, onPreviewClose, onMergeToggle }: {
   entryId: string;
   review: ReviewImageContext;
   candidateId: string;
@@ -579,6 +581,7 @@ function PageCell({ entryId, review, candidateId, page, side, pair, index, merge
   side: MergePageSide;
   pair?: DownloadOverlapPagePair;
   index: number;
+  visible?: boolean;
   mergeEnabled?: boolean;
   mergeDisabled?: boolean;
   mergeSourceBlocked?: boolean;
@@ -590,6 +593,8 @@ function PageCell({ entryId, review, candidateId, page, side, pair, index, merge
 }) {
   const thumbnailKey = useMemo(() => page ? reviewPageKey(review, candidateId, side, entryId, page, index) : null,
     [review.reviewId, review.revision, candidateId, side, entryId, page, index]);
+  // Keep the counterpart in its original row/column without loading hidden images.
+  if (!visible) return <div className="download-overlap-page-cell is-filtered" aria-hidden="true" />;
   if (!page || !thumbnailKey) {
     return <div className="download-overlap-page-cell is-gap" aria-label="이 판본에는 대응 페이지 없음"><span>—</span></div>;
   }
@@ -655,13 +660,27 @@ function PageAlignment({ candidate, review, incoming, previewWidth, mergeEnabled
   onMergeToggle?: (side: MergePageSide, page: number, pair?: DownloadOverlapPagePair, range?: boolean) => void;
 }) {
   const [hoverPreview, setHoverPreview] = useState<PageHoverPreview | null>(null);
+  const [pageVisibility, setPageVisibility] = useState<DownloadOverlapPageVisibility>({
+    matched: true, unique: true, gap: true,
+  });
   const columns = useMemo(
     () => buildDownloadOverlapAlignment(candidate, incoming.pageCount),
     [candidate, incoming.pageCount],
   );
+  const visibleColumns = useMemo(
+    () => filterDownloadOverlapAlignment(columns, pageVisibility),
+    [columns, pageVisibility],
+  );
+  const hiddenSelectionCount = useMemo(() => {
+    if (!mergeSelection) return 0;
+    const existing = new Set(visibleColumns.filter((item) => item.existingVisible).map((item) => item.column.existingPage));
+    const incoming = new Set(visibleColumns.filter((item) => item.incomingVisible).map((item) => item.column.incomingPage));
+    return mergeSelection.pages.existing.filter((page) => !existing.has(page)).length
+      + mergeSelection.pages.incoming.filter((page) => !incoming.has(page)).length;
+  }, [visibleColumns, mergeSelection]);
   const existingUnique = uniquePagesForSide(columns, "existing");
   const incomingUnique = uniquePagesForSide(columns, "incoming");
-  const gridStyle = { "--overlap-page-columns": columns.length } as CSSProperties;
+  const gridStyle = { "--overlap-page-columns": visibleColumns.length } as CSSProperties;
 
   useEffect(() => setHoverPreview(null), [candidate.candidateId, incoming.entryId]);
 
@@ -677,10 +696,24 @@ function PageAlignment({ candidate, review, incoming, previewWidth, mergeEnabled
               신규 B에만 {formatPageRanges(incomingUnique)} · {incomingUnique.length}장
             </span>
           </div>
-          <div className="download-overlap-page-legend" aria-label="페이지 표시 범례">
-            <span className="is-matched">일치</span>
-            <span className="is-unique">한쪽에만 있음</span>
-            <span className="is-gap">대응 없음</span>
+          <div className="download-overlap-page-legend" role="group" aria-label="페이지 표시 필터">
+            {([
+              ["matched", "일치"],
+              ["unique", "한쪽에만 있음"],
+              ["gap", "대응 없음"],
+            ] as const).map(([kind, label]) => (
+              <button
+                key={kind}
+                type="button"
+                className={`download-overlap-page-filter is-${kind}`}
+                aria-pressed={pageVisibility[kind]}
+                title={`${label} ${pageVisibility[kind] ? "숨기기" : "표시하기"}`}
+                onClick={() => {
+                  setHoverPreview(null);
+                  setPageVisibility((current) => ({ ...current, [kind]: !current[kind] }));
+                }}
+              >{label}</button>
+            ))}
           </div>
         </header>
         {mergeEnabled ? (
@@ -691,17 +724,22 @@ function PageAlignment({ candidate, review, incoming, previewWidth, mergeEnabled
             </span>
           </div>
         ) : null}
+        {hiddenSelectionCount > 0 ? (
+          <div className="download-overlap-hidden-selection" role="status" title="숨긴 페이지도 선택과 병합에 포함됩니다.">
+            선택 {hiddenSelectionCount}장 숨김
+          </div>
+        ) : null}
         <div className="download-overlap-alignment-scroll" data-thumbnail-scroll-root tabIndex={0} aria-label="기존 A와 신규 B 페이지 정렬표">
-          <div className="download-overlap-alignment-grid" style={gridStyle}>
+          {visibleColumns.length ? <div className="download-overlap-alignment-grid" style={gridStyle}>
             <strong className="download-overlap-row-label">기존 A</strong>
-            {columns.map((column, index) => (
-              <PageCell key={`existing:${column.key}`} review={review} candidateId={candidate.candidateId} entryId={candidate.existing.entryId} page={column.existingPage} side="existing" pair={column.pair} index={index} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
+            {visibleColumns.map(({ column, sourceIndex, existingVisible }) => (
+              <PageCell key={`existing:${column.key}`} review={review} candidateId={candidate.candidateId} entryId={candidate.existing.entryId} page={column.existingPage} side="existing" pair={column.pair} index={sourceIndex} visible={existingVisible} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
             ))}
             <strong className="download-overlap-row-label">신규 B</strong>
-            {columns.map((column, index) => (
-              <PageCell key={`incoming:${column.key}`} review={review} candidateId={candidate.candidateId} entryId={incoming.entryId} page={column.incomingPage} side="incoming" pair={column.pair} index={index} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
+            {visibleColumns.map(({ column, sourceIndex, incomingVisible }) => (
+              <PageCell key={`incoming:${column.key}`} review={review} candidateId={candidate.candidateId} entryId={incoming.entryId} page={column.incomingPage} side="incoming" pair={column.pair} index={sourceIndex} visible={incomingVisible} mergeEnabled={mergeEnabled} mergeDisabled={mergeDisabled} mergeSelection={mergeSelection} thumbnailClient={thumbnailClient} onPreviewOpen={setHoverPreview} onPreviewClose={() => setHoverPreview(null)} onMergeToggle={onMergeToggle} />
             ))}
-          </div>
+          </div> : <p className="download-overlap-page-filter-empty">표시할 페이지가 없습니다.</p>}
         </div>
       </section>
       {hoverPreview ? createPortal(

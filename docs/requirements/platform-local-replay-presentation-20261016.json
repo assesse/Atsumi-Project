@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "state": "before-edit approved; new player focused11 passed; parent released Library/Chat integration hold after first actual SOOP Explore/live check2026-10-16",
+  "originals": [
+    {"path": ".runtime/requirements-audit/20261015-manual-eight-feedback-original.json", "turn": "01a13fdd-06e7-7570-b2a8-e1f1d54d357e", "item": 5, "request": "녹화본 플레이어와 채팅은 해당 공식 플랫폼 UI와 동일하게, II 같은 임시 문자 조작부 제거"},
+    {"path": ".runtime/requirements-audit/20261016-night-handoff-original.json", "message": "01a14102-e856-70f2-943d-6dd2dd3ae4fd", "rule": "미뤘던 구현과 실제 검증 재개, 목표 활성화 금지"},
+    {"turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "single ingress and retained chat applies to YouTube/SOOP"},
+    {"turn": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "rule": "EOF replay/seek, chat-side close, idle fade, minimize audio/tray mute"}
+  ],
+  "audit": {
+    "main": "230 turns/284 messages EOF; SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 independently rechecked",
+    "other": "333 turns/375 messages EOF; SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 independently rechecked",
+    "coverage": "Root current active50/archive3EOF and changed-contract inventory reused only with unchanged original hashes; current original8/night messages and AGENTS reread directly. Prior complete relevant specification reads reused; media/replay/rich-chat/UI-parity/original-runtime contracts directly reread.",
+    "missing": ["durable01a03f16", "unidentified analysis1/2", "unavailable historical image pixels"],
+    "priorProposal": ".runtime/requirements-audit/20261015-official-replay-presentation-proposal.json"
+  },
+  "evidence": {
+    "sourceConfirmed": "PlatformMediaLibrary currently renders one generic video footer with literal play/pause/fullscreen characters and a select speed box for both providers; shared chat colors are Atsumi theme rather than provider presentation.",
+    "officialSoop": ["https://play.sooplive.com/phonics1/embed", "https://res.sooplive.com/css/global/player/player.css", "https://res.sooplive.com/css/global/chat/chat.css"],
+    "soopRead": "Anonymous static HTML/CSS read2026-10-16 only: original32px SVG play/volume/settings/fullscreen, leftplay-volume and rightsettings/fullscreen, chat header48px padding0 12px 0 16px, darkchat#0c0d0e. No SDK/media/account execution. Web text tool failed; public source HTTP succeeded without credentials. No playback proof from these reads.",
+    "youtube": "Existing original-native UI evidence and youtube-chat-official-theme-20261015.json establish official darkchat#0f0f0f and nativeplayer control layout. Direct current watch source fetch is not a rendered geometry proof. No current complete SVG/theme extraction exists, so this batch must not claim pixel-identical YouTube runtime."
+  },
+  "scope": ["new src/features/platforms/PlatformReplayPlayer.tsx and .css plus focusedtests", "PlatformMediaLibrary.tsx replay presentation integration only", "PlatformReplayChat.tsx/.css provider presentation only and focusedtests"],
+  "decisions": [
+    "Keep the exact existing local playback token/source and single HTML video node. New presentational controls receive the existing media state/actions; no remote iframe, SDK, script, image, poster, chat or media request.",
+    "Use provider-scoped layout, SVG controls, progress/volume presentation and actual settings popover instead of text symbols/select chrome. SOOP shapes inspected in official static CSS, YouTube simple player vector geometry is an adapter approximation, not claimed official SDK reuse.",
+    "Full screen stays rightmost; settings changes only local playbackRate. Original quality, captions, online gifts/messages, live count, autoplay/next and remote profile are absent rather than fabricated nonworking controls.",
+    "Preserve title and storage warnings, EOF replay/seek, keyboard/IME exclusions, close semantics, hidden provider audio, privacy pause/hide and tray mute. Settings Escape closes settings before replay; foreign overlays must still block player shortcuts.",
+    "Chat gets provider header/background/spacing while retaining bounded local paging/asset cache, true author color/badges, safe text, history retention and honest partial/timing notices. No synthetic user-avatar/badge, donation color or historical backfill.",
+    "No CHZZK source, native recording/finalization/admission, profiles or credentials changed. Root owns app control and builds. New recording-time profile proof remains separately unimplemented; this visual change cannot fix missing historical data."
+  ],
+  "acceptance": [
+    "Both provider branches show SVG play/pause/fullscreen and no literal II/Ⅱ/▶/⛶ control; actual paused/event states remain authoritative.",
+    "Single existing video node/source survives local settings, provider hiding, tray mute and chat read updates; no fetch/iframe/remote image introduced.",
+    "Seek, volume/mute, local speed and full screen delegate exactly once, disabled privacy controls do nothing, queued autoplay rejection remains visible.",
+    "Settings close on outside/Escape; player close does not race that Escape. Keyboard input, chat popup and foreign modal exclusions retained.",
+    "EOF replay and errors remain visible, true warnings not erased by skin; saved chat remains safe/local and seek-synchronized via existing currentTime only.",
+    "Root actual app compares both official live and local saved replay at normal/fullscreen, hover/idle, paused/ended, chat scrolling and privacy. Unit/CSS tests alone do not prove parity."
+  ],
+  "checkpoint": {
+    "implementation": "Integrated2026-10-16 after parent explicitly released HMR hold. Existing Library retains video ref, token, event state, clock, close/seek/fullscreen/privacy/tray handlers; new component supplies only local presentation. Chat optional provider property changes visual scope, no paging/asset/fetch changes. SOOP live pane/workspace and CHZZK untouched.",
+    "tests": "PlatformReplayPlayer/PlatformReplayChat/PlatformMediaLibrary:108 passed,0 failed. Full frontend typecheck exit0. First sandbox attempts failed before tests/cache rename or dependency type access; identical commands under ordinary Windows permissions passed.",
+    "regressions": "11 new player cases, two provider Library integration cases, settings-versus-player/foreign-modal Escape case, two provider safe chat cases. Existing EOF/replay, chat timing, hidden provider, privacy, errors, selection and groups tests retained.",
+    "actual": "Root actual saved-media normal/fullscreen, idle, EOF and chat comparison pending. No pixel-identical or complete official SDK equivalence claim."
+  },
+  "footerBoundsAddendum": {
+    "state": "before-edit approved by root2026-10-16; only replay footer CSS and focused regression",
+    "evidence": "Independent peer found border-box footer height74px versus top padding16px + progress18px + control-row44px=78px. Its parent stage has overflow:hidden, so the last4px can be clipped. This is source-confirmed inconsistent declared geometry, not a measured actual screenshot defect.",
+    "original": "Direct reread manual-eight item5 and full current presentation contract; original main/other snapshot hashes unchanged from fully read EOF coverage. Root actual SOOP saved video/chat/EOF replay/fullscreen entry passed; exit and complete visual parity remain root validation.",
+    "decision": "Change footer height only74→78px, preserving existing padding, control/input dimensions, settings bottom78px, media/keyboard behavior and every other provider/native source. No new layout framework.",
+    "acceptance": "Focused source-CSS regression checks explicit border-box height covers top+bottom padding and both direct child declared heights, and settings stays at or above footer. Existing player/library/chat focused tests retained. Declared geometry test is not browser layout or actual visual proof.",
+    "before": {"css":"3FAD26FC0DD5C94D62CAE5640627F4F148DA4A2E85B6B2578D00560597B99E23","test":"274489E5F419E8334DCFD80D188B1B581D9B231C964B7823DDF3B05F4F5EE283"},
+    "result": "Footer height78px applied; player/chat/library109 tests passed,0failed2026-10-16 05:17. No UI or native build. Actual footer pixels remain root-owned verification."
+  },
+  "limitations": [
+    "Full official-runtime equivalence is not possible by a provider CSS skin alone. Offline source cannot use YouTube IFrame API with arbitrary local token. This checkpoint improves deterministic visual/control defects; exact pixel/animation parity remains unverified and may need separate original static asset extraction/licensing review.",
+    "Stored archives lacking avatars/badges/rich event fields cannot reconstruct historical official appearance. Preserve supplied data and honest fallback only.",
+    "No distribution/release rights are inferred from public static assets. No license, SDK or network behavior changed."
+  ]
+}

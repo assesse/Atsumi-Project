@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "state": "root approved scoped implementation; actual app verification pending",
+  "checkpoint": {
+    "frontend": "2026-10-15 05:43 KST: metadataResolution, Workspace and ViewingControls focused tests68pass; full frontend TypeScript and scoped git diff --check pass. Initial sandbox Vitest cache rename EPERM prevented collection; unchanged normal-permission command ran successfully. Existing fixture URL/ID mismatch was corrected to a coherent target; asynchronous controls tests now wait for real metadata preflight rather than bypassing it.",
+    "native": "Root serial Cargo at2026-10-15 approximately05:49KST:76passed,0failed,6ignored in youtube:: scope. Initial compile exposed an omitted ignored-test bool consumer in platform_media/live.rs, corrected with root permission and documented below. Actual native app route remains pending.",
+    "review": "Read-only peer review found view navigation during pending explicit play and fallback-download late enqueue gaps; both were fixed with focused regression tests. Queue capacity/deadline added per root approval. Final peer reread confirms both races fixed, no additional must-fix; actual root desktop tests pending.",
+    "remaining": "No all-card watch fan-out. Unopened ambiguous cards remain unknown until a user action resolves them. Auth-limited/unavailable anonymous metadata remains unknown with retry rather than bypassing controls or guessing VOD. Actual classification path passed; native floating layout is separately defective and not complete.",
+    "actualDesktop": "Root full isolated QA5538ac46df5e4dfba7885b9eb1c958f5 at05:50-06:00KST: Kitkat Playroom all-results first live detail opened with disabled actions/spinner, resolved with disabled VOD download and enabled play; play routed to live with original moving video and separate official chat, source card then gained live label. The native document placement/extra watch content was visibly wrong and is separately investigated in youtube-floating-layout-diagnostics. True VOD jNQXAC9IVRw resolved as Me at the zoo, enabled download, completed1/1, saved744412byte media.mp4, played to19sec in the local library without a chat pane, center replay restarted0:00 and reached end again. Whole-file ffmpeg decode exit0. No user profile or existing media used."
+  },
+  "request": {
+    "latest": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec: continue actual verification and fix YouTube automatic recording, Google transition and SOOP screen problems",
+    "originals": ["01a13adc-a040-70f0-97d9-380c5b6ba368 items1/4: actual YouTube chat/playback and all missing or nonworking workflows", "01a13978/01a1399c: original provider player/chat, CHZZK-aligned flows and isolated provider state", "01a051cd-a457-79f0-a78e-4edcf270fa8c: retain search results and position on return", "01a10785-1343-76e2-8820-053e98507cbb: visible loading for asynchronous actions", "R009/R018/R022: truthful unknown/failure, bounded work and actual app acceptance"]
+  },
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Reuse this continuation's independently rehashed complete main230/284 and other333/375 EOF original snapshots and69 original specifications; only RELEASING changed and was read fully. Root refreshed50active/3archive EOF with unchanged other revisions. Read current discovery contradiction, YouTube followup and provider-clone contracts and relevant original requests directly. Existing inaccessible01a03f16, unidentified analysis1/2 and historical attachment pixels remain unavailable.",
+    "readCode": ["youtube/search.rs renderer/lockup/parser/query/tests", "youtube.rs metadata/bounded public client/commands/tests", "youtube/auto_record_observation.rs and auto_record.rs live/offline consumer", "YouTubeWorkspace.tsx complete search/detail/action routes", "YouTubeViewingControls.tsx known-item/link/channel resolution", "YouTube model/api and current workspace/control tests"],
+    "permissions": "Root owns Cargo and actual UI. Root requested a separate before-edit contract and explicit caller list; production editing awaits approval. No account/auth, shared media, native receiver or CHZZK changes."
+  },
+  "actualEvidence": {
+    "root": "Actual Explore search Kitkat Playroom returned20cards; first cswFQYam8Ic current LIVE detail showed enabled download and VOD playback route.",
+    "independentPublic": "Anonymous official /results?search_query=Kitkat+Playroom&hl=ko HTTP200: first videoRenderer cswFQYam8Ic had no badges, LIVE thumbnailOverlay, lengthText, or live/upcoming keys anywhere in initialData. Same exact public watch initial player: matching videoId, isLive=true, liveBroadcastDetails.isLiveNow=true, lengthSeconds=0, playabilityStatus=OK. No account/cookie used.",
+    "cause": "Absence of search badge is converted to bool false. Workspace.open directly stores the search item; isLive truthiness then chooses live/VOD native host and download permission. Known-video viewing controls also reuse that item without rechecking. kind=video is correct for both live and VOD; the state classification is the fault.",
+    "display": "Official search supplied cumulative 조회수 text; it is not current concurrent viewers. Preserve it unchanged. Source captions/titles containing LIVE are not evidence."
+  },
+  "scope": {
+    "production": [
+      "src-tauri/src/youtube/search.rs: is_live Option<bool>, absent evidence serialized as omitted unknown; retain true only from supported official live badge; bounded parsing remains unchanged",
+      "src-tauri/src/youtube.rs: extract/test exact-video player live-state parser; known true/false only from matching, valid official video/player evidence; missing/malformed/mismatched or unavailable response remains None; reuse existing metadata command/client/limits",
+      "src-tauri/src/youtube/auto_record_observation.rs: adapt Some(true) filter and prevent complete/offline when a video row remains unknown; no per-item watch fan-out, scheduling authority or stop change",
+      "src/features/youtube/metadataResolution.ts: optional small provider-local pure exact-target/result validator and bounded per-action resolver, no global persisted cache",
+      "src/features/youtube/YouTubeWorkspace.tsx: selected-video detail metadata state, exact request token, loading/retry, action preflight and visible-result update; do not modify native layout/player internals",
+      "src/features/youtube/YouTubeViewingControls.tsx: do not let a cached unknown video bypass metadata verification; use exact result validation and unknown error rather than false offline; keep already-playing receiver identity",
+      "Corresponding focused Rust/parser and frontend action/lifecycle tests; minimal existing style reuse for spinner/retry"
+    ],
+    "callers": [
+      "Root compilation revealed an omitted test-only consumer: platform_media/live.rs ignored public_live_shared_receiver_roundtrip predicate. Full src-tauri/src and examples rg audit found no further bool consumers. Root approved changing only this QA predicate to Some(true) and replacing misleading no-longer-live failure with explicit unconfirmed/unknown; shared production media is unchanged. Its badge-less search cannot itself certify live and therefore fails honestly, while existing exact-player/native QA provides actual certification.",
+      "search.rs renderer/lockup constructors and ignored public_channel_live_resolution assertions depend on bool is_live",
+      "auto_record_observation.rs observe_page filters item.is_live and reports complete; auto_record.rs maps empty+complete to offline and incomplete to unknown",
+      "YouTubeWorkspace.tsx detail open, start/toggle playback, download/batch/shortcut/menu, playing-cell/backgroundVod and playbackKind use isLive",
+      "YouTubeViewingControls.tsx known-video fast path and channel live list filter use isLive; onApply must not introduce unverified unknown video",
+      "youtube/original.rs open uses independent YouTubeMetadata.is_live Option and final official native readiness; no modification to native host required",
+      "model favorites only persist known true; old favorites therefore need action-time verification, not migration to fabricated false"
+    ],
+    "excluded": "SOOP race/scroll, broad privacy/search error UI, account/login, original.rs/original_page.js/native viewport, common platform media downloading/recording, CHZZK, automatic reservation state/schema, release and user data."
+  },
+  "decisions": [
+    "Root/cross-review followup: fallback single-download adapter rechecks the action epoch/privacy/active/abort before every enqueue, not merely before the first. The metadata queue retains at most100 waiters (existing saved-list limit) and each waiter expires after12seconds with explicit retry; cancelled waiters are removed immediately. Timed-out waiting work never starts later and does not release one of the two physical in-flight native slots. Existing native per-request timeouts bound active work.",
+    "Root requested matching metadata unknown warning: replace the misleading suggestion to choose LIVE search (which may omit the same badge) with '현재 라이브인지 확인하지 못했습니다. 다시 확인해 주세요.' No policy or authentication change.",
+    "Cross-review found that same active provider with a different view could retain the detail key during pending explicit play. The action epoch now also changes on Explore/live/downloads/screenshots navigation: pending new actions are invalidated, while existing playingIds/receivers remain unchanged. Deferred tests exercise all three outgoing views with an existing receiver preserved.",
+    "Root review clarification: metadata from opening/retrying details never auto-starts playback. A user explicitly pressing play after its30second action verification expires may continue that same play action after exact re-verification, provided the same detail is still visible, its unique token/epoch remains current, privacy/inactive/close have not invalidated it and capacity remains available. This avoids requiring a second click; a delayed open/background/retry response has no such authority.",
+    "Do not infer false from absent badges or true from LIVE in title, missing duration or live-search filter. Unknown search rows remain usable to open, but cannot choose a media path until the exact video's official metadata resolves.",
+    "Open detail immediately using existing title/thumbnail and a per-detail spinner. Disable new play/download while resolving and expose retry inside that detail on failure/unknown. Preserve foreground/background opening, active detail, scroll, selection and other existing players. The network response must never reopen a closed detail or switch the active detail.",
+    "Every selected video action uses a canonical parsed target and requires returned kind=video, exact ID and canonical URL identity match. A nonboolean live state, mismatch or metadata rejection stays unknown. Do not trust a remote title, stale favorite flag or a search boolean as playback/download authority.",
+    "Use existing metadata API, which already bounds two native workers, public response sizes and timeouts. Resolve only opened/selected items; no global card/watch fan-out. Multi-open/download preflights are locally queued at concurrency<=2, deduplicated by exact target within that action. User-visible pending state is bounded; no polling loop or extra media stream.",
+    "A detail instance has monotonically unique request identity independent of its target. Close/reopen, newer retry, unmount, privacy activation or provider navigation invalidates pending actions. Resolved metadata may update only still-present matching details/results and may never auto-start media. Existing playing receivers retain their established route and are never remounted because metadata refreshes.",
+    "Before download, validate all selected videos before submitting the existing batch. Any live or unknown item prevents that batch from being enqueued and gives an actionable message. Privacy/inactive state is rechecked after awaited metadata and immediately before the queue call; already submitted jobs are not silently cancelled.",
+    "A definite live result enables original live playback/chat/recording and blocks VOD download; definite VOD enables ordinary playback/download. Any unknown stays retryable. Current native media verification remains the final authority; frontend preflight is not claimed to eliminate a broadcast ending between metadata and native open.",
+    "Known current playing items may be reused by viewing controls without reclassification. New/nonplaying video inputs must be resolved or rejected as unknown. Channel browse lacking authoritative live evidence must not claim the channel is offline; no automatic watch-page fan-out is introduced to scheduler discovery.",
+    "Search cards update isLive only after the user-triggered exact metadata resolution. Immediate LIVE badges for unopened ambiguous cards are not claimed. Cumulative 조회수 labels stay unchanged."
+  ],
+  "checks": [
+    "Parser fixture matching actual badge-less cswFQYam8Ic yields None, not false; explicit LIVE badge true; title-only LIVE unknown",
+    "Exact watch current live true, ordinary VOD false; malformed/missing/mismatched player or absent state remains unknown; supported native original caller behavior remains valid",
+    "auto observation still schedules only definite live, unknown rows cannot make empty page offline; exact channel checks and no-stop-on-network-error remain unchanged",
+    "Deferred detail response after close/reopen, newer retry, privacy or inactive cannot reopen/select/start/queue or overwrite new state",
+    "Badge-less search opens loading detail, resolves live, updates card, blocks download and uses native playbackKind live with chat; VOD resolves false and remains downloadable",
+    "Download via context, multiselect, Ctrl+Enter and detail requires exact current metadata for all chosen targets and never partially submits a rejected batch",
+    "Viewing-controls saved unknown video cannot bypass preflight; existing playing receivers stay mounted across changed details, privacy and provider navigation",
+    "Root actual desktop verifies live cswFQYam8Ic from all-results search and a true VOD, retries/failure, native route/chat/download controls, retained search return; no completion from mocks alone"
+  ]
+}

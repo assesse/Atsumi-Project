@@ -288,6 +288,30 @@ impl HitomiLiveAdapter {
             return Ok(metadata);
         }
 
+        let metadata = self.fetch_metadata_document(gallery_id, cancellation)?;
+        if metadata.id != gallery_id {
+            return Err(SourceContractError::invalid_data(
+                "galleryinfo.id",
+                format!("requested {gallery_id}, received {}", metadata.id),
+            ));
+        }
+        let current_generation = unpoison(self.cache_generation.lock());
+        if *current_generation == generation {
+            unpoison(self.metadata_cache.lock()).insert(gallery_id, Arc::clone(&metadata));
+        }
+        Ok(metadata)
+    }
+
+    /// Bounded data-only read. Callers must validate the requested identity before
+    /// caching or using it. No redirects or URLs from the response are followed.
+    fn fetch_metadata_document(
+        &self,
+        gallery_id: u64,
+        cancellation: Option<&CancellationToken>,
+    ) -> Result<Arc<HitomiGalleryMetadata>, SourceContractError> {
+        if let Some(cancellation) = cancellation {
+            check_cancelled(cancellation)?;
+        }
         let url = galleryinfo_script_url(gallery_id)?;
         let payload = self.transport.execute(HttpRequest {
             url,
@@ -303,18 +327,7 @@ impl HitomiLiveAdapter {
         let script = std::str::from_utf8(&payload.bytes).map_err(|error| {
             SourceContractError::invalid_data("galleryinfo script", error.to_string())
         })?;
-        let metadata = Arc::new(parse_galleryinfo_script(script)?);
-        if metadata.id != gallery_id {
-            return Err(SourceContractError::invalid_data(
-                "galleryinfo.id",
-                format!("requested {gallery_id}, received {}", metadata.id),
-            ));
-        }
-        let current_generation = unpoison(self.cache_generation.lock());
-        if *current_generation == generation {
-            unpoison(self.metadata_cache.lock()).insert(gallery_id, Arc::clone(&metadata));
-        }
-        Ok(metadata)
+        Ok(Arc::new(parse_galleryinfo_script(script)?))
     }
 
     fn fetch_gg_routing(&self) -> Result<Arc<GgRoutingTable>, SourceContractError> {
@@ -579,6 +592,67 @@ impl TagCatalogSource for HitomiLiveAdapter {
 }
 
 impl DownloadSourcePort for HitomiLiveAdapter {
+    fn resolve_gallery(
+        &self,
+        gallery_id: GalleryId,
+        cancellation: &CancellationToken,
+    ) -> Result<crate::application::DownloadGalleryResolution, SourceContractError> {
+        use crate::{
+            application::DownloadGalleryResolution, source::hitomi::verify_gallery_replacement,
+        };
+        check_cancelled(cancellation)?;
+        let requested_id = gallery_id.get() as u64;
+        let generation = *unpoison(self.cache_generation.lock());
+        // Preserve the existing bounded cache for ordinary exact-ID downloads.
+        // A cached canonical document is never used to prove a replacement.
+        if let Some(metadata) = unpoison(self.metadata_cache.lock())
+            .get_fresh(&requested_id, self.config.metadata_cache_ttl)
+        {
+            return snapshot_from_metadata(gallery_id, &metadata)
+                .map(DownloadGalleryResolution::Exact);
+        }
+        // Fresh independently addressed documents: cached aliases or canonical
+        // metadata cannot validate a replacement. At most two metadata requests.
+        let response = self.fetch_metadata_document(requested_id, Some(cancellation))?;
+        let (canonical, proof) = if response.id == requested_id {
+            (response, None)
+        } else {
+            let canonical_id = i64::try_from(response.id)
+                .ok()
+                .and_then(|id| GalleryId::new(id).ok())
+                .ok_or_else(|| {
+                    SourceContractError::invalid_data(
+                        "galleryinfo.id",
+                        "replacement ID is out of range",
+                    )
+                })?;
+            check_cancelled(cancellation)?;
+            let canonical =
+                self.fetch_metadata_document(canonical_id.get() as u64, Some(cancellation))?;
+            let proof = verify_gallery_replacement(
+                requested_id,
+                &response,
+                canonical_id.get() as u64,
+                &canonical,
+            )?;
+            (canonical, Some(proof))
+        };
+        check_cancelled(cancellation)?;
+        {
+            let current_generation = unpoison(self.cache_generation.lock());
+            if *current_generation == generation {
+                // Never poison the old ID's strict metadata cache.
+                unpoison(self.metadata_cache.lock()).insert(canonical.id, Arc::clone(&canonical));
+            }
+        }
+        match proof {
+            Some(proof) => Ok(DownloadGalleryResolution::Replacement(proof)),
+            None => {
+                snapshot_from_metadata(gallery_id, &canonical).map(DownloadGalleryResolution::Exact)
+            }
+        }
+    }
+
     fn gallery_snapshot(
         &self,
         gallery_id: GalleryId,
@@ -590,60 +664,77 @@ impl DownloadSourcePort for HitomiLiveAdapter {
         })?;
         let metadata = self.fetch_metadata_and_cache_summary(source_id, Some(cancellation))?;
         check_cancelled(cancellation)?;
-        let source_page_count = u32::try_from(metadata.pages.len()).map_err(|_| {
-            SourceContractError::invalid_data(
-                "gallery page count",
-                "exceeds the supported 32-bit range",
-            )
-        })?;
-        let gallery_metadata = GalleryMetadata::new(
-            metadata.title.clone(),
-            metadata.artists.first().cloned(),
-            metadata.groups.first().cloned(),
-            source_page_count,
-        )
-        .map(|gallery| {
-            gallery
-                .with_artists(metadata.artists.clone())
-                .with_list_presentation(
-                    download_list_language(metadata.language.as_deref()),
-                    download_list_published_rank(metadata.published_at.as_deref()),
-                )
-        })
-        .map_err(|error| {
-            SourceContractError::invalid_data("gallery metadata", error.to_string())
-        })?;
-        let gallery_revision = metadata
-            .source_revision
-            .as_str()
-            .rsplit_once(':')
-            .and_then(|(_, fingerprint)| u64::from_str_radix(fingerprint, 16).ok())
-            .unwrap_or(1);
-        let pages = metadata
-            .pages
-            .iter()
-            .map(|page| {
-                Ok(DownloadSourcePage {
-                    source_page_number: SourcePageNumber::new(page.source_page).map_err(
-                        |error| {
-                            SourceContractError::invalid_data(
-                                "source page number",
-                                error.to_string(),
-                            )
-                        },
-                    )?,
-                    source_revision: page.source_revision.to_string(),
-                })
-            })
-            .collect::<Result<Vec<_>, SourceContractError>>()?;
-        Ok(DownloadGallerySnapshot {
-            gallery: Gallery::new(gallery_id, gallery_revision, gallery_metadata),
-            source_revision: metadata.source_revision.to_string(),
-            pages,
-        })
+        snapshot_from_metadata(gallery_id, &metadata)
     }
 
     fn download_page(
+        &self,
+        gallery_id: GalleryId,
+        source_page_number: SourcePageNumber,
+        cancellation: &CancellationToken,
+    ) -> Result<DownloadPagePayload, SourceContractError> {
+        self.download_page_strict(gallery_id, source_page_number, cancellation)
+    }
+}
+
+fn snapshot_from_metadata(
+    gallery_id: GalleryId,
+    metadata: &HitomiGalleryMetadata,
+) -> Result<DownloadGallerySnapshot, SourceContractError> {
+    if metadata.id != gallery_id.get() as u64 {
+        return Err(SourceContractError::invalid_data(
+            "galleryinfo.id",
+            "snapshot identity mismatch",
+        ));
+    }
+    let source_page_count = u32::try_from(metadata.pages.len()).map_err(|_| {
+        SourceContractError::invalid_data(
+            "gallery page count",
+            "exceeds the supported 32-bit range",
+        )
+    })?;
+    let gallery_metadata = GalleryMetadata::new(
+        metadata.title.clone(),
+        metadata.artists.first().cloned(),
+        metadata.groups.first().cloned(),
+        source_page_count,
+    )
+    .map(|gallery| {
+        gallery
+            .with_artists(metadata.artists.clone())
+            .with_list_presentation(
+                download_list_language(metadata.language.as_deref()),
+                download_list_published_rank(metadata.published_at.as_deref()),
+            )
+    })
+    .map_err(|error| SourceContractError::invalid_data("gallery metadata", error.to_string()))?;
+    let gallery_revision = metadata
+        .source_revision
+        .as_str()
+        .rsplit_once(':')
+        .and_then(|(_, fingerprint)| u64::from_str_radix(fingerprint, 16).ok())
+        .unwrap_or(1);
+    let pages = metadata
+        .pages
+        .iter()
+        .map(|page| {
+            Ok(DownloadSourcePage {
+                source_page_number: SourcePageNumber::new(page.source_page).map_err(|error| {
+                    SourceContractError::invalid_data("source page number", error.to_string())
+                })?,
+                source_revision: page.source_revision.to_string(),
+            })
+        })
+        .collect::<Result<Vec<_>, SourceContractError>>()?;
+    Ok(DownloadGallerySnapshot {
+        gallery: Gallery::new(gallery_id, gallery_revision, gallery_metadata),
+        source_revision: metadata.source_revision.to_string(),
+        pages,
+    })
+}
+
+impl HitomiLiveAdapter {
+    fn download_page_strict(
         &self,
         gallery_id: GalleryId,
         source_page_number: SourcePageNumber,

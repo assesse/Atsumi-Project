@@ -1,0 +1,16 @@
+{
+  "id": "shared-browser-environment-20261017",
+  "originals": ["01a14575-680f-7fc2-b9ac-93e0d1dfa769", "01a1475e-8adc-7752-b919-abf426c940f9", ".runtime/requirements-audit/20261016-remaining-goal-original.json"],
+  "audit": ".runtime/requirements-audit/20261017-shared-browser-environment.json",
+  "state": "Implemented exact argument parity across ten builder sites; native90passed1opt-in ignored and frontend94passed. Normal dev build completed1m01s. Actual fresh-process Pixiv-first home then YouTube official video and chat document succeeded; prior0x8007139F absent. YouTube resumed after pause, advancing video clock observed, normal viewer stop succeeded. Pixiv return retained authenticated status, five favorite tags and98loaded cards. Separate fresh-process reverse startup/account popups and other goal gates remain unverified.",
+  "evidence": "Actual Pixiv home loaded favorite tags and recommendations, then YouTube resolved the channel but remained connecting. Native log at10:56 contains four WebView creation failures HRESULT0x8007139F. CHZZK subsequently loaded normally. Ten surfaces share youtube-original-profile, but only YouTube live/chat and VOD set additional browser arguments.",
+  "decisions": [
+    "Retain the explicitly requested shared YouTube/Pinterest/Pixiv browser identity and existing profile path; do not delete, copy, split or reset credentials.",
+    "Use identical environment-level additional browser arguments at every builder using this profile, preserving the existing YouTube autoplay/background playback flags. Keep browser extensions disabled consistently.",
+    "Preserve service-specific authorization, account completion evidence, navigation/IPC permissions, popup opener and media/session ownership. CHZZK and SOOP are not part of this environment.",
+    "Do not alter account settings, authentication, recorded media or automatic reservations. Normal dev restart only after graceful shutdown; no force kill.",
+    "An indefinite loading guard is a separate scoped change if needed, not permission for automatic retries or recording interruption."
+  ],
+  "checks": ["All ten shared-profile builder sites use the same arguments", "Native profile/popup/account-policy tests", "Normal development build", "Actual Pixiv-first then YouTube official player/chat creation and retained Pixiv home", "No profile deletion or broader navigation allowance", "Remaining goal gates remain individually unverified until actually exercised"],
+  "technicalSource": "https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/webview2-idl?view=webview2-1.0.622.22"
+}

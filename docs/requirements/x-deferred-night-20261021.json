@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "request": "2026-10-21 direct user: 미뤘던 작업들 다 처리해줘. 난 자러갈거니까, 승인해줄건지 물어도 답변 못해. 너가 대신 다 처리해.",
+  "state": "resumed; actual verification and proof-led repair in progress",
+  "sourceInventory": {
+    "active": "50 active and pinned inventory refreshed; other Atsumi main1792473578 and UIUX1792073766 unchanged from prior fully read EOF snapshots; current direct conversation read.",
+    "archives": "3 archived entries; nextCursor null; no new Atsumi development source.",
+    "unchangedFullSnapshots": "implementation-policy 3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1; official-split 7648801344FCBD0FCB8067B48B57D63F2E7E45DC9612BCC07B11590298BAFC05; sidebar291E3A9B1B55F857A1CB91C123A06E517E4659719AFE1707879D35174FE92694. Current archive/menu/native-action contracts reread in full.",
+    "unavailable": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"]
+  },
+  "rules": [
+    "Use active2849; preserve shared changes, immutable archives, DB, profiles, all recording/download files. No commit, push, release or PC shutdown.",
+    "No like/bookmark/repost/reply/follow or undo without separate action-time approval. User sleeping does not authorize proxy approval. No authentication/security/privacy automation.",
+    "Normal Atsumi restart only after read-only work safety check. No force termination.",
+    "Retain latest official X split, source ownership and capture integrity checks; do not revive superseded clean-room player or reaction preparation.",
+    "Never declare actual visual/audio acceptance from unit tests or source ready flags alone. Preserve failed screenshots.",
+    "Existing old goal remains paused as previously requested for removal. Do not recreate or falsely complete it. Original separate Android related-video task remains outside this bounded deferred QA, not silently declared completed."
+  ],
+  "newAdFinding": {
+    "actual": "Evidence02: current development PID28992 @jconoha home shows XBusiness2095223824992137355 with visible own 광고 badge. Readiness adShape confirms unique owned placement but metadataMissing1/headerBadges0, no structure/ambiguity failure.",
+    "plan": "Determine bounded own-header discovery rejection with closed count/boolean diagnostics only if needed. Preserve mandatory independent badge plus owned placement proof, fail-open uncertainty, ordinary media and all existing ad tests. Never infer from author/body/video/ad links or private state.",
+    "acceptance": "Regression for demonstrated header structure, negative body/quote/cross-post shapes, actual same-route advertisement hidden while normal media remains playable. Prior two-ad success is not universal proof."
+  },
+  "newPhotoFinding": {
+    "actual": "Evidence05: current development binary includes existing carousel resolver, but UISabor2112470462097670152/photo/1 renders four-slide photo without current-save control. photoProbe4 has two exact image candidates, one apparently fully clipped, matching route/counter and ordinal proof; actual admission still rejects.",
+    "plan": "Add optional bounded carouselProof closed-enum first-rejection diagnostic in actions and native DTO only. Preserve production admission and all ownership/clip checks. Diagnostic on/off must be behavior-equivalent; use new actual sample before choosing any repair.",
+    "acceptance": "Demonstrated rejection reproduced in regression, narrow correction only, then actual two distinct slide saves with identity validation and post-save keyboard focus test. No guessed clipping relaxations."
+  },
+  "plan": [
+    "Verify already integrated local archive black menus and cross-surface/Escape dismissal.",
+    "Verify integrated current-photo proof on multiple-slide source, individual capture identity and all four image keys after save-control focus.",
+    "Use closed quote-avatar diagnostics on a new exact capture; fix only demonstrated visible same-quote ownership case and verify new immutable assets, leaving old captures unchanged.",
+    "Recheck saved-body/media, loaded-reply split and inert historic interactions, original feed/preview navigation and media rendering.",
+    "Audit YouTube-in-X audio path without altering endpoint or source mute; exact unidentified source remains explicit limitation if not recovered safely.",
+    "Run focused and whole-X regression/typecheck, native tests/build only when needed, actual app acceptance and independent contradiction review."
+  ],
+  "preflight": {
+    "db": "SQLite mode=ro, PRAGMA query_only1: completed8992,cancelled618,failed4,quarantined640,review_required274; no unfinished download status. Relocations589excluded; merges10applied. All three auto-record configs enabledfalse. No Atsumi/ffmpeg/streamlink/yt-dlp/cargo/rustc before launch.",
+    "launch": "Plain exe-path launch unexpectedly opened old installed Atsumi with data-preparation error; evidence01 preserved and its startup-cancel-and-exit used. Exact process:fullpath launch then opened correct development exe at14201. No data repair/deletion.",
+    "binary": "063F59E183E79CD0A6205A812C2EFD1C6936C6630FCD896DA9343595DB7BA2A5; 2026-10-21 00:17:37 KST"
+  }
+}

@@ -57,6 +57,7 @@ if (($env:Path -split ";") -notcontains $nodeDirectory) {
 if ($Action -eq "tauri") {
   $mediaTimer = [Diagnostics.Stopwatch]::StartNew()
   & (Join-Path $PSScriptRoot "prepare_media_tools.ps1")
+  & (Join-Path $PSScriptRoot "prepare_platform_tools.ps1")
   Write-Output "Media verification: $($mediaTimer.ElapsedMilliseconds) ms."
   $systemCargo = Get-Command cargo -ErrorAction SilentlyContinue
   $rustupCargo = Join-Path $env:USERPROFILE ".cargo\bin\cargo.exe"

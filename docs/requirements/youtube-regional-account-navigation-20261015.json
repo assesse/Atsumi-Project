@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "status": "narrow interoperability implementation, native regression and build passed; actual fresh authentication remains pending",
+  "beforeEditApproval": "Root read the read-only reassessment and approved this NEW account-window-only exact regional SetSID batch before production editing. Root additionally approved comment correction and cfg(test) list access in original_account_regions.rs; the 269 suffix entries and membership algorithm remain unchanged. Root owns Cargo/build/restart and actual verification. No authentication input, account inspection, user-profile network request or UI operation by this agent.",
+  "originalRequests": [
+    {"source": "01a13adc-a040-70f0-97d9-380c5b6ba368", "scope": "Resolve Google authentication automatic continuation and verify actual YouTube operation."},
+    {"source": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."},
+    {"source": "01a13a73-72e7-7a60-a097-abedc3cab10a", "text": "앞으로도 이런게 뜨면 너가 브라우저 정상 종료까지 되게 이 프로그램을 만들어줘야해. 뭐가 원인인지는 잡았어?"},
+    {"source": "call_93ce2337ac2e4b63b93700eaf5543f13", "scope": "User requested no further questions overnight. Do not automate credentials, security challenges or consent."}
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Rehashed unchanged fully read main230/284 EOF and other333/375 EOF snapshots. Reuse root-refreshed active50/archive3 EOF and69 original-specification inventory with the already fully reread RELEASING delta. Reread AGENTS, complete current implementation-policy, all four auth contracts below, direct original request/account-completion evidence and safe actual authentication observations. Read current complete original_policy/account_regions and exact original.rs account lifecycle before editing. No keyword-only substitute.",
+    "directEvidence": [".runtime/requirements-audit/20261014-account-completion-request.json", ".runtime/requirements-audit/20261015-platform-verification-resume.json"],
+    "contractsReadInFull": ["docs/requirements/youtube-auth-transition-20261015.json", "docs/requirements/youtube-regional-handoff-diagnostics-20261015.json", "docs/requirements/youtube-account-popup-diagnostics-20261015.json", "docs/requirements/youtube-account-observer-bounds-20261015.json"],
+    "unavailable": ["Durable original01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Previously indexed inaccessible historical attachment pixels"]
+  },
+  "evidenceAndLimits": [
+    "Actual fresh authentication was observed as google-account then youtube-account then other/allowed=false and did not advance without the user's F5. The exact blocked destination was not captured; the later challenge expired. This batch does not identify or claim to fix that historical root cause.",
+    "The existing account policy rejects every regional accounts.google host even at exact /accounts/SetSID. Anonymous prior GETs without credentials/profile/cookies/query/body showed accounts.google.co.kr and accounts.google.ro SetSID returned400, a nonexistent /accounts/ path returned302, accounts.youtube.com SetSID returned400, and www.google.com/co.kr SetSID returned404. This distinguishes a recognized public endpoint; it does not prove successful authentication or operation on all listed suffixes.",
+    "The approved change is a bounded interoperability inference combining official host membership, distinct public endpoint evidence and the cross-Google/YouTube authentication architecture. It is not a universal Google-domain or account-path allowlist and is not derived from the user's VPN country.",
+    "Current popup_url calls common account_url, so changing common account_url would widen player-popup privileges. Both functions and player/chat admission must remain unchanged."
+  ],
+  "primarySources": [
+    {"url": "https://raw.githubusercontent.com/chromium/chromium/main/components/google/core/common/google_tld_list.h", "supports": "Frozen explicit Google suffix membership; all269 existing entries retained exactly. Does not document this user's handoff."},
+    {"url": "https://raw.githubusercontent.com/chromium/chromium/main/components/google/core/common/google_util.cc", "supports": "Exact canonical Google-host and suffix boundaries, not substring or wildcard matching. This is not by itself a login-navigation policy."},
+    {"url": "https://raw.githubusercontent.com/chromium/chromium/main/google_apis/gaia/gaia_auth_fetcher.cc", "supports": "Multilogin sets authentication cookies for multiple Google sites including YouTube and the client obtains connection information from the server. It does not prove a particular regional SetSID redirect or the historical blocked target."}
+  ],
+  "supersession": {
+    "explicitlySuperseded": "The diagnostics-only no-admission decision in youtube-regional-handoff-diagnostics-20261015.json and its account_regions module prohibition are superseded ONLY for the new exact account-window regional SetSID predicate approved here. The original diagnostic implementation and its historical validation remain recorded, not rewritten as an earlier permission grant.",
+    "stillBinding": "No speculative arbitrary host/path admission; no raw auth URL/query logs; no new-window permission, forced navigation/refresh, credential/cookie access, authentication automation, changed account completion predicate or cached-session close. Common account_url/popup_url, all other platforms and native player/chat permissions remain unchanged. Fresh-login success still requires actual verification."
+  },
+  "implementationPlan": [
+    "Add a distinct account-window destination predicate: existing common account_url OR HTTPS with no userinfo/nonstandard port, exact case-sensitive /accounts/SetSID and exact accounts.google.<frozen official suffix> membership. No www host, extra subdomain, unknown suffix, other path, encoded path spelling or trailing slash is newly admitted.",
+    "Keep regional classification data/membership independent of permission. Correct only its documentation to identify this narrowly authorized caller, and expose the immutable list only under cfg(test) for complete table coverage. Do not grant permission by comparing account_stage diagnostic strings.",
+    "Use the new predicate only through an AccountFlow account-window navigation method that checks the captured nonce and advances the existing epoch through navigate(). The existing account on_navigation closure calls this method under the same flow mutex and emits its actual decision using existing fixed categories and shared64-event budget. Stale/destroyed/replaced nonce rejects without modifying the newer flow.",
+    "Preserve on_new_window unconditional Deny, account entry/home/completed predicates, fresh observer limits and account-refresh recording fences. Redirect query/fragment stays opaque to this policy; the browser supplies it unchanged, no application parsing/replay/logging. Every subsequent navigation is independently checked by the same current-nonce closure."
+  ],
+  "files": ["src-tauri/src/youtube/original_policy.rs: separate account-window predicate, AccountFlow method and regressions only", "src-tauri/src/youtube/original.rs: existing account on_navigation closure only", "src-tauri/src/youtube/original_account_regions.rs: documentation and cfg(test) list access only", "docs/requirements/implementation-policy.json: contract index only"],
+  "acceptance": [
+    "Every one of269 frozen suffixes accepts the exact HTTPS accounts.google.<suffix>/accounts/SetSID in the current account-window flow; com retains its preexisting common policy. Every new regional case remains denied by common account_url, popup_url, player/chat admission and completion predicates.",
+    "For every newly supported regional suffix, wrong case, trailing slash, percent-encoded path, unrelated account path, www/extra subdomain/foreign-host variants, HTTP, credentials and nonstandard ports reject. Existing default HTTPS port canonicalization is preserved, not broadened.",
+    "Opaque query/fragment does not turn a foreign host/path into permission and is never output. A regional SetSID followed by an external destination is accepted then rejected; query continue values do not authorize the next hop.",
+    "Only current nonce navigation advances the epoch. Stale nonce, destruction and delayed old-window callbacks cannot alter a replacement flow; rejected destinations do not advance epochs or reset diagnostic budgets. Existing common navigation/popup tables remain unchanged.",
+    "Root runs focused native policy tests, broader suite/build and later user-operated fresh authentication. Actual success requires Google challenge to advance to freshly verified official YouTube home, normal account-window destruction and app 로그인됨 without F5. Retained-session close or unit/build success alone is insufficient."
+  ],
+  "remainingRisk": "Official host membership and anonymous endpoint recognition do not prove every regional endpoint is deployed or that this was the missing destination. A different still-blocked category may remain. Fixed diagnostics retain that distinction; no further host/path expansion is automatic.",
+  "implementationCheckpoint": {
+    "state": "Root regional4/policy22 regressions and full native1578passed0failed58ignored; main build86692passed and actual workspace main6490046 launched. Independent peer review found no must-fix. Actual fresh Google authentication remains unverified.",
+    "delta": "original_policy adds one private account_window_url predicate, one AccountFlow::navigate_account_window method and four deterministic tests. original.rs changes only account on_navigation to obtain its actual nonce-fenced decision under the existing mutex, then logs through the unchanged budget. original_account_regions changes module documentation and adds cfg(test) read-only suffix access; membership/data unchanged. implementation-policy adds this contract path only.",
+    "nativeTestFilters": ["regional_account_window", "youtube::original::policy::tests"],
+    "checksByAgent": "Contract/index JSON parse and index membership passed. git diff --check exited0. rustfmt --edition2021 --emit stdout parsed all three files without writing them, exit0 under normal permissions after sandbox path-canonicalization denial. No Cargo, native test execution, build, UI, process or authentication action by this agent.",
+    "frozenSha256": {
+      "src-tauri/src/youtube/original.rs": "BC69335D5619EA611BB4E33A3CDF40AAF2944AE18062BD89358D45D3B8B23B8D",
+      "src-tauri/src/youtube/original_policy.rs": "56E6D5B43950EC4653779DB384113A300AEB67B5F49F46D5973A56705975EFB1",
+      "src-tauri/src/youtube/original_account_regions.rs": "53119B1F6DB78690596D5E1F52AE0DEC5EE252CF54C5A630610C1E36C2334405"
+    }
+  }
+}

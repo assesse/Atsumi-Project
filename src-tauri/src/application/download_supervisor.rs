@@ -1211,6 +1211,7 @@ fn download_entry_from_projection(
     projection: &DownloadJobProjection,
 ) -> Result<DownloadEntry, ApplicationError> {
     Ok(DownloadEntry {
+        linked_gallery_id: projection.download.linked_gallery_id,
         entry_id: DownloadEntryId::new(projection.download.entry_id.clone())?,
         gallery_id: crate::domain::GalleryId::new(projection.download.gallery_id)?,
         revision: projection.download.revision,
@@ -1345,7 +1346,11 @@ fn worker_loop(inner: Arc<SupervisorInner>) {
         let receiving_started = std::time::Instant::now();
         let _diagnostic =
             crate::diagnostics::operation("download_receive", Some(&descriptor.entry_id)).entered();
-        let result = run_download(&inner, &descriptor, &cancellation).and_then(|layout| {
+        let result = run_download(&inner, &descriptor, &cancellation).and_then(|received| {
+            let Some(layout) = received else {
+                workers::finish_job(&inner, &descriptor);
+                return Ok(());
+            };
             tracing::info!(
                 gallery_id = descriptor.gallery_id.get(),
                 worker_attempt = descriptor.worker_attempt,
@@ -1378,7 +1383,7 @@ fn run_download(
     inner: &SupervisorInner,
     descriptor: &DownloadJobDescriptor,
     cancellation: &CancellationToken,
-) -> Result<ArtifactLayout, RunError> {
+) -> Result<Option<ArtifactLayout>, RunError> {
     emit(inner, inner.repository.pipeline_begin(descriptor)?);
     check_cancelled(cancellation)?;
     let settings = inner.settings.settings_get()?;
@@ -1395,9 +1400,31 @@ fn run_download(
             );
             snapshot
         }
-        None => inner
+        None => match inner
             .source
-            .gallery_snapshot(descriptor.gallery_id, cancellation)?,
+            .resolve_gallery(descriptor.gallery_id, cancellation)?
+        {
+            super::DownloadGalleryResolution::Exact(snapshot) => snapshot,
+            super::DownloadGalleryResolution::Replacement(proof) => {
+                check_cancelled(cancellation)?;
+                let linked = inner.repository.pipeline_link_gallery(descriptor, &proof)?;
+                emit(inner, linked.projection);
+                if let Some(target) = linked.start {
+                    emit(inner, linked.target);
+                    // The transaction admitted this exact target. Shutdown leaves
+                    // it durable for normal startup recovery; never stop a reused worker.
+                    let mut queue = unpoison(inner.queue.lock());
+                    if !queue.closed
+                        && !inner.shutting_down.load(Ordering::Acquire)
+                        && queue.known.insert(descriptor_key(&target))
+                    {
+                        queue.pending.push_back(target);
+                        inner.wake.notify_one();
+                    }
+                }
+                return Ok(None);
+            }
+        },
     };
     check_cancelled(cancellation)?;
     let root = PathBuf::from(settings.download_root);
@@ -1471,7 +1498,7 @@ fn run_download(
             "Waiting for verification and overlap review",
         )?,
     );
-    Ok(layout)
+    Ok(Some(layout))
 }
 
 fn download_one_page(
@@ -2810,6 +2837,9 @@ impl std::fmt::Display for RunError {
 impl RunError {
     fn stable(&self) -> (&str, &str, bool) {
         match self {
+            Self::Repository(RepositoryError::GalleryReplacementConflict(message)) => {
+                ("SOURCE_REPLACEMENT_REVIEW_REQUIRED", message, false)
+            }
             Self::Repository(error) => {
                 let busy = matches!(error, RepositoryError::Busy(_));
                 (
@@ -3480,6 +3510,194 @@ mod tests {
                 decoded_sha256: None,
             })
         }
+    }
+
+    struct ReplacementSource {
+        fixture: FakeDownloadSource,
+        proof: crate::source::hitomi::GalleryReplacementProof,
+        page_ids: Mutex<Vec<i64>>,
+        release: AtomicBool,
+    }
+
+    impl ReplacementSource {
+        fn new() -> Self {
+            use crate::source::hitomi::{parse_galleryinfo_script, verify_gallery_replacement};
+            let metadata = parse_galleryinfo_script(&format!(
+                r#"var galleryinfo={{"id":20,"title":"Replacement worker fixture","files":[{{"name":"1.png","hash":"{}"}},{{"name":"2.png","hash":"{}"}}]}};"#,
+                "a".repeat(64), "b".repeat(64),
+            )).unwrap();
+            Self {
+                fixture: FakeDownloadSource::new(2, None),
+                proof: verify_gallery_replacement(10, &metadata, 20, &metadata).unwrap(),
+                page_ids: Mutex::new(Vec::new()),
+                release: AtomicBool::new(true),
+            }
+        }
+    }
+
+    impl DownloadSourcePort for ReplacementSource {
+        fn resolve_gallery(
+            &self,
+            id: GalleryId,
+            cancellation: &CancellationToken,
+        ) -> Result<super::super::DownloadGalleryResolution, SourceContractError> {
+            if id.get() == 10 {
+                Ok(super::super::DownloadGalleryResolution::Replacement(
+                    self.proof.clone(),
+                ))
+            } else {
+                self.gallery_snapshot(id, cancellation)
+                    .map(super::super::DownloadGalleryResolution::Exact)
+            }
+        }
+
+        fn gallery_snapshot(
+            &self,
+            id: GalleryId,
+            cancellation: &CancellationToken,
+        ) -> Result<DownloadGallerySnapshot, SourceContractError> {
+            assert_eq!(
+                id.get(),
+                20,
+                "obsolete ID must never reach the ordinary snapshot path"
+            );
+            let mut snapshot = self.fixture.gallery_snapshot(id, cancellation)?;
+            snapshot.source_revision = self.proof.canonical_revision().into();
+            for (page, revision) in snapshot.pages.iter_mut().zip(self.proof.page_revisions()) {
+                page.source_revision = revision.clone();
+            }
+            Ok(snapshot)
+        }
+
+        fn download_page(
+            &self,
+            id: GalleryId,
+            number: SourcePageNumber,
+            cancellation: &CancellationToken,
+        ) -> Result<DownloadPagePayload, SourceContractError> {
+            unpoison(self.page_ids.lock()).push(id.get());
+            while !self.release.load(Ordering::Acquire) {
+                if cancellation.is_cancelled() {
+                    return Err(SourceContractError::cancelled());
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            let mut page = self.fixture.download_page(id, number, cancellation)?;
+            page.source_revision = self.proof.page_revisions()[number.get() as usize - 1].clone();
+            Ok(page)
+        }
+    }
+
+    #[test]
+    fn replacement_worker_creates_one_canonical_artifact_and_never_downloads_old_id() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let source = Arc::new(ReplacementSource::new());
+        let (supervisor, events) = launch(&repository, source.clone());
+        let old = service
+            .download_queue_add(vec![10], "old-request".into())
+            .unwrap();
+        let old_id = old.jobs[0].entry_id.clone();
+        supervisor.enqueue_all(old.jobs).unwrap();
+        let linked = wait_for_state(&service, &old_id, JobState::Cancelled, 0.0);
+        assert_eq!(linked.linked_gallery_id, Some(20));
+        let target = service
+            .download_entries_list(DownloadListRequest {
+                state: None,
+                query: None,
+                page: 1,
+                page_size: 20,
+            })
+            .unwrap()
+            .entries
+            .into_iter()
+            .find(|entry| entry.gallery_id.get() == 20)
+            .unwrap();
+        wait_for_state(
+            &service,
+            target.entry_id.as_str(),
+            JobState::Completed,
+            100.0,
+        );
+        supervisor.shutdown_and_wait();
+        assert_eq!(*unpoison(source.page_ids.lock()), vec![20, 20]);
+        assert!(repository
+            .pipeline_artifact_bundle(&DownloadEntryId::new(old_id.clone()).unwrap())
+            .unwrap()
+            .is_none());
+        let bundle = repository
+            .pipeline_artifact_bundle(&target.entry_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(bundle.artifact.state, DownloadArtifactState::Complete);
+        let manifest: ArtifactManifest = serde_json::from_reader(
+            std::fs::File::open(
+                temporary
+                    .path()
+                    .join("downloads")
+                    .join(bundle.artifact.manifest_relative_path.unwrap().as_str()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.pages.len(), 2);
+        let emitted: Vec<_> = events.try_iter().collect();
+        assert!(
+            !emitted.iter().any(|event| event.download.entry_id == old_id
+                && event.download.state == JobState::Completed)
+        );
+        assert_eq!(
+            emitted
+                .iter()
+                .filter(|event| event.download.linked_gallery_id == Some(20))
+                .count(),
+            1
+        );
+        assert!(service
+            .download_queue_add(vec![20], "canonical-again".into())
+            .unwrap()
+            .jobs
+            .is_empty());
+    }
+
+    #[test]
+    fn replacement_worker_retains_an_active_target_without_cancellation_or_second_receiver() {
+        let temporary = tempdir().unwrap();
+        let (repository, service) = configured_repository(temporary.path());
+        let source = Arc::new(ReplacementSource::new());
+        source.release.store(false, Ordering::Release);
+        let (send, _receive) = mpsc::channel();
+        let supervisor = DownloadSupervisor::new(
+            repository.clone(),
+            repository.clone(),
+            source.clone(),
+            Arc::new(FilesystemArtifactStore::new()),
+            send,
+            2,
+        )
+        .unwrap();
+        let target = service
+            .download_queue_add(vec![20], "canonical-first".into())
+            .unwrap();
+        let target_id = target.jobs[0].entry_id.clone();
+        supervisor.enqueue_all(target.jobs).unwrap();
+        let before = wait_for_state(&service, &target_id, JobState::Downloading, 0.0);
+        let old = service
+            .download_queue_add(vec![10], "old-after".into())
+            .unwrap();
+        let old_id = old.jobs[0].entry_id.clone();
+        supervisor.enqueue_all(old.jobs).unwrap();
+        let linked = wait_for_state(&service, &old_id, JobState::Cancelled, 0.0);
+        let during = wait_for_state(&service, &target_id, JobState::Downloading, 0.0);
+        source.release.store(true, Ordering::Release);
+        wait_for_state(&service, &target_id, JobState::Completed, 100.0);
+        supervisor.shutdown_and_wait();
+        assert_eq!(linked.linked_gallery_id, Some(20));
+        assert_eq!(
+            (before.revision, before.attempt),
+            (during.revision, during.attempt)
+        );
+        assert_eq!(*unpoison(source.page_ids.lock()), vec![20, 20]);
     }
 
     fn configured_repository(
@@ -4910,7 +5128,8 @@ mod tests {
             &descriptor,
             &CancellationToken::default(),
         )
-        .unwrap_or_else(|error| panic!("could not seed received download: {error}"));
+        .unwrap_or_else(|error| panic!("could not seed received download: {error}"))
+        .expect("exact source returns a layout");
         assert!(!layout
             .root
             .join(layout.manifest_relative_path.as_str())

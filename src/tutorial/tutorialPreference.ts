@@ -6,6 +6,11 @@ const tutorialKeys: Record<ContentSource, string> = {
   hitomi: "atsumi.tutorial.dismissed.v1",
   danbooru: "atsumi.tutorial.danbooru.dismissed.v1",
   chzzk: "atsumi.tutorial.chzzk.dismissed.v1",
+  youtube: "atsumi.tutorial.youtube.dismissed.v1",
+  soop: "atsumi.tutorial.soop.dismissed.v1",
+  pinterest: "atsumi.tutorial.pinterest.dismissed.v1",
+  pixiv: "atsumi.tutorial.pixiv.dismissed.v1",
+  x: "atsumi.tutorial.x.dismissed.v1",
 };
 
 export function isTutorialDismissed(source: ContentSource = "hitomi"): boolean {

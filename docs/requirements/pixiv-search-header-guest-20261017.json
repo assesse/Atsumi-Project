@@ -1,0 +1,21 @@
+{
+  "id": "pixiv-search-header-guest-20261017",
+  "originals": ["01a145d1-c3cb-7190-bd9e-31154eaf8f8d: search must be at the top, account controls on same line or below", "01a145d2-3259-7d51-b4c8-29ffd1365477: search entirely fails without login"],
+  "audit": ".runtime/requirements-audit/20261017-pixiv-search-header-guest.json",
+  "state": "Complete for this scoped search/layout fix: implemented, applied, automated checks passed and user confirmed actual application acceptance on 2026-10-17 KST.",
+  "evidence": ["Before this change, account controls preceded the heading and search form in the Pixiv DOM", "A fresh anonymous official Pixiv homepage sets PHPSESSID; /ajax/user/extra returns 401/error:true/body:[] while the same anonymous session keyword search returns 200/error:false/60 entries and ranking returns 50 entries", "Before this change, verify_session treated every non-200 as unknown and lease blocked all requests; anonymous session cookie is not authenticated proof"],
+  "decisions": [
+    "Search is the first visible and keyboard-ordered toolbar element in Explore, Favorites and Downloads. Reuse existing input/select/button design tokens and search/history/cancel behavior. Account controls follow on the same row when space permits and wrap below, never above. Error text stays below the main row; no redundant platform heading above search.",
+    "Classify an exact-origin bounded Pixiv 401 JSON error response as explicitly signed out, discard its cookie from request authorization, and permit the existing anonymous lease. Keep positive 200 verified schema for authenticated access. Redirects, invalid/oversized bodies, 403/429/5xx and transport failures remain unknown, not false logout or success.",
+    "Retain session generation fences, security-page auto-close restrictions, shared YouTube browser profile, local favorites/downloads and card controls. No login-gated content bypass, account change, cookie export, media deletion, release or goal.",
+    "Do not assume a successful service call or synthetic layout test proves actual app operation. Record remaining desktop acceptance explicitly."
+  ],
+  "checks": ["Search precedes account controls in DOM and rendered geometry at narrow and wide widths, including busy/error states", "Guest keyword/ranking responses remain usable; session 401 is signed out rather than unknown", "Auth/network/schema errors retain fail-closed behavior and do not repeatedly invalidate valid anonymous results", "Existing card, account, local-reader and shared social login regression tests", "TypeScript/frontend/native tests and build; actual app search without login if desktop validation is available"],
+  "results": {
+    "frontend": "85 tests across 8 files passed, including real-component offline geometry for Explore/Favorites/Downloads at 320/720/1280px and repeated guest polling without result invalidation.",
+    "native": "41 passed, 2 opt-in tests ignored; covers guest/auth/unknown transitions, session fencing, local media and shared browser identity. Sandbox-only temporary file rename failures were resolved by rerunning the unchanged suite on the normal host.",
+    "build": "TypeScript check and frontend production build passed. Active development watcher rebuilt native atsumi.exe after account.rs changed.",
+    "runtime": "Read-only local health: PID 4028, pulse age 547ms, nativeUnresponsive=false, reloadPending=false. Local Vite served updated pixiv-toolbar module with HTTP 200.",
+    "actualApp": "2026-10-17 KST: user replied '확인 완료. 문제 없음' to call_00103323dfde43d3a2b0ee0dd6fbcce6, confirming the requested guest keyword-card/search-first layout check in the running development app. This is user-operated acceptance, not agent-observed UI. Exact keyword and viewport were not supplied. No agent UI input, logout or cookie clearing performed."
+  }
+}

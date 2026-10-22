@@ -1,0 +1,18 @@
+.soop-workspace{position:relative;box-sizing:border-box;display:flex;flex-direction:column;gap:18px;min-width:0;min-height:0;height:100%;padding:18px;overflow:auto;color:var(--text);--soop-star:#ffad5c}
+.soop-workspace.is-live-view{padding:0;gap:0;overflow:hidden;container:soop-live-workspace/inline-size}
+.soop-workspace[hidden],.soop-workspace [hidden]{display:none!important}
+.soop-workspace button:disabled{opacity:.4;cursor:default}
+.soop-workspace button:focus-visible,.soop-workspace input:focus-visible,.soop-workspace a:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.soop-workspace a{font-size:12px;color:var(--text-soft);text-decoration:none}.soop-workspace a:hover{text-decoration:underline}
+.soop-workspace .is-live{color:#63dca8}
+.soop-inline-error{margin:8px 0 0;color:var(--warning);font-size:12px;line-height:1.6}
+.soop-inline-error button{margin-left:8px;color:inherit;background:none;border:0;text-decoration:underline;cursor:pointer}
+.soop-spinner{display:inline-block;flex:none;width:14px;height:14px;box-sizing:border-box;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:soop-spin .75s linear infinite}
+.soop-avatar{position:relative;display:grid;place-items:center;isolation:isolate;flex:none;width:48px;height:48px;overflow:hidden;border-radius:50%;background:#ffffff0a;color:var(--text-soft);font-size:19px;box-shadow:inset 0 0 0 1px #ffffff12}
+.soop-avatar img{position:absolute;inset:0;z-index:1;width:100%;height:100%;object-fit:cover}.soop-avatar img[hidden]{display:none}
+.soop-star svg{display:block;width:22px;height:22px}.soop-star[aria-pressed=true]{color:var(--soop-star)}
+.soop-record-toggle svg{display:block;width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.6}.soop-record-toggle svg circle:last-child{fill:currentColor;stroke:none}
+@keyframes soop-spin{to{transform:rotate(360deg)}}
+@keyframes soop-skeleton{to{background-position:-200% 0}}
+@media(max-width:650px){.soop-workspace:not(.is-live-view){padding:12px}}
+@media(prefers-reduced-motion:reduce){.soop-spinner{animation:none}}

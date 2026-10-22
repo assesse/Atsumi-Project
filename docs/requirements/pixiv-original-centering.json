@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "batch": "pixiv-original-slot-full-width-centering",
+  "state": "implemented-unit-and-offline-css-verified-updated-desktop-pending",
+  "audit": {
+    "coverage": "All69 audited specification hashes and the fully read main230/284 and other333/375 EOF snapshots are unchanged. Current Pixiv implementation/resize contracts, changed Pinterest/validation contracts and the applicable complete original requests reread. Historical unavailable sources remain explicitly listed in implementation-policy.json; no historical app-control permission is renewed.",
+    "originals": ["01a05eb9-33da-7813-a6d7-54fdc8df0495", "01a0f8ab-e779-7f33-836c-fc747a3b0b35", "01a0fa72-37ba-77f0-9ef5-23187336a5cc", "01a12c46-788a-7b00-9f69-e6f1d6f2d53e"],
+    "rules": "Preserve portrait/two-page and mixed orientation, black missing slots, direct original±2 loading, resize geometry and separate ordinary detail versus hidden-control reader. Latest root authorization permits this narrow frontend correction/tests only; running static QA app/server remain untouched."
+  },
+  "observed": "Root actual isolated app saw stable left displacement in both ordinary detail and reader: stage center633 but image centers485 and556. Reader stage516px displayed only about363px width. Controls-hidden state unchanged.",
+  "cause": "PixivOriginalPages used raw image width/height as flex-grow with zero basis. A single portrait has grow<1, so CSS flex intentionally allocates less than the full free space and leaves the remainder at the end. Centered contain is relative to the undersized left-aligned slot, not the stage. This is not a remote image or shared stylesheet conflict.",
+  "reference": "https://www.w3.org/TR/css-flexbox-1/#flex-flex-grow-factor",
+  "scope": ["src/features/pixiv/PixivOriginalPages.tsx", "src/features/pixiv/PixivOriginalPages.layout.test.tsx", "docs/requirements/pixiv-original-centering.json"],
+  "plan": ["Normalize each visible/blank slot's aspect by the minimum aspect, so all grow factors are at least1 while relative widths stay identical", "Keep current CSS contain, image loading, keyboard/controls and resize lifecycle unchanged", "Test actual component markup plus production/common CSS in an isolated offline headless browser; never attach to the running QA app or a user profile"],
+  "acceptance": ["One portrait/landscape/fallback slot fills its stage and centers image content", "Portrait pair and portrait/landscape pair fill the stage in original aspect ratio, including reversed order", "Very thin portraits whose raw grow sum is below1 also fill correctly", "First/last blank remains black and proportional without an image request", "Same checks at minimum/normal/resized reader sizes and ordinary detail", "Focused Pixiv tests and full TypeScript check pass; actual updated desktop verification remains pending root"],
+  "verification": {
+    "before": "Real offline headless Edge plus actual component markup and common/Pixiv CSS reproduced the defect in both requested browser-window sizes: portrait320 left95.40625px unfilled at the right. Both geometry tests failed before the production change.",
+    "after": "2026-10-13 18:13:42 KST final run: six Pixiv test files/64 tests passed,exit0; full npx tsc -b --pretty false exited0. Nine new slot-weight cases and two headless geometry tests cover60 scenes across requested960x640/1280x800 browser windows, minimum320/normal517/wide reader widths and ordinary detail. Slots fill the complete stage and image-element centers match their slots within1px; mixed ratios and black blanks preserved. Browser window dimensions are not claimed as exact CSS viewport dimensions; the test measures geometry in the actual reported viewport.",
+    "scope": "Only PixivOriginalPages production slot weights changed; CSS, original pool, navigation, controls and resize logic unchanged. New layout test and dedicated contract added. No Cargo, vite build, preview-server control, account data or running app changes.",
+    "desktop": "Updated production desktop verification remains pending root; currently running static QA build has not received this correction. Offline synthetic CSS measurements do not establish actual Windows/Alt-Tab behavior."
+  }
+}

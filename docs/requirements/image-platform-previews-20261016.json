@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "state": "Item3 implemented and automated checks passed; actual app acceptance pending",
+  "latestAuthority": "User answered 지금 반영해도 됨 to call_3cb6d3cf022740839dc8967cd52a6439 on 2026-10-16. HMR production edits now allowed; no renewed Computer Use/auth/restart authority inferred.",
+  "original": ".runtime/requirements-audit/20261016-image-platform-followup-original.json",
+  "turnId": "01a1450b-2076-7293-85ab-d384d54c78cc",
+  "scope": "Implement item3 only: Pinterest and Pixiv card preview size. Items1/2/4/5 are questions and architecture recommendations, not authorization to change accounts, restricted content access, home feed, masonry, or add another platform.",
+  "audit": {
+    "inventory": "Active50 plus all pinned and archive3 EOF refreshed. main latest4, other-main4 and UIUX2 read through known overlap; user originals and final decisions projected without command logs. No additional accessible Atsumi development chat found. Main complete230turn/284message SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333turn/375message SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21 rehashed unchanged, reuse full reading. Earlier delta coverage remains .runtime/requirements-audit/20261016-live-discovery-eight-spec-inventory.json.",
+    "specifications": "All69 original document hashes checked: only RELEASING differs from oldest snapshot, at previously fully read F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. All145 baseline contract hashes compared; changed policy and five live-discovery contracts fully read or reused at the exact parent-turn fully read hash. SOOP final partial-warning addendum and changed YT final contract reread. No uncatalogued current contract except this batch.",
+    "missing": ["durable01a03f16", "unidentified analysis1/2", "unretained historical attachment pixels"],
+    "directRules": ["R003 platform-isolated preferences", "R004/R005 preserve card focus, Ctrl/Shift, double-click and nested actions", "R008 stable toggles", "R010 retain tabs/results/scroll context", "R018/R022 distinguish mocked checks from actual app acceptance"],
+    "runtime": "Prior physical-Escape stop remains: no UI control, auth, privacy changes or restart this turn. Read-only process check before production writes. No release/push/goal."
+  },
+  "findings": [
+    "SettingsDialog explicitly shows no settings for Pinterest/Pixiv. Existing video-only preview preferences provide immediate independent local storage with commit-first failure handling.",
+    "Both image card grids use180px target minimum; Pixiv old small viewport rule forces140px. Readers already have separate fit/resize controls; this request concerns browsing card previews.",
+    "Pinterest public profile is a specific account, not personalized home; official search browser has no initial-home entry. Current3:4 image grid is not masonry. Pixiv is explicitly public no-cookie safe-mode reader, so adding only a login popup would not connect authenticated search/download. These findings are reported without changing those behaviors."
+  ],
+  "decision": [
+    "Add isolated image preview preference helper for pinterest and pixiv, keys atsumi.<source>.preview-width.v1,180px default and140/180/220/280/340px steps. Do not alter video keys, defaults or subscribers.",
+    "Each existing platform settings tab has a compact range+pixel output matching video settings; immediately save first, dispatch only after success, retain last saved value and offer retry on failure. Exact provider key and bounded enum only.",
+    "PlatformWorkspace passes image width to the same mounted image provider; no key/remount/fetch changes. Each provider validates prop and sets a source-local CSS custom property; grid minmax(min(width,100%),1fr) prevents overflow and adjusts columns with available width. Explicit size stays respected on narrow windows instead of silently forcing140px.",
+    "Apply to native Explore/Favorites/Downloads card lists and inherited Pinterest removed-list grid, not official embedded website CSS or full-size page reader. Existing ratio/crop, controls, selection order, download behavior and privacy untouched. Do not silently implement masonry based on a question.",
+    "Prefer existing scopes and narrow helpers over new backend/DB/schema. No network required for size changes. No UI or file deletion, accounts, native build, or publication."
+  ],
+  "files": {
+    "root": ["src/features/platforms/imagePreviewPreferences.ts", "src/features/platforms/imagePreviewPreferences.test.tsx", "src/features/platforms/PlatformWorkspace.tsx", "src/features/platforms/PlatformWorkspace.test.tsx", "src/components/SettingsDialog.tsx", "src/components/SettingsDialog.test.tsx"],
+    "offlineReview": ["src/features/platforms/ImagePreview.layout.test.ts"],
+    "pixiv": ["src/features/pixiv/PixivWorkspace.tsx", "src/features/pixiv/PixivWorkspace.css", "src/features/pixiv/PixivWorkspace.test.tsx"],
+    "pinterest": ["src/features/pinterest/PinterestWorkspace.tsx", "src/features/pinterest/PinterestWorkspace.css", "src/features/pinterest/PinterestWorkspace.test.tsx"]
+  },
+  "acceptance": ["Independent persisted defaults/range/reload, malformed values and write failure", "Live settings update does not remount workspace, clear results/selection, fetch again or mutate favorites/downloads", "Both native card grids resize in Explore/Favorites/Downloads and clamp to narrow width; unaffected page readers", "Focused regressions and full TypeScript/build; offline geometry separate from actual app", "Actual app remains explicitly unverified while physical-Escape stop is in effect"],
+  "verification": {
+    "focused": "113 tests across SettingsDialog, PlatformWorkspace, image/video preference helpers, PinterestWorkspace and PixivWorkspace passed on2026-10-16. First sandbox run could not collect tests due to EPERM Vite temporary-cache rename; exact normal-host rerun passed, no app/account/media access.",
+    "geometry": "Independent reviewer added3 offline Chrome tests,30 scenes:2providers x5sizes x320/720/1280px viewport. Production CSS plus representative12card fixture passes horizontal-overflow/nested-control-clipping checks. Disposable profile; no actual app or remote images. Exact per-card width is not measured.",
+    "typecheckBuild": "Full TypeScript and frontend production build passed after integration. Existing oversized-chunk and ineffective-dynamic-import warnings remain, unrelated to this batch.",
+    "review": "Independent source review found no required correction. Sizes are target minimums; remaining grid width is distributed. Existing scroll state is not explicitly reset; real browser may clamp scrollTop when content height shrinks.",
+    "actualApp": "Not performed. User authorized frontend reflection, not renewal of prior stopped Computer Use. No screenshot, live app click, account action, restart or native change claimed.",
+    "contradictionCheck": ["Only requested preview size implemented; questions not silently expanded into behavior", "Provider-local storage and CSS; no shared media or account state", "No new keys/remount/reload/fetch from width", "Existing card ratios/readers/official browsers and Ctrl/Shift/nested actions retained", "Failed save retains previous setting and exposes retry", "Actual application acceptance remains open"]
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "state": "diagnostic-only QA implemented and actual selected-source shape/clock evidence observed; production codec admission remains unimplemented",
+  "parentContract": "docs/requirements/youtube-webm-capture-20261015.json",
+  "originals": [
+    { "turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "One incoming stream for viewing and recording, retain chat, and preserve recordings against browser failure, including YouTube." },
+    { "turn": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Clean only exact-owned intermediate files after complete merge and verification; retain final media and chat." },
+    { "turn": "01a13363-ef61-71e3-bf03-3babe3f5b5c0", "rule": "Audit all original requirements; app-internal discovery, favorites, downloading and management are the purpose, not external-site wrappers." },
+    { "turn": "01a1399c-e7fb-7260-ac09-93bc94288f2f", "rule": "Match existing CHZZK flow but isolate unrelated platform state." },
+    { "turn": "01a13a1f-f808-74a0-85c8-e90aa748a292", "rule": "Use original YouTube player/chat and actually working login, viewing and recording without CHZZK interference." }
+  ],
+  "audit": {
+    "main": "Previously completely read main230turn/284message EOF snapshot independently rehashed now: 85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676.",
+    "other": "Previously completely read other333turn/375message EOF snapshot independently rehashed now: 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21.",
+    "inventory": "Root refreshed active50/archive3EOF and current continuation overlap. Other main1791827531 and UIUX1791393086 unchanged;69 baseline specs have only already-read RELEASING change F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. This subagent reused that complete revision-matching coverage, not a keyword-only audit.",
+    "directReads": [
+      "AGENTS.md and current docs/requirements/implementation-policy.json",
+      "Original single-ingress, cleanup, new-platform and requirements-first texts directly in main-thread-users.json",
+      ".runtime/requirements-audit/20261014-native-integration-request.json and 20261014-native-player-focus.json, including original clone/native-player text",
+      "platform-media-contract.json, platform-encoded-writer-20261014.json, youtube-original-integration-20261014.json, youtube-followup-20261014.json",
+      "youtube-format-continuation-20261015.json, youtube-continuation-buffer-20261015.json, youtube-continuation-chat-timing-20261015.json, youtube-initial-chat-availability-20261015.json",
+      "Root's complete new youtube-webm-capture-20261015.json before this proposal",
+      "Current original_capture.js framing, init, selection, clock and continuation; browser_fmp4.rs strict init/sample/clock/mux; encoded writer; existing public original_probe JS/Rust"
+    ],
+    "unavailable": ["durable01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "unidentified analysis1/2", "historically unavailable attachment pixels"]
+  },
+  "evidenceAndUnknowns": {
+    "observed": "Production-like original QA T4XZmMPQ9Kw decoded1744frames but capture reason codec_unsupported. Separate public default-UA original_probe50154 observed progressing video/webm vp09.00.51.08.01.01.01.01.00 plus audio/mp4 mp4a.40.2 with no mediaKeys/ad. These are different native sessions, not a same-session packet proof.",
+    "code": "Current recorder discards unsupported SourceBuffer state at makeBuffer and parses only MP4 ftyp/moov/moof/mdat. Existing native codec validation requires AVC NALs plus AAC; downstream output is MP4. Neither MIME acceptance nor a new extension can add WebM support.",
+    "unknown": [
+      "Selected source identity and whether an advertisement or replaced MediaSource contributed any observed MIME.",
+      "Actual WebM Segment/Cluster known or unknown lengths, element layout, lacing, default/block durations, timestamp scale, signed block times and frame cadence.",
+      "VP9 first-frame profile/key/show flags and presence of superframe indexes, unseen altref frames or show_existing_frame; not every subframe can be examined without retaining payload.",
+      "Actual common source-clock relationship between WebM block PTS, MP4 AAC tfdt/timescale and each SourceBuffer timestampOffset. Matching initial time or independently resetting tracks is not proof of sync.",
+      "Synthetic copy/decoder compatibility is useful but does not prove actual source capture, rollover, recovery, chat timing or library replay."
+    ]
+  },
+  "proposedOwnership": [
+    "New standalone diagnostic-only src-tauri/examples/youtube_webm_shape_probe.rs and .js, reusing the existing public probe lifecycle by copy rather than production imports/state.",
+    "New pure browser-script regression test under src/features/youtube; no production player/capture, native writer, library, account, scheduler, CHZZK file or shared parser edit.",
+    "Root alone builds/runs the isolated native probe; new temporary profile and public canonical video only, no user cookies/authentication or ordinary-app manipulation."
+  ],
+  "hookProtocol": {
+    "scope": "Top-level exact HTTPS www.youtube.com/watch with configured syntactically valid11-character public video ID; current v parameter must match. No live_chat, embedded or foreign document observation.",
+    "semantics": "Call original methods with Reflect.apply and original receiver/arguments first, return exactly their result and propagate their original exception. Only after a successful appendBuffer return, synchronously inspect the supplied byte view. Catch observer errors internally. Never mutate the caller buffer, delay the native append, rewrite a media request, call isTypeSupported/change quality, fetch media, use captureStream/MediaRecorder or alter the page UI.",
+    "ownership": "Never retain the caller's ArrayBuffer, TypedArray, DataView, subarray view or any reference to it past the synchronous wrapper. Cross-append parser state owns only bounded structural/header prefix or tail copies; no full encoded sample, complete Cluster or media append copy. Reject SharedArrayBuffer observation. Hook functions never return diagnostic data to the site.",
+    "sourceBinding": "WeakMaps bind the actual MediaSource and SourceBuffer objects. Local createObjectURL/revokeObjectURL observation maps the ephemeral object URL to its MediaSource without exposing or persisting the string. Snapshot determines selected by comparing current video.currentSrc to that map. Tracks expose only small source/track ordinals, generation, selected and detached flags. Never combine sources or attribute an unselected buffer to the playing video.",
+    "lifecycle": "sourceclose, removeSourceBuffer and changeType reset only that parser's generation and mark prior aggregate incomplete; budgets never reset. A new init inside the same buffer starts a new bounded generation. source replacement/ad state is reported, not silently treated as a continuation. pagehide/55second observation deadline closes only diagnostic observation. The root-owned native example exits by70seconds. Native app/player lifetime and login state remain unchanged.",
+    "adHandling": "Before processing an append, inspect only the fixed player ad-showing/ad-interrupting classes and current protected/sourceObject booleans. For protected/ad intervals, skip structural parsing and mark observation excluded. If parsing missed bytes in an already-active stream, mark that generation incomplete rather than joining pre/post-ad bytes. Only a new fully observed init may make structural completeness known again."
+  },
+  "bounds": {
+    "sources": 8,
+    "tracksPerSource": 2,
+    "parserGenerationsPerTrack": 8,
+    "observedBytesPerTrack": 33554432,
+    "observedBytesTotal": 67108864,
+    "appendsPerTrack": 128,
+    "appendBytesMaximum": 16777216,
+    "clustersPerTrack": 20,
+    "ebmlNestingMaximum": 12,
+    "elementsPerAppendMaximum": 4096,
+    "elementsPerTrackMaximum": 16384,
+    "ownedScratchPerTrackMaximum": 65536,
+    "ownedScratchAllTracksMaximum": 1048576,
+    "blockHeaderPrefixMaximum": 4096,
+    "vp9FirstFramePrefixMaximum": 32,
+    "vp9SuperframeTailMaximum": 34,
+    "scalarHistoryEntriesPerTrack": 8,
+    "nativeSnapshotBytesMaximum": 32768,
+    "nativeSnapshotsMaximum": 8,
+    "behavior": "Use checked integer arithmetic/BigInt for EBML sizes and timestamps. Unknown-size sentinel is a type, never a huge allocation. Unknown/skipped element payload advances a remaining count without scanning/copying. Any bound or unsupported structure halts that track's parser with a fixed reason, preserves playback and reports unknown/incomplete; never converts truncation or timeout into an unsupported-codec fact or safe production admission."
+  },
+  "webmParserProposal": {
+    "incrementalState": "ElementHeader (ID1..4bytes,size1..8bytes) -> bounded master stack or Scalar/PayloadSkip -> next header. Retain at most12 header bytes across appends (four ID plus eight size bytes; corrected arithmetic before QA). Unknown size is accepted structurally only for Segment/Cluster; a level1 Cluster/new EBML header closes a preceding unknown Cluster according to MSE rules. Respect known parent bounds, checked depth/length, Timestamp-before-Block and complete headers. This probe reports topology, not valid playable media.",
+    "initialization": "Recognize EBML/Segment/Info/Tracks and selected TrackEntry. Project fixed DocType category webm/other, unknown Segment flag, positive TimestampScale (including specified default), video codec category VP9/other, track number/count, PixelWidth/Height, DefaultDuration, FlagLacing, bounded profile/color fields and presence of CodecPrivate/ContentEncodings. Unknown strings, UID/name/title/language/writer/date or private bytes are skipped, never logged. Encryption/compression metadata is only a presence/type enum and makes recording feasibility unproven.",
+    "clusters": "Project known/unknown size count, Timestamp, SimpleBlock versus BlockGroup counts, signed16-bit relative block time, track number, lacing enum none/xiph/fixed/ebml, frame-count scalar, BlockDuration/ReferenceBlock presence and bounded resulting presentation interval/cadence numbers. Do not presume absent BlockDuration means constant frame rate. Header sizes and lacing sizes must fit the enclosing Block using checked arithmetic; oversized lacing header results in fixed limit/unknown.",
+    "vp9": "For an unlaced first coded frame only, at most32 owned prefix bytes may project frame-marker validity, profile, show_existing_frame, key/inter, show_frame and key-frame sync/dimension/color scalars where wholly present. Keep at most34 owned final bytes of the containing coded payload to report a syntactically self-consistent superframe marker, frame-count and total-size match. Never claim all superframe subframe headers are validated: their earlier payload is not retained. Laced frames or unobserved prefix report unknown, not false. No raw header/index bytes leave the parser.",
+    "completeness": "Snapshot separately reports complete init, complete headers/blocks, still-open unknown cluster, parser stop reason and inspected count. A legal open unknown-size Cluster at the sample deadline is not a malformed container; unparsed trailer/frame fields remain unknown. All scalar findings are feasibility evidence, never production trust inputs."
+  },
+  "aacAndClockProposal": {
+    "aac": "For exact audio/mp4 AAC-LC MIME, copy only bounded ftyp+moov initialization or moof metadata within the same64KiB scratch budget, release it after projecting scalars, and skip mdat bytes without copying. Reuse the existing initTiming/moofShape concepts by narrow diagnostic copy, not production modification. Record mdhd timescale, tfhd/trun/trex duration-source category, tfdt and first/end duration sums with fixed parse-known flags. No AAC payload, ESDS/config bytes or media URL output.",
+    "clock": "For each parsed generation expose finite segments-mode timestampOffset, appendWindowStart/End category, first/last raw source presentation seconds (bounded finite0..1e9) and up to8 recent observation-time/source-interval pairs. Display-time comparison is coded PTS plus that buffer's contemporaneous timestampOffset; record offset changes explicitly. Cross-track overlap and relative clock deltas are calculated only for the same selected MediaSource with complete known clocks. Asynchronous first appends are not presumed simultaneous and neither track is independently zeroed.",
+    "chat": "No chat page/continuation/text is read. These scalar clocks can inform a later production design but cannot by themselves establish chat synchronization or change the existing receive-time-approximate archive proof."
+  },
+  "output": {
+    "allowed": "Version, fixed reason/category enums, small source/track/generation ordinals, selected/ad/protected/detached/completeness booleans, counts/byte sizes/dimensions/bounded time scalars, existing safe allowlisted MIME, and fixed probe lifecycle outcomes only.",
+    "forbidden": "No encoded media/header bytes, hashes of content, frame images, packet dump, arbitrary page text, DOM tree, title, channel/account identity, object/network/auth URL, request/response header, cookie, token, chat/message content or credentials.",
+    "nativeBoundary": "Read only the fixed probe snapshot API in the exact created public watch document. Validate version, bounded schema/serialized size and finite numbers before printing. Do not print raw eval errors or arbitrary page returned JSON. Root may retain only the sanitized aggregate report under .runtime; do not add raw media fixtures from this probe."
+  },
+  "testsBeforeActualRun": [
+    "Synthetic fragmented EBML headers and partial scalar/block headers at every split position; known and unknown Segment/Cluster, later Cluster terminator, parent/depth/size overflow and incomplete terminal state.",
+    "Default/missing TimestampScale, missing timestamp before Block, signed block time, DefaultDuration/BlockDuration distinction, lacing kind/count and malformed size arithmetic; absent information remains unknown.",
+    "VP9 key/inter/show_existing first-prefix classifications, valid/invalid superframe tail, truncated/laced unknown and no claim about later subframe headers.",
+    "AAC metadata split boundaries, missing/invalid tfdt/timescale, no mdat copies, source clock/offset-change comparison only for the same selected MediaSource.",
+    "Original addSourceBuffer/appendBuffer/createObjectURL methods receive identical this/arguments and return/throw unchanged. Observer failures never affect playback. Caller-buffer mutation after return cannot mutate retained diagnostic state.",
+    "Ads, protected/sourceObject video, removed/replaced sources, changeType/init generation reset, source budget exhaustion and unselected tracks do not contaminate selected findings.",
+    "Huge/unknown elements allocate no payload; per-track/global budget and bounded output enforce fail-closed observation with fixed reasons and no arbitrary strings.",
+    "Root actual public T4XZmMPQ9Kw run must show same selected source, video progress and both track clocks. If the source no longer chooses VP9, report that result and do not force it. Actual aggregate evidence only informs the next separately reviewed production contract."
+  ],
+  "implementationCheckpoint": {
+    "scope": "Only new QA JS/Rust/test files and this contract; no production file changed. Root approved this QA implementation after reading the complete proposal. Separate peer owns native typed sanitizer; parent owns Cargo and actual execution.",
+    "browserTests": "15 focused pure-fixture tests passed on2026-10-15 09:15KST. Initial sandbox EPERM executed0 tests; the identical focused command outside that temp-file restriction actually ran all15. No full frontend/native suite was started by this agent.",
+    "reviewCorrections": "Root review found potential cross-atom AAC reads and repeated-init ambiguity. Diagnostic parser now checks atom-local mandatory lengths/version/flags, tkhd/trex/tfhd track identity and unique tfdt before any known AAC clock; regressions cover truncated/duplicate/wrong-track cases. Complete new WebM EBML and AAC moov boundaries start fresh bounded generations without resetting lifetime budgets or combining old clocks. Current key-frame-only VP9 dimension/color scalars are separate from container dimensions.",
+    "nonClaims": "No recording or real stream format acceptance claim from these tests. Root still must build, run the public default-UA probe and inspect sanitized selected-source evidence. No new parser expansion without a concrete actual observation and separate review."
+  },
+  "engineeringDecisionBoundary": {
+    "recommendedIfEvidenceSupports": "Provider-local incremental WebM/VP9 parser plus separate VP9/AAC fMP4 mux feeding the existing validated MP4 commit contract. No physical edits to CHZZK/browser_fmp4.rs. New AAC sample extraction must be independently bounded and differential-tested; existing EncodedMuxer cannot accept audio-only input as a shortcut.",
+    "alternative": "Durable original WebM/AAC spools plus local-only FFmpeg streamcopy could preserve compressed payload but require new versioned spool ownership/recovery/ACK/cleanup and exact common-clock/rollover handling. Current MP4 manifest cannot authorize arbitrary raw-spool cleanup or resume. It is not a small fallback or permission for another network receiver.",
+    "mustNotInfer": "The probe, synthetic MP4 playback or packet-copy equality does not complete requested original recording. Actual VP9 capture, unchanged compressed frames/audio, A/V/source interval continuity, complete video verification, honest chat proof, stop/owner/recovery, library reopen/seek/EOF and unchanged AVC/other-provider behavior remain separate mandatory acceptance."
+  },
+  "actualObservation": {
+    "timeKst": "2026-10-15 09:17-09:18",
+    "evidence": ".runtime/requirements-audit/20261015-youtube-webm-shape-observed.json",
+    "native": "Five sanitizer tests passed and isolated example built. Public T4XZmMPQ9Kw run15576 exited0: seven typed snapshots, one rejected, playback and decoded frames progressed. No account/chat/media payload retained; ordinary app untouched.",
+    "completeEarlyGenerations": "Same selected source, segments mode, default append window, unchanged timestampOffset0 on both tracks, no ad/protected/sourceObject. Generations4/5 each contain150 complete unlaced VP9 blocks:149SimpleBlock plus1BlockGroup/BlockDuration/ReferenceBlock,30superframes comprising60subframes,30invisible first frames,1key and149inter. Profile0,8bit,TimestampScale1000000,DefaultDuration33333333ns,unknown-size Segment/Cluster,CodecDelay0,oneVP9track,no observed compression/encryption. Resolution changes854x480 to1280x720 between those generations.",
+    "clocks": "gen4 video first46805.001,last46809.967,last known interval end46810.001; AAC215samples44100Hz46804.99376417234..46809.986054421766. gen5 video46810.001..46814.967,end46815.001;AAC216samples46809.986054421766..46815.00156462585. This is same-source scalar overlap evidence, not recorded-packet preservation or exact A/V output proof.",
+    "limits": "Later video lifetime128append cap and audio8generation cap stop observation as designed. A final partial generation does not erase earlier complete observations or prove malformed source. No cap increase or probe rerun needed. Initial native rejection reason was not retained; report as rejected, not successful parse.",
+    "nextGate": "Repeated initialization occurs on successive approximately5second units, so new init alone must not imply changed codec/recording rollover. Actual superframe payload grouping and repeated-init demux clocks require a separately reviewed small raw-pair feasibility experiment before production design. The existing AVC-only recorder is unchanged."
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "date": "2026-10-16",
+  "state": "2026-10-17 authorized scoped integration/build/launch complete. Concurrent Hitomi change preserved;194 frontend tests, typecheck, frontend and debug builds passed. Exact workspace development app running; actual Pinterest shell/login-enabled/signed-out UI observed. User authentication and end-to-end acceptance remain pending.",
+  "original": ".runtime/requirements-audit/20261016-image-session-original.json",
+  "turnId": "01a1451a-2eff-7341-9100-aafa9089a5d0",
+  "latestAuthority": "Turn01a1455b-9626-7d03-a7f1-4cddb8b9f454 explicitly authorizes applying and launching the prepared app. User will handle Pinterest/Pixiv login and requests manual acceptance instructions. This supersedes the earlier staging-only answer; authentication, release, account reset and media deletion are not delegated. Integration audit:.runtime/requirements-audit/20261017-image-session-apply.json.",
+  "audit": {
+    "inventory": "Active50+pinned and archived3 EOF refreshed; no additional development chat. Main latest3, other-main3, UIUX2 original user messages/final decisions read through previous covered overlap. Reused complete main230turn/284message and other333turn/375message snapshots at unchanged SHA85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 / SHA799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Prior deltas remain fully covered.",
+    "specifications": "Rechecked all69 original specification hashes; only RELEASING differs baseline and retains already-read F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. Current requirement-directory inventory compared against145 baseline records: only five known live-discovery contracts, image-previews and implementation-policy differ; all retain last-turn fully-read revisions (policy/image-previews reflect parent's last-turn authored final changes). Existing Pinterest/Pixiv contracts reused at unchanged hash and relevant sections re-read.",
+    "missing": [
+      "original durable01a03f16 unavailable",
+      "unidentified analysis1/2",
+      "unretained historical attachment pixels"
+    ],
+    "rules": [
+      "R002 in-app discovery/localfavorites/download not external wrapper",
+      "R003 platform isolated account/domainstate",
+      "R004/R005 singlefocus/doubleclick/context/CtrlShift/nested controls",
+      "R008 stable controls and truthful pending/failure",
+      "R010 retained tabs/results/context",
+      "R011/R015 accepted-download lifecycle and verified-safe files",
+      "R018/R022 distinguish automated/service/actual app verification"
+    ]
+  },
+  "decisions": [
+    "Pinterest: replace initial company-profile shortcut with native home feed sourced from official same-profile session. Search/profile/pin and canonical original resolution use that same session when available. Retain public anonymous routes only as explicit allowed fallback, never silently substitute another account/feed or represent login shell as no-results.",
+    "Dedicated official browser profile. Never return cookies/tokens/account identifiers in frontend state or logs; public account status is verified/unknown/loggedOut, busy/open, epoch. No remote privileged IPC/cookie exports. Same-origin request kinds and metadata projection closed/allowlisted; validate native URL+epoch before and after async work, timeout/cancel/bounded body and stale rejection.",
+    "Pinterest verified hydration feed/resource plans only; no guessed general endpoint presented as supported. Bounded server-owned opaque continuation handles, no arbitrary URLs/bookmarks from IPC. Session/generation change invalidates remote cache/results, preserves localfavorites/saved originals. Pure localfavorites stay local; no cloud board/bookmark writes.",
+    "Pinterest Masonry applies nativeExplore/Favorites/Downloads/Removed: deterministic shortest-column placement, original DOM/key/order and nested controls retained. Metadata uses selected actualpage dimensions; missing dimension fallback from existingdecodedthumbnail only. Bounded verywide/tall cardpreview (minimum120px/max3xcolumnwidth) keeps overlay readable; fullreader unchanged. Existing5stepwidth retained. Stable samecontext anchor only, do not override tab/page restoration. R007 uniformcardheight is explicitly superseded ONLY for Pinterestnativecards; otherproviders unchanged.",
+    "Pixiv: isolated official account window and persistent profile, native cookies onlyinprocess to exact www.pixiv.net metadata requests; no CDN cookie forwarding, no crosshost redirects. Positive freshserver proof required, cookiepresence alone never authenticates. Statuscheck async offUIthread (avoid Tauri Windows cookies_for_url deadlock). Close loginwindow only after officiallanding + freshpositiveproof, never securityscreen.",
+    "Pixiv thread verified generation leases through search/creator/detail/pages/download; local saved-original reads remain offline. Preserve safe-mode and existing age/content/DRM exclusions; ordinary isLoginOnly permitted only from current positively verified session. No accountsetting changes. Logout invalidates remote generations and cached authdata promptly; busy/failure never claims success or deletes localmedia/favorites.",
+    "Root owns shared IPC registration/managed account state and Pinterest home/account UI; agents own source-specific native session and Masonry/Pixivfrontend. Initial preparation stayed in staging; later user authorization now permits scoped integration and launch. Preserve concurrent commands.rs linked_gallery_id projection.",
+    "No goal activation, new Git worktree, reset, user data deletion, commit/push/release, PC shutdown, actual auth/media/UI tests this batch."
+  ],
+  "files": {
+    "stagingRoot": ".runtime/image-session-staging",
+    "pinterestBackend": [
+      "src-tauri/src/pinterest.rs",
+      "src-tauri/src/pinterest_browser.rs",
+      "src-tauri/src/pinterest_session.rs",
+      "src-tauri/src/pinterest_session.js"
+    ],
+    "masonry": [
+      "src/features/pinterest/PinterestWorkspace.tsx",
+      "src/features/pinterest/PinterestWorkspace.css",
+      "src/features/pinterest/PinterestWorkspace.test.tsx",
+      "src/features/pinterest/pinterestMasonryLayout.ts",
+      "src/features/pinterest/pinterestMasonryLayout.test.ts",
+      "src/features/pinterest/PinterestMasonry.tsx",
+      "src/features/pinterest/PinterestMasonry.test.tsx"
+    ],
+    "pixiv": [
+      "src-tauri/src/pixiv.rs",
+      "src-tauri/src/pixiv/account.rs",
+      "src-tauri/src/pixiv/session.rs",
+      "src/features/pixiv/api.ts",
+      "src/features/pixiv/model.ts",
+      "src/features/pixiv/PixivWorkspace.tsx",
+      "src/features/pixiv/PixivWorkspace.css",
+      "src/features/pixiv/PixivWorkspace.test.tsx"
+    ],
+    "root": [
+      "src-tauri/src/lib.rs",
+      "src-tauri/src/interface/commands.rs",
+      "src/features/pinterest/api.ts",
+      "src/features/pinterest/types.ts",
+      "src/features/pinterest/browserApi.ts",
+      "src/features/pinterest/accountApi.ts",
+      "src/features/pinterest/PinterestAccountControls.tsx",
+      "src/features/pinterest/PinterestAccountControls.css",
+      "src/features/pinterest/PinterestAccountControls.test.tsx",
+      "src/features/pinterest/api.test.ts",
+      "src/features/pinterest/pinterestSessionProjection.test.ts",
+      "src/features/pinterest/PinterestWorkspace.tsx (after Masonry agent finishes)",
+      "src/features/pinterest/PinterestWorkspace.test.tsx (after Masonry agent finishes)"
+    ]
+  },
+  "verification": {
+    "scope": "No active app input, restart, login, actual account access, user-media mutation or source application. Isolated source/test copy only; native test cache reused but app executable not rebuilt or launched.",
+    "currentEvidence": "Final Pinterest/Pixiv frontend suite:194passed across14files (session39511). Final full TypeScript typecheck and staged frontend build passed. Final native library compiled; Pinterest49passed3ignored (session46176), Pixiv32passed2ignored using that exact compiled binary:81passed5ignored total. Ignored tests require real network or saved GUI QA data and were intentionally not run. Initial sandbox temporary-folder rename failures passed normal-host with the same compiled tests and no source changes. Test-only tauri.conf resources override was restored exactly; no app executable was rebuilt/launched.",
+    "sharedRegression": "Workspace registry, settings and App suites:85passed1failed. Existing Hitomi related-album scroll restoration assertion at src/App.test.tsx:1541 expected321 but got0. Reproduced by the isolated test in unchanged live source as well as staging; App.tsx/App.test.tsx/DetailWorkspace.tsx and CSS hashes match. This unrelated pre-existing failure is recorded, not fixed or attributed to this batch.",
+    "bundleVerification": "29source/test files,4428line patch. git apply --check passed without applying. All live-baseline and prepared SHA256 values match manifest; applied:false. No cookie/profile/user-media/config override in patch.",
+    "reviewFixes": ["Initial home waits for first account generation", "Continuation status poll coalesces rather than randomly fails", "Duplicate-only advancing pages have100hop/6000ID bounds", "Current failed status proof revokes stale authorization, stale failures cannot overwrite newer proof", "Final original publication uses generation fence", "Delayed list restoration cannot override user scroll", "Continuation button no longer inherits34px arrow width", "Private initial Pixiv search must not initialize account profile", "Pixiv local-reader loader and original pool remain stable across unknown/logout remote-session changes: no blob revocation, refetch, page/focus reset", "Both account/query window creation and shutdown are fenced by lifecycle admission and flow/generation; normal shutdown detaches isolated session holders"],
+    "deferred": ["Real authenticated Pinterest home hydration and continuation", "Real Pinterest keyword/profile/canonical-original download", "Pixiv authenticated positive verification schema and official login/logout navigation", "Actual in-app favorite→download→local reopen and rendered Masonry", "Third-party Google/Facebook social-login flows are not enabled without verified origin/navigation evidence"],
+    "delivery": ".runtime/image-session-staging/prepared/manifest.json and image-platform-sessions.patch; later application requires unchanged source hashes and fresh requirement/conflict check"
+  },
+  "acceptance": [
+    "Tests enforce origin/domain/epoch/cache/privacy/request/body bounds; no cookie in IPC/logs/cachefiles",
+    "Homepage/search return real pin cards with canonicaloriginal storage path; realauthfeed remains pending until userlogin",
+    "Login/logout accountcontrols truthful disable states and failures; retainedlocalfavorites/downloads independent of account",
+    "Masonry no stablekey/remount orselection/context regressions; no additionalimagefetch, visibleanchor and narrowwidth checks",
+    "Native unit/typecheck/frontendbuild in stagedcopy only; recording/broadcast providers unchanged",
+    "Actual login, authnavigation, homepaging and favorite→download→localreopen in app explicitly pending per latest userinstruction"
+  ]
+}

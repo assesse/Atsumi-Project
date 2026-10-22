@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "state": "implemented and offline-verified; actual account acceptance blocked by desktop helper initialization failure",
+  "original": {"threadId":"01a089ee-56ed-7322-a750-c034423826c2","turnId":"01a14c22-aae6-7143-a84d-29b32328dd9f","messageId":"01a14c22-ac33-7b50-962c-5c67843ccbd8"},
+  "audit": ".runtime/requirements-audit/20261018-pinterest-x-preedit.json",
+  "requests": ["Pinterest opens directly into large preview", "Repair home continuation", "Read signed-in own saved boards alongside preserved local favorites", "X feed browsing and five distinct layout mockups"],
+  "decisions": [
+    "Single click selects, Ctrl/Shift multi-select, double-click/Enter opens directly into preview. Preserve multi-tabs and confirm only whole-overlay multi-tab closure. Keep album/page favorite actions distinct and information reachable.",
+    "Integrate the independently prepared continuation candidate only after baseline/hash review. Preserve exact HTTPS hosts, same-session generation, native kind/path/query/scope checks, known-only options, cancellation and resource bounds. Unknown request context equivalence remains actual-verification-required, not proven by HTTP success.",
+    "Only explicit terminal evidence means end. Missing, invalid, echoed or rejected continuation means limited; retain old cards/selection/scroll on follow-up failure.",
+    "Add an own-boards switch within Favorites; never replace local album/page favorites. Resolve current owner from authenticated official session projection only, never arbitrary recommended users or guessed account names. Keep owner path and remote lists in session memory; reject absent/conflicting ownership. No cookie export or remote board writes.",
+    "X mockups are synthetic local interactions, not connected feeds. Recommend a text/media balanced single-column baseline, plus gallery, multi-column, list-preview and creator-grouped alternatives. An external-site wrapper alone does not satisfy native feed browsing; report the unimplemented connection boundary explicitly if credentials/actual integration cannot be completed."
+  ],
+  "latestXDecision": {"original":"User reply to call_124b088b2dd24e9f9739682326d07456: 앱내 로그인 방식으로. 아니 하루 100개의 게시물을 로드하는데 저 가격이라고?","status":"User chose official in-app login; supersedes pending connection choice. No paid API calls or enrollment.","source":"https://docs.x.com/x-api/getting-started/pricing","checked":"2026-10-18","postReadUsd":0.005,"userReadUsd":0.01,"estimates":"30 days: 100/500/1000 posts daily = USD15/75/150 for posts only; extra resources, taxes and FX not included. UTC-day dedup is a soft guarantee. Own-data discount does not list reverse-chronological home timeline.","boundary":"Read-only officially rendered website feed implementation is covered by x-login-feed-20261018.json. Human authentication and actual account acceptance remain required; five layout choices are still independent."},
+  "acceptance": ["Preview-first and favorite/keyboard/tab regression", "Home/keyword continuation and explicit terminal projection tests", "Own identity/path/account-generation/privacy fences", "Board list/pin paging with local favorites preserved", "Typecheck, frontend/native tests, builds", "Actual app home More and signed-in own boards are distinct from synthetic tests", "Five responsive interactive mockups with screenshots retained"],
+  "authorization": "User answered: 작업 없음. 이미 종료함. Necessary development build/restart allowed; no release, commit, account login, PC shutdown or destructive user-data action."
+}

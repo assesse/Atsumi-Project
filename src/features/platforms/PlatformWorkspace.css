@@ -1,0 +1,10 @@
+.platform-main { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
+.platform-shell.is-live-immersive { position: relative; grid-template-columns: minmax(0, 1fr); transition: none; }
+.platform-shell.is-live-immersive > .platform-main { padding-left: 8px; box-sizing: border-box; }
+.platform-shell > .live-edge-panel.edge-left.is-enabled { z-index: 40; }
+.platform-content-boundary { min-width: 0; min-height: 0; height: 100%; }
+.platform-loading, .platform-load-error { min-height: 220px; display: flex; align-items: center; justify-content: center; gap: 12px; color: var(--text-muted, #aaa5ae); }
+.platform-load-error { flex-direction: column; }
+.platform-spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: platform-spin .8s linear infinite; }
+@keyframes platform-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .platform-spinner { animation: none; border-style: dotted; } }

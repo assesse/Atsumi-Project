@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-13",
+  "scope": ["src/features/pixiv/**", "src-tauri/src/pixiv.rs"],
+  "authority": "Latest explicit user requests; implementation-policy.json; current verified contracts",
+  "audit": {
+    "mainEvidence": ".runtime/requirements-audit/main-thread-users.json",
+    "mainRead": "All 230 turns / 284 user messages; pagination exhausted in captured snapshot",
+    "otherEvidence": ".runtime/requirements-audit/other-threads.json",
+    "otherRead": "All 61 requirements / 17 supersessions, additional 210 human messages and non-main question replies read directly; shared main turns already read",
+    "specifications": ".runtime/requirements-audit/specifications.json",
+    "specificationRead": "69 files / 5742 lines fully read in preceding audit; source hashes recorded there",
+    "limitations": "Unavailable original durable thread and Atsumi analysis 1/2; historical image-only attachments not re-reviewed; automated heartbeats are not new requirements or current permissions"
+  },
+  "batches": [{
+    "id": "pixiv-local-originals-and-discovery-context",
+    "state": "implemented-service-and-desktop-core-flow-verified-offline-isolation-pending",
+    "originalSources": [
+      {"turnId":"01a13363-ef61-71e3-bf03-3babe3f5b5c0", "rule":"In-app discovery, favorites, original download, local management; links alone insufficient"},
+      {"turnId":"01a05719-4fc4-7ee1-8000-df39220238aa", "rule":"Downloaded works open local originals; completed download icon replaces download action"},
+      {"turnId":"01a051cd-a457-79f0-a78e-4edcf270fa8c", "rule":"Retain original discovery context when navigating creator and returning"},
+      {"turnId":"01a0ee1f-7915-7eb1-882b-3fa552a31cf8", "rule":"Creator links support background opening; current-page prefetch; cancel from detail/selection"},
+      {"turnId":"01a0ee84-c864-75c3-9328-32271ce8182a", "rule":"Ctrl-card selects; Enter opens selected, Ctrl-Enter downloads; update list locally"},
+      {"turnId":"01a0ffb2-7b46-77f1-9970-1c4be0da6a41", "rule":"Single focus, double-click detail, two-plus checkbox selection"},
+      {"turnId":"01a10593-61fd-70c0-bdd4-f8521107be97", "rule":"Album/page favorites only, no collections"},
+      {"turnId":"01a10806-d91b-7960-a4a4-09a11e14032d", "rule":"Toggle geometry fixed and privacy default honored"},
+      {"turnId":"01a0fb3e-84f6-7760-b780-98d6d258e8ac", "rule":"Korean title first in lists, overlay card controls"},
+      {"path":"docs/DANBOORU_MODE.md", "lines":"14-38", "rule":"Safe original storage and local index"},
+      {"path":"docs/EXTENSIBLE_ARCHITECTURE.md", "lines":"15-64", "rule":"Independent domain state; background work survives view changes"},
+      {"path":"docs/DOWNLOAD_PIPELINE.md", "lines":"5-33", "rule":"Bounded work, cancellation, verification before completion"}
+    ],
+    "conflicts": [
+      "Normal exit clears searches, not favorites/media; navigation cache is session-only",
+      "Ctrl-card selection differs from Ctrl-creator background navigation",
+      "Ugoira remains explicitly unsupported rather than saving a still and reporting success",
+      "No remote account bookmark mutations, auth collection, age restriction or DRM bypass"
+    ],
+    "proposedChanges": [
+      "Resolve saved work metadata/page files by validated ID under configured Pixiv root; no arbitrary path IPC",
+      "Use local thumbnail/detail media for downloaded works without contacting Pixiv; bounded image decode/output and page prefetch",
+      "Connect public creator/tag discovery to retained search contexts",
+      "Retain ten removable tag searches with clear-all, matching R017 and original 01a105c6 search-history request; use an overlay without list displacement",
+      "Preserve fixed overlays, multi-selection, cancellation and bounded async feedback across views"
+    ],
+    "acceptance": [
+      {"check":"Native local detail/media rejects traversal, symlink/reparse, corrupt/incomplete manifest and missing page", "state":"passed-native", "evidence":"20 native unit tests passed; file digest/missing/traversal/hardlink/legacy preservation covered"},
+      {"check":"Actual desktop IPC saved-original thumbnail/detail works with all external network blocked", "state":"pending-root-isolated-app-qa", "qualification":"Direct native local reads and mocked UI are not a substitute for actual desktop IPC"},
+      {"check":"Actual public search/rank/creator response and isolated original download", "state":"passed-native-public-http", "evidence":"Daily 50, weekly 50, landscape artwork 150784144, creator 60; original 2269921 bytes equals offline local bytes; temporary fixture only"},
+      {"check":"Card double-click/context/favorites/page favorite and Ctrl/Shift selection retain common behavior", "state":"passed-unit-layout-desktop-core-flow", "evidence":"27 frontend tests; CSS layout 960x640 cards/detail/favorites/rail/privacy; root actual isolated app verified daily50, detail original, album favorite, original download and saved card local reopen. Context/page favorite/multiselect desktop not separately verified"},
+      {"check":"Tag/creator navigation and return preserves prior results/page/scroll", "state":"passed-unit-real-wrapper-fixture-awaiting-desktop", "evidence":"Ctrl background creator, retained page on return, stale errors ignored; actual wrapper 24-card scroll600→creator→close restores600"},
+      {"check":"Multi-download/cancel survives tab changes, list update does not refresh all cards", "state":"partially-verified", "evidence":"CtrlEnter one native batch/no list reload unit test; native all IDs registered under managed work lock; queued cancellation and actual shutdown awaiting desktop"},
+      {"check":"Privacy covers all media surfaces; 960x640 and 1920x1080 controls do not clip", "state":"both-fixture-sizes-passed-desktop-privacy-pending", "evidence":".runtime/platform-verification/pixiv/verification.json"}
+    ]
+  }, {
+    "id": "pixiv-recoverable-library-management",
+    "state": "implemented-fixture-tested-awaiting-desktop",
+    "originalSources": [
+      {"turnId":"01a13363-ef61-71e3-bf03-3babe3f5b5c0", "rule":"In-app original download and local management are essential"},
+      {"turnId":"01a10854-707d-7182-97d5-0b5669f92801", "rule":"Card context actions rather than unfamiliar separate selection flow"},
+      {"path":"docs/requirements/implementation-policy.json", "rule":"R004/R005/R008/R015: common selection, stable controls, validated job-owned files only"}
+    ],
+    "conflicts": ["Removing a library item must not silently delete unknown files or free space without describing its recoverable behavior", "Historical user deletion permission is not permission to mutate existing media during QA"],
+    "proposedChanges": ["Open a validated album folder", "Explicit confirmation moves only an app-owned album with no extra files into Pixiv/.removed using a unique token; undo restores without overwrite", "No recursive deletion and no outside paths accepted over IPC"],
+    "acceptance": [
+      {"check":"Move/restore operates only on isolated fixture; extra files, reparse points, invalid token and destination collision are rejected", "state":"passed-native-fixture", "evidence":"library_remove_restore_is_recoverable_and_refuses_extra_files_or_overwrite plus shared strict local reader tests"},
+      {"check":"UI confirmation/undo preserves favorites and updates only affected cards", "state":"passed-unit-awaiting-desktop", "evidence":"Library confirmation, no pre-confirm mutation, favorite persistence and undo tested"}
+    ]
+  }, {
+    "id":"pixiv-final-interaction-contradiction-audit",
+    "state":"implemented-and-regression-verified",
+    "auditRefresh":"All 69 specification hashes still match; no new README/docs/tools/runtime top-level Markdown. Main/other user-evidence snapshots unchanged. implementation-policy refreshed including isolated-desktop-validation batch.",
+    "originalSources":[
+      {"turnId":"01a10854-707d-7182-97d5-0b5669f92801","rule":"Animate opening/closing floating windows and preserve nested controls"},
+      {"turnId":"01a0ee1f-7915-7eb1-882b-3fa552a31cf8","rule":"Keyboard follows the topmost context; creator return retains prior search/page/scroll"},
+      {"turnId":"01a051cd-a457-79f0-a78e-4edcf270fa8c","rule":"Do not lose the original place after creator discovery"},
+      {"turnId":"01a0fb3e-84f6-7760-b780-98d6d258e8ac","rule":"Favorites and other album tabs follow the same flow; search location and overlay actions should agree"},
+      {"path":"docs/DANBOORU_MODE.md","rule":"Use analogous image-platform local library and header/body/footer template; do not couple domain state"}
+    ],
+    "proposedChanges":["Guard Pixiv keyboard handling while native modal/tutorial/context-menu or newer modal is topmost", "Add short close animation respecting reduced-motion and cancel an old close when a new detail opens", "Offer local title/artist/tag/id search in saved and favorite views in the same searchbar position", "Report shared wrapper scroll ownership defect to parent without editing shared files"],
+    "acceptance":[{"check":"Topmost modal blocks Pixiv A/D/Escape; input typing is unaffected","state":"passed-unit"},{"check":"Close transition completes once, reopening cannot be erased by old timer","state":"passed-unit"},{"check":"Local search filters in app without remote request and preserves tab/search state","state":"passed-unit"},{"check":"Real shared wrapper has one intended scroll owner and restores scroll","state":"passed-real-css-fixture","evidence":"Parent shared fix; wrapper and main640/640, Pixiv640/2552;600px restored after creator tab return"}]
+  }, {
+    "id":"pixiv-private-diagnostic-stages",
+    "state":"implemented-native-regression-passed",
+    "originalSources":[{"path":"docs/LOCAL_DIAGNOSTICS_20261004.md","rule":"Allowlisted fixed stage/result/duration only; no title/search/tags/content identifiers/URLs/paths/auth material; never upload automatically"}],
+    "proposedChanges":["Record bounded operation completion for search, detail, original save and local library actions; record only failed image/network stages, not every successful thumbnail"],
+    "acceptance":[{"check":"No operation input/error body is logged; stage literal/result/time only","state":"passed-source-audit"},{"check":"No shared diagnostic schema changes; existing bounded recorder remains authoritative","state":"passed-source-audit"},{"check":"Latest native source compiles and operation result is unchanged","state":"passed-native","evidence":"21 Pixiv tests passed, including diagnostics_preserve_the_operation_result; initial restricted TempDir run could not resolve fixture folders, normal Windows-access rerun passed all"}]
+  }, {
+    "id":"pixiv-context-menu-filter-dismissal",
+    "state":"implemented-and-regression-verified",
+    "originalSources":[{"turnId":"01a10854-707d-7182-97d5-0b5669f92801","rule":"Card context actions must stay usable and nested controls retain precedence"},{"turnId":"01a0fb3e-84f6-7760-b780-98d6d258e8ac","rule":"Favorites and other album views have consistent interactions"}],
+    "evidence":"Last local-filter cleanup added context.close to its effect dependencies, but the shared hook recreates close when anchor changes. Opening a context menu therefore retriggered filter cleanup and immediately dismissed the menu.",
+    "proposedChanges":["Keep the latest dismiss callback in a ref; trigger filter cleanup only when category or local filter changes", "Explicit regression: ordinary rerenders keep an open menu; changing local filter closes it"],
+    "acceptance":[{"check":"Right-click and recoverable removal work with the real shared context hook","state":"passed-unit","evidence":"Pixiv frontend 3 files/28 tests passed after callback lifetime fix"},{"check":"Filter changes dismiss selection/menu, while unrelated rerenders do not","state":"passed-unit","evidence":"New explicit context-menu/rerender/local-filter regression test; no shared hook changes"}]
+  }],
+  "storageSafetyBatch": {
+    "id": "pixiv-failure-preservation-and-durable-recovery",
+    "state": "implemented-frontend-and-native-regressions-passed-desktop-pending",
+    "originalSources": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a12a4c-724c-7d13-801d-3d92da01fe1e", "docs/requirements/implementation-policy.json:R004,R005,R015"],
+    "evidence": "Original in-app local management and verified-only cleanup requests reread. Final cross-audit found path-resolved recursive failed-staging cleanup could delete a substituted same-root album; strict complete-only listing hid missing-page albums and prevented removal; undo tokens existed only in component memory.",
+    "decision": ["Failed/cancelled UUID staging is preserved, never recursively cleaned through a re-resolved path; completed publication still leaves only the final directory", "Separate safe manifest/ownership management from strict page opening so missing or changed pages remain visible with a problem state and can be recoverably removed", "Rediscover validated .removed token directories through the existing downloads query on restart; no browser-only persistence or new collections UI", "Never present damaged or removed records as complete; unknown files, redirections and destination collisions remain rejected"],
+    "acceptance": ["Substituted failed staging cannot delete another album", "Missing-page and truncated-page fixtures remain visible, strict open fails, remove/restore remains possible", "Fresh query rediscovers removed token; frontend remount restores undo without network/user-media access", "Private filenames/contents never logged; all mutation tests use temporary generated fixtures"],
+    "verification": {"frontend":"3 files / 30 tests passed, including incomplete local card state and rediscovered removal on a fresh mount", "typecheck":"Passed with normal Windows access; sandbox-only run failed to resolve dependency types", "native":"Parent-coordinated shared rebuild 86491 exited 0; Pixiv 23 passed / 1 ignored, including substituted staging, damaged-album management, durable removed-token discovery and the final hardlink rejection regression. No standalone cargo launched", "source":"rustfmt passed; no recursive failed-staging removal remains; no common files or real user media changed"},
+    "qualification": "Code/unit tests do not establish actual desktop flow; actual app remains untested under the current no-UI restriction. Failed partial files intentionally remain for safe recovery; no failed-file cleanup is claimed. Management accepts missing/truncated regular originals but retains reparse/hardlink and unknown-file rejection when moving. Existing undo remains batch-only and stops at the first destination collision, leaving that item and subsequent items safely in .removed; individual recovery selection is not implemented in this narrow safety batch."
+  },
+  "previewReadOnlyAudit":{
+    "state":"reader-and-bounded-window-implemented-unit-verified-desktop-pending",
+    "originals":["01a05eb9-33da-7813-a6d7-54fdc8df0495","01a0f8ab-e779-7f33-836c-fc747a3b0b35","01a0fa72-37ba-77f0-9ef5-23187336a5cc","01a0fa91-7994-7cf2-8afe-e5140fd67b9c","01a12c46-788a-7b00-9f69-e6f1d6f2d53e"],
+    "evidence":"Original full user messages reread from unchanged main snapshot; PixivWorkspace.tsx/detail markup,CSS andapi.ts reviewed",
+    "implemented":["Separate explicit page reader leaves ordinary detail metadata intact", "Direct original public/local pages with two simultaneous reads and visible-first current±2 window; maximum six encoded originals within96MiB", "A/D and Left/Right navigation; topmost modal/hidden tab/modifier guards", "Bottom-center page number and numbered bookmarks for each real visible page", "Two-page, LTR/RTL, black missing slots and mixed-orientation spread using unchanged pure shared helpers", "Default hidden controls, movement reveal, stationary timeout, persisted pin/direction and directional arrow pulse with reduced-motion", "Reader Escape/X restores detail page/opener without search reload", "Right/bottom/corner reader resize implemented and unit-verified in docs/requirements/pixiv-reader-resize.json; five files/53 tests and full TypeScript passed, not actual Windows/pixel/Alt-Tab verification"],
+    "missing":[],
+    "unverified":["Actual Windows Alt-Tab focus restoration for Pixiv detail/page shortcuts", "Real app offline-blocked-network re-open and frontend control parity"],
+    "qualification":"Latest own-source batch implements reader controls and bounded encoded original storage. It does not change Hitomi state or claim actual desktop pixel/Windows focus behavior. Historical native-unit evidence predates this frontend-only change."
+  },
+  "previewPlannedBatches": {
+    "state": "implemented-focused-tests-passed-desktop-pending",
+    "authority": "Parent lifted own-source freeze for the recorded reader/cache batch. Isolated QA app remains idle and must not be operated, closed or rebuilt by this agent. No user-account or media mutation is authorized.",
+    "implementationPlan": "Keep ordinary detail metadata and its page controls. Add an explicitly entered separate reader with independent overlay controls and unchanged pure slot/frame helpers. Use one Pixiv-owned original window pool across ordinary detail and reader, with two concurrent original reads, six allowed pages, 96 MiB encoded-byte budget, visible-first queue, stale-result rejection and exact Blob disposal. Native ArrayBuffer responses expose their byteLength through an owned media value; thumbnails remain a separate bounded loader. Only visible original pages are decoded by image elements. No shared production files or native IPC changes. Right/bottom/corner resize was outside this initial batch and is now implemented/unit-verified by the separate docs/requirements/pixiv-reader-resize.json batch; desktop verification remains pending.",
+    "auditRefresh": "Implementation policy and Pixiv/Pinterest contracts fully reread; audited 69 specification hashes and main/other raw snapshots unchanged. Relevant complete original requests reread; unavailable source qualifications remain in audit.limitations.",
+    "originalSources": [
+      {"turnId":"01a05eb9-33da-7813-a6d7-54fdc8df0495", "rule":"Page-preview two-page control at bottom right; right/bottom edge resize in addition to corner"},
+      {"turnId":"01a0f8ab-e779-7f33-836c-fc747a3b0b35", "rule":"Independent left-to-right/right-to-left direction; default hidden overlay controls revealed briefly by pointer movement; dark backing and large navigation arrows"},
+      {"turnId":"01a0fa72-37ba-77f0-9ef5-23187336a5cc", "rule":"Bottom-center page count, number inside bookmark, persistent bottom-left pin, directional turn animation, black missing-page slots, mixed portrait/landscape without cancelling two-page mode"},
+      {"turnId":"01a0fa91-7994-7cf2-8afe-e5140fd67b9c", "rule":"Preview/detail A/D still work after Windows Alt-Tab; unit key events do not establish native focus behavior"},
+      {"turnId":"01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "item":20, "rule":"Read originals directly rather than a low-quality-to-original chain; preload two or three originals either side"},
+      {"turnId":"01a0ee1f-7915-7eb1-882b-3fa552a31cf8", "items":[8,9], "rule":"Keyboard belongs to the topmost context and page preview preloads two neighboring pages either side"},
+      {"path":"docs/requirements/implementation-policy.json", "rule":"R003/R004/R006/R008/R010/R021/R022; independent domain state, retained contexts, stable controls and actual-app verification"}
+    ],
+    "referenceFlow": {
+      "hitomi": "DetailWorkspace.tsx:908-915 opens the selected page from an explicit preview thumbnail button while retaining the detail workspace. The independent native dialog at 1146 onward is the only auto-hidden reading surface. Its close/cancel clears previewPage, not the detail tab, and restores the opening control's focus; direct page-favorite requests are handled at 410-415.",
+      "danbooru": "DanbooruWorkspace.tsx:925-966 has an ordinary floating post detail with persistent header, metadata and save footer. It has no second PAGE PREVIEW transition in current code. Preserve its detail template as the reference for ordinary metadata interaction; do not invent a Danbooru preview behavior or hide that entire detail.",
+      "pinterest": "PinterestWorkspace.tsx:522 already exposes an explicit page-preview entry. Escape or its preview-close button returns to the same PinDetail rather than closing the work; ordinary metadata remains outside reading mode. Its current preview mode needs parity corrections but must remain distinct from ordinary detail.",
+      "pixiv": "Current PixivWorkspace.tsx:319-330 has only ordinary detail and a single original image. A new explicit reading-mode transition is required; existing ordinary metadata/favorites/download controls must remain visible until the user enters it. Ugoira remains explicitly unsupported for original-album saving."
+    },
+    "batches": [
+      {
+        "id": "pixiv-separate-page-preview-and-reading-controls",
+        "state": "implemented-unit-verified-desktop-pending",
+        "scope": ["src/features/pixiv/PixivWorkspace.tsx", "src/features/pixiv/PixivWorkspace.css", "src/features/pixiv/PixivWorkspace.test.tsx", "src/features/pixiv/PixivPageReader.tsx", "src/features/pixiv/PixivPageReader.css", "src/features/pixiv/PixivPageReader.test.tsx", "src/features/pixiv/PixivOriginalPages.tsx"],
+        "readOnlyReuse": ["src/components/pagePreviewNavigation.ts", "src/components/pagePreviewFrame.ts", "src/components/PagePreviewOverlay.css as visual reference only"],
+        "decision": "Add an explicit selected-page preview trigger in the existing detail image area; retain ordinary detail and introduce a separately identified topmost reading surface. Use unchanged pure slot/navigation/frame helpers with a checked one-based UI to zero-based Pixiv page adapter. Do not import Hitomi backend/session state or auto-hide all detail metadata.",
+        "acceptance": [
+          "Card double-click/context opens ordinary detail, not reader mode; artist/tag/album favorite/download controls remain visible in ordinary detail",
+          "Click or keyboard activation of the explicit page-preview trigger opens exactly the current real page; a page-favorite entry may open its stored page directly, using the same retained detail context",
+          "Escape/X closes only the reader, restores the connected opener focus and retains the original detail tab, page, search results and scroll; no list reload, automatic album-tab close or synthetic favorite/download occurs",
+          "Only the topmost reader handles A/D/arrow keys; typing, modifiers, inactive platforms, menus and newer dialogs retain precedence; ordinary detail keyboard semantics remain unchanged",
+          "Two-page and reading-direction controls stay in fixed bottom-right slots; page count stays bottom-center and pin bottom-left; each actual visible page has its own numbered bookmark, with no blank-slot mutation",
+          "Counts 1/2/5/6, both directions and first/last anchors preserve black missing-page slots; portrait-landscape-portrait does not automatically disable two-page mode; toggling to one page selects an actual page",
+          "Controls initially hide unless pinned, reveal on pointer movement or deliberate keyboard interaction, hide after the established inactivity interval and remain usable while keyboard-focused; stationary hover does not hold them visible",
+          "Persist only lightweight reading-direction/pin preferences; no media or query content in localStorage; arrows pulse in the actual physical direction and reduced-motion disables animated movement",
+          "Right/bottom/corner resize is separately implemented and unit-verified under docs/requirements/pixiv-reader-resize.json, not inferred from the responsive frame; actual Windows/pixel validation remains pending",
+          "Synthetic interaction/clock tests and 960x640/1920x1080 isolated desktop checks are both required; actual Windows Alt-Tab remains pending until root explicitly verifies it"
+        ],
+        "verification": "2026-10-13 16:46 KST: all five Pixiv frontend files/45 tests passed; full TypeScript check exited0. New tests cover chosen original, separate-detail return/page/focus/no-reload, stationary hide/pin, counts1/2/5/6, black edges in both directions, mixed portrait/landscape, RTL physical keys/pulse, modifier/newer-modal guard, privacy. No actual app, screenshot, Alt-Tab or drag-resize validation performed."
+      },
+      {
+        "id": "pixiv-bounded-original-reading-window",
+        "state": "implemented-unit-verified-desktop-pending",
+        "scope": ["src/features/pixiv/api.ts", "src/features/pixiv/model.ts", "src/features/pixiv/PixivWorkspace.tsx", "src/features/pixiv/originalWindow.ts", "src/features/pixiv/originalWindow.test.ts", "src/features/pixiv/PixivOriginalPages.tsx"],
+        "decision": "Retain current direct-original loading and existing single-page plus/minus-two behavior while replacing implicit cache eviction with a visible-priority bounded window. A spread needs two visible pages plus two before and two after; current five-original cache cannot guarantee six required pages. Separate this lifecycle/cache work from reader-control geometry.",
+        "acceptance": [
+          "Load real visible pages first, then at most two pages before and two after; blank slots never become native requests; retain current original-only behavior without a thumbnail intermediate",
+          "At most two page reads run concurrently; queued stale requests are cancelled or removed on a page jump, close, privacy transition or disposal; late results cannot replace the active work/page",
+          "Track actual binary byte size rather than Blob URL string length; enforce count and byte budgets, deduplicate requests and revoke evicted/disposed Blob URLs without revoking a still-visible image",
+          "Local and recoverably removed works preserve their exact native ownership/token route and do not fall back to public network if an original is missing or invalid",
+          "Tests cover exact visible/prefetch indices, both reading directions, spread edges, rapid navigation, stale completion, memory eviction and close cleanup; existing local-original safety and card interaction tests remain passing",
+          "Real isolated desktop original display and repeated page-turn/close behavior remain pending; successful service reads do not establish the app reading flow"
+        ],
+        "verification": "Six original-window tests passed: exact visible/prefetch indices without blank requests, two-concurrency/stale queue discard and late Blob revoke, actual encoded-byte eviction without revoking visible images, local-only failure/retry, pending dedup/oversize rejection, browser decode error/retry. Native ArrayBuffer.byteLength supplies real sizes; fixture string Blob sizes conservatively charge32MiB. The96MiB cap is encoded bytes, not total renderer RAM; only1–2visible originals are attached to image elements, each retains native32MiB/24MP display limits. No new native API or compilation was required."
+      }
+    ],
+    "pinterestCoordination": "Equivalent reader controls belong to the Pinterest agent's src/features/pinterest files and its own implementation contract. Its current original preview already preserves JPEG/PNG/WebP bytes and prioritizes local records; missing work is neighboring preload and spread/control parity. Its two-original cache also requires an explicit bounded-window decision before six-page spread prefetch. No Pinterest or shared production files were changed here.",
+    "qualification": "Own code/tests batch authorized and implemented; root alone owns isolated desktop QA. Initial sandbox test could not collect because Temp cache rename was denied; normal Windows-access rerun passed45tests. Full TypeScript passed; git diff--check found no whitespace errors. Source hashes remained unchanged for69 audited specifications and both fully read raw chat snapshots; changed policy/SOOP automatic-recording/Pinterest/validation contracts were reread. No app launch, control, close, rebuild, account or real-media mutation occurred. The subsequent docs/requirements/pixiv-reader-resize.json batch implements right/bottom/corner reader resizing with53 frontend tests and full TypeScript passing; these are unit checks only. Actual960x640/1920x1080 pixel behavior, repeated real-original turns/close, strict offline and Windows Alt-Tab remain pending."
+  },
+  "limitations": ["Public anonymous endpoints only; no account cookies or account mutations", "Login/age-restricted works remain unavailable", "Ugoira preview only; no misleading still-image download success", "Original display limited to 32 MB / 24 million pixels per page; original save limited to 100 pages / 1 GB per album and bounded decoder memory", "Removed files are retained in .removed, not physically deleted or represented as freed disk space", "Actual full-app IPC/offline/normal-exit and shutdown tests remain required before completion", "Image preview parity gaps are explicitly listed in previewReadOnlyAudit"]
+}

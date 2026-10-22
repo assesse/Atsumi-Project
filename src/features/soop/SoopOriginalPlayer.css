@@ -1,0 +1,11 @@
+.soop-original-slot,.soop-original-chat{background:#000;position:relative;min-height:0;min-width:0}
+.soop-original-actions{position:absolute;right:12px;top:12px;z-index:6;display:flex;align-items:center;background:rgba(20,20,23,.88);border-radius:8px;padding:3px}
+.soop-original-actions button{display:flex;gap:6px;align-items:center;color:var(--text-primary);background:transparent;border:0;padding:5px 8px;cursor:pointer}
+.soop-original-actions button[aria-pressed=true]{color:#ff738b}.soop-original-actions button:disabled{opacity:.5;cursor:default}
+.soop-original-actions svg{width:20px;height:20px;stroke:currentColor;stroke-width:1.7}.soop-native-capture{z-index:8}
+.soop-original-notice{position:absolute;z-index:7;max-width:min(90%,400px);height:max-content;inset:50% auto auto 50%;transform:translate(-50%,-50%);background:var(--surface-raised,#242129);padding:12px;border-radius:10px}
+.soop-workspace.is-live-view:has(.is-native-fullscreen){container-type:normal;overflow:visible}
+.soop-player-area .soop-original-pair.is-native-fullscreen{position:fixed!important;inset:0!important;z-index:30;display:flex!important;width:100vw!important;height:100vh!important;max-height:none!important;overflow:hidden}
+.soop-player-area .soop-original-pair.is-native-fullscreen>.platform-live-player,.soop-player-area .soop-original-pair.is-native-fullscreen>.platform-live-chat{grid-area:auto!important;min-height:0!important;height:100%!important}
+.soop-player-area .soop-original-pair.is-native-fullscreen>.platform-live-player{width:auto!important;aspect-ratio:auto!important}.soop-player-area .soop-original-pair.is-native-fullscreen>.platform-live-chat{display:flex!important;width:var(--platform-live-chat-size)!important}.soop-player-area .soop-original-pair.is-native-fullscreen>.platform-live-resize{display:block!important}
+.soop-player-area .soop-original-pair.is-compact.is-native-fullscreen>.platform-live-player{width:100%!important;height:auto!important}.soop-player-area .soop-original-pair.is-compact.is-native-fullscreen>.platform-live-chat{width:100%!important;height:var(--platform-live-chat-size)!important}

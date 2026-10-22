@@ -26,7 +26,7 @@ const { tmpdir } = await import(osName) as { tmpdir(): string };
 const { execFile } = await import(childName) as { execFile(file: string, args: string[], options: { timeout: number; maxBuffer: number; encoding: 'utf8'; windowsHide: boolean }, done: (error: Error | null, stdout: string) => void): void };
 const { pathToFileURL } = await import(urlName) as { pathToFileURL(path: string): { href: string } };
 const { env } = await import(processName) as { env: Record<string, string | undefined> };
-const edge = ['C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'].find(file => fs.existsSync(file));
+const edge = [env.ATSUMI_TEST_BROWSER ?? '', 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe', 'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe'].find(file => fs.existsSync(file));
 const script = multiview.replace('window.location.origin === "https://chzzk.naver.com"', 'window.location.protocol === "file:"').replaceAll('window.location.pathname', '"/live/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"');
 async function render(html: string, options: { width?: number; height?: number; reducedMotion?: boolean; screenshot?: string } = {}) {
   const root = fs.mkdtempSync(path.join(tmpdir(), 'atsumi-ui-geometry-'));

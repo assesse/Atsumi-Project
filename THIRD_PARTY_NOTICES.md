@@ -1,5 +1,27 @@
 # Third-party notices
 
+## Offline Pixiv metadata readings
+
+Kana romanization uses WanaKana 5.3.1 (MIT). Optional, on-demand Japanese
+morphological readings use kuromoji.js 0.1.2 (Apache-2.0), its bundled IPADIC
+dictionary, and doublearray 0.0.2 (MIT). Dictionary-derived proper-name readings
+are estimates, not authoritative creator-name translations. No remote translation
+service is used. The build includes the complete package licenses and dictionary
+notices in `assets/pixiv-reading/NOTICE.txt`; compressed dictionary assets are
+distributed beside it. `tools/pixiv-reading-assets.ts` generates this notice from
+the pinned installed packages and fails the build if required notices are absent.
+
+## Chromium Google-domain diagnostic data
+
+The fixed Google-domain suffix data in
+`src-tauri/src/youtube/original_account_regions.rs` is derived from Chromium's
+`components/google/core/common/google_tld_list.h`, reviewed on 2026-10-15.
+Data copyright 2016 The Chromium Authors; BSD-3-Clause terms apply.
+The full attribution, upstream links and license text are distributed in
+`public/licenses/chromium-google-domain-data.txt`, which is copied into the
+packaged frontend. This data only classifies diagnostics; it grants no
+navigation, popup or authentication permissions.
+
 ## Fluent UI System Icons 1.1.328
 
 The card metadata and status icons include vector paths from

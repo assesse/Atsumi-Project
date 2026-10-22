@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "state": "implemented, automated regressions/builds passed, development app normally relaunched; actual Computer Use acceptance remains deferred",
+  "originalRequests": [
+    "이미지 다운로드 후 저장되는것까지 검증함.",
+    "내 계정 프로필 이미지 해상도가 너무 낮음.",
+    "@albu_love · 전체 저장 · 열린 X 보관 선택창이 너무 많습니다. 이게 뭐죠.",
+    "가끔 다운로드 문제가 발생하고 있음. 미디어가 하나인데 전체 다운로드 버튼을 눌러서 그런것 같기도함.",
+    "종료했음. 그리고 로컬 저장소 미디어 불러올때 기본적으로 화면을 꽉채우고, 스크롤내리면 맞춰서 추가로드되어야함.",
+    "2026-10-21 explicit avatar rendition exception: 좌측 하단 내 계정 전환시 프로필에만 허용"
+  ],
+  "audit": {
+    "sources": "Current direct history read; active50 and archived3 EOF re-enumerated 2026-10-21. Other Atsumi main1792473578 and UIUX1792073766 unchanged from full EOF snapshots. No newly changed requirement source except current own receipt-repair record.",
+    "reusedHashes": "Policy3A717CA4, sidebar291E3A9B, native-actions678D6E36, archiveF6E50272, save-sessionBC1DD78F match fully read preceding snapshots; current receipt repairAB40944A read in full in preceding turn.",
+    "unavailable": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachment pixels"]
+  },
+  "evidence": [
+    "User confirms actual image download and saved-library result in the previous receipt repair. Do not mark every remaining scenario verified.",
+    "PID1488: eight capture-frozen results between15:34:47 and15:36:30, seven complete and one partial. Ninth and next three fail before capture-frozen. freeze retains600s and caps8; reserve clones without consuming and completion never releases draft.",
+    "One partial record at15:34:58 contains only capture_text_truncated. Preserve this historical omission; do not relabel it as media transport failure or silently make the whole snapshot complete.",
+    "Single-media all is valid. Do not disable all for one media or remove source/ownership/integrity checks to avoid the capacity error."
+  ],
+  "rules": [
+    "Active2849 only; preserve shared changes, archives, protected registry and user data. No account reactions, force stop, deletion, commit, push, release or PC shutdown.",
+    "User confirmed normal exit before production editing. Implement automated regressions/build and normal relaunch; no live download/UI acceptance without new authorization.",
+    "Use exact request/capture/account identity and original current-pane guards. Never invalidate all drafts or cancel unrelated jobs to release a single temporary slot. Keep bounded draft capacity andTTL.",
+    "Keep permitted raster hosts, bounded decode/data storage, account/revision proof. Never upscale a tiny image and call it higher detail or silently replace credentials/session state.",
+    "Latest explicit exception supersedes observed-URL-only ONLY for bottom-left own-account switcher portraits: preserve exact proven owner/image ID/base name and change a recognized resolution suffix to a bounded larger rendition. Keep known-good existing bytes on failure. Never extend this to post/reply authors, archive assets, media downloads, credentials or session state."
+  ],
+  "changes": [
+    "Immediate native save owns an exact temporary draft lease; release it on all early-exit paths and once reserve has made the owned immutable job snapshot. Existing job continues independently.",
+    "Actual selection UI retains its capture while selections/retries remain open. Add main-only exact-capture release for close/unmount/context replacement, discarded/late inspect responses and successful handoff. Release affects only transient memory, not files or active jobs.",
+    "Correct misleading capacity wording while preserving the bounded admission rule. Add repeat-save and concurrent chooser/job isolation regressions.",
+    "Improve own-account-switcher avatar quality using observed larger candidates first and the narrowly authorized same-image rendition fallback. Upgrade compatible old low-quality display cache without resetting registry/session; reject unrelated image identities/hosts and stale account results.",
+    "Local media library fills the available view by loading bounded batches until content exceeds the viewport or items end. Near-bottom scrolling loads subsequent batches automatically. Preserve concurrency limit, exact account/tab filters, stale-result fences and a manual fallback without bulk decoding the entire library.",
+    "Independent review found a never-settling local-read deadlock in the existing lane promise chain: UI deadline expired but the next batch item waited forever and disabled retry. Keep exactly two physical read slots with one bounded UI waiter each; context replacement wakes only the stale waiter, deadline removes only the UI wait, and the real read owns its lane until completion. Stop the batch on read timeout and mark not-started items retryable without issuing additional native reads or accumulating retry promise chains."
+  ],
+  "verification": {
+    "date": "2026-10-21 KST",
+    "frontend": "Final frozen whole-X Vitest: 23 files,1197 passed,0 failed (15:58:48,35.93s); focused241 passed; TypeScript and Vite production bundle passed.",
+    "native": "Final frozen cargo test --lib x_feed:: --locked --no-default-features:200 passed,0 failed; includes own-switcher rendition/fallback and draft lifecycle regressions. Existing unrelated warnings preserved.",
+    "buildAndLaunch": "cargo build --bin atsumi --locked --no-default-features passed in1m45s. Existing hidden development launcher selected port1420 and launched exact2849 debug executable PID23036 at16:00:37 KST. Read-only status: nativeUnresponsive=false,reloadPending=false,pulseAge237ms,lag9ms. No force stop/recovery/cancel/GUI operation.",
+    "portraitRuntimeLimit": "Postlaunch read-only display-cache dimensions still24x24,24x24,48x48 with old cache timestamp14:37. New high-resolution fetch/display has not yet been observed; it runs when an exact current-owner X account surface observation is available. Do not claim actual visual quality passed.",
+    "review": "Independent exact-identity/RAII/lock/publication/chooser/lane/portrait review complete. Never-settling read deadlock and first-image large-source fallback gaps fixed and regression-tested.",
+    "sourceHashes": {
+      "x_archive.rs": "8FF2EAEF9C018A11916A14452E216FFE35A494567CF5C5422D7BF40E3656148A",
+      "x_account_presentation.rs": "AC214E0F81093D4378FAE3505EED87588B663316CFF47B4C53BDBC3DBBE4E5E4",
+      "x_surface.js": "C949CA1C0292E6BB705630A75264871B29BE2DFAFBAC802DA9ED08778A8B0F5B",
+      "XArchivePanel.tsx": "2C889CA72E39F8D700E18B6BCF5599F31462DED76C609D399065763C955B0077",
+      "xArchiveApi.ts": "DEAB7F58A4C4D0CE8EC5AD79AEB25090D6A9F245E524253213CF4B4CFC944672"
+    },
+    "deferred": "No Computer Use, live repeated downloads, account switching, social reactions or actual scroll/portrait visual acceptance performed. User's earlier actual single-image save pass remains separate evidence. Exact live X expanded-account-menu file resolution has not been compared."
+  },
+  "acceptance": [
+    "More than8 sequential immediate saves; exact lease cleanup on success/failure/cancel/selection mismatch; no unrelated chooser eviction, active-job cancellation or immutable data change.",
+    "Chooser close/replacement/unmount and late inspect results return only their own draft. Save failure can retry the retained chooser capture.",
+    "One-image all and one both work, native validation and media provenance remain unchanged.",
+    "Avatar cache upgrade/observed candidate selection and own-switcher-only rendition fallback with host/identity limits, known-good failure fallback and stale account protections. No transform for default/unknown suffix or other image consumers.",
+    "Media first-load viewport fill, near-bottom loading, scroll/resize, empty/error/end-of-list, account/tab change races, duplicate read prevention and bounded concurrent reads. Two never-settling native reads must free UI pending/retry state after the deadline while retaining both physical slots; repeated retry/scope changes must not start extra reads or accumulate UI waiters.",
+    "Run focused and whole-X regressions plus frontend/native builds. Report separately what was user-verified and what remains screen-QA deferred."
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "batch": "portable-distribution-read-only-audit",
+  "status": "findings-and-proposed-checks-only; implementation-and-clean-package-acceptance-pending",
+  "date": "2026-10-13",
+  "scope": "Read existing source, pinned tool directories/archive directory entries and license files only. No build, downloader/tool execution, new software acquisition, release, application control, package replacement or deletion. Root-owned platform-validation.json is not modified. Completed Pixiv centering changes are preserved.",
+  "audit": {
+    "coverage": "Reused the fully read main230turns/284messages and other333unique-turns/375messages snapshots only after exact SHA256 matches; existing69document inventory rehashed with0changes and prior EOF coverage retained. Reread current changed platform-media-contract, soop-auto-recording and platform-validation through EOF, plus AGENTS.md and relevant original messages. New packager/source/license observations below do not replace original-request evidence.",
+    "hashes": {
+      "main": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+      "other": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+      "implementationPolicy": "3267605CA09E8FBA111BFDC84C840E6856BC8B2E82CEB64F165AC732CA43F914",
+      "preparePortable": "82DE38AA4BB68F1ACC96EB23730AC35EBCCBDE7E7241986AE227EA8E25CE3954",
+      "preparePlatformTools": "0A5B8C38C9D0A2E226F5B5D01F0E7BB2071F4C458E3BE15E42CFBF08DC60863B",
+      "prepareMediaTools": "168CEFA91F95180F1C1B706A22D94615B60F7334FCC5868857C5753F2E7D924D",
+      "prepareRelease": "1471C1E9EF0706C7EF3990D5D08C92A485CF4EEAE8D555508E9C40DE66EE6972",
+      "windowsReleaseWorkflow": "07A909873005CE2F3315F64873D687BA6F5A9464CFC2678EFD8EB973DAB09EA4",
+      "thirdPartyNotices": "43F9758BBDB2694BB3D23D649A28FD88D160434D05AFD44688633505287687D3"
+    },
+    "originalsReread": ["01a10593-61fd-70c0-bdd4-f8521107be97", "01a10626-9c92-7d83-8671-485b53b86ca5", "01a1154a-0c82-7993-b06a-01fbb3882406", "01a10f20-23fb-7f02-8a66-e6f21e697349", "01a10fa8-313c-7703-a1f2-447464a9af6e", "01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a13363-ef61-71e3-bf03-3babe3f5b5c0"],
+    "rules": ["DOC-049 bounded validated tool acquisition", "DOC-055 signed portable updater and rollback without user-data mutation", "DOC-056 explicit deployment authority; updater signatures are not Authenticode", "DOC-080 installation-free is not transferable AppData/account storage"],
+    "filesFullyRead": ["AGENTS.md", "tools/prepare_portable.ps1", "tools/prepare_platform_tools.ps1", "tools/prepare_media_tools.ps1", "tools/prepare_release.mjs", ".github/workflows/windows-release.yml", "tools/portable/Readme.txt", "tools/portable/Start-Atsumi.cmd", "tools/portable/atsumi-portable.json", "tools/test_portable_update.ps1", "src/features/platforms/platformPackaging.test.ts", "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/build.rs", "package.json", "vite.config.ts", "THIRD_PARTY_NOTICES.md", "docs/RELEASING.md", "docs/LOCAL_DIAGNOSTICS_20261004.md", "docs/releases/v2.2.1.md", ".runtime/platform-tools/licenses/yt-dlp-LICENSE.txt", ".runtime/platform-tools/licenses/deno-LICENSE.txt", ".runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/LICENSE.txt"],
+    "targetedSupportingReads": ["src-tauri/src/portable_update.rs:1-187 and resource/update tests", "yt-dlp-THIRD_PARTY_LICENSES.txt introduction/component headings/GPL section6; not represented as full243550-byte license review", "FFmpeg approved archive entry inventory and extracted resource sizes", "public/licenses direct directory inventory", "src-tauri/src/interface/commands.rs tool paths; src-tauri/src/lib.rs merge tool paths"],
+    "unavailable": ["Historical thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified Atsumi analysis1/2 chats", "Historical attachment pixels not independently reread"],
+    "excluded": ["Generated staging/release snapshots, target outputs and vendor notices are not additional user specifications", "License dependencies are supporting distribution evidence, not instructions", "No updater private key, user account, user recording or broad personal-directory inspection"]
+  },
+  "existingGuards": [
+    "Tool downloads use exact versions and SHA256, not latest; media archive permits a byte-identical project mirror. Existing mismatches are preserved and rejected.",
+    "FFmpeg executable/DLL files are checked against the approved archive; platform bin contains exactly yt-dlp.exe and deno.exe. Known tool ancestors reject reparse points.",
+    "Fresh CI checkout builds Tauri before portable creation; workflow validates package/Cargo/Tauri/tag versions and prepares platform resources before build.",
+    "Existing portable output is never overwritten; release staging refuses different same-version bytes. Signatures and tamper rejection are checked; already-published releases are not overwritten.",
+    "Current/legacy portable updater only replaces5owned roots, validates paths/links/signatures/bounds and retains rollback/user data. New tools correctly remain under media-tools/platform-tools."
+  ],
+  "findings": [
+    {
+      "id": "PKG-01",
+      "severity": "P1 release correctness",
+      "evidence": ["tools/prepare_portable.ps1:8-11", "tools/prepare_portable.ps1:38", "tools/prepare_release.mjs:10-15", "tools/prepare_release.mjs:37-50", ".github/workflows/windows-release.yml:75-87"],
+      "problem": "Local packaging accepts an older same-version executable; even a missing ProductVersion passes prepare_portable's conditional. Signature integrity does not bind artifacts to the intended source revision. Fresh CI ordering reduces this risk but the documented standalone local path is unprotected.",
+      "observation": "Existing target/release/atsumi.exe has ProductVersion2.2.1,76685824bytes and2026-10-13 03:17:33KST modification time, while current Pixiv source changed at18:12:10KST and source version remains2.2.1. No new package was made. Existing default output refusal prevents overwriting the old release but a new output directory can still package that old executable.",
+      "smallestPlan": "Require a successful-build provenance record binding current version, commit plus source-input/lock/config/resource hashes, target and executable hash. Validate that record immediately before copying/signing installer and portable outputs. Reject absent version, stale source/resource digest or a changed executable. Use a new staging directory, not deletion of existing artifacts. Do not rely only on modification times or commit ID with dirty sources."
+    },
+    {
+      "id": "PKG-02",
+      "severity": "P1 release gate; redistribution review incomplete",
+      "evidence": ["THIRD_PARTY_NOTICES.md:59-75", "tools/prepare_media_tools.ps1:40-45", "tools/prepare_platform_tools.ps1:58-61", "tools/prepare_release.mjs:59", ".github/workflows/windows-release.yml:104", ".runtime/platform-tools/licenses/yt-dlp-THIRD_PARTY_LICENSES.txt:3-6 and1275-1315"],
+      "problem": "The pipeline includes license texts but does not stage or publish an exact-version corresponding-source/build-material index or source assets for the redistributed FFmpeg/library and yt-dlp bundled binaries. Existing THIRD_PARTY_NOTICES explicitly leaves this review incomplete. yt-dlp's bundled notice offers upstream-project sources/maintainer contact, which has not been checked as a complete durable delivery route for this distribution. Deno's top-level MIT text is present, but its bundled third-party notice coverage is unverified.",
+      "smallestPlan": "Before a new release, inventory exact binary components and accepted license route; pin and retain applicable exact corresponding sources, third-party dependency versions, patches and build recipes, with a readable source index next to binary downloads. A separate source asset can avoid bloating the updater ZIP. Keep all required notices and do not claim that distributing only upstream LICENSE or the Atsumi repository supplies every binary's source. This is an engineering release-blocker assessment, not a completed legal opinion."
+    },
+    {
+      "id": "PKG-03",
+      "severity": "P2 resource integrity",
+      "evidence": ["tools/prepare_media_tools.ps1:73-101", "tools/prepare_platform_tools.ps1:58-67", "tools/prepare_portable.ps1:22-24", "tools/prepare_portable.ps1:39-43", "src-tauri/tauri.conf.json:49-52"],
+      "problem": "prepare_media_tools compares only bin EXE/DLL entries, while the packager recursively copies the entire resource directories. A reused package can therefore have missing/changed FFmpeg LICENSE or other non-bin files, or unexpected root files, despite the comment claiming all license files are validated. Platform license files are pinned individually, but extra root/license-directory entries are not rejected. No such tampering was found or performed; this is a code-path gap.",
+      "smallestPlan": "Create an exact positive manifest for all shipped resource entries including licenses/docs; verify size/hash/type/ancestor boundary before a fresh staging copy and validate the resulting ZIP manifest. Reject unknown/missing files without deleting them. Keep DLL validation and the legacy media-tools root."
+    },
+    {
+      "id": "PKG-04",
+      "severity": "P2 notice coverage",
+      "evidence": ["THIRD_PARTY_NOTICES.md:48-53", "THIRD_PARTY_NOTICES.md:3-30 and79-109", "src-tauri/tauri.conf.json:6-10 and49-52", "vite.config.ts:74-78", "package.json:20-39", "tools/prepare_portable.ps1:39-50"],
+      "problem": "The root THIRD_PARTY_NOTICES file is not a configured resource or public frontend asset. public/licenses contains six texts:Apache-2.0,chrono,fs2,hls.js,tauri,tungstenite. No explicit full dependency-notice aggregation is present in the examined build/packaging path; the assertion that normal Cargo/pnpm distribution includes all notices is not backed by that path. Source-package license files existing in node_modules/vendor do not by themselves prove delivery in the app bundle.",
+      "smallestPlan": "Generate a version-locked runtime dependency notice bundle, including packaged frontend dependencies regardless of devDependency classification (hls.js), Rust/vendor changes and copied icon/decoder notices. Include the reviewed file in public/licenses or a legacy-compatible media-tools/licenses resource and verify it from the final artifact. Inventory first; do not claim every existing dependency is currently missing or infer a license from package name."
+    },
+    {
+      "id": "PKG-05",
+      "severity": "P2 optional package/updater mismatch",
+      "evidence": ["tools/prepare_portable.ps1:18-20 and51", "tools/portable/Readme.txt:8-12 and18-22", "src-tauri/src/portable_update.rs:16-24 and127-130", "tools/prepare_release.mjs:44-51"],
+      "problem": "Optional WebView2/ is accepted by the portable packager but rejected as an unknown top-level root by existing/current updater extraction. Signing this optional-runtime ZIP and publishing it as the single portable updater artifact would fail. Default CI does not supply the parameter, so its ordinary ZIP is unaffected.",
+      "smallestPlan": "Explicitly distinguish an initial-install runtime-inclusive package from the legacy-compatible updater ZIP; never feed WebView2/ through the latter. Preserve an already-present runtime during updates and retain browser sandbox requirements. Inspect clean-PC missing-runtime behavior before claiming no external prerequisites."
+    }
+  ],
+  "optionalSizeWorkAfterSafety": {
+    "observation": "FFmpeg resource bin contains10files/173445632bytes, including unused-in-current-Rust-call-sites ffplay.exe18721280bytes. doc is11595340bytes; include+lib total3027637bytes. Current platform executables total115302447bytes. These are uncompressed file totals, not a measured future ZIP size.",
+    "plan": "If package size needs reduction, evaluate a manifest-selected runtime subset in a NEW stage only. Prove FFmpeg/ffprobe transitive runtime DLL completeness and license/source delivery before omitting optional ffplay or development headers/import libraries. Keep current resources untouched and do not prioritize size over a reproducible, compliant package."
+  },
+  "proposedAcceptance": [
+    "Same-version stale executable, absent version/provenance, source/resource change after build and altered signed bytes are rejected",
+    "Missing/changed license, unexpected non-bin/root file, reparse ancestor and duplicate/case-colliding archive entries are rejected without deleting source packages",
+    "Fresh staging and final archive contain exactly the approved runtime/notices manifest; no .runtime chat snapshots, user data, signing material, test profiles or old app binary enters the package",
+    "Exact tool versions, source/material index and notice texts can be located in published artifacts; legal/distribution route is reviewed separately rather than inferred from a source LICENSE",
+    "Updater ZIP remains within the old5root policy,512MiBcompressed/1GiBexpanded/4096entry limits; source assets and initial-install WebView2 package are distinct",
+    "Existing signed-update path preserves user DB/media/profile, optional WebView2 and rollback behavior; latest bundled-tool path tests remain intact",
+    "New empty Windows user profile with no global ffmpeg/yt-dlp/deno installation exercises actual app discovery, download, local playback and tool resolution from the extracted package",
+    "No new release is created/published without explicit current authority and passing actual package/UI acceptance"
+  ],
+  "verification": "Read-only source/path/metadata/archive-entry audit only. No new package or tests executed in this batch; no assurance of current clean-PC behavior or completed third-party redistribution compliance. Production source unchanged; only this audit document added."
+}

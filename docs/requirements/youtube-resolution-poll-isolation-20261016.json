@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "state": "implemented; same-channel actual resolution accepted; automatic recording remains a separate failed acceptance",
+  "originals": [".runtime/requirements-audit/20261016-remaining-goal-original.json", ".runtime/requirements-audit/20261016-night-handoff-original.json", ".runtime/requirements-audit/20261015-manual-eight-feedback-original.json"],
+  "audit": {
+    "main": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676; complete230turn284message EOF snapshot unchanged",
+    "other": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; complete333turn375message EOF snapshot unchanged",
+    "coverage": "Current active50/pinned/archive3EOF and latest pages through overlap refreshed in this logical turn. Baseline69 and130 specifications compared against current141 inventory; all15 changed/new sources fully read, including RELEASING and complete policy gap. Existing unchanged fully read snapshots reused.",
+    "missing": ["durable01a03f16", "unidentifiedanalysis1/2", "historical inaccessible attachment pixels"]
+  },
+  "evidence": "Actual current debug app remains responsive, but one canonical public YouTube channel input stays pending over3minutes with favorite/start disabled. automatic.rows changes on each2second snapshot and resolution effect depends on its known map, aborting each request and its10second deadline. No authentication, native transport or API outage inferred from this alone.",
+  "rules": ["R009 bounded loading and honest failure", "Keep original YouTube discovery/favorite/automatic-recording flow and CHZZK-like drawer", "Preserve current input, close, inactive and privacy cancellation", "Never discard equal-revision auto snapshots because live recording status may change without reservation revision", "No auth/cookie/site/navigation/security changes or shared platform state"],
+  "scope": ["src/features/youtube/YouTubeViewingControls.tsx resolution dependencies only", "src/features/youtube/YouTubeViewingControls.test.tsx focused regression tests"],
+  "decision": "Separate current lookup seed data from effect triggers. Reservation polling must still repaint statuses, without cancelling or rerunning unchanged user-input resolution. Recheck exact source before write and preserve concurrent edits. Root owns actual app and native build; no native changes planned.",
+  "acceptance": ["Fresh equal-revision snapshot arrays every2seconds do not abort a4-6second channel+live resolution", "Unresolved input really times out after10seconds despite polling", "Resolved input does not flicker back to pending on polling", "Address change, panel close, inactivity and privacy still suppress stale completion", "Actual same channel input settles in the app; automatic recording start/off and media reopen verified separately"],
+  "verification": {"focusedTests": "32 passed across3files, full frontend typecheck passed;2new tests first reproduced expected failures", "actual": "Same canonical Kitten Academy channel now resolves in actual app, name/favorite/start become available after HMR and returning to platform. Added local favorite for automatic QA, reservation later turned off. Automatic recording itself interrupted111seconds later and is NOT accepted by this frontend fix.", "checkpoint": ".runtime/requirements-audit/20261016-midday-actual-checkpoint.json"},
+  "authority": "No commit/push/release, force stop, user media deletion or credential entry. Idle current app may reload for frontend-only fix; no receiver or recording is running. Normal restart remains standing-authorized."
+}

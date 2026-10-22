@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "originalReferences": ["R022 and original verification request01a13bb3-d33b-7de0-867d-aeae3e3e8bec: verify actual operation and regressions", "R003: new platform work must not interfere with established CHZZK behavior"],
+  "audit": "Main230/284 EOF and other333/375 EOF fully-read snapshots rehashed unchanged in this batch. Root current active50/archive3 EOF and69 original specification inventory reused; changed contracts and implementation-policy directly read. Inaccessible old thread01a03f16, unidentified analysis1/2 and historical pixels remain unavailable. This is test harness only, no new app behavior.",
+  "evidence": "Full frontend run06:48 yielded2469passed/17failed.15streamingUiGeometry cases and1PlatformScreenshot case failed before metrics due hardcoded Edge returning no result/locked owned temp profile. Both ignore the existing ATSUMI_TEST_BROWSER override already used by offlineLayoutBrowser and other layout tests. One OfficialBrowserPanel scene separately failed offline Chrome handshake under parallel load; rerun serially without changing assertions.",
+  "proposal": "Allow the same explicit ATSUMI_TEST_BROWSER executable override in the two legacy offline tests. Preserve defaults, isolated profile, blocked DNS/background networking, original HTML/JS, all assertions, cleanup path validation and timeouts. Run failing files sequentially with installed Chrome. Never convert missing metrics into success, skip a discovered browser or relax geometry bounds.",
+  "files": ["src/features/streaming/streamingUiGeometry.test.ts", "src/features/platforms/PlatformScreenshot.layout.test.tsx"],
+  "acceptance": ["Each previously failing scene produces real metrics and meets unchanged assertions", "Full frontend rerun uses limited workers to avoid browser launch contention", "Failures remain failures if independent rerun does not pass", "No app production code, user browser/profile, account, media or system settings change"]
+}

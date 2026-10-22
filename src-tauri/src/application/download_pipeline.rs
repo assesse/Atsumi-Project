@@ -52,6 +52,20 @@ pub struct DownloadGallerySnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadGalleryResolution {
+    Exact(DownloadGallerySnapshot),
+    Replacement(crate::source::hitomi::GalleryReplacementProof),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DownloadGalleryLink {
+    pub projection: DownloadJobProjection,
+    pub target: DownloadJobProjection,
+    /// None when the canonical worker/artifact already exists.
+    pub start: Option<DownloadJobDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DownloadPagePayload {
     pub source_page_number: SourcePageNumber,
     pub bytes: Vec<u8>,
@@ -67,6 +81,30 @@ pub struct DownloadPagePayload {
 }
 
 impl DownloadPagePayload {
+    /// Raw input for isolated desktop QA examples, never a source-decoder proof.
+    /// The normal artifact store still decodes, hashes and verifies these bytes.
+    #[cfg(debug_assertions)]
+    pub fn for_isolated_qa(
+        source_page_number: SourcePageNumber,
+        bytes: Vec<u8>,
+        source_revision: String,
+        source_format: DownloadSourceImageFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        Self {
+            source_page_number,
+            bytes,
+            source_revision,
+            source_format,
+            width,
+            height,
+            candidate_index: 0,
+            candidate_diagnostics: Vec::new(),
+            decoded_sha256: None,
+        }
+    }
+
     pub(crate) fn mark_decoded(&mut self) {
         use sha2::{Digest, Sha256};
         if self.source_format == DownloadSourceImageFormat::Webp {
@@ -83,7 +121,44 @@ impl DownloadPagePayload {
     }
 }
 
+#[cfg(all(test, debug_assertions))]
+mod isolated_qa_payload_tests {
+    use super::*;
+
+    #[test]
+    fn isolated_qa_payload_never_claims_a_decoder_proof() {
+        for format in [
+            DownloadSourceImageFormat::Png,
+            DownloadSourceImageFormat::Webp,
+        ] {
+            let mut payload = DownloadPagePayload::for_isolated_qa(
+                SourcePageNumber::new(1).unwrap(),
+                b"invalid image bytes must still be decoded".to_vec(),
+                "isolated-fixture:1".into(),
+                format,
+                2,
+                2,
+            );
+            assert!(payload.decoded_sha256.is_none());
+            assert!(!payload.has_unchanged_decoded_webp());
+            payload.bytes.push(0);
+            assert!(!payload.has_unchanged_decoded_webp());
+            assert_eq!(payload.candidate_index, 0);
+            assert!(payload.candidate_diagnostics.is_empty());
+        }
+    }
+}
+
 pub trait DownloadSourcePort: Send + Sync {
+    fn resolve_gallery(
+        &self,
+        gallery_id: GalleryId,
+        cancellation: &CancellationToken,
+    ) -> Result<DownloadGalleryResolution, SourceContractError> {
+        self.gallery_snapshot(gallery_id, cancellation)
+            .map(DownloadGalleryResolution::Exact)
+    }
+
     fn gallery_snapshot(
         &self,
         gallery_id: GalleryId,
@@ -319,6 +394,16 @@ impl DownloadPageAttemptOutcome {
 }
 
 pub trait DownloadPipelineRepository: Send + Sync {
+    fn pipeline_link_gallery(
+        &self,
+        _descriptor: &DownloadJobDescriptor,
+        _proof: &crate::source::hitomi::GalleryReplacementProof,
+    ) -> Result<DownloadGalleryLink, RepositoryError> {
+        Err(RepositoryError::Other(
+            "Verified gallery replacement is not supported by this repository".into(),
+        ))
+    }
+
     fn pipeline_begin(
         &self,
         descriptor: &DownloadJobDescriptor,

@@ -1,11 +1,12 @@
 import type { DownloadState } from "../core/types";
 
 type GalleryStatusIconProps = {
-  kind: DownloadState | "warning" | "complete" | "duplicate";
+  kind: DownloadState | "warning" | "complete" | "duplicate" | "linked";
 };
 
 // Distinct line icons for processing stages, without idle-job animations.
 const stagePaths = {
+  linked: "M7 12 5 14a3 3 0 0 1-4-4l4-4a3 3 0 0 1 4 0 M13 8l2-2a3 3 0 0 1 4 4l-4 4a3 3 0 0 1-4 0 M7 13l6-6",
   queued: "M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M10 5v5l3 2",
   resolving_metadata: "M4 2h8l4 4v12H4z M7 9h6 M7 12h6 M7 15h4",
   hashing: "M8 3 6 17 M14 3l-2 14 M3 7h14 M3 13h14",

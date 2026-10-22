@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "state": "root approved bounded diagnostics-only investigation; no input permission change or claimed fix",
+  "originalReferences": [
+    {"turn": "01a13adc-a040-70f0-97d9-380c5b6ba368", "request": "Fix unimplemented or nonworking YouTube behavior and verify actual operation."},
+    {"turn": "01a13978-c469-7242-9ec2-f065de16743a", "request": "Use each platform's original player interface as the base."},
+    {"turn": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "request": "Preserve normal fullscreen/player controls, fade behavior, replay and minimize/tray semantics."},
+    {"turn": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "request": "Tab changes retain playback and audio without forcing old video over the new page."}
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Both fully read snapshots independently rehashed unchanged; main230turn284messages and other333turn375messages with EOF. Root refreshed active50/archive3 EOF and69 baseline specifications with known fully reread RELEASING revision. Current AGENTS, implementation-policy, native-fullscreen-presentation-owner contract and runtime presentation checkpoint reread. Applicable original fullscreen and retained-playback messages reread directly. Latest request originals remain in prior fully audited deltas.",
+    "unavailable": "Original thread01a03f16, unidentified analysis1/2, inaccessible historical attachment pixels remain unavailable.",
+    "ownership": "youtube_followup edits only the read-only input gate classification, YouTube live/VOD logging callsites, bounded local logging helper and exact SafeFields enum/tests. Root controls actual app, Cargo and rebuilds. No page JavaScript, layout or coordinator edits."
+  },
+  "evidence": {
+    "actual": "Root isolated full-app QA605385: original YouTube live mouse fullscreen enters; Escape fails with main focus and again after native-video focus. Original mouse exit button succeeds and restores the floating layout. This proves a keyboard-path defect, not its exact cause.",
+    "code": "Both original_page.js and original_vod_page.js accept Escape from a noneditable body in the exact player document while their fullscreen flag is true. There is no movie_player closest gate. The native receiver independently requires the physical key still down in GetAsyncKeyState during asynchronous WebMessageReceived. No existing gate-reason log can distinguish released key, focus mismatch or an absent message.",
+    "primarySources": ["https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getasynckeystate", "https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/javascript/webview"],
+    "inference": "A short keydown can be released before asynchronous bridge delivery, but this is only a candidate until the actual classified gate result is observed. Do not remove a guard or call the keyboard bug fixed from this candidate."
+  },
+  "proposal": {
+    "classification": "Return a fixed enum for the existing guard's first failure: invalid_input, window_unavailable, key_released, focus_mismatch, pointer_outside, accepted. Preserve the same check ordering, APIs, foreground/pane/focus/physical-button conditions and final permission result; trusted_input remains an equivalent bool wrapper for other callers.",
+    "logging": "Only after the existing canonical source, label, message and current document epoch checks, log a recognized fullscreen mouse/f/escape action and the fixed gate enum. Limit to32 events per native WebView bridge lifetime using an atomic saturating budget. No arbitrary keys, strings, URL/query, document content, identifiers, account values or HWND values. No input interception, polling, synthetic input or focus repair.",
+    "scope": "YouTube LIVE and VOD bridge routes only. The classification helper is shared but SOOP/CHZZK admission behavior and logging remain unchanged. No new trusted origin, privilege, account or authentication behavior.",
+    "conflicts": "Root cannot safely hold a key with the current UI tool. Diagnostics collect evidence instead of weakening physical intent checks to make automated short key presses pass. Existing native mouse success is preserved."
+  },
+  "checkpoint": {
+    "state": "production source frozen for root native tests/build and actual reproduction",
+    "files": ["src-tauri/src/platform_native_geometry.rs", "src-tauri/src/youtube/original_input_diagnostics.rs", "src-tauri/src/youtube/original.rs", "src-tauri/src/youtube/original_vod.rs", "src-tauri/src/diagnostics.rs"],
+    "verified": "Scoped rustfmt parsing and git diff --check succeeded. Initial sandbox path canonicalization failure was an environment error; the unchanged Rust parsing command succeeded with ordinary host permissions.",
+    "pending": "Six added pure unit tests await root Cargo: two gate ordering/enum tests, two atomic budget tests and two SafeFields projection tests. Root owns native compilation and actual desktop keyboard/mouse reproduction. No permission or JavaScript change, and no claim the Escape defect is fixed."
+  },
+  "acceptance": [
+    "Pure guard truth-table tests preserve every deny condition and acceptance, including key-up with otherwise correct focus",
+    "Per-bridge event budget emits at most32 recognized fullscreen diagnostics, never wraps or logs ordinary keys",
+    "SafeFields permits only exact input action/gate enums and rejects arbitrary URL/account/private strings",
+    "Existing player chat/IME/editable exclusion and fullscreen source/epoch/label checks remain unchanged",
+    "Root rebuilds, repeats actual mouse enter, Escape and original exit, then reads only the fixed diagnostic projection",
+    "The keyboard defect remains open until actual cause and a separately approved fix are verified"
+  ]
+}

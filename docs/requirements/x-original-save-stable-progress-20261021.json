@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-21",
+  "status": "automated_checks_passed_native_ui_acceptance_pending",
+  "source": "Current chat: request original image downloads/saves; diagnose unreadably fast MB text and use received MB if necessary; replace local-library completion guidance with a hand-drawn check animation; diagnose second portrait video blanking the feed. User confirms graceful app exit and clarifies skeleton followed by orange X load-failed/reload notice.",
+  "audit": {
+    "direct_chat": "Full supplied conversation and latest replies reviewed. Ignore stale mockup selection as ambient/untrusted interaction, not a renewed layout request.",
+    "accessible_chats": "Refreshed live and archived inventories. Reuse full-EOF snapshots: other main revision 1792473578, UIUX 1792073766 unchanged; archived inventory exhausted with null cursor.",
+    "specifications": "Complete requirements inventory refreshed; unchanged fully read implementation-policy and X archive/native-actions/session/receipt/lifecycle/queue contracts reused by hash. Last queue contract fully reread.",
+    "unavailable": ["historical durable chat 01a03f16", "unidentified analysis 1/2 chats", "historical lost attachment pixels"],
+    "preserve": "Shared 2849 workspace, all unrelated dirty changes, existing archives/accounts and integrity validation. No commit/push/release/PC shutdown/social reactions. Authoritative process check confirms Atsumi is closed."
+  },
+  "decisions": [
+    "Supersede observed-display-URL-only for newly saved X body images only: request the same validated pbs.twimg.com/media ID and observed format with name=orig. Never invent another ID/host/format or fall back to a display-size image on original failure. This requests X original-size rendition, not a guarantee of pre-upload camera bytes. Avatar, quote-avatar, poster, video and own-account portrait policies remain unchanged.",
+    "Retain observed sourceUrl for frozen selection and offline post/quote association. Persist optional strictly validated downloadUrl provenance for newly fetched originals. Existing records remain readable without rewriting or relabelling their quality. Preserve redirect/length/decode/hash/readback/size limits and truthful partial failure.",
+    "Supersede the previous current-file MB ratio UI: use cumulative received MB consistently, coalesce downloading numeric text at 750ms with latest trailing value. Native byte truth and progress bars remain current. Phase changes, cancellation, uncertainty and final results remain immediate; timers cannot overwrite terminal/new-request/hidden state.",
+    "Remove local-library completion instruction. Only a final confirmed fully successful result may show the drawn SVG check once, with accessible saved label and reduced-motion static fallback. Partial/failed/cancelled outcomes retain distinct truthful text.",
+    "Video item is diagnosis, not authority for an unverified player/readiness rewrite. Match clarified skeleton/orange timeout to logs and source; preserve account/privacy/security gates. Report proven conditions and residual renderer uncertainty separately."
+  ],
+  "evidence": {
+    "original": "Capture uses currentSrc/src; store_media previously fetched it unchanged, so displayed smaller variants could be saved.",
+    "progress": "Every transfer begin/end forces progress (including helpers/HLS); frontend swaps current-file ratio and cumulative text immediately, outside the 100ms chunk limiter.",
+    "video": "18:09:49.044 foryou video route loading, primary absent; same PID has continued healthy main UI pulses and home/ready at 18:10:47.903. JS readiness accepts primary or native photo only; Rust conceals non-ready pane and reports timeout after 30s. No observed native process crash; child renderer crash not absolutely excluded."
+  },
+  "checks": [
+    "Original URL strict host/ID/format/query validation, idempotence, no small-image fallback, unchanged helpers/video; legacy/new provenance reads and offline quote mapping.",
+    "Fast transfer bursts keep a stable cumulative MB format; per-request timers capped, terminal/phase immediate; hide/cleanup/receipt duplication and multiple concurrent jobs remain correct.",
+    "Success check only after final complete receipt, never raw complete progress/partial/error/cancel; no repeated animation; reduced-motion and accessibility.",
+    "Targeted and full X tests, strict TypeScript/frontend build, locked native tests/debug build. UI acceptance must be reported separately; Computer Use is presently unavailable (kernel assets os error 3) unless successfully recovered."
+  ],
+  "validation": {
+    "frontend": "25 X suites, 1228 tests passed, including 11 added provenance/reader regressions. Strict TypeScript and Vite production build passed.",
+    "native": "230 X tests passed serially, including 8 original-image URL/failure/provenance/backward-read regressions. Locked no-default-features debug atsumi build passed with devUrl http://127.0.0.1:1420.",
+    "review": "Independent UI review found a live-region announcement burst; fixed by keeping coalesced text as the live region and matching popup aria-valuetext. Parent and independent reviewer checked original URL/cancellation/record validation; stored MIME and extension must match original URL format. No remaining blocking finding in the reviewed changes.",
+    "diff_check": "Passed for all touched source and test files. Shared unrelated changes preserved.",
+    "video": "User's skeleton then orange reload notice matches native loading-to-timeout after 30 seconds. No video/readiness production change was made; diagnosis only.",
+    "ui": "Computer Use initialization and one reset/retry both failed with kernel-assets os error 3. No live save, source X original response, animation appearance or video-click acceptance was claimed; no social reactions were sent.",
+    "relaunch": "Normal hidden development launcher started updated 2849 debug app PID 30612 at 18:33:56 KST on port 1420. No process termination or user-data change was used."
+  }
+}

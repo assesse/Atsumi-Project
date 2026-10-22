@@ -162,7 +162,10 @@ impl Drop for SendLease {
 }
 
 fn validate_source(source: &str) -> Result<(), String> {
-    if matches!(source, "hitomi" | "danbooru" | "chzzk") {
+    if matches!(
+        source,
+        "hitomi" | "danbooru" | "chzzk" | "youtube" | "soop" | "pinterest" | "pixiv"
+    ) {
         Ok(())
     } else {
         Err("올바른 제보 화면을 선택해 주세요.".into())

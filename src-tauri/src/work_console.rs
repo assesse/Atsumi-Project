@@ -6,7 +6,10 @@ use std::{collections::BTreeMap, path::Path, time::Duration};
 const ACTIVE: &str =
     "('queued','resolving_metadata','downloading','hashing','verifying','retry_wait')";
 // An entry reused by a later request still belongs to its original request.
-const OWNER: &str = "WITH owners AS (SELECT x.entry_id, MIN(r.rowid) AS sequence FROM download_queue_request_entries x JOIN download_queue_requests r ON r.request_id=x.request_id GROUP BY x.entry_id)";
+const OWNER: &str = "WITH work_entries AS (
+    SELECT x.request_id, CASE WHEN l.created_target=1 THEN l.target_entry_id ELSE x.entry_id END AS entry_id
+    FROM download_queue_request_entries x LEFT JOIN download_gallery_links l ON l.source_entry_id=x.entry_id
+), owners AS (SELECT x.entry_id, MIN(r.rowid) AS sequence FROM work_entries x JOIN download_queue_requests r ON r.request_id=x.request_id GROUP BY x.entry_id)";
 
 #[derive(Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -160,7 +163,7 @@ fn snapshot_connection(c: &Connection, query: &QueueQuery) -> rusqlite::Result<Q
       SELECT r.rowid,r.request_id,COUNT(DISTINCT x.entry_id),COUNT(DISTINCT CASE WHEN o.sequence=r.rowid THEN x.entry_id END),
         COUNT(DISTINCT CASE WHEN o.sequence=r.rowid AND e.state IN {ACTIVE} THEN e.entry_id END),
         MIN(CASE WHEN o.sequence=r.rowid THEN e.created_at END),COALESCE(MIN(g.primary_artist),'앨범 요청')
-      FROM download_queue_requests r JOIN download_queue_request_entries x ON x.request_id=r.request_id
+      FROM download_queue_requests r JOIN work_entries x ON x.request_id=r.request_id
       JOIN download_entries e ON e.entry_id=x.entry_id LEFT JOIN owners o ON o.entry_id=x.entry_id LEFT JOIN galleries g ON g.gallery_id=e.gallery_id
       GROUP BY r.rowid HAVING COUNT(DISTINCT CASE WHEN o.sequence=r.rowid THEN x.entry_id END)>0
       ORDER BY (COUNT(DISTINCT CASE WHEN o.sequence=r.rowid AND e.state IN {ACTIVE} THEN e.entry_id END)>0) DESC,r.rowid DESC LIMIT 100"))?;
@@ -229,9 +232,35 @@ pub async fn work_queue_snapshot(
 mod tests {
     use super::*;
     #[test]
+    fn replacement_new_target_inherits_original_scope_but_reused_work_does_not() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE download_queue_requests(request_id TEXT);
+            CREATE TABLE download_queue_request_entries(request_id TEXT,entry_id TEXT);
+            CREATE TABLE download_gallery_links(source_entry_id TEXT,target_entry_id TEXT,created_target INTEGER);
+            INSERT INTO download_queue_requests VALUES('earlier'),('old-request'),('later');
+            INSERT INTO download_queue_request_entries VALUES('earlier','existing'),('old-request','old-new'),
+                ('old-request','old-reuse'),('later','new-target');
+            INSERT INTO download_gallery_links VALUES('old-new','new-target',1),('old-reuse','existing',0);").unwrap();
+        let mut stmt = c
+            .prepare(&format!(
+                "{OWNER} SELECT entry_id,sequence FROM owners ORDER BY entry_id"
+            ))
+            .unwrap();
+        let owners = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .unwrap()
+            .collect::<Result<BTreeMap<_, _>, _>>()
+            .unwrap();
+        assert_eq!(owners["existing"], 1);
+        assert_eq!(owners["new-target"], 2);
+        assert_eq!(owners["old-reuse"], 2);
+        assert!(!owners.contains_key("old-new"));
+    }
+    #[test]
     fn later_reused_request_does_not_own_old_work_and_settled_is_not_active() {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch("CREATE TABLE download_queue_requests(request_id TEXT); CREATE TABLE download_queue_request_entries(request_id TEXT,entry_id TEXT);
+        CREATE TABLE download_gallery_links(source_entry_id TEXT,target_entry_id TEXT,created_target INTEGER);
         CREATE TABLE download_entries(entry_id TEXT,gallery_id INTEGER,state TEXT,progress REAL,created_at TEXT,updated_at TEXT);
         CREATE TABLE download_jobs(entry_id TEXT,state TEXT,updated_at TEXT,finished_at TEXT,last_error_code TEXT);
         CREATE TABLE galleries(gallery_id INTEGER,title TEXT,primary_artist TEXT);

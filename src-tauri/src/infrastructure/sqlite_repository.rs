@@ -12,6 +12,9 @@ use rusqlite::{
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+#[path = "gallery_replacement_repository.rs"]
+mod gallery_replacement;
+
 use crate::{
     application::{
         ArtifactRepository, AutoFindCheckpointStage, AutoFindIncrementalCheckpoint,
@@ -1382,8 +1385,9 @@ impl DownloadRepository for SqliteRepository {
                         WHERE gallery_id = ?1
                           AND state IN (
                               'queued', 'resolving_metadata', 'downloading',
-                              'hashing', 'verifying', 'retry_wait'
+                              'hashing', 'verifying', 'retry_wait', 'completed', 'review_required'
                           )
+                        ORDER BY CASE WHEN state='completed' THEN 1 WHEN state='review_required' THEN 2 ELSE 0 END, updated_at DESC, entry_id DESC
                         LIMIT 1
                     "#,
                     [gallery_id.get()],
@@ -1543,7 +1547,7 @@ impl DownloadRepository for SqliteRepository {
                         d.entry_id, d.gallery_id, d.revision, d.state, d.progress,
                         d.review_kind, d.review_id,
                         j.attempt, j.last_error_code, j.last_error_message,
-                        j.last_error_retryable, d.created_at, d.updated_at
+                        j.last_error_retryable, d.created_at, d.updated_at, j.linked_gallery_id
                     FROM download_entries d
                     JOIN download_jobs j
                       ON j.job_id = (
@@ -1784,7 +1788,8 @@ impl DownloadRepository for SqliteRepository {
                             SELECT artist FROM owned_gallery_artists owned
                             WHERE owned.gallery_id = library_page.gallery_id
                             ORDER BY artist COLLATE NOCASE ASC
-                        )) AS artists_json
+                        )) AS artists_json,
+                        (SELECT linked_gallery_id FROM download_jobs WHERE entry_id=library_page.entry_id LIMIT 1) AS linked_gallery_id
                     FROM library_page
                     LEFT JOIN gallery_summary_cache summary
                       ON summary.gallery_id = library_page.gallery_id
@@ -1878,6 +1883,12 @@ impl DownloadRepository for SqliteRepository {
             let Some(target) = read_download_target(&transaction, entry_id)? else {
                 return Ok(DownloadMutationOutcome::EntryNotFound(entry_id.clone()));
             };
+
+            if target.linked_gallery_id.is_some() {
+                return Ok(DownloadMutationOutcome::InvalidState {
+                    entry_id: entry_id.clone(), state: target.state,
+                });
+            }
 
             let duplicate_hidden = transaction
                 .query_row(
@@ -2301,6 +2312,7 @@ impl DownloadRepository for SqliteRepository {
                 message: Some(step.message().to_owned()),
             },
             download: DownloadChangedEvent {
+                linked_gallery_id: None,
                 entry_id,
                 gallery_id,
                 revision: download_revision,
@@ -2665,6 +2677,14 @@ impl ArtifactRepository for SqliteRepository {
 }
 
 impl DownloadPipelineRepository for SqliteRepository {
+    fn pipeline_link_gallery(
+        &self,
+        descriptor: &DownloadJobDescriptor,
+        proof: &crate::source::hitomi::GalleryReplacementProof,
+    ) -> Result<crate::application::DownloadGalleryLink, RepositoryError> {
+        gallery_replacement::link(self, descriptor, proof)
+    }
+
     fn pipeline_begin(
         &self,
         descriptor: &DownloadJobDescriptor,
@@ -2813,6 +2833,10 @@ impl DownloadPipelineRepository for SqliteRepository {
         if target.state != JobState::ResolvingMetadata {
             return Err(invalid_pipeline_state(&target, "prepare artifact"));
         }
+        if plan.gallery.id != plan.descriptor.gallery_id {
+            return Err(RepositoryError::Other("artifact gallery identity differs from the worker".into()));
+        }
+        gallery_replacement::validate_prepared_identity(&transaction, plan)?;
 
         let source_revision = plan.source_revision.trim();
         if source_revision.is_empty() || source_revision.len() > 512 {
@@ -3475,8 +3499,12 @@ impl DownloadPipelineRepository for SqliteRepository {
                     r#"
                         SELECT d.entry_id
                         FROM download_entries d
-                        JOIN download_artifacts a ON a.entry_id = d.entry_id
+                        LEFT JOIN download_artifacts a ON a.entry_id = d.entry_id
                         WHERE d.state = 'interrupted'
+                          AND (a.entry_id IS NOT NULL OR EXISTS (
+                              SELECT 1 FROM download_gallery_links l
+                              WHERE l.target_entry_id=d.entry_id AND l.created_target=1
+                          ))
                         ORDER BY d.created_at ASC, d.entry_id ASC
                     "#,
                 )
@@ -6715,6 +6743,7 @@ fn apply_duplicate_decision_side_effect(
 }
 
 struct StoredPipelineTarget {
+    linked_gallery_id: Option<i64>,
     job_id: String,
     entry_id: String,
     gallery_id: i64,
@@ -6745,6 +6774,7 @@ impl StoredPipelineTarget {
                 message: message.map(str::to_owned),
             },
             download: DownloadChangedEvent {
+                linked_gallery_id: self.linked_gallery_id,
                 entry_id: self.entry_id,
                 gallery_id: self.gallery_id,
                 revision: stored_u64(self.entry_revision, "download revision")?,
@@ -6769,7 +6799,7 @@ fn read_pipeline_target(
             r#"
                 SELECT j.job_id, j.entry_id, j.gallery_id, j.revision,
                        d.revision, j.state, j.completed_units, j.total_units,
-                       j.attempt, d.progress, j.last_error_code, j.last_error_message
+                       j.attempt, d.progress, j.last_error_code, j.last_error_message, j.linked_gallery_id
                 FROM download_jobs j
                 JOIN download_entries d
                   ON d.entry_id = j.entry_id AND d.gallery_id = j.gallery_id
@@ -6778,6 +6808,7 @@ fn read_pipeline_target(
             [&descriptor.job_id],
             |row| {
                 Ok(StoredPipelineTarget {
+                    linked_gallery_id: row.get(12)?,
                     job_id: row.get(0)?,
                     entry_id: row.get(1)?,
                     gallery_id: row.get(2)?,
@@ -7027,6 +7058,7 @@ fn invalid_pipeline_state(target: &StoredPipelineTarget, operation: &str) -> Rep
 }
 
 struct StoredDownloadTarget {
+    linked_gallery_id: Option<i64>,
     job_id: String,
     entry_id: DownloadEntryId,
     gallery_id: i64,
@@ -7052,6 +7084,7 @@ impl StoredDownloadTarget {
             ));
         }
         Ok(DownloadEntry {
+            linked_gallery_id: self.linked_gallery_id,
             entry_id: self.entry_id,
             gallery_id: GalleryId::new(self.gallery_id).map_err(domain_corruption)?,
             revision: stored_u64(self.entry_revision, "download revision")?,
@@ -7080,7 +7113,7 @@ fn read_download_target(
                     j.job_id, j.entry_id, j.gallery_id,
                     j.revision, d.revision, j.state, d.state,
                     d.progress, d.review_kind, d.review_id, j.attempt,
-                    j.last_error_code, j.last_error_message
+                    j.last_error_code, j.last_error_message, j.linked_gallery_id
                 FROM download_jobs j
                 JOIN download_entries d
                   ON d.entry_id = j.entry_id AND d.gallery_id = j.gallery_id
@@ -7102,6 +7135,7 @@ fn read_download_target(
                     row.get::<_, i64>(10)?,
                     row.get::<_, Option<String>>(11)?,
                     row.get::<_, Option<String>>(12)?,
+                    row.get::<_, Option<i64>>(13)?,
                 ))
             },
         )
@@ -7121,6 +7155,7 @@ fn read_download_target(
         attempt,
         error_code,
         error_message,
+        linked_gallery_id,
     )) = stored
     else {
         return Ok(None);
@@ -7137,6 +7172,7 @@ fn read_download_target(
         )));
     }
     Ok(Some(StoredDownloadTarget {
+        linked_gallery_id,
         job_id,
         entry_id: DownloadEntryId::new(stored_entry_id).map_err(domain_corruption)?,
         gallery_id,
@@ -7408,7 +7444,8 @@ fn read_request_entries(
                     NULL AS error_message,
                     NULL AS error_retryable,
                     download.created_at,
-                    download.updated_at
+                    download.updated_at,
+                    NULL AS linked_gallery_id
                 FROM download_queue_request_entries request_entry
                 LEFT JOIN download_entries download
                   ON download.entry_id = request_entry.entry_id
@@ -7428,6 +7465,7 @@ fn read_request_entries(
 }
 
 struct StoredDownloadEntry {
+    linked_gallery_id: Option<i64>,
     entry_id: String,
     gallery_id: i64,
     revision: i64,
@@ -7456,6 +7494,7 @@ impl StoredDownloadEntry {
         }
 
         Ok(DownloadEntry {
+            linked_gallery_id: self.linked_gallery_id,
             entry_id: DownloadEntryId::new(self.entry_id).map_err(domain_corruption)?,
             gallery_id: GalleryId::new(self.gallery_id).map_err(domain_corruption)?,
             revision: stored_u64(self.revision, "download revision")?,
@@ -7492,6 +7531,7 @@ fn parse_download_review_kind(
 
 fn stored_download_entry(row: &Row<'_>) -> rusqlite::Result<StoredDownloadEntry> {
     Ok(StoredDownloadEntry {
+        linked_gallery_id: row.get("linked_gallery_id")?,
         entry_id: row.get(0)?,
         gallery_id: row.get(1)?,
         revision: row.get(2)?,

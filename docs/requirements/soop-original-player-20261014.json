@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "date": "2026-10-14",
+  "state": "before-edit-design; public-source-read; actual-original-playback-and-capture-unverified",
+  "scope": "SOOP original live player and original chat, without requiring an installed external streamer; preserve single video ingress, automatic recording, existing library and navigation",
+  "originalRequests": [
+    { "turn": "01a13978-c469-7242-9ec2-f065de16743a", "rule": "SOOP follows CHZZK's user flow, removes the separate favorites tab, uses SOOP's own player and chat interface as nearly unchanged as possible, and investigates operation without the grid program. The same original-interface baseline applies to all platform playback." },
+    { "turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "Viewing and recording must share one incoming video stream, including SOOP and YouTube. Preserve chat with the recording." },
+    { "turn": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "rule": "Changing tabs preserves playback and sound; a visible floating player is not required." },
+    { "turn": "01a11672-f428-7850-899b-5155aebb4e8a", "rule": "Integrate favorites and independent automatic-recording controls into live viewing, support multiple broadcasts and streaming privacy." },
+    { "turn": "01a13363-ef61-71e3-bf03-3babe3f5b5c0", "rule": "In-app discovery, favorites, download or recording, and local management are required; external-site link wrappers are insufficient." },
+    { "turn": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "rule": "Minimize preserves playback sound, tray mutes, added controls fade with the original controls and fullscreen stays rightmost." }
+  ],
+  "audit": {
+    "basis": "docs/requirements/soop-live-navigation-20261014.json.audit",
+    "coverage": "Both fully read conversation snapshots were independently hash-checked, all69 original specification hashes checked, root refreshed current latest18turns through the previous overlap and confirmed other-thread/archive inventory. Original applicable user turns and current request were read directly, not substituted with an agent summary.",
+    "directSpecifications": ["AGENTS.md", "docs/requirements/implementation-policy.json", "docs/requirements/soop-implementation.json", "docs/CHZZK_VIEWING_UI.md", "docs/CHZZK_CONNECTION_UI.md", "docs/CHZZK_UNIFIED_LIVE_20260921.md", "docs/EXTENSIBLE_ARCHITECTURE.md"],
+    "evidenceRead": ["src-tauri/examples/soop_embed_probe.rs", ".runtime/requirements-audit/soop-shared-player-batch.json", "docs/requirements/platform-validation.json", "src-tauri/src/streaming/browser_encoded_capture.js", "src-tauri/src/streaming/browser_encoded.rs", "src-tauri/src/platform_media/live.rs", "src-tauri/src/soop/auto_record.rs"],
+    "unavailable": ["Durable original thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified Atsumi analysis1/2", "Historical attachment-only pixels not reverified"],
+    "runtime": "Current installed release2.2.1 remains unchanged. This design does not authorize app input, playback probes, login, closing or restarting the user's app. Parent owns build coordination; no competing Cargo build is run."
+  },
+  "conflictsAndDecisions": [
+    "The older shared-player batch replaced an official iframe with the generic local-HLS player to meet single ingress. The latest original-player request supersedes that UI choice, not the single-ingress requirement.",
+    "Do not simply open the official SOOP player while retaining yt-dlp as its simultaneous recording receiver. That duplicates video traffic and violates R013.",
+    "Do not copy the SOOP control appearance around the existing generic player and report original-player parity. A native hosted official document is the preferred live path; full local-file playback parity is a separate acceptance item.",
+    "Reuse low-level bounded fMP4 parsing and durable publication only where provider-neutral. Do not reuse CHZZK's mutable channel, login profile, origin allowlist, page generation, arm or recording ownership state.",
+    "No installed grid program and no peer-to-peer traffic are different claims. Official SDK routing can select a P2P_HLS protocol even when an external streamer agent is absent. Do not label that as zero P2P or claim blanket grid bypass.",
+    "Do not disable DRM, authentication, paid-tier, age, password or other access controls. If the official available source is unsupported or restricted, report that limit and keep a visible honest error rather than silently selecting another receiver.",
+    "SOOP navigation is handled in its independent completed source batch. Existing VOD favorites and downloads remain accessible; this live-player change must not erase or migrate them."
+  ],
+  "publicEvidence": {
+    "method": "Anonymous read-only public HTML, JavaScript, styles and public metadata requests; no media socket, player, login, account or user data used",
+    "officialEmbed": {
+      "url": "https://play.sooplive.com/aftwapex/embed",
+      "status": 200,
+      "bytes": 169096,
+      "headers": "No X-Frame-Options or Content-Security-Policy response header observed in this request",
+      "document": "body embeded_mode, broadcasting-type live; original player, player_info, chatting_area and chatbox are present. Original play, volume, quality, PIP, screen-mode, fullscreen and chat controls occur in markup. Runtime visible chat layout, sending and popups are not proved by HTML."
+    },
+    "officialAssets": [
+      { "url": "https://static.sooplive.com/asset/app/liveplayer/player/dist/LivePlayer.js?_=202411151900", "status": 200, "bytes": 1285981 },
+      { "url": "https://static.sooplive.com/asset/app/liveplayer/view/dist/LiveView.js?_=202402201100", "status": 200, "bytes": 1133986 },
+      { "url": "https://res.sooplive.com/css/global/soop_webplayer/webplayer.css", "status": 200, "bytes": 1967206 }
+    ],
+    "officialInitialization": "The embed constructs LivePlayer and LiveView with mode embed and calls loadBroad(channel,broadcast). A top-level official child document can retain these original assets and controls; execution inside the privileged Atsumi main document is not proposed.",
+    "originalChatCondition": "Additional anonymous source reads confirm player liveInfo.isShowChat requires player.config.showChat===true in embed mode; initialization accepts showChat and emits initShowChat, while connectChat and LiveView visibility use the condition. The plain embed HTML did not expose an explicit showChat setting. Merely finding chat markup does not prove visible chat; a supported original initialization option and actual rendered operation must be verified, not a guessed URL parameter or CSS-only unhide.",
+    "publicAvailability": "Anonymous station metadata for phonics1 identified unrestricted live broadcast297833919. player_live_api returned RESULT1/BROADING, password N, grade0, minimum tier0 and both ALS_ACTIVE_YN and HLS_ACTIVE_YN true with rate100. Temporary tickets, media URLs, cookies and chat contents were neither printed nor saved. This is metadata availability, not actual media playback proof.",
+    "transportSelection": "Official code supports HLS, ALS and P2P_HLS. getIsSdkHls can be true when the stream connector is not using an external agent, subject to platform, live-kind and subscription/PPV rules. Low-latency support separately excludes embed, mobile and several restricted modes. A Mac user agent is not sufficient evidence of no-install use because the page also contains Mac streamer-install flows.",
+    "qualification": "No reverse-engineering tool is required to inspect these publicly served sources. Public responses may change; rendered runtime and current transport must be observed independently."
+  },
+  "priorProofBoundary": {
+    "existingProbe": "src-tauri/examples/soop_embed_probe.rs creates a disposable profile and sandboxed official embed, polls non-ad livePlayer decoded frames/currentTime for at most100seconds and does not force play. Its proof excludes ads and requires actual frame/time advancement, but it does not inspect MSE tracks, original chat visibility, external agent use or duplicate media ingress.",
+    "missingRunEvidence": "No retained actual soop_embed_probe result was located in the accessible .runtime/docs JSON, Markdown or log evidence. The example source alone is not a successful run.",
+    "existingActualSuccess": "platform-validation.json records successful SOOP desktop search/favorite/automatic recording/later viewer attachment/local replay and independently decoded output. Those observations used yt-dlp plus local HLS and the generic player, not the proposed original SOOP embed; they cannot prove this replacement."
+  },
+  "probeOnlyBatch": {
+    "state": "harness-implemented; offline11tests-passed; launch-awaits-parent-coordination",
+    "scope": ["src-tauri/examples/soop_embed_probe.rs", "src-tauri/examples/soop_embed_probe.js", "src/features/soop/soopEmbedProbe.test.ts"],
+    "reason": "The existing WindowBuilder is unfocused but its child WebviewBuilder has no explicit focused(false). A diagnostic probe must not steal the user's live-chat focus. Existing decoded-frame proof also lacks source-bound MIME/container observations and logs unnecessary arbitrary page text.",
+    "plan": [
+      "Set both window and child to focused(false), keep offscreen/skip-taskbar/disposable profile/no new windows and mute-audio. Never click, focus, navigate or force play from the observation script.",
+      "Install bounded document-start MSE hooks which call and preserve original native methods first, then count accepted appends and retain only MIME, track counts and recognized container types. Bind observations to the original non-ad livePlayer through its own blob URL without exporting that URL.",
+      "Report original chat visibility and presence/enabled status of a chat input without reading message text, account identity, input values, URLs or tickets. Do not claim chat sending or external-agent absence from these observations.",
+      "Remove arbitrary title/error/class text from the diagnostic result; output only allowlisted scalar structural state. Preserve the independent 100second deadline and90second media observation budget.",
+      "Add offline fake-DOM tests for origin/frame guard, original method semantics, bounded diagnostics and no private text. These tests do not start an app or access the network."
+    ],
+    "verification": "2026-10-14 offline Vitest:1file/11tests passed in1.13seconds. Covers accepted append-only observation, original exceptions/input slices/codec changes, origin/nesting guards, unavailable MSE, no private DOM reads, source/buffer bounds and restoration, host schema sanitization, explicit parent+child unfocused settings and mute flag. No Cargo build, app launch, playback, login, account or media access. Native compilation and parent review remain pending.",
+    "acceptance": "Harness tests pass and parent reviews no-focus/no-sensitive-output boundaries before any future authorized playback run. No original live-player implementation or actual playback claim is made by this harness batch."
+  },
+  "minimalArchitecture": {
+    "receiver": "One provider-owned native child WebView per (provider=soop, channelId, broadcastId), using the exact official HTTPS player URL and a separate SOOP profile. Native registry leases attach the viewer and recorder to this same receiver; no second official video or native yt-dlp video pipeline is opened for that tuple.",
+    "captureHook": "Install an origin- and channel-bound document-start observer before SOOP scripts create their MediaSource. Observe original SourceBuffer.appendBuffer only after it succeeds; copy accepted encoded data without mutating, detaching, reordering or suppressing the original playback call. Prefer a top-level official child document so frame realm identity is explicit. An iframe wrapper requires verified all-frame installation plus frame identity/origin enforcement and is not interchangeable with top-level injection.",
+    "captureCapability": "Probe first. Existing bounded capture/parser handles clear fMP4 AVC avc1/avc3 and AAC mp4a.40.2, at most2 tracks, segments mode and finite timestamp offset. It rejects encrypted mediaKeys, srcObject, unsupported codec/container/timeline, oversized buffers and unavailable hooks. SOOP ALS may still feed MSE, but public protocol names do not prove this; worker MSE or another transport can invalidate the proposed hook.",
+    "nativeBoundary": "Every begin/append/finish requires native-created session/lease, exact provider, channel and broadcast binding, WebView label/origin, page-generation epoch, source UUID and one-use unexpired recording arm. Do not accept page-supplied file paths, arbitrary URLs, cookies, provider switches or CHZZK identifiers. Bound payload and queues, sequence/ACK, byte-identical immediate duplicate receipts and init/codec changes as in the existing capture contract.",
+    "durableWriter": "Reuse the strict EncodedMuxer only through a provider-neutral writer adapter. Publish to the existing SOOP media-job journal, verified segment manifest and finalization lifecycle, not to CHZZK directories or metadata. Existing final validation-before-cleanup and chat retention continue. On unsupported/init/codec change, finish verified preceding data and record a clear interruption, never silently fetch a replacement stream.",
+    "automaticRecording": "Update NativeHost behind the existing SOOP scheduler to acquire the same official receiver registry rather than media.scheduled_start's native extractor. Scheduled start owns channel+broadcast+attempt+generation and can create the official receiver without visible viewing; later viewing attaches the exact instance. Stopping viewing releases only its lease; disabling reservation drains only its owned recorder. Manual stop suppression, active-work admission, shutdown, limits and generation fencing stay enforced.",
+    "migration": "Do not switch engines underneath a running recorder. New receiver mode is chosen only when no live lease/recording for that identity exists. Existing legacy sessions must drain normally; source code changes are not permission to terminate user work. A central receiver choice must reject simultaneous legacy and official sessions for the same provider/channel/broadcast.",
+    "chat": "Keep original SOOP chat DOM and interaction for viewing. Independently preserve existing recording chat ingestion only if it is not accidentally duplicated by another archive reader; chat is not a second video ingress. Bind chat archives and clocks to the same verified broadcast and native job. Prefer a dedicated original-chat child only if the official site supports a chat-only route; never hide a second video's pixels and call that chat-only.",
+    "navigationAndSecurity": "Deny unexpected player navigation and external protocols; route explicit login/popups through provider-scoped handlers with actual close controls. Main app IPC remains inaccessible to the third-party document. No shared CHZZK cookies/profile, no account scraping, no remote script execution in main, no arbitrary native commands from page messages.",
+    "lifecycle": "Retain receiver identity across drawer/layout/tab/privacy changes. Privacy hides surfaces; tab/minimize preserves required sound, tray mutes. Do not focus repeatedly during layout or metadata updates. Preserve stable controls, original fade timing and CHZZK-like live drawer/favorites flow."
+  },
+  "candidateFiles": [
+    { "path": "src-tauri/src/soop/original_player.rs", "status": "proposed new", "purpose": "Provider-scoped receiver registry, child host, navigation/security, document start, leases and native approvals" },
+    { "path": "src-tauri/src/soop/original_player_capture.js", "status": "proposed new", "purpose": "SOOP-specific origin/channel realm adapter around bounded encoded observation, original UI preserved" },
+    { "path": "src-tauri/src/platform_media/encoded.rs", "status": "proposed new", "purpose": "Provider-neutral validated capture-to-existing-job writer, no source URL or new media receiver" },
+    { "path": "src-tauri/src/streaming/browser_fmp4.rs", "status": "existing parser reference", "purpose": "Reuse or extract pure parser types without sharing CHZZK mutable state; regression-check original implementation" },
+    { "path": "src-tauri/src/platform_media/live.rs", "status": "existing", "purpose": "Single-ingress admission/lease boundary, explicit receiver kind and no parallel extractor for official SOOP live" },
+    { "path": "src-tauri/src/soop/auto_record.rs", "status": "existing", "purpose": "Replace only NativeHost receiver adapter while retaining scheduler ownership/suppression and tests" },
+    { "path": "src-tauri/src/platform_media_ipc.rs", "status": "existing", "purpose": "Trusted-main minimal commands and token/session validation, no broad third-party capability" },
+    { "path": "src-tauri/src/soop.rs", "status": "existing", "purpose": "Register isolated provider host and validate channel/broadcast references" },
+    { "path": "src-tauri/src/lib.rs", "status": "existing", "purpose": "App state and shutdown wiring after native tests, no CHZZK realm widening" },
+    { "path": "src/features/soop/SoopWorkspace.tsx", "status": "existing", "purpose": "Attach original SOOP host surface under the already established live drawer layout" },
+    { "path": "src-tauri/examples/soop_embed_probe.rs", "status": "existing proof harness", "purpose": "Bounded disposable original playback proof followed by separate capability/transport/visible-chat evidence" }
+  ],
+  "acceptance": [
+    "Anonymous permitted broadcast actually advances non-ad decoded video using official SOOP controls; original chat is visible and no external streamer installation is required in a clean isolated profile.",
+    "Record actual capability diagnostics: source realm, observed MIME/track count, supported fMP4 initialization and appended samples; no cookies, tickets, chat contents or media URLs in evidence.",
+    "One actual network-video receiver during watch then record and auto-record then watch; process/session/media-origin evidence, not just registry unit tests.",
+    "Actual verified recorded file decodes, seeks, reaches EOF and replays with retained chat; record stop leaves watching alive and watch stop leaves opted-in recording alive.",
+    "Multi-channel and same-channel reattachment do not duplicate a receiver; quality/source change, broadcast change, queue pressure, end, reservation cancellation and shutdown have bounded honest outcomes.",
+    "Navigation, foreign-frame, wrong provider/channel/broadcast, stale generation, expired arm, replayed chunk and oversized payload are rejected without affecting another platform.",
+    "Tab/minimize/tray/privacy behavior, original controls and chat input/IME, drawer overlay, resize and popup close paths are operated in the updated app. Mocked UI or public HTTP200 alone cannot complete this request.",
+    "If SOOP's actual transport bypasses supported clear MSE, stop the rollout and report the exact runtime limit; no duplicate hidden extractor, no DRM workarounds and no fake completion claim."
+  ]
+}

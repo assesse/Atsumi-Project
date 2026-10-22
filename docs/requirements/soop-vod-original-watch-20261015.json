@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "state": "root-approved scoped implementation in progress; remote VOD playback not yet verified",
+  "finding": "SOOP-VOD-WATCH-GAP",
+  "originalReferences": [
+    {"turn": "01a13adc-a040-70f0-97d9-380c5b6ba368", "items": [2, 3], "request": "SOOP video and chat downloading, working official-style discovery and platform-consistent viewing/management."},
+    {"turn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "request": "Continue actual verification including SOOP screens and repair evidenced problems."},
+    {"turn": "01a13a1f-f808-74a0-85c8-e90aa748a292", "request": "SOOP and YouTube must use each platform's original player/chat UI, with working login, viewing and recording and no CHZZK interference."},
+    {"turn": "01a13978-c469-7242-9ec2-f065de16743a", "request": "Platform playback starts from the original interface, nearly identical, with subsequent explicitly requested additions/removals."},
+    {"turn": "01a1399c-e7fb-7260-ac09-93bc94288f2f", "request": "Clone CHZZK presentation/flow first while retaining provider isolation and checking copied-code interference."},
+    {"turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "request": "Integrated viewing and saving, durable video/chat, and no independent duplicate incoming stream for live viewing plus recording."},
+    {"turn": "01a0ad1d-e7d4-7f43-865a-8f3ac7f81ebe", "request": "Changing tabs must retain playback and sound without forcing the player over another page."},
+    {"turn": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e", "request": "Minimization preserves sound, tray hides/mutes, original controls remain usable, and ended playback supports replay/seek instead of becoming inert."}
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Rehashed unchanged fully read main230turn/284message and other333turn/375message EOF snapshots. Root refreshed active50/archive3 EOF and unchanged other-thread revisions.69 baseline specifications retain recorded hashes except already fully reread RELEASING F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. Directly reread the original source messages listed above, the native-integration request artifact and latest request in inherited history. New contracts are separate from the baseline69.",
+    "specificationsRead": [
+      "docs/requirements/discovery-contradiction-audit-20261015.json",
+      "docs/requirements/soop-discovery-followup-20261014.json",
+      "docs/requirements/platform-followup-20261014.json",
+      "docs/requirements/soop-chzzk-ui-clone-20261014.json",
+      "docs/requirements/soop-original-player-20261014.json",
+      "docs/requirements/soop-native-integration-20261014.json",
+      "docs/requirements/soop-vod-replay-chat-visibility-20261015.json",
+      "docs/requirements/youtube-followup-20261014.json",
+      "docs/requirements/platform-original-runtime-20261014.json",
+      "docs/requirements/implementation-policy.json"
+    ],
+    "sourceRead": [
+      "src/features/soop/SoopDiscovery.tsx",
+      "src/features/soop/SoopWorkspace.tsx",
+      "src/features/soop/SoopOriginalPlayer.tsx",
+      "src/api/soopOriginal.ts",
+      "src-tauri/src/soop/original.rs",
+      "src-tauri/src/soop/original_policy.rs",
+      "src-tauri/src/soop/original_page.js",
+      "src-tauri/src/soop/original_commands.rs",
+      "src-tauri/src/youtube/original_vod.rs",
+      "src-tauri/src/youtube/original_vod_page.js",
+      "src-tauri/src/platform_media/soop_vod.rs"
+    ],
+    "unavailable": ["Durable original thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified historical analysis1/2", "Historical inaccessible attachment pixels"],
+    "gate": "Initial public investigation was read-only; root subsequently read and approved this scoped implementation and the bounded metadata observer. This agent performs no native UI, Cargo, account input or media mutation; root owns actual validation. Public source probes did not attach cookies or the retained account profile."
+  },
+  "currentGap": {
+    "remote": "SoopDiscovery video detail currently presents its thumbnail/title and favorite/download/channel actions but no original VOD viewing path. onLive is the only playback callback. Native SoopOriginalHost is a live channel/broadcast receiver that necessarily reserves an OfficialReceiverLease and injects a live capture adapter, so passing titleNo as a live identifier is incorrect.",
+    "notTheSameAsLocalReplay": "The existing downloaded-video library and synchronized stored chat replay are a separate implemented flow. Root already actually downloaded209244227 and verified its local video, chat, seek, EOF replay and return to library. This must not be presented as verification of remote official VOD viewing."
+  },
+  "publicEvidence": {
+    "checkedOn": "2026-10-15 KST; anonymous bounded HTTPS GET of page and public static JavaScript only",
+    "page": {"url": "https://vod.sooplive.com/player/209244227", "status": 200, "title": "김민교 원펀치킹의 원펀맨 시청 | SOOP VOD", "staticRoots": ["portalContainer", "root"]},
+    "embed": {"url": "https://vod.sooplive.com/player/209244227/embed?showChat=true", "status": 200, "qualification": "HTTP200 and correct title establish an official route, not successful decoded playback or chat."},
+    "sources": [
+      {"url": "https://static.sooplive.com/asset/app/vodplayer/view/static/js/main.7f883468.js", "fact": "Official router basename /player has /:titleNo/embed, /:titleNo/chat and /:titleNo; pcEmbed and pcChatPopUp are separate components. Bundle version3.1.232."},
+      {"url": "https://static.sooplive.com/asset/app/vodplayer/view/static/js/pEmbed.81d8ffee.chunk.js", "fact": "PC embed loads the exact titleNo metadata, then renders the official player and conditionally the official chat component in the same document."},
+      {"url": "https://static.sooplive.com/asset/app/vodplayer/view/static/js/238.af930bce.chunk.js", "fact": "isRenderPcChatArea requires successful permitted metadata and show_chat=Y; embed additionally requires Boolean(query.showChat). Therefore showChat=true requests supported replay chat but must not override the site's availability/restriction checks."},
+      {"url": "https://static.sooplive.com/asset/app/vodplayer/view/static/js/999.e7732e25.chunk.js", "fact": "Official VOD component exposes #webplayer, #player, #videoLayer and video#video.af_video, distinct from adVideo; original identity, controls and fullscreen button remain in the player. VOD uses vodCore, not livePlayer."},
+      {"url": "https://static.sooplive.com/asset/app/vodplayer/view/static/js/323.48c1ab61.chunk.js", "fact": "Official replay chat uses #chatting_area.chatting_area.vod and #chatbox_height.chatbox, with its original VOD chat components/styles."},
+      {"url": "https://static.sooplive.com/asset/app/vodplayer/view/static/js/pcChatPopUp.1e5b910b.chunk.js", "fact": "Standalone chat popup expects window.opener.oChatCore; without that owner it calls window.close(). Do not substitute an independent /chat WebView or load a second video document as a chat workaround."},
+      {"url": "https://static.sooplive.com/asset/app/vodplayer/view/static/js/894.69597e27.chunk.js", "fact": "An official fromApi=1/Pload option exists, but ordinary embed showChat already has an evidenced route and render condition. Do not introduce iframe API boot or override ad/access flags unless actual playback evidence requires a separate scoped change."}
+    ],
+    "limits": "No authenticated document, cookies, chat messages, media segments or account data were read by these probes. No claim of login-required, paid/age-restricted, replay-chat progression, grid-free transport or actual playback success follows from source alone. Static asset hashes can change."
+  },
+  "proposal": {
+    "architecture": "Add a SOOP-owned watch-only VOD host/registry and typed API, following the lifecycle algorithms of YouTube original_vod but not importing its policy, identifiers, state or DOM adapter. The only shared provider-specific persistent resource is the existing soop-original-profile directory. Keep separate VOD tokens, titleNo, epoch, viewer aliases, request binding, status and viewport sequence. Do not fake a channel/broadcast snapshot.",
+    "presentation": "Add an actual central play action to the existing SOOP video detail. Keep favorite, download and channel actions and the existing card-selection rules. Once playing, render the original embedded VOD video plus its available official replay chat inside the established floating detail using native geometry slots; do not rebuild provider controls or insert a custom HTML video player. Keep the mounted session when the containing provider/tab is hidden, and close only on explicit viewer/detail close or normal lifecycle cleanup. Different-video replacement and late close must not close the current viewer.",
+    "document": "Open exactly https://vod.sooplive.com/player/<validated decimal titleNo>/embed?showChat=true in one native child using the retained SOOP profile. Treat this as watch-only: no MediaRef, OfficialReceiverLease, recording owner, encoded/chat capture bridge, scheduler, downloader or recording button. Existing explicit VOD download remains a separate validated action and is not silently started by watch.",
+    "viewport": "Use platform_native_geometry for full-client coordinates, clipping and occlusion, and a source-owned VOD adapter for #player and #chatting_area/#chatbox_height. Do not reuse the livePlayer layout/capture script. Preserve provider aspect ratio, original identity/quality/seek/replay/fullscreen controls and original chat synchronization. When official metadata disables chat, remove the reserved chat slot rather than show an indefinite blank/loading panel. On small layouts use the established adjustable side-by-side/stacked player-chat geometry without hidden scrollbars or clipped control edges.",
+    "account": "Reuse the existing SOOP profile and existing login popup flow only. VOD status may report local restricted/error state, but must not become another writer of global account authority or alter login completion, security pages, logout revisions, campaign behavior or scheduled/live capture readiness. After an accepted existing account revision, a narrow watch-only refresh hook may reload only VOD views; never reload a recording receiver. Authentication input remains user-operated.",
+    "limits": "Retain the established maximum4 provider native playback documents across live and VOD through a small presentation-only admission check/guard, not the recording approval gate. Reopening the same VOD reuses its document with a distinct viewer lease; at capacity, reject a new different document visibly without evicting live/scheduled work. The count/check must be atomic with simultaneous live/VOD opens and must not hold locks while waiting for network/UI completion. If this cannot be added without changing live scheduling behavior, split admission work into an explicitly reviewed prerequisite instead of silently increasing limits.",
+    "lifecycle": "Delegate normal shutdown, frontend detach, tray mute and accepted account refresh to the watch-only registry from existing SOOP lifecycle points. Keep minimization separate from tray mute; privacy hides and mutes while preserving session; unrelated tab hiding preserves playback/sound. Maintain fullscreen ownership tied to the exact VOD token, not channel names or another platform's event. EOF updates state but does not destroy the document, so native replay and seek still work."
+  },
+  "approvedImplementationDetails": {
+    "admission": "Root approved an SOOP-owned AtomicUsize RAII document permit shared only by live and VOD document creation, maximum4. Acquire only for a new document, release after successful native close or creation failure; keep capacity reserved if native close fails. No shared mutex is held across network/UI waiting. Existing recording arm/owner/scheduler preparation and start/stop algorithms remain unchanged.",
+    "metadataProjection": "Root approved a source-local fetch/XHR response observer for exact HTTPS api.m.sooplive.com/station/video/a/view. Preserve original call/return semantics and clone fetch responses rather than consume the caller body. Bound bytes before parsing and project only exact title_no identity, typed result and show_chat Y/N into a chat availability enum. Do not retain or transport raw metadata, request/query/body, account data, chat messages or media URLs. Unrelated, wrong-title, malformed and oversized responses cannot change state; timeout does not mean unavailable.",
+    "division": "This agent owns native VOD host/policy/adapter/commands and their tests. soop_discovery_followup owns the new frontend API/player and narrowly coordinated SoopDiscovery detail integration; platform_chat_followup owns the independent scroll fix. Root owns serial Cargo and actual UI."
+  },
+  "securityAndIsolation": [
+    "Dedicated strict VOD route policy: HTTPS, exact vod.sooplive.com, no credentials or nondefault port, exact validated titleNo and /embed path, only evidenced presentation query options. Existing live player and account allowlists remain unchanged.",
+    "about:blank is only the initial boot document. Do not admit arbitrary VOD links, other videos, redirects or official-looking suffixes as the current session. User navigation to a different video must return through trusted main-renderer intent and new validated binding.",
+    "VOD bridge accepts bounded status and trusted-input fullscreen messages only, bound to native label, exact document, current nonzero epoch and session. Reject encoded_begin/append/finish, screenshot file mutation, recording and arbitrary account/navigation instructions.",
+    "No raw auth URL, cookies, tokens, chat content or account identity in diagnostics. Fixed state/reason and public video id are enough for playback diagnostics.",
+    "No independent /chat WebView, second video for chat, background extractor, stream relay, custom download or scheduler starts on watch. Existing explicit VOD download can transfer a file separately; do not promise a unified watch/download transport in this batch.",
+    "Do not disable advertisements, bypass age/paid/login gates, install a grid component, mutate credentials or claim a no-grid guarantee from static sources. Respect the original player's actual availability state."
+  ],
+  "tentativeScope": [
+    "New src-tauri/src/soop/original_vod.rs and original_vod_page.js with source-owned policy/tests",
+    "New source-owned typed VOD API and SoopVodPlayer component/styles/tests; SoopDiscovery only real-play/detail integration",
+    "Narrow SOOP lifecycle/admission/command/module registrations; no live recording algorithm or account-policy rewrite",
+    "Dedicated isolated native VOD QA example/fixture and this contract's verification record"
+  ],
+  "conflictsAndRisks": [
+    "The literal latest request emphasizes VOD download, while earlier original-platform viewing requirements establish this separate missing remote-watch flow. Do not replace a working download/local replay with remote playback.",
+    "Original official embed is evidenced but not yet runtime-verified in WebView2. It may enforce embedding, login, advertising or browser requirements; report concrete blocking behavior instead of replacing it with a fake/custom player.",
+    "CSS geometry needs actual proof: same-document chat has different VOD roots from live, and original controls/identity must not be clipped. Source-selector presence alone does not establish fit.",
+    "Do not infer chat availability from a successful video or a missing temporary DOM node. Distinguish pending, officially unavailable and ready; preserve official unavailable/restricted messages.",
+    "Shared-profile reuse is necessary for retained login but does not authorize cookie extraction, profile copying, account automation or a VOD page claiming global logged-in state.",
+    "Combined admission and lifecycle delegation are the only intended touch points with the live host. Tests must detect token, lock ordering, fullscreen and account-refresh interference; approval is required before those production edits."
+  ],
+  "acceptance": {
+    "unitAndAdapter": [
+      "Strict route/document binding rejects wrong id, spoofed host, HTTP, userinfo, alternate port, extra path, forbidden query and stale epoch/label; recording/capture messages cannot acquire authority",
+      "Same-video reopen and delayed previous close retain the replacement viewer; old async status/viewport cannot mutate another VOD; idempotent request cannot bind a different video",
+      "Concurrent live/VOD admission never exceeds4 or evicts a live/scheduled receiver; count releases after normal close/failure/shutdown",
+      "Status loading/playing/paused/ended/error and chat pending/available/unavailable remain distinct; EOF is replayable; no folder setting is required merely to watch",
+      "Adapter fixtures preserve original controls/identity and correct pixel-aligned player/chat bounds at large, small, stacked, privacy and occluded states without copying live capture code",
+      "Source dependency audit confirms no CHZZK/YouTube state imports or capture/scheduler calls from SOOP VOD"
+    ],
+    "actualDesktopRequired": [
+      "From real SOOP discovery open public short VOD209244227, start original player, observe advancing content video and original replay chat, seek both ways, reach EOF and replay; capture a sanitized screenshot of fit and controls",
+      "Repeat with one different ordinary public VOD and one known no-chat item; unavailable chat leaves video usable without a misleading empty pane",
+      "Use the retained SOOP session without extracting credentials, verify original account-sensitive UI when legitimately available, and distinguish retained-session proof from any fresh authentication not performed",
+      "Resize floating player and app, move splitter, fullscreen/exit, hide/reopen provider/tab and privacy; verify original controls, identity and chat are not clipped and no session restarts unexpectedly",
+      "Minimize maintains audio; tray mutes; normal close releases the exact viewer. Keep another SOOP live view/recording and CHZZK/YouTube view stable in a root-owned isolated test",
+      "Existing explicit video+chat download and local library replay still pass; watching alone creates no recording/download job or output file"
+    ],
+    "completionRule": "Only actual app operation plus requirement-by-requirement contradiction checks can close this finding. Public HTTP/static-source probes, mocked DOM, build or service success alone cannot. Root owns actual UI and Cargo."
+  },
+  "implementationCheckpoint": {
+    "native": "Source-owned watch-only host, exact route policy, status/fullscreen-only bridge, SOOP profile reuse, no download-folder/media-lease requirement, dedicated trusted-main commands and native geometry adapter. Shared provider document budget is atomic and RAII; failed native close does not falsely free capacity. Opening-session close retains the permit until native creation completes and is cleaned up.",
+    "races": "Independent review found last-viewer close could drop the registry lock before marking retirement; fixed by marking closed within that gate so a simultaneous reopen cannot attach to the retiring document. Newest alias owns presentation so older viewport/fullscreen calls do not overwrite it. Per-viewer sequences remain enforced.",
+    "metadata": "Exact successful response projects only title identity/show_chat enum; fetch clones are bounded to1MiB/10seconds without consuming original caller body. Regression exposed cross-realm Promise.resolve delaying clone until caller consumption; direct then on the original promise now preserves body and promise. Deadline cancellation never projects even a valid-looking incomplete response prefix and never implies unavailable chat.",
+    "automated": "Root reports25 SOOP original native tests passed after final race fixes. This agent ran VOD adapter/player/Discovery44 tests successfully and full TypeScript check passed; frontend owner separately reports85 related tests/typecheck passed. Counts overlap and are not summed. Sandbox EPERM tool/cache failures were rerun in the ordinary permitted environment and not counted as code failures.",
+    "actual": "Remote SOOP VOD playback remains unverified at this checkpoint. Root is building the isolated app for actual video/chat/geometry/seek/replay validation. Earlier successful local downloaded VOD playback is not counted as this remote flow.",
+    "remainingIsolationFinding": "Cross-provider main-window fullscreen ownership was found during review. Existing four native helpers and CHZZK direct main-window path lack a common owner. Separate proposal docs/requirements/native-fullscreen-presentation-owner-20261015.json awaits review; no CHZZK/shared fullscreen production change is included or claimed solved here."
+  }
+}

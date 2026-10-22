@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "date": "2026-10-13",
+  "status": "source implementation and focused checks passed; current manual QA stays unchanged and next-build desktop acceptance is pending",
+  "originalRequests": ["01a1293d-c453-75e2-bdc7-1086dbf04dd1", "01a11775-9d47-7280-9431-a4aac2761ccd", "01a0ffb2-7b46-77f1-9970-1c4be0da6a41", "01a13142-4c44-7560-bde6-d7e089fd9ea9"],
+  "rules": ["R003", "R004", "R005", "R008", "R010", "R022"],
+  "coverage": "Re-enumerated current active50 and archived3/EOF; no new Atsumi development source. Complete main230/284 and other333/375 EOF snapshots retain85487c5f2edcca6d946cd1b9bbbbde9e9142942059fbc44f637954d607615676 and799f75c9037808630eb2a8faf2973c450d16ae9a3c343d12e2b4cf8dbf931a21. Policy retains3267605ca09e8fba111bfdc84c840e6856bc8b2e82ceb64f165ac732ca43f914. All69 original specifications checked; only RELEASING differs baseline but retains already fully read f5a49125c16f4cbfff8251d5263cbf0b35b6dcaad33a8f9fc7fdf87b542e12a0. Original full selection requests and current recordingSelection/RecordingLibrary/PlatformMediaLibrary read. Unavailable old durable source, unnamed analysis1/2 and historical image pixels remain excluded explicitly in policy.",
+  "evidence": "PlatformMediaLibrary replaces the prior selection on Shift, moves its anchor on each Shift gesture, and handles the second click of a double-click. The user requested the album-card gesture rules be copied independently rather than linked to Hitomi state. Existing recordingSelection documents and implements additive Shift with a retained anchor, Ctrl toggle and repeat-solo deselection.",
+  "decision": [
+    "Implement the same gesture state locally in the platform library; no runtime imports of Hitomi or CHZZK selection reducers/components/state.",
+    "Single click focuses one item without checkboxes; repeated solo click clears and blurs. Ctrl/Meta toggles individual IDs. Shift adds the visible inclusive range while keeping its original anchor. Two or more selected IDs expose the existing selection bar/checks.",
+    "Ignore click events with detail greater than1 so opening a card by double-click does not toggle selection a second time; preserve the existing double-click playback action.",
+    "Retain only currently loaded visible IDs when the library removes items; clear obsolete anchors. Existing context-menu action precedence, confirmation, playback ownership, privacy and background lifecycle remain unchanged.",
+    "This prerequisite does not implement or claim same-broadcast grouping. That separate batch still needs actual-receiver broadcast identity and complete group pagination."
+  ],
+  "files": ["src/features/platforms/PlatformMediaLibrary.tsx", "src/features/platforms/PlatformMediaLibrary.test.tsx", "src/features/platforms/mediaSelection.ts", "src/features/platforms/mediaSelection.test.ts"],
+  "acceptance": [
+    "Noncontiguous Ctrl selection followed by Shift retains prior selected IDs; repeated forward/backward Shift uses the same anchor.",
+    "Solo deselect and Ctrl-last deselect blur; one selected item never exposes checks or multi-selection bar.",
+    "A realistic click1,click2,dblclick sequence opens once and does not transiently toggle the second click.",
+    "Removed visible IDs and anchors are pruned; context menu, modal keyboard priority and local-player lifetime regressions continue to pass.",
+    "Focused tests and proper project typecheck only; no Vite build, QA example build, current-app input or restart. Actual next-build gesture acceptance remains pending."
+  ],
+  "verification": {
+    "focusedTests": "Two focused files passed41tests (mediaSelection8, PlatformMediaLibrary33). Initial sandbox cache-rename EPERM prevented test collection; identical normal Windows run passed.",
+    "typecheck": "tools/run_frontend.ps1 typecheck exited0.",
+    "independentReview": "Read-only review of all four approved files, original selection requests and existing recording-selection reference found no concrete blocker. Additive Shift/stable anchor, Ctrl/Meta, visible-ID pruning, double-click second-event exclusion and context/modal/playback boundaries checked.",
+    "qualification": "No Vite build, QA example build, application input or restart. The current user-operated QA app does not contain these changes. Actual next-build gestures remain pending; no broadcast grouping is claimed."
+  }
+}

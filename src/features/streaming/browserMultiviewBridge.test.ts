@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import source from "../../../src-tauri/src/streaming/browser_multiview.js?raw";
 import receiver from "../../../src-tauri/src/streaming/browser_auto_view.js?raw";
+import nativePaneSource from "../../../src-tauri/src/streaming/browser_multiview.rs?raw";
+import pointerSource from "../../../src-tauri/src/streaming/browser_pane_focus.js?raw";
 
 const vmName = "node:vm";
 const { runInNewContext } = await import(vmName) as {
@@ -48,7 +50,74 @@ afterEach(() => {
   vi.clearAllTimers(); vi.useRealTimers(); vi.restoreAllMocks();
 });
 
+describe("native pane pointer notification", () => {
+  function pointerFixture(options: { nested?: boolean; url?: string; bridge?: boolean } = {}) {
+    const expected = `https://chzzk.naver.com/live/${ID}/chat`;
+    const token = "this_pane_only";
+    const listeners = new Map<string, { listener: (event: Record<string, unknown>) => void; options: unknown }>();
+    const postMessage = vi.fn();
+    const pageWindow = {
+      location: { href: options.url ?? expected }, top: null as unknown,
+      chrome: options.bridge === false ? undefined : { webview: { postMessage } },
+      addEventListener: vi.fn((name: string, listener: (event: Record<string, unknown>) => void, options: unknown) => listeners.set(name, { listener, options })),
+    };
+    pageWindow.top = options.nested ? {} : pageWindow;
+    const run = () => runInNewContext(`(${pointerSource})(${JSON.stringify(expected)}, ${JSON.stringify(token)});`, { window: pageWindow });
+    run();
+    const press = (event: Record<string, unknown>) => listeners.get("pointerdown")?.listener(event);
+    return { pageWindow, postMessage, listeners, press, run };
+  }
+
+  it("reports only trusted primary pointer presses without reading input contents or changing event handling", () => {
+    const f = pointerFixture();
+    expect([...f.listeners.keys()]).toEqual(["pointerdown"]);
+    expect(f.listeners.get("pointerdown")?.options).toEqual({ capture: true, passive: true });
+    const event = { isTrusted: true, button: 0, isPrimary: true, preventDefault: vi.fn(), stopPropagation: vi.fn() };
+    Object.defineProperty(event, "target", { get() { throw new Error("must not read chat target or contents"); } });
+    f.press(event);
+    expect(f.postMessage).toHaveBeenCalledExactlyOnceWith("ATSUMI_PANE_POINTER:this_pane_only");
+    expect(event.preventDefault).not.toHaveBeenCalled();
+    expect(event.stopPropagation).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    f.run();
+    expect(f.pageWindow.addEventListener).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects synthetic, secondary and non-primary pointers and subsequent navigation", () => {
+    const f = pointerFixture();
+    for (const event of [
+      { isTrusted: false, button: 0 },
+      { isTrusted: true, button: 1 },
+      { isTrusted: true, button: 0, isPrimary: false },
+    ]) f.press(event);
+    f.pageWindow.location.href += "?another=1";
+    f.press({ isTrusted: true, button: 0 });
+    expect(f.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("never installs in another page, login document or nested frame and tolerates a missing bridge", () => {
+    for (const options of [
+      { nested: true }, { url: "https://nid.naver.com/" }, { url: "about:blank" },
+      { url: `https://chzzk.naver.com/live/${ID}` }, { bridge: false },
+    ]) expect(pointerFixture(options).listeners.size).toBe(0);
+    const f = pointerFixture();
+    f.postMessage.mockImplementation(() => { throw new Error("disposed native bridge"); });
+    expect(() => f.press({ isTrusted: true, button: 0 })).not.toThrow();
+  });
+});
+
 describe("watch-only official multiview bridge", () => {
+  it("creates native child panes without a programmatic focus request before showing them", () => {
+    const creation = nativePaneSource.slice(nativePaneSource.indexOf("fn create_multiview_pane("));
+    const builder = creation.slice(creation.indexOf("let builder = WebviewBuilder::new("), creation.indexOf("let view = parent"));
+    expect(builder).toContain(".focused(false)");
+    expect(builder.match(/\.focused\(/g)).toHaveLength(1);
+    expect(creation.indexOf(".add_child(")).toBeLessThan(creation.indexOf("view.hide()"));
+    expect(builder).toContain("pane_focus::initialization_script(&pointer_url, &pointer_nonce)");
+    expect(creation.indexOf("pane_focus::install(&view, pointer_url, pointer_nonce)")).toBeLessThan(creation.indexOf("view.navigate("));
+    // Source-level protection only: actual native click/Alt-Tab/IME behavior
+    // still needs a rebuilt desktop app and a user-operated acceptance check.
+  });
   it("keeps the original aside out of video-only presentation and delegates chat to the app", () => {
     const f = fixture(); const player = f.page.querySelector('.pzp-pc')!, aside = f.page.querySelector('aside')!;
     aside.id = 'aside-chatting'; const parent = aside.parentElement;
@@ -374,10 +443,49 @@ describe("watch-only official multiview bridge", () => {
     header.innerHTML = '<h2 class="_title_1e2su_12" style="font-family:Sandoll Nemony2;font-size:15px;font-weight:400">채팅</h2><div class="_wrapper_1e2su_28 _scale_1e2su_39"><button>−</button><span>100%</span><button>+</button></div><div class="_wrapper_1e2su_28 _menu_1e2su_36"><button>메뉴</button></div>';
     rect(header, 480, 44); page.body.appendChild(header); return header;
   };
-  it("fits the official popup and extends its scale down to 50% without replacing chat or menu", async () => {
+  const popupClasses = [
+    '_container_b8csn_2 _is_popup_chat_b8csn_13',
+    '_container_nu1j9_2 _is_popup_chat_nu1j9_13',
+  ];
+  const popupChat = (f: ReturnType<typeof fixture>, className = popupClasses[1]!, tag = 'aside') => {
+    const wrapper = f.page.createElement('main'); wrapper.className = '_container_1gtzb_1';
+    const section = f.page.createElement('section'); section.className = '_container_wj4te_1';
+    const inner = f.page.createElement('div'); inner.className = '_wrapper_wj4te_16';
+    const root = f.page.createElement(tag); root.id = 'aside-chatting'; root.className = className;
+    const header = chatHeader(f.page), input = f.page.querySelector('textarea')!;
+    const original = header.querySelector('._scale_1e2su_39')!;
+    original.querySelector('span')!.className = '_scale_text_1e2su_46';
+    const menu = header.querySelector('._menu_1e2su_36')!;
+    root.append(header, input); inner.append(root); section.append(inner); wrapper.append(section); f.page.body.append(wrapper);
+    return { wrapper, section, inner, root, header, input, original, menu };
+  };
+  it('compacts only narrow logical widths, preserving manual zoom and clearing on an invalid root', async () => {
+    const f = fixture({ chat: true }), popup = popupChat(f);
+    let width = 175;
+    Object.defineProperty(popup.root, 'clientWidth', { get: () => width / Number(f.page.body.style.getPropertyValue('--atsumi-chat-zoom') || 1) });
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: '테스트' });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-compact')).toBe(true);
+    const minus = popup.header.querySelector<HTMLButtonElement>('.atsumi-chat-scale button')!;
+    for (let i = 0; i < 5; i++) minus.click();
+    expect(f.page.body.style.getPropertyValue('--atsumi-chat-zoom')).toBe('0.5');
+    expect(f.page.body.hasAttribute('data-atsumi-chat-compact')).toBe(false);
+    const plus = popup.header.querySelector<HTMLButtonElement>('.atsumi-chat-scale button:last-child')!;
+    for (let i = 0; i < 5; i++) plus.click();
+    expect(f.page.body.hasAttribute('data-atsumi-chat-compact')).toBe(true);
+    width = 300; f.pageWindow.dispatchEvent(new Event('resize')); await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-compact')).toBe(false);
+    width = 299; f.pageWindow.dispatchEvent(new Event('resize')); await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-compact')).toBe(true);
+    expect(f.page.body.style.getPropertyValue('--atsumi-chat-zoom')).toBe('1');
+    popup.root.className = '_container_nu1j9_2'; await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-compact')).toBe(false);
+    expect(popup.input.parentElement).toBe(popup.root); expect(popup.menu.parentElement).toBe(popup.header);
+  });
+  it.each(popupClasses)("fits official popup %s and extends its scale down to 50% without replacing chat or menu", async (className) => {
     const f = fixture({ chat: true }), header = chatHeader(f.page);
     const wrapper = f.page.createElement('main'); wrapper.className = '_container_1gtzb_1';
-    const root = f.page.createElement('aside'); root.id = 'aside-chatting'; root.className = '_container_b8csn_2 _is_popup_chat_b8csn_13';
+    const root = f.page.createElement('aside'); root.id = 'aside-chatting'; root.className = className;
     const input = f.page.querySelector('textarea')!; input.value = '작성 중';
     root.append(header, input); wrapper.append(root); f.page.body.append(wrapper);
     const original = header.querySelector('._scale_1e2su_39')!, originalButtons = original.querySelectorAll('button');
@@ -404,6 +512,207 @@ describe("watch-only official multiview bridge", () => {
     expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
     expect(original.hasAttribute('data-atsumi-chat-scale-original')).toBe(false);
     expect(header.querySelector('.atsumi-chat-scale')).toBeNull();
+  });
+  it.each([
+    { name: 'non-popup aside', className: '_container_nu1j9_2', tag: 'aside' },
+    { name: 'partial popup prefix', className: 'prefix_is_popup_chat_nu1j9_13', tag: 'aside' },
+    { name: 'partial popup suffix', className: '_is_popup_chat_nu1j9_13_extra', tag: 'aside' },
+    { name: 'missing module hash', className: '_is_popup_chat__13', tag: 'aside' },
+    { name: 'missing numeric suffix', className: '_is_popup_chat_nu1j9_number', tag: 'aside' },
+    { name: 'wrong element type', className: popupClasses[1]!, tag: 'div' },
+  ])('does not fit a $name or replace its official input/menu', ({ className, tag }) => {
+    const f = fixture({ chat: true }), popup = popupChat(f, className, tag);
+    popup.input.value = '작성 중 ㄱ'; popup.input.setSelectionRange(5, 5);
+    const inputParent = popup.input.parentElement, menuParent = popup.menu.parentElement;
+    const key = vi.fn(), menuClick = vi.fn();
+    popup.input.addEventListener('keydown', key); popup.menu.querySelector('button')!.addEventListener('click', menuClick);
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: '테스트' }); f.advance();
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
+    expect(f.page.querySelector('[data-atsumi-chat-layout]')).toBeNull();
+    expect(f.page.querySelector('.atsumi-chat-scale')).toBeNull();
+    expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(false);
+    const event = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true }); popup.input.dispatchEvent(event);
+    popup.menu.querySelector<HTMLButtonElement>('button')!.click();
+    expect(event.defaultPrevented).toBe(false); expect(key).toHaveBeenCalledOnce(); expect(menuClick).toHaveBeenCalledOnce();
+    expect(popup.input.value).toBe('작성 중 ㄱ'); expect([popup.input.selectionStart, popup.input.selectionEnd]).toEqual([5, 5]);
+    expect(popup.input.parentElement).toBe(inputParent); expect(popup.menu.parentElement).toBe(menuParent);
+  });
+  it.each(['aside', 'div'])('rejects duplicate chat IDs including a second %s and reattaches only when unique again', async (tag) => {
+    const f = fixture({ chat: true }), popup = popupChat(f);
+    const duplicate = f.page.createElement(tag); duplicate.id = 'aside-chatting'; duplicate.className = popupClasses[0]!;
+    f.page.body.append(duplicate);
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: '테스트' });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
+    expect(f.page.querySelector('.atsumi-chat-scale')).toBeNull();
+    duplicate.remove(); await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(true);
+    expect(f.page.querySelectorAll('.atsumi-chat-scale')).toHaveLength(1);
+    f.page.body.append(duplicate); await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
+    expect(f.page.querySelector('[data-atsumi-chat-layout]')).toBeNull();
+    expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(false);
+    expect(f.page.querySelector('.atsumi-chat-scale')).toBeNull();
+    expect(popup.input.parentElement).toBe(popup.root); expect(popup.menu.parentElement).toBe(popup.header);
+  });
+  it.each(['class', 'id'] as const)('removes stale popup fitting after its %s changes and restores it without a resize', async (attribute) => {
+    const f = fixture({ chat: true }), popup = popupChat(f);
+    popup.input.value = '작성 중 ㄱ'; popup.input.setSelectionRange(5, 5);
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: '테스트' });
+    await vi.advanceTimersByTimeAsync(400);
+    const oldControl = popup.header.querySelector('.atsumi-chat-scale')!;
+    expect(oldControl).not.toBeNull(); expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(true);
+    const previous = popup.root.getAttribute(attribute)!;
+    popup.root.setAttribute(attribute, attribute === 'class' ? '_container_nu1j9_2' : 'aside-chatting-retired');
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
+    expect(f.page.body.style.getPropertyValue('--atsumi-chat-zoom')).toBe('');
+    expect(f.page.querySelector('[data-atsumi-chat-layout]')).toBeNull();
+    expect(f.page.querySelector('.atsumi-chat-scale')).toBeNull();
+    expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(false);
+    popup.root.setAttribute(attribute, previous); await vi.advanceTimersByTimeAsync(400);
+    const nextControl = popup.header.querySelector('.atsumi-chat-scale')!;
+    expect(nextControl).not.toBe(oldControl); expect(oldControl.isConnected).toBe(false);
+    expect(f.page.querySelectorAll('.atsumi-chat-scale')).toHaveLength(1);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(true);
+    for (const parent of [popup.wrapper, popup.section, popup.inner]) expect(parent.hasAttribute('data-atsumi-chat-layout')).toBe(true);
+    expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(true);
+    expect(popup.input.value).toBe('작성 중 ㄱ'); expect([popup.input.selectionStart, popup.input.selectionEnd]).toEqual([5, 5]);
+    expect(popup.input.parentElement).toBe(popup.root); expect(popup.menu.parentElement).toBe(popup.header);
+    await vi.advanceTimersByTimeAsync(400); expect(vi.getTimerCount()).toBe(0);
+  });
+  it.each(['subtree insertion', 'existing element ID change'])('invalidates fitting for a duplicate introduced by %s without a resize', async (change) => {
+    const f = fixture({ chat: true }), popup = popupChat(f);
+    const holder = f.page.createElement('section'), duplicate = f.page.createElement('aside');
+    duplicate.className = popupClasses[0]!; holder.append(duplicate);
+    if (change === 'existing element ID change') f.page.body.append(holder);
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: '테스트' });
+    await vi.advanceTimersByTimeAsync(400); expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(true);
+    duplicate.id = 'aside-chatting';
+    if (change === 'subtree insertion') f.page.body.append(holder);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
+    expect(f.page.querySelector('[data-atsumi-chat-layout]')).toBeNull();
+    expect(f.page.querySelector('.atsumi-chat-scale')).toBeNull();
+    expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(false);
+    if (change === 'subtree insertion') holder.remove(); else duplicate.removeAttribute('id');
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(true);
+    expect(f.page.querySelectorAll('.atsumi-chat-scale')).toHaveLength(1);
+    expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(true);
+    expect(popup.input.parentElement).toBe(popup.root); expect(popup.menu.parentElement).toBe(popup.header);
+  });
+  it('does not schedule popup refitting for ordinary message appends or unrelated class and ID updates', async () => {
+    const f = fixture({ chat: true }), popup = popupChat(f);
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: '테스트' });
+    await vi.advanceTimersByTimeAsync(400);
+    const controls = popup.header.querySelector('.atsumi-chat-scale')!;
+    const create = vi.spyOn(f.page, 'createElement'), originalAttribute = vi.spyOn(popup.original, 'setAttribute');
+    const rows = Array.from({ length: 30 }, (_, index) => {
+      const row = f.page.createElement('div'); row.textContent = 'synthetic message'; row.id = `message-${index}`;
+      return row;
+    });
+    create.mockClear();
+    for (const [index, row] of rows.entries()) {
+      popup.root.append(row); row.className = `message-state-${index}`; row.id = `message-updated-${index}`;
+    }
+    for (const row of rows.slice(0, 10)) row.remove();
+    await Promise.resolve();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(vi.getTimerCount()).toBe(0); expect(create).not.toHaveBeenCalled(); expect(originalAttribute).not.toHaveBeenCalled();
+    expect(popup.header.querySelector('.atsumi-chat-scale')).toBe(controls);
+    expect(f.page.querySelectorAll('.atsumi-chat-scale')).toHaveLength(1);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(true);
+    expect(popup.input.parentElement).toBe(popup.root); expect(popup.menu.parentElement).toBe(popup.header);
+  });
+  it.each([
+    { name: 'watch page', url: `https://chzzk.naver.com/live/${ID}` },
+    { name: 'other route', url: `https://chzzk.naver.com/live/${ID}/other` },
+    { name: 'foreign origin', url: `https://other.example/live/${ID}/chat` },
+    { name: 'query suffix', url: `https://chzzk.naver.com/live/${ID}/chat?extra=1` },
+    { name: 'fragment suffix', url: `https://chzzk.naver.com/live/${ID}/chat#extra` },
+    { name: 'nested frame', nested: true },
+  ])('never applies popup fitting to a $name even with the current official class', (options) => {
+    const f = fixture({ chat: true, ...options }), popup = popupChat(f);
+    f.pageWindow.__atsumiMultiView?.configureChat({ channelId: ID, number: 1, channelName: '테스트' }); f.advance();
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
+    expect(f.page.querySelector('[data-atsumi-chat-layout]')).toBeNull();
+    expect(f.page.querySelector('.atsumi-chat-scale')).toBeNull();
+    expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(false);
+    expect(popup.input.parentElement).toBe(popup.root); expect(popup.menu.parentElement).toBe(popup.header);
+  });
+  it('fits a late current popup once and reattaches after the official root/header is replaced', async () => {
+    const f = fixture({ chat: true, width: 175, height: 300 });
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: '테스트' }); f.advance();
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(false);
+    const popup = popupChat(f);
+    popup.input.value = '작성 중 ㄱ'; popup.input.setSelectionRange(5, 5);
+    const key = vi.fn(), menuClick = vi.fn();
+    popup.input.addEventListener('keydown', key); popup.menu.querySelector('button')!.addEventListener('click', menuClick);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.page.body.hasAttribute('data-atsumi-chat-fit')).toBe(true);
+    for (const parent of [popup.wrapper, popup.section, popup.inner]) expect(parent.hasAttribute('data-atsumi-chat-layout')).toBe(true);
+    expect(popup.header.querySelectorAll('.atsumi-chat-scale')).toHaveLength(1);
+    const oldControl = popup.header.querySelector('.atsumi-chat-scale')!;
+    const replacementRoot = f.page.createElement('aside'); replacementRoot.id = 'aside-chatting'; replacementRoot.className = popupClasses[0]!;
+    const replacementHeader = chatHeader(f.page), replacementOriginal = replacementHeader.querySelector('._scale_1e2su_39')!;
+    replacementOriginal.querySelector('span')!.className = '_scale_text_1e2su_46';
+    replacementHeader.querySelector('._menu_1e2su_36')!.replaceWith(popup.menu);
+    replacementRoot.append(replacementHeader, popup.input); popup.root.replaceWith(replacementRoot);
+    await vi.advanceTimersByTimeAsync(400); f.again(); f.pageWindow.dispatchEvent(new Event('resize')); await vi.advanceTimersByTimeAsync(400);
+    expect(oldControl.isConnected).toBe(false); expect(popup.original.hasAttribute('data-atsumi-chat-scale-original')).toBe(false);
+    expect(f.page.querySelectorAll('.atsumi-chat-scale')).toHaveLength(1);
+    expect(replacementOriginal.hasAttribute('data-atsumi-chat-scale-original')).toBe(true);
+    replacementHeader.querySelector<HTMLButtonElement>('.atsumi-chat-scale button')!.click();
+    expect(f.page.body.style.getPropertyValue('--atsumi-chat-zoom')).toBe('0.9');
+    expect(popup.input.value).toBe('작성 중 ㄱ'); expect([popup.input.selectionStart, popup.input.selectionEnd]).toEqual([5, 5]);
+    expect(popup.input.parentElement).toBe(replacementRoot); expect(popup.menu.parentElement).toBe(replacementHeader);
+    expect(replacementHeader.querySelector('h2')!.style.fontSize).toBe('15px');
+    const event = new KeyboardEvent('keydown', { key: 'Backspace', cancelable: true }); popup.input.dispatchEvent(event);
+    popup.menu.querySelector<HTMLButtonElement>('button')!.click();
+    expect(event.defaultPrevented).toBe(false); expect(key).toHaveBeenCalledOnce(); expect(menuClick).toHaveBeenCalledOnce();
+  });
+  it.each(["minimum", "native maximum"])("settles at the %s scale without repeatedly rewriting the header during composition", async (limit) => {
+    const f = fixture({ chat: true }), header = chatHeader(f.page);
+    const root = f.page.createElement("aside"); root.id = "aside-chatting"; root.className = "_is_popup_chat_b8csn_13";
+    const input = f.page.querySelector("textarea")!;
+    root.append(header, input); f.page.body.append(root);
+    const original = header.querySelector("._scale_1e2su_39")!;
+    const nativeValue = original.querySelector("span")!; nativeValue.className = "_scale_text_1e2su_46";
+    const nativePlus = original.querySelectorAll("button")[1]!;
+    if (limit === "native maximum") { nativeValue.textContent = "200%"; nativePlus.disabled = true; }
+    f.pageWindow.__atsumiMultiView!.configureChat({ channelId: ID, number: 1, channelName: "테스트" });
+    await vi.advanceTimersByTimeAsync(400);
+    const minus = header.querySelector<HTMLButtonElement>(".atsumi-chat-scale button")!;
+    const plus = header.querySelector<HTMLButtonElement>(".atsumi-chat-scale button:last-child")!;
+    if (limit === "minimum") for (let i = 0; i < 5; i++) minus.click();
+    input.value = "작성 중 ㄱ"; input.setSelectionRange(5, 5);
+    input.dispatchEvent(new Event("compositionstart"));
+    const draft = input.outerHTML, selection = [input.selectionStart, input.selectionEnd];
+    const focus = vi.spyOn(input, "focus"), mutate = vi.spyOn(input, "setAttribute");
+    await vi.advanceTimersByTimeAsync(600);
+    expect(limit === "minimum" ? minus.disabled : plus.disabled).toBe(true);
+    // Same-value disabled=true assignments are observable DOM mutations too.
+    // They must not schedule another 150ms presentation pass forever.
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(input.outerHTML).toBe(draft); expect(input.value).toBe("작성 중 ㄱ");
+    expect([input.selectionStart, input.selectionEnd]).toEqual(selection);
+    expect(input.parentElement).toBe(root); expect(mutate).not.toHaveBeenCalled(); expect(focus).not.toHaveBeenCalled();
+    input.dispatchEvent(new Event("compositionend"));
+    if (limit === "minimum") {
+      plus.click(); expect(minus.disabled).toBe(false);
+      expect(header.querySelector(".atsumi-chat-scale output")?.textContent).toBe("60%");
+    } else {
+      nativePlus.disabled = false; nativeValue.textContent = "175%";
+      await vi.advanceTimersByTimeAsync(400);
+      expect(plus.disabled).toBe(false);
+      expect(header.querySelector(".atsumi-chat-scale output")?.textContent).toBe("175%");
+    }
+    await vi.advanceTimersByTimeAsync(400);
+    expect(vi.getTimerCount()).toBe(0);
   });
   it("places a plain-text channel label inside the original chat heading, preserving its controls and typography", () => {
     const f = fixture({ chat: true }); const header = chatHeader(f.page), heading = header.querySelector('h2')!;

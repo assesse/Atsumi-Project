@@ -2,6 +2,64 @@
 // Native code owns the save location and issues one-use, channel-bound permits.
 (() => {
   "use strict";
+  // Kept in parity with screenshotPreviewLifetime.ts by the regression test.
+  function createPreviewLifetime(clock, deadline, handlers) {
+    let hideTimer = null, expiryTimer = null, revision = 0;
+    let disposed = false, hovered = false, focused = false, blocked = false;
+    let expired = false, expiryGrace = false, hideAt = clock.now() + 3000;
+    function cancelHide() {
+      ++revision;
+      if (hideTimer !== null) clock.clear(hideTimer);
+      hideTimer = null;
+    }
+    function expire() {
+      if (!expired && clock.now() >= deadline) {
+        expired = true;
+        handlers.expire();
+      }
+    }
+    function schedule() {
+      cancelHide();
+      if (disposed) return;
+      expire();
+      if (disposed || blocked || focused || (hovered && !expired)) return;
+      const at = expired ? (expiryGrace ? hideAt : clock.now()) : Math.min(hideAt, deadline);
+      const ticket = revision;
+      hideTimer = clock.set(() => {
+        if (disposed || ticket !== revision) return;
+        expire();
+        if (blocked || focused || (hovered && !expired)) { schedule(); return; }
+        dispose();
+        handlers.dismiss();
+      }, Math.max(0, at - clock.now()));
+    }
+    function hover(value) {
+      if (disposed || hovered === value) return;
+      hovered = value;
+      if (!value && !expired) hideAt = clock.now() + 1500;
+      schedule();
+    }
+    function focus(value) {
+      if (disposed || focused === value) return;
+      focused = value;
+      if (!value) { hideAt = clock.now() + 1500; expiryGrace = expired; }
+      schedule();
+    }
+    function block(value) {
+      if (disposed || blocked === value) return;
+      blocked = value;
+      schedule();
+    }
+    function dispose() {
+      if (disposed) return;
+      disposed = true; cancelHide();
+      if (expiryTimer !== null) clock.clear(expiryTimer);
+      expiryTimer = null;
+    }
+    expiryTimer = clock.set(() => { if (!disposed) { expire(); schedule(); } }, Math.max(0, deadline - clock.now()));
+    schedule();
+    return { hover, focus, block, dispose };
+  }
   const channel = () => window.location.origin === "https://chzzk.naver.com" &&
     /^\/live\/([a-f0-9]{32})\/?$/i.exec(window.location.pathname)?.[1].toLowerCase();
   if (!channel() || window.top !== window || !window.chrome?.webview?.postMessage || window.__atsumiPlayerUI) return;
@@ -12,6 +70,21 @@
   let controls = null, record = null, screenshot = null, speed = null, player = null, style = null;
   let topControls = null, settings = null, rateButton = null, rateMenu = null;
   let recordOnly = null;
+  let viewerClose = null, viewerCloseBusy = false;
+  const closeViewer = async event => {
+    if (!event.isTrusted || viewerCloseBusy || !pageActive || context.automaticWatch || !channel() || typeof window.__atsumiCloseViewerNonce !== "string") return;
+    event.preventDefault(); event.stopPropagation(); viewerCloseBusy = true;
+    try {
+      await new Promise((resolve,reject) => {
+        const id=crypto.randomUUID();
+        const timer=setTimeout(()=>{pending.delete(id);reject(new Error("시청 종료를 확인하지 못했습니다."));},8000);
+        pending.set(id,{resolve,reject,timer});
+        try { window.chrome.webview.postMessage("ATSUMI_VIEWER_CLOSE:"+JSON.stringify({id,nonce:window.__atsumiCloseViewerNonce})); }
+        catch {clearTimeout(timer);pending.delete(id);reject(new Error("시청 종료를 요청하지 못했습니다."));}
+      });
+    } catch(error) { tell(error.message); }
+    finally {viewerCloseBusy=false;}
+  };
   const context = { multiview: false, automaticWatch: false };
   let catchup = null;
   let selectedRate = null;
@@ -60,7 +133,7 @@
   };
   let snapshotBusy = false, intentBusy = false, notice = "", noticeUntil = 0;
   let pageRevision = 0, screenshotNotice = null, screenshotNoticeTimer = null;
-  let screenshotPreview = null, screenshotPreviewUrl = null, screenshotPreviewTimer = null;
+  let screenshotPreview = null, screenshotPreviewUrl = null, screenshotPreviewLifetime = null, screenshotPreviewResize = null, screenshotUndoBusy = false;
   const request = (kind, fields) => new Promise((resolve, reject) => {
     const id = crypto.randomUUID();
     const timer = setTimeout(() => { pending.delete(id); reject(new Error("응답을 받지 못했습니다")); }, 8000);
@@ -260,7 +333,7 @@
     if (topControls.getAttribute("data-placement") !== placement) topControls.setAttribute("data-placement", placement);
   };
   const removeControls = () => {
-    controls?.remove(); topControls?.remove();
+    controls?.remove(); topControls?.remove(); viewerClose?.remove();
   };
   const scheduleRender = () => {
     if (!pageActive || renderFrame !== null) return;
@@ -277,6 +350,13 @@
     if (!style) {
       style = document.createElement("style"); style.id = "atsumi-player-ui-style";
       style.textContent = `
+        #atsumi-viewer-close{position:absolute;top:12px;left:50%;transform:translateX(-50%);display:grid;place-items:center;width:72px;height:72px;box-sizing:border-box;padding:0;margin:0;border:0;border-radius:50%;background:#0009;color:#fff;cursor:pointer;z-index:2147483646;opacity:0;visibility:hidden;pointer-events:none;transition:opacity .2s ease-in,visibility 0s .2s}
+        .pzp-pc.pzp-pc--controls #atsumi-viewer-close,html:not(:has(.pzp-pc))[data-atsumi-controls=visible] #atsumi-viewer-close{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .2s ease-in}
+        #atsumi-viewer-close[hidden]{display:none!important}
+        #atsumi-viewer-close:hover{background:#000c}#atsumi-viewer-close:focus-visible{outline:2px solid #fff;outline-offset:2px}
+        #atsumi-viewer-close svg{width:40px;height:40px;max-width:60%;max-height:60%;pointer-events:none}
+        #atsumi-screenshot-preview button:focus-visible{outline:2px solid #fff;outline-offset:-3px}
+        #atsumi-screenshot-preview button[aria-disabled=true]{cursor:default;opacity:.7}
         [data-atsumi-cursor-restored]{cursor:auto!important}
         button[data-atsumi-cursor-restored],a[data-atsumi-cursor-restored],[role=button][data-atsumi-cursor-restored]{cursor:pointer!important}
         /* PZP fades each button, not the parent strip. Match its state and
@@ -334,6 +414,18 @@
     topControls.hidden = context.multiview || context.automaticWatch;
     if (context.multiview) topControls.remove();
     else layoutTopControls(nextPlayer);
+    if (nextPlayer && typeof window.__atsumiCloseViewerNonce === "string") {
+      if (!viewerClose) {
+        viewerClose=document.createElement("button");viewerClose.type="button";viewerClose.id="atsumi-viewer-close";
+        viewerClose.setAttribute("aria-label","방송 시청 종료");viewerClose.title="방송 시청 종료";
+        viewerClose.innerHTML='<svg aria-hidden="true" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+        viewerClose.addEventListener("click",event=>void closeViewer(event));
+      }
+      if(viewerClose.parentElement!==nextPlayer)nextPlayer.appendChild(viewerClose);
+      const bounds=nextPlayer.getBoundingClientRect(),size=Math.max(0,Math.min(72,bounds.width-24,bounds.height-24));
+      viewerClose.style.width=viewerClose.style.height=`${size}px`;
+      viewerClose.hidden=context.automaticWatch||!Number.isFinite(size)||size<=0;viewerClose.disabled=viewerCloseBusy;
+    } else viewerClose?.remove();
     if (!nextPlayer || !video) { controls?.remove(); return; }
     if (!controls) {
       controls = document.createElement("div"); controls.id = "atsumi-player-controls";
@@ -417,51 +509,84 @@
     screenshot.title = snapshotBusy ? "스크린샷 저장 중…" : "스크린샷 · S";
 
   };
-  const showScreenshotNotice = (text, saving = false) => {
+  const showScreenshotNotice = (text, saving = false, error = false) => {
     clearTimeout(screenshotNoticeTimer); screenshotNotice?.remove();
     if (!pageActive || !player?.isConnected) return;
     screenshotNotice = document.createElement("div"); screenshotNotice.id = "atsumi-screenshot-notice";
-    screenshotNotice.setAttribute("role", "status"); screenshotNotice.textContent = text;
+    screenshotNotice.setAttribute("role", error ? "alert" : "status"); screenshotNotice.textContent = text;
     screenshotNotice.style.cssText = "position:absolute;right:14px;bottom:56px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 28px);padding:9px 12px;border:1px solid #ffffff26;border-radius:7px;background:#252528f5;color:#fff;font:13px/1.5 system-ui,sans-serif;box-shadow:0 4px 16px #0005";
     player.appendChild(screenshotNotice);
-    if (!saving) screenshotNoticeTimer = setTimeout(() => screenshotNotice?.remove(), 2600);
+    if (error) {
+      const node = screenshotNotice, close = document.createElement("button"); close.type = "button";
+      close.textContent = "×"; close.setAttribute("aria-label", "스크린샷 오류 닫기");
+      close.style.cssText = "pointer-events:auto;border:0;margin-left:8px;background:transparent;color:inherit;font:18px/1 system-ui;cursor:pointer";
+      close.addEventListener("click", event => { if (event.isTrusted) { event.stopPropagation(); node.remove(); } });
+      node.appendChild(close);
+    } else if (!saving) screenshotNoticeTimer = setTimeout(() => screenshotNotice?.remove(), 2600);
   };
   const clearScreenshotPreview = () => {
-    clearTimeout(screenshotPreviewTimer); screenshotPreview?.remove(); screenshotPreview = null;
+    screenshotPreviewLifetime?.dispose(); screenshotPreviewLifetime = null;
+    screenshotPreviewResize?.disconnect(); screenshotPreviewResize = null;
+    screenshotPreview?.remove(); screenshotPreview = null;
     if (screenshotPreviewUrl) URL.revokeObjectURL(screenshotPreviewUrl);
     screenshotPreviewUrl = null;
   };
-  const showScreenshotPreview = (blob, id, sourceChannel, revision) => {
+  const showScreenshotPreview = (blob, id, sourceChannel, revision, undoDeadline) => {
     clearScreenshotPreview();
     if (!/^[a-f0-9]{32}$/.test(id ?? "") || !pageActive || !player?.isConnected) return;
     const popup = document.createElement("div"); popup.id = "atsumi-screenshot-preview";
-    popup.style.cssText = "position:absolute;left:12px;top:64px;width:min(480px,80%);z-index:2147483647;pointer-events:auto;overflow:hidden;border:1px solid #ffffff40;border-radius:8px;background:#202024f5;box-shadow:0 6px 24px #0008;color:white;font:12px/1.5 system-ui,sans-serif";
+    popup.style.cssText = "position:absolute;left:12px;top:clamp(8px,12%,64px);width:min(480px,80%);z-index:2147483647;pointer-events:auto;overflow:hidden;border:0;outline:1px solid #ffffff59;outline-offset:-1px;border-radius:0;background:transparent;box-shadow:none;color:white";
+    popup.setAttribute("role", "group"); popup.setAttribute("aria-label", "방금 저장한 스크린샷");
     const image = document.createElement("img"); image.alt = "방금 저장한 스크린샷";
     screenshotPreviewUrl = URL.createObjectURL(blob); image.src = screenshotPreviewUrl;
-    image.style.cssText = "display:block;width:100%;max-height:320px;object-fit:contain;background:#080808";
-    const footer = document.createElement("div"); footer.style.cssText = "display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 9px";
-    const label = document.createElement("span"); label.textContent = "스크린샷 저장됨";
-    const undo = document.createElement("button"); undo.type = "button"; undo.textContent = "저장 취소"; undo.setAttribute("aria-label", "스크린샷 저장 취소");
-    undo.style.cssText = "border:0;border-radius:4px;padding:4px 6px;background:#ffffff18;color:white;cursor:pointer;font:inherit;white-space:nowrap";
+    image.style.cssText = "display:block;width:100%;height:auto;background:transparent";
+    const fit = () => {
+      if (!player?.isConnected || screenshotPreview !== popup) return;
+      const ratio = image.naturalWidth && image.naturalHeight ? image.naturalWidth / image.naturalHeight : 16 / 9;
+      const top = Math.max(8, Math.min(64, player.clientHeight * .12));
+      popup.style.width = `${Math.max(1, Math.min(480, player.clientWidth - 24, Math.min(320, player.clientHeight - top - 12) * ratio))}px`;
+    };
+    image.addEventListener("load", fit);
+    const dismiss = document.createElement("button"); dismiss.type = "button"; dismiss.setAttribute("aria-label", "스크린샷 미리보기 닫기"); dismiss.title = "스크린샷 미리보기 닫기";
+    dismiss.innerHTML = '<svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+    dismiss.style.cssText = "position:absolute;right:6px;top:6px;box-sizing:border-box;display:grid;place-items:center;width:32px;height:32px;min-width:32px;min-height:32px;margin:0;padding:0;border:0;border-radius:4px;background:#000a;color:white;cursor:pointer";
+    dismiss.addEventListener("click", event => {
+      event.stopPropagation();
+      if (event.isTrusted && !screenshotUndoBusy && screenshotPreview === popup && pageActive && pageRevision === revision && sourceChannel === channel()) clearScreenshotPreview();
+    });
+    const undo = document.createElement("button"); undo.type = "button"; undo.setAttribute("aria-label", "스크린샷 저장 취소"); undo.title = "스크린샷 저장 취소";
+    undo.textContent = "취소";
+    undo.style.cssText = "position:absolute;right:6px;bottom:6px;box-sizing:border-box;display:grid;place-items:center;min-width:32px;height:32px;min-height:32px;margin:0;padding:0 10px;border:0;border-radius:4px;background:#000a;color:white;font:12px/1.5 system-ui,sans-serif;cursor:pointer";
+    let unavailable = false;
+    const lifetime = createPreviewLifetime({ now: () => performance.now(), set: (callback, ms) => window.setTimeout(callback, ms), clear: id => window.clearTimeout(id) }, undoDeadline, {
+      dismiss: () => { if (screenshotPreview === popup) clearScreenshotPreview(); },
+      expire: () => { unavailable = true; undo.setAttribute("aria-disabled", "true"); undo.setAttribute("aria-label", "취소 시간이 지났습니다. 스크린샷 목록에서 관리해 주세요."); undo.title = undo.getAttribute("aria-label"); },
+    });
+    popup.addEventListener("pointerenter", () => lifetime.hover(true));
+    popup.addEventListener("pointerleave", () => lifetime.hover(false));
+    popup.addEventListener("focusin", () => lifetime.focus(true));
+    popup.addEventListener("focusout", event => { if (!popup.contains(event.relatedTarget)) lifetime.focus(false); });
+    popup.addEventListener("keydown", event => event.stopPropagation());
     undo.addEventListener("click", async event => {
-      if (!event.isTrusted || undo.disabled || !pageActive || pageRevision !== revision || sourceChannel !== channel()) return;
-      event.stopPropagation(); undo.disabled = true; clearTimeout(screenshotPreviewTimer);
+      if (!event.isTrusted || unavailable || screenshotUndoBusy || screenshotPreview !== popup || performance.now() >= undoDeadline || !pageActive || pageRevision !== revision || sourceChannel !== channel()) return;
+      event.stopPropagation(); screenshotUndoBusy = true; unavailable = true; undo.setAttribute("aria-busy", "true"); undo.setAttribute("aria-disabled", "true"); dismiss.setAttribute("aria-disabled", "true"); lifetime.block(true);
       try {
         await request("screenshot_undo", { screenshotId: id });
         if (screenshotPreview === popup) { clearScreenshotPreview(); showScreenshotNotice("스크린샷 저장 취소됨"); }
       } catch {
-        if (screenshotPreview === popup) { label.textContent = "취소 실패 · 목록에서 삭제 가능"; undo.remove(); screenshotPreviewTimer = setTimeout(clearScreenshotPreview, 5000); }
-      }
+        if (screenshotPreview === popup) { clearScreenshotPreview(); showScreenshotNotice("취소를 확인하지 못했습니다. 스크린샷 목록에서 확인해 주세요.", false, true); }
+      } finally { screenshotUndoBusy = false; }
     });
-    footer.append(label, undo); popup.append(image, footer); player.appendChild(popup); screenshotPreview = popup;
-    screenshotPreviewTimer = setTimeout(clearScreenshotPreview, 10000);
+    popup.append(image, dismiss, undo); player.appendChild(popup); screenshotPreview = popup; screenshotPreviewLifetime = lifetime;
+    screenshotPreviewResize = new ResizeObserver(fit); screenshotPreviewResize.observe(player); fit();
   };
   const saveScreenshot = async (command) => {
-    if (!pageActive || snapshotBusy || intentBusy || context.automaticWatch || !channel()) return;
+    if (!pageActive || snapshotBusy || screenshotUndoBusy || intentBusy || context.automaticWatch || !channel()) return;
     if (command && (!UUID.test(command.requestId ?? "") || command.channelId !== channel())) return;
     const sourceChannel = channel(), revision = pageRevision;
     let requestId = command?.requestId;
     snapshotBusy = true;
+    const undoDeadline = performance.now() + 45000;
     const deadline = Date.now() + 19000;
     const check = () => { if (!pageActive || revision !== pageRevision || Date.now() > deadline || sourceChannel !== channel()) throw new Error("스크린샷 요청이 만료됐습니다"); };
     let canvas;
@@ -502,8 +627,8 @@
       }
       check(); const saved = await request("screenshot_finish", { requestId });
       if (pageActive && revision === pageRevision && sourceChannel === channel()) {
-        showScreenshotNotice("스크린샷 저장 완료");
-        try { showScreenshotPreview(blob, saved?.id, sourceChannel, revision); } catch { /* Saving succeeded even if a preview cannot be displayed. */ }
+        clearTimeout(screenshotNoticeTimer); screenshotNotice?.remove(); screenshotNotice = null;
+        try { showScreenshotPreview(blob, saved?.id, sourceChannel, revision, undoDeadline); } catch { showScreenshotNotice("스크린샷 저장 완료"); }
       }
     } catch {
       if (UUID.test(requestId ?? "")) void request("screenshot_abort", { requestId }).catch(() => {});

@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "updatedAt": "2026-10-13",
+  "state": "approved-production-batch-and-nul-correction-implemented; native-verified; rebuilt-desktop-flow-pending",
+  "scope": ["youtube", "soop"],
+  "requirements": ["R003", "R009", "R013", "R015", "R022"],
+  "originals": [
+    {"turnId": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "Hours-long viewing and recording share one video ingress and preserve chat; the original explicitly includes SOOP and YouTube."},
+    {"turnId": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Automatically clean original chunks and intermediate files only after successful merge and validation, retaining the completed video and chat."},
+    {"turnId": "01a13142-4c44-7560-bde6-d7e089fd9ea9", "rule": "New platforms preserve earlier requests and fit the established UI and relevant CHZZK workflows."},
+    {"turnId": "01a10785-1343-76e2-8820-053e98507cbb", "rule": "Asynchronous work throughout the app must show its actual progress; missing or failed work must not appear successfully complete."}
+  ],
+  "audit": {
+    "main": {"turns": 230, "messages": 284, "paginationExhausted": true, "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676"},
+    "other": {"uniqueTurns": 333, "messages": 375, "accessiblePaginationExhausted": true, "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21"},
+    "specifications": {"files": 69, "lines": 5742, "sha256": "7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C", "currentFileHashesChecked": 69, "changedOriginalFiles": 0},
+    "reuse": "Previously completely read snapshots retain their revisions and EOF coverage. The four original requests above were reread verbatim before this document. AGENTS, current implementation policy, media/replay/SOOP contracts, CHZZK replay/capture clocks and the changed rich-chat contract including its asset-close durability batch were reviewed.",
+    "unavailable": ["Old durable thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Referenced but unidentified Atsumi analysis1/2", "Unretained historical image-only attachment pixels"],
+    "authority": "This assignment authorizes this plan only. No production source edit, native/frontend build, QA launch/rebuild, existing-app control, account use, real recording, commit or release. Production implementation awaits the parent's full review and explicit assignment."
+  },
+  "specifications": [
+    "docs/requirements/implementation-policy.json",
+    "docs/requirements/platform-media-contract.json",
+    "docs/requirements/platform-replay-chat.json",
+    "docs/requirements/platform-rich-chat.json",
+    "docs/requirements/soop-chat-implementation.json",
+    "docs/CHZZK_REPLAY.md",
+    "docs/CHZZK_CAPTURE_CLOCKS.md"
+  ],
+  "findings": [
+    {"priority": "P1", "source": "src-tauri/src/platform_media/live.rs:1147-1164", "problem": "A text archive cap/write/sync error returned by detach_archive prevents finalize_recording even when the captured video is healthy. Live reception continues until stop, so failure can become visible only at finalization."},
+    {"priority": "P1", "source": "src-tauri/src/platform_media/live.rs:1257-1294", "problem": "Manual recovery calls finalize_recording without a durable chat-completeness check. A later successful video retry can remove owned TS inputs without retaining a durable partial-chat warning."},
+    {"priority": "P1", "source": "src-tauri/src/platform_media.rs:951-965", "problem": "Publishing a verified video clears the general job error. Chat preservation cannot rely on that transient error field."},
+    {"priority": "P2", "source": "src-tauri/src/platform_media/live_chat.rs:212-229,536-570", "problem": "Mutex/detach failure and successful detach with incomplete text storage currently share an Err path. Ignoring all errors would permit finalization while an archive may still be attached. Rich asset close already has a distinct warning/preserve-source path; its incomplete result must not be confused with complete text storage."},
+    {"priority": "P2", "source": "src-tauri/src/platform_media/replay_chat.rs:16,548-567,623,726", "problem": "Removing the writer's128MiB cap alone would leave replay unable to read larger archives. Replay partial_file currently recognizes only a .part filename, not a truncated-but-valid JSONL archive."}
+  ],
+  "decisions": {
+    "separateOutcomes": "Video validation, text-archive storage and optional rich-asset availability are different outcomes. A verified video with a durably recorded partial-chat warning may be played; it is not a claim that all requested recording data was saved.",
+    "noBlanketIgnore": "Keep Result<ChatDetachOutcome, DetachFailure>. An inability to lock/take/detach the archive, or to prove its write target was closed, is a hard failure: do not publish completion or clean inputs. Once detached under the session lock, an archive cap/write/flush failure is a structured incomplete outcome, not a reason to skip independent video verification.",
+    "cleanup": "Cleanup requires full video decode/hash verification, durable completed video proof, and affirmative durable text-storage completion with no existing preserve-source protection. Partial, unknown, writing, corrupt or unavailable chat status retains owned TS/merge inputs and all raw/normalized chat. Existing exact-owned cleanup restrictions remain; no glob-based ownership and no deletion of unknown files.",
+    "caps": "Keep current raw-plus-normalized128MiB and all line/ring/reader/index limits. Rotation and long-file support require a separate writer/manifest/reader design and separate acceptance evidence; this batch neither removes nor increases those caps.",
+    "completionMeaning": "A text-storage complete result means accepted archive writes were durably finished without a known local storage failure. It does not prove that an upstream disconnect lost no messages, every provider rich event was supported, timing is exact, or an empty/connection-only archive contains real chat. Do not display a blanket all-chat-saved claim."
+  },
+  "proposedContracts": {
+    "detach": {
+      "shape": "Result<ChatDetachOutcome, DetachFailure>; outcome includes the detached archive identity and TextStorageOutcome, with existing asset-incomplete/preserve-source information kept separate.",
+      "textOutcome": "Complete or Partial with bounded typed reason codes (archive_limit, write_failed, flush_failed, interrupted, status_unknown). No raw error text, chat contents, author IDs, tokens or URLs in persisted diagnostics.",
+      "fence": "Take and close the current sink under its existing mutex before allowing a new recording attachment. An old finalizer must only use its detached job identity/outcome, never the current session's new archive. No additional media/chat receiver.",
+      "writerStats": "Keep bounded aggregate counts/byte totals and last-received sequence/time only if actually observed. Distinguish written/accepted from successfully synced values; do not label an unsynced counter as saved or invent a boundary after flush failure."
+    },
+    "durableStatus": {
+      "path": "Owned job directory/chat-status.json is the immutable version1 writing/attachment marker; chat-status.final.json is the immutable version1 terminal proof. Both use exact basenames and a16KiB read bound. Windows pins all ancestors against rename/delete, holds an exclusive-write/delete temporary-file handle and publishes through same-handle FileRenameInfo with ReplaceIfExists=false. Unknown targets are never overwritten and no path-based temporary unlink occurs. Read/link/type/length/hash validation uses the actual held handle. Non-Windows no-replace fallback is not claimed Windows-equivalent verified security.",
+      "identity": "Bind provider, job UUID and recording/attachment identity. Validate exact schema/version/enums, finite counters, owned regular file/ancestor identity and no reparse/hardlink access. Do not accept a renderer-provided path.",
+      "storageState": ["writing", "complete", "partial", "unknown"],
+      "fields": "Version/identity, storageState, bounded reason codes, whether originals must be retained, optional proven aggregate byte/sequence checkpoints. No text, nickname, raw account identifier, remote URL or credential.",
+      "begin": "Persist the writing marker before the new recording is considered to have an attached writable archive. A failure prevents recording acceptance rather than silently creating an untracked successful archive.",
+      "finish": "After actual detach and final flush attempts, durably publish complete/partial status before reporting a completed video. Use an owned temporary status file plus sync and verified publication; never overwrite an unknown target or discard the previous valid status on a failed update.",
+      "crash": "Reader first validates the writing marker's identity/version, then the matching terminal proof. A valid partial terminal remains partial on every retry. A missing terminal after a writing marker becomes interrupted/partial on recovery. Legacy absence becomes unknown. Existing malformed, oversized, wrong-identity or conflicting terminal proof is fail-closed, not replaced or interpreted as complete. An interrupted temporary-file publication leaves the marker and original files intact; a corrupt published proof cannot be automatically repaired.",
+      "failure": "If the required partial warning cannot be persisted, fail closed: preserve all inputs and any already-created/verified final video, retain the last valid journal, do not publish a completed library item, and surface/latch a persistence error. Existing ordinary-quit versus factory-reset shutdown_error rules apply; a timeout is not success."
+    },
+    "dto": {
+      "proposal": "MediaLibraryItem.chatArchive?: { state: 'complete' | 'partial' | 'unknown'; reasons: string[]; originalsRetained: boolean } | null, using native allowlisted codes rather than arbitrary strings. A serde-default optional field maintains existing journal/IPC compatibility. The nested library entry in MediaJob exposes the same summary without adding job-state variants.",
+      "semantics": "completed still means verified playable video, while chatArchive.partial/unknown is an independent durable warning. Generic successful polling, publication error=None and retry must not clear it. Normal VOD downloads have no new chat claim.",
+      "ui": "Keep existing library/card/player geometry and interactions. Affected live recordings show a concise warning such as '채팅 일부 누락' or '채팅 상태 확인 필요', with a short reason and '원본 보존' where true. The same current item summary remains visible during replay; no long description, modal, unrelated action or fake progress is added."
+    }
+  },
+  "flow": [
+    "Create validated recording identity and durable writing marker; attach the archive only if initialization succeeds.",
+    "Maintain the existing single session receiver and bounded ring. A text cap or I/O failure remains sticky; it does not silently reset on later successful live messages or a new polling reply.",
+    "Stop this recording: detach its archive synchronously and fence late writes. Hard detach failure retains all data and fails the job.",
+    "For a safely detached archive, attempt final sync, classify local text storage, persist complete/partial proof and retain any existing rich-asset warning separately.",
+    "If proof is durable and video inputs are healthy, run the existing bounded merge/full decode/hash verification. Publish the verified video with its durable chat warning rather than treating chat failure as video corruption.",
+    "Clean exact-owned intermediates only when video proof and chat cleanup eligibility both succeed. Otherwise keep final video, source chunks, merge inputs, raw chat, normalized chat and status evidence.",
+    "Recovery/retry uses the same helper and cleanup gate, with no provider request or automatic new broadcast capture. Revalidate an already published media file; a retry cannot turn partial/unknown into complete merely because merge succeeds."
+  ],
+  "compatibility": [
+    "Existing completed VOD and live files remain readable/playable with their original video proof. A missing optional legacy chat status is unknown/not recorded, never retroactively complete, and does not invalidate or rewrite existing media.",
+    "Do not bulk migrate or inspect user recordings. Read the small optional status only for the owned requested item as needed, with bounded I/O.",
+    "An unfinished legacy live recording lacking the new proof may be revalidated into a playable video with a durable unknown-status warning, but its original/intermediate cleanup remains disabled.",
+    "A corrupt/unreadable status for an existing completed video may show chat-state-unknown while verified video playback remains available. It must not authorize cleanup, source rewrite or a silent successful status repair.",
+    "Do not change old chat timestamps, backfill rich data, replace normalized/raw files, rewrite final media, or use missing actual messages as successful chat-preservation evidence."
+  ],
+  "ownershipPlan": {
+    "youtube_platform_after_approval": [
+      "src-tauri/src/platform_media/live.rs",
+      "src-tauri/src/platform_media/live_chat.rs",
+      "src-tauri/src/platform_media.rs",
+      "src-tauri/src/platform_media/chat_status.rs (new bounded helper and isolated tests)",
+      "src/features/platforms/platformMedia.ts (optional DTO only)",
+      "src/features/platforms/PlatformMediaLibrary.tsx",
+      "src/features/platforms/PlatformMediaLibrary.test.tsx",
+      "src/features/platforms/PlatformMediaLibrary.css (only if existing status geometry needs a narrow rule)",
+      "src-tauri/src/platform_media/queries.rs (parent-approved test literal optional field only)"
+    ],
+    "coordination": "Parent assigns final ownership after reviewing this plan. Pinterest agent owns chat_assets.rs asset-close P2; do not edit it or its separate status format. Any additional lifecycle/helper file or required test-literal update must be listed before editing. No lib/commands IPC registration is expected for an additive existing DTO.",
+    "excluded": ["SOOP rich protocol acquisition", "Emoji parser/assets/UI changes", "Replay timing redesign", "Archive rotation or cap changes", "User data cleanup", "QA example or actual app controls", "Release and commits"]
+  },
+  "acceptanceBeforeCompletion": [
+    "Inject the existing isolated actual SOOP5-message source fixture into a separate temporary archive with a test-only small budget. Assert sticky cap, live ring continuation, typed partial result and unchanged source hash; output aggregate counts only.",
+    "Synthetic valid local TS plus chat cap yields fully verified playable media with a durable partial warning, preserving all TS/raw/normalized/registered merge inputs. Network tool paths are deliberately invalid.",
+    "Raw write success followed by normalized write failure and separate final sync failure cannot produce a complete chat status; only proven saved boundaries are reported.",
+    "Hard detach/lock failure does not call video publication or cleanup. A new attachment cannot receive a late write/status from the old finalizer.",
+    "Required warning/status publication failure preserves the last valid status/journal and all files, fails completion and latches shutdown_error; ordinary quit still drains actual workers, factory reset remains blocked.",
+    "Restart the isolated service and retry the same partial recording; verify no network requests, no cleared warning, no loss of originals and no new recording. Already-published media is revalidated safely.",
+    "Successful complete text storage plus verified video retains normal exact-owned cleanup; unknown UUID-shaped intermediate files, chat/status/assets and final media are always preserved.",
+    "Old completed item with no optional field still opens offline; legacy incomplete recovery is conservatively unknown; corrupt/oversized/wrong-job/reparse/hardlink status cannot authorize cleanup.",
+    "Frontend warning persists across refresh/replay and does not change Ctrl/Shift selection, context menus, background playback, privacy, close/fade or stable status geometry. Existing VOD/legacy fixtures require no new mandatory field.",
+    "Focused native/frontend tests and typecheck followed by parent-coordinated integrated regression. Actual rebuilt desktop partial-warning flow remains pending until separately authorized and verified; unit/service results do not substitute for it."
+  ],
+  "diagnosticFollowup": {
+    "recordedBeforeEdit": "2026-10-13; parent explicitly approved minimal diagnostics after the same second-attachment failure recurred in a full lib run (1225 passed, 1 failed, 50 ignored). It is not resolved by the intervening successful repetitions.",
+    "requirements": ["R009", "R013", "R015", "R021", "R022"],
+    "originalsReread": ["01a10785-1343-76e2-8820-053e98507cbb", "01a0862c-6058-7442-a6fe-38d660288ee2", "01a12a4c-724c-7d13-801d-3d92da01fe1e"],
+    "coverage": "Main/other/specification snapshot SHA values and completed pagination match the audit above. All 69 original file hashes rechecked: only docs/RELEASING.md changed, fully reread; current SHA F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. Current implementation policy and this contract fully reread. Latest parent/user manual-QA priority and no restart/build of the running QA app override old operation permissions.",
+    "scope": "chat_status.rs only: add capped static operation-stage plus numeric OS/HRESULT diagnostics through existing tracing, and cfg(test) diagnostic emission to capture failures from the standalone lib test runner. Keep exact existing UI ERROR, path/identity/content secrecy, all validation and fail-closed behavior. No retries or weakened Windows sharing/ownership checks.",
+    "bounded": "At most 128 diagnostic events per process. Existing SafeFields only persists allowed string fields, so use static diag_stage/diag_operation and bounded error_code OS_32, WIN32_32, HRESULT_80004005 or OS_UNAVAILABLE (uppercase/digits/underscore). Unknown fields and Debug values are intentionally not used. Never format the original error, path, job/provider ID, chat content or credentials. Successful operations emit nothing.",
+    "buildPlan": "Only cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run and the produced test exe. Current QA example SHA 6a6e3281719de2336be1b37e528e510d9b9cad57892d1f6d29828cfa5714bbf6 must remain unchanged; no Vite/example/app rebuild or control. Capture one actual failed API before proposing a correction.",
+    "acceptance": ["UI error unchanged", "Static stage and numeric code distinguish publication APIs without sensitive values", "Bounded diagnostics and synthetic error mapping tests", "One bounded focused reproduction; no indefinite or long-repeat suite", "Any correction requires evidence and separate parent coordination"],
+    "observedFailure": "Final diagnostic build52041 helper1/1; one platform_media filter64 passed/1 failed/8 ignored. Captured stage=publish_rename, Win32 code123 (ERROR_INVALID_NAME) at SetFileInformationByHandle(FileRenameInfo). Running QA executable SHA remains unchanged. No path, identity or content was emitted.",
+    "approvedMinimalCorrection": {
+      "recordedBeforeEdit": "Parent approved after independently reading the official FILE_RENAME_INFO contract. The path buffer previously allocated offset(FileName)+path bytes, with only incidental alignment padding. Exact8-byte-aligned sizes leave no allocated UTF16 terminator, while first/second fixture directory names differ by one character. This is a concrete structural defect consistent with the observed intermittent invalid-name response.",
+      "officialSource": "https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_rename_info",
+      "decision": "Allocate and pass an explicit additional WCHAR terminator; FileNameLength remains path bytes excluding NUL, dwBufferSize includes the terminator. Copy the same validated path and explicitly write NUL. Preserve same source handle, ancestor pins, no-replace and fail-closed checks. No retry or relaxed sharing/identity validation.",
+      "checks": ["Structural construction covers all four UTF16 length residues relative to usize alignment plus Unicode, proving NUL lies inside the declared buffer before reading it", "Actual Windows marker/terminal/recovery succeeds in four distinct-length directory cases including Korean text", "Original failing assertion remains unchanged", "Focused and parent-approved full ordinary native regression; no opt-in network test or QA/app restart"],
+      "result": "lib no-run68144 exit0. chat_status9/9 including alignment/Unicode/Windows publication tests; unchanged previously failing reattachment exact1/1. One complete ordinary lib run74062 with testthreads1:1229 passed,0 failed,50 ignored in106.18s. No further repetitions. QA example SHA remains6A6E3281719DE2336BE1B37E528E510D9B9CAD57892D1F6D29828CFA5714BBF6, so its running process does not yet contain this correction or the new diagnostic fields.",
+      "limits": "Failure stage/code were observed in the isolated test runner, not a live user's recording. Code uses the existing SafeFields-allowed static string fields and safeformat helper assertions; actual persisted diagnostics from a rebuilt desktop app remain unverified. Structural buffer defect is corrected with exact evidence and the full ordinary regression passed; this does not claim every filesystem or future recording failure is impossible."
+    }
+  },
+  "verification": {
+    "auditOnly": "Planning completed before production edits. Original snapshots and changed contracts were reread/checked as recorded above; no user recordings or accounts were used.",
+    "implementation": "Approved narrow production batch implemented and frozen on 2026-10-13. Safely detached partial text permits independently verified playable video with a durable warning while retaining original/intermediate files. Assets-only incomplete permits normal video cleanup and displays a separate emoji warning; SharedChat transient-source preservation is unchanged. Immutable writing/terminal proofs fail closed on I/O, malformed content or conflicting identity. Legacy completed items remain readable without migration.",
+    "tests": {
+      "nativeCompile": "cargo test --manifest-path src-tauri/Cargo.toml --lib --no-run: exit 0, session 48828; no QA example or application was rebuilt by this agent.",
+      "focused": "chat_status 6/6; live_chat 12/12 ordinary; terminal journal success plus chat-proof persistence latch 1/1. Includes same-handle hashing/publication, pinned Windows parent/file replacement rejection, malformed/oversized/hardlinked status and conservative legacy recovery.",
+      "isolatedOptIn": "4/4: actual pre-existing SOOP five-message fixture injected into a separate temporary archive with a synthetic cap; complete local synthetic merge cleans only owned inputs; partial local synthetic merge/restart/retry preserves all inputs and warning; no-view scheduled synthetic capture keeps single-ingress ownership. Network tools unavailable in recovery tests, no provider requests or real app operations.",
+      "frontend": "PlatformMediaLibrary 28/28 and TypeScript check exit 0 before the final wording-only change to '이모티콘 일부 누락'; that corresponding expectation was updated. Parent subsequently checked integrated TypeScript/Vite successfully.",
+      "integratedNative": "Pre-correction platform_media filter63 passed/1 failed/8 ignored, later64/64 and exact10/10 passed, but parent full ordinary run1225 passed/1 failed/50 ignored reproduced it. Instrumented filter64 passed/1 failed/8 ignored identified publish_rename Win32_123. After explicit NUL correction: focused9+1 passed and full ordinary1229 passed/0 failed/50 ignored. Historical failures remain recorded, not replaced by the later successes.",
+      "qualification": "The second-attachment failure was not a synthetic injected fault or conclusively an environment issue. Static diagnostics identified the actual production API; explicit NUL storage corrects the observed structural buffer defect without error masking, retry relaxation or weakened checks. Write/flush failures remain injected state classifications, not a real full-disk endurance test."
+    },
+    "desktop": "The newly rebuilt partial-chat warning flow has not been exercised through desktop UI. Prior successful video playback does not prove this new failure branch. Parent is preparing the current QA app/manual checklist separately.",
+    "remainingSeparateStages": ["Bounded archive rotation and replay part/index support for long recordings", "Provider-verified SOOP donation/emoji events", "Monotonic/piecewise media time mapping and reconnect endurance"]
+  }
+}

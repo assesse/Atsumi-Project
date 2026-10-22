@@ -3,16 +3,25 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { invoke } from "@tauri-apps/api/core";
 import { createMultiviewApi, emptyMultiview, multiviewEntries, normalizeMultiviewChannel, type MultiviewApi, type MultiviewSnapshot } from "../../api/multiview";
-import { MadoWorkspace, NativeStreamingPane, readMadoLayout } from "./MadoWorkspace";
+import { MadoWorkspace, NativeStreamingPane, readMadoLayout, removeClosedViewer, projectControlSnapshot } from "./MadoWorkspace";
 import { createOfficialBrowserApi, emptyOfficialBrowserSnapshot } from "../../api/officialBrowser";
 import { tutorialStepEvent } from "../../tutorial/tourActions";
+import type { WindowFullscreenGrant, WindowFullscreenOutcome } from "../../api/windowFullscreen";
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 const nativeWindow = vi.hoisted(() => ({ isMinimized: vi.fn(), isVisible: vi.fn(), isFullscreen: vi.fn(), setFullscreen: vi.fn() }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => nativeWindow }));
 const presentationEvents = vi.hoisted(() => new Set<(event: { payload: { action: string; channelId: string } }) => void>());
+const fullscreenLostEvents = vi.hoisted(() => new Set<(event: { payload: WindowFullscreenGrant }) => void>());
+const viewerClosedEvents = vi.hoisted(() => new Set<(event: { payload: { snapshot: MultiviewSnapshot; channelId: string } }) => void>());
+const windowFullscreen = vi.hoisted(() => ({ acquire: vi.fn(), release: vi.fn(), current: vi.fn() }));
+vi.mock("../../api/windowFullscreen", () => ({ windowFullscreenApi: windowFullscreen, sameFullscreenGrant: (a: WindowFullscreenGrant | null, b: WindowFullscreenGrant | null) => !!a && !!b && a.owner === b.owner && a.documentEpoch === b.documentEpoch && a.revision === b.revision && a.windowKey === b.windowKey }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: async (name: string, handler: (event: { payload: { action: string; channelId: string } }) => void) => {
   if (name === 'chzzk-presentation') presentationEvents.add(handler);
-  return () => presentationEvents.delete(handler);
+  const lostHandler = handler as unknown as (event: { payload: WindowFullscreenGrant }) => void;
+  if (name === 'platform-window-fullscreen:lost') fullscreenLostEvents.add(lostHandler);
+  const closedHandler=handler as unknown as (event:{payload:{snapshot:MultiviewSnapshot;channelId:string}})=>void;
+  if(name==='chzzk-viewer-closed')viewerClosedEvents.add(closedHandler);
+  return () => { presentationEvents.delete(handler); fullscreenLostEvents.delete(lostHandler); viewerClosedEvents.delete(closedHandler); };
 } }));
 // Simulate the parent's sidebar request; the live workspace has no own header.
 function WorkspaceFixture(props: ComponentProps<typeof MadoWorkspace>) {
@@ -42,13 +51,78 @@ const fake = () => ({ runtime: "tauri" as const, configure: vi.fn<MultiviewApi["
   setViewport: vi.fn<MultiviewApi["setViewport"]>().mockResolvedValue(success(undefined)),
 });
 let container: HTMLDivElement, root: Root;
-beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))); nativeWindow.isMinimized.mockResolvedValue(false); nativeWindow.isVisible.mockResolvedValue(true); nativeWindow.isFullscreen.mockResolvedValue(false); nativeWindow.setFullscreen.mockResolvedValue(undefined); });
+beforeEach(() => { localStorage.clear(); vi.mocked(invoke).mockResolvedValue(success(emptyOfficialBrowserSnapshot("tauri"))); nativeWindow.isMinimized.mockResolvedValue(false); nativeWindow.isVisible.mockResolvedValue(true); nativeWindow.isFullscreen.mockResolvedValue(false); nativeWindow.setFullscreen.mockResolvedValue(undefined);
+  let revision = 0;
+  windowFullscreen.acquire.mockReset().mockImplementation(async (owner: string, documentEpoch: number) => ({ grant: { owner, documentEpoch, revision: ++revision, windowKey: 'main-test' }, error: null }));
+  windowFullscreen.release.mockReset().mockResolvedValue(true); windowFullscreen.current.mockReset().mockResolvedValue(true);
+});
 beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); vi.useFakeTimers(); vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback) => setTimeout(() => cb(0), 16)); vi.stubGlobal("cancelAnimationFrame", clearTimeout); container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((element) => element.textContent === text || element.getAttribute('aria-label') === text)!;
 const enter = async (index: number, text: string) => act(async () => {
   const input = container.querySelector<HTMLInputElement>(`#mado-channel-${index}`)!;
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text); input.dispatchEvent(new Event("input", { bubbles: true }));
+});
+describe('single-viewer close ordering', () => {
+  it('projects only exact surviving control panes while preserving their fresh status and controls',()=>{
+    const initial=multiple(),current=removeClosedViewer(initial,{channelId:A,snapshot:initial});
+    const reply={...initial,audioOwner:A,pendingUiAction:{paneId:'video-0',id:'old',action:'exit_focus' as const},pendingControl:{paneId:'video-1',channelId:B,id:'survivor',action:'screenshot' as const,expiresAt:100},panes:initial.panes.map(pane=>pane.paneId==='video-1'?{...pane,recordingId:'still-recording',chatCount:23}:pane)};
+    const next=projectControlSnapshot(current,reply);
+    expect(next.panes.map(pane=>pane.channelId)).toEqual([B,B,C,C,D,D]);
+    expect(next.panes[0]).toMatchObject({recordingId:'still-recording',chatCount:23});
+    expect(next.pendingControl).toBe(reply.pendingControl);expect(next.pendingUiAction).toBeNull();expect(next.audioOwner).toBeNull();
+  });
+  it('rejects different epochs, closed layouts, and reused pane ids with different source or kind',()=>{
+    const current=active();expect(projectControlSnapshot(current,{...current,epoch:8})).toBe(current);
+    const closed=removeClosedViewer(current,{channelId:A,snapshot:current});expect(projectControlSnapshot(closed,current)).toBe(closed);
+    for(const patch of [{channelId:B},{kind:'chat' as const}]){
+      const reply={...current,panes:[{...current.panes[0]!,...patch}],pendingControl:{paneId:current.panes[0]!.paneId,channelId:B,id:'wrong',action:'screenshot' as const,expiresAt:100}};
+      expect(projectControlSnapshot(current,reply)).toMatchObject({active:false,panes:[],pendingControl:null});
+    }
+  });
+  it.each(['request','confirm'] as const)('does not resurrect viewers from a late %s response and releases pending state', async phase => {
+    const api=fake(), state=multiple(true), waiting=deferred<Awaited<ReturnType<MultiviewApi['requestControl']>>>();
+    state.pendingControl={paneId:'video-0',id:'late-control',action:'screenshot',channelId:A,expiresAt:Date.now()+20000};
+    api.snapshot.mockResolvedValue(success(phase==='request'?{...state,pendingControl:null}:state));
+    if(phase==='request')api.requestControl.mockReturnValue(waiting.promise);else api.confirmControl.mockReturnValue(waiting.promise);
+    await act(async()=>root.render(<WorkspaceFixture runtime="tauri" privacy={false} onLeave={()=>{}} api={api}/>));
+    if(phase==='request')await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'s',bubbles:true})));
+    else await act(async()=>button('취소').click());
+    expect(phase==='request'?api.requestControl:api.confirmControl).toHaveBeenCalledOnce();
+    await act(async()=>{for(const channelId of [B,A])for(const handler of viewerClosedEvents)handler({payload:{channelId,snapshot:state}});});
+    expect(container.querySelectorAll('.mado-native-slot')).toHaveLength(2);
+    await act(async()=>waiting.resolve(success(state)));
+    expect(container.querySelectorAll('.mado-native-slot')).toHaveLength(2);
+    expect(container.querySelector('[role="alertdialog"]')).toBeNull();
+    await act(async()=>button('연결 설정').click());
+    expect(button('일반모드')).toBeEnabled();
+    expect(api.close).not.toHaveBeenCalled(); expect(api.configure).not.toHaveBeenCalled();
+  });
+  it('does not resurrect a channel when same-epoch close events arrive backwards', () => {
+    const initial = multiple();
+    const afterA = removeClosedViewer(initial, { channelId: A, snapshot: initial });
+    const afterB = removeClosedViewer(afterA, { channelId: B, snapshot: afterA });
+    const reversedB = removeClosedViewer(initial, { channelId: B, snapshot: afterB });
+    const reversedA = removeClosedViewer(reversedB, { channelId: A, snapshot: afterA });
+    expect(reversedA.panes).toEqual(afterB.panes);
+    expect(reversedA.panes.map(pane => pane.channelId)).toEqual([C, C, D, D]);
+    expect(removeClosedViewer(reversedA, { channelId: A, snapshot: afterA })).toBe(reversedA);
+  });
+  it('ignores stale epochs and keeps another pane recording and pending controls untouched', () => {
+    const current = multiple(); current.audioOwner = B;
+    current.panes[2] = { ...current.panes[2]!, recordingId: 'recording-survivor', receiverBacked: true };
+    current.pendingControl = { paneId: 'video-1', id: 'pending', action: 'screenshot', channelId: B, expiresAt: 100 };
+    expect(removeClosedViewer(current, { channelId: A, snapshot: { ...current, epoch: 6 } })).toBe(current);
+    const next = removeClosedViewer(current, { channelId: A, snapshot: current });
+    expect(next.audioOwner).toBe(B); expect(next.pendingControl).toBe(current.pendingControl);
+    expect(next.panes[0]).toBe(current.panes[2]);
+  });
+  it('clears only a removed pane control and becomes inactive on the last viewer', () => {
+    const current = active(); current.audioOwner = A;
+    current.pendingUiAction = { paneId: current.panes[0]!.paneId, id: 'exit', action: 'exit_focus' };
+    const next = removeClosedViewer(current, { channelId: A, snapshot: current });
+    expect(next).toMatchObject({ active: false, panes: [], audioOwner: null, pendingUiAction: null });
+  });
 });
 describe("마도 배치", () => {
   it("names the bottom handle for watching or editing the current broadcast", async () => {
@@ -121,9 +195,45 @@ describe("마도 배치", () => {
     expect(container.querySelector('.mado-content-surfaces')).toHaveClass('chat-hidden');
     await send('chat_toggle');
     expect(container.querySelector('.mado-content-surfaces')).not.toHaveClass('chat-hidden');
-    await send('fullscreen_toggle'); expect(nativeWindow.setFullscreen).toHaveBeenLastCalledWith(true);
-    await send('fullscreen_exit'); expect(nativeWindow.setFullscreen).toHaveBeenLastCalledWith(false);
+    await send('fullscreen_toggle'); expect(windowFullscreen.acquire).toHaveBeenCalledExactlyOnceWith(expect.any(String), 7);
+    await send('fullscreen_exit'); expect(windowFullscreen.release).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ documentEpoch: 7, revision: 1 }));
+    expect(nativeWindow.setFullscreen).not.toHaveBeenCalled();
     expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+  });
+  it("does not exit another provider after this fullscreen grant was superseded", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    const send = (action: string) => act(async () => { for (const handler of presentationEvents) handler({ payload: { action, channelId: A } }); });
+    await send('fullscreen_toggle');
+    const acquired = await windowFullscreen.acquire.mock.results[0]!.value as WindowFullscreenOutcome;
+    await act(async () => { for (const handler of fullscreenLostEvents) handler({ payload: acquired.grant! }); });
+    await send('fullscreen_exit');
+    expect(windowFullscreen.release).not.toHaveBeenCalled();
+    await send('fullscreen_toggle'); expect(windowFullscreen.acquire).toHaveBeenCalledTimes(2);
+    expect(api.close).not.toHaveBeenCalled(); expect(api.configure).not.toHaveBeenCalled();
+  });
+  it("releases a delayed grant after its workspace closes without adopting it", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    const pendingGrant = deferred<WindowFullscreenOutcome>(); windowFullscreen.acquire.mockReturnValueOnce(pendingGrant.promise);
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    await act(async () => { for (const handler of presentationEvents) handler({ payload: { action: 'fullscreen_toggle', channelId: A } }); });
+    const [owner, documentEpoch] = windowFullscreen.acquire.mock.calls[0]!;
+    await act(async () => root.render(null));
+    const grant = { owner, documentEpoch, revision: 4, windowKey: 'main-test' };
+    await act(async () => pendingGrant.resolve({ grant, error: null }));
+    expect(windowFullscreen.release).toHaveBeenCalledExactlyOnceWith(grant);
+  });
+  it("does not install a grant revoked before the acquire response arrives", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    const pendingGrant = deferred<WindowFullscreenOutcome>(); windowFullscreen.acquire.mockReturnValueOnce(pendingGrant.promise);
+    await act(async () => root.render(<MadoWorkspace runtime="tauri" privacy={false} unifiedLive onLeave={vi.fn()} api={api} />));
+    const send = (action: string) => act(async () => { for (const handler of presentationEvents) handler({ payload: { action, channelId: A } }); });
+    await send('fullscreen_toggle');
+    const [owner, documentEpoch] = windowFullscreen.acquire.mock.calls[0]!;
+    const grant = { owner, documentEpoch, revision: 5, windowKey: 'main-test' };
+    await act(async () => { for (const handler of fullscreenLostEvents) handler({ payload: grant }); pendingGrant.resolve({ grant, error: null }); });
+    expect(windowFullscreen.release).toHaveBeenCalledExactlyOnceWith(grant);
+    await send('fullscreen_exit'); expect(windowFullscreen.release).toHaveBeenCalledTimes(1);
   });
   it("keeps audio on minimize, mutes for tray hide and restores the same viewport", async () => {
     const api = fake();

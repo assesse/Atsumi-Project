@@ -1,0 +1,26 @@
+{
+  "id": "pixiv-display-preference-20261017",
+  "state": "Implemented and normally rebuilt/restarted.151 unique frontend tests,57 native tests plus one real public metadata probe passed; typecheck/frontend/native builds passed. Actual authenticated home loaded60 cards with saved session retained. Desktop setting click and account-specific result-count comparison remain unverified because user input/overlapping browser interrupted automation; no targeted explicit-content query was performed.",
+  "verification": ".runtime/requirements-audit/20261017-pixiv-display-preference-final.json",
+  "originals": [
+    { "turn": "01a149c6-46d6-7670-8aab-bc9f92432b88", "message": "01a149c6-476b-7f81-80d8-d1b0bee17995", "request": "Generic app functionality, not a request to find or retrieve sexual content; match the original account-based specification and provide an on/off setting." },
+    { "turn": "01a149c0-59e8-7272-9709-9b7db8f0b86b", "message": "01a149c1-4127-7a53-ab39-5f3f016d4f9a", "request": "Leave empty-result next-button behavior unchanged." }
+  ],
+  "audit": ".runtime/requirements-audit/20261017-pixiv-display-preference-coverage.json",
+  "supersedes": ["The diagnosis-only/content-filter-preservation decisions in pixiv-home-access-20261017 apply to that earlier batch, not this newly authorized generic display setting."],
+  "decisions": [
+    "Settings > Pixiv: general-rating-only display toggle, default off; persisted locally with explicit save-failure feedback. Off uses the official verified account's allowed responses, not an unconditional app safe query. Guests retain public general results; site login/age/private/masked restrictions remain authoritative.",
+    "Distinguish rating metadata from actual access denial. Do not bypass server errors/masked/private rows, synthesize media links, export sessions or alter official account settings. Existing exact-origin/session-generation/size/ID validations remain.",
+    "Apply discovery preference to keyword, recommendation and artist/ranking result projection. Fence recommendation cursors and retained remote tabs against preference changes, including late in-flight completions. Preserve drafts, local favorites/downloads and local reader state.",
+    "Preserve search-first toolbar, existing card/preview interactions, tag translations and all pagination UI. No targeted explicit-content search or media retrieval for validation; use synthetic rating fixtures and ordinary metadata probes.",
+    "Only this batch's files may change; retain unrelated shared workspace changes. No account logout, force termination, goal, commit, push, release or data cleanup. Normal development restart is authorized."
+  ],
+  "acceptance": [
+    "Default/enable/disable/persist/storage-failure settings tests and Pixiv-only UI placement",
+    "Verified-account general/full mode query selection and guest-safe behavior with synthetic metadata",
+    "Masked/private/malformed metadata and stale authorization remain rejected",
+    "Preference change invalidates old searches, continuation and late results without clearing local library",
+    "Existing empty-page next-button behavior unchanged",
+    "Typecheck, focused frontend/native tests, build, and actual app settings/search verification or an explicit unverified qualification"
+  ]
+}

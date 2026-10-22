@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-13",
+  "status": "read-only audit; no implementation authorization implied",
+  "scope": "YouTube/SOOP video UI only. Existing provider-specific CHZZK account, gift, mission and clip mechanisms are not presumed transferable.",
+  "coverage": {
+    "main": {
+      "turns": 230,
+      "userMessages": 284,
+      "cursorExhausted": true,
+      "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676"
+    },
+    "other": {
+      "turns": 333,
+      "userMessages": 375,
+      "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21"
+    },
+    "specifications": {
+      "files": 69,
+      "lines": 5742,
+      "changedSourceHashes": 0,
+      "sha256": "7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C"
+    },
+    "method": "Reused fully read complete snapshots only after hash/coverage validation; reread applicable full original turns and relevant changed contracts. Read current production source without running the app or builds.",
+    "limitations": [
+      "Old source chat 01a03f16-5c02-74a3-b49c-2c3a20ccdaae and unnamed analysis1/2 chats remain inaccessible.",
+      "Historical image-only details are not newly visually verified.",
+      "Root controls actual desktop QA; static source and mock tests are not desktop acceptance."
+    ],
+    "refreshedDocuments": [
+      "docs/requirements/implementation-policy.json",
+      "docs/requirements/platform-media-contract.json",
+      "docs/requirements/soop-implementation.json",
+      "docs/requirements/platform-replay-chat.json",
+      "docs/requirements/youtube-favorites-boundary.json",
+      "docs/CHZZK_VIEWING_UI.md",
+      "docs/CHZZK_CONNECTION_UI.md"
+    ]
+  },
+  "governingRules": [
+    {
+      "id": "R003",
+      "source": "01a13142-4c44-7560-bde6-d7e089fd9ea9",
+      "rule": "Preserve existing requests; new platforms fit existing UI and actively reference similar CHZZK/Danbooru features without coupling platform state."
+    },
+    {
+      "id": "R014",
+      "source": "01a12c46-788a-7b00-9f69-e6f1d6f2d53e",
+      "rule": "Normal minimization preserves audio; tray hides/mutes; all player controls fade together. Actual lifecycle verification required."
+    }
+  ],
+  "confirmedSourceFindings": [
+    {
+      "id": "VUI-01",
+      "priority": "P2",
+      "classification": "existing live presentation rule not applied to YouTube viewing route",
+      "originals": [
+        "01a11b85-ed1b-78b3-b16a-20fce337f087",
+        "01a11bcc-0734-76e2-a4d8-20c73dffc698",
+        "01a12e00-087e-75f3-b315-155260efdf35"
+      ],
+      "source": [
+        {
+          "path": "src/features/youtube/YouTubeWorkspace.tsx",
+          "line": 131
+        },
+        {
+          "path": "src/features/youtube/YouTubeWorkspace.tsx",
+          "line": 134
+        },
+        {
+          "path": "src/features/youtube/YouTubeWorkspace.tsx",
+          "line": 135
+        }
+      ],
+      "evidence": "view=live reuses the always-visible detail header/tabs and title/favorite/download/play/stop action row. These are outside the fading native player overlay. The empty viewing route has only passive text and no actionable directional entry. No bottom control handle exists.",
+      "scope": "Fix the dedicated live/viewing route, not ordinary Explore VOD detail. An in-app discovery platform need not copy SOOP link fields."
+    },
+    {
+      "id": "VUI-02",
+      "priority": "P2",
+      "classification": "narrow-layout interaction missing in shared player",
+      "originals": [
+        "01a11b1f-f3cc-7ba1-9639-902bdb55c6b0",
+        "01a11b85-ed1b-78b3-b16a-20fce337f087",
+        "01a11775-9d47-7280-9431-a4aac2761ccd"
+      ],
+      "source": [
+        {
+          "path": "src/features/platforms/PlatformLivePlayer.tsx",
+          "line": 18
+        },
+        {
+          "path": "src/features/platforms/PlatformLivePlayer.tsx",
+          "line": 61
+        },
+        {
+          "path": "src/features/platforms/PlatformLivePlayer.css",
+          "line": 3
+        },
+        {
+          "path": "src/features/platforms/PlatformLivePlayer.css",
+          "line": 5
+        }
+      ],
+      "evidence": "The only resize control changes horizontal chat width. At a pair width below580px or the740px viewport media query it is hidden; compact video/chat use a fixed56/44 vertical split without a replacement vertical separator. This removes individual sizing when multi-view becomes narrow.",
+      "verification": "Source-confirmed missing control. Current compact min-height0 fixes are present; actual final pixel overflow is not newly measured."
+    },
+    {
+      "id": "VUI-03",
+      "priority": "P2",
+      "classification": "YouTube multiple-view selection parity missing",
+      "originals": [
+        "01a11b1f-f3cc-7ba1-9639-902bdb55c6b0",
+        "01a11f1d-e4a6-74f1-b278-f1f1256e9f93",
+        "01a11bcc-0734-76e2-a4d8-20c73dffc698"
+      ],
+      "source": [
+        {
+          "path": "src/features/youtube/YouTubeWorkspace.tsx",
+          "line": 94
+        },
+        {
+          "path": "src/features/youtube/YouTubeWorkspace.tsx",
+          "line": 137
+        },
+        {
+          "path": "src/features/youtube/YouTubeMultiView.css",
+          "line": 2
+        },
+        {
+          "path": "src/features/youtube/YouTubeMultiView.css",
+          "line": 10
+        }
+      ],
+      "evidence": "Up to4 playing IDs are retained, but all render in a fixed2-column grid that becomes1column below740px. There is no all/selected state or channel-name selection, unlike the implemented SOOP path. Existing live player already supports videoVisible without receiver teardown.",
+      "verification": "Missing selection controls are source-confirmed; tall narrow4-view overflow remains a desktop test, not an asserted measured result."
+    },
+    {
+      "id": "VUI-04",
+      "priority": "P2",
+      "classification": "shared screenshot parity gap; explicit original scope was CHZZK",
+      "originals": [
+        "01a12bdc-aa77-78c0-930a-a844b5054209",
+        "01a12c46-788a-7b00-9f69-e6f1d6f2d53e"
+      ],
+      "source": [
+        {
+          "path": "src/features/platforms/PlatformLivePlayer.tsx",
+          "line": 59
+        },
+        {
+          "path": "src/app/workspaceRegistry.ts",
+          "line": 54
+        },
+        {
+          "path": "src/app/workspaceRegistry.ts",
+          "line": 63
+        }
+      ],
+      "evidence": "New video live footer has play/volume/record/chat/fullscreen only; no capture, enlarged top-left review/cancel, or screenshots collection route exists.",
+      "scope": "R003 makes this a relevant analogous-video capability gap, not authority to silently copy CHZZK-specific backend state. Root has deferred this larger feature."
+    },
+    {
+      "id": "VUI-05",
+      "priority": "P2",
+      "classification": "live identity presentation parity missing",
+      "originals": [
+        "01a11f1d-e4a6-74f1-b278-f1f1256e9f93"
+      ],
+      "source": [
+        {
+          "path": "src/features/platforms/PlatformLivePlayer.tsx",
+          "line": 54
+        },
+        {
+          "path": "src/features/platforms/platformMedia.ts",
+          "line": 19
+        }
+      ],
+      "evidence": "Live upper-left overlay renders only a title and LIVE/recording state; it has no channel portrait or separate channel identity. Channel name exists in chat, but disappears when chat is hidden. The live snapshot has no portrait field.",
+      "scope": "Restore available verified identity; do not fabricate viewer count/profile data or reuse today's remote profile for old local recordings."
+    },
+    {
+      "id": "VUI-06",
+      "priority": "P2",
+      "classification": "recording-library grouping parity missing; VOD is excluded",
+      "originals": [
+        "01a11532-d68e-78a3-96ae-3b96b1d9d20f",
+        "01a12c46-788a-7b00-9f69-e6f1d6f2d53e",
+        "01a12e00-087e-75f3-b315-155260efdf35"
+      ],
+      "source": [
+        {
+          "path": "src/features/platforms/PlatformMediaLibrary.tsx",
+          "line": 129
+        },
+        {
+          "path": "src/features/platforms/platformMedia.ts",
+          "line": 6
+        },
+        {
+          "path": "src-tauri/src/platform_media.rs",
+          "line": 70
+        }
+      ],
+      "evidence": "Library maps every item to a separate flat card; no same-broadcast overlay group, all-collapsed state, or remembered expansion exists. The public library model has provider/kind/externalId but no durable SOOP broadcast identity; SOOP live externalId is the channel, so grouping by that alone would incorrectly merge different broadcasts.",
+      "scope": "The original grouping request targets recordings of the same broadcast, not unrelated VODs or every item by a channel. A later batch needs safe broadcast metadata before grouping."
+    }
+  ],
+  "verifiedOrPresent": [
+    {
+      "area": "YouTube Favorites boundary",
+      "status": "actual desktop acceptance reported by Root this audit turn",
+      "evidence": "Fresh a4f isolated profile: query14cards → saved Me at zoo → Favorites only local video/channel/category/card, no external form → jawed author opens Explore actual1channel result; oldquery tab retained.",
+      "source": "docs/requirements/youtube-favorites-boundary.json"
+    },
+    {
+      "area": "SOOP live drawer",
+      "status": "implemented; basic desktop flow previously confirmed",
+      "evidence": "Thin draggable/clickable centered handle, idle directional CTA, four-line hover-only help, top-rightX, favorites above input, footer all/selected/channel names and start/change/stop. Never restore superseded animated attention handle or expanding help.",
+      "source": "src/features/soop/SoopWorkspace.tsx:186-206"
+    },
+    {
+      "area": "SOOP favorite recording controls",
+      "status": "implemented and actual isolated zero-view start/lateviewer/off/finalize verified by Root",
+      "evidence": "Record toggle is fixed beside star; metadata refresh and reservation state are independent; disabling a scheduled recording preserved its attached viewer.",
+      "source": "src/features/soop/SoopWorkspace.tsx:162-174"
+    },
+    {
+      "area": "Shared player controls",
+      "status": "source and unit verified; full desktop timing matrix pending",
+      "evidence": "Fullscreen is last/rightmost; chat toggles Atsumi's existing pane; header/footer share2200ms idle fade and keyboard-only focus-visible exception; error/retry and stale response fences are present.",
+      "source": "src/features/platforms/PlatformLivePlayer.tsx:40-62"
+    },
+    {
+      "area": "Background/minimize/tray",
+      "status": "source wired; actual OS audio matrix not proven",
+      "evidence": "Route visibility does not tear down native playback lease. Tray hide emits true and main-window restore emits false; ordinary minimize does not call that mute path. Do not report this as a known defect.",
+      "source": [
+        "src/features/platforms/PlatformLivePlayer.tsx:19-39",
+        "src/features/youtube/YouTubePlayer.tsx:11-12",
+        "src-tauri/src/interface/commands.rs:2393",
+        "src-tauri/src/lib.rs:680"
+      ]
+    },
+    {
+      "area": "Recorded playback",
+      "status": "actual end/replay verified in isolated desktop",
+      "evidence": "Center replay button remains with seek/controls; live-recording replay close is beside chat controls; flat cards retain title/channel/fileinfo and optional local profile fallback.",
+      "source": "src/features/platforms/PlatformMediaLibrary.tsx:129-145"
+    }
+  ],
+  "unverifiedNotClaimedAsDefects": [
+    {
+      "area": "Fullscreen global handles",
+      "source": "src/features/platforms/PlatformLivePlayer.tsx:42",
+      "reason": "Fullscreen requests the individual video/chat pair. Shared rail and SOOP drawer are outside that subtree; global-handle access/expected fullscreen exit needs actual desktop validation before choosing a fix."
+    },
+    {
+      "area": "Small4-view exact layout",
+      "source": [
+        "src/features/youtube/YouTubeMultiView.css",
+        "src/features/soop/SoopWorkspace.css:56-63"
+      ],
+      "reason": "No fresh real960x640 or1920x1080 final pixel measurements in this read-only audit. CSS structural risk and missing resize controls are not equivalent to proven clipping."
+    },
+    {
+      "area": "Audio lifecycle",
+      "reason": "Actual minimize/tray/restore, user-muted-volume restoration and cross-platform hidden playback require isolated OS verification; mocked events alone do not satisfy R014."
+    },
+    {
+      "area": "Live speed",
+      "source": "src/features/platforms/PlatformLivePlayer.tsx:59",
+      "reason": "Live footer has no speed control although prior CHZZK customized controls included one. A bounded HLS timeshift/sync policy must be decided before treating replay playbackRate behavior as live feature parity."
+    }
+  ],
+  "knownSeparateWork": [
+    {
+      "area": "YouTube rich chat",
+      "owner": "pinterest_platform read-only audit",
+      "evidence": "Root actual QA observed emoji aliases. Raw archive contains image metadata but normalized/live/replay models flatten it. Provider-scoped bounded assets and backward-compatible source reading are separate work; no CHZZK-specific gift/OGQ state wholesale copying."
+    },
+    {
+      "area": "SOOP local profile",
+      "evidence": "Legitimate600x600GIF now normalizes to bounded96pxPNG in source and tests. The prior QA binary displayed a placeholder. Updated binary acceptance is separate; do not count the old observed failure as a fresh current-source regression."
+    }
+  ],
+  "nextOwnership": {
+    "youtube": "Root requested a separate narrow proposal for VUI-01 and VUI-03 only; Workspace/MultiView/helper UI/tests. Preserve ordinary VOD detail and playback identities.",
+    "root": "Shared narrow resize VUI-02.",
+    "deferred": "Screenshots are explicitly deferred; other items require their own scoped contract, no automatic implementation."
+  },
+  "followUp": {
+    "VUI-01-and-VUI-03": "Separate approved youtube-live-shell.json batch implemented and source-frozen19:09; focused42tests pass. Original findings above describe the pre-batch audit baseline, not unresolved current-source claims. Fresh desktop acceptance remains pending.",
+    "VUI-02": "Root owns the separate shared compact-resize correction and its validation. This audit does not claim that owner batch complete without its own evidence.",
+    "VUI-05": "Separate platform-live-identity.json contract implemented available verified identity only. Focused frontend33/native10unique ordinary tests and typecheck passed. SOOP existing portrait reused without network. Subsequent youtube-live-portrait.json implements exact owner-bound optional YouTube photo acquisition;6ordinary tests and separate real anonymous VOD/live photo reads passed. Missing/error cases keep the neutral fallback, never a video cover. Current manual QA executable unchanged; next-build actual desktop acceptance pending."
+  },
+  "performed": "Original audit was read-only source/spec inspection and this JSON only. Later narrow approved YouTube implementation is tracked separately in youtube-live-shell.json. No app/UI operation, build, network media, account, recording or Root validation aggregate changes."
+}

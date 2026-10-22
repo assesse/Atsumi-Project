@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "status": "current main/QA build and native1571/frontend2507 regressions pass; actual positive video/chat capture, automatic rollover, archive/reopen/off pass; actual explicit disabled notice correctly yields false but VP9 capture remains unsupported; delayed transition has deterministic regression proof, not a forced live-site test; fresh Google authentication unresolved",
+  "authority": "Root fully read this contract and exact production sources, confirmed both main and isolated apps normally closed, and approved the listed narrow implementation. First add and run failing regressions; Root owns native Cargo/build and all actual UI. No authentication, cookie/profile access, unrelated source edit or publishing.",
+  "originalRequests": [
+    {"turn": "01a13adc-a040-70f0-97d9-380c5b6ba368", "text": "남은 유튜브 초기 채팅 누락이랑 구글 인증 후 자동 화면 전환도 이어서 해결해줘. 실제로 정상 동작하는 것까지 확인해.", "also": "item4 requires missing/nonworking YouTube flows to be corrected"},
+    {"turn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."},
+    {"turn": "01a0862c-6058-7442-a6fe-38d660288ee2", "rule": "One incoming video receiver shared by viewing and recording, with chat preserved."},
+    {"turn": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Do not call missing/unverified chat complete or clean failed originals."},
+    {"turn": "01a1399c-e7fb-7260-ac09-93bc94288f2f", "rule": "Preserve the cloned interaction flow and isolate platform domain state."}
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Both previously fully read snapshots independently rehashed unchanged: main230turns/284messages EOF, other333turns/375messages EOF. Reuse Root current complete active50/archived3EOF inventory and69baseline specifications, known RELEASING revision reread. Current AGENTS, implementation-policy, original native integration, platform-chat followup, YouTube followup/auth observer/transition/regional diagnostics, continuation buffer/timing contracts and full current safe verification evidence reread. Latest original request is in the current conversation and the resume evidence. Newly changed morning verification records are included, not replaced by an old summary.",
+    "unavailable": ["Durable original01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Previously indexed historical attachment pixels"],
+    "sourceHashesBeforeProposal": {
+      "src-tauri/src/youtube/original_page.js": "B1900D4394E1D99A8EF82256D1469931715AA2763878482E9F93F2F956A90F61",
+      "src-tauri/src/youtube/original.rs": "A790791B1EBA42ABA1ADD43E2289A952D83415F57DCA4501AC58A26F334E12F0",
+      "src-tauri/src/platform_media/encoded.rs": "1920E1C10D315F88A689456C4C6FAC3890C55B61006939BF0B6F854BAFD1D281",
+      "src-tauri/src/platform_media/live_chat.rs": "3C947A98A3B4A699BED1F8CD03DB2DF3123DD5AD9A8F0C79563922D032430A25",
+      "src/features/youtube/YouTubeOriginalPage.test.ts": "A1958BF86C213AA0F969FF41031D9DD62E1F15BBD7E70309012B1BA695AF4DF8"
+    }
+  },
+  "evidence": {
+    "codeDefect": "original_page.js status emits chatAvailable=false whenever matching live player identity and twoColumnWatchNextResults exist but neither liveChatRenderer nor iframe#chatframe exists. This absence is not affirmative unavailability. encoded.rs bind_youtube_chat stores the channel binding even when false, starts SharedChat with Descriptor=None, and every later same-channel call returns before considering new availability. That first no-descriptor worker exits with a terminal error. A later positive observation therefore cannot start the public chat producer for the same receiver.",
+    "deterministicReproduction": "Read-only Node VM evaluated the actual production status function without source edits. Three successive same-identity data fixtures (empty watch data, explicit official disabled-chat message, liveChatRenderer) produce [false,false,true]. The first value should be unknown, not false. Existing native binding code deterministically returns early on the third observation; its current tests cover true-to-true and wrong identity, not unknown-to-true or false-to-true.",
+    "actualQualification": "No actual current user's missing rows or provider timing sequence is inferred from the fixture. Existing real positive-first chat/recording proofs remain valid. The precise unknown-to-positive native runtime path still requires separate application validation.",
+    "publicResponseChecks": [
+      "2026-10-15 anonymous direct HTTPS GET, no cookies/profile/custom identity, redirect:error,12second deadline,5MiB body bound: cswFQYam8Ic HTTP200, matching videoId,isLive=true,twoColumnWatchNextResults.conversationBar.liveChatRenderer present.",
+      "Same bounded public check T4XZmMPQ9Kw HTTP200, matching videoId,isLive=true, no liveChatRenderer. Actual explicit path is contents.twoColumnWatchNextResults.conversationBar.conversationBarRenderer.availabilityMessage.messageRenderer.text, not conversationBar.availabilityMessage.",
+      "Exact public system message with hl=en: Chat is disabled for this live stream.",
+      "Exact public system message with hl=ko: 채팅을 사용할 수 없는 실시간 스트림입니다.",
+      "Only provider system-message structure and these short fixed public notices were projected. No chat transcript, continuation token, cookie, account field or raw response persisted. Web search cache could not fetch these pages; bounded direct public requests succeeded. Initial sandbox requests failed before network access and are not counted as successful checks."
+    ],
+    "google": "No new actionable fresh-authentication evidence. Existing exact denied destination was not recorded and cannot be reconstructed from current safe category logs or expired challenge. This chat proposal neither widens Google account admission nor claims to fix fresh authentication. Retained-session completion remains a distinct verified path."
+  },
+  "primarySources": [
+    "https://www.youtube.com/watch?v=cswFQYam8Ic",
+    "https://www.youtube.com/watch?v=T4XZmMPQ9Kw&hl=en",
+    "https://www.youtube.com/watch?v=T4XZmMPQ9Kw&hl=ko",
+    "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/yt_dlp/downloader/youtube_live_chat.py"
+  ],
+  "proposal": [
+    "Publish a bounded tri-state chatAvailable:true/false/null from the exact canonical player document and matching current live video/channel identity. True requires the actual official liveChatRenderer or exact matching official chat iframe; false requires the exact observed official disabled-message structure and one of the two verified fixed system messages. Missing/malformed watch data, unknown language/message, empty shell or unrelated iframe is unknown. Do not infer a negative from missing data. Existing independent native chat visibility remains separate from archive availability.",
+    "Separate immutable canonical channel identity from producer-start state in the YouTube receiver binding. Unknown may bind the verified channel and establish pending chat preservation without starting a process or consuming the once-only producer. Explicit unavailable is a distinct current observation, not a transport failure or a completed empty archive. A later exact-identity positive observation may start the one existing public chat producer once; repeated positive/unknown/negative observations cannot spawn another producer or reset it. A real started producer's failure is not automatically retried by this correction.",
+    "Before an unknown/unavailable channel binding becomes eligible for video archive admission, mark its SharedChat as requiring verified coverage. Start one existing15second preparation deadline once for unknown/preparing state; repeated status ticks must not reset it. Explicit unavailable can permit video-only capture immediately; unresolved unknown after the original bound can permit video-only capture with StatusUnknown. A later positive handshake may benefit future archives but cannot remove a partial reason from an already-attached archive or rewrite old proofs. No video pause, second video source, historical data rewrite or manufactured completeness.",
+    "Preserve exact source, native document epoch, canonical video and channel, active receiver, shutdown and owner gates. Serialize identity/availability admission through the receiver binding lock. In the native host recheck epoch under its existing admission/arm ordering before changing binding, so a stale document cannot start a new producer. Account refresh may not reset an already-started producer, recording or global account state in this batch.",
+    "Keep durable complete/partial/unknown schema and original retention rules unchanged. Public source-unavailable status must remain visible and distinguishable from preparing; raw external system text is not forwarded to diagnostics/UI. Existing bootstrap proof, bounded initial history, first-segment timeline, sticky failure and recent-loss accounting are not weakened.",
+    "Update only YouTube status projection, the narrow native status/binding path, SharedChat YouTube preparation/availability methods, focused tests and QA expectation mapping if its existing bool assertion requires the new unknown value. Do not change SOOP, CHZZK, account navigation, fullscreen/input/layout, scheduler intent or any cleanup authority. Root owns all actual application operations and Cargo."
+  ],
+  "productionOwnershipAfterApproval": [
+    "src-tauri/src/youtube/original_page.js status projection only",
+    "src/features/youtube/YouTubeOriginalPage.test.ts focused availability tests",
+    "src-tauri/src/youtube/original.rs status descriptor admission only",
+    "src-tauri/src/platform_media/encoded.rs YouTube binding and regression tests only",
+    "src-tauri/src/platform_media/live_chat.rs YouTube preparation/explicit unavailable state and focused tests only",
+    "src-tauri/examples/youtube_original_qa.rs only if exact scenario expectation needs tri-state compatibility"
+  ],
+  "conflictsAndLimits": [
+    "Supersedes only the old implicit false-from-absence and irrevocable no-descriptor start. Explicit source unavailability and honest partial storage remain required.",
+    "Unknown is not offline or disabled; visible original chat is not durable archive readiness. A successful first-response handshake remains required to claim coverage.",
+    "Unknown or unfamiliar localized notices must remain unknown, not be classified by broad substring or by any arbitrary messageRenderer.",
+    "The public chat producer remains unauthenticated and receive-only. No credential extraction, member-only access bypass or second video ingress is introduced.",
+    "This fixes a deterministic state-machine defect, not an observed current-account authentication problem. Actual fresh Google challenge verification still requires the user's later participation."
+  ],
+  "implementationCheckpoint": {
+    "redFrontend": "Current production source fails all3new focused regressions while13existing tests pass: missing data is falsely disabled, unknown system notices are falsely disabled, and a foreign/mismatched iframe is falsely available. Initial sandbox EPERM prevented execution; the same command in the ordinary development environment produced these assertion failures.",
+    "redNative": "Root session79629 actually ran youtube_unavailable_does_not_consume_the_once_only_chat_producer against unchanged production behavior:0pass/1fail, assertion at encoded.rs1286. The only test instrumentation is a cfg(test) read-only SharedChat.started accessor; fixture executables do not exist, and the false observation must not launch a producer at all.",
+    "review": "Independent peer confirms the necessary first-deadline, once-only producer, immutable canonical channel, sticky attached partial, source epoch and no-autoretry boundaries. Parent additionally requires no video-only bypass when the canonical descriptor itself is absent.",
+    "greenFrontend": "17focused YouTubeOriginalPage tests pass in the ordinary development environment. Sandbox cache EPERM prevented one run before tests, not a code failure. New tests cover unknown, exact disabled notices, iframe-alone rejection, false precedence and existing source/IME/layout protections.",
+    "nativeCheckpoint": "Root owns execution. Added native unknown/false-to-positive once-only concurrent transition, local missing-tool failure not retried, close/shutdown rejection, concurrent close/unknown observation, first-deadline/timeout display, late handshake sticky archive and strict explicit bool/null descriptor regressions. No real network/media tool runs in these unit fixtures.",
+    "scope": "Frozen production changes are only source-local status projection and native admission, YouTube receiver binding/close synchronization, SharedChat availability/deadline read projection. Isolated QA accepts explicit disabled independently of visible notice and emits only bounded public source evidence. Account, fullscreen, capture bytes, scheduler and other-provider behavior untouched."
+  },
+  "closeAdmissionAddendum": {
+    "authority": "Root directly read close/live_shutdown/service.shutdown ordering and approved before production edit.",
+    "decision": "YouTube-only receiver close acquires the same binding gate before closed/stop. Binding holds that gate and the existing service state admission while testing shutdown and making the once-only producer decision. No live registry lock inside binding, no state-to-binding reverse lock order, and SOOP close behavior unchanged.",
+    "check": "Concurrent close/bind cannot expose a new binding or start after close wins; a pre-existing producer is never restarted. Add a deterministic close-wins regression and concurrent close/observation stress without network or media tools."
+  },
+  "iframeEvidenceAddendum": {
+    "status": "Root fully read and approved before production edit; implemented and frontend regression green",
+    "actualEvidence": "Root ran old03:45youtube_original_qa binary against T4XZmMPQ9Kw with --expect-no-chat. It progressed real official video and reported chatAvailable=true/native chatVisible=true, despite separate anonymous official watch data having the exact disabled notice. This is baseline evidence only, not a test of the new code. Exact matching iframe navigation proves a chat document exists, not whether that document offers chat; a disabled notice can itself be visible there.",
+    "supersedes": "The preceding proposal's matching-iframe-alone positive fallback is withdrawn. Do not classify availability from the visible chat pane or iframe address alone.",
+    "decision": "Return false first for the exact observed disabled notice, true only for a real liveChatRenderer object, otherwise null. Keep immutable canonical video/channel admission and all native producer/coverage rules. Do not inspect private iframe content or add requests. Adjust the no-chat QA expectation to require explicit false independent of chatVisible, because a visible official disabled notice is not an available chat. Positive QA still requires real original chat visibility.",
+    "safeQaEvidence": "In the isolated QA inspector only, add a renderer-present boolean, fixed noticeKind enum (disabled_en/disabled_ko/other/absent), and exact matching iframe boolean. Never return notice text, iframe URL, chat rows, cookies or account fields. Missing or malformed facts cannot certify unavailable. Preserve video failure such as codec_unsupported as a distinct reason, not a successful recording test.",
+    "checks": "Add combined disabled notice plus exact iframe and renderer fixture: disabled wins. Matching iframe without positive renderer remains unknown. Positive renderer and no notice remains available. Native original no-chat visible-message fixture must accept explicit false without requiring invisible pane; unknown still rejected. Actual checks remain Root-owned."
+  },
+  "timeoutStatusAddendum": {
+    "authority": "Root requested honest timeout presentation within the existing first-deadline scope.",
+    "decision": "Existing status and snapshot reads project a fixed unverified message once the first15second preparation deadline expires, without new timers, changed producer state, transport failure, history rewrite or retry. Explicit disabled, known failures, verified connection and stopped lifecycle retain their own status."
+  },
+  "acceptance": [
+    "First add deterministic failing tests for empty matching watch data followed by positive renderer: unknown must not become a terminal failure and later positive starts one producer. Confirm the regression fails before production changes; Root owns native test execution.",
+    "Official observed disabled message in both verified languages yields explicit unavailable, video-only capture remains possible, and its archived chat is not complete. Malformed/unrelated/empty/unknown-language messages remain unknown. Wrong iframe video/origin never counts as positive.",
+    "Unknown repeated ticks share one15second deadline; timeout does not certify chat. Unknown-to-positive and unavailable-to-positive start exactly once without clearing an earlier archive's partial proof. True-to-true, true-to-unknown and concurrent equivalent observations start no duplicate connection.",
+    "Wrong channel/video, stale document epoch, closed receiver and shutdown cannot bind or start. Existing scheduled owner channel matching and one-ingress checks remain passing. Account reload and actual transport failure do not silently reset the producer guard.",
+    "Initial valid empty server response and buffered first rows still preserve completeness only after the real handshake. Existing buffer-loss/format-continuation/late attach/failure tests remain passing.",
+    "Root actual anonymous positive-chat sample opens original playback/chat and records/reopens video plus chat; explicit-disabled sample proves video success plus honest noncomplete chat. A controlled isolated delayed-descriptor scenario, if feasible without modifying the public site/authentication, distinguishes the repaired transition from ordinary positive-first success. Otherwise report deterministic regression coverage separately from actual ordinary flow proof.",
+    "No claim of all flows complete from unit/build/service results; Google fresh handoff and unrelated mouse/audio/IME acceptance remain separately recorded."
+  ]
+}

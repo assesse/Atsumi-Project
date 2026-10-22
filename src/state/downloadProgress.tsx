@@ -4,7 +4,7 @@ import type { Gallery, GalleryId } from "../core/types";
 import { uiCounters } from "../diagnostics/uiDiagnostics";
 
 type Download = Gallery["download"];
-const STRUCTURAL_FIELDS = ["entryId", "state", "attempt", "errorCode", "errorMessage", "reviewKind", "reviewId"] as const;
+const STRUCTURAL_FIELDS = ["entryId", "state", "attempt", "errorCode", "errorMessage", "reviewKind", "reviewId", "linkedGalleryId"] as const;
 const MAX_ENTRIES = 4096;
 
 /** Progress is not gallery metadata. Notify only subscribers to the changed ID,

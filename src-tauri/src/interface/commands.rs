@@ -2,14 +2,14 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Mutex, OnceLock,
     },
     time::{SystemTime, UNIX_EPOCH},
 };
 
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Emitter, State, Window};
+use tauri::{AppHandle, Emitter, Manager, State, Window};
 
 use crate::{
     application::{
@@ -52,7 +52,8 @@ use super::storage_usage::{collect_storage_usage, StorageUsageSnapshot};
 use super::{
     api::{
         AppActiveAutoFindSnapshot, AppActiveDownloadsSnapshot, AppActiveDuplicateScanSnapshot,
-        AppActiveInternalDuplicateScanSnapshot, AppActiveRecordingsSnapshot, AppActiveWorkSnapshot,
+        AppActiveInternalDuplicateScanSnapshot, AppActiveLiveReceiversSnapshot,
+        AppActiveRecordingsSnapshot, AppActiveWorkSnapshot,
         AppQuitRejectionReason, AppQuitRequest, AppQuitResult,
     },
     ApiAction, ApiError, ApiResult,
@@ -66,6 +67,10 @@ struct ManagedWorkGate {
 struct ManagedWorkGateInner {
     control: Mutex<ManagedWorkGateState>,
     quitting: AtomicBool,
+    // A failed reset cannot reopen services that have already been shut down.
+    // Keep admission closed separately from whether a quit is being dispatched.
+    maintenance_stopped: AtomicBool,
+    platform_initializers: AtomicUsize,
 }
 
 #[derive(Default)]
@@ -80,12 +85,46 @@ impl Default for ManagedWorkGate {
             inner: Arc::new(ManagedWorkGateInner {
                 control: Mutex::new(ManagedWorkGateState::default()),
                 quitting: AtomicBool::new(false),
+                maintenance_stopped: AtomicBool::new(false),
+                platform_initializers: AtomicUsize::new(0),
             }),
         }
     }
 }
 
 impl ManagedWorkGate {
+    fn begin_platform_initialization(&self) -> Result<PlatformInitialization, String> {
+        let control = self.inner.control.lock().map_err(|_| "작업 상태를 확인하지 못했습니다.")?;
+        if self.admission_closed() || control.updating {
+            return Err("종료·업데이트 중에는 영상 서비스를 준비할 수 없습니다.".into());
+        }
+        self.inner.platform_initializers.fetch_add(1, Ordering::AcqRel);
+        Ok(PlatformInitialization { gate: self.clone() })
+    }
+
+    fn platform_initializing(&self) -> bool {
+        self.inner.platform_initializers.load(Ordering::Acquire) > 0
+    }
+
+    fn admission_closed(&self) -> bool {
+        self.inner.quitting.load(Ordering::Acquire)
+            || self.inner.maintenance_stopped.load(Ordering::Acquire)
+    }
+
+    fn reserve_factory_reset(&self) -> Result<FactoryResetReservation, ApplicationError> {
+        let _control = self.inner.control.lock().map_err(|_| {
+            crate::application::RepositoryError::Other(
+                "managed work gate mutex was poisoned".into(),
+            )
+        })?;
+        if self.admission_closed() || _control.updating {
+            return Err(ApplicationError::AppQuitInProgress);
+        }
+        self.inner.maintenance_stopped.store(true, Ordering::Release);
+        self.inner.quitting.store(true, Ordering::Release);
+        Ok(FactoryResetReservation { gate: self.clone(), committed: false })
+    }
+
     fn run<T>(
         &self,
         operation: impl FnOnce() -> Result<T, ApplicationError>,
@@ -95,7 +134,7 @@ impl ManagedWorkGate {
                 "managed work gate mutex was poisoned".into(),
             )
         })?;
-        if self.inner.quitting.load(Ordering::Acquire) || _control.updating {
+        if self.admission_closed() || _control.updating {
             return Err(ApplicationError::AppQuitInProgress);
         }
         operation()
@@ -147,6 +186,102 @@ impl ManagedWorkGate {
         control.accepted_quit = Some(accepted.clone());
         self.inner.quitting.store(true, Ordering::Release);
         (accepted, true)
+    }
+}
+
+struct PlatformInitialization {
+    gate: ManagedWorkGate,
+}
+
+impl Drop for PlatformInitialization {
+    fn drop(&mut self) {
+        self.gate.inner.platform_initializers.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+// Admission must already be closed. Do not snapshot an empty OnceLock before
+// its admitted initializer has finished journal recovery and worker creation.
+fn settled_platform_service<T: Clone>(
+    gate: &ManagedWorkGate,
+    service: &OnceLock<T>,
+    mut wait: impl FnMut(),
+) -> Option<T> {
+    while gate.platform_initializing() { wait(); }
+    service.get().cloned()
+}
+
+struct FactoryResetReservation {
+    gate: ManagedWorkGate,
+    committed: bool,
+}
+
+impl Drop for FactoryResetReservation {
+    fn drop(&mut self) {
+        if !self.committed {
+            let mut control = self.gate.inner.control.lock().unwrap_or_else(|error| error.into_inner());
+            control.accepted_quit = None;
+            // A normal quit can retry the drain, but no work/update may start.
+            self.gate.inner.quitting.store(false, Ordering::Release);
+        }
+    }
+}
+
+fn finish_factory_reset(
+    mut reservation: FactoryResetReservation,
+    drain: impl FnOnce() -> Result<(), ApplicationError>,
+    publish_marker: impl FnOnce() -> std::io::Result<()>,
+) -> Result<(), ApplicationError> {
+    drain()?;
+    publish_marker().map_err(|error| {
+        ApplicationError::from(crate::application::RepositoryError::Other(format!(
+            "could not schedule factory reset: {error}"
+        )))
+    })?;
+    reservation.committed = true;
+    Ok(())
+}
+
+fn drain_managed_workers(
+    stop: impl FnOnce(),
+    mut pending: impl FnMut() -> bool,
+    mut wait: impl FnMut(),
+    drain_legacy: impl FnOnce(),
+) {
+    stop();
+    while pending() {
+        wait();
+    }
+    drain_legacy();
+}
+
+fn publish_factory_reset_marker(data_dir: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write;
+    let temporary = data_dir.join(format!(".factory-reset-{}.pending", uuid::Uuid::new_v4()));
+    let target = data_dir.join("factory-reset.pending");
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary)?;
+    let written = file.write_all(b"v1\n").and_then(|()| file.sync_all());
+    drop(file);
+    let result = written.and_then(|()| publish_marker_no_replace(&temporary, &target));
+    // Only our unpublished unique file is removed; never the destination marker.
+    let _ = std::fs::remove_file(&temporary);
+    result
+}
+
+fn publish_marker_no_replace(source: &std::path::Path, target: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::{core::PCWSTR, Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH}};
+        let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
+        let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+        unsafe { MoveFileExW(PCWSTR(source.as_ptr()), PCWSTR(target.as_ptr()), MOVEFILE_WRITE_THROUGH) }
+            .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+    #[cfg(not(windows))]
+    {
+        // A same-directory hard-link publication is atomic and cannot clobber
+        // an existing target; the caller removes only its temporary link.
+        std::fs::hard_link(source, target)
     }
 }
 
@@ -208,6 +343,24 @@ fn active_work_fingerprint<'a>(
     );
     let digest = hasher.finalize();
     digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Display-only classification of the already deduplicated ownership IDs.
+/// Keep the original IDs intact for quit fingerprints and actual worker drain.
+fn display_work_counts(ids: &[String]) -> (AppActiveDownloadsSnapshot, Option<AppActiveLiveReceiversSnapshot>) {
+    let receiver_count = ids.iter().filter(|id| {
+        id.strip_prefix("platform-live:")
+            .or_else(|| id.strip_prefix("platform-official:"))
+            .is_some_and(|identity| !identity.is_empty())
+    }).count();
+    (
+        AppActiveDownloadsSnapshot {
+            active_count: u64::try_from(ids.len() - receiver_count).unwrap_or(u64::MAX),
+        },
+        (receiver_count > 0).then(|| AppActiveLiveReceiversSnapshot {
+            active_count: u64::try_from(receiver_count).unwrap_or(u64::MAX),
+        }),
+    )
 }
 
 fn active_work_status_error(source_code: &str) -> ApiError {
@@ -275,6 +428,9 @@ pub struct AppState {
     overlap_merges: Option<Arc<OverlapMergeService>>,
 
     browser: crate::streaming::startup::DeferredBrowser,
+    platform_media: Arc<OnceLock<Result<crate::platform_media::PlatformMediaService, String>>>,
+    soop_auto_recorder: Arc<crate::soop::auto_record::SoopAutoRecorder>,
+    youtube_auto_recorder: Arc<crate::youtube::auto_record::YouTubeAutoRecorder>,
     download_root_picker: Arc<dyn DownloadRootPicker>,
     artifact_store: Arc<dyn ArtifactStore>,
     live_source: Arc<HitomiLiveAdapter>,
@@ -349,6 +505,15 @@ impl SearchPageRequests {
     }
 }
 
+fn platform_development_resource_root() -> Result<PathBuf, String> {
+    // Keep the native resolver's trusted compile-time path lexical. The raw
+    // archive's guarded tool lease deliberately rejects ParentDir components.
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|workspace| workspace.join(".runtime"))
+        .ok_or_else(|| "개발용 앱 도구 위치를 확인하지 못했습니다.".into())
+}
+
 impl AppState {
     // This is the single composition root for application services and ports.
     // Keeping dependencies explicit here makes production/test wiring auditable.
@@ -385,6 +550,9 @@ impl AppState {
             overlap_merges: None,
 
             browser: crate::streaming::startup::DeferredBrowser::default(),
+            platform_media: Arc::new(OnceLock::new()),
+            soop_auto_recorder: Arc::new(crate::soop::auto_record::SoopAutoRecorder::new(data_dir.clone())),
+            youtube_auto_recorder: Arc::new(crate::youtube::auto_record::YouTubeAutoRecorder::new(data_dir.clone())),
             download_root_picker,
             artifact_store,
             live_source,
@@ -471,7 +639,7 @@ impl AppState {
                 true,
             )
         })?;
-        if self.managed_work.inner.quitting.load(Ordering::Acquire) || _control.updating {
+        if self.managed_work.admission_closed() || _control.updating {
             return Err(StreamError::new(
                 "APP_QUITTING",
                 "앱 종료 중에는 녹화를 시작할 수 없습니다.",
@@ -496,6 +664,67 @@ impl AppState {
 
     pub(crate) fn settings_snapshot(&self) -> Result<SettingsSnapshot, ApplicationError> {
         self.service.settings_get()
+    }
+
+    /// Lazy on a blocking command worker: tool/journal inspection must not delay the first frame.
+    pub(crate) fn platform_media(&self, app: &AppHandle) -> Result<crate::platform_media::PlatformMediaService, String> {
+        use tauri::Manager;
+        if self.is_quitting() { return Err("앱을 종료하는 중입니다.".into()); }
+        if let Some(service) = self.platform_media.get() { return service.clone(); }
+        // Only registration holds the admission lock. Disk I/O stays on the
+        // calling blocking worker; normal UI/quit requests remain responsive.
+        let _initialization = self.managed_work.begin_platform_initialization()?;
+        let result = self.platform_media.get_or_init(|| {
+            let root = if cfg!(debug_assertions) {
+                platform_development_resource_root()?
+            } else { app.path().resource_dir().map_err(|_| "앱 도구 위치를 확인하지 못했습니다.")? };
+            let media = if cfg!(debug_assertions) {
+                root.join("media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/bin")
+            } else { root.join("media-tools/bin") };
+            // Keep new tools under the resource root supported by older portable updaters.
+            let platform = if cfg!(debug_assertions) {
+                root.join("platform-tools/bin")
+            } else { root.join("media-tools/platform-tools/bin") };
+            crate::platform_media::PlatformMediaService::new(self.data_dir.clone(), crate::platform_media::PlatformMediaTools {
+                yt_dlp: platform.join("yt-dlp.exe"), deno: platform.join("deno.exe"),
+                ffmpeg: media.join("ffmpeg.exe"), ffprobe: media.join("ffprobe.exe"),
+            }, app.config().build.dev_url.clone())
+        }).clone();
+        if self.is_quitting() {
+            if let Ok(service) = &result { service.shutdown(); }
+            return Err("앱을 종료하는 중입니다.".into());
+        }
+        result
+    }
+
+    pub(crate) fn existing_platform_media(&self) -> Option<crate::platform_media::PlatformMediaService> {
+        self.platform_media.get().and_then(|value| value.as_ref().ok()).cloned()
+    }
+
+    pub(crate) fn soop_auto_recorder(&self) -> Arc<crate::soop::auto_record::SoopAutoRecorder> {
+        self.soop_auto_recorder.clone()
+    }
+
+    pub(crate) fn youtube_auto_recorder(&self) -> Arc<crate::youtube::auto_record::YouTubeAutoRecorder> {
+        self.youtube_auto_recorder.clone()
+    }
+
+    /// Register provider work atomically with quit/update reservation. Network I/O
+    /// and waiting must happen after this closure returns its RAII work permit.
+    pub(crate) fn begin_platform_work<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, String>,
+    ) -> Result<T, String> {
+        let control = self
+            .managed_work
+            .inner
+            .control
+            .lock()
+            .map_err(|_| "작업 상태를 확인하지 못했습니다.")?;
+        if control.updating || self.is_quitting() {
+            return Err("종료·업데이트 중에는 다운로드를 시작할 수 없습니다.".into());
+        }
+        operation()
     }
 
     pub(crate) fn active_work_snapshot(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
@@ -581,9 +810,38 @@ impl AppState {
     }
 
     fn active_work_snapshot_locked(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
-        let mut active_download_ids = self.service.download_active_entry_ids()?;
+        let mut active_download_ids: Vec<String> = self
+            .service
+            .download_active_entry_ids()?
+            .into_iter()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        active_download_ids.extend(
+            crate::pinterest::active_download_ids()
+                .into_iter()
+                .map(|id| format!("pinterest:{id}")),
+        );
+        active_download_ids.extend(
+            crate::pixiv::active_download_ids()
+                .into_iter()
+                .map(|id| format!("pixiv:{id}")),
+        );
+        active_download_ids.extend(
+            crate::x_feed::archive::active_ids()
+                .into_iter()
+                .map(|id| format!("x-archive:{id}")),
+        );
+        if let Some(service) = self.existing_platform_media() {
+            active_download_ids.extend(service.active_ids());
+        }
+        if self.managed_work.platform_initializing() {
+            active_download_ids.push("platform-media:initializing".into());
+        }
+        active_download_ids.extend(self.soop_auto_recorder.active_ids());
+        active_download_ids.extend(self.youtube_auto_recorder.active_ids());
         active_download_ids.sort();
         active_download_ids.dedup();
+        let (downloads, live_receivers) = display_work_counts(&active_download_ids);
         let auto_find = self.auto_find.active_run_snapshot()?;
         let duplicate_scan = self.duplicates.active_run_snapshot()?;
         let internal_duplicate_scan = self.internal_duplicates.active_run_snapshot()?;
@@ -605,9 +863,8 @@ impl AppState {
             recordings: (!recording_ids.is_empty()).then_some(AppActiveRecordingsSnapshot {
                 active_count: recording_ids.len() as u64,
             }),
-            downloads: AppActiveDownloadsSnapshot {
-                active_count: u64::try_from(active_download_ids.len()).unwrap_or(u64::MAX),
-            },
+            downloads,
+            live_receivers,
             auto_find: auto_find.map(|run| AppActiveAutoFindSnapshot {
                 run_id: run.run_id,
                 completed_favorites: run.completed_favorites,
@@ -689,23 +946,86 @@ impl AppState {
         Ok(result)
     }
 
-    fn spawn_graceful_shutdown(&self, app: AppHandle) {
+    /// The caller must first close admission under ManagedWorkGate. Neither a
+    /// normal exit nor a factory-reset marker may bypass this same drain.
+    fn blocking_work_drain(&self, app: AppHandle) -> impl FnOnce() -> Result<(), ApplicationError> + Send + 'static {
+        let soop_auto_recorder = self.soop_auto_recorder.clone();
+        let youtube_auto_recorder = self.youtube_auto_recorder.clone();
+        let platform_slot = self.platform_media.clone();
+        let gate = self.managed_work.clone();
         let browser = self.browser.clone();
         let downloads = self.downloads.clone();
         let auto_find = self.auto_find.clone();
         let duplicates = self.duplicates.clone();
         let internal_duplicates = self.internal_duplicates.clone();
-        tauri::async_runtime::spawn(async move {
-            if let Err(error) = tauri::async_runtime::spawn_blocking(move || {
+        move || {
+            let platform_media = settled_platform_service(&gate, &platform_slot, || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }).and_then(Result::ok);
+            drain_managed_workers(
+            || {
+                soop_auto_recorder.shutdown();
+                youtube_auto_recorder.shutdown();
+                if let Some(host) = app.try_state::<crate::soop::original::SoopOriginalHost>() {
+                    host.shutdown(&app);
+                }
+                if let Some(host) = app.try_state::<crate::youtube::original::YouTubeOriginalHost>() {
+                    host.shutdown(&app);
+                }
+                if let Some(browser) = app.try_state::<crate::pinterest_browser::PinterestBrowser>() {
+                    browser.detach(&app);
+                }
+                if let Some(session) = app.try_state::<crate::pinterest_session::PinterestSession>() {
+                    session.detach(&app);
+                }
+                if let Some(session) = app.try_state::<crate::x_feed::XSession>() {
+                    session.shutdown(&app);
+                }
+                if let Some(account) = app.try_state::<crate::pixiv::account::PixivAccount>() {
+                    account.shutdown(&app);
+                }
+                crate::pinterest::cancel_all_downloads();
+                crate::pixiv::cancel_all_downloads();
+                crate::x_feed::archive::cancel_all();
+                crate::x_feed::archive_ipc::clear_cache();
+                if let Some(service) = &platform_media { service.shutdown(); }
                 browser.shutdown_and_wait(&app);
-
+            },
+            || crate::pinterest::active_download_count() > 0
+                    || crate::pixiv::active_download_count() > 0
+                    || !crate::x_feed::archive::active_ids().is_empty()
+                    || crate::x_feed::surface::search::busy()
+                    || !soop_auto_recorder.active_ids().is_empty()
+                    || !youtube_auto_recorder.active_ids().is_empty()
+                    || platform_media.as_ref().is_some_and(|service| !service.active_ids().is_empty()),
+            || std::thread::sleep(std::time::Duration::from_millis(50)),
+            || {
                 crate::shutdown_all_then_exit(
                     || internal_duplicates.shutdown_and_wait(),
                     || duplicates.shutdown_and_wait(),
                     || auto_find.shutdown_and_wait(),
                     || downloads.shutdown_and_wait(),
-                    || app.exit(0),
+                    || {},
                 );
+            });
+            if let Some(error) = platform_media.and_then(|service| service.shutdown_error()) {
+                return Err(crate::application::RepositoryError::Other(error).into());
+            }
+            Ok(())
+        }
+    }
+
+    fn spawn_graceful_shutdown(&self, app: AppHandle) {
+        let drain = self.blocking_work_drain(app.clone());
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = tauri::async_runtime::spawn_blocking(move || {
+                // All real workers have stopped before this result is returned.
+                // A failed final journal write is recoverable from the last valid
+                // journal and retained originals; it is not a successful save.
+                if let Err(error) = drain() {
+                    tracing::warn!(error = %error, "work stopped; journal persistence failed, originals retained for recovery");
+                }
+                app.exit(0);
             })
             .await
             {
@@ -715,7 +1035,9 @@ impl AppState {
     }
 
     pub(crate) fn is_quitting(&self) -> bool {
-        self.managed_work.inner.quitting.load(Ordering::Acquire)
+        // Also suppress delayed startup after a failed maintenance shutdown.
+        // Quit dispatch itself checks `quitting`, so the user can still exit.
+        self.managed_work.admission_closed()
     }
 
     /// Only used when bootstrap was cancelled before any queued work resumed.
@@ -1826,6 +2148,7 @@ pub async fn download_cancel(
             state.downloads.cancel_entries(&cancellation_ids);
             for entry in &entries {
                 let event = DownloadChangedEvent {
+                    linked_gallery_id: entry.linked_gallery_id,
                     entry_id: entry.entry_id.to_string(),
                     gallery_id: entry.gallery_id.get(),
                     revision: entry.revision,
@@ -2009,6 +2332,36 @@ pub async fn maintenance_execute(
             .into(),
         ));
     }
+    if matches!(action, MaintenanceAction::FactoryReset { .. }) {
+        let reservation = match state.managed_work.reserve_factory_reset() {
+            Ok(reservation) => reservation,
+            Err(error) => return Ok(ApiResult::failure(error.into())),
+        };
+        let drain = state.blocking_work_drain(app.clone());
+        let data_dir = state.data_dir.clone();
+        let result = run_application_blocking("maintenance_factory_reset", move || {
+            finish_factory_reset(reservation, drain, || publish_factory_reset_marker(&data_dir))?;
+            Ok(MaintenanceResult {
+                action,
+                completed_steps: vec!["factory reset scheduled for the next startup".into()],
+                warnings: vec!["the app will now exit; external originals are unchanged".into()],
+                restart_required: true,
+            })
+        }).await;
+        return Ok(match result {
+            ApiResult::Success(result) => {
+                app.exit(0);
+                ApiResult::Success(result)
+            }
+            ApiResult::Failure(_) => ApiResult::failure(ApiError {
+                code: "FACTORY_RESET_INCOMPLETE".into(),
+                message: "초기화를 예약하지 못했습니다. 새 작업은 차단된 상태입니다. 앱을 정상 종료한 뒤 다시 열어 주세요. 기존 파일은 삭제하지 않았습니다.".into(),
+                retryable: false,
+                action: Some(ApiAction::None),
+                details: None,
+            }),
+        });
+    }
     if matches!(action, MaintenanceAction::QuickRepair) {
         state.search_pages.cancel_all();
     }
@@ -2020,12 +2373,9 @@ pub async fn maintenance_execute(
     let auto_find = state.auto_find.clone();
     let duplicates = state.duplicates.clone();
     let internal_duplicates = state.internal_duplicates.clone();
-    let data_dir = state.data_dir.clone();
     let managed_work = state.managed_work();
     let execute_action = action.clone();
 
-    let browser = state.browser.clone();
-    let shutdown_app = app.clone();
     let result = run_application_blocking("maintenance_execute", move || {
         let mut completed_steps = Vec::new();
         let mut warnings = Vec::new();
@@ -2094,35 +2444,27 @@ pub async fn maintenance_execute(
                 Ok(MaintenanceResult { action: execute_action.clone(), completed_steps, warnings, restart_required: false })
             }
             MaintenanceAction::FactoryReset { .. } => {
-                browser.shutdown_and_wait(&shutdown_app);
-
-                internal_duplicates.shutdown_and_wait();
-                duplicates.shutdown_and_wait();
-                auto_find.shutdown_and_wait();
-                downloads.shutdown_and_wait();
-                std::fs::write(data_dir.join("factory-reset.pending"), b"v1\n")
-                    .map_err(|error| ApplicationError::from(crate::application::RepositoryError::Other(format!("could not schedule factory reset: {error}"))))?;
-                Ok(MaintenanceResult {
-                    action: execute_action,
-                    completed_steps: vec!["factory reset scheduled for the next startup".into()],
-                    warnings: vec!["the app will now exit; external originals are unchanged".into()],
-                    restart_required: true,
-                })
+                // Handled by the reserved, shared-drain branch above.
+                Err(ApplicationError::AppQuitInProgress)
             }
         }
     }).await;
-    if matches!(action, MaintenanceAction::FactoryReset { .. })
-        && matches!(result, ApiResult::Success(_))
-    {
-        app.exit(0);
-    }
     Ok(result)
 }
 
 #[tauri::command]
 pub async fn app_minimize_to_tray(window: Window) -> Result<ApiResult<()>, ApiError> {
     match crate::minimize_to_tray(|| window.hide()) {
-        Ok(()) => Ok(ApiResult::success(())),
+        Ok(()) => {
+            let _ = window.emit("platform-media:tray-muted", true);
+            if let Some(host) = window.app_handle().try_state::<crate::soop::original::SoopOriginalHost>() {
+                host.set_tray_muted(window.app_handle(), true);
+            }
+            if let Some(host) = window.app_handle().try_state::<crate::youtube::original::YouTubeOriginalHost>() {
+                host.set_tray_muted(window.app_handle(), true);
+            }
+            Ok(ApiResult::success(()))
+        },
         Err(error) => Ok(ApiResult::failure(ApiError {
             code: "WINDOW_HIDE_FAILED".into(),
             message: format!("could not hide Atsumi to the tray: {error}"),
@@ -2390,6 +2732,16 @@ mod tests {
     use crate::domain::ValidationError;
 
     #[test]
+    fn platform_development_tools_have_no_parent_traversal_components() {
+        let root = platform_development_resource_root().unwrap();
+        assert!(root.is_absolute());
+        assert_eq!(root.file_name(), Some(std::ffi::OsStr::new(".runtime")));
+        assert_eq!(root.parent(), std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent());
+        assert!(!root.components().any(|part| matches!(part,
+            std::path::Component::ParentDir | std::path::Component::CurDir)));
+    }
+
+    #[test]
     fn thumbnail_cleanup_clears_persistent_and_memory_entries() {
         use crate::thumbnail::{
             FixtureThumbnailResolver, ThumbnailConsumer, ThumbnailCoordinatorConfig,
@@ -2514,6 +2866,7 @@ mod tests {
             queried_at: "123".into(),
             work_set_fingerprint: "current-work".into(),
             recordings: None,
+            live_receivers: None,
             downloads: AppActiveDownloadsSnapshot {
                 active_count: active_downloads,
             },
@@ -2528,6 +2881,7 @@ mod tests {
             queried_at: "123".into(),
             work_set_fingerprint: "all-work".into(),
             recordings: None,
+            live_receivers: None,
             downloads: AppActiveDownloadsSnapshot { active_count: 2 },
             auto_find: Some(AppActiveAutoFindSnapshot {
                 run_id: "auto-run".into(),
@@ -2551,6 +2905,55 @@ mod tests {
                 groups_found: 3,
             }),
         }
+    }
+
+    #[test]
+    fn live_receiver_display_counts_preserve_all_ownership_and_unknown_work() {
+        let ids = ["platform-official:receiver-a", "platform-live:receiver-b", "platform-media:download-c", "platform-screenshot:capture", "platform-live:", "platform-officially:unknown"]
+            .map(str::to_owned);
+        let original = ids.clone();
+        let fingerprint = active_work_fingerprint(ids.iter().map(String::as_str), None, None, None);
+        let (downloads, receivers) = display_work_counts(&ids);
+        assert_eq!(downloads.active_count, 4);
+        assert_eq!(receivers.as_ref().map(|value| value.active_count), Some(2));
+        assert_eq!(ids, original);
+        assert_eq!(fingerprint, active_work_fingerprint(ids.iter().map(String::as_str), None, None, None));
+
+        let (empty, no_receivers) = display_work_counts(&[]);
+        assert_eq!(empty.active_count, 0);
+        assert!(no_receivers.is_none());
+        let (watch_only, receiver) = display_work_counts(&["platform-official:receiver-a".into()]);
+        assert_eq!(watch_only.active_count, 0);
+        assert_eq!(receiver.unwrap().active_count, 1);
+    }
+
+    #[test]
+    fn live_receiver_only_quit_keeps_confirmation_and_stale_owner_fencing() {
+        let ids = vec!["platform-official:receiver-a".into()];
+        let mut snapshot = active_work_snapshot(0);
+        (snapshot.downloads, snapshot.live_receivers) = display_work_counts(&ids);
+        snapshot.work_set_fingerprint = active_work_fingerprint(ids.iter().map(String::as_str), None, None, None);
+        assert!(snapshot.has_active_work());
+        assert_eq!(snapshot.active_work_count(), 1);
+        let request = AppQuitRequest {
+            expected_work_set_fingerprint: snapshot.work_set_fingerprint.clone(),
+            confirm_active_work: false,
+            force_when_status_unknown: false,
+        };
+        assert_eq!(quit_rejection_reason(&request, &snapshot), Some(AppQuitRejectionReason::ActiveWorkConfirmationRequired));
+        let confirmed = AppQuitRequest { confirm_active_work: true, ..request };
+        assert_eq!(quit_rejection_reason(&confirmed, &snapshot), None);
+        snapshot.work_set_fingerprint = active_work_fingerprint(["platform-official:receiver-b"], None, None, None);
+        assert_eq!(quit_rejection_reason(&confirmed, &snapshot), Some(AppQuitRejectionReason::ActiveWorkChanged));
+
+        snapshot.downloads.active_count = 2;
+        assert_eq!(snapshot.active_work_count(), 3);
+        snapshot.downloads.active_count = u64::MAX;
+        assert_eq!(snapshot.active_work_count(), u64::MAX);
+        snapshot.downloads.active_count = 0;
+        snapshot.live_receivers = Some(AppActiveLiveReceiversSnapshot { active_count: 0 });
+        assert!(!snapshot.has_active_work());
+        assert_eq!(snapshot.active_work_count(), 0);
     }
 
     #[test]
@@ -2713,6 +3116,214 @@ mod tests {
         assert!(gate.run(|| Ok::<_, ApplicationError>(7)).is_err());
         gate.inner.control.lock().unwrap().updating = false;
         assert_eq!(gate.run(|| Ok(8)).unwrap(), 8);
+    }
+
+    #[test]
+    fn platform_initialization_registers_without_holding_admission_lock() {
+        let gate = ManagedWorkGate::default();
+        let permit = gate.begin_platform_initialization().unwrap();
+        assert!(gate.platform_initializing());
+        assert!(gate.inner.control.try_lock().is_ok());
+        let reset = gate.reserve_factory_reset().unwrap();
+        assert!(gate.begin_platform_initialization().is_err());
+        drop(permit);
+        assert!(!gate.platform_initializing());
+        drop(reset);
+        assert!(gate.begin_platform_initialization().is_err());
+        let gate = ManagedWorkGate::default();
+        gate.inner.control.lock().unwrap().updating = true;
+        assert!(gate.begin_platform_initialization().is_err());
+        assert!(!gate.platform_initializing());
+    }
+
+    #[test]
+    fn platform_initialization_drain_reads_only_the_settled_slot() {
+        let gate = ManagedWorkGate::default();
+        let slot = OnceLock::new();
+        let mut permit = Some(gate.begin_platform_initialization().unwrap());
+        let _reset = gate.reserve_factory_reset().unwrap();
+        let mut waited = false;
+        let service = settled_platform_service(&gate, &slot, || {
+            assert!(!waited);
+            assert!(slot.get().is_none());
+            waited = true;
+            slot.set("completed service").unwrap();
+            drop(permit.take());
+        });
+        assert!(waited);
+        assert_eq!(service, Some("completed service"));
+    }
+
+    #[test]
+    fn platform_initialization_panic_releases_its_owned_count() {
+        let gate = ManagedWorkGate::default();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _permit = gate.begin_platform_initialization().unwrap();
+            panic!("fixture initialization failure");
+        }));
+        assert!(result.is_err());
+        assert!(!gate.platform_initializing());
+        let _reset = gate.reserve_factory_reset().unwrap();
+        let slot: OnceLock<String> = OnceLock::new();
+        assert_eq!(settled_platform_service(&gate, &slot, || panic!("no remaining initializer")), None);
+    }
+
+    #[test]
+    fn factory_reset_reserves_admission_and_rejects_competing_quit_dispatch() {
+        let gate = ManagedWorkGate::default();
+        let reservation = gate.reserve_factory_reset().unwrap();
+        assert!(gate.run(|| Ok(())).is_err());
+        assert!(gate.reserve_factory_reset().is_err());
+        let mut control = gate.inner.control.lock().unwrap();
+        let request = AppQuitRequest {
+            expected_work_set_fingerprint: String::new(),
+            confirm_active_work: true,
+            force_when_status_unknown: false,
+        };
+        let (accepted, dispatch) = gate.evaluate_quit_locked(&mut control, &request, None);
+        assert!(accepted.accepted);
+        assert!(!dispatch);
+        drop(control);
+        drop(reservation);
+        assert!(gate.admission_closed());
+        assert!(!gate.inner.quitting.load(Ordering::Acquire));
+        assert!(gate.run(|| Ok(())).is_err());
+        assert!(gate.reserve_factory_reset().is_err());
+        let mut control = gate.inner.control.lock().unwrap();
+        let (accepted, dispatch) = gate.evaluate_quit_locked(&mut control, &request, None);
+        assert!(accepted.accepted);
+        assert!(dispatch, "explicit quit must work after a failed reset");
+    }
+
+    #[test]
+    fn factory_reset_rejects_update_or_quit_without_changing_gate() {
+        let gate = ManagedWorkGate::default();
+        gate.inner.control.lock().unwrap().updating = true;
+        assert!(gate.reserve_factory_reset().is_err());
+        assert!(!gate.admission_closed());
+        gate.inner.control.lock().unwrap().updating = false;
+        gate.inner.quitting.store(true, Ordering::Release);
+        assert!(gate.reserve_factory_reset().is_err());
+        assert!(!gate.inner.maintenance_stopped.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn factory_reset_stale_preflight_cannot_commit() {
+        let gate = ManagedWorkGate::default();
+        let worker_gate = gate.clone();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let committed = Arc::new(AtomicBool::new(false));
+        let worker_committed = committed.clone();
+        let worker = thread::spawn(move || prepare_then_commit_managed_work(&worker_gate, || {
+            entered_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            Ok(())
+        }, |()| { worker_committed.store(true, Ordering::Release); Ok(()) }));
+        entered_rx.recv().unwrap();
+        let reservation = gate.reserve_factory_reset().unwrap();
+        release_tx.send(()).unwrap();
+        assert!(worker.join().unwrap().is_err());
+        assert!(!committed.load(Ordering::Acquire));
+        drop(reservation);
+    }
+
+    #[test]
+    fn factory_reset_publishes_only_after_drain_and_keeps_successful_quit_reserved() {
+        let gate = ManagedWorkGate::default();
+        let events = std::cell::RefCell::new(Vec::new());
+        finish_factory_reset(gate.reserve_factory_reset().unwrap(), || {
+            assert!(gate.run(|| Ok(())).is_err());
+            events.borrow_mut().push("drained");
+            Ok(())
+        }, || {
+            assert_eq!(*events.borrow(), ["drained"]);
+            events.borrow_mut().push("marker");
+            Ok(())
+        }).unwrap();
+        assert_eq!(events.into_inner(), ["drained", "marker"]);
+        assert!(gate.inner.quitting.load(Ordering::Acquire));
+        assert!(gate.admission_closed());
+    }
+
+    #[test]
+    fn factory_reset_shared_drain_waits_for_every_platform_before_marker() {
+        let gate = ManagedWorkGate::default();
+        let events = std::cell::RefCell::new(Vec::new());
+        // Platform counts settle separately, including a late scheduler worker.
+        let polls = std::cell::Cell::new(0usize);
+        let remaining = [[1, 1, 1, 1], [0, 1, 1, 1], [0, 0, 1, 1], [0, 0, 0, 1], [0, 0, 0, 0]];
+        finish_factory_reset(gate.reserve_factory_reset().unwrap(), || {
+            drain_managed_workers(
+                || events.borrow_mut().push("stop"),
+                || remaining[polls.get()].iter().any(|count| *count > 0),
+                || { polls.set(polls.get() + 1); events.borrow_mut().push("wait"); },
+                || events.borrow_mut().push("legacy-drained"),
+            );
+            Ok(())
+        }, || { events.borrow_mut().push("marker"); Ok(()) }).unwrap();
+        assert_eq!(events.into_inner(), ["stop", "wait", "wait", "wait", "wait", "legacy-drained", "marker"]);
+    }
+
+    #[test]
+    fn factory_reset_failed_marker_and_panicked_drain_never_reopen_admission() {
+        let gate = ManagedWorkGate::default();
+        let result = finish_factory_reset(gate.reserve_factory_reset().unwrap(), || Ok(()), || {
+            Err(std::io::Error::other("fixture marker failure"))
+        });
+        assert!(result.is_err());
+        assert!(gate.admission_closed());
+        assert!(!gate.inner.quitting.load(Ordering::Acquire));
+
+        let gate = ManagedWorkGate::default();
+        let published = AtomicBool::new(false);
+        let reservation = gate.reserve_factory_reset().unwrap();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            finish_factory_reset(reservation, || panic!("fixture drain failure"), || {
+                published.store(true, Ordering::Release); Ok(())
+            })
+        }));
+        assert!(result.is_err());
+        assert!(!published.load(Ordering::Acquire));
+        assert!(gate.admission_closed());
+        assert!(!gate.inner.quitting.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn factory_reset_terminal_persistence_failure_never_publishes_marker() {
+        let gate = ManagedWorkGate::default();
+        let published = AtomicBool::new(false);
+        let result = finish_factory_reset(gate.reserve_factory_reset().unwrap(), || {
+            Err(crate::application::RepositoryError::Other("fixture journal write failed".into()).into())
+        }, || { published.store(true, Ordering::Release); Ok(()) });
+        assert!(result.is_err());
+        assert!(!published.load(Ordering::Acquire));
+        assert!(gate.admission_closed());
+        assert!(!gate.inner.quitting.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn factory_reset_marker_is_complete_and_never_overwrites() {
+        let root = tempfile::tempdir().unwrap();
+        publish_factory_reset_marker(root.path()).unwrap();
+        let marker = root.path().join("factory-reset.pending");
+        assert_eq!(std::fs::read(&marker).unwrap(), b"v1\n");
+        std::fs::write(&marker, b"existing marker").unwrap();
+        assert!(publish_factory_reset_marker(root.path()).is_err());
+        assert_eq!(std::fs::read(&marker).unwrap(), b"existing marker");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn factory_reset_marker_failure_preserves_existing_directory_and_no_temp() {
+        let root = tempfile::tempdir().unwrap();
+        let marker = root.path().join("factory-reset.pending");
+        std::fs::create_dir(&marker).unwrap();
+        let sentinel = marker.join("owned-elsewhere");
+        std::fs::write(&sentinel, b"keep").unwrap();
+        assert!(publish_factory_reset_marker(root.path()).is_err());
+        assert_eq!(std::fs::read(sentinel).unwrap(), b"keep");
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
     #[test]

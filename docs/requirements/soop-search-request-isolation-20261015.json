@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "state": "root-approved narrow implementation; deterministic regressions passed; actual desktop close/reopen acceptance remains root-owned",
+  "finding": "SOOP-STALE-REOPEN",
+  "originalReferences": [
+    {"turn": "01a13adc-a040-70f0-97d9-380c5b6ba368", "item": 3, "request": "SOOP discovery must actually search, initially show official-style home, and support integrated search with the established app flows."},
+    {"turn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec", "request": "Continue actual verification including SOOP screens and repair evidenced problems."},
+    {"turn": "01a051cd-a457-79f0-a78e-4edcf270fa8c", "request": "Opening an artist search must not lose the original exploration and require finding the interrupted position again."},
+    {"turn": "01a10785-1343-76e2-8820-053e98507cbb", "request": "Operations throughout the program must visibly indicate loading."}
+  ],
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Independently rehashed and reused fully read main230turn/284message and other333turn/375message EOF snapshots. Root refreshed active50/archive3 EOF and unchanged other-thread revisions;69 original specifications retain their recorded hashes except the already reread RELEASING F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. Directly reread original01a051cd and01a10785 messages, latest user request in inherited history, AGENTS, full discovery contradiction audit, platform followup, SOOP discovery followup and SOOP clone contracts. Current new contracts are indexed separately, not confused with the original69 baseline.",
+    "unavailable": ["Durable original thread01a03f16-5c02-74a3-b49c-2c3a20ccdaae", "Unidentified analysis1/2", "Historical inaccessible attachment pixels"],
+    "sourceRead": ["src/features/soop/SoopDiscovery.tsx", "src/features/soop/SoopDiscovery.test.tsx"]
+  },
+  "cause": "A tab's deterministic query id is reused after closing. Its request generation is also reset to1 because the deleted tab no longer exists. Delayed successes or errors from the closed tab then match the replacement tab's id and generation. A late page2 response can likewise collide once a reopened tab requests its own page2.",
+  "rules": [
+    "R003 provider-local state and CHZZK-aligned interactions; no shared request counter or other provider mutation",
+    "R009/R018 pending, successful, failed and empty states remain distinct",
+    "R010 existing tab/results/history/scroll reuse remains intact; closing is still a user-directed tab removal",
+    "No visual/wording changes, no new cancellation promise, no account/media/file mutation"
+  ],
+  "proposal": "Allocate every SOOP search request's generation from a monotonically increasing ref owned by the mounted SoopDiscovery component. Allocate inside load so initial searches, retries and pagination all receive a fresh identity. Tab deletion never resets this allocator. Keep deterministic query ids for existing-tab selection and keep response checks on both id and generation. Initial tab creation carries an inert generation0 until its synchronously queued load assigns the unique generation.",
+  "scope": ["src/features/soop/SoopDiscovery.tsx", "src/features/soop/SoopDiscovery.test.tsx"],
+  "conflicts": "No conflicting newer request found. The separate scroll-return and VOD-watch gaps are not included, and no stale-reply result is called cancelled at the network layer.",
+  "checks": [
+    "Deferred old first-page success and error cannot replace a reopened tab's successful results or error state",
+    "Deferred old success and error cannot clear loading while the replacement request is still pending",
+    "Deferred old page2 cannot append into a reopened tab even when its own page2 is pending; only the replacement page2 appends",
+    "Existing populated query reuse, retry, pagination-error preservation, home, saved-video, selection/context/download and independent scroll tests remain passing",
+    "Root-owned actual SOOP search close/reopen and normal result/loading checks remain distinct from deterministic deferred-promise tests"
+  ],
+  "verification": {
+    "beforeFix": "Six new deferred-promise regression cases failed against the unchanged production file;16 preexisting cases passed. Failures reproduced old first-page warnings/errors replacing the reopened state and old page2 appending or reporting its error into the replacement page2.",
+    "afterFix": "SoopDiscovery22 tests and SoopWorkspace40 tests passed,62 total. Full tsc -b --pretty false passed outside the sandbox; the sandbox attempt could not resolve installed pnpm test types reliably and was not counted as a code result.",
+    "scopeCheck": "Production changes are limited to SoopDiscovery request-generation allocation and its load callsites. Query ids, UI, storage, scroll, media, account and native player code unchanged. No Cargo, native UI, authentication or file/media mutation performed.",
+    "actualLimit": "Root actual isolated desktop searched the public short-video title, observed the circular channel and0:09video result, closed the search tab to return home, then submitted the same unchanged query and observed a new tab with the same correct results. Loading indicator settled. This verifies normal real-service close/reopen, not deterministic race timing; old-reply ordering remains separately tested by deferred responses."
+  },
+  "gate": "Root read and approved this contract before production edits. Root owns app lifecycle and actual UI. Main app was normally closed; this agent made no UI or Cargo calls."
+}

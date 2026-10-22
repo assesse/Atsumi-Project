@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-13",
+  "status": "implemented; focused regression passed; desktop acceptance pending",
+  "coverage": {
+    "policy": "docs/requirements/implementation-policy.json",
+    "main": { "turns": 230, "userMessages": 284, "cursorExhausted": true, "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676" },
+    "other": { "turns": 333, "userMessages": 375, "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21" },
+    "specifications": { "files": 69, "lines": 5742, "sha256": "7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C" },
+    "refresh": "Re-enumerated local evidence/contracts, rechecked unchanged complete-snapshot hashes and reread the applicable full original turns plus changed implementation policy/media contract. Unavailable original chat and unnamed analysis chats remain explicitly unavailable in the shared policy. Root's ongoing isolated desktop QA is fresh evidence, not permission to control or rebuild its running app."
+  },
+  "originalRequests": [
+    "01a10835-c6c8-7d31-b270-8b32df9a1a94",
+    "01a0f6ad-b26a-7381-808e-5f876e7bbebf",
+    "01a10593-61fd-70c0-bdd4-f8521107be97",
+    "01a051cd-a457-79f0-a78e-4edcf270fa8c",
+    "01a0ffb2-7b46-77f1-9970-1c4be0da6a41",
+    "01a13142-4c44-7560-bde6-d7e089fd9ea9",
+    "01a13363-ef61-71e3-bf03-3babe3f5b5c0"
+  ],
+  "requirements": ["R002", "R003", "R004", "R006", "R010", "R012", "R021", "R022"],
+  "evidence": "Isolated desktop QA observed the old Explore query, search-kind/sort dropdowns and Search button on YouTube Favorites. Source confirms that submitting this form performs remote youtube_search, changes favoriteSearch to display remote results under the unchanged Favorites heading, and never filters the stored favorites. Existing image Favorites searches only saved bookmarks; existing SOOP exposes external search only in Explore and navigates there when opening a favorite's creator.",
+  "conflicts": [
+    "The image-favorites request for consistent search placement is not authorization to present remote discovery as saved-list filtering.",
+    "The request to remove favorite-channel search applies to channel selection; it is not a universal ban on existing image-favorites local search.",
+    "Removing the form must not remove favorite-channel discovery or erase existing Explore tabs, saved favorites, category scroll or background playback."
+  ],
+  "decision": "Expose the external query, kind and sort controls only in Explore. Favorites always displays its saved video/channel category. Foreground channel-card or creator actions create/reuse the existing search tab and explicitly navigate to Explore through the shell callback. Ctrl-click on a creator retains its established background-tab behavior without navigating or replacing favorites. Preserve independent category/search scroll and retained results, including cached same-query tabs. No native, media lifecycle, account or storage-schema change.",
+  "files": ["src/features/youtube/YouTubeWorkspace.tsx", "src/features/youtube/YouTubeWorkspace.test.tsx", "src/features/platforms/PlatformWorkspace.tsx", "src/features/platforms/PlatformWorkspace.test.tsx"],
+  "parentIntegration": "Root explicitly extended ownership to the single onViewChange:setVideoView field in the YouTube shell branch and its connection regression. No other shell behavior or Root-owned QA aggregate document is changed.",
+  "acceptance": [
+    "Favorites has no external search form, kind/sort dropdown or search-history popover; entering it issues no discovery request.",
+    "Video/channel categories remain local, persistent and independently scrolled.",
+    "Opening a favorite channel or creator navigates to Explore with its channel results; existing search results and scroll remain recoverable.",
+    "An already loaded channel tab is reused without another request and restores its scroll.",
+    "Ctrl-click creator adds a background tab without navigating, changing selection or swapping the displayed favorites.",
+    "Returning to Explore retains its input/filter/sort and prior tabs; returning to Favorites retains its category/scroll.",
+    "Existing card selection, favorites persistence, background playback and detail tests remain intact.",
+    "Run focused frontend regression and TypeScript only; no Vite/Cargo build, app control, user files, real network search or release. Refreshed desktop verification is separately pending."
+  ],
+  "verification": {
+    "frontend": "2026-10-13 18:27 KST: YouTubeWorkspace and PlatformWorkspace, 2 files/29 tests passed, exit0 with maxWorkers1. Five added cases cover Explore-only controls and local categories, foreground channel cached-tab/scroll recovery, foreground/background favorite creator navigation, and the actual shell callback without remounting. Existing selection, privacy, player retention and independent-scroll assertions remain unchanged.",
+    "typecheck": "npx tsc -b --pretty false exited0. No Vite or Cargo build was run.",
+    "desktop": "Pending; Root's current static QA build intentionally remains unchanged. Unit/shell callback tests do not establish refreshed desktop acceptance."
+  }
+}

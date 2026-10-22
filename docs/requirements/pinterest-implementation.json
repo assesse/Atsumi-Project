@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-10-13",
+  "status": "implementation-in-progress; isolated official search implemented but desktop validation pending",
+  "ownership": [
+    "src-tauri/src/pinterest.rs",
+    "src-tauri/src/pinterest_browser.rs",
+    "src/features/pinterest/**",
+    "docs/requirements/pinterest-implementation.json"
+  ],
+  "evidence": {
+    "policy": "docs/requirements/implementation-policy.json",
+    "chatAudit": ".runtime/requirements-audit/other-threads.json",
+    "mainAudit": ".runtime/requirements-audit/main-thread-users.json",
+    "specAudit": ".runtime/requirements-audit/specifications.json",
+    "requirementIds": [
+      "R002",
+      "R003",
+      "R004",
+      "R005",
+      "R006",
+      "R007",
+      "R008",
+      "R009",
+      "R010",
+      "R011",
+      "R016",
+      "R017",
+      "R018",
+      "R019",
+      "R021",
+      "R022"
+    ],
+    "originalTurnsReRead": [
+      "01a13363-ef61-71e3-bf03-3babe3f5b5c0",
+      "01a13142-4c44-7560-bde6-d7e089fd9ea9",
+      "01a051cd-a457-79f0-a78e-4edcf270fa8c",
+      "01a051f6-9147-7e23-aef5-d3a4238c546e",
+      "01a0ffb2-7b46-77f1-9970-1c4be0da6a41",
+      "01a10593-61fd-70c0-bdd4-f8521107be97",
+      "01a0fb3e-84f6-7760-b780-98d6d258e8ac",
+      "01a10806-d91b-7960-a4a4-09a11e14032d",
+      "01a0ee84-c864-75c3-9328-32271ce8182a"
+    ],
+    "applicableOriginalDocumentsReRead": [
+      "docs/DANBOORU_MODE.md",
+      "docs/PERSONAL_LIBRARY.md",
+      "docs/DOWNLOAD_PIPELINE.md",
+      "docs/HITOMI_SEARCH_TABS_20260924.md",
+      "docs/EXTENSIBLE_ARCHITECTURE.md",
+      "docs/HITOMI_QUEUE_NAVIGATION_20260930.md",
+      "docs/WINDOWS_UI_STABILITY.md",
+      "docs/design-system/ATSUMI_INK_V0_1.md",
+      "docs/design-system/DECISION_HISTORY.md"
+    ],
+    "coverage": "Other accessible chat pages fully read to EOF by this agent; applicable original documents listed above re-read. Parent completed current main and the 69-document inventory; this agent does not claim to have independently reread all 69 originals. Inaccessible original durable chat, unidentified analysis 1/2 and unreviewed attachment pixels remain explicitly recorded in audit artifacts."
+  },
+  "conflicts": [
+    "Link import is supplementary, not platform discovery completion.",
+    "Legacy PERSONAL_LIBRARY collections are superseded by album/page-only favorites.",
+    "Legacy single-click detail and broad Ctrl background-open are superseded by single selection, double-click detail and Ctrl/Shift multi-selection.",
+    "Normal exit clears search state; favorites and saved original records persist.",
+    "HTTP 200 empty login shell is not no-results success. Do not spoof authenticated access or use user cookies without a separate authorized flow."
+  ],
+  "design": {
+    "discovery": "Native public profile/board HTML supplies ordered pin metadata and navigable boards. Keywords open a dedicated official in-app Pinterest WebView; explicit current-public-pin selection returns only the validated native-observed ID to the canonical resolver. No account-cookie export or remote IPC bridge. Keep official page and native query context while visiting details/library; normal restart does not restore searches. Actual official results/login/SPA remain desktop-unverified.",
+    "media": "Discovery thumbnail metadata is never a complete download plan. Resolve canonical pin metadata before originals. Preview uses server-owned allowlisted URLs, local verified originals first, no global CSP expansion.",
+    "downloads": "Bounded multiple selected original saves with guarded native tasks, cancellation, no overwrite, immutable manifest/hash and decoded-image validation.",
+    "library": "Offline local preview and original dimensions retained. Local title filtering, folder reveal and recoverable owned-record removal with explicit confirmation; favorites are not deleted with files.",
+    "ui": "Existing compact overlay cards, Korean-prioritized list titles, album/page bookmarks, fixed controls, Ctrl/Shift selection, double-click/context actions, A/D preview, visible loading/error/cancel states and privacy masking."
+  },
+  "liveReadOnlyEvidence": [
+    {
+      "path": "https://www.pinterest.com/search/pins/?q=landscape",
+      "status": 200,
+      "pins": 0,
+      "result": "login-limited empty app shell, not genuine no results"
+    },
+    {
+      "path": "https://www.pinterest.com/resource/BaseSearchResource/get/",
+      "status": 403,
+      "result": "anonymous keyword resource rejected; no credentials used"
+    },
+    {
+      "path": "https://www.pinterest.com/pinterest/",
+      "status": 200,
+      "pins": 25,
+      "boards": 10,
+      "result": "public profile hydration with UserPinsResource and BoardsFeedResource"
+    },
+    {
+      "path": "https://www.pinterest.com/pinterest/girls-night-in/",
+      "status": 200,
+      "pins": 24,
+      "result": "public BoardFeedResource returned ordered pin list"
+    }
+  ],
+  "acceptance": [
+    "Actual anonymous public profile and board discovery returns pins in API order",
+    "Keyword restriction explicit; do not advertise verified unrestricted search",
+    "Browse pin → open detail → favorite → back retains results and scroll",
+    "Single click no checkbox; Ctrl/Shift two-or-more and nested actions",
+    "Multiple originals download into isolated fixture with cancellation",
+    "Decode/hash verification and no-overwrite",
+    "Fresh process offline record/preview load without remote metadata request",
+    "Native IPC origin checks, path/reparse/manifest tampering rejection",
+    "Recoverable removal changes only explicitly selected fixture records",
+    "Actual desktop IPC/UI and responsive/privacy checks separate from unit tests"
+  ],
+  "followupBatch": {
+    "references": ["R004", "R006", "R009", "R010", "R011", "R017"],
+    "originalEvidenceChecked": ["01a051cd-a457-79f0-a78e-4edcf270fa8c", "01a051f6-9147-7e23-aef5-d3a4238c546e", "01a105c6-24f6-7792-9fc5-c8bd6309021a"],
+    "changes": ["Bound and sanitize persisted favorites to metadata only", "Retain per-view position and multiple opened details without evicting search tabs", "Ten removable session search-history entries", "Stop indefinite detail spinner on metadata failure"],
+    "checks": ["No persisted data URLs or arbitrary metadata", "View/tab return preserves results and scroll", "Multi-Enter opens all selected detail tabs", "History deletion and clear-all", "Explicit metadata retry"]
+  },
+  "continuationBatch": {
+    "checkedAt": "2026-10-13",
+    "coverageRefresh": "Re-enumerated active50 and archived3/EOF; latest main turn user messages unchanged; main/other snapshots SHA256 unchanged. Re-read changed implementation policy and original R002/R003/R010/R011 requests plus DOWNLOAD_PIPELINE and PERSONAL_LIBRARY; collections remain superseded.",
+    "originalReferences": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a051cd-a457-79f0-a78e-4edcf270fa8c", "01a051f6-9147-7e23-aef5-d3a4238c546e", "01a10ac4-0133-7711-8850-ffd7ebcedcc7"],
+    "plan": "Enumerate validated owned .removed manifests from configured media root, not a transient undo token; provide persistent compact restoration overlay with offline thumbnails and missing-file metadata handling. Investigate public pagination/auth before advertising further pages.",
+    "acceptance": ["Fresh native list finds excluded record without session state", "Only validated id/UUID folder and matching owned manifest shown", "Reparse/unknown/invalid records rejected", "Individual and multi restore preserves files/favorites and rejects overwrite", "Overlay persists existing list context and shows bounded load/error/cancel feedback"],
+    "paginationEvidence": ["Actual public UserPinsResource bookmark request:403", "Actual BoardFeedResource bookmark request with normal AJAX headers:403", "HTML bookmarks query:200 but 0 new IDs; not pagination", "Official widget users endpoint:50 pins but no bookmark; not complete pagination"],
+    "authenticationEvidence": "Official Pinterest OAuth documentation requires app ID, client secret, registered redirect and user authorization; no application credentials available or account extraction authorized. Official SearchApi confirms /search/pins searches the token user's own pins; general /search/partner/pins is beta and unavailable to all apps. Adding ordinary OAuth alone is not proof of general keyword-search support.",
+    "officialSources": ["https://developers.pinterest.com/docs/reference/pagination/", "https://developer.pinterest.com/docs/getting-started/set-up-authentication-and-authorization/", "https://raw.githubusercontent.com/pinterest/pinterest-python-generated-api-client/main/docs/SearchApi.md"],
+    "implemented": ["Persisted owned .removed manifest discovery independent of session tokens", "Compact overlay with local-only preview, Ctrl/Shift selection, per-card/context and multi restore, cancellation and focus restoration", "Missing originals remain manageable; unrelated files, malformed/mismatching tokens and redirected paths rejected; target overwrite rejected"],
+    "ipc": "New pinterest_removed_list(requestId) is trusted-main, bounded/cancellable read-only. Existing pinterest_preview_get optional removedToken resolves only validated owned local records, never an IPC file path. library_action restore remains managed-work guarded."
+  },
+  "interactionParityBatch": {
+    "checkedAt": "2026-10-13",
+    "coverageRefresh": "Active50 and archived3/EOF re-enumerated; main/other source snapshots unchanged (85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 / 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21). Changed policy fully reread at SHA256 249A5CD52A32FE4F41B2CEE3F69F655D00CE84AB5ED1E28D21B7D98DE8F8E74B. Applicable original chat requests, PERSONAL_LIBRARY and HITOMI_SEARCH_TABS reread. No newly renewed GUI/account permission; parent prohibits app launch and UI interaction.",
+    "originalReferences": ["01a0ee84-c864-75c3-9328-32271ce8182a", "01a0ffb2-7b46-77f1-9970-1c4be0da6a41", "01a10593-61fd-70c0-bdd4-f8521107be97", "01a10854-707d-7182-97d5-0b5669f92801", "01a051cd-a457-79f0-a78e-4edcf270fa8c", "01a051f6-9147-7e23-aef5-d3a4238c546e"],
+    "plan": ["Keep source entry identity distinct from pin identity for different bookmarked pages and excluded versions", "Restore per-search list page along with scroll when switching or closing tabs", "Apply multi-Enter and independent close behavior to excluded cards", "Confirm only whole-detail multi-tab closure; individual tab closes remain direct"],
+    "acceptance": ["Two page favorites from one pin each reopen exact page; one active tab and closing an inactive page cannot replace current page", "Second result page survives same-query revisit and closing an adjacent search tab without re-fetch", "Excluded multi-Enter opens selected owned tokens with local-only preview and no metadata fetch", "Whole-detail close can be cancelled, individual tabs never prompt", "Existing context, Ctrl/Shift, batch cancellation, missing-file restore, privacy and persistence tests remain passing"],
+    "status": "implemented; 36 frontend tests and typecheck passed; no GUI verification",
+    "result": ["Detail tab identity includes bookmarked page or owned archive token, not only pin ID", "Search page/scroll restored on revisit/adjacent close and library view return; late discovery response cannot replace the newly focused tab", "Excluded multi-Enter opens all selected local records independently", "Whole-detail closure confirmation remains short; per-tab close direct; privacy covers tab titles"]
+  },
+  "atomicDownloadBatch": {
+    "checkedAt": "2026-10-13",
+    "sourceCoverage": "Main/other accessible EOF snapshots and implementation-policy hashes unchanged from the exhaustive audit. Re-read original app-native download requirement (01a13363-ef61-71e3-bf03-3babe3f5b5c0), cross-platform preservation (01a13142-4c44-7560-bde6-d7e089fd9ea9), visible async status (01a10785-1343-76e2-8820-053e98507cbb), normal-exit search-only cleanup (01a10ac4-0133-7711-8850-ffd7ebcedcc7), and DOWNLOAD_PIPELINE integrity/cancellation section. No GUI/account operation authorized in this batch.",
+    "requirements": ["R002", "R009", "R011", "R016"],
+    "defect": "The renderer sequentially invoked one native download per selected pin. Between replies, the native active registry could reach zero even though the selected queue still had work, allowing normal quit/update to discard accepted queue entries.",
+    "plan": "Validate the complete bounded ID plan and register one native batch guard atomically under AppState.begin_platform_work. Hold it across all queued downloads and cancellation settlement. Stream verified per-pin outcomes to the renderer and reconcile final outcomes without double counting. No renderer-only download queue fallback.",
+    "conflictDecision": "Normal exit may clear exploration tabs, not silently lose already accepted media work. Existing single-download behavior, safe originals, no-overwrite checks and cooperative cancellation remain unchanged.",
+    "acceptance": ["Native active ID stays registered between items, including failed item boundaries", "Cancel/shutdown marks unstarted remainder cancelled without starting network/disk work", "Whole request validates before any side effect and deduplicates bounded IDs", "Batch guard drops after normal finish or panic; no global registry test contamination", "One frontend invoke submits all selected IDs; progress/final duplicate outcomes counted once", "Unmount cancels batch and late outcomes cannot change stale UI", "No app launch, user files or accounts touched"],
+    "status": "implemented; frontend 41/41 and full TypeScript passed at 15:39 KST; latest shared native build passed and Pinterest 25 passed / 2 opt-in ignored including all 4 batch regressions",
+    "result": "One trusted-main batch invoke registers the complete 1–128-ID plan under begin_platform_work. The guard remains live across successful/failed boundaries and cancellation settlement. Channel outcomes plus the final response are deduplicated in the UI. Unmount cancels the batch once, no per-pin invoke fallback. Native tests use local registries and cover accepted-plan validation, failed boundary protection, queued cancellation, pre-cancel and panic drain. No user media/network/GUI test in this batch."
+  },
+  "officialSearchBatch": {
+    "checkedAt": "2026-10-13",
+    "coverage": "Exhaustively read main/other EOF snapshots remain SHA256 85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Policy 42815523F793ED92CB271EF606E1828212E6212870A333B2C4BC82F6AE0A800F unchanged since full reread. Original R002/R003/R008/R010 requests reread; EXTENSIBLE_ARCHITECTURE, WINDOWS_UI_STABILITY and DOWNLOAD_PIPELINE reread in preceding design audit. Parent refreshed latest live request: code/tests allowed, no GUI or QA executable rebuild.",
+    "originalReferences": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a10806-d91b-7960-a4a4-09a11e14032d", "01a051cd-a457-79f0-a78e-4edcf270fa8c", "01a11672-f428-7850-899b-5155aebb4e8a"],
+    "confirmedDefects": ["Root isolated desktop QA observed a duplicate success notice both in shared toast and inside the list, shifting cards.", "Anonymous keyword endpoint cannot provide general search; copying links from an external browser is not a completed discovery flow.", "Offline headless layout baseline at 960x640 and 1280x800 reproduced original-image element overflow for the 1440x2560 portrait in both detail and page preview; the 2560x1440 landscape stayed contained. Existing object-fit was already contain. Bound the inner grid tracks/minimum image size, not a guessed object-fit replacement."],
+    "plan": ["Transient success uses only onNotice/shared toast; persistent errors and restore interactions remain.", "Dedicated isolated official Pinterest child WebView with no remote privileged IPC or cookie export; only trusted main may control it.", "Explicit selected-public-pin handoff re-reads native current URL, validates exact HTTPS host, ID and epoch, then uses existing pin resolver/favorites/download/original storage.", "Native surface hides immediately for privacy, overlays or inactive view; epoch/sequence rejects stale show and close/create races. Preserve official page context across local detail and lists; never restore search after normal restart."],
+    "acceptance": ["Success cannot insert a normal-flow banner or move cards", "Existing error, cancel and restore tests remain", "URL/ID/epoch and remote IPC rejection tests", "Mocked viewport lifecycle and cancellation race tests", "Official SPA/current URL and login restrictions remain explicitly unverified until desktop QA", "No account reading, automatic login, global CSP widening, GUI control or new release"],
+    "finalReviewPlan": "Unchanged main/other source hashes rechecked; changed shared policy fully reread at SHA256 595CDDF4F606BB252FADC4E25BC268DFF46B82F7286EDA703E42DC825F21B1D4. R002/R008/R010 original evidence still applies. Preserve the official component across workspace inactivity instead of unmount/reopen; test switching platform/library and returning. Treat the shared toast and visible app overlays as native surface blockers, including class/style visibility changes. Prevent obsolete navigation actions from clearing a newer search's loading state. Final trust-boundary review also requires clipping against overflow ancestors, not only the main window, and atomically checking close epoch with detachment so a late close cannot invalidate a new search. No GUI action required.",
+    "result": "Code implemented. Transient save success uses shared toast only. Dedicated isolated official WebView admits only exact HTTPS Pinterest hosts, disables popups/downloads, remains muted, exposes no injected remote bridge or cookie export, and guards every control command with trusted_main. Epoch/sequence fences prevent old show/action/import/close effects; selected ID is read from native URL twice. Surface hides for privacy, inactive views, modal/menu/toast/fullscreen and clips to CSS overflow ancestors. Native list and official page context are retained across navigation. New portrait grid constraints passed deterministic data-only headless layout tests.",
+    "checksResult": "2026-10-13 16:58 KST: Pinterest frontend 58/58 passed across four files, including two offline Edge layout tests at 960x640 and 1280x800 (six scenes). Full TypeScript exit 0. YouTube agent's shared native library rebuild and direct tests passed existing Pinterest25/25 plus initial browser4/4; final atomic-close regression adds one browser test and is awaiting its next consolidated run. No GUI, account login or executable launch in this code batch."
+  },
+  "regionalSearchLoadingBatch": {
+    "checkedAt": "2026-10-13",
+    "requirements": ["R002", "R003", "R009", "R018"],
+    "originalReferences": ["01a13363-ef61-71e3-bf03-3babe3f5b5c0", "01a13142-4c44-7560-bde6-d7e089fd9ea9", "01a10785-1343-76e2-8820-053e98507cbb", "01a11672-f428-7850-899b-5155aebb4e8a"],
+    "coverage": "Active50 and archived3/EOF re-enumerated; accessible main/other snapshots remain 85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 / 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21. Applicable original user turns reread; changed policy fully reread at 3267605CA09E8FBA111BFDC84C840E6856BC8B2E82CEB64F165AC732CA43F914. Previously fully read EXTENSIBLE_ARCHITECTURE and WINDOWS_UI_STABILITY hashes unchanged. Previously unavailable sources remain unavailable; historical permissions are not renewed.",
+    "observed": "Root's isolated desktop profile fa0e0692d85b478ba8f3b1ddbe41431b displayed 12 forest search cards at kr.pinterest.com/search/pins/?q=forest+landscape, with an official login modal blocking selection. Atsumi was still loading at about25 seconds. The source's strict initial www target equality can reject a regional Finished event; this is a reproducible code-path defect candidate, not proven to be the cause of the observed screen.",
+    "decision": "Native-only change: accept the exact same HTTPS /search/pins/ path, query and fragment across the existing three exact Pinterest hosts. Retain target ownership until Finished, check captured epoch and actual native URL, and do not reset the original30-second deadline on regional Started events. Timeout/stop release pending target ownership so navigation can recover. No host expansion, remote bridge, cookie access, login action, UI change, QA rebuild or current-app control.",
+    "acceptance": ["www-to-kr Finished ends loading for the current equivalent search", "Changed query/path/pin identity, external or credentialed hosts cannot finish that search", "Late old-epoch events and stale Started/Finished cannot clear or extend newer work", "Regional Started keeps the original30-second deadline; deadline is deterministic without sleep", "Explicit stop and timeout leave later normal navigation usable", "Pin import continues to use the actual native URL rather than the requested search target"],
+    "verification": "Native implementation and four deterministic regression tests added. Pending the coordinated consolidated library compile/test; browser suite now has9 tests. Current QA binary and frontend remain unchanged. Official keyword selection/import remains login-limited and unverified."
+  },
+  "verification": {
+    "native": "YouTube agent's shared library build7228 and direct tests passed existing Pinterest25 /2 opt-in ignored and official-browser5, including atomic close. Four regional-loading regressions added afterwards; browser9 final run pending. Existing suite includes local ownership/offline, atomic batch shutdown guard, queued cancellation and panic drain. Earlier explicit live_public_discovery_roundtrip passed; this native-only patch has not been loaded into the QA app.",
+    "frontend": "58/58 Pinterest tests passed at 16:58 KST across four files; full TypeScript exit 0. Existing card/favorites/exclusion/batch coverage remains, plus official-search import into native favorite/save, inactive/library context preservation, cancel/race fencing, toast/modal/privacy masking, overflow boundary clipping and deterministic portrait/landscape layout tests. Mocked official search is not proof of real Pinterest results or login.",
+    "isolatedPublicDownload": "2026-10-13 13:50 KST: official profile 25 pins/10 boards; public nature board /sheetal_takhar/_quick_creates/ returned 8 pins; pre-inspected tree/sky pin 1076430748452447388 saved one 1,256,242-byte original in disposable tempfile, decoded/hash checked/listed/previewed. No user media root or account used.",
+    "offline": "Local-only unit path passed with no remote request; real fixture preview read completed local original. Fresh-process desktop offline reproduction remains pending.",
+    "desktop": "Before this batch, parent isolated profile local.atsumi.platformqa.19c01716580f45e09bd83e2529459485 verified public board -> eight cards -> tree pin detail/context -> album favorite -> original save -> page favorite -> both favorite categories -> Downloads card. Downloaded-card double-click was not performed because Computer Use helper stopped responding. Agent read-only verification matched owned 001.jpg SHA256 916a1cf1b6e0c574682e6cafd74662f3b60005ba07b1d56490f34c814d6e976e, 1,256,242 bytes, 1440x2560 and pin.json manifest. This does not validate the new official-search UI or fresh-process offline reopen.",
+    "keywordSearch": "Anonymous API blocked. Root's isolated profile fa0e0692d85b478ba8f3b1ddbe41431b displayed12 forest landscape cards in the actual official in-app child at kr.pinterest.com, but the site's login modal prevented selection. No account/login operation occurred. Explicit selected-public-pin handoff is unit-tested, not desktop-validated through this login wall; no unrestricted global-search claim. The regional-loading patch is not yet in that QA binary."
+  },
+  "requirementChecklist": [
+    { "id": "R002/R018", "state": "partial", "evidence": "Real public profile/board discovery, detail, favorites and original save verified in isolated desktop. Anonymous API limitation remains; official in-app search handoff implemented with real desktop validation still pending, not advertised as unrestricted search." },
+    { "id": "R004/R005", "state": "implemented-unit-verified", "evidence": "Single focus, repeat-click deselect/blur, Ctrl/Shift multi, double-click detail, multi-Enter detail tabs, Ctrl-Enter downloads, full-card context menu; desktop hitboxes pending." },
+    { "id": "R006/R007/R008", "state": "implemented-unit-verified", "evidence": "Album/page favorites only, sanitized metadata persistence, Korean list-title priority, compact image overlays, stable bookmark/download geometry; desktop visual verification pending." },
+    { "id": "R009/R016", "state": "implemented-unit-verified", "evidence": "Bounded/cancellable network and original save, batch settled/failed/cancelled counters include cancelled remainder, explicit metadata retry. Byte-level transfer percentage is not claimed; only verified item settlement is displayed." },
+    { "id": "R010/R011/R017", "state": "implemented-unit-verified", "evidence": "Same-query tabs reuse snapshots/scroll; no silent eviction at 64-tab bound; view scroll, session-only ten removable history entries; normal restart does not restore searches. Fresh-process desktop verification pending." },
+    { "id": "offline-management", "state": "implemented-desktop-pending", "evidence": "Validated local originals, folder reveal, missing-file records retained, recoverable selected-record exclusion/restore with no overwrite. Excluded list reloaded from validated owned disk manifests with offline preview/multi restore. Existing native 25 passed / 2 opt-in ignored; frontend58 includes remount/conflict/independent-archive-tab coverage. Parent verified saved Downloads card, but desktop reopen/fresh-process offline validation remains pending." },
+    { "id": "download-security", "state": "native-verified", "evidence": "Exact HTTPS hosts, validated redirects, response caps/timeouts, original image decode/SHA256, guarded tasks, no overwrite, manifest path checks, symlink/reparse/hardlink rejection, known-file-only staging cleanup, unsafe IPC origins rejected by trusted_main contract." }
+  ],
+  "remainingGaps": [
+    "Anonymous keyword and continuation requests returned access limitations. Isolated official in-app search and selected-public-pin handoff now implemented; actual visible results, Pinterest email login and SPA behavior remain unverified. Existing account sessions/cookies were not read. External social-login popups are intentionally unsupported and disclosed; private pins cannot be imported through the anonymous canonical resolver. Ordinary OAuth alone does not provide general global search.",
+    "Public profile/board first hydration page only. nextBookmark is disclosed as limited, not automatically paginated.",
+    "Video/story pins unsupported; actual multipage public static pin not yet verified, although multi-image atomic storage is unit tested.",
+    "Persistent excluded-items UI and native verification passed; desktop verification pending. Permanent/recycle-bin removal is not implemented; exclusion is explicitly recoverable, not space reclamation.",
+    "New official-search desktop IPC, responsive visual comparison, fresh-process offline reopen and real cancellation verification remain pending parent harness; pre-batch public-board/favorite/save verification is qualified above."
+  ]
+}

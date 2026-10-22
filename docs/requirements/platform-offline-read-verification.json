@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-13",
+  "status": "native read-only verification passed for both exact GUI-saved fixtures; fresh desktop IPC isolation not performed",
+  "authority": "Root authorized planning and a read-only service verification of two previously GUI-saved isolated QA records. No GUI, QA executable rebuild, Vite, account access, network download, existing-file write, production behavior change or release is authorized.",
+  "audit": {
+    "main": { "path": ".runtime/requirements-audit/main-thread-users.json", "sha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676", "coverage": "Previously fully read 230 turns / 284 user messages, EOF; hash unchanged and pertinent original messages reread in this batch." },
+    "other": { "path": ".runtime/requirements-audit/other-threads.json", "sha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21", "coverage": "Previously fully read 333 unique turns / 375 user messages, accessible thread pagination EOF; hash unchanged." },
+    "policySha256": "3267605CA09E8FBA111BFDC84C840E6856BC8B2E82CEB64F165AC732CA43F914",
+    "contractsFullyReread": [
+      { "path": "docs/requirements/pinterest-implementation.json", "sha256": "F5BC14761A8059BBF5A83C2A8F71403CAC9B4A143FA545887605AD3485EF1A09" },
+      { "path": "docs/requirements/pixiv-implementation.json", "sha256": "DDDD42DE96133C4EA5ECA2B4369EE8E5FD6EA451212857FEAEB27B3956C8920E" }
+    ],
+    "documentsReread": ["docs/PERSONAL_LIBRARY.md", "docs/DOWNLOAD_PIPELINE.md"],
+    "limitations": "Unavailable original durable chat and Atsumi analysis1/2, plus unreviewed historical attachment pixels, remain unavailable. Root owns the exhaustive69-specification inventory; this agent does not independently claim69 full rereads in this batch. No old permission is renewed. Legacy collections are superseded by album/page-only favorites."
+  },
+  "originalReferences": [
+    { "turnId": "01a05719-4fc4-7ee1-8000-df39220238aa", "rule": "Downloaded albums open originals in page preview, rather than requiring remote preview media." },
+    { "turnId": "01a13363-ef61-71e3-bf03-3babe3f5b5c0", "rule": "Actual in-app discovery, favorites, original download and local management are essential; inspect all original requirements before implementation." },
+    { "turnId": "01a12a4c-724c-7d13-801d-3d92da01fe1e", "rule": "Only verified completion may trigger cleanup; finished media and chat must remain. This verification does not authorize any cleanup." }
+  ],
+  "scope": {
+    "mediaRoot": ".runtime/platform-app-qa/local.atsumi.platformqa.fa0e0692d85b478ba8f3b1ddbe41431b/media",
+    "records": [
+      { "provider": "Pinterest", "id": "1076430748452447388", "pages": 1, "originalBytes": 1256242, "manifestSha256": "4b49418ec0dfd6c2270fe86bf7fb51ce2168bec817c19d468b6b05e33a97bace", "originalSha256": ["916a1cf1b6e0c574682e6cafd74662f3b60005ba07b1d56490f34c814d6e976e"] },
+      { "provider": "Pixiv", "id": "150698216", "pages": 7, "originalBytes": 21646837, "manifestSha256": "8092a0ee678e5d8f3ef2802797330e64fada4aeb6d6c752ae38529d323d632c3", "originalSha256": ["2b2f8aecd8d15045f8dc3b937d0f4090f0db658c15deca8d10750e15fa30065b", "a37118562ffe275b23620060922ee80125a5e898fb9fbaea9d060acae562709f", "0158dd8d4e04612284ff7088275de84fbc751d9821c6f04704a2e6e41e36d30f", "36f0dda7d2f689f0c13ada7ad0bdeec8eb8835a86ba7a4b2596a59bfb73da3bf", "67ad9a8b99f91e73118d270b350de4913b8aa4fef19701aaf44f5efb9915a62b", "af1eaba56097d1f559a1e6d007c1d0fb1a2331e82f5a2c651e5c08b29da7ba12", "67bcfca6806884859c93f7b4496d214312d214d22946dea29ddc354b70e18304"] }
+    ],
+    "ownedSourceChanges": ["src-tauri/src/pinterest.rs test module and cfg(test) client-entry guard only", "src-tauri/src/pixiv.rs test module and cfg(test) client-entry guard only"],
+    "forbidden": ["Reading account/profile/cookie data", "Writing, migrating, moving or deleting existing media/manifests", "Calling download/save/remove/restore helpers", "Production-only code changes", "Starting or controlling the app", "Rebuilding the QA example", "Network access or external tool execution"]
+  },
+  "plan": [
+    "Add a module-local test-thread-local deny-network guard, reset by RAII. Under cfg(test), each client() checks the guard before building or retrieving the cached HTTP client. Entry immediately fails with a fixed diagnostic and is counted. Other test threads and release builds are unaffected.",
+    "Add non-ignored synthetic guard tests proving client entry is denied before initialization and the guard restores its prior state, including unwind. Do not issue network requests for these tests.",
+    "Add one explicitly ignored opt-in read-only test per provider with the exact QA fixture path derived from CARGO_MANIFEST_DIR. Reject unexpected directory entries/reparse paths before invoking a provider-wide list, so no unrelated record is read.",
+    "Snapshot exact allowed manifest and original file SHA256/lengths before and after. Pin hashes to the observed GUI-saved records; do not dump media, titles, names, source URLs or serialized manifests in assertions/log output.",
+    "Pinterest: call the actual downloads/read_record/preview_get service path for the local record, thumbnail and original. Decode returned original data URL and verify byte-for-byte identity, digest and dimensions. No discovery or download helper.",
+    "Pixiv: call actual downloads_sync/local_detail_sync/local_media_sync for all7 originals plus bounded thumbnail. Verify every returned original equals its saved file and manifest digest/dimensions. No metadata/search/save helper.",
+    "Use a fresh native test process for each --exact ignored fixture test, eliminating preexisting process caches. Guard remains active throughout the local-reader calls and reports zero attempted client entries.",
+    "Coordinate a single lib compile with the YouTube agent after its P1 source is ready; do not start independent concurrent Cargo. Run only exact approved tests, never all ignored tests."
+  ],
+  "acceptance": [
+    "Pinned1+7 pages / expected original-byte totals and both manifest hashes match before reads",
+    "Actual native local list, detail, thumbnail and original readers succeed in fresh processes with network client entry forbidden",
+    "All returned original bytes decode and match saved original SHA256/dimensions",
+    "Manifest/original exact file set, lengths and hashes remain unchanged after success",
+    "A caught unexpected client attempt still makes the zero-attempt assertion fail",
+    "Guard scope does not affect another thread or non-test build",
+    "No existing-file write, account/profile access, GUI operation or remote request",
+    "Report native service proof separately from unperformed fresh desktop IPC/network-isolation acceptance"
+  ],
+  "verification": {
+    "baseline": "Read-only exact-file inventory and SHA256 captured;1 Pinterest page /1,256,242 bytes and7 Pixiv pages /21,646,837 bytes match the prior desktop-save evidence. No file content, title, nickname or source URL was printed.",
+    "implementation": "Root approved the complete contract. Added only cfg(test) client-entry checks and provider test modules. HTTP entry returns a fixed error and increments a thread-local attempt counter before client construction/cache lookup; local-reader tests also assert zero attempts. Guard RAII restores prior state, including unwind. No release-code behavior changes. Normal-Windows rustfmt succeeded after the restricted sandbox denied source canonicalization.",
+    "tests": "Latest consolidated lib executable atsumi_lib-7ce51641099afcde.exe (1,276 registered tests): offline_client_guard_ passed4/4; pinterest::tests::qa_saved_original_reopens_offline_without_mutation passed1/1 in a fresh exact ignored process; pixiv::tests::qa_saved_originals_reopen_offline_without_mutation passed1/1 in a separate fresh exact ignored process. Both providers used actual local list/detail/original/thumbnail readers, with zero HTTP-client entry attempts. All1+7 original images decoded and matched pinned hashes/dimensions; all original and manifest before/after hashes and file sets remained unchanged. No production source was changed for execution.",
+    "environmentQualification": "Pixiv's first restricted-sandbox process failed at Windows path canonicalization before list reading. The identical test executable and exact filter passed under normal Windows permissions; the test was not weakened and no app/media/account files were changed. Pinterest and all4 guard tests passed in the restricted sandbox. No general ignored suite was run.",
+    "desktop": "Not performed in this batch. Prior GUI save/reopen evidence does not establish network-isolated fresh desktop IPC."
+  }
+}

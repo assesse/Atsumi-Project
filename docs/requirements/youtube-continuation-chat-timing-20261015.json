@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "state": "approved narrow implementation verified in native1478pass suite including8new tests; actual f93f rollover chatComplete=true,0sourcegap,29ms relative approximate origin drift; affine/version2 redesign deferred",
+  "implementedChecks": [
+    "Recent entries retain bounded scalar replay-wall/unknown-receipt coverage; eviction merges only scalar maxima, without increasing row/byte budgets. Each YouTube attachment snapshots earlier loss once and resolves only against its exact marker/provider/job.",
+    "Overlap marks ArchiveLimit and uncertain overlap/unresolved lost prefix marks StatusUnknown without stopping subsequent durable chat writes. Earlier proven loss does not taint a later recording. Active-sink cache eviction does not taint that sink. Previous failures are preserved.",
+    "Recognized empty action or bounded continuation-only envelopes carry no replay-content loss; unfamiliar renderers or unknown envelopes remain conservative. Quiet verified streams are not made partial merely by polling.",
+    "The native callback and unchanged version1 timeline use one captured actual commit timestamp and the same1..120000ms duration validity range. No affine anchor, version2 replay, account/JS/host or other-platform change.",
+    "Eight focused tests cover row/byte limits, unknown and stale loss, continued writes, attach snapshot, stale-job/provider fence, pending resolution, earlier failures, raw/normalized duplication, quiet polling and unknown renderers. Root owns Cargo and actual verification."
+  ],
+  "approvedBatch": {
+    "scope": "Only live_chat.rs bounded eviction metadata, pre-attachment loss snapshot, exact-job coverage resolution and tests; encoded.rs only captures one existing commit timestamp and passes the same version1 origin to the resolver after timeline publication.",
+    "deferred": "Affine source/wall-clock propagation, version2 timeline, original.rs host changes and replay_chat.rs changes are not approved or implemented. The current actual timing is consistent within8ms; this batch does not claim or attempt an exact synchronization redesign.",
+    "resolution": "Keep scalar maximum mapped replay wall time and conservative unknown-row receive time for evicted recent entries. Snapshot loss at each YouTube attach. Overlap marks ArchiveLimit; uncertain recent loss or an unresolved lost interval at detach marks StatusUnknown. Provably earlier loss under the existing approximate wall-time basis does not perpetually poison a new archive. Eviction after attach cannot alter its snapshot or imply loss of already written rows. Existing stronger reasons remain sticky.",
+    "gate": "Root explicitly approved this narrow scope and assigned these two files. No Cargo/UI/account/JS/CHZZK/SOOP changes. Root owns serialized builds and actual QA after the freeze notice."
+  },
+  "request": {
+    "turn": "01a13bb3-d33b-7de0-867d-aeae3e3e8bec",
+    "text": "남은 검증 이어서 진행해. 구글 인증 후 자동 전환, 유튜브 자동녹화, SOOP 실제 화면까지 확인하고 문제 있으면 수정해줘. 로그인 인증이 필요하면 그때 알려줘."
+  },
+  "audit": {
+    "mainSha256": "85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+    "otherSha256": "799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+    "coverage": "Previously fully read main230/284 EOF and other333/375 EOF snapshots rehashed unchanged in this review. Reuse this turn's complete50 active/3 archived EOF and69 original specification inventory, with the known RELEASING change already reread. Latest original request, AGENTS, implementation-policy and current continuation/buffer contracts read directly. Previously documented unavailable durable01a03f16, unidentified analysis1/2 and historical attachment pixels remain unavailable.",
+    "originals": [
+      "01a0862c-6058-7442-a6fe-38d660288ee2: one incoming receiver for watching and recording; preserve chat",
+      "01a12a4c-724c-7d13-801d-3d92da01fe1e: only verified completed media/chat may be treated as complete or cleaned up",
+      "01a11672-f428-7850-899b-5155aebb4e8a item14: explicit automatic-recording opt-in; off stops the exact owned current run",
+      "01a1399c and R003: original provider behavior and isolated domain state",
+      "Latest YouTube follow-up item1: fix initial missing chat with actual operation, not optimistic status relabeling",
+      "R009/R018/R022: bounded failure, honest status and actual verification"
+    ],
+    "readCode": [
+      "src-tauri/src/platform_media/encoded.rs: native first-segment proof, timeline write, archive attach and format-boundary finalizer",
+      "src-tauri/src/platform_media/live_chat.rs: pre-attach recent buffer, raw/normalized serialization, bounded eviction and partial reasons",
+      "src-tauri/src/platform_media/replay_chat.rs: timeline anchor, sourceTimestampMs fallback, negative-offset filtering and approximate quality",
+      "src-tauri/src/platform_media/chat_status.rs: existing ArchiveLimit/StatusUnknown reasons and preservation proof",
+      "src-tauri/src/youtube/original.rs and original_capture.js: exact-owner continuation, source epoch and bounded media pocket"
+    ]
+  },
+  "evidence": {
+    "existingActualGap": "The prior two-file actual QA9aec had a9.995639455781667sec source gap. The separate approved media-pocket batch addresses those missing received fragments; root is running its actual strict250ms continuity verification now.",
+    "timingRisk": "encoded.rs writes each file's replay origin as firstSegmentCommittedAtMs minus firstSegmentDurationMs. A successor queues previously received fragments after native finish/stability/approval. When its first committed duration spans that wait, the current subtraction can remain approximately correct; additional ACK/flush delay need not be represented by that duration. replay_chat.rs subtracts the resulting origin and skips negative offsets, creating a delayed-ACK timing risk. This is a code-level risk, not a claim that the latest actual run lost or shifted chat significantly.",
+    "latestActual": "Root QA a728951c893045f29e94ad14417e8170 produced two verified files, chat/reopen, stable off and surviving watch. Source intervals46810.00033333333..46815.00033333333 and46815.00033333333..46850.00033333333 have exactly0gap. Current approximate origins1792008215568 and1792008220576 differ5008ms against5000ms of source advance: only8ms relative drift in this run. The proposed affine anchor is protection against unrepresented delayed-ACK/commit delay, not a repair of an observed10sec chat error. Root moved strict harness post-check before normal Tauri quit for a further printed proof run.",
+    "coverageDefect": "live_chat.rs silently evicts from recent when1000 raw/normalized rows or1MiB is exceeded, then copies the surviving recent rows into the next archive. The archive has no snapshot of evicted coverage, so a busy transition can appear Complete even when the needed overlap was dropped. This is a code-level defect; no actual user's missing rows are claimed from inference alone.",
+    "qualityLimit": "The initial source-clock/wall-clock relationship is already receive-time-approximate, not exact broadcast synchronization. YouTube source timestamps, network latency and clock skew remain approximate even after continuity correction. No claim of native/exact offsets is permitted."
+  },
+  "scope": {
+    "allowedAfterApproval": "A narrow native YouTube-only continuation timing context plus YouTube-specific recent-buffer coverage accounting and replay-anchor parsing. Root assigns encoded.rs and host integration separately; this agent does not touch them before assignment.",
+    "unchanged": "CHZZK source and state, SOOP native/VOD timeline behavior, ordinary download offsets, shared fragment/init validators, exact-owner fencing, account UI, auto-record defaults, ordinary finish/cancel behavior and existing final media verification.",
+    "noNewCollection": "No extra stream, network endpoint, credentials, private payload logging or historical user data rewrite. Bounded scalar timing/coverage metadata only; no increase to transcript or media memory budgets."
+  },
+  "proposal": [
+    "When the first complete native-validated segment of an initially approved YouTube recording is committed, associate its existing approximate wall origin with its native parsed source_start. Retain a typed, opaque native continuation context; do not accept a browser-supplied arbitrary wall-time anchor.",
+    "Issue the context only through an approved format-boundary finalization after any validated tail is committed. Bind it to the exact receiver, canonical live/video identity, sourceId, document generation, full RecordingOwner and current recording intent. An implicit receiver-wide cache is insufficient because a later manual start must not inherit an old run. A zero-progress boundary without an established anchor must not fabricate one.",
+    "Consume that context once at the fresh native-approved successor admission under the existing arm/owner/cancel fences. At its first validated segment derive successorOriginMs=originalOriginMs+round((successorSourceStart-originalSourceStart)*1000), not from delayed successor commit time. Preserve the original reference anchor across further successors so repeated rounding or wait time does not accumulate drift.",
+    "Require finite validated source intervals, checked millisecond arithmetic and plausible wall time. A source clock reset, mismatched identity/owner/epoch, missing proof, or adjacent source discontinuity beyond the current250ms continuity acceptance must not silently reuse the affine relationship. Keep valid video and retained chat, but expose missing/uncertain timing and partial coverage rather than manufacture synchronization. Do not clamp media timestamps or weaken mux validation.",
+    "Write a bounded version2 YouTube-only chat-timeline document containing the explicit derived media origin and its fixed anchor-method classification while preserving the truthful firstSegmentCommittedAtMs and actual duration. timelineQuality remains receive-time-approximate. The reader accepts the version2 origin only with valid provider/method/version/ranges; malformed/unsupported version2 must not fall back to the delayed version1 formula. Existing version1/SOOP reading stays unchanged. No previously saved user's timeline is rewritten.",
+    "Add bounded metadata to the existing YouTube recent buffer indicating the time/coverage of evicted rows. Prefer already-parsed source timestamps used by replay; retain conservative host-receive/unknown coverage for raw or untimed rows. Do not log row contents. At archive attachment snapshot only losses that precede that attachment; later eviction of rows already written to the active archive is not an archive loss.",
+    "Once the actual replay origin is established, compare the attachment's loss snapshot with the required media interval. If dropped coverage may overlap, retain existing originals and mark the archive partial with existing ArchiveLimit; uncertain timing/coverage uses StatusUnknown. An old loss entirely before a new recording's required interval must not permanently poison all later archives. Raw protocol/status-only rows with proven no replay content should not invent chat loss. A verified quiet stream with zero chat and no overlapping loss remains complete.",
+    "Bind any coverage-resolution call to the exact active archive marker/job so late first-segment or old-finalizer work cannot mutate a successor. Preserve earlier Interrupted/WriteFailed/FlushFailed/ArchiveLimit reasons; do not replace a known failure with Complete. Missing origin at detach remains honest unknown/partial. Video verification and durable cleanup rules remain independent of chat completeness."
+  ],
+  "conflicts": [
+    "The approved media pocket fixes video continuity but does not by itself prove replay chat synchronization or coverage; its success is not superseded or weakened by this separate batch.",
+    "Complete means observed coverage, not simply that a chat file exists. Retaining raw originals does not make normalized replay complete when overlapping rows were evicted.",
+    "No timestamp may be relabeled exact and no actual commit time may be replaced with a virtual timestamp to hide buffering delay.",
+    "An explicit stop/off, new manual start, account refresh, source/document change or cancelled arm invalidates pending continuity authority. No background retry or new recording is introduced by timing correction."
+  ],
+  "acceptance": [
+    "Deterministic old source100..105 with wall originT and successor source105..110 committed10sec later yields successor originT+5000ms, with the original actual commit timestamp retained and receive-time-approximate quality. Multiple continuations preserve the same original affine reference.",
+    "Wrong receiver/source/document/owner/generation/channel/video, cancelled/off/new-manual intent, nonfinite source, overflow, reset or discontinuous source clock cannot inherit an anchor; no new job/permission is created by the helper.",
+    "A first complete segment produced only during format-boundary tail flush can establish the outgoing anchor; a zero-progress attempt cannot falsely establish one.",
+    "Recent-buffer row and byte overflow overlapping the successor's derived origin produces partial ArchiveLimit and preserves sources. Proven entirely older overflow does not taint a later recording. Raw/normalized duplicate entries do not create a false completeness claim. Unknown timestamps are handled conservatively.",
+    "Eviction after archive attach does not mark loss when those same rows were already durably written; delayed coverage resolution for the wrong job cannot alter the next archive. Existing receiver, write and cancellation failures remain sticky.",
+    "Version1 and SOOP replay fixtures are unchanged; version2 malformed/provider mismatch cannot use a misleading fallback. Verified zero-message streams still complete, while missing anchor is shown as uncertain rather than native-offset.",
+    "Root runs focused native tests plus real same-receiver automatic record→watch→adaptive rollover→off. Compare adjacent native source intervals within250ms and chat origin deltas against native source deltas; inspect replay rows near the boundary without printing chat contents. Full media decode, both library reopens and exact-owner/off checks remain required. Report the approximate synchronization limit and any remaining partial path explicitly."
+  ]
+}

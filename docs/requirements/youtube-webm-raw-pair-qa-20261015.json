@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "state": "Root fully read and approved test-only capture plus separately root-owned local packet proof. No production edits/admission.",
+  "authority": "First implementation is only QA JS unit capture and native fixed-file/manifest persistence. The native example never starts ffprobe/ffmpeg/remux. Root separately reviews/runs local packet proof and any remux. ready/captureCompleted means owned raw capture, not media verification. The70second native cap does not include subsequent root-owned local analysis.",
+  "parents": [
+    "youtube-webm-spool-20261015.json",
+    "youtube-webm-shape-probe-20261015.json",
+    "youtube-webm-capture-20261015.json"
+  ],
+  "originals": {
+    "01a0862c-6058-7442-a6fe-38d660288ee2": "Single ingress; preserve recording/chat.",
+    "01a12a4c-724c-7d13-801d-3d92da01fe1e": "Preserve originals until verified.",
+    "01a13a1f-f808-74a0-85c8-e90aa748a292": "Original player; actual recording; isolate CHZZK.",
+    "01a13bb3-d33b-7de0-867d-aeae3e3e8bec": "Continue actual verification."
+  },
+  "audit": "Reuse fully read/rehashed main230/284 EOF 85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676 and other333/375 EOF 799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; root active50/archive3EOF/69spec inventory unchanged except already-read RELEASING. AGENTS, policy, originals/parent contracts and full actual report read. Missing durable01a03f16, analysis1/2 and old attachment pixels remain unavailable.",
+  "evidence": ".runtime/requirements-audit/20261015-youtube-webm-shape-observed.json SHA256670C74852D92402D8FDA95F0D17EA086B385B1A0FBA0D0CD851DBCB830E6F5BF: selected VP9/AAC, repeated5s init, actual superframes. Gen4 audio ends14.946ms before video; gen5 audio covers its video. Equal generation is not synchronization.",
+  "scope": "New debug-only isolated example/JS/tests. Exact public T4XZmMPQ9Kw/default UA/new temporary profile, no account/chat/ordinary app IPC. Deny foreign navigation/new windows. Root builds/runs. No production, CHZZK, user-profile/media or current-app change.",
+  "collection": "Own accepted append bytes only AFTER original Reflect.apply returns; same this/args/result/exception, observer errors contained. No caller views/SAB, fetch, second ingress, UA/quality/seek changes. Exact selected MediaSource/two buffers; segments, timestampOffset0, default window, ad/protected false. Source/config change within candidate or excluded interval stops with fixed reason.",
+  "boundaries": "Capture at most15s bounded owned bytes, then choose complete units using existing structural parser scope plus absolute byte offsets, NEVER magic scanning payload. Each complete EBML or MP4 init+media generation stays separate. Unknown Cluster ends at proved next init; partial header/block/mdat is ineligible. Repeated equivalent init is not a codec change. Select1 complete video unit and at most2 overlapping AAC units; reject changed required configuration within candidate.",
+  "transfer": "Native pulls fixed128KiB chunks from exact created view/source/unit/generation with contiguous unit-relative offset/length/final-total checks; unit metadata separately preserves absolute structural boundaries. Retain owned bytes until native exit/deadline; no acknowledgement API. Native writes create_new fixed ordinal names under fresh .runtime/youtube-webm-raw-pair-qa/UUID, syncs and hashes exact units/manifest. No JS paths, overwrite or raw/base64/tool stdout. Failed/partial files retained; no cleanup.",
+  "limits": {
+    "perTrackBytes": 16777216,
+    "totalBytes": 33554432,
+    "collectionSeconds": 15,
+    "nativeLifetimeSeconds": 70,
+    "chunkBytes": 131072,
+    "appendCalls": 4096,
+    "structuralScratchPerTrack": 65536,
+    "parserDepth": 12
+  },
+  "interface": {
+    "version": "Frozen v1. Top-level exact public watch only. Native injects canonical UUID window.__atsumiYouTubeRawPairQaCaptureId before QA script. JS creates one canonical UUID documentId per document. Native pins both on its first valid snapshot and rejects any later change. No arbitrary strings/extra fields; nullable keys are always present.",
+    "api": "window.__atsumiYouTubeRawPairQa.snapshot() and .readChunk(captureId, documentId, unit, offset). Both synchronous; snapshot returns the closed object below, readChunk returns closed chunk or null on invalid arguments/not-ready. No ack/release API: reads are non-destructive/repeatable and owned copied bytes remain until native exit/deadline. Neither API prints data.",
+    "snapshotFields": {
+      "version": "integer exactly1",
+      "captureId": "canonical UUID equal to native injection",
+      "documentId": "canonical UUID generated once by JS for this document",
+      "state": "collecting | ready | stopped",
+      "reason": "observing | complete | deadline | limit | source_changed | configuration_changed | excluded | malformed | unsupported | no_candidate | observer_error | closed",
+      "sourceOrdinal": "null until selected, then integer1..8; immutable for this collection",
+      "elapsedMs": "integer0..15000; accepted-byte collection elapsed time, frozen on terminal state",
+      "totalBytes": "integer0..33554432, equals trackBytes.video + trackBytes.audio",
+      "trackBytes": "closed object {video: integer0..16777216, audio: integer0..16777216}; all owned copied bytes, including excluded units",
+      "excludedPartialUnits": "integer0..32; structurally incomplete terminal units not exported",
+      "requiresAudioJoin": "boolean; ready with two AAC units iff no one complete AAC unit covers chosen video",
+      "units": "array of closed unit objects; collecting/stopped always[], ready length2or3 in unit order"
+    },
+    "stateRules": "collecting requires reason=observing, units=[], requiresAudioJoin=false. ready requires reason=complete, nonnull sourceOrdinal and exactly one video plus1or2 audio units; selected intervals have overlapping AAC coverage, which is still unverified raw evidence. stopped uses any reason except observing/complete, units=[], requiresAudioJoin=false. Once terminal, snapshot metadata and exported bytes are immutable. Later playback changes do not invalidate an already completed captured unit; document/origin identity must still match at native reads. Snapshot serialized size <=16KiB.",
+    "unitFields": {
+      "unit": "integer1..3;1 is video;2/3 are audio sorted by startSeconds then startOffset",
+      "track": "video | audio",
+      "generation": "integer1..16; parser init generation of this exact track, never A/V alignment evidence",
+      "startOffset": "integer0..16777215; absolute offset in that track's owned collection byte sequence",
+      "endOffset": "integer1..16777216; >startOffset and <=trackBytes[track]",
+      "byteLength": "integer1..16777216; exactly endOffset-startOffset",
+      "initLength": "integer1..65536 and <=byteLength; exact original init prefix including ftyp if present, no fabricated header",
+      "startSeconds": "finite number0..1000000000 from parsed native-container clock plus observed zero offset",
+      "endSeconds": "finite number greater than startSeconds and <=1000000000; structurally complete interval, not guessed constant length",
+      "configuration": "exact closed variant below, matching track"
+    },
+    "videoConfiguration": {
+      "kind": "vp9_webm",
+      "trackNumber": "integer1..2147483647",
+      "timestampScaleNs": "integer1..1000000000",
+      "defaultDurationNs": "null or integer1..1000000000; mandatory key",
+      "width": "integer1..16384",
+      "height": "integer1..16384",
+      "profile": "integer0..3 from complete key-frame prefix",
+      "bitDepth": "integer8,10or12 from complete key-frame prefix"
+    },
+    "audioConfiguration": {
+      "kind": "aac_mp4",
+      "trackId": "integer1..2147483647",
+      "timescale": "integer1..768000"
+    },
+    "configurationQualification": "These are bounded observations, not a full decoder-equivalence certificate. Capture complete init bytes; root's independent local packet/config probe decides equivalence. A configuration change inside one candidate unit invalidates it. Separate complete init units retain independent generation/configuration and are never mixed or declared equivalent solely by these fields.",
+    "chunkFields": {
+      "version": "integer exactly1",
+      "captureId": "exact pinned native UUID",
+      "documentId": "exact pinned document UUID",
+      "unit": "exact requested1..3",
+      "generation": "exact generation from pinned unit metadata",
+      "offset": "exact requested unit-relative integer0..byteLength-1",
+      "byteLength": "exact min(131072, unit.byteLength-offset)",
+      "final": "boolean exactly offset+byteLength==unit.byteLength",
+      "base64": "canonical base64 of exactly byteLength bytes; string<=174764 characters, no other payload fields"
+    },
+    "nativeRules": "Chunk JSON <=176KiB. Native reads/writes strictly contiguous relative offsets and independently enforces unit/track/total caps and hash; JS absolute start/end prove structural selection while pull offset is unit-relative. Use fixed unit-1.webm, unit-2.mp4, optional unit-3.mp4 and manifest.json below the new UUID. Preserve raw evidence and declared observations; captureCompleted does not claim native packet/config verification. No raw/base64/snapshot error output. Stdout only fixed normalized scalars and native-created UUID path."
+  },
+  "selection": "Independently demux each unit with original clocks. Prefer1 AAC unit covering video's proved RAP..complete end, with explicit packet-boundary/priming excess. At most2 AAC units are evidence only: if joining needed, report needs_audio_unit_join; no concat/repeated-header normalization or guessed timing.",
+  "tools": "Separate root-owned analysis only: pinned local ffprobe/ffmpeg after regular/non-reparse/single-link/owned extent+hash and external-dref checks. Force formats, local protocol whitelist, MOV enable_drefs/use_absolute_path disabled. Fixed packet fields/hash projection, bounded streaming lines/counts, no tags/raw dump. Single-pair candidate.mp4 uses -c copy/exact2track mapping/common parsed origin/no overwrite; no shortest, guessed ss/t, genpts or reencoding. No automatic tool call from the QA example.",
+  "verification": "Compare retained packet count/order/size/hash, codec/timebase, source-adjusted PTS/DTS/duration and A/V coverage; then full decode. Wrong-clock300video/1audio fixture must fail despite decode exit0. Actual superframe regrouping is grouping_changed, not success by equal frame/byte totals. No new equivalence rule/mux. Fixed scalar/boolean summary only.",
+  "tests": [
+    "Original-call semantics/copy ownership; source/ad/protected/config/cap stops.",
+    "Split structural boundaries/repeated init/partial units; exact chunk/offset/source/native totals.",
+    "Same-generation A/V mismatch; one-AAC coverage; two-AAC no-join; wrong-clock/drop/reorder/grouping failure.",
+    "Root actual default-UA single-ingress pair capture, independent clocks/packets, streamcopy/full decode."
+  ],
+  "localClockAddendum": {
+    "authority":"Root-owned local packet proof already authorized above; this before-execution addendum permits one additional fixed candidate-common-origin.mp4 in the existing isolated0ab34128-d5cf-43b2-8fad-2d2fe9cc89c2 directory. No production or original-file change, deletion or overwrite.",
+    "observed":"Original video150packets andAAC216packets retain identical orderedsize/SHA256 in firstcandidate.mp4, codecconfigurationmatches and full decodeexit0. Samevideoorigin46800.001 preservesPTS within sourceclock precision but MP4 adds firstAAC skip_samples651 atnegativePTS. This is NOT complete presentation-preservation proof despite payload equality.",
+    "decision":"Use earliest independently proved sourcepacket start2063879393/44100=46799.986235827666 as one common origin for BOTHinputs, not separatezeroing. Exactsourcehashes/heldreadhandles/localonlyprotocol/externaldrefdisabled/-c copy/-n stayrequired. ExpectAACstart0 andvideoapproximately14.764172ms, with input1ms video clock quantization explicitly measured. No trim/shortest/genpts/reencoding or offset guess.",
+    "acceptance":"Compare everypacket count/order/payload/size and rescaled PTS/DTS/duration, codec/extradata/color configuration, plus absence of unexpectedskip_samples/discard_padding. Report maximum errors against BOTHsource/output tickprecision, not arbitraryepsilon. Full decode only afterpacketproof. This remains shortpairfeasibility, notproductionrecording or longterm sync."
+  },
+  "continuousV2Approval": {
+    "authority": "Root before-edit approval2026-10-15 after full current JS/native/test/contract read. Test-only v2 supersedes v1 unit selection/schema/filenames below; v1 actual evidence is immutable and retained. No production admission, media rewrite, remux or cleanup is authorized by this addendum.",
+    "audit": "Active50 inventory unchanged; archived3 EOF unchanged; currentmain latest3 IDs01a13dae-b45a-7b03-9e24-a9a904c3d39c,01a13d95-a946-7ff2-949e-a80f0e52dadb,01a13d23-c8bb-7083-953a-ccdd21e14500 have no new human messages. Main230/284 and other333/375 EOF source hashes match originals above.69baseline specs unchanged except fully-read RELEASING F5A49125C16F4CBFFF8251D5263CBF0B35B6DCAAD33A8F9FC7FDF87B542E12A0. Missing sources remain explicitly unavailable. Direct single-ingress/preservation and native-platform original messages reread.",
+    "baseline": {
+      "js": "BF324CF183214A9705C57C712D52A7338FA73BEA4548D0F6C2D16F943D1ED83B",
+      "native": "C0A32ADB6F909E44841C68AC3DCB23D587254C2D7750F04957C7F15F9A946429"
+    },
+    "need": "Existing one-video evidence cannot validate repeated-init assembly. Preserve consecutive actual units rather than infer continuity from isolated packets or synthetic tests.",
+    "selection": "Prefer3 consecutive complete video units with2or3 consecutive complete AAC units covering the entire video interval; finish early only for3video. At15s allow2video with2or3AAC; otherwise no_candidate. Both track runs require previous.endOffset==next.startOffset, next.generation==previous.generation+1, exact init bytes and observed configuration equal. Never skip invalid middle units, infer a terminal end, stretch timer or fallback to onevideo. Audio must progress monotonically without observed gaps and overlap the selected video range; no epsilon clock claim. JS float intervals are selection observations only; exact native packet/clock validation remains mandatory.",
+    "schema": "Snapshot/chunk/manifest version2 only; same closed fields/caps. Ready units ordered2or3video then2or3audio, unit IDs1..6, requiresAudioJoin=true. Collecting/stopped units empty and requiresAudioJoin=false. Native independently enforces contiguous offsets/generations/config and coverage, then verifies exact same-track init bytes from held transferred files before publishing manifest. All existing source/document/terminal and transfer guards remain.",
+    "files": "Fixed video-1.webm,video-2.webm,optional video-3.webm; audio-1.mp4,audio-2.mp4,optional audio-3.mp4; manifest.json under fresh UUID. create_new/sync/hash/nooverwrite/heldsinglelink guards unchanged. No concatenation or header rewriting. Summary adds videoUnits/audioUnits and remains capture-only; mediaVerified/recordingVerified=false.",
+    "limits": "Keep15s collection,70s native lifecycle,16MiB pertrack/32MiBtotal,128KiBchunks,16KiBmetadata/32KiBmanifest,16units pertrack,original public video/defaultUA/newisolatedprofile/noaccount/nochat. Parser startup pin policy remains unchanged. No production source files or ordinary app state changes.",
+    "deadlineGuardReview": "Root source review found the previous v1 check tested15second selection before current ad/source/config guards. For v2 move candidate deadline completion after those existing guards, while preserving immutable already-terminal state. A source/config/excluded change observed on the same deadline check must fail rather than become a raw-capture success. Add exact-deadline regression; no new admission or time extension.",
+    "acceptance": "JS original-call/copy/chunk/terminal/cap regressions plus2and3video runs; reject gaps,duplicate/reordered units, config/initchanges and partial tails; native v1/oversize/wrongorder/adjacency/coverage/exactinit rejects. Root serialized JS/native tests/build followed by at most one bounded actual capture before evaluating any failure. Capture-only success is not recording success. Independent finalizer reconstruction is a separate batch."
+  },
+  "continuousV2DiagnosticsApproval": {
+    "beforeEdit": "2026-10-15 approximately13:05 after focusedJS23passed/native19passed and independent root+peer review. First actualv2 capture7f121792-1096-4c6b-b0a0-94e00e0df4fd failed no_candidate at17873ms; immutable firstpin5025ms, Started2/Finished2 stable. No raw files or manifest published. This failure is not enough to infer which selection gate rejected. Browser shutdown also printed fixed Chrome unregister-class1412; do not reinterpret it as capture success or cause without evidence.",
+    "scope": "Add only a closed bounded diagnostics projection to QA snapshot and native failure summary. It is observations, never authority or selection relaxation. No new collection time/size, units, fetching, source/profile change, retry, production path, header rewrite, codec assumption or automatic media tool invocation.",
+    "projection": "diagnostics object has video/audio child objects, each exactly units, adjacentPairs, adjacentTriples, initDifferences, configurationDifferences, byteGenerationBreaks, clockOrderBreaks, gaps. All integers0..16 (pairs/differences/breaks/gaps<=15,triples<=14). Count adjacent complete-unit pairs in observed append order. Init equality is the already bounded exact comparison; config equality and byte/generation/order conditions are unchanged. gaps only reports next.startSeconds>previous.endSeconds, not a new clock acceptance gate. No times, URLs, text, identifiers, configs, media/base64 or arbitrary payload. Each child is present even if no bound source, with zeros. Terminal projection immutable with the existing snapshot.",
+    "native": "Keep v2 during unreleased test development; require diagnostics and reject missing/extra/wrongtype/outofbounds. Carry typed diagnostics only on CaptureFailed into the single bounded failure summary. Other error branches remain unchanged. No success promotion and no full snapshot output. Puretests exercise schema/counters/failureprivacy and preserve all previous tests.",
+    "acceptance": "Root tests/builds and performs one additional bounded actual capture after independent review. A no_candidate result with these diagnostics is actionable evidence, not permission to relax exactinit or skip units. Production and existing raw evidence remain unchanged."
+  },
+  "continuousV2DiagnosticsResult": {
+    "tests": "Native22passed0failed0ignored, JS25passed0failed, isolated example buildexit0. Independent read-only review found no must-fix. Production encoded/original_capture/browser_fmp4/process/mainexe hashes match prior checkpoint.",
+    "hashes": {"js":"AF8F1756B45F606053305E0123C67E580C08BE8829BFA289263C75BC7FD3BF32","native":"48C56776C9486AEDB7942762A3B9301776D355860AE4D47F029C7195C1C9E475","tests":"6BBA7180864BB30E04A54B69F024FC151A982CD7D7D0E50E623894D7C991AFED"},
+    "actual": "75d35500-31b7-4c1b-b0be-4a808bb6d900 no_candidate17947ms; firstpin5095ms, started2/finished2 stable.5complete units pertrack. Video initDifferences4, adjacentPairs0/triples0; everyotherdifference/gap0. Audio adjacentPairs4/triples3, everydifference/gap0. UUID directory empty, no media/manifest created. Process exit1 after structured failure and Chrome_WidgetWin_0 unregister1412 warning; no evidence that teardown warning caused selection failure.",
+    "inference": "The exact init comparison rejects observed consecutive video units. It does not identify the differing fields or establish decoder compatibility. No production recording success or permission to join follows. V3 below is separately reviewed raw evidence collection only."
+  },
+  "continuousV3EvidenceApproval": {
+    "beforeEdit": "2026-10-15 root-approved after v2 diagnostic native22/JS25 tests passed, independent review and actual capture75d35500-31b7-4c1b-b0be-4a808bb6d900. Actual no_candidate17947ms: both tracks5 complete units, video4 initDifferences and no byte/generation/config/clock/gap differences; audio4 adjacentPairs/3triples and all differences0. No files published. This proves exact init equality prevents observing these actual independent units, not that their decoder configuration differs or agrees.",
+    "purpose": "Version3 is independent raw-unit evidence collection, never a recording or join admission. Preserve each complete unit with its own exact original initialization, including differences, so root can inspect bounded structural metadata. Do not remove, rewrite, normalize, concatenate or declare equivalent initializations. Existing v1/v2 evidence and fail observations remain retained above.",
+    "selection": "Keep v2 source/ad/protection/config/complete-boundary/RAP/byte-offset/generation/clock/coverage/cap/time constraints. Only remove exact same-track init-byte equality from raw evidence candidate selection; varying init length is likewise evidence, not rejection. Continue computing exact initDifferences diagnostics. adjacentPairs/Triples continue to mean the prior stricter exact-init equality property; use a separate existing-reasons-based raw-evidence predicate for selection, so diagnostics retain their meaning. Other selection failures are unchanged.",
+    "native": "Snapshot/chunk/manifest version3 only. Independent native validation still enforces every non-init-equality gate. Hold/hash/sync each original separate file. Read every bounded init prefix using current pinned file checks and cursor restoration; calculate exact equality to the first unit of each track, but report differences instead of rejecting them. Add native-created closed initializationsIdentical:{video:boolean,audio:boolean} to manifest and successful summary. Outcome is needs_initialization_review when either false, otherwise needs_audio_unit_join. packetVerified/mediaVerified/recordingVerified remain false; captureCompleted means only raw evidence stored. No new arbitrary JS metadata fields.",
+    "scope": "Only existing QA JS/native/tests plus this contract. No production admission or original-capture/encoded/process/browser_fmp4 changes, no user account/profile/media, no extra requests, no media-tool invocation, no app restart. Existing fresh UUID fixed files and all limits remain. Root alone builds and runs one bounded additional capture after focused tests and independent review.",
+    "acceptance": "Preserve all existing tests except explicitly superseded exact-init/v2 selection assertions. Add differing-init-length and differing-init-bytes evidence cases with exact preserved exported bytes; retain config/byte/generation/order rejects; native validates per-file prefix handling and returns track equality accurately. All terminal/privacy/chunk checks remain. Actual capture is followed only by read-only structural inspection, not automatic assembly or media proof. Never promote evidence capture to recording completion. Audit/original references and missing sources remain as continuousV2Approval, unchanged hashes verified this turn."
+  },
+  "continuousV3EvidenceResult": {
+    "tests": "Native25passed0failed0ignored, JS26passed0failed, buildexit0. Root and independent source review found no confirmed must-fix.",
+    "hashes": {"js":"73A247B60DAEB3A5C735BD54B34BC31B0736213325C27A32776F4C373A7D5EA0","native":"DEE9FE52A780D2874BD2EE89D4A455095EA32B0931BB503EFCDAB0C155BB1AC6","tests":"BD64311C627A410CB9E83EC97A67A26E53967AB9E3E2DAD227650A28E603DEC8"},
+    "actual": "c26c9147-735f-4ed3-821b-31e92cef9afd exit0,18093ms,firstpin5188ms stable2started/2finished.2video2audio336383B persisted; manifest3840B SHA256c4a92fbff4e9c27870b817e1d2015cb66990eaf9ec47568ead953026c15508ad. Collection reached15s; selected same-configuration480p2video run, while later unselected complete units contain one observed configuration difference. Native exactinit flags video=false/audio=true. Outcome needs_initialization_review; all packet/media/recording verification flags false. Shutdown class-unregister1412 printed after result; not capture failure.",
+    "inspection": ".runtime/requirements-audit/20261015-youtube-continuous-init-inspection.json records root bounded read-only prefix comparison after all4size/hash/singlelink guards. Only Segment-level Void header/payload differed, body279vs278. Every other parsed header/leaf identical. Existing native parser cross-check is separately authorized below; no original/header rewrite or join."
+  },
+  "continuousV3NativeInspectionApproval": {
+    "beforeEdit": "Root2026-10-15 after V3 native25/JS26passed and independent review. Actual fixed capturec26c9147-735f-4ed3-821b-31e92cef9afd succeeded raw persistence only at18093ms, 2video2audio336383bytes, native init equality video=false/audio=true. Manifest SHA256c4a92fbff4e9c27870b817e1d2015cb66990eaf9ec47568ead953026c15508ad. Read-only bounded EBML prefix comparison identified only Segment/Void header+payload size difference279vs278; every other parsed prefix header/leaf byte matched. This is not whole-packet/codec or reconstruction proof.",
+    "scope": "One ignored root-run fixed read-only fixture test in existing youtube_spool/index/tests.rs. Use existing Directories/GuardedFile/native index, no new production API, metadata changes, files, concatenation, remux, tools or network. All four fixed files are regular singlelink held readonly; exact pre/post sizes/SHA verified, directories retained. Native scan each separately with exact original committed length, known expected scale, and bounded unit sink; check Complete/singleunit/exactend/init length. Compare full native parsed configurations across same-track pair while preserving distinct init hashes. Report bounded count,clock,reconstruction scalars only, never raw tags/header bytes/UIDs/chat/account data. Actual clocks and counts are evidence; do not silently infer continuous packet preservation.",
+    "files": [
+      {"name":"video-1.webm","bytes":95635,"sha256":"9be82861467e27ed66fa8220db1a7c4f1e2872996755257cbeafe149035070a4","initBytes":452},
+      {"name":"video-2.webm","bytes":76753,"sha256":"7bb5f6e6f3fcd435042dc5b7227ca023799014f7f3e7886e4a99bc732451a4b6","initBytes":451},
+      {"name":"audio-1.mp4","bytes":81810,"sha256":"c349dc8672a8ade3d961d19c7d0b30f09473b08b96c7eb58641cbaceb385779a","initBytes":632},
+      {"name":"audio-2.mp4","bytes":82185,"sha256":"b9fa4f91f7dc48bee2a9f7128188f27b3b041b6faf16f91e19b7a3e17daf7457","initBytes":632}
+    ],
+    "acceptance": "Root source review, focused native index tests and explicit ignored fixture execution. Missing fixture means fail, not skip/pass. This is observational structural proof; no exact-init gate or semantic fingerprint is altered. No production VP9 recording completion claim. Original request/audit references unchanged and remain fully covered as above."
+  },
+  "continuousV3NativeInspectionResult": {
+    "tests": "Root focused index38passed0failed2ignored0.12s after50.05s compile; explicit exact actual_v3_four_units_preserve_distinct_init_evidence1passed0failed0ignored0.01s. Existing attachment_id/read_page warnings only. Independent and root source reviews found no confirmed must-fix. Test file SHA256893CEAE4DB64F4B0BB63090F61A433F3E69CB0C50B7AE956E282FD9C507176BE.",
+    "video": "Both individual native scans Complete,150items/1cluster each, RAPcandidate true, references1each, exact config/fingerprint equal while init hashes differ. Firstclock46790000000000..46795000000000 andsecond46795000000000..46800000000000 at1000000000ticks/s: container clock contiguous. Both unknownSegment=true; segmentCRC/infoDuration/clusterPosition/clusterPrevSize/unknownClusterCRC/finiteClusterCRC=false.",
+    "audio": "Both native scans Complete,215then216items/1fragment each, config/fingerprint/init identical, clock2063438879..2063659039 then2063659039..2063880223 at44100ticks/s: container clock contiguous. Each fragment mfhd first=last1, allDefaultBaseIsMoof=true, movie/track/media durationZero. Repeated sequence1 remains original evidence, not accepted as a joined native input.",
+    "ownership": "All4fixed sources and manifest held read-only with regular/singlelink/nonreparse/directory guards and matching pre/postexactsize/SHA. No outputs, normalization, media tools or user account/media/UI modification. Root read-only desktop inventory earlier this turn found ordinary main6490046 still present, YouTube idle/account-check-pending, no authwindow; prior sandbox process0 observation does not establish the app was closed.",
+    "next": "Smallest remaining work is one YouTube-local derived-track finalizer reusing held SequentialSource/index/packet+codec comparisons and verify_publish_from. Source original bytes must remain unchanged; any narrowly structural Void handling or mfhd4-byte derived sequence normalization requires separate explicit before-edit scope and complete packet/clock verification. ManagedProbe currently pins ffprobe, not ffmpeg; existing publication does not accept a preverified candidate hash. These are concrete remaining integration points, not current production implementation. Fresh Google authentication remains unverified."
+  },
+  "nonClaims": "A successful pair proves only short actual remux feasibility. Production durability/recovery, repeated-init assembly, long recording, chat/rollover/library/other providers remain unverified.",
+  "sources": [
+    "https://www.w3.org/TR/mse-byte-stream-format-webm/",
+    "https://www.webmproject.org/vp9/mp4/",
+    "https://ffmpeg.org/ffprobe.html#Main-options",
+    "https://www.rfc-editor.org/rfc/rfc8794.html#section-11.3.2"
+  ]
+}
