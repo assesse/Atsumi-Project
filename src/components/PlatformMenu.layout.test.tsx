@@ -19,7 +19,7 @@ async function menuScene(collapsed: boolean): Promise<LayoutScene> {
       <main className="workspace"><h1>YouTube</h1></main>
     </div></div>));
     await act(async () => container.querySelector<HTMLButtonElement>(".brand")!.click());
-    expect(container.querySelectorAll('[role="menuitemradio"] .platform-icon')).toHaveLength(7);
+    expect(container.querySelectorAll('[role="menuitemradio"] .platform-icon')).toHaveLength(8);
     return { name: collapsed ? "platform-icons-collapsed" : "platform-icons-expanded", html: container.innerHTML };
   } finally {
     await act(async () => root.unmount());
@@ -27,7 +27,7 @@ async function menuScene(collapsed: boolean): Promise<LayoutScene> {
   }
 }
 
-describe.skipIf(!layoutBrowser)("seven-platform banner", () => {
+describe.skipIf(!layoutBrowser)("eight-platform banner", () => {
   it.each([[960, 640], [1280, 800]])("keeps the icon menu inside the rail at %ix%i", async (width, height) => {
     const scenes = [await menuScene(false), await menuScene(true)];
     const results = await auditLayouts(scenes, appCss + inkCss, width, height, `platform-icons-${width}`);

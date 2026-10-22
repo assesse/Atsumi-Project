@@ -8,7 +8,7 @@ describe("workspace registry", () => {
     expect(workspaceRegistry.danbooru.navigation.map((item) => item.view)).toEqual(["explore", "downloads"]);
     expect(workspaceRegistry.chzzk.navigation.map((item) => item.view)).toEqual(["live", "screenshots", "recordings"]);
     expectTypeOf<ContentSource>().toEqualTypeOf<"hitomi" | "danbooru" | "chzzk" | "youtube" | "soop" | "pinterest" | "pixiv" | "x">();
-    expect(workspaceRegistry.x.navigation.map(item=>item.view)).toEqual(["explore"]);
+    expect(workspaceRegistry.x.navigation.map(item=>item.view)).toEqual(["explore", "likes", "bookmarks", "local"]);
     expectTypeOf<WorkspaceViewId<"hitomi">>().toEqualTypeOf<"explore" | "auto-find" | "downloads">();
     expectTypeOf<WorkspaceViewId<"danbooru">>().toEqualTypeOf<"explore" | "downloads">();
     expectTypeOf<WorkspaceViewId<"chzzk">>().toEqualTypeOf<"live" | "screenshots" | "recordings">();

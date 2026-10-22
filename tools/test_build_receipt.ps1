@@ -1,7 +1,9 @@
 param()
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'build_receipt.ps1')
-$fixtureRoot=Join-Path (Split-Path -Parent $PSScriptRoot) ('.runtime/build-receipt-tests-'+[Guid]::NewGuid().ToString('N'))
+# Keep nested synthetic Cargo paths below Win32 MAX_PATH in long worktree paths.
+# MustCreate still refuses a collision; no existing fixture is reused/deleted.
+$fixtureRoot=Join-Path (Split-Path -Parent $PSScriptRoot) ('.runtime/brt-'+[Guid]::NewGuid().ToString('N').Substring(0,12))
 New-AtsumiSafeDirectory $fixtureRoot -MustCreate
 $script:checks=[Collections.Generic.List[string]]::new()
 $utf8=[Text.UTF8Encoding]::new($false)
@@ -9,7 +11,7 @@ function Check([bool]$Value,[string]$Name){if(-not $Value){throw "Synthetic chec
 function Reject([scriptblock]$Action,[string]$Name){$failed=$false;try{& $Action|Out-Null}catch{$failed=$true};Check $failed $Name}
 function Write-TestFile([string]$Path,[string]$Value){New-AtsumiSafeDirectory ([IO.Path]::GetDirectoryName($Path));$null=Write-AtsumiPackageBytes $Path ($utf8.GetBytes($Value))}
 function New-TestRoot {
-  $root=Join-Path $fixtureRoot ([Guid]::NewGuid().ToString('N'))
+  $root=Join-Path $fixtureRoot ([Guid]::NewGuid().ToString('N').Substring(0,12))
   foreach($directory in @('src','public','shared','tools','src-tauri/src','src-tauri/vendor','src-tauri/icons','src-tauri/capabilities','.github/workflows','docs/releases')){New-AtsumiSafeDirectory (Join-Path $root $directory)}
   foreach($file in @('pnpm-lock.yaml','pnpm-workspace.yaml','.npmrc','index.html','vite.config.ts','tsconfig.json','tsconfig.app.json','tsconfig.node.json','src-tauri/Cargo.lock','src-tauri/build.rs','THIRD_PARTY_NOTICES.md','src/app.ts','src-tauri/src/profile.rs','public/asset.svg','src-tauri/vendor/patch.rs','tools/build.ps1')){Write-TestFile (Join-Path $root $file) ('synthetic '+$file)}
   Write-TestFile (Join-Path $root 'package.json') '{"version":"9.8.7"}'
@@ -102,6 +104,32 @@ Reject {Invoke-AtsumiBuildReceipt $root $wrongAliasBuild $versions $resources $e
 $root=New-TestRoot
 Write-TestFile (Join-Path $root 'src/.env.local') 'must not enter manifest'
 Reject {Get-AtsumiBuildSourceManifest $root} 'sensitive source filename rejected'
+$root=New-TestRoot
+$profileSource='src-tauri/src/platform_media/profile'
+foreach($name in @('current.rs','snapshot.rs','snapshot/tests.rs')){Write-TestFile (Join-Path $root ($profileSource+'/'+$name)) ('synthetic Rust source '+$name)}
+$profileManifest=Get-AtsumiBuildSourceManifest $root
+foreach($name in @('current.rs','snapshot.rs','snapshot/tests.rs')){Check (@($profileManifest.files.path) -ccontains ($profileSource+'/'+$name)) ('reviewed source profile module included: '+$name)}
+$profileInputs=Get-AtsumiBuildInputs $root $resources
+[IO.File]::WriteAllText((Join-Path $root ($profileSource+'/current.rs')),'changed Rust source',$utf8)
+Reject {Assert-AtsumiBuildInputsEqual $profileInputs (Get-AtsumiBuildInputs $root $resources)} 'reviewed profile source changes still invalidate build inputs'
+foreach($extra in @('extra.rs','account.json','.env.local','signing.key','cookies/session.json','nested/extra.rs','snapshot/extra.rs','snapshot/.env','snapshot/credentials.pem')){
+  $root=New-TestRoot
+  foreach($name in @('current.rs','snapshot.rs','snapshot/tests.rs')){Write-TestFile (Join-Path $root ($profileSource+'/'+$name)) 'synthetic Rust source'}
+  Write-TestFile (Join-Path $root ($profileSource+'/'+$extra)) 'unreviewed fixture'
+  Reject {Get-AtsumiBuildSourceManifest $root} ('unreviewed source profile child rejected: '+$extra)
+}
+$root=New-TestRoot
+Write-TestFile (Join-Path $root ($profileSource+'/current.rs')) 'incomplete reviewed module'
+Reject {Get-AtsumiBuildSourceManifest $root} 'incomplete source profile inventory rejected'
+foreach($directory in @('src/profile','src/profiles','src/cookies','src/secrets','src-tauri/src/other/profile')){
+  $root=New-TestRoot
+  Write-TestFile (Join-Path $root ($directory+'/current.rs')) 'not an approved module'
+  Reject {Get-AtsumiBuildSourceManifest $root} ('other sensitive-named directory rejected: '+$directory)
+}
+$root=New-TestRoot
+foreach($name in @('current.rs','snapshot.rs','snapshot/tests.rs')){Write-TestFile (Join-Path $root ($profileSource+'/'+$name)) 'synthetic Rust source'}
+New-Item -ItemType HardLink -Path (Join-Path $root 'src/aliased-profile-source.rs') -Target (Join-Path $root ($profileSource+'/current.rs'))|Out-Null
+Reject {Get-AtsumiBuildSourceManifest $root} 'reviewed profile source hardlink still rejected'
 $root=New-TestRoot
 Write-TestFile (Join-Path $root '.env.production') 'implicit private frontend configuration'
 Reject {Get-AtsumiBuildSourceManifest $root} 'implicit root environment input rejects instead of hashing or silently omitting'

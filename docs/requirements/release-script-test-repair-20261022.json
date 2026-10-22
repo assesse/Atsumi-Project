@@ -1,0 +1,45 @@
+{
+  "date": "2026-10-22",
+  "status": "script-test-repair-verified-release-artifacts-pending",
+  "request": "Preserve app functionality; repair only release scripts and stale tests, then push and complete the release.",
+  "sourceReferences": [
+    "Current chat: current-state push/release request and explicit release-script/test-only approval",
+    "AGENTS.md",
+    "docs/requirements/implementation-policy.json",
+    "docs/requirements/portable-build-receipt.json",
+    "docs/requirements/portable-manifest-hardening.json",
+    "docs/RELEASING.md"
+  ],
+  "scope": {
+    "baseCommit": "846895dedcce2c4aa36162ad315c7d0c894a6c5c",
+    "applicationBehaviorChanges": false,
+    "computerUse": false,
+    "appRestart": false,
+    "userDataChanges": false,
+    "releaseMetadataChanges": true
+  },
+  "evidence": {
+    "failedWorkflow": "https://github.com/assesse/Atsumi-Project/actions/runs/39740815408",
+    "packagingFailure": "Sensitive-directory heuristic rejects the Rust source directory src-tauri/src/platform_media/profile.",
+    "frontendBaseline": "4616 passing tests; 5 stale expectations in 4 files; typecheck passed.",
+    "targetedRepairVerification": "4 frontend test files / 12 tests pass, including 960x640 and 1280x800 platform-menu layout audits; 63 synthetic build receipt safety checks pass; real source manifest includes the exact 3 reviewed Rust files among 1555 files. Independent read-only review found no remaining P1/P2.",
+    "fullFrontendVerification": "307 files / 4621 tests passed; typecheck and frontend production build passed. Log: .runtime/verification/verify-20261022-165603.log. The verification script then stopped at pre-existing Rust formatting differences, so subsequent full Rust test/clippy stages were not run.",
+    "remainingBaselineGate": "cargo +stable fmt --all -- --check reports existing formatting differences in unchanged Rust application/example sources. Do not reformat app code in this script/test-only batch; disclose that the complete verification gate is not green.",
+    "sourceCoverage": "Prior full-read snapshots retained; implementation policy SHA256 unchanged at 3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1. Latest accessible main development messages refreshed. This batch makes no component, service or backend behavior change.",
+    "unavailableHistoricalSources": ["01a03f16-5c02-74a3-b49c-2c3a20ccdaae durable history", "unidentified historical analysis chats", "unavailable historical attachment pixels"]
+  },
+  "decisions": [
+    "Permit only the exact reviewed Rust profile source directory, its snapshot subdirectory and current.rs/snapshot.rs/snapshot/tests.rs regular files; do not allow arbitrary profile directories or private files.",
+    "Preserve link rejection, source-before/after equality, fresh owned build outputs, signatures and exact package manifests.",
+    "Update explicit test expectations for eight platforms, X navigation/tutorial entries, and the existing exact local protocol/dictionary CSP whitelist; do not broaden production CSP.",
+    "Preserve the failed v2.3.0 tag and existing public releases; use v2.3.1.",
+    "Latest explicit release approval governs this release; prior rights review and unverified live flows remain documented, not claimed resolved."
+  ],
+  "acceptance": [
+    "Reviewed source directory included in the build manifest; unknown children, other profile directories, environment/key files and links rejected.",
+    "Synthetic receipt regression checks and focused stale tests pass.",
+    "Rerun automated verification and disclose any remaining failure without altering app behavior to hide it.",
+    "Diff against base contains no application logic/UI changes.",
+    "Fresh signed installer and portable build succeed; verify four draft assets and updater metadata before publishing."
+  ]
+}

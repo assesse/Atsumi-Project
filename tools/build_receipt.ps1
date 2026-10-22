@@ -18,6 +18,11 @@ function Get-AtsumiBuildSourceManifest([string]$Root) {
   }
   $files = [Collections.Generic.List[object]]::new()
   $directories = [Collections.Generic.List[string]]::new()
+  # This reviewed Rust module is source code, not a browser/user profile. Keep
+  # the exception exact: new children require review instead of being hashed.
+  $profileSource = 'src-tauri/src/platform_media/profile'
+  $profileSourceFiles = @(($profileSource+'/current.rs'), ($profileSource+'/snapshot.rs'), ($profileSource+'/snapshot/tests.rs'))
+  $profileSourceDirectories = @($profileSource, ($profileSource+'/snapshot'))
   foreach ($tree in $trees + $optionalTrees) {
     $path = Join-Path $rootPath $tree
     if (-not (Test-Path -LiteralPath $path)) {
@@ -35,7 +40,23 @@ function Get-AtsumiBuildSourceManifest([string]$Root) {
       foreach ($entry in Get-ChildItem -LiteralPath $directory -Force) {
         Assert-AtsumiPackagePath $entry.FullName
         $relative = ConvertTo-AtsumiPackagePath $entry.FullName.Substring($rootPath.Length+1)
-        if ($relative -match '(^|/)\.env(?:\.|$)|\.(?:key|pem|pfx|p12)$' -or ($entry.PSIsContainer -and $entry.Name -match '^(?:secrets?|profiles?|cookies?)$')) { throw 'Sensitive-named file in build inputs; review required, contents not recorded.' }
+        if ($relative -match '(^|/)\.env(?:\.|$)|\.(?:key|pem|pfx|p12)$') { throw 'Sensitive-named file in build inputs; review required, contents not recorded.' }
+        if ($relative.StartsWith($profileSource+'/', [StringComparison]::Ordinal)) {
+          if (($entry.PSIsContainer -and $relative -cnotin $profileSourceDirectories) -or (-not $entry.PSIsContainer -and $relative -cnotin $profileSourceFiles)) { throw 'Unreviewed entry in source profile module; contents not recorded.' }
+        }
+        if ($entry.PSIsContainer -and $entry.Name -match '^(?:secrets?|profiles?|cookies?)$') {
+          if ($relative -cne $profileSource) { throw 'Sensitive-named file in build inputs; review required, contents not recorded.' }
+        }
+        if ($entry.PSIsContainer -and $relative -cin $profileSourceDirectories) {
+          $expectedMembers = if ($relative -ceq $profileSource) { @('current.rs','snapshot.rs','snapshot') } else { @('tests.rs') }
+          $members = @(Get-ChildItem -LiteralPath $entry.FullName -Force)
+          if ($members.Count -ne @($expectedMembers).Count) { throw 'Source profile module inventory changed; review required.' }
+          foreach ($member in $members) {
+            Assert-AtsumiPackagePath $member.FullName
+            $memberRelative = $relative+'/'+$member.Name
+            if ($member.Name -cnotin $expectedMembers -or ($member.PSIsContainer -and $memberRelative -cnotin $profileSourceDirectories) -or (-not $member.PSIsContainer -and $memberRelative -cnotin $profileSourceFiles)) { throw 'Unreviewed entry in source profile module; contents not recorded.' }
+          }
+        }
         if ($entry.PSIsContainer) { $directories.Add($relative); $pending.Enqueue($entry.FullName) }
         else { $proof=Get-AtsumiFileProof $entry.FullName; $files.Add([pscustomobject]@{path=$relative;length=$proof.length;sha256=$proof.sha256}) }
         if ($files.Count+$directories.Count -gt 4095) { throw 'Build input manifest exceeds entry bound.' }

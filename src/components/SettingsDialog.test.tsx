@@ -280,7 +280,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(container.querySelector(".settings-scope-intro")).toBeNull();
       expect([...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent)).toEqual(["다운로드 폴더", "튜토리얼", "Windows 로그인 시 자동 실행", "프라이버시 모드 상태로 시작", "설정 초기화"]);
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="튜토리얼 다시 보기"]')!.click());
-      expect([...container.querySelectorAll('[role="option"]')].map(option => option.lastElementChild?.textContent)).toEqual(["다시 체험하기", "Hitomi", "Danbooru", "CHZZK", "YouTube", "SOOP", "Pinterest", "pixiv"]);
+      expect([...container.querySelectorAll('[role="option"]')].map(option => option.lastElementChild?.textContent)).toEqual(["다시 체험하기", "Hitomi", "Danbooru", "CHZZK", "YouTube", "SOOP", "Pinterest", "pixiv", "X"]);
       await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent === "CHZZK")!.click());
       expect(onReplayTutorial).toHaveBeenCalledWith("chzzk");
       expect(container.textContent).not.toContain("다음 단계");

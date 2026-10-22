@@ -72,6 +72,9 @@ jobs:
       - name: Prepare pinned platform media tools
         run: ./tools/prepare_platform_tools.ps1
 
+      - name: Verify build receipt safety regressions
+        run: ./tools/test_build_receipt.ps1
+
       - name: Build signed installer and portable packages
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
