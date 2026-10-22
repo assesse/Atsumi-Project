@@ -112,6 +112,9 @@ foreach($name in @('current.rs','snapshot.rs','snapshot/tests.rs')){Check (@($pr
 $profileInputs=Get-AtsumiBuildInputs $root $resources
 [IO.File]::WriteAllText((Join-Path $root ($profileSource+'/current.rs')),'changed Rust source',$utf8)
 Reject {Assert-AtsumiBuildInputsEqual $profileInputs (Get-AtsumiBuildInputs $root $resources)} 'reviewed profile source changes still invalidate build inputs'
+$diagnostic=''
+try{Assert-AtsumiBuildInputsEqual $profileInputs (Get-AtsumiBuildInputs $root $resources)}catch{$diagnostic=$_.Exception.Message}
+Check ($diagnostic.Contains('changed: '+$profileSource+'/current.rs') -and -not $diagnostic.Contains('changed Rust source')) 'mismatch diagnostics identify admitted path without file contents'
 foreach($extra in @('extra.rs','account.json','.env.local','signing.key','cookies/session.json','nested/extra.rs','snapshot/extra.rs','snapshot/.env','snapshot/credentials.pem')){
   $root=New-TestRoot
   foreach($name in @('current.rs','snapshot.rs','snapshot/tests.rs')){Write-TestFile (Join-Path $root ($profileSource+'/'+$name)) 'synthetic Rust source'}
@@ -130,6 +133,11 @@ $root=New-TestRoot
 foreach($name in @('current.rs','snapshot.rs','snapshot/tests.rs')){Write-TestFile (Join-Path $root ($profileSource+'/'+$name)) 'synthetic Rust source'}
 New-Item -ItemType HardLink -Path (Join-Path $root 'src/aliased-profile-source.rs') -Target (Join-Path $root ($profileSource+'/current.rs'))|Out-Null
 Reject {Get-AtsumiBuildSourceManifest $root} 'reviewed profile source hardlink still rejected'
+$root=New-TestRoot
+[IO.File]::WriteAllText((Join-Path $root 'src/app.ts'),"first`r`nsecond`r`n",$utf8)
+$crlfInputs=Get-AtsumiBuildInputs $root $resources
+[IO.File]::WriteAllText((Join-Path $root 'src/app.ts'),"first`nsecond`n",$utf8)
+Reject {Assert-AtsumiBuildInputsEqual $crlfInputs (Get-AtsumiBuildInputs $root $resources)} 'line ending changes remain byte-exact input mismatches'
 $root=New-TestRoot
 Write-TestFile (Join-Path $root '.env.production') 'implicit private frontend configuration'
 Reject {Get-AtsumiBuildSourceManifest $root} 'implicit root environment input rejects instead of hashing or silently omitting'

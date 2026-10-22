@@ -132,7 +132,29 @@ function Get-AtsumiReceiptDigest($Value) {
 }
 
 function Assert-AtsumiBuildInputsEqual($Expected, $Actual) {
-  if ((Get-AtsumiReceiptDigest $Expected) -cne (Get-AtsumiReceiptDigest $Actual)) { throw 'Build inputs changed; no release receipt can be accepted.' }
+  if ((Get-AtsumiReceiptDigest $Expected) -cne (Get-AtsumiReceiptDigest $Actual)) {
+    # Only bounded, validated relative paths and change categories, never source bytes or
+    # environment values. Keep equality byte-exact, including line endings.
+    $before = @{}; $after = @{}
+    foreach ($file in $Expected.source.files) { $before[$file.path] = $file }
+    foreach ($file in $Actual.source.files) { $after[$file.path] = $file }
+    $changes = [Collections.Generic.List[string]]::new()
+    foreach ($name in @(@($before.Keys) + @($after.Keys) | Sort-Object -Unique)) {
+      $displayName = 'invalid source path'
+      if ($name -is [string] -and $name.Length -le 256) {
+        try { $displayName = ConvertTo-AtsumiPackagePath $name }
+        catch { $displayName = 'invalid source path' }
+      }
+      if (-not $before.ContainsKey($name)) { $changes.Add('added: '+$displayName) }
+      elseif (-not $after.ContainsKey($name)) { $changes.Add('removed: '+$displayName) }
+      elseif ((Get-AtsumiReceiptDigest $before[$name]) -cne (Get-AtsumiReceiptDigest $after[$name])) { $changes.Add('changed: '+$displayName) }
+    }
+    if ((Get-AtsumiReceiptDigest $Expected.source.directories) -cne (Get-AtsumiReceiptDigest $Actual.source.directories)) { $changes.Add('source directories changed') }
+    if ((Get-AtsumiReceiptDigest $Expected.resources) -cne (Get-AtsumiReceiptDigest $Actual.resources)) { $changes.Add('approved resources changed') }
+    if ($Expected.version -cne $Actual.version) { $changes.Add('version changed') }
+    $details = (@($changes | Select-Object -First 16) -join '; ')
+    throw ('Build inputs changed; no release receipt can be accepted. '+$changes.Count+' differences: '+$details)
+  }
 }
 
 function Initialize-AtsumiOwnedBuildHandle {

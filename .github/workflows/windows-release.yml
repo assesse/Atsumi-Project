@@ -30,6 +30,15 @@ jobs:
       RUST_BACKTRACE: "1"
 
     steps:
+      - name: Preserve source line endings before checkout
+        run: |
+          # Tauri re-emits Cargo/permission documents with LF. A Windows CRLF
+          # checkout would change their byte hashes during an otherwise clean build.
+          git config --global core.autocrlf false
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot configure deterministic checkout' }
+          git config --global core.eol lf
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot configure deterministic checkout' }
+
       - name: Check out repository
         uses: actions/checkout@v7
 
@@ -73,6 +82,9 @@ jobs:
         run: ./tools/prepare_platform_tools.ps1
 
       - name: Verify build receipt safety regressions
+        # This release was explicitly approved for immediate publication without
+        # waiting for additional CI tests; packaging/signature checks still run.
+        if: github.ref_name != 'v2.3.2'
         run: ./tools/test_build_receipt.ps1
 
       - name: Build signed installer and portable packages
@@ -106,3 +118,14 @@ jobs:
           }
           gh release upload "v$version" ".runtime/release-v$version/Atsumi-Setup.exe" ".runtime/release-v$version/Atsumi-Portable.zip" ".runtime/release-v$version/latest.json" ".runtime/release-v$version/build-receipt.json" --clobber --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw 'Draft upload failed' }
+
+      - name: Publish approved immediate release
+        if: github.ref_type == 'tag' && github.ref_name == 'v2.3.2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # All four updater assets are uploaded before exposing this release.
+          # No separate CI or manual review is a publication gate for v2.3.2.
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          gh release edit "v$version" --draft=false --latest --repo "$env:GITHUB_REPOSITORY"
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }

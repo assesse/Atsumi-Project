@@ -2,6 +2,7 @@
   "date": "2026-10-22",
   "status": "script-test-repair-verified-release-artifacts-pending",
   "request": "Preserve app functionality; repair only release scripts and stale tests, then push and complete the release.",
+  "latestPublicationInstruction": "Publish auto-update immediately without waiting for additional CI verification. Skip additional test gates for v2.3.2; build/sign/package generation remains required because no current signed local artifacts exist. Publish automatically after all four assets upload, without a separate draft review wait.",
   "sourceReferences": [
     "Current chat: current-state push/release request and explicit release-script/test-only approval",
     "AGENTS.md",
@@ -20,6 +21,9 @@
   },
   "evidence": {
     "failedWorkflow": "https://github.com/assesse/Atsumi-Project/actions/runs/39740815408",
+    "secondWorkflow": "https://github.com/assesse/Atsumi-Project/actions/runs/39745007725: optimized Rust build and signed NSIS installer succeeded, then byte-exact pre/post input validation rejected changed inputs; no draft was uploaded.",
+    "lineEndingEvidence": "Isolated checkout-index probe reproduced CRLF in Cargo.toml and nine vendored permission reference documents under core.autocrlf=true, and zero CRLF under false. Tauri CLI can reserialize Cargo.toml; vendored build.rs invokes LF generate_docs in those source-tree documents. Preserve LF before CI checkout, not normalize or ignore hashes. Exact failed-run delta was unavailable; bounded path-only mismatch diagnostics added for subsequent runs.",
+    "secondRepairVerification": "65 synthetic build receipt checks passed, including byte-exact line-ending mismatch rejection and path-only error diagnostics. Focused 4 files / 12 tests and typecheck passed again at version 2.3.2. Production source diff remains zero apart from version metadata and the four test files.",
     "packagingFailure": "Sensitive-directory heuristic rejects the Rust source directory src-tauri/src/platform_media/profile.",
     "frontendBaseline": "4616 passing tests; 5 stale expectations in 4 files; typecheck passed.",
     "targetedRepairVerification": "4 frontend test files / 12 tests pass, including 960x640 and 1280x800 platform-menu layout audits; 63 synthetic build receipt safety checks pass; real source manifest includes the exact 3 reviewed Rust files among 1555 files. Independent read-only review found no remaining P1/P2.",
@@ -32,7 +36,7 @@
     "Permit only the exact reviewed Rust profile source directory, its snapshot subdirectory and current.rs/snapshot.rs/snapshot/tests.rs regular files; do not allow arbitrary profile directories or private files.",
     "Preserve link rejection, source-before/after equality, fresh owned build outputs, signatures and exact package manifests.",
     "Update explicit test expectations for eight platforms, X navigation/tutorial entries, and the existing exact local protocol/dictionary CSP whitelist; do not broaden production CSP.",
-    "Preserve the failed v2.3.0 tag and existing public releases; use v2.3.1.",
+    "Preserve failed v2.3.0 and v2.3.1 tags and existing public releases; use v2.3.2 after the CI line-ending correction.",
     "Latest explicit release approval governs this release; prior rights review and unverified live flows remain documented, not claimed resolved."
   ],
   "acceptance": [
@@ -40,6 +44,6 @@
     "Synthetic receipt regression checks and focused stale tests pass.",
     "Rerun automated verification and disclose any remaining failure without altering app behavior to hide it.",
     "Diff against base contains no application logic/UI changes.",
-    "Fresh signed installer and portable build succeed; verify four draft assets and updater metadata before publishing."
+    "Fresh signed installer and portable build succeed; existing signature/package generation checks remain. Upload all four assets, then automatically publish v2.3.2 as latest without waiting for separate CI tests or manual draft review."
   ]
 }
