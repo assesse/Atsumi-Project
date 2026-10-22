@@ -2,7 +2,8 @@
   "date": "2026-10-22",
   "status": "script-test-repair-verified-release-artifacts-pending",
   "request": "Preserve app functionality; repair only release scripts and stale tests, then push and complete the release.",
-  "latestPublicationInstruction": "Publish auto-update immediately without waiting for additional CI verification. Skip additional test gates for v2.3.2; build/sign/package generation remains required because no current signed local artifacts exist. Publish automatically after all four assets upload, without a separate draft review wait.",
+  "latestPublicationInstruction": "Publish auto-update immediately without waiting for additional CI verification. Skip additional test gates for v2.3.2/v2.3.3; build/sign/package generation remains required because no current signed local artifacts exist. Publish automatically after all four assets upload, without a separate draft review wait.",
+  "thirdFailureAndRepair": "v2.3.2 run 39748843528 built and signed installer plus portable, then Node spawned PowerShell 5 against PowerShell 7 receipt ordering. NLS/ICU Sort-Object path order divergence reproduced even under identical en-US culture; bytes unchanged. Pin only build/portable step to powershell so creation and existing Node verification use the same engine. Preserve only seven explicitly named captured package/proof files as failure artifacts. Preserve v2.3.2 tag and use v2.3.3; no product logic changes.",
   "sourceReferences": [
     "Current chat: current-state push/release request and explicit release-script/test-only approval",
     "AGENTS.md",
@@ -44,6 +45,6 @@
     "Synthetic receipt regression checks and focused stale tests pass.",
     "Rerun automated verification and disclose any remaining failure without altering app behavior to hide it.",
     "Diff against base contains no application logic/UI changes.",
-    "Fresh signed installer and portable build succeed; existing signature/package generation checks remain. Upload all four assets, then automatically publish v2.3.2 as latest without waiting for separate CI tests or manual draft review."
+    "Fresh signed installer and portable build succeed; existing signature/package generation checks remain. Upload all four assets, then automatically publish v2.3.3 as latest without waiting for separate CI tests or manual draft review."
   ]
 }

@@ -84,22 +84,46 @@ jobs:
       - name: Verify build receipt safety regressions
         # This release was explicitly approved for immediate publication without
         # waiting for additional CI tests; packaging/signature checks still run.
-        if: github.ref_name != 'v2.3.2'
+        if: github.ref_name != 'v2.3.2' && github.ref_name != 'v2.3.3'
         run: ./tools/test_build_receipt.ps1
 
       - name: Build signed installer and portable packages
+        id: build
+        # prepare_release.mjs invokes Windows PowerShell too. Do not mix its
+        # NLS sorting with pwsh's ICU sorting in byte-exact receipt manifests.
+        shell: powershell
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
           $receipt = ./tools/build_release.ps1
           if (-not $receipt -or -not (Test-Path -LiteralPath $receipt -PathType Leaf)) { throw 'Successful build receipt missing' }
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "stage=$(Split-Path -Parent $receipt)"
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "version=$version"
           ./tools/prepare_portable.ps1 -BuildReceipt $receipt
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           pnpm exec tauri signer sign --password= ".runtime/portable-v$version/Atsumi-Portable.zip"
           if ($LASTEXITCODE -ne 0) { throw 'Portable signing failed' }
           node tools/prepare_release.mjs $receipt
           if ($LASTEXITCODE -ne 0) { throw 'Release verification failed' }
+
+      - name: Preserve built packages if final packaging fails
+        if: failure() && steps.build.outputs.stage != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-recovery-${{ github.run_id }}-${{ github.run_attempt }}
+          retention-days: 7
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            ${{ steps.build.outputs.stage }}/atsumi.exe
+            ${{ steps.build.outputs.stage }}/Atsumi-Setup.exe
+            ${{ steps.build.outputs.stage }}/Atsumi-Setup.exe.sig
+            ${{ steps.build.outputs.stage }}/build-receipt.json
+            .runtime/portable-v${{ steps.build.outputs.version }}/Atsumi-Portable.zip
+            .runtime/portable-v${{ steps.build.outputs.version }}/Atsumi-Portable.zip.sig
+            .runtime/portable-v${{ steps.build.outputs.version }}/Atsumi-Portable.zip.metadata.json
 
       - name: Upload verified draft release
         env:
@@ -120,12 +144,12 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Draft upload failed' }
 
       - name: Publish approved immediate release
-        if: github.ref_type == 'tag' && github.ref_name == 'v2.3.2'
+        if: github.ref_type == 'tag' && (github.ref_name == 'v2.3.2' || github.ref_name == 'v2.3.3')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # All four updater assets are uploaded before exposing this release.
-          # No separate CI or manual review is a publication gate for v2.3.2.
+          # No separate CI or manual review is a gate for these approved releases.
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           gh release edit "v$version" --draft=false --latest --repo "$env:GITHUB_REPOSITORY"
           if ($LASTEXITCODE -ne 0) { throw 'Release publication failed' }
