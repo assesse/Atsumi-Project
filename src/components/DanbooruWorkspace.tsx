@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { DanbooruApi } from "../api/featureClients";
+import type { SupportedLinkRequest } from "../app/supportedLinkNavigation";
 import type {
   DanbooruAutocompleteItem,
   DanbooruDownloadRecord,
@@ -43,6 +44,7 @@ type DanbooruView = "explore" | "downloads";
 type DanbooruWorkspaceProps = {
   active?: boolean;
   navigationRequest?: import("../app/CommonNavigation").NavigationRequest | null;
+  supportedLinkRequest?: SupportedLinkRequest | null;
   backend: DanbooruApi;
   railCollapsed: boolean;
   pageSize: number;
@@ -172,6 +174,7 @@ const replaceActiveToken = (value: string, replacement: string): string => {
 export function DanbooruWorkspace({
   active = true,
   navigationRequest,
+  supportedLinkRequest,
   backend,
   railCollapsed,
   pageSize,
@@ -259,6 +262,7 @@ export function DanbooruWorkspace({
   const [historySize, setHistorySize] = useState(0);
   const [scrollRevision, setScrollRevision] = useState(0);
   const handledNavigation = useRef(navigationRequest);
+  const handledSupportedLink = useRef<string | null>(null);
   const committedPresentation = useRef({ draft: persisted.exploreDraft, filters: persisted.filters });
 
   useEffect(() => {
@@ -405,6 +409,35 @@ export function DanbooruWorkspace({
     handledNavigation.current = navigationRequest;
     navigate(navigationRequest.view as ViewId);
   }, [active, navigationRequest]);
+
+  useEffect(() => {
+    if (!active || privacyMode || privacyModePending || supportedLinkRequest?.source !== "danbooru" || handledSupportedLink.current === supportedLinkRequest.id) return;
+    const sequence = ++requestSequence.current, id = supportedLinkRequest.targetId, requestId = supportedLinkRequest.id;
+    let cancelled = false;
+    restoredPageLoaded.current = true;
+    setView("explore"); setExploreDraft(id); setExploreCommitted(id); setExplorePage(1);
+    setDetail(null); setSuggestions([]); setLoading(true); setError(null);
+    // Numeric search is the existing exact-post backend path; do not copy a
+    // URL into a new fetch primitive or let unrelated returned posts open.
+    // StrictMode withdraws the first setup before replaying it. Do not consume
+    // an unfinished link or dispatch a request from that withdrawn setup.
+    queueMicrotask(() => {
+      if (cancelled || sequence !== requestSequence.current) return;
+      void backend.danbooruSearch({ tags: id, page: 1, pageSize: 1 }).then(result => {
+        if (cancelled || sequence !== requestSequence.current) return;
+        if (!result.ok) { setError(result.error.message); return; }
+        const post = result.data.items.find(item => String(item.id) === id);
+        if (!post) { setError("해당 Danbooru post를 찾을 수 없습니다."); return; }
+        setSearchPage({ ...result.data, items: [post], hasMore: false }); setDetail(post);
+      }, () => { if (!cancelled && sequence === requestSequence.current) setError("Danbooru post를 불러오지 못했습니다."); }).finally(() => {
+        if (!cancelled && sequence === requestSequence.current) {
+          handledSupportedLink.current = requestId;
+          setLoading(false);
+        }
+      });
+    });
+    return () => { cancelled = true; };
+  }, [active, privacyMode, privacyModePending, supportedLinkRequest, backend]);
 
   const rememberSearch = () => {
     history.current = [...history.current.slice(-11), {
@@ -821,7 +854,7 @@ function DanbooruCard({
     </article>
     <CardContextMenu anchor={menu.anchor} close={menu.close} label={postTitle(post)} items={[
       { id: "open", label: "상세 열기", action: onOpen },
-      { id: "download", label: downloaded ? "원본 저장 완료" : pending ? "원본 저장 중" : "원본 다운로드", disabled: downloaded || pending || !post.fileUrl, action: onDownload },
+      { id: "download", icon: downloaded ? "check" : "download", label: downloaded ? "원본 저장 완료" : pending ? "원본 저장 중" : "원본 다운로드", disabled: downloaded || pending || !post.fileUrl, action: onDownload },
     ]} />
     </>
   );

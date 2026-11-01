@@ -20,6 +20,21 @@ const gallery: Gallery = {
 };
 
 describe("ProgressiveGallerySlot", () => {
+  it("does not rebuild an offscreen summary for changing card actions, but mounts their latest state on entry", async () => {
+    let reads = 0;
+    const counted = { ...gallery, get title() { reads++; return gallery.title; } };
+    const container = document.createElement("div"), root = createRoot(container);
+    try {
+      await act(async () => root.render(<ProgressiveGallerySlot gallery={counted} active={false}><button>before</button></ProgressiveGallerySlot>));
+      const initialReads = reads;
+      await act(async () => root.render(<ProgressiveGallerySlot gallery={counted} active={false}><button>latest</button></ProgressiveGallerySlot>));
+      expect(reads).toBe(initialReads);
+      expect(container.querySelector("button")).toBeNull();
+      await act(async () => root.render(<ProgressiveGallerySlot gallery={counted} active><button>latest</button></ProgressiveGallerySlot>));
+      expect(container.querySelector("button")).toHaveTextContent("latest");
+    } finally { await act(async () => root.unmount()); }
+  });
+
   it.each(["detail", "compact"] as const)("keeps the Korean-first title even in a %s placeholder", async (displayMode) => {
     const container = document.createElement("div"), root = createRoot(container);
     const bilingual = { ...gallery, title: "Original title | 한글 제목" };

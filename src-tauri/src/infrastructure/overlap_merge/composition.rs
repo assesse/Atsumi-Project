@@ -21,6 +21,7 @@ pub(super) fn plan(
     target: &ArtifactBundle,
 ) -> Result<Vec<ComposedPage>, ApplicationError> {
     let Some(selected) = &request.selected_pages else {
+        if request.target_selection_only { return Err(invalid("An explicit partial destination requires selected pages")); }
         return Ok(vec![]);
     };
     let (donor, keep) = match request.source_side {
@@ -138,6 +139,10 @@ pub(super) fn plan(
             });
         }
         s += 1;
+    }
+    if request.target_selection_only {
+        output.retain(|choice| choice.donor || keep.contains(&choice.page));
+        if output.is_empty() { return Err(invalid("At least one page must remain")); }
     }
     Ok(output)
 }

@@ -10,11 +10,12 @@
     && Object.keys(nativeSearch).length === 2 && Object.hasOwn(nativeSearch,'image') && Object.hasOwn(nativeSearch,'video')
     && typeof nativeSearch.image === 'boolean' && typeof nativeSearch.video === 'boolean');
   const searchCapabilities = Object.freeze({image:validSearchCapabilities && nativeSearch.image === true,video:validSearchCapabilities && nativeSearch.video === true});
-  const searchAllowed = kind => searchEnabled && (kind === 'image' ? searchCapabilities.image === true : kind === 'video' && searchCapabilities.video === true);
+  const searchAllowed = kind => searchEnabled && (kind === 'image' ? searchCapabilities.image === true : (kind === 'video'||kind === 'thumbnail') && searchCapabilities.video === true);
   let visible = false, menu = null, expansion = null, toast = null, photoControl = null, photoControlTarget = null;
-  let photoRefresh = null;
+  let photoRefresh = null, photoHoverRefresh = null, photoControlRect = null;
   const pending = new Map(), finished = new Map(), notices = new Map();
   const searches = new Map();
+  let contextDiagnostic = null;
   const controls = new WeakSet();
   const transport = () => {
     try {const bridge=window.chrome?.webview,send=bridge?.postMessage;return typeof send==='function'?send.bind(bridge):null;}catch{return null;}
@@ -106,7 +107,7 @@
       ordinalItemCandidates:0,fullyClipped:0,partlyClipped:0,unclipped:0,clipUncertain:0,overflow:false};
     const listSelector='[role="list"],ul,ol',itemSelector='[role="listitem"],li';
     const lists=new Set(),items=new Set(),carousels=new Set(),labels=new Set();
-    const ordinal=value=>/^[1-4]$/.test(value||'')?Number(value):0;
+    const ordinal=value=>/^[1-6]$/.test(value||'')?Number(value):0;
     const carousel=node=>node?.getAttribute('role')==='carousel'||
       /^(carousel|회전 슬라이드|カルーセル)$/i.test(node?.getAttribute('aria-roledescription')||'');
     const boundedText=node=>{
@@ -115,8 +116,8 @@
     };
     const counter=value=>{
       if(typeof value!=='string'||value.length>80)return null;
-      const match=/^(?:slide\s+)?([1-4])\s*(?:\/|of)\s*([1-4])(?:\s*-\s*carousel)?$/i.exec(value.trim())
-        ||/^슬라이드\s*([1-4])\s*\/\s*([1-4])\s*-\s*회전 슬라이드$/.exec(value.trim());
+      const match=/^(?:slide\s+)?([1-6])\s*(?:\/|of)\s*([1-6])(?:\s*-\s*carousel)?$/i.exec(value.trim())
+        ||/^슬라이드\s*([1-6])\s*\/\s*([1-6])\s*-\s*회전 슬라이드$/.exec(value.trim());
       return match&&Number(match[1])<=Number(match[2])?[Number(match[1]),Number(match[2])]:null;
     };
     const clip=image=>{
@@ -153,7 +154,7 @@
     for(const list of lists){
       const slides=[...list.querySelectorAll(itemSelector)].filter(item=>item.closest(listSelector)===list);
       shape.slides=Math.min(8,shape.slides+slides.length);
-      if(slides.length>4){shape.overflow=true;continue;}
+      if(slides.length>6){shape.overflow=true;continue;}
       const selected=slides[shape.routeOrdinal-1];
       shape.ordinalItemCandidates+=candidates.filter(value=>value.image.closest(itemSelector)===selected).length;
       for(const item of slides){
@@ -184,6 +185,20 @@
     }
     return shape;
   }
+  function threadBoundaryPlaceholder(item) {
+    // Observed in the official thread viewer: one empty SVG slide at either
+    // boundary navigates to another post. It is not a photo of this post.
+    const nodes=[...item.querySelectorAll('*')];
+    if(nodes.length<3||nodes.length>8||(item.textContent||'').trim()
+      ||nodes.some(node=>!['DIV','IMG'].includes(node.tagName)))return null;
+    const images=nodes.filter(node=>node.tagName==='IMG'),markers=nodes.filter(node=>node.getAttribute('aria-label')==='placeholder');
+    if(images.length!==1||markers.length!==1||images[0].parentElement!==markers[0]
+      ||images[0].getAttribute('alt')!=='placeholder'
+      ||!item.querySelector('[data-testid="swipe-to-dismiss"]')?.contains(markers[0]))return null;
+    const source=images[0].getAttribute('src');
+    if(source!=='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%221%22%20height=%221%22%3E%3C/svg%3E')return null;
+    return images[0];
+  }
   function resolveCurrentCarouselPhoto(candidates, route, shown, trace=null) {
     // undefined preserves the legacy unambiguous non-carousel path. A detected
     // but conflicting/incomplete carousel returns null, including mid-transition.
@@ -212,12 +227,17 @@
     const lists = [...root.querySelectorAll(listSelector)];
     if (lists.length !== 1) return done('lists');
     const list = lists[0], items = [...list.querySelectorAll(itemSelector)];
-    if (items.length < 1 || items.length > 4 || index > items.length) return done('items');
+    if (items.length < 1 || items.length > 6) return done('items');
     if (items.some(item => item.closest(listSelector) !== list || item.parentElement?.closest(itemSelector))) return done('nestedItems');
+    const placeholders=items.map(threadBoundaryPlaceholder);
+    if(placeholders.some((node,i)=>node&&i!==0&&i!==items.length-1))return done('items');
+    const leading=placeholders[0]?1:0,trailing=placeholders.at(-1)?1:0;
+    const photoCount=items.length-leading-trailing,currentIndex=index+leading;
+    if(photoCount<1||photoCount>4||index>photoCount)return done('items');
     const parseCounter = value => {
       if (typeof value !== 'string' || value.length > 80) return null;
-      const match = /^(?:slide\s+)?([1-4])\s*(?:\/|of)\s*([1-4])(?:\s*-\s*carousel)?$/i.exec(value.trim()) ||
-        /^슬라이드\s*([1-4])\s*\/\s*([1-4])\s*-\s*회전 슬라이드$/.exec(value.trim());
+      const match = /^(?:slide\s+)?([1-6])\s*(?:\/|of)\s*([1-6])(?:\s*-\s*carousel)?$/i.exec(value.trim()) ||
+        /^슬라이드\s*([1-6])\s*\/\s*([1-6])\s*-\s*회전 슬라이드$/.exec(value.trim());
       return match && Number(match[1]) <= Number(match[2]) ? [Number(match[1]), Number(match[2])] : null;
     };
     const counters = [];
@@ -231,8 +251,8 @@
       }
     }
     if (!counters.length) return done('counterMissing');
-    if (counters.some(([current, total]) => current !== index || total !== items.length)) return done('counterMismatch');
-    const currentItem = items[index - 1];
+    if (counters.some(([current, total]) => current !== currentIndex || total !== items.length)) return done('counterMismatch');
+    const currentItem = items[currentIndex - 1];
     if (!shown(currentItem)) return done('currentHidden');
     for (let ordinal = 0; ordinal < items.length; ordinal++) {
       const item = items[ordinal];
@@ -289,6 +309,11 @@
       }
       return node ? done('clipDepth') : right > left && bottom > top;
     };
+    for(const placeholder of placeholders.filter(Boolean)){
+      const presented=exposed(placeholder);
+      if(presented===null)return null;
+      if(presented)return done('neighbourExposed');
+    }
     let current = null;
     for (const candidate of candidates) {
       if (!candidate.image?.isConnected) return done('detached');
@@ -365,7 +390,7 @@
   const closeMenu=()=>{const wasOpen=!!menu||!!expansion;menu?.remove();menu=null;collapse();return wasOpen;};
   const icon = name => {
     const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    for(const [k,v] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true'}))svg.setAttribute(k,v);
+    for(const [k,v] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false'}))svg.setAttribute(k,v);
     if(name==='download-all'){
       for(const transform of ['translate(1 1) scale(.68)','translate(7 7) scale(.68)']){
         const p=document.createElementNS(svg.namespaceURI,'path');p.setAttribute('d','M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4');p.setAttribute('transform',transform);svg.append(p);
@@ -374,6 +399,8 @@
     }
     const p=document.createElementNS(svg.namespaceURI,'path');
     p.setAttribute('d',name==='save'?'M3 4h18v4H3zM5 8v12h14V8M10 12h4'
+      :name==='search'?'M17 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0Zm-2 5 6 6'
+      :name==='external'?'M14 3h7v7m0-7L10 14M10 3H3v18h18v-7'
       :'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4');svg.append(p);return svg;
   };
   const progressStages=new Set(['queued','capture','preparing','downloading','writing','complete','failed','cancelled']);
@@ -607,14 +634,31 @@
     if(!signal('archive',submission,send)&&pending.get(id)===job){job.unknown=true;paintJob(job);}
     scheduleReceipt(job);
   }
-  function item(label,run) {
-    const b=document.createElement('button');controls.add(b);b.type='button';b.setAttribute('role','menuitem');b.textContent=label;
+  function item(label,run,iconName) {
+    const b=document.createElement('button');controls.add(b);b.type='button';b.setAttribute('role','menuitem');
+    const slot=document.createElement('span');slot.className='atsumi-x-menu-icon';slot.setAttribute('aria-hidden','true');
+    if(iconName){slot.dataset.menuIcon=iconName;slot.append(icon(iconName));}
+    const text=document.createElement('span');text.className='atsumi-x-menu-text';text.textContent=label;b.append(slot,text);
     b.onclick=e=>{if(!e.isTrusted)return;e.preventDefault();e.stopPropagation();e.stopImmediatePropagation();closeMenu();run();};return b;
   }
   const searchImageUrl = value => {
     try{const url=new URL(value);return url.protocol==='https:'&&url.hostname==='pbs.twimg.com'&&!url.username&&!url.password&&!url.port&&!url.hash
       &&url.href.length<=2048&&/^\/media\/[A-Za-z0-9_-]+(?:\.(?:jpg|jpeg|png|webp|gif))?$/.test(url.pathname)
       &&[...url.searchParams.keys()].every(key=>['format','name'].includes(key))?url.href:null;}catch{return null;}
+  };
+  const searchThumbnailUrl = value => {
+    if(typeof value!=='string'||!value||value.length>2048||/[\s\\%]/.test(value))return null;
+    try{
+      const url=new URL(value);if(url.href!==value||url.protocol!=='https:'||url.hostname!=='pbs.twimg.com'||url.username||url.password||url.port||url.hash)return null;
+      const match=/^\/(?:ext_tw_video_thumb\/[1-9]\d{0,24}\/pu\/img\/|amplify_video_thumb\/[1-9]\d{0,24}\/img\/|tweet_video_thumb\/|media\/)[A-Za-z0-9_-]{1,256}(?:\.(jpg|jpeg|png|webp))?$/.exec(url.pathname);
+      if(!match)return null;let format=null,name=false;
+      for(const [key,item]of url.searchParams){
+        if(key==='format'&&format===null&&/^(jpg|jpeg|png|webp)$/.test(item)){if(match[1]&&match[1]!==item)return null;format=item;}
+        else if(key==='name'&&!name&&/^[A-Za-z0-9_-]{1,24}$/.test(item))name=true;
+        else return null;
+      }
+      return match[1]||format?url.href:null;
+    }catch{return null;}
   };
   function clearSearch(id) {
     const entry=searches.get(id);if(!entry)return;
@@ -627,6 +671,61 @@
     const root=video&&scope.contains(video)?video:photo&&scope.contains(photo)?photo:null;
     return root?.closest('article[data-testid="tweet"]')===article?root:null;
   }
+  function videoSearchTarget(video,current) {
+    const source=video.currentSrc||video.src,thumbnailUrl=searchThumbnailUrl(video.poster);
+    const videoCurrent=()=>current()&&video.isConnected&&(video.currentSrc||video.src)===source&&displayed(video)&&inViewport(video.getBoundingClientRect());
+    return {kind:'video',node:video,current:videoCurrent,thumbnail:{kind:'thumbnail',thumbnailUrl,current:()=>videoCurrent()&&searchThumbnailUrl(video.poster)===thumbnailUrl}};
+  }
+  function immersiveSearchProof(target,trace=null) {
+    const reject=reason=>{if(trace)trace.reason=reason;return null;};
+    if(!searchEnabled||window.__atsumiXSurface?.sourceMediaViewerAvailable?.()!==true)return reject('capability');
+    // The original viewer keeps the entry post in its pathname while its own
+    // currentTweet pair changes. Never attribute a related item to that root.
+    const url=new URL(location.href),entry=/^\/([A-Za-z0-9_]{1,15})\/status\/([1-9]\d{4,24})\/(?:mediaviewer|mediaViewer)$/.exec(url.pathname);
+    if(!entry||url.origin!==location.origin||url.hash)return reject('route');
+    const ids=url.searchParams.getAll('currentTweet'),authors=url.searchParams.getAll('currentTweetUser');
+    if([...url.searchParams.keys()].some(key=>!['currentTweet','currentTweetUser'].includes(key)))return reject('query');
+    let id=entry[2],author=entry[1];
+    if(ids.length||authors.length){
+      if(ids.length!==1||authors.length!==1||!/^[1-9]\d{4,24}$/.test(ids[0])||!/^[A-Za-z0-9_]{1,15}$/.test(authors[0]))return reject('selection');
+      [id]=ids;[author]=authors;
+    }
+    const path=`/${author}/status/${id}`,cellSelector=`[data-testid="cellInnerDiv-tweet-${id}"]`,cells=document.querySelectorAll(cellSelector);
+    if(cells.length!==1)return reject('cellCount');const cell=cells[0];
+    if(!cell.isConnected||target.closest('[data-testid^="cellInnerDiv-tweet-"]')!==cell
+      ||cell.closest('article[data-testid="tweet"],[data-testid="quoteTweet"],[data-testid="quotedTweet"]')
+      ||cell.querySelector('[data-testid="immersive-tweet-ad-label"]')||window.__atsumiXAds?.blocked(cell))return reject('cellScope');
+    const ownNodes=selector=>[...cell.querySelectorAll(selector)].filter(node=>node.closest('[data-testid^="cellInnerDiv-tweet-"]')===cell);
+    const hud=ownNodes(`[data-testid="immersive-tweet-ui-content-container-${id}"]`),overlays=ownNodes(`[data-testid="immersive-video-controls-${id}"]`),roots=ownNodes('[data-testid="videoComponent"]');
+    if(hud.length>1||overlays.length!==1||roots.length!==1||ownNodes(`button[data-testid="immersive-tweet-back-button-${id}"]`).length!==1
+      ||!(overlays[0].contains(target)||roots[0].contains(target)))return reject('nativeStructure');
+    // X unmounts the HUD while playing. Its own published current-item URL and
+    // unique native cell still identify that video. When present, never ignore
+    // conflicting author/caption evidence or borrow the separate source credit.
+    if(hud.length){
+      const avatars=ownNodes(`[data-testid="UserAvatar-Container-${author}"]`).filter(node=>hud[0].contains(node));
+      if(avatars.length!==1)return reject('avatar');
+      const profileLinks=[...new Set([avatars[0].closest('a[href]'),...avatars[0].querySelectorAll('a[href]')].filter(Boolean))];
+      if(profileLinks.length!==1||!hud[0].contains(profileLinks[0]))return reject('profile');
+      try{const profile=new URL(profileLinks[0].href);if(profile.origin!==url.origin||profile.pathname!==`/${author}`||profile.search||profile.hash)return reject('profile');}catch{return reject('profile');}
+      const captions=[...hud[0].querySelectorAll('[data-testid="tweetText"]')];
+      if(captions.length>1||captions.length===1&&(!captions[0].matches('a[href]')||postPath(captions[0].href)!==path))return reject('caption');
+    }
+    const videos=ownNodes('video');
+    if(videos.length!==1||!roots[0].contains(videos[0]))return reject('video');
+    if(trace)trace.reason='proved';
+    return {path,cell,root:roots[0],video:videos[0]};
+  }
+  function immersiveSearchTarget(target,trace=null) {
+    const proof=immersiveSearchProof(target,trace);if(!proof)return null;
+    const current=()=>{
+      const now=immersiveSearchProof(target);
+      return visible&&!!now&&now.path===proof.path&&now.cell===proof.cell&&now.root===proof.root&&now.video===proof.video;
+    };
+    const search=videoSearchTarget(proof.video,current);
+    if(!search.current()){if(trace)trace.reason='videoNotCurrent';return null;}
+    return {path:proof.path,search};
+  }
   function sourceSearchTarget(article,path,root,target) {
     if(!searchEnabled||!root)return null;
     const scope=root.closest('[data-testid="quoteTweet"],[data-testid="quotedTweet"],[role="link"]:not(a)')||article;
@@ -635,8 +734,18 @@
     const videos=[...root.querySelectorAll('video')].filter(video=>searchMediaRoot(article,video)===root);
     if(videos.length){
       if(videos.length!==1)return null;
-      const video=videos[0],source=video.currentSrc||video.src;
-      return {kind:'video',node:video,current:()=>current()&&video.isConnected&&searchMediaRoot(article,video)===root&&(video.currentSrc||video.src)===source&&displayed(video)&&inViewport(video.getBoundingClientRect())};
+      const video=videos[0];
+      return videoSearchTarget(video,()=>current()&&searchMediaRoot(article,video)===root);
+    }
+    // Before X hydrates a <video>, the actual displayed thumbnail can be an
+    // image. Bind it explicitly; never relabel an ordinary body image or avatar.
+    const thumbnails=[...root.querySelectorAll('img')].filter(image=>searchMediaRoot(article,image)===root
+      &&searchThumbnailUrl(image.currentSrc||image.src)&&(root.matches('[data-testid="videoPlayer"]')||!searchImageUrl(image.currentSrc||image.src)));
+    if(thumbnails.length){
+      const direct=target?.closest('img'),image=thumbnails.includes(direct)?direct:thumbnails.length===1?thumbnails[0]:null;
+      if(!image)return null;const thumbnailUrl=searchThumbnailUrl(image.currentSrc||image.src);
+      return{kind:'thumbnail',thumbnailUrl,current:()=>current()&&image.isConnected&&searchMediaRoot(article,image)===root
+        &&searchThumbnailUrl(image.currentSrc||image.src)===thumbnailUrl&&!!photoPaint(image,thumbnailUrl)&&inViewport(image.getBoundingClientRect())};
     }
     // An actual image target is stronger than a container's first descendant.
     // Never borrow a poster, avatar or a neighbouring image in a grouped root.
@@ -654,11 +763,20 @@
     const id=crypto.randomUUID(),kind=target.kind,provider=kind==='image'?'saucenao':'lens',sourceUrl=location.href;
     let payload={id,kind,provider,path,sourceUrl};
     if(kind==='image')payload={...payload,imageUrl:target.imageUrl};
+    else if(kind==='thumbnail'){
+      if(!target.thumbnailUrl){searchNotice('이 영상의 썸네일을 확인할 수 없습니다. 영상을 재생한 뒤 현재 장면 검색을 선택할 수 있습니다. 다른 이미지는 전송하지 않았습니다.');return;}
+      payload={...payload,thumbnailUrl:target.thumbnailUrl};
+    }
     else{
       const video=target.node,width=video.videoWidth,height=video.videoHeight,time=video.currentTime;
       if(video.mediaKeys){searchNotice('보호된 영상의 장면은 검색할 수 없습니다.');return;}
       if(video.readyState<2||!Number.isFinite(time)||time<0||!Number.isSafeInteger(width)||!Number.isSafeInteger(height)
         ||width<1||height<1||width>16384||height>16384||width*height>67108864){searchNotice('현재 영상 장면을 읽을 수 없습니다. 영상이 표시된 후 다시 시도해 주세요.');return;}
+      // HAVE_CURRENT_DATA can describe a decoded first frame underneath the
+      // still-visible poster. Canvas would search unseen pixels (often black).
+      // Never auto-play or substitute that poster for the requested frame.
+      if(video.paused&&time===0&&video.played.length===0){searchNotice('아직 재생 전이라 현재 영상 장면을 확인할 수 없습니다. 영상을 한 번 재생한 뒤 원하는 장면에서 다시 검색해 주세요. 이미지는 전송하지 않았습니다.');return;}
+      if(video.seeking){searchNotice('장면 이동이 끝난 뒤 다시 검색해 주세요. 이미지는 전송하지 않았습니다.');return;}
       const scale=Math.min(1,2048/Math.max(width,height)),canvas=document.createElement('canvas');
       canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));
       try{
@@ -679,10 +797,14 @@
     else searchNotice('검색할 미디어를 확인하는 중…');
   }
   function searchItem(path,target) {
-    const label=target.kind==='image'?'작가·원본 찾기':'현재 장면으로 검색';
-    const button=item(label,()=>beginSearch(path,target));
-    button.title=target.kind==='image'?'SauceNAO · 선택한 이미지 주소를 전달합니다.':'Google Lens · 현재 영상 장면을 전송합니다.';
+    const label=target.kind==='image'?'작가·원본 찾기':target.kind==='thumbnail'?'썸네일로 검색 (기본)':'현재 장면으로 검색';
+    const button=item(label,()=>beginSearch(path,target),'search');
+    button.title=target.kind==='image'?'SauceNAO · 선택한 이미지 주소를 전달합니다.':target.kind==='thumbnail'?'Google Lens · 선택한 영상의 썸네일 한 장을 전송합니다. 재생하지 않아도 됩니다.':'Google Lens · 현재 영상 장면을 전송합니다.';
     button.setAttribute('aria-description',button.title);return button;
+  }
+  function appendSearchItems(path,target){
+    if(target.kind==='video')menu.append(searchItem(path,target.thumbnail));
+    menu.append(searchItem(path,target));
   }
   function placeMenu(anchor,point) {
     document.body.append(menu);
@@ -699,13 +821,13 @@
       ||root.isConnected&&mediaRoot(article,root)===root&&mediaFor(root)===media);
     window.__atsumiXSurface?.dismissMenu?.();
     closeMenu();menu=document.createElement('div');menu.className='atsumi-x-download-menu';menu.setAttribute('role','menu');menu.setAttribute('aria-label','게시물 메뉴');
-    if(media)menu.append(item('개별',()=>{if(current())start(path,'one',media,articleBinding(article,path,root));}));
-    menu.append(item('전체',()=>{if(current())start(path,'all',null,articleBinding(article,path));}));
+    if(media)menu.append(item('개별 다운로드',()=>{if(current())start(path,'one',media,articleBinding(article,path,root));},'download'));
+    menu.append(item('전체 다운로드',()=>{if(current())start(path,'all',null,articleBinding(article,path));},'download-all'));
     if(point){
-      const search=searchEnabled&&sourceSearchTarget(article,path,target?searchMediaRoot(article,target):root,target);if(search)menu.append(searchItem(path,search));
-      menu.append(item('게시물 보관',()=>{if(current())start(path,'archive',null,articleBinding(article,path));}));
+      const search=searchEnabled&&sourceSearchTarget(article,path,target?searchMediaRoot(article,target):root,target);if(search)appendSearchItems(path,search);
+      menu.append(item('게시물 보관',()=>{if(current())start(path,'archive',null,articleBinding(article,path));},'save'));
       menu.append(item('본문·댓글 선택 보관',()=>{if(current())signal('archiveChoose',path);}));
-      menu.append(item('외부 브라우저에서 열기',()=>{if(current())signal('external',path);}));
+      menu.append(item('외부 브라우저에서 열기',()=>{if(current())signal('external',path);},'external'));
     }
     placeMenu(anchor,point);
   }
@@ -713,9 +835,9 @@
     const current=()=>samePhoto(photo,currentPhoto());
     window.__atsumiXSurface?.dismissMenu?.();
     closeMenu();menu=document.createElement('div');menu.className='atsumi-x-download-menu';menu.setAttribute('role','menu');menu.setAttribute('aria-label','사진 메뉴');
-    menu.append(item('개별',()=>{if(current())start(photo.path,'one',photo.media,photoBinding(photo));}));
+    menu.append(item('개별 다운로드',()=>{if(current())start(photo.path,'one',photo.media,photoBinding(photo));},'download'));
     if(searchEnabled&&point&&searchImageUrl(photo.media))menu.append(searchItem(photo.path,{kind:'image',imageUrl:photo.media,current}));
-    if(point)menu.append(item('외부 브라우저에서 열기',()=>{if(current())signal('external',photo.route);}));
+    if(point)menu.append(item('외부 브라우저에서 열기',()=>{if(current())signal('external',photo.route);},'external'));
     placeMenu(anchor,point);
   }
   function button(name,label) {
@@ -790,25 +912,104 @@
   function queuePhotoRefresh(event) {
     if(!event.isTrusted||!visible||photoRefresh||
       !/^\/[A-Za-z0-9_]{1,15}\/status\/[1-9]\d{4,24}\/photo\/[1-4]$/.test(location.pathname))return;
+    let transitionPhoto=null;
     if(event.type!=='resize'){
       const target=event.target;
-      if(!(target instanceof Element)||target.closest('article[data-testid="tweet"]')||
-        (event.type==='load'?!target.matches('img'):!target.closest('[role="carousel"],[aria-roledescription]')))return;
+      if(!(target instanceof Element)||target.closest('article[data-testid="tweet"]'))return;
+      if(event.type==='load'){if(!target.matches('img'))return;}
+      else if(!target.closest('[role="carousel"],[aria-roledescription]')){
+        // An opacity animation can finish after the first hover refresh. Only
+        // nearby native chrome in this exact photo may request another pass.
+        if(event.type!=='transitionend'||event.propertyName!=='opacity')return;
+        transitionPhoto=currentPhoto();if(!transitionPhoto||!nearbyPhotoChrome(target,transitionPhoto))return;
+      }
     }
     const owner=window.__atsumiXSurface?.archivePhotoOwner?.();
     if(typeof owner!=='string'||!/^[A-Za-z0-9_]{1,15}$/.test(owner))return;
-    const request={owner,route:location.pathname};photoRefresh=request;
+    const request={owner,route:location.pathname,photo:transitionPhoto};photoRefresh=request;
     setTimeout(()=>{
       if(photoRefresh!==request)return;photoRefresh=null;
       if(!visible||location.pathname!==request.route||window.__atsumiXSurface?.archivePhotoOwner?.()!==request.owner)return;
+      if(request.photo&&!samePhoto(request.photo,currentPhoto()))return;
       update();
     },0);
   }
   document.addEventListener('load',queuePhotoRefresh,true);
   document.addEventListener('transitionend',queuePhotoRefresh,true);
   window.addEventListener?.('resize',queuePhotoRefresh);
+  const finitePhotoRect=rect=>rect&&['left','top','right','bottom','width','height'].every(key=>Number.isFinite(rect[key]))&&rect.width>0&&rect.height>0;
+  const photoChromeSelector='button,[role="button"],a[href],input,select,textarea,[role="menu"],[role="menuitem"]';
+  function nearbyPhotoChrome(target,photo) {
+    const nearest=target.closest(photoChromeSelector),nodes=nearest?[nearest]:target.querySelectorAll(photoChromeSelector);
+    if(!nodes.length||nodes.length>16)return false;
+    const rect=photo.image.getBoundingClientRect();if(!finitePhotoRect(rect))return false;
+    for(const node of nodes){
+      if(controls.has(node)||node===menu||menu?.contains(node)||toast?.contains(node)||node.contains(photo.image)
+        ||node.closest('article[data-testid="tweet"],[hidden],[inert],[aria-hidden="true"]'))continue;
+      const style=getComputedStyle(node),bounds=node.getBoundingClientRect();
+      // The completed transition may end at opacity 0 (chrome fading out).
+      // Its layout can still justify a refresh, but never media ownership.
+      if(style.display==='none'||['hidden','collapse'].includes(style.visibility)||!finitePhotoRect(bounds)||!inViewport(bounds))continue;
+      if(bounds.left<rect.right+40&&bounds.right>rect.left-40&&bounds.top<rect.bottom+40&&bounds.bottom>rect.top-40)return true;
+    }
+    return false;
+  }
+  function placePhotoControl(photo) {
+    const rect=photo.image.getBoundingClientRect(),size=32,gap=8;
+    if(!finitePhotoRect(rect)||innerWidth<size+gap*2||innerHeight<size+gap*2)return null;
+    // Observe native hitboxes; never move, hide or intercept X's controls. The
+    // whole document includes photo chrome outside a nested modal shell. Feed
+    // articles and our own controls cannot supply fullscreen chrome geometry.
+    const nodes=document.querySelectorAll(photoChromeSelector);
+    // Hidden/offscreen navigation does not consume the visible-obstacle budget.
+    // Keep a separate hard scan limit so an oversized document cannot cause an
+    // unbounded layout walk or make us silently ignore a later native hitbox.
+    if(nodes.length>2048)return null;
+    const obstacles=[];
+    for(const node of nodes){
+      if(controls.has(node)||node===menu||menu?.contains(node)||toast?.contains(node)
+        ||node.closest('article[data-testid="tweet"]')||node.contains(photo.image)||!displayed(node))continue;
+      const bounds=node.getBoundingClientRect();
+      if(finitePhotoRect(bounds)&&inViewport(bounds)){obstacles.push(bounds);if(obstacles.length>256)return null;}
+    }
+    const clamp=(value,max)=>Math.max(gap,Math.min(value,max-size-gap));
+    const right=clamp(rect.right-size-gap,innerWidth),left=Math.min(right,clamp(rect.left+gap,innerWidth));
+    const top=clamp(rect.top+gap,innerHeight),bottom=Math.max(top,clamp(rect.bottom-size-gap,innerHeight));
+    // A bounded grid keeps the preferred upper-right placement, moving left
+    // then down when native controls occupy it. No safe slot means no overlay;
+    // the exact-photo context menu remains available.
+    for(let row=0;row<8;row++)for(let column=0;column<8;column++){
+      const x=Math.max(left,right-column*(size+gap)),y=Math.min(bottom,top+row*(size+gap));
+      const candidate={left:x,top:y,right:x+size,bottom:y+size};
+      if(!obstacles.some(bounds=>candidate.left<bounds.right+4&&candidate.right>bounds.left-4
+        &&candidate.top<bounds.bottom+4&&candidate.bottom>bounds.top-4))return candidate;
+    }
+    return null;
+  }
+  function overPhotoBridge(photo,event) {
+    const rect=photo.image.getBoundingClientRect(),button=photoControlRect,x=event.clientX,y=event.clientY;
+    if(!button||!finitePhotoRect(rect)||!Number.isFinite(x)||!Number.isFinite(y))return false;
+    const inside=(bounds,pad=0)=>x>=bounds.left-pad&&x<=bounds.right+pad&&y>=bounds.top-pad&&y<=bounds.bottom+pad;
+    if(inside(rect))return true;
+    // Only retain an already revealed control across its narrow photo-to-button
+    // bridge. Wrapper geometry never grants media ownership or starts a save.
+    const nearestX=Math.max(rect.left,Math.min((button.left+button.right)/2,rect.right));
+    const nearestY=Math.max(rect.top,Math.min((button.top+button.bottom)/2,rect.bottom));
+    return inside({left:Math.min(nearestX,button.left),right:Math.max(nearestX,button.right),
+      top:Math.min(nearestY,button.top),bottom:Math.max(nearestY,button.bottom)},8);
+  }
+  function queuePhotoHoverRefresh(photo) {
+    if(photoHoverRefresh)return;
+    const request=photo;photoHoverRefresh=request;
+    // X can reveal native chrome in its own pointer handler or hover CSS.
+    // Recheck once after that gesture, not on every pointer movement.
+    setTimeout(()=>{
+      if(photoHoverRefresh!==request)return;photoHoverRefresh=null;
+      if(visible&&photoControl?.hasAttribute('data-media-hover')&&samePhoto(request,currentPhoto()))update();
+    },0);
+  }
   function update() {
-    photoRefresh=null;
+    photoRefresh=null;photoHoverRefresh=null;
     if(!visible||!installStyle())return;
     reconcileProgress();
     if(expansion&&!expansion.current())collapse();
@@ -816,28 +1017,31 @@
       const path=pathFor(article);if(path)install(article,path);
     }
     const photo=currentPhoto();
-    if(!photo){photoControl?.remove();photoControl=null;photoControlTarget=null;return;}
+    const placement=photo&&placePhotoControl(photo);
+    if(!placement){photoControl?.remove();photoControl=null;photoControlTarget=null;photoControlRect=null;return;}
     if(!photoControl?.isConnected){
       photoControl=button('download','개별');photoControl.dataset.atsumiPhotoSave='true';photoControl.classList.add('atsumi-x-photo-action');
+      const control=photoControl;
       photoControl.onclick=e=>{
-        if(!e.isTrusted||!visible)return;e.preventDefault();e.stopImmediatePropagation();
-        const current=currentPhoto();if(current)start(current.path,'one',current.media,photoBinding(current));
+        if(!e.isTrusted||!visible||control!==photoControl||!control.isConnected)return;e.preventDefault();e.stopImmediatePropagation();
+        const current=currentPhoto();if(samePhoto(photoControlTarget,current))start(current.path,'one',current.media,photoBinding(current));
       };
       document.body.append(photoControl);
     }
-    const rect=photo.image.getBoundingClientRect();
     if(!samePhoto(photoControlTarget,photo))photoControl.removeAttribute('data-media-hover');
-    photoControlTarget=photo;
-    photoControl.style.left=`${Math.max(8,Math.min(rect.right-40,innerWidth-40))}px`;
-    photoControl.style.top=`${Math.max(8,Math.min(rect.top+8,innerHeight-40))}px`;
+    photoControlTarget=photo;photoControlRect=placement;
+    photoControl.style.left=`${placement.left}px`;
+    photoControl.style.top=`${placement.top}px`;
   }
   const style=document.createElement('style');
   style.textContent='.atsumi-x-inline-action{display:grid!important;place-items:center!important;width:32px!important;height:32px!important;min-width:32px!important;padding:0!important;border:0!important;border-radius:50%!important;color:#e7e9ea!important;background:transparent!important;cursor:pointer!important;flex:none!important}.atsumi-x-inline-action svg{display:block!important;width:19px!important;height:19px!important;pointer-events:none}.atsumi-x-inline-action:hover{background:#1d9bf033!important;color:#1d9bf0!important}:where(.atsumi-x-media-host[data-atsumi-relative-host]){position:relative}.atsumi-x-media-host>[data-atsumi-media-save]{position:absolute!important;top:8px!important;right:8px!important;z-index:5!important;background:#000b!important}.atsumi-x-download-menu{position:fixed;z-index:2147483647;box-sizing:border-box;width:232px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow-y:auto;padding:4px;background:#000;color:#e7e9ea;border:1px solid #2f3336;border-radius:12px;box-shadow:0 0 12px #ffffff30;font:14px system-ui}.atsumi-x-download-menu button{display:block;width:100%;padding:12px;border:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}.atsumi-x-download-menu button:hover{background:#16181c}.atsumi-x-save-notice{position:fixed;z-index:2147483646;bottom:20px;left:50%;transform:translateX(-50%);max-width:calc(100vw - 32px);padding:12px 18px;background:#1d9bf0;color:#fff;border-radius:8px;font:14px system-ui}.atsumi-x-save-notice button{margin-left:12px;border:0;background:transparent;color:inherit;text-decoration:underline;cursor:pointer}';
   style.textContent+='.atsumi-x-photo-action{position:fixed!important;z-index:2147483645!important;background:#000b!important;opacity:0;pointer-events:none}.atsumi-x-photo-action[data-media-hover],.atsumi-x-photo-action:focus{opacity:1;pointer-events:auto}';
   style.textContent+='.atsumi-x-download-menu button{box-sizing:border-box;border-radius:8px}.atsumi-x-download-menu button:focus-visible{background:#16181c;outline:2px solid #1d9bf0;outline-offset:-2px}';
+  // Match the app's ContextMenuLabel gutter without touching source-site menus.
+  style.textContent+='.atsumi-x-download-menu button{display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;column-gap:8px}.atsumi-x-download-menu .atsumi-x-menu-icon{display:grid;place-items:center;width:20px;height:20px;pointer-events:none}.atsumi-x-download-menu .atsumi-x-menu-icon>svg{display:block;width:16px;height:16px;opacity:.9}.atsumi-x-download-menu .atsumi-x-menu-text{min-width:0;overflow-wrap:anywhere}';
   style.textContent+='.atsumi-x-media-progress{position:absolute;left:0;right:0;bottom:0;height:3px;overflow:hidden;background:#1d9bf033;pointer-events:none;z-index:6}.atsumi-x-media-progress>span{display:block;height:100%;background:#1d9bf0}.atsumi-x-media-progress[data-atsumi-photo-progress]{position:fixed;right:auto;bottom:auto;z-index:2147483644}.atsumi-x-save-notice>.atsumi-x-media-progress{background:#ffffff40}.atsumi-x-save-notice>.atsumi-x-media-progress>span{background:#fff}.atsumi-x-media-progress[data-state="failed"]>span,.atsumi-x-media-progress[data-state="partial"]>span{background:#f4a340}.atsumi-x-media-progress[data-state="cancelled"]>span{background:#71767b}.atsumi-x-media-progress[data-state="complete"]>span{background:#00ba7c}.atsumi-x-media-progress[data-indeterminate]>span{animation:atsumi-x-save-progress 1.2s linear infinite}@keyframes atsumi-x-save-progress{from{transform:translateX(-100%)}to{transform:translateX(440%)}}@media(prefers-reduced-motion:reduce){.atsumi-x-media-progress[data-indeterminate]>span{animation:none}}';
   style.textContent+='.atsumi-x-save-notice button[hidden]{display:none!important}.atsumi-x-media-progress[data-state="unknown"]>span{background:#f4a340}';
-  style.textContent+='.atsumi-x-save-notice{width:max-content;max-width:calc(100vw - 32px);max-height:min(240px,35vh);overflow:auto;padding:0;background:#000;color:#e7e9ea;border:1px solid #2f3336;box-sizing:border-box}.atsumi-x-save-row{position:relative;padding:9px 12px;overflow-wrap:anywhere}.atsumi-x-save-row+.atsumi-x-save-row{border-top:1px solid #2f3336}.atsumi-x-save-row>.atsumi-x-media-progress{background:#1d9bf033}.atsumi-x-save-row button:focus-visible{outline:2px solid #1d9bf0;outline-offset:2px}.atsumi-x-save-row [data-atsumi-save-busy]{font-size:12px;color:#8b98a5}';
+  style.textContent+='.atsumi-x-save-notice{width:max-content;max-width:calc(100vw - 32px);max-height:min(240px,35vh);overflow:auto;padding:0;background:#000;color:#e7e9ea;border:1px solid #2f3336;box-sizing:border-box}.atsumi-x-save-row{position:relative;padding:9px 12px;overflow-wrap:anywhere}.atsumi-x-save-row+.atsumi-x-save-row{border-top:1px solid #2f3336}.atsumi-x-save-row>.atsumi-x-media-progress{background:#1d9bf033}.atsumi-x-save-row button:focus-visible{outline:2px solid #1d9bf0;outline-offset:2px}.atsumi-x-save-row [data-atsumi-save-busy]{font-size:13px;color:#8b98a5}';
   style.textContent+='[data-atsumi-post-save]{color:#71767b!important;align-self:center!important;margin-block:0!important;box-sizing:border-box!important}.atsumi-x-download-rail{position:absolute;top:8px;right:8px;z-index:5;display:flex;align-items:center;justify-content:flex-end;gap:4px;width:32px;box-sizing:content-box;opacity:0;pointer-events:none;transition:width .12s ease,opacity .12s ease}.atsumi-x-media-host:hover>.atsumi-x-download-rail,.atsumi-x-media-host:focus-within>.atsumi-x-download-rail{opacity:1;pointer-events:auto}.atsumi-x-download-rail[data-expanded]{width:68px}.atsumi-x-download-rail>.atsumi-x-inline-action{background:#000b!important}.atsumi-x-download-rail>[hidden]{display:none!important}@media(prefers-reduced-motion:reduce){.atsumi-x-download-rail{transition:none}}';
   style.textContent+='.atsumi-x-save-check{display:inline-block;width:24px;height:24px;vertical-align:middle;color:#00ba7c}.atsumi-x-save-check path{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:0;animation:atsumi-x-save-check .45s ease-out both}@keyframes atsumi-x-save-check{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}@media(prefers-reduced-motion:reduce){.atsumi-x-save-check path{animation:none;stroke-dashoffset:0}}';
   function installStyle() {
@@ -878,20 +1082,44 @@
     event.preventDefault();event.stopImmediatePropagation();
     if(visible)target.onclick?.call(target,event);
   },true);
+  document.addEventListener('pointermove',event=>{
+    if(!event.isTrusted||!visible||!photoControl?.isConnected||!photoControl.hasAttribute('data-media-hover'))return;
+    // Movement only releases existing visibility. It never acquires a photo or
+    // authorizes a save; click, enter/exit and keyboard ownership still use the
+    // complete current-photo proof. Avoid rescanning the carousel on each pixel.
+    const photo=photoControlTarget;
+    let retained=false;
+    try{retained=!!photo&&photo.image.isConnected&&photo.scope.isConnected&&photo.scope.contains(photo.image)
+      &&location.pathname===photo.route&&window.__atsumiXSurface?.archivePhotoOwner?.()===photo.owner
+      &&mediaFor(photo.image)===photo.media&&event.target instanceof Element&&overPhotoBridge(photo,event);}catch{}
+    if(!retained){photoControl.removeAttribute('data-media-hover');photoHoverRefresh=null;}
+  },true);
   for(const type of ['pointerover','pointerout']){
     document.addEventListener(type,event=>{
       if(!event.isTrusted||!visible||!photoControl?.isConnected)return;
+      const retained=photoControl.hasAttribute('data-media-hover');
       const photo=currentPhoto(),target=type==='pointerout'?event.relatedTarget:event.target;
-      const over=!!photo&&target instanceof Element&&(target===photo.image||target===photo.paint||photoControl.contains(target));
+      const over=samePhoto(photoControlTarget,photo)&&target instanceof Element
+        &&(target===photo.image||target===photo.paint||photoControl.contains(target)||retained&&overPhotoBridge(photo,event));
       photoControl.toggleAttribute('data-media-hover',over);
+      if(!over)photoHoverRefresh=null;
+      else if(!retained&&(target===photo.image||target===photo.paint))queuePhotoHoverRefresh(photo);
     },true);
   }
   document.addEventListener('contextmenu',e=>{
+    const trace=config.diagnostics===true?{stage:'event',trusted:e.isTrusted===true,visible,node:e.target instanceof Element,reason:'notEvaluated'}:null;
+    contextDiagnostic=trace;
     if(!e.isTrusted||!visible||!(e.target instanceof Element)||e.target.closest('input,textarea,[contenteditable="true"]'))return;
     const link=e.target.closest('a[href]');
     if(link){try{const url=new URL(link.getAttribute('href'),location.href);if(!['x.com','www.x.com'].includes(url.hostname.replace(/\.$/,'')))return;}catch{return;}}
     const article=e.target.closest('article[data-testid="tweet"]');
     if(!article){
+      const immersive=immersiveSearchTarget(e.target,trace);
+      if(immersive){
+        e.preventDefault();e.stopImmediatePropagation();window.__atsumiXSurface?.dismissMenu?.();closeMenu();
+        menu=document.createElement('div');menu.className='atsumi-x-download-menu';menu.setAttribute('role','menu');menu.setAttribute('aria-label','미디어 검색');
+        appendSearchItems(immersive.path,immersive.search);placeMenu(null,{x:e.clientX,y:e.clientY});if(trace)trace.stage='menuPlaced';return;
+      }
       const photo=currentPhoto();
       if(photo&&(e.target===photo.image||e.target===photo.paint)){
         e.preventDefault();e.stopImmediatePropagation();photoChoices(null,photo,{x:e.clientX,y:e.clientY});
@@ -906,9 +1134,9 @@
       // ownership or inventing its canonical post/artist identity.
       const search=sourceSearchTarget(article,path,searchMediaRoot(article,e.target),e.target);if(!search)return;
       e.preventDefault();e.stopImmediatePropagation();window.__atsumiXSurface?.dismissMenu?.();closeMenu();
-      menu=document.createElement('div');menu.className='atsumi-x-download-menu';menu.setAttribute('role','menu');menu.setAttribute('aria-label','미디어 검색');menu.append(searchItem(path,search));
+      menu=document.createElement('div');menu.className='atsumi-x-download-menu';menu.setAttribute('role','menu');menu.setAttribute('aria-label','미디어 검색');appendSearchItems(path,search);
       const href=link?.href,linked=href&&postPath(href);
-      if(linked)menu.append(item('외부 브라우저에서 열기',()=>{if(search.current()&&link?.href===href)signal('external',new URL(href).pathname);}));
+      if(linked)menu.append(item('외부 브라우저에서 열기',()=>{if(search.current()&&link?.href===href)signal('external',new URL(href).pathname);},'external'));
       placeMenu(null,{x:e.clientX,y:e.clientY});return;
     }
     const media=mediaRoot(article,e.target);
@@ -926,6 +1154,7 @@
   window.__atsumiXActions=Object.freeze({
     update,
     photoDiagnostic,
+    contextDiagnostic:()=>config.diagnostics===true&&contextDiagnostic?{...contextDiagnostic,menuConnected:!!menu?.isConnected}:null,
     // Native-pane and main-shell focus coordination can dismiss UI without a
     // synthetic click or a focus change in the source document.
     dismissMenus:closeMenu,
@@ -954,7 +1183,7 @@
     },
     visibility(value){
       visible=value===true;
-      if(!visible){for(const id of searches.keys())clearSearch(id);photoRefresh=null;closeMenu();toast?.remove();toast=null;notices.clear();photoControl?.remove();photoControl=null;photoControlTarget=null;for(const job of [...pending.values(),...finished.values()]){job.poll=null;clearTextTimer(job,true);clearLines(job);}}
+      if(!visible){for(const id of searches.keys())clearSearch(id);photoRefresh=null;photoHoverRefresh=null;closeMenu();toast?.remove();toast=null;notices.clear();photoControl?.remove();photoControl=null;photoControlTarget=null;photoControlRect=null;for(const job of [...pending.values(),...finished.values()]){job.poll=null;clearTextTimer(job,true);clearLines(job);}}
       else{
         update();
         for(const job of pending.values()){paintJob(job);scheduleReceipt(job);}

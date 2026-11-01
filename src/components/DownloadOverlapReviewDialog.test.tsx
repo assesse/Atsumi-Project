@@ -161,6 +161,71 @@ const pageMergeFixture = (): DownloadOverlapReview => {
 };
 
 describe("DownloadOverlapReviewDialog", () => {
+  it("keeps horizontal virtualization, covers, selection and sizing independent", async()=>{
+    const review=pageMergeFixture(),first=review.candidates[0]!;
+    review.incoming={...review.incoming,pageCount:1000};
+    review.candidates=[0,1,2].map(n=>({...first,candidateId:"wide-"+n,existing:{...first.existing,entryId:"wide-"+n,galleryId:galleryId(100+n),pageCount:1000},existingFingerprint:"wide-fp-"+n,existingUniquePages:990,incomingUniquePages:990,existingCoverage:.01,incomingCoverage:.01}));
+    const client=new ThumbnailClient({resolve:()=>({kind:"image",url:"https://example.test/cover.png",width:120,height:170})});
+    const container=document.createElement("div");document.body.append(container);const root=createRoot(container);
+    let resize:()=>void=()=>{};
+    vi.stubGlobal("ResizeObserver",class{constructor(callback:()=>void){resize=callback;}observe(){}disconnect(){}});
+    const click=async(label:string)=>act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="'+label+'"]')!.click());
+    try{
+      await act(async()=>root.render(<DownloadOverlapReviewDialog open={false} review={review} previewWidth={220} thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onMergePages={vi.fn()}/>));
+      const scroll=container.querySelector<HTMLDivElement>(".overlap-group-grid-scroll")!;
+      const covers=[...container.querySelectorAll(".overlap-group-cover img")];
+      const selected=()=>container.querySelector<HTMLElement>('[aria-label^="#100 1페이지"]')!;
+      expect([...container.querySelectorAll(".download-overlap-page-filter")].map(b=>b.textContent)).toEqual(["일치 보기","추가 보기"]);
+      expect(container.querySelector(".is-gap")).toBeNull();
+      expect(container.querySelector('input[type="checkbox"]')).toBeNull();
+      await act(async()=>selected().dispatchEvent(new MouseEvent("click",{bubbles:true,ctrlKey:true,button:0})));
+      expect(selected()).toHaveAttribute("data-merge-state","source");
+      await act(async()=>{scroll.scrollLeft=24000;scroll.dispatchEvent(new Event("scroll",{bubbles:true}));});
+      expect(selected()).toBeNull();
+      expect(container.querySelectorAll(".overlap-group-grid-cell").length).toBeLessThan(45);
+      expect(container.querySelector(".overlap-group-actions")).toHaveTextContent("1장 선택");
+      expect([...container.querySelectorAll(".overlap-group-cover img")]).toEqual(covers);
+      await click("창 확대");
+      expect(container.querySelector("dialog")).toHaveClass("is-expanded");
+      Object.defineProperty(scroll,"clientWidth",{value:1800,configurable:true});
+      await act(async()=>resize());
+      expect(container.querySelectorAll(".overlap-group-grid-cell").length).toBeGreaterThan(45);
+      await act(async()=>{scroll.scrollLeft=0;scroll.dispatchEvent(new Event("scroll",{bubbles:true}));});
+      expect(selected()).toHaveAttribute("data-merge-state","source");
+      const height=parseFloat(scroll.style.getPropertyValue("--comparison-height"));
+      await click("#102 비교");
+      expect(container.querySelectorAll(".overlap-group-row-head")).toHaveLength(4);
+      expect(parseFloat(scroll.style.getPropertyValue("--comparison-height"))).toBeGreaterThan(height);
+      await click("창 크기 복원");
+      expect(container.querySelector("dialog")).not.toHaveClass("is-expanded");
+      expect(selected()).toHaveAttribute("data-merge-state","source");
+      expect([...container.querySelectorAll(".overlap-group-cover img")]).toEqual(covers);
+    } finally {await act(async()=>root.unmount());client.dispose();container.remove();vi.unstubAllGlobals();}
+  });
+
+  it("reattaches scrolling and sizing after a background review reopens without losing selections", async () => {
+    const review=pageMergeFixture(),first=review.candidates[0]!;
+    review.candidates=[first,{...first,candidateId:"second",existing:{...first.existing,entryId:"second",galleryId:galleryId(98)},existingFingerprint:"second-fp"}];
+    const client=new ThumbnailClient({resolve:()=>({kind:"missing",reason:"fixture"})});
+    const container=document.createElement("div");document.body.append(container);const root=createRoot(container);
+    const observe=vi.fn();vi.stubGlobal("ResizeObserver",class{observe=observe;disconnect(){}});
+    const render=async(open:boolean)=>act(async()=>root.render(<DownloadOverlapReviewDialog open={open} preserveDraftOnHide review={review} previewWidth={220} thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onMergePages={vi.fn()}/>));
+    try {
+      await render(true);
+      await act(async()=>container.querySelector<HTMLElement>('[aria-label^="#100 1페이지"]')!.dispatchEvent(new MouseEvent("click",{bubbles:true,ctrlKey:true})));
+      const old=container.querySelector(".overlap-group-grid-scroll");
+      await render(false);expect(container.querySelector(".overlap-group-grid-scroll")).toBeNull();
+      await render(true);
+      const scroll=container.querySelector<HTMLElement>(".overlap-group-grid-scroll")!;
+      expect(scroll).not.toBe(old);expect(observe).toHaveBeenCalledWith(scroll);
+      Object.defineProperties(scroll,{scrollWidth:{value:2000},clientWidth:{value:700}});
+      const wheel=new WheelEvent("wheel",{bubbles:true,cancelable:true,deltaY:120,shiftKey:true});
+      await act(async()=>scroll.dispatchEvent(wheel));
+      expect(wheel.defaultPrevented).toBe(true);expect(scroll.scrollLeft).toBe(120);
+      expect(container.querySelector('[aria-label^="#100 1페이지"]')).toHaveAttribute("data-merge-state","source");
+    } finally {await act(async()=>root.unmount());client.dispose();container.remove();vi.unstubAllGlobals();}
+  });
+
   async function mountPageFilters() {
     const review = pageMergeFixture();
     const onMergePages = vi.fn();
@@ -443,198 +508,99 @@ describe("DownloadOverlapReviewDialog", () => {
     container.remove();
   });
 
-  it("clears page merge selection when the candidate or review revision changes", async () => {
-    const review = pageMergeFixture();
-    const first = review.candidates[0]!;
-    review.candidates = [first, {
-      ...first,
-      candidateId: "candidate-second",
-      existing: { ...first.existing, entryId: "existing-second", galleryId: galleryId(98), title: "Second owned edition" },
-      existingFingerprint: "second-fingerprint",
-      rank: 2,
-    }];
-    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const render = async (currentReview: DownloadOverlapReview) => act(async () => root.render(
-      <DownloadOverlapReviewDialog
-        open={false}
-        review={currentReview}
-        previewWidth={220}
-        thumbnailClient={client}
-        onClose={vi.fn()}
-        onRetry={vi.fn()}
-        onDecision={vi.fn()}
-        onMergePages={vi.fn()}
-      />,
-    ));
-    const selectFirstExistingPage = async () => {
-      const cell = container.querySelector<HTMLElement>('.download-overlap-page-cell[aria-label^="기존 A 1페이지"]')!;
-      await act(async () => cell.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, button: 0 })));
-    };
-
-    await render(review);
-    await selectFirstExistingPage();
-    expect(container.querySelector(".download-overlap-merge-apply")).not.toBeNull();
-    const secondTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-      .find((button) => button.textContent?.includes("#98"))!;
-    await act(async () => secondTab.click());
-    expect(container.querySelector(".download-overlap-merge-apply")).toBeNull();
-    expect(container.querySelector(".download-overlap-page-cell.is-merge-source")).toBeNull();
-
-    await selectFirstExistingPage();
-    expect(container.querySelector(".download-overlap-merge-apply")).not.toBeNull();
-    await render({ ...review, revision: 5 });
-    expect(container.querySelector(".download-overlap-merge-apply")).toBeNull();
-    expect(container.querySelector(".download-overlap-page-cell.is-merge-source")).toBeNull();
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
+  it("preserves per-edition Ctrl/Shift selections across columns, filters and unrelated revisions", async () => {
+    const review = pageMergeFixture(), first = review.candidates[0]!;
+    review.candidates = [first, { ...first, candidateId:"candidate-second", existing:{...first.existing,entryId:"second",galleryId:galleryId(98),title:"Second edition"}, existingFingerprint:"second-fp",rank:2 }];
+    const client = new ThumbnailClient({ resolve: () => ({kind:"missing",reason:"fixture"}) });
+    const container=document.createElement("div"); document.body.append(container);const root=createRoot(container), onMerge=vi.fn();
+    const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
+    const render=async (data=review)=>act(async()=>root.render(<DownloadOverlapReviewDialog open={false} review={data} previewWidth={220} thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onMergePages={onMerge}/>));
+    const cell=(id:number,page:number)=>container.querySelector<HTMLElement>('.download-overlap-page-cell[aria-label^="#'+id+' '+page+'페이지"]')!;
+    const click=async(el:HTMLElement)=>act(async()=>el.click());
+    const select=async(id:number,page:number,shift=false)=>act(async()=>cell(id,page).dispatchEvent(new MouseEvent("click",{bubbles:true,button:0,ctrlKey:!shift,shiftKey:shift})));
+    try {
+      await render();
+      expect(container.querySelectorAll(".overlap-group-row-head")).toHaveLength(3);
+      const mode=(id:number,label:string)=>[...container.querySelectorAll<HTMLButtonElement>('[data-edition-row="'+id+'"] .overlap-edition-modes button')].find(b=>b.textContent===label)!;
+      expect(container.querySelector('[aria-label="#100 비교 닫기"]')).toBeNull();
+      expect(mode(100,'남기기')).toHaveAttribute('aria-pressed','true');
+      await click(mode(100,'제거'));expect(onMerge).not.toHaveBeenCalled();
+      await select(100,1);expect(mode(100,'일부만')).toHaveAttribute('aria-pressed','true');
+      await click(mode(100,'남기기'));expect(cell(100,1)).toHaveAttribute('data-merge-state','source');
+      await select(98,2); await select(100,3,true);
+      expect(mode(100,'일부만')).toHaveAttribute('aria-pressed','true');
+      expect(cell(100,1)).toHaveAttribute("data-merge-state","source");
+      expect(cell(100,2)).toHaveAttribute("data-merge-state","source");
+      expect(cell(100,3)).toHaveAttribute("data-merge-state","source");
+      await click(container.querySelector('[aria-label="#100 비교"]')!);
+      expect(cell(100,1)).toBeNull();
+      expect(container.querySelector('[data-edition-id="100"]')).toHaveTextContent("선택 3");
+      await click(container.querySelector('[aria-label="#100 비교"]')!);
+      expect(cell(100,1)).toHaveAttribute("data-merge-state","source");
+      for(const filter of container.querySelectorAll<HTMLButtonElement>(".download-overlap-page-filter")) await click(filter);
+      expect(container.querySelectorAll(".overlap-group-grid-row")).toHaveLength(0);
+      expect(container.querySelector(".overlap-group-actions")).toHaveTextContent("3장 선택");
+      await render({...review,revision:5});
+      const merge=[...container.querySelectorAll<HTMLButtonElement>("button")].find(b=>b.textContent==="적용")!;
+      await click(merge);
+      expect(onMerge).toHaveBeenCalledWith({reviewId:"review-overlap",expectedRevision:5,candidateId:"candidate-1",sourceSide:"existing",sourcePages:[1,2,3],selectedPages:{existing:[1,2,3],incoming:[]},targetSelectionOnly:false,excludeSource:true});
+      for(const filter of container.querySelectorAll<HTMLButtonElement>(".download-overlap-page-filter")) await click(filter);
+      expect(cell(98,2)).toHaveAttribute("data-merge-state","source");
+      await render({...review,revision:6,incomingFingerprint:"changed"});
+      expect(container.querySelector(".overlap-group-comparison")).toHaveTextContent("재선택 필요");
+      expect(container.querySelectorAll('[data-merge-state="source"]')).toHaveLength(0);
+    } finally { await act(async()=>root.unmount());client.dispose();container.remove();confirm.mockRestore(); }
   });
 
-  it("shows verified contained editions together and keeps ambiguous candidates in direct review", async () => {
-    const { review, group } = containmentFixture();
-    const onApplyContainmentBatch = vi.fn();
-    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-
-    await act(async () => root.render(
-      <DownloadOverlapReviewDialog
-        open={false}
-        review={review}
-        containmentGroup={group}
-        previewWidth={220}
-        thumbnailClient={client}
-        onClose={vi.fn()}
-        onRetry={vi.fn()}
-        onDecision={vi.fn()}
-        onApplyContainmentBatch={onApplyContainmentBatch}
-      />,
-    ));
-
-    const batch = container.querySelector<HTMLElement>(".download-overlap-containment")!;
-    expect(batch).not.toBeNull();
-    expect(batch.textContent).toContain("합본 포함 검토");
-    expect(batch.textContent).toContain("보존 합본");
-    expect(batch.textContent).toContain("Compilation edition");
-    expect(batch.textContent).toContain("완전 포함 3개");
-    expect(batch.textContent).toContain("17p → 합본 155p");
-    expect(batch.textContent).toContain("제외본 1~17p · 합본 1~17p");
-    expect(batch.textContent).toContain("별도 직접 검토 1개");
-    expect(batch.textContent).toContain("완전 포함이 확인되지 않아 일괄 제외에 포함하지 않았습니다");
-
-    const checks = [...batch.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    expect(checks).toHaveLength(3);
-    expect(checks.every((check) => check.checked)).toBe(true);
-    await act(async () => checks[1]!.click());
-    expect(checks[1]).not.toBeChecked();
-
-    const evidenceButton = [...batch.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "페이지 근거 보기")!;
-    await act(async () => evidenceButton.click());
-    expect(batch.querySelector(".download-overlap-containment-evidence .download-overlap-page-map")).not.toBeNull();
-    expect(evidenceButton).toHaveAttribute("aria-expanded", "true");
-
-    const ambiguousButton = [...batch.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("#3003999"))!;
-    await act(async () => ambiguousButton.click());
-    const activeTab = container.querySelector<HTMLButtonElement>('.download-overlap-candidate-tabs [role="tab"][aria-selected="true"]');
-    expect(activeTab?.textContent).toContain("#3003999");
-
-    const applyButton = [...batch.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("제외 · 합본 보존"))!;
-    expect(applyButton.textContent).toContain("선택한 2개");
-    await act(async () => applyButton.click());
-    expect(onApplyContainmentBatch).toHaveBeenCalledWith([
-      "review-overlap:contained-1",
-      "review-overlap:contained-3",
-    ]);
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
+  it("shows the keeper once and compares uncertain editions together without offering their bulk exclusion", async () => {
+    const {review,group}=containmentFixture(); const onApply=vi.fn();
+    const client=new ThumbnailClient({resolve:()=>({kind:"missing",reason:"fixture"})});
+    const container=document.createElement("div");document.body.append(container);const root=createRoot(container);
+    try {
+      await act(async()=>root.render(<DownloadOverlapReviewDialog open={false} review={review} containmentGroup={group} previewWidth={220}
+        thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onApplyContainmentBatch={onApply}/>));
+      expect(container.querySelectorAll(".overlap-group-keeper")).toHaveLength(1);
+      expect(container.querySelector(".download-overlap-artifacts")).toBeNull();
+      expect(container.querySelector(".download-overlap-actions")).toBeNull();
+      expect(container.querySelector(".overlap-group-keeper")).toHaveTextContent("Compilation edition");
+      expect(container.querySelector('[aria-label="#3003999 제외 선택"]')).toBeNull();
+      await act(async()=>container.querySelector<HTMLInputElement>('[aria-label="#3003701 제외 선택"]')!.click());
+      await act(async()=>container.querySelector<HTMLButtonElement>('[aria-label="#3003700 비교"]')!.click());
+      expect(container.querySelectorAll(".overlap-group-row-head")).toHaveLength(3);
+      expect(container.querySelectorAll(".overlap-group-grid-cell").length).toBeLessThanOrEqual(45);
+      await act(async()=>container.querySelector<HTMLButtonElement>(".overlap-group-batch button")!.click());
+      expect(onApply).toHaveBeenCalledExactlyOnceWith(["review-overlap:contained-1","review-overlap:contained-3"]);
+    } finally {await act(async()=>root.unmount());client.dispose();container.remove();}
   });
 
-  it("locks a running containment batch and preserves only unfinished selections after a partial failure", async () => {
-    const { review, group } = containmentFixture();
-    const onApplyContainmentBatch = vi.fn();
-    const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
-    const container = document.createElement("div");
-    document.body.append(container);
-    const root = createRoot(container);
-    const render = async (props: {
-      decisionPending?: boolean;
-      error?: string;
-      completed?: number;
-      currentReview?: DownloadOverlapReview;
-      currentGroup?: DownloadOverlapContainmentGroup;
-    } = {}) => {
-      await act(async () => root.render(
-        <DownloadOverlapReviewDialog
-          open={false}
-          review={props.currentReview ?? review}
-          containmentGroup={props.currentGroup ?? group}
-          decisionPending={props.decisionPending}
-          error={props.error}
-          batchProgress={props.completed === undefined ? undefined : { completed: props.completed, total: 2 }}
-          previewWidth={220}
-          thumbnailClient={client}
-          onClose={vi.fn()}
-          onRetry={vi.fn()}
-          onDecision={vi.fn()}
-          onApplyContainmentBatch={onApplyContainmentBatch}
-        />,
-      ));
-    };
-
-    await render();
-    let batch = container.querySelector<HTMLElement>(".download-overlap-containment")!;
-    let checks = [...batch.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    await act(async () => checks[1]!.click());
-    let applyButton = [...batch.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("제외 · 합본 보존"))!;
-    await act(async () => applyButton.click());
-
-    await render({ decisionPending: true, completed: 1 });
-    batch = container.querySelector<HTMLElement>(".download-overlap-containment")!;
-    expect(batch).toHaveAttribute("aria-busy", "true");
-    expect(batch.textContent).toContain("선택 항목 처리 중 · 1/2");
-    applyButton = [...batch.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("제외 처리 중"))!;
-    expect(applyButton).toBeDisabled();
-
-    const refreshedReview = { ...review, revision: review.revision + 1 };
-    const refreshedGroup: DownloadOverlapContainmentGroup = {
-      keeper: refreshedReview.incoming,
-      items: group.items.map((item, index) => ({
-        ...item,
-        review: refreshedReview,
-        candidate: refreshedReview.candidates[index]!,
-        excluded: refreshedReview.candidates[index]!.existing,
-      })),
-    };
-    await render({ error: "두 번째 판본 처리 실패", completed: 1, currentReview: refreshedReview, currentGroup: refreshedGroup });
-    batch = container.querySelector<HTMLElement>(".download-overlap-containment")!;
-    expect(batch.textContent).toContain("일부 처리 후 중단 · 1/2 완료");
-    expect(batch.textContent).toContain("처리되지 않은 선택은 유지됩니다");
-    checks = [...batch.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
-    expect(checks[0]).toBeDisabled();
-    expect(checks[0]).not.toBeChecked();
-    expect(checks[1]).not.toBeChecked();
-    expect(checks[2]).toBeChecked();
-    applyButton = [...batch.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent?.includes("제외 · 합본 보존"))!;
-    expect(applyButton.textContent).toContain("선택한 1개");
-    await act(async () => applyButton.click());
-    expect(onApplyContainmentBatch).toHaveBeenLastCalledWith(["review-overlap:contained-3"]);
-
-    await act(async () => root.unmount());
-    client.dispose();
-    container.remove();
+  it("locks a running batch, folds completed editions and retains unresolved exclusions with fresh thumbnails", async () => {
+    const {review,group}=containmentFixture(), onApply=vi.fn();
+    const resolve=vi.fn((_request:ThumbnailRequest)=>({kind:"missing" as const,reason:"fixture"}));
+    const client=new ThumbnailClient({resolve});const container=document.createElement("div");document.body.append(container);const root=createRoot(container);
+    const render=async(busy=false,completed?:number,current=review)=>act(async()=>root.render(<DownloadOverlapReviewDialog open={false}
+      review={current} containmentGroup={{...group,items:group.items.map((item,i)=>({...item,review:current,candidate:current.candidates[i]!}))}}
+      decisionPending={busy} batchProgress={completed===undefined?undefined:{completed,total:2,failure:busy?undefined:"#3003702 처리 실패"}}
+      previewWidth={220} thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onApplyContainmentBatch={onApply}/>));
+    try {
+      await render();
+      await act(async()=>container.querySelector<HTMLInputElement>('[aria-label="#3003701 제외 선택"]')!.click());
+      await act(async()=>container.querySelector<HTMLButtonElement>(".overlap-group-batch button")!.click());
+      await render(true,1);
+      expect(container.querySelector(".overlap-group")).toHaveAttribute("aria-busy","true");
+      expect(container.querySelector(".overlap-group-batch button")).toBeDisabled();
+      const refreshed={...review,revision:5,candidates:review.candidates.map((c,i)=>i===0?{...c,decision:"existing_removed" as const}:c)};
+      await render(false,1,refreshed);
+      expect(container.querySelector(".overlap-group-completed")).not.toHaveAttribute("open");
+      expect(container.querySelector(".overlap-group-completed")).toHaveTextContent("이미 처리된 판본 1");
+      expect(container.querySelector('[aria-label="#3003700 제외 선택"]')).toBeNull();
+      expect(container.querySelector('[aria-label="#3003701 제외 선택"]')).not.toBeChecked();
+      expect(container.querySelector('[aria-label="#3003702 제외 선택"]')).toBeChecked();
+      expect(container.querySelector(".overlap-group")).toHaveTextContent("#3003702 처리 실패");
+      const requests=resolve.mock.calls.map(([r])=>r.key).filter(k=>k.kind==="overlap-review-page");
+      expect(requests.some(k=>k.reviewRevision===5)).toBe(true);
+      await act(async()=>container.querySelector<HTMLButtonElement>(".overlap-group-batch button")!.click());
+      expect(onApply).toHaveBeenLastCalledWith(["review-overlap:contained-3"]);
+    } finally {await act(async()=>root.unmount());client.dispose();container.remove();}
   });
 
   it("explains stale evidence as a read-only recheck instead of another actionable failure", async () => {
@@ -771,6 +737,7 @@ describe("DownloadOverlapReviewDialog", () => {
     const root = createRoot(container);
 
     const review = fixture();
+    review.candidates = [review.candidates[0]!];
     review.incoming.pageCount = 16;
     const active = review.candidates[0]!;
     active.existing.pageCount = 11;
@@ -798,7 +765,7 @@ describe("DownloadOverlapReviewDialog", () => {
       />,
     ));
 
-    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(4);
+    expect(container.querySelectorAll('[role="tab"]')).toHaveLength(0);
     expect(container.textContent).toContain("거의 같은 판본");
     expect(container.textContent).toContain("기존 A 범위");
     expect(container.textContent).toContain("80%");
@@ -824,7 +791,7 @@ describe("DownloadOverlapReviewDialog", () => {
     container.remove();
   });
 
-  it.each(["resolved", "cancelled", "pending"] as const)("allows restoring and acknowledging automatic %s evidence without a footer close button", async (state) => {
+  it.each(["resolved", "cancelled", "pending", "stale"] as const)("allows restore but requires approval only for manual %s evidence", async (state) => {
     const client = new ThumbnailClient({ resolve: () => ({ kind: "missing", reason: "fixture" }) });
     const container = document.createElement("div");
     document.body.append(container);
@@ -857,12 +824,14 @@ describe("DownloadOverlapReviewDialog", () => {
     ));
     const footer = container.querySelector('.download-overlap-history-actions')!;
     const buttons = [...footer.querySelectorAll<HTMLButtonElement>("button")];
-    const restore = buttons.find((button) => button.textContent?.includes("목록에 복원"))!;
-    const acknowledge = buttons.find((button) => button.textContent?.includes("확인 완료"))!;
+    const restore = buttons.find((button) => button.textContent?.includes("복원"))!;
+    const acknowledge = buttons.find((button) => button.textContent?.includes("승인"))!;
     expect(restore).toBeEnabled();
-    expect(acknowledge).toBeEnabled();
+    const manual = state === "pending" || state === "stale";
+    if (manual) expect(acknowledge).toBeEnabled();
+    else expect(acknowledge).toBeUndefined();
     expect(document.getElementById(restore.getAttribute("aria-describedby")!)).toHaveTextContent("격리된 실제 파일은 복원하지 않습니다");
-    expect(document.getElementById(acknowledge.getAttribute("aria-describedby")!)).toHaveTextContent("앨범이나 파일은 변경하지 않습니다");
+    if (manual) expect(document.getElementById(acknowledge.getAttribute("aria-describedby")!)).toHaveTextContent("앨범·파일은 변경하지 않습니다");
     expect(container.querySelector('.download-overlap-readonly-actions')).toBeNull();
     expect(container.querySelectorAll('button[aria-label="닫기"]')).toHaveLength(1);
     expect([...container.querySelectorAll(".review-actions button")].some((button) => button.textContent === "닫기")).toBe(false);
@@ -871,9 +840,10 @@ describe("DownloadOverlapReviewDialog", () => {
     // Selecting another comparison must not replace the persisted removal targets.
     await act(async () => container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[1]!.click());
     await act(async () => restore.click());
-    await act(async () => acknowledge.click());
+    await act(async () => acknowledge?.click());
     expect(onRestore).toHaveBeenCalledExactlyOnceWith(review.reviewId, removedGalleryIds);
-    expect(onAcknowledge).toHaveBeenCalledExactlyOnceWith(review.reviewId);
+    if (manual) expect(onAcknowledge).toHaveBeenCalledExactlyOnceWith(review.reviewId);
+    else expect(onAcknowledge).not.toHaveBeenCalled();
     expect(onDecision).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
 
@@ -913,8 +883,8 @@ describe("DownloadOverlapReviewDialog", () => {
     const nextButton = nav.querySelector<HTMLButtonElement>('[aria-label="다음 자동 분류"]')!;
     expect(nav).toHaveTextContent("순차 검토 · 2 / 3");
     const acknowledgeButton = [...container.querySelectorAll<HTMLButtonElement>(".download-overlap-history-actions button")]
-      .find((button) => button.textContent?.includes("확인 완료"))!;
-    expect(document.getElementById(acknowledgeButton.getAttribute("aria-describedby")!)).toHaveTextContent("다음 미확인 기록으로 이동");
+      .find((button) => button.textContent?.includes("승인"))!;
+    expect(acknowledgeButton).toBeUndefined();
     await act(async () => { previousButton.click(); nextButton.click(); });
     expect(previous).toHaveBeenCalledOnce();
     expect(next).toHaveBeenCalledOnce();
@@ -977,12 +947,12 @@ describe("DownloadOverlapReviewDialog", () => {
     await render(history, false, true);
     for (const button of container.querySelectorAll(".download-overlap-history-actions button")) expect(button).toBeDisabled();
     await render({ ...history, acknowledgedAt: "2026-09-10T00:00:00Z" });
-    expect(container.querySelector('.download-overlap-history-actions')).toHaveTextContent("확인 완료한 자동 분류 기록");
+    expect(container.querySelector('.download-overlap-history-actions')).toHaveTextContent("승인 완료");
     expect(container.querySelectorAll(".download-overlap-history-actions button")).toHaveLength(0);
     await render({ ...history, removedGalleryIds: [] });
     const onlyAction = container.querySelectorAll(".download-overlap-history-actions button");
     expect(onlyAction).toHaveLength(1);
-    expect(onlyAction[0]).toHaveTextContent("확인 완료");
+    expect(onlyAction[0]).toHaveTextContent("승인");
     await render({ ...history, reviewId: "different-review" });
     expect(container.querySelector('.download-overlap-history-actions')).toBeNull();
     await render({ ...history, incomingGalleryId: galleryId(999) });
@@ -1186,19 +1156,15 @@ describe("DownloadOverlapReviewDialog", () => {
       />,
     ));
 
-    const decidedTab = container.querySelectorAll<HTMLButtonElement>('[role="tab"]')[0]!;
-    expect(decidedTab).toHaveTextContent("A 제외 · 계속 검토");
-    expect(decidedTab.querySelector("small")).toHaveClass("is-pending");
-    await act(async () => decidedTab.click());
-
-    expect(container.querySelector(".download-overlap-result")).toBeNull();
-    const artifacts = [...container.querySelectorAll<HTMLElement>(".download-overlap-artifact")];
-    expect(artifacts[0]).toHaveClass("is-excluded");
-    expect(artifacts[0]).toHaveTextContent("수동 제거 선택");
-    expect(artifacts[1]).toHaveClass("is-pending");
-    expect(artifacts[1]).toHaveTextContent("검토 계속 중");
-    expect(artifacts[1]).toHaveTextContent("남은 후보 검토 중");
-
+    expect(container.querySelector(".overlap-group-completed")).toHaveTextContent("이미 처리된 판본 1");
+    expect(container.querySelector(".overlap-group-completed")).not.toHaveAttribute("open");
+    const completedRow = container.querySelector('[data-edition-id="100"]')!;
+    expect(completedRow).toHaveTextContent("제외 완료");
+    expect(completedRow.querySelector("input")).toBeNull();
+    await act(async () => completedRow.querySelector<HTMLButtonElement>("button")!.click());
+    expect(container.querySelectorAll(".overlap-group-row-head")).toHaveLength(3);
+    expect(container.querySelector(".overlap-group-actions")).toBeNull();
+    expect(container.textContent).not.toContain("A 제외 · 계속 검토");
     await act(async () => root.unmount());
     client.dispose();
     container.remove();
@@ -1214,7 +1180,7 @@ describe("DownloadOverlapReviewDialog", () => {
     await act(async () => root.render(
       <DownloadOverlapReviewDialog
         open={false}
-        review={fixture()}
+        review={(() => { const r=fixture(); return {...r,candidates:[r.candidates[0]!]}; })()}
         previewWidth={220}
         thumbnailClient={client}
         onClose={vi.fn()}
@@ -1293,7 +1259,7 @@ describe("DownloadOverlapReviewDialog", () => {
       await act(async () => root.render(
         <DownloadOverlapReviewDialog
           open={false}
-          review={fixture()}
+          review={(() => { const r=fixture(); return {...r,candidates:[r.candidates[0]!]}; })()}
           previewWidth={280}
           thumbnailClient={client}
           onClose={vi.fn()}
@@ -1330,4 +1296,48 @@ describe("DownloadOverlapReviewDialog", () => {
       rect.mockRestore();
     }
   });
+});
+
+it("preserves selected pages when unordered evidence arrives and blocks a merge that would duplicate them",async()=>{
+ const review=pageMergeFixture();review.incoming={...review.incoming,pageCount:3};
+ const base=review.candidates[0]!,pair=base.pagePairs[0]!;
+ review.candidates=[0,1].map(n=>({...base,candidateId:"reorder-"+n,
+  existing:{...base.existing,entryId:"reorder-"+n,galleryId:galleryId(100+n),pageCount:3},
+  existingFingerprint:"reorder-fp-"+n,relation:"partial_overlap" as const,
+  matchedPages:2,exactPages:2,visualPages:0,existingUniquePages:1,incomingUniquePages:1,
+  existingCoverage:2/3,incomingCoverage:2/3,longestAlignedRun:2,
+  pagePairs:[{...pair,incomingSourcePage:1,existingSourcePage:2,exactSha256:true},
+   {...pair,incomingSourcePage:2,existingSourcePage:3,exactSha256:true}]}));
+ let complete!:()=>void;
+ const ready=new Promise<void>(resolve=>{complete=resolve;});
+ const loader=vi.fn(async(request:{candidateId:string})=>{
+  await ready;const c=review.candidates.find(c=>c.candidateId===request.candidateId)!;
+  return {ok:true as const,data:{reviewId:review.reviewId,revision:review.revision,candidateId:c.candidateId,
+   incomingFingerprint:review.incomingFingerprint,existingFingerprint:c.existingFingerprint,
+   additionalPairs:[{...pair,incomingSourcePage:3,existingSourcePage:1,exactSha256:true,visualSimilarity:1}]}};
+ });
+ const client=new ThumbnailClient({resolve:()=>({kind:"missing",reason:"fixture"})});
+ const host=document.createElement("div");document.body.append(host);const root=createRoot(host),onMerge=vi.fn();
+ const page=(g:number,p:number)=>host.querySelector<HTMLElement>('[aria-label^="#'+g+' '+p+'페이지"]')!;
+ try{
+  await act(async()=>root.render(<DownloadOverlapReviewDialog open review={review} previewWidth={220}
+   thumbnailClient={client} loadPageEvidence={loader} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onMergePages={onMerge}/>));
+  await act(async()=>page(100,1).dispatchEvent(new MouseEvent("click",{bubbles:true,button:0,ctrlKey:true})));
+  expect(page(100,1)).toHaveAttribute("data-merge-state","source");
+  expect(page(100,1)).toHaveTextContent("확인 중");
+  await act(async()=>complete());
+  expect(page(100,1)).toHaveAttribute("data-merge-state","source");
+  expect(page(100,1)).toHaveTextContent("일치");
+  expect(page(200,3)).toHaveTextContent("일치");
+  expect(page(100,1).querySelector('[aria-label="순서 다름"]')).not.toBeNull();
+  const merge=[...host.querySelectorAll<HTMLButtonElement>("button")].find(b=>b.textContent==="적용")!;
+  await act(async()=>merge.click());
+  expect(onMerge).not.toHaveBeenCalled();
+  expect(host).toHaveTextContent("순서가 다른 선택 페이지는 병합할 수 없습니다. 선택은 유지됩니다.");
+  expect(page(100,1)).toHaveAttribute("data-merge-state","source");
+  const active=host.querySelector<HTMLButtonElement>('[aria-label="#101 페이지 선택 활성화"]')!;
+  await act(async()=>active.click());
+  expect(page(200,3)).toHaveTextContent("일치");
+  expect(page(100,1)).toHaveAttribute("data-merge-state","source");
+ }finally{await act(async()=>root.unmount());client.dispose();host.remove();}
 });

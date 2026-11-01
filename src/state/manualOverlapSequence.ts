@@ -1,5 +1,11 @@
 import type { BackendClient } from "../api/backend";
 import type { GalleryId } from "../core/types";
+import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
+
+/** Approval acknowledges a manual-review record; it never resolves an album decision. */
+export const requiresManualOverlapApproval = (
+  item: Pick<DownloadOverlapAutomationHistoryItem, "reviewState" | "acknowledgedAt">,
+): boolean => !item.acknowledgedAt && (item.reviewState === "pending" || item.reviewState === "stale");
 
 export type ManualOverlapItem = { reviewId: string; incomingGalleryId: GalleryId };
 

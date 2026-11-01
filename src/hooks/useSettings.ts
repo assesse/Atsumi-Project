@@ -4,6 +4,7 @@ import type { ApiError, ApiResult, SettingsPatch, SettingsSnapshot } from "../ap
 
 const fallback: SettingsSnapshot = {
   chzzkSsdStaging: false,
+  processingMode: "basic",
   highPerformanceProcessing: false,
   revision: 0,
   downloadRoot: "",

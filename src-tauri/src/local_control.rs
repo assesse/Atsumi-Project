@@ -1,4 +1,5 @@
 //! Loopback-only rescue channel. No shell, arbitrary JS, file deletion, or process kill endpoint.
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
     io::{Read, Write},
@@ -54,7 +55,11 @@ impl LocalControl {
             .checkpoint
             .lock()
             .map_err(|_| "Checkpoint lock unavailable")?;
-        for name in ["navigation-checkpoint.json", "navigation-checkpoint.tmp"] {
+        for name in [
+            "navigation-checkpoint.json".to_owned(),
+            "navigation-checkpoint.tmp".to_owned(),
+            format!("control-endpoint-{}.json", std::process::id()),
+        ] {
             match std::fs::remove_file(self.directory.join(name)) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -141,6 +146,11 @@ pub fn install(app: &tauri::AppHandle) -> Result<(), String> {
         uuid::Uuid::new_v4().simple()
     );
     let descriptor = json!({"pid":std::process::id(),"url":format!("http://{address}"),"token":token,"version":1});
+    std::fs::write(
+        directory.join(format!("control-endpoint-{}.json", std::process::id())),
+        serde_json::to_vec(&descriptor).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
     std::fs::write(
         directory.join("control-endpoint.json"),
         serde_json::to_vec(&descriptor).map_err(|e| e.to_string())?,
@@ -261,8 +271,97 @@ fn read_request(
     Ok((request[0].into(), request[1].into(), body))
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ShutdownRequest {
+    confirm: bool,
+    epoch: String,
+    pid: u32,
+    #[serde(default)]
+    drain_work: bool,
+}
+
+fn shutdown_request(body: &[u8], epoch: &str, pid: u32) -> Result<ShutdownRequest, ()> {
+    let request: ShutdownRequest = serde_json::from_slice(body).map_err(|_| ())?;
+    (request.confirm && request.epoch == epoch && request.pid == pid)
+        .then_some(request)
+        .ok_or(())
+}
+
+fn graceful_shutdown(app: &tauri::AppHandle, drain_work: bool) -> (u16, Value) {
+    if let Some(startup) = app.try_state::<Arc<crate::startup::Startup>>() {
+        if !startup.ready() && crate::startup::app_startup_cancel(app.clone(), startup) {
+            return (
+                202,
+                json!({"accepted":true,"pid":std::process::id(),"phase":"startup_cancelling"}),
+            );
+        }
+    }
+    let Some(state) = app.try_state::<crate::interface::AppState>() else {
+        return (503, json!({"accepted":false,"code":"BACKEND_UNAVAILABLE"}));
+    };
+    // Observe and confirm the current work set through the same gate used by
+    // the normal Exit dialog. A changed set is re-read; unknown state never
+    // grants a force/status bypass, and no process is terminated here.
+    for _ in 0..3 {
+        let fingerprint = if drain_work {
+            match state.active_work_snapshot() {
+                Ok(work) => work.work_set_fingerprint,
+                Err(error) => {
+                    return (
+                        503,
+                        json!({"accepted":false,"code":crate::interface::ApiError::from(error).code}),
+                    )
+                }
+            }
+        } else {
+            String::new()
+        };
+        match state.request_graceful_quit(
+            app.clone(),
+            crate::interface::AppQuitRequest {
+                expected_work_set_fingerprint: fingerprint,
+                confirm_active_work: drain_work,
+                force_when_status_unknown: false,
+            },
+        ) {
+            Ok(result) if result.accepted => {
+                return (
+                    202,
+                    json!({"accepted":true,"pid":std::process::id(),"phase":"draining"}),
+                )
+            }
+            Ok(result)
+                if drain_work
+                    && result.reason
+                        == Some(crate::interface::AppQuitRejectionReason::ActiveWorkChanged) =>
+            {
+                continue
+            }
+            Ok(result) => return (409, json!(result)),
+            Err(error) => return (503, json!({"accepted":false,"code":error.code})),
+        }
+    }
+    (
+        409,
+        json!({"accepted":false,"reason":"active_work_changed"}),
+    )
+}
+
 fn route(app: &tauri::AppHandle, method: &str, path: &str, body: &[u8]) -> (u16, Value) {
     let recorder = app.state::<Arc<crate::ui_diagnostics::UiDiagnostics>>();
+    if path == "/shutdown" {
+        if method != "POST" {
+            return (405, json!({"accepted":false,"error":"POST required"}));
+        }
+        return match shutdown_request(body, &recorder.epoch(), std::process::id()) {
+            Ok(request) => graceful_shutdown(app, request.drain_work),
+            Err(()) => (
+                403,
+                json!({"accepted":false,"error":"Current PID, epoch and explicit confirmation required"}),
+            ),
+        };
+    }
     if method == "GET" && path == "/status" {
         return (
             200,
@@ -391,6 +490,34 @@ fn respond(stream: &mut TcpStream, status: u16, value: Value) {
 mod tests {
     use super::*;
     #[test]
+    fn shutdown_requires_exact_current_identity_and_explicit_bounded_drain() {
+        let payload = json!({"confirm":true,"epoch":"current","pid":42});
+        let parse =
+            |value: Value| shutdown_request(&serde_json::to_vec(&value).unwrap(), "current", 42);
+        assert!(!parse(payload.clone()).unwrap().drain_work);
+        let mut draining = payload.clone();
+        draining["drainWork"] = json!(true);
+        assert!(parse(draining).unwrap().drain_work);
+        for (key, value) in [
+            ("confirm", json!(false)),
+            ("epoch", json!("old")),
+            ("pid", json!(41)),
+            ("pid", json!(42.5)),
+            ("drainWork", json!("true")),
+            ("forceWhenStatusUnknown", json!(true)),
+            ("command", json!("exit")),
+        ] {
+            let mut invalid = payload.clone();
+            invalid[key] = value;
+            assert!(parse(invalid).is_err(), "accepted {key}");
+        }
+        for key in ["confirm", "epoch", "pid"] {
+            let mut missing = payload.clone();
+            missing.as_object_mut().unwrap().remove(key);
+            assert!(parse(missing).is_err());
+        }
+    }
+    #[test]
     fn external_queue_paging_is_typed_and_bounded() {
         let query = queue_query("/queue?page=2&includeSettled=true").unwrap();
         assert_eq!(query.page, 2);
@@ -470,12 +597,23 @@ mod tests {
             closing: AtomicBool::new(false),
         };
         std::fs::write(temp.path().join("keep.log"), b"diagnostics").unwrap();
+        let owned_endpoint = temp
+            .path()
+            .join(format!("control-endpoint-{}.json", std::process::id()));
+        std::fs::write(&owned_endpoint, b"current instance").unwrap();
+        std::fs::write(
+            temp.path().join("control-endpoint-other.json"),
+            b"other instance",
+        )
+        .unwrap();
         state
             .save_checkpoint(json!({"version":1,"savedAt":1,"tabs":[]}))
             .unwrap();
         assert!(temp.path().join("navigation-checkpoint.json").exists());
         std::fs::write(temp.path().join("navigation-checkpoint.tmp"), b"partial").unwrap();
         state.clear_for_clean_exit().unwrap();
+        assert!(!owned_endpoint.exists());
+        assert!(temp.path().join("control-endpoint-other.json").exists());
         state
             .save_checkpoint(json!({"version":1,"savedAt":2,"tabs":[]}))
             .unwrap();

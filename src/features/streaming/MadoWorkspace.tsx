@@ -11,6 +11,7 @@ import { tutorialStepEvent } from "../../tutorial/tourActions";
 import "./MadoWorkspace.css";
 import { usePanelHandleGesture } from "./usePanelHandleGesture";
 import { windowFullscreenApi, sameFullscreenGrant, type WindowFullscreenGrant } from "../../api/windowFullscreen";
+import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 
 type MadoLayout = { version: 1; direction: "horizontal" | "vertical"; horizontal: number; vertical: number };
 const layoutKey = "atsumi.mado.layout.v1";
@@ -173,12 +174,13 @@ export function NativeStreamingPane({ pane, epoch, api, privacy, suspended = fal
   </div>;
 }
 
-export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, tutorialActive = false, onWatchingChange, connectionRequest = 0, onConnectionRequestHandled, onConnectionOpenChange, api: suppliedApi, officialApi: suppliedOfficialApi }: { runtime: MultiviewApi["runtime"]; privacy: boolean; onLeave(): void; unifiedLive?: boolean; tutorialActive?: boolean; onWatchingChange?(watching: boolean): void; connectionRequest?: number; onConnectionRequestHandled?(): void; onConnectionOpenChange?(open: boolean): void; api?: MultiviewApi; officialApi?: OfficialBrowserApi }) {
+export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, tutorialActive = false, onWatchingChange, connectionRequest = 0, onConnectionRequestHandled, onConnectionOpenChange, api: suppliedApi, officialApi: suppliedOfficialApi, supportedLinkRequest, onSupportedLinkHandled }: { runtime: MultiviewApi["runtime"]; privacy: boolean; onLeave(): void; unifiedLive?: boolean; tutorialActive?: boolean; onWatchingChange?(watching: boolean): void; connectionRequest?: number; onConnectionRequestHandled?(): void; onConnectionOpenChange?(open: boolean): void; api?: MultiviewApi; officialApi?: OfficialBrowserApi; supportedLinkRequest?: SupportedLinkRequest | null; onSupportedLinkHandled?(): void }) {
   const api = useMemo(() => suppliedApi ?? createMultiviewApi(runtime), [runtime, suppliedApi]);
   const officialApi = useMemo(() => suppliedOfficialApi ?? createOfficialBrowserApi(runtime), [runtime, suppliedOfficialApi]);
   const [account, setAccount] = useState(() => emptyOfficialBrowserSnapshot(runtime));
   const [connectionMode, setConnectionMode] = useState<ConnectionMode>("mado");
   const [inputs, setInputs] = useState(unifiedLive ? [""] : ["", "", "", ""]);
+  const handledSupportedLink = useRef<string | null>(null);
   const [mode, setMode] = useState<"paired" | "chats">("paired");
   const [appliedMode, setAppliedMode] = useState<"paired" | "chats">("paired");
   const [lead, setLead] = useState(0);
@@ -311,6 +313,19 @@ export function MadoWorkspace({ runtime, privacy, onLeave, unifiedLive = false, 
     setSettings(false);
   };
   const handleGesture = usePanelHandleGesture(showingConnection, "y", open => { if (open) openSettings(); else closeSettings(); });
+  useEffect(() => {
+    if (privacy || supportedLinkRequest?.source !== "chzzk" || handledSupportedLink.current === supportedLinkRequest.id) return;
+    handledSupportedLink.current = supportedLinkRequest.id;
+    edited.current = true; setConnectionMode("mado");
+    const id = supportedLinkRequest.targetId;
+    if (!inputs.includes(id)) {
+      const empty = inputs.findIndex(row => !row.trim());
+      if (empty >= 0) setInputs(rows => rows.map((row, index) => index === empty ? id : row));
+      else if (inputs.length < 4) setInputs(rows => [...rows, id]);
+      else setError("방송은 최대 4개까지 선택할 수 있습니다. 입력란 하나를 비운 뒤 다시 열어 주세요.");
+    }
+    openSettings(); onSupportedLinkHandled?.();
+  }, [privacy, supportedLinkRequest, onSupportedLinkHandled]);
   useEffect(() => {
     if (!showingConnection && restoreHandleFocus.current) {
       restoreHandleFocus.current = false;

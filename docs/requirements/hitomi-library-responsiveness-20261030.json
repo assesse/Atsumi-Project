@@ -1,0 +1,39 @@
+{
+  "id": "hitomi-library-responsiveness-20261030",
+  "source": "01a089ee-56ed-7322-a750-c034423826c2 / 01a18ac5-d7f2-7682-8891-65e63b08e1f8 / 01a18ac5-daaf-7e40-95d5-8e2fc5115c84",
+  "request": "Keep the Hitomi Downloads UI responsive on first load and when opening/closing artist folders and albums, independently of background preparation.",
+  "audit": {
+    "inventoryBaseline": ".runtime/requirements-audit/20261030-performance-modes-inventory.json",
+    "coverage": "Re-enumerated current50/pinned and archived3/EOF. Same three development chats. Fully read historical230/284 and333/375 snapshots and specification snapshot retain verified85487C5F,799F75C9,7DDBD2B0 SHA256 prefixes. This chat's latest10 original turns and Danbooru latest5 original turns read; historical originals remain in verified snapshots and intervening batch inventory. Other main revision1793109867 unchanged; fresh read exceeds provider size limit, not represented as newly read.",
+    "changedSpecificationsRead": ["AGENTS.md", "docs/requirements/implementation-policy.json (all72 batches)", "docs/HITOMI_PROCESSING_PERFORMANCE_20260925.md", "docs/requirements/background-image-work-20261030.json", "docs/requirements/native-context-menu-policy-20261030.json", "docs/requirements/three-level-processing-20261030.json"],
+    "unchangedSpecifications": "Full baseline290-entry hash inventory compared; only the five documented specification changes above were found. Existing detailed interaction contracts reused after unchanged-hash verification; hitomi-detail-scroll-preview contract reread.",
+    "unavailable": ["Original durable handoff01a03f16", "Unidentified Atsumi analysis1/2", "Missing historical image pixels", "Source discovery beyond returned accessible inventory"]
+  },
+  "findings": [
+    "visibleGalleries depends on the entire UiState, so detail/selection changes repeat full-library filtering/sorting and replace grouping identities.",
+    "Artist folder cards and all folder tag summaries are prepared together. Background cover warmup can drain cached results synchronously without yielding.",
+    "Every200-entry library page and saved-preview response publishes new library-wide projections; empty/no-op saved-preview responses still invalidate the display map.",
+    "2026-10-30 read-only database count:9103completed jobs,280review_required,4failed, no queued/active jobs. Process recheck after stale47604 descriptor found no Atsumi/cargo process; no shutdown was performed."
+  ],
+  "changes": [
+    "Separate list query dependencies from detail, overlay, selection and folder state; preserve unchanged gallery/group/metadata references.",
+    "Memoize folder/card rendering and only prepare expensive offscreen folder content near the viewport, retaining all folder names/actions and existing background cover cache/warmup.",
+    "Schedule background library/preview updates as interruptible work and bound cover warmup per task; do not delay urgent open/close actions behind data work.",
+    "Avoid remounting/recomputing background grids when only detail visibility changes; preserve keyboard focus, scroll, selection, sorting and folder ownership."
+  ],
+  "conflicts": [
+    "Do not remove the established all-folder background cover prefetch or count/byte-bounded retention in order to make the initial render faster.",
+    "The latest three processing modes and existing integrity/duplicate criteria are unchanged. This task concerns UI work, not lowering the user's chosen processing priority.",
+    "Computer Use remains deferred under AGENTS.md; isolated automated browser fixtures and tests are permitted. Actual native interaction must remain explicitly pending unless separately authorized."
+  ],
+  "acceptance": [
+    "Large neutral library: changing selection or opening/closing detail must not repeat whole-library filter/sort or folder tag scans.",
+    "First screen is available before offscreen folder metadata preparation, and later scrolling/keyboard focus still exposes correct folders and actions.",
+    "Saved-preview updates, background hydration and latest-revision download state still update affected cards; older data cannot undo newer events.",
+    "Cover prefetch yields to input/timers with cached results; disposal cancels pending owned work and existing cache semantics remain intact.",
+    "Existing folder/album, selection, pagination, preview, projection and keyboard regressions; typecheck and build.",
+    "Record before/after measurements from an isolated browser separately from real native UI verification. No unmeasured perfect-responsiveness claim."
+  ],
+  "verification": ".runtime/requirements-audit/20261030-hitomi-library-responsiveness-verification.json",
+  "state": "implemented;235 automated checks, typecheck, frontend/native development builds and isolated browser performance/layout checks passed; development PID41056 responds normally; Computer Use interaction remains deferred"
+}

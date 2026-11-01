@@ -166,27 +166,39 @@ enum JobKind {
     Cleanup,
     Part,
     Archive,
+    Offload,
 }
 
-// One bounded worker, but no task class can monopolize it. In particular,
-// continuously arriving live ranges cannot starve completed recordings.
+// Live range work takes precedence over unbounded historical final exports.
+// A final export already running is cooperatively cancelled if capture starts.
 fn next_job(
     store: &BrowserCaptureStore,
     cursor: &mut usize,
 ) -> Result<Option<(JobKind, BrowserMergeJob)>, StreamError> {
-    const KINDS: [JobKind; 4] = [
+    const KINDS: [JobKind; 5] = [
         JobKind::Final,
         JobKind::Cleanup,
         JobKind::Part,
         JobKind::Archive,
+        JobKind::Offload,
     ];
+    let live = store.has_active();
     for step in 0..KINDS.len() {
         let index = (*cursor + step) % KINDS.len();
+        if live
+            && matches!(
+                KINDS[index],
+                JobKind::Final | JobKind::Cleanup | JobKind::Archive
+            )
+        {
+            continue;
+        }
         let job = match KINDS[index] {
             JobKind::Final => store.take_merge_job()?,
             JobKind::Cleanup => store.take_cleanup_job()?,
             JobKind::Part => store.take_part_job()?,
             JobKind::Archive => store.take_archive_job()?,
+            JobKind::Offload => store.take_offload_job()?,
         };
         if let Some(job) = job {
             *cursor = (index + 1) % KINDS.len();
@@ -194,6 +206,65 @@ fn next_job(
         }
     }
     Ok(None)
+}
+
+/// Job-owned cancellation, distinct from application shutdown. Polling never
+/// holds a capture mutex during media I/O and never cancels the live capture.
+struct BackgroundGuard {
+    cancel: Arc<AtomicBool>,
+    preempted: Arc<AtomicBool>,
+    done: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+impl BackgroundGuard {
+    fn new(shared: &Arc<Shared>, store: BrowserCaptureStore) -> Self {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let preempted = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        let (token, flag, finished, shared) = (
+            cancel.clone(),
+            preempted.clone(),
+            done.clone(),
+            shared.clone(),
+        );
+        let handle = thread::Builder::new()
+            .name("browser-merge-preempt".into())
+            .spawn(move || {
+                while !finished.load(Ordering::Acquire) {
+                    if shared.cancel.load(Ordering::Acquire) {
+                        token.store(true, Ordering::Release);
+                        break;
+                    }
+                    if store.has_active() {
+                        flag.store(true, Ordering::Release);
+                        token.store(true, Ordering::Release);
+                        break;
+                    }
+                    thread::park_timeout(Duration::from_millis(100));
+                }
+            })
+            .ok();
+        // Failure to create the cancellation watcher must not admit unbounded
+        // work that can starve a capture; retry later without claiming failure.
+        if handle.is_none() {
+            cancel.store(true, Ordering::Release);
+        }
+        Self {
+            cancel,
+            preempted,
+            done,
+            handle,
+        }
+    }
+}
+impl Drop for BackgroundGuard {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Release);
+        if let Some(handle) = self.handle.take() {
+            handle.thread().unpark();
+            let _ = handle.join();
+        }
+    }
 }
 
 fn worker(shared: Arc<Shared>) {
@@ -239,7 +310,30 @@ fn worker(shared: Arc<Shared>) {
         if let Some((JobKind::Archive, job)) = work {
             let store = shared.store.lock().ok().map(|s| s.clone());
             if let Some(store) = store {
-                browser_store::archive::run(&store, &job, &shared.cancel);
+                let guard = BackgroundGuard::new(&shared, store.clone());
+                browser_store::archive::run_background(
+                    &store,
+                    &job,
+                    &guard.cancel,
+                    &guard.preempted,
+                );
+            }
+            continue;
+        }
+        if let Some((JobKind::Offload, job)) = work {
+            let store = shared.store.lock().ok().map(|s| s.clone());
+            if let Some(store) = store {
+                if job.recording.status == browser_store::BrowserRecordingStatus::Recording {
+                    browser_store::archive::offload::run(&store, &job, &shared.cancel);
+                } else {
+                    let guard = BackgroundGuard::new(&shared, store.clone());
+                    browser_store::archive::run_background(
+                        &store,
+                        &job,
+                        &guard.cancel,
+                        &guard.preempted,
+                    );
+                }
             }
             continue;
         }
@@ -252,14 +346,25 @@ fn worker(shared: Arc<Shared>) {
         }
         if let Some((JobKind::Cleanup, job)) = work {
             // Media hashing/deletion never holds either shared store mutex.
-            let result = browser_store::cleanup::remove_verified_sources(&job, &shared.cancel);
-            if let Ok(store) = shared.store.lock() {
-                let _ = store.finish_cleanup(&job, result);
+            let store = shared.store.lock().ok().map(|s| s.clone());
+            if let Some(store) = store {
+                let guard = BackgroundGuard::new(&shared, store.clone());
+                let result = browser_store::cleanup::remove_verified_sources(&job, &guard.cancel);
+                let _ = store.finish_cleanup_preempted(
+                    &job,
+                    result,
+                    guard.preempted.load(Ordering::Acquire),
+                );
             }
             continue;
         }
         if let Some((JobKind::Final, job)) = work {
-            let result = merge_recording(&job, shared.tools.as_ref(), &shared.cancel);
+            let store = shared.store.lock().ok().map(|s| s.clone());
+            let Some(store) = store else {
+                continue;
+            };
+            let guard = BackgroundGuard::new(&shared, store.clone());
+            let result = merge_recording(&job, shared.tools.as_ref(), &guard.cancel);
             if let Ok(store) = shared.store.lock() {
                 match result {
                     Ok(output) => {
@@ -272,7 +377,11 @@ fn worker(shared: Arc<Shared>) {
                         }
                     }
                     Err(error) => {
-                        let status = if error.code == "BROWSER_MERGE_CANCELLED" {
+                        let status = if guard.handle.is_none() {
+                            BrowserMergeStatus::Blocked
+                        } else if guard.preempted.load(Ordering::Acquire)
+                            || error.code == "BROWSER_MERGE_CANCELLED"
+                        {
                             BrowserMergeStatus::Queued
                         } else if matches!(
                             error.code.as_str(),
@@ -1249,7 +1358,7 @@ mod tests {
     }
 
     #[test]
-    fn final_exports_are_not_starved_by_live_range_backlog() {
+    fn live_ranges_preempt_final_export_admission_until_capture_stops() {
         let dir = tempfile::tempdir().unwrap();
         let store = BrowserCaptureStore::new(dir.path()).unwrap();
         let channel = "a".repeat(32);
@@ -1269,17 +1378,53 @@ mod tests {
             }
         }
         store.finish(&stopped.id, false, None).unwrap();
-        // Even when the next slot is a live range, one bounded range job is
-        // followed by the final export, not all of the live recording's ranges.
+        // The newest contract prioritizes bounded live SSD evacuation over a
+        // potentially hours-long final decode. Final export resumes when idle.
         let mut cursor = 2;
         let (kind, part) = next_job(&store, &mut cursor).unwrap().unwrap();
         assert_eq!(kind, JobKind::Part);
         assert_eq!(part.recording.id, live.id);
-        store.finish_part_job(&part, Err(cancelled())).unwrap_err();
+        browser_store::parts::tests::publish_fixture(&store, &part);
+        assert!(next_job(&store, &mut cursor).unwrap().is_none());
+        store.finish(&live.id, false, None).unwrap();
         let (kind, final_job) = next_job(&store, &mut cursor).unwrap().unwrap();
         assert_eq!(kind, JobKind::Final);
-        assert_eq!(final_job.recording.id, stopped.id);
+        assert!([live.id, stopped.id].contains(&final_job.recording.id));
         assert!(final_job.part.is_none());
+    }
+    #[test]
+    fn background_job_token_is_preempted_without_stopping_capture_or_global_worker() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = BrowserCaptureStore::new(dir.path()).unwrap();
+        let shared = Arc::new(Shared {
+            store: Arc::new(Mutex::new(store.clone())),
+            tools: None,
+            cancel: AtomicBool::new(false),
+            state: Mutex::new(WorkerState { wake: false }),
+            changed: Condvar::new(),
+        });
+        let guard = BackgroundGuard::new(&shared, store.clone());
+        let record = store
+            .begin_progressive(dir.path(), &"a".repeat(32), "preempt fixture", "video/webm")
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !guard.cancel.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(guard.cancel.load(Ordering::Acquire));
+        assert!(guard.preempted.load(Ordering::Acquire));
+        assert!(!shared.cancel.load(Ordering::Acquire));
+        assert!(store.has_active());
+        store.finish(&record.id, false, None).unwrap();
+        drop(guard);
+        let shutdown = BackgroundGuard::new(&shared, store);
+        shared.cancel.store(true, Ordering::Release);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !shutdown.cancel.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(shutdown.cancel.load(Ordering::Acquire));
+        assert!(!shutdown.preempted.load(Ordering::Acquire));
     }
     fn segment(index: u64, start: Option<f64>, end: Option<f64>, duration: f64) -> BrowserSegment {
         BrowserSegment {
@@ -2004,6 +2149,116 @@ mod tests {
                 .status,
             BrowserMergeStatus::Complete
         );
+    }
+
+    #[test]
+    #[ignore = "explicit verified tools and ATSUMI_ARCHIVE_TEST_ROOT; synthetic cross-volume rolling capture only"]
+    fn synthetic_ffmpeg_rolling_ssd_offload_tail_export_and_cleanup() {
+        let tools = e2e_tools();
+        let parent = PathBuf::from(
+            std::env::var_os("ATSUMI_ARCHIVE_TEST_ROOT")
+                .expect("explicit synthetic archive destination"),
+        );
+        let archive = tempfile::Builder::new()
+            .prefix("atsumi-rolling-fixture-")
+            .tempdir_in(&parent)
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = BrowserCaptureStore::new(dir.path()).unwrap();
+        let record = store
+            .begin_with_storage(
+                dir.path(),
+                Some(archive.path()),
+                &"a".repeat(32),
+                "synthetic rolling capture",
+                "video/mp4",
+                true,
+            )
+            .unwrap();
+        let segments = native_encoded_fixture(&synthetic_mp4(&tools), 2);
+        assert_eq!(segments.len(), 2);
+        for (i, segment) in segments.iter().enumerate() {
+            store
+                .append(&record.id, i as u64, 0, &segment.bytes)
+                .unwrap();
+            store
+                .finish_segment_source(
+                    &record.id,
+                    i as u64,
+                    segment.duration_seconds,
+                    Some(segment.source_start_seconds),
+                    Some(segment.source_end_seconds),
+                )
+                .unwrap();
+            if i == 0 {
+                let job = store.take_short_part_job().unwrap().unwrap();
+                let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
+                store.finish_part_job(&job, Ok(output)).unwrap();
+                let offload = store.take_offload_job().unwrap().unwrap();
+                browser_store::archive::offload::run(&store, &offload, &AtomicBool::new(false));
+                let snapshot = store.snapshot().unwrap().remove(0);
+                assert_eq!(
+                    snapshot
+                        .progressive
+                        .as_ref()
+                        .unwrap()
+                        .offloaded_segment_count,
+                    1,
+                    "{:?}",
+                    snapshot.archive
+                );
+                assert!(!Path::new(&record.output_dir)
+                    .join("segment-000000000000.mp4")
+                    .exists());
+                let mut replay = store.replay_source(&record.id).unwrap();
+                assert_eq!(replay.parts.len(), 1);
+                let mut header = [0u8; 8];
+                replay.media.read_exact(&mut header).unwrap();
+                assert_eq!(&header[4..8], b"ftyp");
+                drop(replay);
+            }
+        }
+        let chat = b"{\"fixture\":\"original chat retained\"}\n";
+        fs::write(Path::new(&record.output_dir).join("chat.jsonl"), chat).unwrap();
+        store.finish(&record.id, false, None).unwrap();
+        let offload = store.take_offload_job().unwrap().unwrap();
+        browser_store::archive::offload::run(&store, &offload, &AtomicBool::new(false));
+        let ready = store.snapshot().unwrap().remove(0);
+        assert_eq!(
+            ready.archive.as_ref().unwrap().status,
+            browser_store::archive::ArchiveStatus::Complete,
+            "{:?}",
+            ready.archive
+        );
+        assert!(Path::new(&ready.output_dir).starts_with(fs::canonicalize(archive.path()).unwrap()));
+        let job = store.take_merge_job().unwrap().unwrap();
+        let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
+        let media = Path::new(&ready.output_dir).join(&output.file);
+        verify_decode(&tools, &media);
+        let timeline =
+            fs::read_to_string(Path::new(&ready.output_dir).join(&output.timeline_file)).unwrap();
+        assert_eq!(timeline.lines().count(), segments.len());
+        store.complete_merge(&job, output).unwrap();
+        let cleanup = store.take_cleanup_job().unwrap().unwrap();
+        let outcome =
+            browser_store::cleanup::remove_verified_sources(&cleanup, &AtomicBool::new(false));
+        assert!(outcome.complete);
+        assert_eq!(outcome.deleted, 2);
+        store.finish_cleanup(&cleanup, outcome).unwrap();
+        assert_eq!(
+            fs::read(Path::new(&ready.output_dir).join("chat.jsonl")).unwrap(),
+            chat
+        );
+        for i in 0..2 {
+            assert!(!Path::new(&ready.output_dir)
+                .join(format!("segment-{i:012}.mp4"))
+                .exists());
+        }
+        for _ in 0..2 {
+            let reopened = BrowserCaptureStore::new(dir.path()).unwrap();
+            assert_eq!(reopened.merged_file(&record.id).unwrap(), media);
+        }
+        println!("Synthetic SSD -> HDD: live verified range, original fragments, unmerged tail, full A/V decode, timeline, cleanup, twice-recovery passed");
     }
 
     #[test]

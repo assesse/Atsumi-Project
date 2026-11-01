@@ -27,7 +27,7 @@ export function useAlbumMenuItems(gallery: Gallery | undefined, actions: {
     ...(actions.background ? [{ id: "background", label: "백그라운드 탭으로 열기", action: actions.background }] : []),
     ...(actions.folder && download?.state === "completed" ? [{ id: "folder", label: "저장 폴더 열기", action: actions.folder }] : []),
     ...(actions.artifact && download?.state === "completed" ? [{ id: "artifact", label: "외부 뷰어로 열기", action: actions.artifact }] : []),
-    ...(actions.queue ? [{ id: "download", label: !download ? "다운로드" : retryableDownloadStates.has(download.state) ? "다운로드 재시도" : `다운로드 · ${downloadStatus[download.state].label}`,
+    ...(actions.queue ? [{ id: "download", icon: download?.state === "completed" ? "check" as const : download && retryableDownloadStates.has(download.state) ? "restore" as const : "download" as const, label: !download ? "다운로드" : retryableDownloadStates.has(download.state) ? "다운로드 재시도" : `다운로드 · ${downloadStatus[download.state].label}`,
       disabled: actions.pending || Boolean(download && !retryableDownloadStates.has(download.state)), action: actions.queue }] : []),
     ...(library ? [{ id: "bookmark", label: `앨범 즐겨찾기 ${saved ? "해제" : "저장"}`, disabled: library.pending || !library.summary, action: () => { void library.save(gallery, 0, !saved); } }] : []),
     ...(actions.review ? [{ id: "review", label: "중복 판본 검토", separator: true, action: actions.review }] : []),

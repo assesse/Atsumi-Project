@@ -29,6 +29,16 @@ function deferredPage() {
   return { promise, resolve, reject };
 }
 describe("SOOP discovery interactions", () => {
+  it("routes exact creator/video destinations through channel results and VOD details without starting video", async () => {
+    const search = vi.fn().mockResolvedValue({ items, page: 1, hasMore: false }), api: SoopApi = { inspect: vi.fn(), search };
+    const request: import("../../app/supportedLinkNavigation").SupportedLinkRequest = { id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae2", source: "soop", kind: "channel", targetId: "artist", url: "https://play.sooplive.com/artist" };
+    const onLive = vi.fn();
+    const draw = (supportedLinkRequest = request) => act(async () => root.render(<SoopDiscovery api={api} active privacyMode={false} onLive={onLive} onFavoriteChannel={vi.fn()} isChannelFavorite={() => false} supportedLinkRequest={supportedLinkRequest} />));
+    await draw(); expect(search).toHaveBeenCalledWith({ kind: "video", keyword: "", channelId: "artist", page: 1 });
+    await draw(); expect(search).toHaveBeenCalledOnce();
+    await draw({ ...request, id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae3", kind: "video", targetId: "123456", url: "https://vod.sooplive.com/player/123456" });
+    expect(host.querySelector(".soop-detail")?.textContent).toContain("SOOP 영상 #123456"); expect(onLive).not.toHaveBeenCalled();
+  });
   it("renders official four sections with real viewer badges, tags and deduplicated channel portraits", async () => {
     const portrait = "data:image/png;base64,AQ==";
     const official: SoopSearchItem[] = [

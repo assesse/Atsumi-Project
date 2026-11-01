@@ -1,0 +1,19 @@
+.context-menu-label {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  flex: 1;
+  min-width: 0;
+  text-align: start;
+}
+.context-menu-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: inherit;
+  pointer-events: none;
+}
+.context-menu-icon > svg { display: block; width: 16px; height: 16px; opacity: .9; }
+.context-menu-text { min-width: 0; overflow-wrap: anywhere; }

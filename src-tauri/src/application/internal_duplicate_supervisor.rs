@@ -1001,18 +1001,24 @@ fn scan_inner(
             )? {
                 hash
             } else {
-                let bytes = inner
-                    .store
-                    .read_verified_page_bytes(root, page)
-                    .map_err(|error| RepositoryError::Other(error.to_string()))?;
-                let hash = compute_page_hash(
-                    bundle.artifact.entry_id.as_str(),
-                    bundle.gallery.id,
-                    page.page_id.source_page_number,
-                    sha.clone(),
-                    &bytes,
-                    profile,
-                )?;
+                let hash = {
+                    let Some(_image_work) = super::image_work_budget::acquire(Some(cancellation))
+                    else {
+                        return Ok(());
+                    };
+                    let bytes = inner
+                        .store
+                        .read_verified_page_bytes(root, page)
+                        .map_err(|error| RepositoryError::Other(error.to_string()))?;
+                    compute_page_hash(
+                        bundle.artifact.entry_id.as_str(),
+                        bundle.gallery.id,
+                        page.page_id.source_page_number,
+                        sha.clone(),
+                        &bytes,
+                        profile,
+                    )?
+                };
                 inner
                     .duplicate_repository
                     .duplicate_page_hash_upsert(&hash)?;

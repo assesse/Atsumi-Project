@@ -16,6 +16,25 @@ const asset: ThumbnailAsset = { kind: "image", url: "blob:https://atsumi.test/co
 afterEach(() => vi.useRealTimers());
 
 describe("GalleryCoverBackgroundPreloader", () => {
+  it("yields between bounded cached-cover batches and cancels deferred work on disposal", async () => {
+    vi.useFakeTimers();
+    const resolve = vi.fn(() => asset);
+    const client = new ThumbnailClient({ resolve });
+    const loader = new GalleryCoverBackgroundPreloader(client);
+    try {
+      loader.update(Array.from({ length: 1000 }, (_, index) => gallery(index + 1)));
+      expect(resolve.mock.calls.length).toBeLessThanOrEqual(16);
+      let inputRan = false;
+      setTimeout(() => { inputRan = true; }, 0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(inputRan).toBe(true);
+      expect(resolve.mock.calls.length).toBeLessThan(1000);
+      const beforeDispose = resolve.mock.calls.length;
+      loader.dispose();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(resolve).toHaveBeenCalledTimes(beforeDispose);
+    } finally { loader.dispose(); client.dispose(); }
+  });
   it("reconciles changed representative pages without restarting unrelated pending covers", async () => {
     vi.useFakeTimers();
     const resolvers = new Map<string, (asset: ThumbnailAsset) => void>();
@@ -54,6 +73,7 @@ describe("GalleryCoverBackgroundPreloader", () => {
       resolvers.get("gallery-cover:2")?.(asset);
       await Promise.resolve();
       await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(1);
       expect(identities()).toEqual(["gallery-cover:1", "gallery-cover:2", "artifact-page:entry-1:7", "gallery-cover:3"]);
       expect(subscribe.mock.calls.filter(([request]) => thumbnailKeyIdentity(request.key) === "gallery-cover:2")).toHaveLength(1);
     } finally {

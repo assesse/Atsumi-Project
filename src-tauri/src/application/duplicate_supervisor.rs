@@ -459,7 +459,7 @@ fn scan_inner(
     profile: &HashProfile,
     cancellation: &CancellationToken,
 ) -> Result<(), RepositoryError> {
-    let hash_pool = DuplicateHashPool::new(profile)?;
+    let hash_pool = DuplicateHashPool::new(profile, cancellation)?;
     let mut timing = DuplicateScanTiming::new(run_id, hash_pool.worker_count());
     let mut artifacts = Vec::with_capacity(bundles.len());
     for (artifact_index, bundle) in bundles.iter().enumerate() {
@@ -497,6 +497,8 @@ fn scan_inner(
                 timing.hash_cache_misses = timing.hash_cache_misses.saturating_add(1);
                 hash_pipeline_started.get_or_insert_with(Instant::now);
                 let bytes = measure(&mut timing.image_read, || {
+                    let _image_work = super::image_work_budget::acquire(Some(cancellation))
+                        .ok_or_else(|| RepositoryError::Other("duplicate scan cancelled".into()))?;
                     inner
                         .store
                         .read_verified_page_bytes(root, page)
@@ -648,7 +650,10 @@ struct DuplicateHashPool {
 }
 
 impl DuplicateHashPool {
-    fn new(profile: &HashProfile) -> Result<Self, RepositoryError> {
+    fn new(
+        profile: &HashProfile,
+        cancellation: &CancellationToken,
+    ) -> Result<Self, RepositoryError> {
         let worker_count = duplicate_hash_worker_count();
         let (sender, jobs) = mpsc::sync_channel::<DuplicateHashJob>(worker_count);
         let jobs = Arc::new(Mutex::new(jobs));
@@ -660,6 +665,7 @@ impl DuplicateHashPool {
             let jobs = Arc::clone(&jobs);
             let result_sender = result_sender.clone();
             let profile = Arc::clone(&profile);
+            let cancellation = cancellation.clone();
             let worker = match thread::Builder::new()
                 .name(format!("atsumi-duplicate-hash-{}", ordinal + 1))
                 .spawn(move || loop {
@@ -672,6 +678,10 @@ impl DuplicateHashPool {
                     };
                     let started = Instant::now();
                     let result = catch_unwind(AssertUnwindSafe(|| {
+                        let _image_work = super::image_work_budget::acquire(Some(&cancellation))
+                            .ok_or_else(|| {
+                                RepositoryError::Other("duplicate scan cancelled".into())
+                            })?;
                         compute_page_hash(
                             &job.entry_id,
                             job.gallery_id,
@@ -751,9 +761,7 @@ impl Drop for DuplicateHashPool {
 }
 
 fn duplicate_hash_worker_count() -> usize {
-    thread::available_parallelism()
-        .map_or(1, usize::from)
-        .clamp(1, MAX_DUPLICATE_HASH_WORKERS)
+    super::image_work_budget::parallel_workers().clamp(1, MAX_DUPLICATE_HASH_WORKERS)
 }
 
 fn measure<T>(total: &mut Duration, operation: impl FnOnce() -> T) -> T {
@@ -1284,7 +1292,11 @@ mod tests {
                 .unwrap();
             encoded
         };
-        let pool = DuplicateHashPool::new(&crate::domain::HashProfile::current()).unwrap();
+        let pool = DuplicateHashPool::new(
+            &crate::domain::HashProfile::current(),
+            &CancellationToken::new(),
+        )
+        .unwrap();
         for source_page in [4_u32, 1, 3, 2] {
             pool.submit(DuplicateHashJob {
                 entry_id: "entry-parallel".into(),
@@ -1307,6 +1319,31 @@ mod tests {
             .collect::<Vec<_>>();
         pages.sort_unstable();
         assert_eq!(pages, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn cancelled_hash_pool_skips_queued_decodes_and_joins() {
+        let cancellation = CancellationToken::new();
+        cancellation.cancel();
+        let pool =
+            DuplicateHashPool::new(&crate::domain::HashProfile::current(), &cancellation).unwrap();
+        // Invalid image bytes would return a format error if a cancelled job
+        // reached the decoder. Keep draining results so bounded senders unblock.
+        for page in 1..=8 {
+            pool.submit(DuplicateHashJob {
+                entry_id: "cancelled".into(),
+                gallery_id: GalleryId::new(1).unwrap(),
+                source_page_number: SourcePageNumber::new(page).unwrap(),
+                artifact_sha256: ArtifactSha256::new(format!("{page:064x}")).unwrap(),
+                bytes: vec![0],
+            })
+            .unwrap();
+        }
+        for _ in 0..8 {
+            let error = pool.receive().unwrap().result.unwrap_err();
+            assert!(error.to_string().contains("duplicate scan cancelled"));
+        }
+        drop(pool);
     }
 
     #[test]
@@ -1341,7 +1378,7 @@ mod tests {
         }
         let sequential = sequential_started.elapsed();
 
-        let pool = DuplicateHashPool::new(&profile).unwrap();
+        let pool = DuplicateHashPool::new(&profile, &CancellationToken::new()).unwrap();
         let parallel_started = Instant::now();
         for source_page in 1..=PAGE_COUNT {
             pool.submit(DuplicateHashJob {

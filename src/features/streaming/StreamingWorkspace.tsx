@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 import type { OfficialBrowserApi } from "../../api/officialBrowser";
 import type { ContentSource, WorkspaceViewId } from "../../app/workspaceRegistry";
 import { SideRail } from "../../components/SideRail";
@@ -23,6 +24,7 @@ function readStreamingView(): StreamingView {
 export type StreamingWorkspaceProps = {
   tutorialActive?: boolean;
   navigationRequest?: import("../../app/CommonNavigation").NavigationRequest | null;
+  supportedLinkRequest?: SupportedLinkRequest | null;
   runtime: OfficialBrowserApi["runtime"];
   active: boolean;
   railCollapsed: boolean;
@@ -34,10 +36,17 @@ export type StreamingWorkspaceProps = {
   onPrivacyModeToggle?: () => void;
 };
 
-export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRail, onSourceChange, navigationRequest, onOpenSettings, tutorialActive = false, privacyMode = false, privacyModePending = false, onPrivacyModeToggle }: StreamingWorkspaceProps) {
+export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRail, onSourceChange, navigationRequest, supportedLinkRequest, onOpenSettings, tutorialActive = false, privacyMode = false, privacyModePending = false, onPrivacyModeToggle }: StreamingWorkspaceProps) {
   const requestedView = navigationRequest?.source === "chzzk" ? normalizeStreamingView(navigationRequest.view) : null;
   const [view, setView] = useState<StreamingView>(() => requestedView ?? readStreamingView());
   const [watching, setWatching] = useState(false);
+  const handledSupportedLink = useRef<string | null>(null);
+  const [channelRequest, setChannelRequest] = useState<SupportedLinkRequest | null>(null);
+  useEffect(() => {
+    if (!active || supportedLinkRequest?.source !== "chzzk" || handledSupportedLink.current === supportedLinkRequest.id) return;
+    handledSupportedLink.current = supportedLinkRequest.id;
+    setChannelRequest(supportedLinkRequest); setView("live");
+  }, [active, supportedLinkRequest]);
   const immersive = watching && view === "live" && !tutorialActive;
   // Live is the only presentation entry. Bookmarks and scheduled recordings
   // use that same channel selector; leaving it never owns recording lifetime.
@@ -59,7 +68,7 @@ export function StreamingWorkspace({ runtime, active, railCollapsed, onToggleRai
       <SideRail source="chzzk" view={view} collapsed={immersive ? false : railCollapsed} autoFindCount={0} attentionCount={0} onNavigate={navigate} onSourceChange={onSourceChange} onToggle={onToggleRail} onSettings={onOpenSettings} privacyMode={privacyMode} privacyModePending={privacyModePending} onPrivacyModeToggle={onPrivacyModeToggle} />
     </LiveEdgePanel>
     <main className={`streaming-workspace${view === "live" ? " is-official-view is-unified-live" : ""}`}>
-      {view === "live" ? <MadoWorkspace runtime={runtime} privacy={privacyMode} tutorialActive={tutorialActive} onWatchingChange={setWatching} unifiedLive onLeave={() => {}} />
+      {view === "live" ? <MadoWorkspace runtime={runtime} privacy={privacyMode} tutorialActive={tutorialActive} onWatchingChange={setWatching} unifiedLive onLeave={() => {}} supportedLinkRequest={channelRequest} onSupportedLinkHandled={() => setChannelRequest(null)} />
         : view === "screenshots" ? <ScreenshotLibrary runtime={runtime} privacy={privacyMode} />
         : <OfficialBrowserPanel runtime={runtime} active={active} view="recordings" privacyMode={privacyMode} />}
     </main>

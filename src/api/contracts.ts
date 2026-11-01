@@ -158,10 +158,14 @@ export type AppExitRequestedEvent = {
   source: "window_close" | "tray_menu";
 };
 
+export type ProcessingMode = "basic" | "game_priority" | "atsumi_priority";
+
 export type SettingsSnapshot = {
   /** Missing on older backends; SSD staging is opt-in. */
   chzzkSsdStaging?: boolean;
-  /** Opt-in CPU fan-out; older settings default to balanced processing. */
+  /** Hardware-bounded image work policy; missing on older backends. */
+  processingMode?: ProcessingMode;
+  /** Legacy compatibility only. true migrates to game_priority, not atsumi_priority. */
   highPerformanceProcessing?: boolean;
   revision: number;
   downloadRoot: string;
@@ -758,6 +762,10 @@ export type DownloadOverlapPagePair = {
   lowInformation: boolean;
 };
 
+
+export type DownloadOverlapDisplayMatchRequest = { reviewId: string; expectedRevision: number; candidateId: string };
+export type DownloadOverlapDisplayMatches = { reviewId: string; revision: number; candidateId: string; incomingFingerprint: string; existingFingerprint: string; additionalPairs: DownloadOverlapPagePair[] };
+
 export type DownloadOverlapCandidate = {
   candidateId: string;
   existing: DownloadOverlapGalleryRef;
@@ -860,6 +868,8 @@ export type DownloadOverlapMergeRequest = {
   sourcePages: number[];
   /** Explicit choices on both sides. Unselected counterparts retain destination bytes. */
   selectedPages?: { existing: number[]; incoming: number[] };
+  /** Explicit partial destination: retain only its selected pages, plus selected donor pages. */
+  targetSelectionOnly?: boolean;
   /** The server independently validates the automatic uncensored-containment rule. */
   automation?: boolean;
   excludeSource?: boolean;

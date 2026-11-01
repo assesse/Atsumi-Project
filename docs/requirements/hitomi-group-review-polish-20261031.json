@@ -1,0 +1,56 @@
+{
+  "id": "hitomi-group-review-polish-20261031",
+  "state": "implemented_automated_verified_actual_ui_deferred",
+  "originals": [
+    "01a19267-9c08-7932-9dd6-9d3db988f3a9",
+    "01a19269-91d3-7fe0-acff-bb611b696861",
+    "01a1926c-27e6-7e31-b3b1-ac8feae34d5e"
+  ],
+  "requests": [
+    "Keep current group UI and multi-edition functionality; transpose pages to horizontal progression with editions in rows.",
+    "Do not revert to former single-pair flow. Preserve Ctrl/Shift selection through filters, resize, virtualization, activation and close/reopen edition.",
+    "일치 보기 / 추가 보기; gaps always hidden, no gap control.",
+    "Only actual safe batch-exclusion targets have checkboxes; keep safety eligibility.",
+    "Stop cover unsubscribe/resubscribe churn on same structured thumbnail key. Actual evidence/source changes still refresh.",
+    "Resizable dialog plus maximize/restore control; comparison viewport grows with edition count within display bounds."
+  ],
+  "audit": {
+    "reused": ".runtime/manual-review-actions-20261031/preedit.json",
+    "documentsChecked": 294,
+    "allUnchanged": true,
+    "newContractRead": "docs/requirements/hitomi-manual-review-actions-20261031.json",
+    "latestRead": "current3turns includes both direction clarifications",
+    "otherChatRevisionCoverage": "28 active + 3 archived EOF; unchanged other thread revisions from full-read snapshots",
+    "unavailable": [
+      "Original handoff01a03f16",
+      "Unidentified historical analysis1/2",
+      "Historical image pixels outside snapshots",
+      "Unlisted/inaccessible sources"
+    ]
+  },
+  "invariants": [
+    "No real file decisions for QA. No database/media/login mutation.",
+    "Do not stop recording or drain running tasks. Normal app-owned idle gate before integration.",
+    "No commit/push/release. Preserve other chats changes by hash check."
+  ],
+  "acceptance": [
+    "Aligned horizontal slots and narrow portrait cells; no striped gap cards.",
+    "Only eligible batch checkboxes function; comparison remains independent.",
+    "Selections remain across horizontal scroll, filters, edition toggle, resize and expansion; changed evidence invalidates.",
+    "Same structured thumbnail key does not resubscribe; revision/source key changes still propagate.",
+    "1920x1080 and smaller viewport clipping/resize/scale checks; automatic tests and actual app read-only review."
+  ],
+  "validation": {
+    "totalAutomatedPassed": 79,
+    "typecheck": "app+node passed",
+    "build": "frontend+developer startup passed",
+    "isolatedUI": "three viewport sizes passed",
+    "actualUI": "startup verified; comparison input deferred because another application was foreground"
+  },
+  "thumbnailReproduction": {
+    "before": "20 equivalent renders -> 20 subscriptions",
+    "after": "20 equivalent renders -> 1 subscription; revision change refresh verified"
+  },
+  "integratedAt": "2026-10-31T14:59:51.713Z",
+  "verification": ".runtime/group-review-polish-20261031/verification.json"
+}

@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { isProcessingMode, resolveProcessingMode } from "../state/processingMode";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { galleryId, type GalleryId } from "../core/types";
 import { mergeOutputPages } from "../downloadOverlap/mergeSelection";
@@ -40,6 +41,8 @@ import type {
   DownloadOverlapMergeRequest,
   DownloadOverlapMergeResult,
   DownloadOverlapReview,
+  DownloadOverlapDisplayMatchRequest,
+  DownloadOverlapDisplayMatches,
   DownloadListRequest,
   DownloadPage,
   DuplicateCandidate,
@@ -171,6 +174,7 @@ export interface BackendClient {
   duplicateReviewGet(candidateId: string): Promise<ApiResult<DuplicateReview>>;
   duplicateDecisionApply(request: DuplicateDecisionRequest): Promise<ApiResult<DuplicateReview>>;
   downloadOverlapReviewGet(reviewId: string): Promise<ApiResult<DownloadOverlapReview>>;
+  downloadOverlapDisplayMatches(request: DownloadOverlapDisplayMatchRequest): Promise<ApiResult<DownloadOverlapDisplayMatches>>;
   downloadOverlapAutomationHistoryList(
     request: DownloadOverlapAutomationHistoryRequest,
   ): Promise<ApiResult<DownloadOverlapAutomationHistoryPage>>;
@@ -220,6 +224,7 @@ export interface BackendClient {
 }
 
 const defaultSettings: SettingsSnapshot = {
+  processingMode: "basic",
   highPerformanceProcessing: false,
   chzzkSsdStaging: false,
   revision: 0,
@@ -334,7 +339,8 @@ const readPersistedBrowserSettings = (): SettingsSnapshot => {
       downloadAdaptiveConcurrency: typeof parsed.downloadAdaptiveConcurrency === "boolean"
         ? parsed.downloadAdaptiveConcurrency : defaultSettings.downloadAdaptiveConcurrency,
       chzzkSsdStaging: parsed.chzzkSsdStaging === true,
-      highPerformanceProcessing: parsed.highPerformanceProcessing === true,
+      processingMode: resolveProcessingMode(parsed),
+      highPerformanceProcessing: resolveProcessingMode(parsed) !== "basic",
       downloadAdaptiveMaxRequests: Number.isInteger(parsed.downloadAdaptiveMaxRequests)
         && (parsed.downloadAdaptiveMaxRequests ?? 0) >= 1
         && (parsed.downloadAdaptiveMaxRequests ?? 0) <= 8
@@ -994,7 +1000,17 @@ class BrowserMockBackend implements BackendClient {
 
   async settingsUpdate(patch: SettingsPatch, expectedRevision: number): Promise<ApiResult<SettingsSnapshot>> {
     if (expectedRevision !== this.settings.revision) return conflict("설정");
+    if (patch.processingMode !== undefined && !isProcessingMode(patch.processingMode)) {
+      return validationError("processingMode", "must be basic, game_priority or atsumi_priority");
+    }
+    if (patch.highPerformanceProcessing !== undefined && typeof patch.highPerformanceProcessing !== "boolean") {
+      return validationError("highPerformanceProcessing", "must be a boolean");
+    }
     const next = { ...this.settings, ...patch };
+    next.processingMode = patch.processingMode ?? (patch.highPerformanceProcessing === undefined
+      ? resolveProcessingMode(next)
+      : patch.highPerformanceProcessing ? "game_priority" : "basic");
+    next.highPerformanceProcessing = next.processingMode !== "basic";
     if (next.autoFindHistoryMode === "newer_than_oldest_downloaded") {
       next.autoFindHistoryMode = "newer_than_latest_owned";
     }
@@ -1881,6 +1897,15 @@ class BrowserMockBackend implements BackendClient {
       };
     }
     return ok(cloneDuplicateReview(nextReview));
+  }
+
+  async downloadOverlapDisplayMatches(request: DownloadOverlapDisplayMatchRequest): Promise<ApiResult<DownloadOverlapDisplayMatches>> {
+    const result = await this.downloadOverlapReviewGet(request.reviewId);
+    if (!result.ok) return result;
+    if (result.data.revision !== request.expectedRevision) return conflict("downloadOverlapReview");
+    const candidate = result.data.candidates.find(c => c.candidateId === request.candidateId);
+    if (!candidate) return conflict("downloadOverlapReview");
+    return ok({reviewId: request.reviewId, revision: result.data.revision, candidateId: request.candidateId, incomingFingerprint: result.data.incomingFingerprint, existingFingerprint: candidate.existingFingerprint, additionalPairs: []});
   }
 
   async downloadOverlapReviewGet(reviewId: string): Promise<ApiResult<DownloadOverlapReview>> {
@@ -3606,6 +3631,10 @@ class TauriBackend implements BackendClient {
 
   duplicateDecisionApply(request: DuplicateDecisionRequest): Promise<ApiResult<DuplicateReview>> {
     return invoke("duplicate_decision_apply", { request });
+  }
+
+  downloadOverlapDisplayMatches(request: DownloadOverlapDisplayMatchRequest): Promise<ApiResult<DownloadOverlapDisplayMatches>> {
+    return invoke("download_overlap_display_matches", { request });
   }
 
   downloadOverlapReviewGet(reviewId: string): Promise<ApiResult<DownloadOverlapReview>> {

@@ -64,6 +64,14 @@ const enter = async (index: number, text: string) => act(async () => {
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, text); input.dispatchEvent(new Event("input", { bubbles: true }));
 });
 describe('single-viewer close ordering', () => {
+  it('stages a linked CHZZK channel in existing controls without replacing playing panes', async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(success(active()));
+    const onHandled = vi.fn(), supportedLinkRequest = { id: '97ea02a0-b626-40c2-ab6b-5cf601e81ae2', source: 'chzzk' as const, kind: 'channel' as const, targetId: B, url: `https://chzzk.naver.com/live/${B}` };
+    await act(async () => root.render(<WorkspaceFixture runtime="tauri" privacy={false} unifiedLive api={api} onLeave={() => {}} supportedLinkRequest={supportedLinkRequest} onSupportedLinkHandled={onHandled} />));
+    expect(container.querySelector<HTMLInputElement>('#mado-channel-0')?.value).toBe(B);
+    expect(onHandled).toHaveBeenCalledOnce(); expect(api.configure).not.toHaveBeenCalled(); expect(api.close).not.toHaveBeenCalled();
+    expect(container.querySelectorAll('.mado-native-slot')).toHaveLength(2);
+  });
   it('projects only exact surviving control panes while preserving their fresh status and controls',()=>{
     const initial=multiple(),current=removeClosedViewer(initial,{channelId:A,snapshot:initial});
     const reply={...initial,audioOwner:A,pendingUiAction:{paneId:'video-0',id:'old',action:'exit_focus' as const},pendingControl:{paneId:'video-1',channelId:B,id:'survivor',action:'screenshot' as const,expiresAt:100},panes:initial.panes.map(pane=>pane.paneId==='video-1'?{...pane,recordingId:'still-recording',chatCount:23}:pane)};

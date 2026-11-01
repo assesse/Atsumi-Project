@@ -73,4 +73,16 @@ describe("card context menus", () => {
       expect(callback).toHaveBeenCalledWith(gallery.id);
     }
   });
+
+  it("keeps the action name and activation when the decorative icon is clicked", async () => {
+    const action = vi.fn();
+    await act(async () => root.render(<Fixture id="album" action={action} />));
+    await context(host.querySelector("article")!);
+    const button = document.querySelector<HTMLButtonElement>('[role="menuitem"]')!;
+    expect(button).toHaveAccessibleName("열기");
+    await act(async () => button.querySelector("svg path")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(action).toHaveBeenCalledOnce();
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(document.activeElement).toBe(host.querySelector("article"));
+  });
 });

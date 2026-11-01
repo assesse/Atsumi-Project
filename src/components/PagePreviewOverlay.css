@@ -94,7 +94,7 @@
 .page-preview-dialog[data-controls-visible="false"] .page-preview-resize-handle { opacity: 0; }
 @container bookmark-preview (max-width: 520px) {
   .page-preview-dialog .page-preview-toolbar { gap: 4px; }
-  .page-preview-dialog .page-preview-toolbar button { padding-inline: 6px; font-size: 11px; }
+  .page-preview-dialog .page-preview-toolbar button { padding-inline: 6px; font-size: var(--font-size-min); }
   .page-preview-dialog .page-preview-spread-toggle > span:last-child { display: none; }
   .page-preview-dialog .page-preview-spread-toggle { min-width: 32px; }
 }

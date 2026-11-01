@@ -15,6 +15,6 @@
 }
 .pixiv-favorite-tag-translated > .pixiv-tag-translation {
   color: var(--text-muted, #aba5b2);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   line-height: 1.35;
 }

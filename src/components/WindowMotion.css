@@ -19,7 +19,7 @@
 .detail-restore-dock[data-minimized="false"] { opacity: 0; pointer-events: none; translate: 0 8px; }
 .detail-restore-dock[data-minimized="true"] { animation: detail-dock-arrive 320ms ease-out; }
 .detail-restore-dock:hover { box-shadow: 0 0 0 2px var(--primary-soft), 0 8px 26px #0006; }
-.detail-restore-dock small { color: var(--muted); font-size: 11px; }
+.detail-restore-dock small { color: var(--muted); font-size: var(--font-size-min); }
 .window-motion .danbooru-detail { animation: none; }
 /* Native dialogs stay in the top layer during the fade; their save/close logic
    remains immediate. Page Preview has its own cancellable exit animation. */

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { galleryId } from "../core/types";
-import { collectManualOverlapReviews } from "./manualOverlapSequence";
+import { collectManualOverlapReviews, requiresManualOverlapApproval } from "./manualOverlapSequence";
 import type { DownloadEntry } from "../api/contracts";
 
 const entry = (i: number, state: DownloadEntry["state"] = "review_required"): DownloadEntry => ({
@@ -8,6 +8,10 @@ const entry = (i: number, state: DownloadEntry["state"] = "review_required"): Do
   reviewKind: "gallery_duplicate", revision: 1, progress: 100, state,
 });
 describe("manual overlap queue", () => {
+  it.each(["pending", "stale", "resolved", "cancelled"] as const)("only manual %s records can request approval", (reviewState) => {
+    expect(requiresManualOverlapApproval({ reviewState })).toBe(reviewState === "pending" || reviewState === "stale");
+    expect(requiresManualOverlapApproval({ reviewState, acknowledgedAt: "2026-10-31T00:00:00Z" })).toBe(false);
+  });
   it("collects every pending page, deduplicates, and excludes terminal jobs", async () => {
     const entries = Array.from({ length: 200 }, (_, i) => entry(i));
     const downloadEntriesList = vi.fn().mockResolvedValueOnce({ ok: true, data: { page: 1, totalItems: 204, entries } })

@@ -1,0 +1,76 @@
+{
+  "date": "2026-10-25",
+  "state": "native-source-autoplay-repaired-and-verified-with-computer-use",
+  "latestVerified20261026": {
+    "original": "Latest direct user requires complete autoplay repair and actual Computer Use verification until BGD is updated. Central video2 must keep playing after a small upward scroll while videos1/3 are partly visible.",
+    "audit": ".runtime/requirements-audit/20261026-x-autoplay-computer-use-resume.json",
+    "verification": ".runtime/requirements-audit/20261026-x-autoplay-computer-use-outcome.json",
+    "confirmedCauses": [
+      "The public source renders already-permitted media using showContent OR displaySensitiveMedia, but its native playback coordinator receives NORMAL priority only for showContent. These visible videos therefore fail autoplay eligibility and are paused by the source after a wheel event.",
+      "One actual MSE stream has metadata and buffered data starting at1.227814s, but no data at0. The native first-frame preparation waits without emitting an HTML play event.",
+      "The presentation helper clips against the scrolled document root's border box instead of the layout viewport, falsely classifying a fully visible deeper video as offscreen."
+    ],
+    "implementation": [
+      "Correct only the uniquely recognized public-source priority predicate, retaining the actual source age gate. Compile the public code through the existing native script API before the ordinary network script completes. No HTTP response substitution, CSP change, credential forwarding, private React/store/API access or new adapter play call.",
+      "Original X retains video selection, loading, manual controls and cross-pane playback ownership. Unknown source or expired delivery falls back to the original script; an arrived original JavaScript packet is never delayed.",
+      "Prepare a small existing initial buffer prefix once for untouched visible current-owned media. Preserve explicit pause/seek, route/history/resource/visibility/security fences, and use the existing presentation observer without new polling.",
+      "Use the layout viewport for the document scroller while retaining ordinary ancestor clipping. A fresh current observation after a retained pane returns can finish an untouched preparation."
+    ],
+    "actual": [
+      "Exact eight problem Likes and all five supplied normal controls automatically started and advanced without video play clicks in the real app.",
+      "Central2 retained playback after a small upward wheel with1/3 partly visible; forward and reverse native handoffs worked. Manual pause, paused seek and replay remained effective.",
+      "Final fresh development binary contains the exact adapter and delivery sources. Likes-to-Feed-to-Likes before first visiting the initial-gap video still allows that video to autoplay and advance.",
+      "Actual public four-video primary detail: second video play and expansion, native2-to3-to4 transitions, advancing frames and Escape return passed without a skeleton freeze. The initial detail was opened by ordinary public-URL navigation through standard DevTools; this is not a claim that a recommendation feed happened to contain that post."
+    ],
+    "checks": "Final X frontend34files/1755tests, typecheck, unchanged native surface151tests, scoped rustfmt/diff checks and final debug build passed.",
+    "historicalStatus": "The older BGD analysis, withdrawn forced-selector proposal, acceptance and checks below remain historical evidence. This verified entry supersedes their unresolved status; the forced selector remains withdrawn.",
+    "limits": "Verification covers the reported exact set and stated interactions, not every future upstream bundle or unrelated platform/account/search flow. No account/security/social mutations, media downloads, data reset, commit/push/release or PC shutdown."
+  },
+  "actualBGD20261026": {
+    "outcome": ".runtime/requirements-audit/20261026-bgd-verification-outcome.json",
+    "recovery": "Actual five supplied normal controls source-autoplayed and progressed without video play clicks. Eight problem posts did not automatically call play. Native source autoplay recovery is observed, but the original problem remains.",
+    "trace": "A trusted small upward wheel kept video2 central; the public X media bundle called pause about475ms later. No third play was observed in this bounded sample, so full2→3 takeover cause is unconfirmed.",
+    "rejectedInference": "Both groups have the same embedded-video label/native ancestry. Duration, aspect ratio and muted state before playback do not establish the cause.",
+    "currentSource": "D9749B5B12BD92F427C7C2BEE14A7B38531AFCE60E4FC09BEDBAC460229D09A7 adds only the separately audited bounded current-detail handoff identity fallback to the restored baseline. No forced feed selector or new adapter play calls.",
+    "remaining": "Original autoplay selection/steal repair remains open. Historical withdrawn decisions and synthetic acceptance below are not current behavior."
+  },
+  "latestAnalysis20261026": {
+    "original":"User clarifies1/3 remain partly visible at top/bottom and2 remains central; after manually playing2, a tiny upward scroll lets3 take over. All videos play manually.",
+    "evidence":".runtime/requirements-audit/20261026-x-eight-likes-analysis.json",
+    "confirmed":"Unchanged current adapter misclassifies the first positively visible post-wheel source play as manual regardless of video identity/centrality/direction. Offline10px-bottom case reproduces this classification, not source initiation. Same-pane autoplay also admits3 without the wheel token; removing that token alone is insufficient.",
+    "pending":"Latest explicit BGD request resumed the audit. Actual2.pause source is captured, while3.play initiation/full takeover remains unconfirmed. No new autoplay-selection implementation; see actualBGD20261026."
+  },
+  "withdrawal": {
+    "original":"Current direct user: 뭐가 고쳐졌다는거지? 다 망가져서 이젠 자동 재생도 안되는데?",
+    "reason":"The real user report invalidates the synthetic acceptance evidence. Pausing a source play before a classified/hydrated replacement is available can leave every video paused. Do not assume the mocked ordering policy works in the real source.",
+    "activePolicy":"Restore native X ownership of selection/loading/playback. Remove all feedPlayback/acceptFeedPlay and adapter-created play calls added in this batch. Preserve original native readiness, wheel/audio ownership and other-platform changes.",
+    "restoredSourceSha256":"B94936DF13F6541856662A2367B6B669FE7524B977E8D56CE7B7615548E210F1",
+    "runtime":"Recompiled2m03s after detecting and rejecting stale binary cache reuse. PID7012, exact complete restored source embedded, withdrawn selector absent; heartbeat healthy. Actual playback remains unverified. User explicitly declined the focused Computer Use exception with 화면 조작은 계속 보류; wait for later direction without repeating this question.",
+    "historicalFields":"The decisions/supersedes/checks below describe the withdrawn candidate, not current production behavior or actual acceptance.",
+    "originalOrderIssue":"Still unresolved. Diagnose actual first-play/hydration/scroll behavior before introducing another playback selector.",
+    "audit":".runtime/requirements-audit/20261025-x-autoplay-regression-revert-preedit.json"
+  },
+  "original": "Current direct request: X feed videos arranged 1,2,3 can play1 then3 while scrolling without playing2; investigate and repair.",
+  "audit": ".runtime/requirements-audit/20261025-x-feed-playback-order-preedit.json",
+  "preserves": ["x-official-split-return-20261020.json", "x-native-actions-and-focus-20261020.json", "x-menus-preview-tabs-20261020.json", "x-native-video-readiness-20261025.json"],
+  "evidence": "Neutral three-row regression failed before the change: the adapter accepted the third source play although the second native player occupied the viewport center. The former adapter selected no within-pane media and its whole-column wheel token accepted any positive visible area. This proves an app-side ordering gap, not the exact current upstream X timing or repost-specific cause.",
+  "supersedes": "The latest repair and retained original center-near autoplay request supersede source-only inline feed selection/no-play-call in the older readiness contract. Original immersive video/photo views and independent right preview still use native source behavior.",
+  "decisions": [
+    "Keep original native X players, media URLs, controls, playback positions, mute and volume. No replacement UI/player, source click, fabricated URL, reload, navigation, private state or API.",
+    "Within one current primary feed column, group observed native players by actual outer article, independent of repost/author text. Prefer the displayed video interval nearest the clipped viewport center with24px boundary tolerance. A tall video is not penalized by a full-area visibility ratio.",
+    "Reject early off-center autoplay before consuming the wheel input token. After existing source playback intent, reconcile to the observed centered video using its own play method, only while native pane playback permission is granted. Native cross-pane account/registration/visibility/fullscreen priority remains authoritative.",
+    "Coalesce scroll, resize, source hydration and permission callbacks into a single60ms task. Bind to the same DOM root, route/history, input and visibility epoch; recheck owner/security/editing/native permission at execution. Cancel on intervening trusted input, revoked routing, account/login, history or concealment.",
+    "An explicit play may select a different visible row until the next scroll. Preserve current clip within a multi-video post. A trusted pointer/keyboard pause suppresses autoplay while the same row remains selected; explicit replay clears it.",
+    "Separate pause intent from other original-player controls: role=slider/native seeking temporary pauses do not suppress native resume. English/Korean pause controls, direct video toggles and K/Space retain explicit pause protection, including the pointerdown/click pair.",
+    "An observed centered poster reserves its row during hydration; do not click its source button or invent a media resource. Start only when a real permitted video source exists. Browser denial/errors/end do not create polling or repeated same-resource play attempts.",
+    "Large scroll jumps use the current viewport and may pass rows that are no longer visible. No forced playback of previously passed posts and no preload of every feed video."
+  ],
+  "acceptance": ["Forward and reverse ordering through the middle row", "Tall and repost geometry; actual ancestor clipping", "Wheel/native grant race and independent preview priority", "Explicit pause/replay and multi-clip retention", "Blocked/foreign/hidden/ad/stale ownership refusal; no retry loop or source-setting mutation", "Actual primary-feed operation remains in the deferred Computer Use batch; unit tests/build/heartbeat are not live UI proof"],
+  "checks": {
+    "before":"Three-row regression failed before production edits: third source play was not paused. Follow-up seek-slider regression also failed before its bounded pause-intent repair.",
+    "focused":"Final xSurface252 tests passed, including43 additional regressions over the209-test baseline.",
+    "frontend":"All33 X frontend files /1751 tests passed; TypeScript and scoped git diff --check passed.",
+    "native":"x_feed::surface suite147 tests passed with unchanged Rust ownership/registration/visibility/native bridge code. Final JavaScript behavior is covered by the frontend suite. Final debug build passed1m59s; ordinary non-probe PID16684 authenticated heartbeat pulseAge738ms, nativeUnresponsive=false, reloadPending=false.",
+    "actual":"No Computer Use in this batch. Current user's exact live source timing, poster-only hydration and upstream re-pausing remain pending; no actual-flow completion claim."
+  }
+}

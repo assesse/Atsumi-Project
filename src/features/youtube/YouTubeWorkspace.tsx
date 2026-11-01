@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from 'react';
+import { ContextMenuLabel } from '../../components/ContextMenuLabel';
 import { createYouTubeApi, type YouTubeApi, type YouTubeSearchItem, type YouTubeSearchRequest } from './api';
 import { parseYouTubeTarget, readYouTubeFavorites, saveYouTubeFavorites, targetKey, type YouTubeFavorite, type YouTubeMetadata } from './model';
 import { YouTubePlayer } from './YouTubePlayer';
@@ -15,8 +16,9 @@ import { platformMediaApi, type PlatformMediaApi } from '../platforms/platformMe
 import './YouTubeWorkspace.css';
 import { subscribeYouTubeThumbnail } from './thumbnailRequests';
 import './YouTubeMultiView.css';
+import type { SupportedLinkRequest } from '../../app/supportedLinkNavigation';
 
-export type YouTubeWorkspaceProps = { active: boolean; runtime: 'tauri' | 'browser-mock'; privacyMode: boolean; view: 'explore' | 'live' | 'favorites' | 'screenshots' | 'downloads'; onViewChange?: (view: 'explore' | 'live' | 'favorites' | 'screenshots' | 'downloads') => void; onNotice?: (message: string) => void; api?: YouTubeApi; mediaApi?: PlatformMediaApi; onWatchingChange?: (watching: boolean) => void; previewWidth?: number };
+export type YouTubeWorkspaceProps = { active: boolean; runtime: 'tauri' | 'browser-mock'; privacyMode: boolean; view: 'explore' | 'live' | 'favorites' | 'screenshots' | 'downloads'; onViewChange?: (view: 'explore' | 'live' | 'favorites' | 'screenshots' | 'downloads') => void; onNotice?: (message: string) => void; api?: YouTubeApi; mediaApi?: PlatformMediaApi; onWatchingChange?: (watching: boolean) => void; previewWidth?: number; supportedLinkRequest?: SupportedLinkRequest | null };
 type SearchTab = { id: string; label: string; request: YouTubeSearchRequest; items: YouTubeSearchItem[]; cursor?: string | null; loading: boolean; error?: string; scroll: number };
 type DetailResolution = { token: number; pending: boolean; error?: string; verifiedAt?: number };
 const errorText = (error: unknown) => error instanceof Error ? error.message : typeof error === 'string' ? error : '요청을 마치지 못했습니다.';
@@ -35,8 +37,9 @@ function Cover({ item, api, privacy, active }: { item: YouTubeMetadata; api: You
   }, [item.id, item.kind, item.thumbnail, api, privacy, active]);
   return <div className="youtube-card-cover" data-kind={item.kind} ref={root}>{source && !privacy ? <img src={source} alt="" /> : <span aria-hidden="true">{privacy ? '' : item.kind === 'channel' ? '◉' : '▶'}</span>}</div>;
 }
-export function YouTubeWorkspace({ active, runtime, privacyMode, view, onViewChange, onNotice, api: providedApi, mediaApi = platformMediaApi, onWatchingChange, previewWidth = 320 }: YouTubeWorkspaceProps) {
+export function YouTubeWorkspace({ active, runtime, privacyMode, view, onViewChange, onNotice, api: providedApi, mediaApi = platformMediaApi, onWatchingChange, previewWidth = 320, supportedLinkRequest }: YouTubeWorkspaceProps) {
   const api = useMemo(() => providedApi ?? createYouTubeApi(runtime), [providedApi, runtime]);
+  const handledSupportedLink = useRef<string | null>(null);
   const actionApi = useMemo(() => ({ ...api, metadata: createYouTubeMetadataResolver(api) }), [api]);
   const [input, setInput] = useState(''), [filter, setFilter] = useState<YouTubeSearchRequest['filter']>('all'), [sort, setSort] = useState<YouTubeSearchRequest['sort']>('relevance');
   const [tabs, setTabs] = useState<SearchTab[]>([]), [tabId, setTabId] = useState(''), [history, setHistory] = useState<string[]>([]), [showHistory, setShowHistory] = useState(false);
@@ -173,6 +176,18 @@ export function YouTubeWorkspace({ active, runtime, privacyMode, view, onViewCha
     if (target) { if (target.kind === 'video') { open({ ...target, title: target.id, author: '' }); return; } setBusy(true); try { const item = await actionApi.metadata(target); open(item); } catch (cause) { setError(errorText(cause)); } finally { setBusy(false); } return; }
     await search({ query: value.trim(), filter, sort }, value.trim());
   };
+  useEffect(() => {
+    if (!active || privacyMode || view !== 'explore' || supportedLinkRequest?.source !== 'youtube' || handledSupportedLink.current === supportedLinkRequest.id) return;
+    // Wait for this effect to survive StrictMode's mount/cleanup probe before
+    // consuming the link; that probe aborts pending metadata by design.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || handledSupportedLink.current === supportedLinkRequest.id) return;
+      handledSupportedLink.current = supportedLinkRequest.id;
+      setInput(supportedLinkRequest.url); void submit(supportedLinkRequest.url);
+    });
+    return () => { cancelled = true; };
+  }, [active, privacyMode, view, supportedLinkRequest]);
   const favorite = (item: YouTubeMetadata) => { setFavorites(old => { const exists = old.some(value => targetKey(value) === targetKey(item)); if (!exists && old.length >= 100) { setError('즐겨찾기는 100개까지 저장할 수 있습니다. 기존 항목을 해제한 뒤 추가해 주세요.'); return old; } const next = exists ? old.filter(value => targetKey(value) !== targetKey(item)) : [{ ...item, savedAt: Date.now() }, ...old]; try { saveYouTubeFavorites(localStorage, next); return next; } catch { setError('즐겨찾기를 저장하지 못했습니다.'); return old; } }); };
   const download = async (items: YouTubeMetadata[]) => {
     if (!allowed.current || downloadInFlight.current) return;
@@ -243,7 +258,7 @@ export function YouTubeWorkspace({ active, runtime, privacyMode, view, onViewCha
       </article>; })}</div> : current?.loading && !showFavorites ? <p role="status" className="youtube-empty"><span className="youtube-spinner" /></p> : <p className="youtube-empty">{showFavorites ? '즐겨찾기한 항목이 없습니다.' : current ? '검색 결과가 없습니다.' : '검색어로 영상이나 채널을 찾아보세요.'}</p>}
       {current?.cursor && !showFavorites ? <button className="youtube-more" disabled={current.loading} onClick={() => { const tab = current; updateTab(tab.id, { loading: true, error: undefined }); void api.search?.({ ...tab.request, cursor: tab.cursor! }).then(result => updateTab(tab.id, { items: [...tab.items, ...result.items.filter(item => !tab.items.some(value => targetKey(value) === targetKey(item)))], cursor: result.cursor, loading: false })).catch(cause => updateTab(tab.id, { loading: false, error: errorText(cause) })); }}>{current.loading ? <span className="youtube-spinner" /> : '더 보기'}</button> : null}
       </div>
-      {menu ? <><div className="platform-media-dismiss" onClick={() => setMenu(null)} /><div ref={menuRef} role="menu" className="platform-media-menu" style={{ left: menu.x, top: menu.y }}><button role="menuitem" onClick={() => open(menu.item)}>열기</button><button role="menuitem" onClick={() => { favorite(menu.item); setMenu(null); }}>즐겨찾기</button>{menu.item.kind === 'video' ? <button role="menuitem" disabled={busy} onClick={() => void download([menu.item])}>다운로드</button> : null}<button role="menuitem" onClick={() => { void external(menu.item); setMenu(null); }}>YouTube에서 열기</button></div></> : null}
+      {menu ? <><div className="platform-media-dismiss" onClick={() => setMenu(null)} /><div ref={menuRef} role="menu" className="platform-media-menu" style={{ left: menu.x, top: menu.y }}><button role="menuitem" onClick={() => open(menu.item)}><ContextMenuLabel icon="open">열기</ContextMenuLabel></button><button role="menuitem" onClick={() => { favorite(menu.item); setMenu(null); }}><ContextMenuLabel icon="favorite">즐겨찾기</ContextMenuLabel></button>{menu.item.kind === 'video' ? <button role="menuitem" disabled={busy} onClick={() => void download([menu.item])}><ContextMenuLabel icon="download">다운로드</ContextMenuLabel></button> : null}<button role="menuitem" onClick={() => { void external(menu.item); setMenu(null); }}><ContextMenuLabel icon="external">YouTube에서 열기</ContextMenuLabel></button></div></> : null}
     </section>
     <PlatformMediaLibrary provider="youtube" active={active && view === 'downloads'} privacyMode={privacyMode} api={mediaApi} onNotice={onNotice} />
     <PlatformScreenshotLibrary provider="youtube" active={active && view === 'screenshots'} privacyMode={privacyMode} onNotice={onNotice} />

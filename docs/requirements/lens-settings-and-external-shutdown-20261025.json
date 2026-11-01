@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-25",
+  "state": "implemented-real-dialog-settings-refresh-and-external-graceful-exit-verified-google-human-check-pending",
+  "actualBGD20261026": {
+    "outcome": ".runtime/requirements-audit/20261026-bgd-verification-outcome.json",
+    "dialog": "Actual main-window media-search controls opened the same-profile SafeSearch page. Original/settings manual close and refresh returned to seven Lens results while preserving seven SauceNAO results.",
+    "google": "Existing Off selection remained displayed, but Google explicitly states that age-unverified users can still have restricted results. No login, age verification or security/privacy preference input was automated; unrestricted-image persistence remains unverified.",
+    "shutdown": "Five development instances in this BGD batch normally exited through the authenticated app-owned client. Final PID66164 returned accepted/exited and the child window inventory contained no Atsumi. No forced termination or repeated user-close request."
+  },
+  "originals": [
+    "위에서 말한 흐림처리 문제도 해결해줘.",
+    "User normal-closed Atsumi and explicitly requested an app-owned external code path for graceful shutdown to avoid repeated manual close requests."
+  ],
+  "audit": ".runtime/requirements-audit/20261025-lens-settings-shutdown-preedit.json",
+  "outcome": ".runtime/requirements-audit/20261025-lens-settings-shutdown-outcome.json",
+  "preserves": [
+    "x-parallel-source-search-20261025.json",
+    "supported-link-window-repair-20261025.json",
+    "existing normal-exit managed-work and startup cancellation contracts"
+  ],
+  "decisions": [
+    "Lens-only fixed SafeSearch settings entry in the original provider profile; no credential copying, settings forcing, hidden-image fetching or managed/age-gate bypass.",
+    "Remember immutable native-observed GET results URL only for the current job. Explicit refresh revisits/reopens that exact same result (never image upload), re-extracts bounded observed images and updates only Lens after ownership/fence validation; preserve old results on failure and other provider results.",
+    "Compact Lens header settings/refresh controls, expiry/closed handling and cancellation/privacy guards. No exact-match automation change in this batch.",
+    "Actual SafeSearch page requires age verification. Explicit settings mode alone permits the human user's normal Google account/age procedure in the same Lens profile; ordinary search still denies account navigation. No automated authentication, age submission, DOM extraction or credential copying. Amendment evidence: .runtime/requirements-audit/20261025-lens-manual-access-preedit.json.",
+    "Superseding the preliminary single-instance proposal: reuse the app's existing authenticated IPv4 loopback control channel, strict current PID/epoch/confirmation/drain grammar; no arbitrary URL/path/code IPC. No running app => no app launch.",
+    "Reuse native startup-cancel and managed-work fingerprint/drain path on worker; default refuses active work, explicit drain flag confirms the current observed work set without force-kill/status bypass.",
+    "Bounded PowerShell client waits on exact process handle, reports receipt/timeout without termination; no user-data or profile resets."
+  ],
+  "acceptance": [
+    "Native result/settings URL allowlists and no-upload refresh tests",
+    "Lens UI/API scope, independent provider preservation, refresh failure/cancel/expiry tests",
+    "Shutdown parser/current identity/explicit drain tests, existing managed-work gate tests, bounded client process identity and no-app behavior",
+    "Actual SafeSearch page in provider profile, same-result refresh, persistent preference; locked/auth requirements reported accurately",
+    "Actual external no-work graceful close and ordinary launch; no force process termination",
+    "Resume still-pending actual video/Hitomi/YouTube first-link verification where desktop input permits"
+  ],
+  "limits": "Google's managed/age/account restrictions remain authoritative. No clear-pixel or login success claim from fixtures. Exact-match automation is outside this blur fix. Actual operation and outstanding previous QA are recorded separately."
+}

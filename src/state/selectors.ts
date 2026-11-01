@@ -56,7 +56,9 @@ const matchesQuery = (gallery: Gallery, query: string): boolean => {
   return tokens.every((token) => matchesSearchToken(gallery, token));
 };
 
-const matchesDownloadFilter = (gallery: Gallery, state: UiState): boolean => {
+type GalleryListState = Pick<UiState, "view" | "search" | "downloadsFilter" | "downloadsSort" | "exploreSort">;
+
+const matchesDownloadFilter = (gallery: Gallery, state: GalleryListState): boolean => {
   if (!gallery.download) return false;
   switch (state.downloadsFilter) {
     case "all":
@@ -77,7 +79,7 @@ const matchesDownloadFilter = (gallery: Gallery, state: UiState): boolean => {
 /** Auto Find is an inbox for discoveries that have not entered the download library yet. */
 export const isPendingAutoFindCandidate = (gallery: Gallery): boolean => gallery.download === undefined;
 
-export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>, popularity: import("../api/downloadPopularity").PopularityRanks = {}): Gallery[] {
+export function visibleGalleries(state: GalleryListState, galleries: Iterable<Gallery>, popularity: import("../api/downloadPopularity").PopularityRanks = {}): Gallery[] {
   const search = state.search[state.view];
   const directExploreId = state.view === "explore" && /^\d{7}$/.test(search.committed.trim());
   let items = [...galleries].filter((gallery) => directExploreId
@@ -90,7 +92,7 @@ export function visibleGalleries(state: UiState, galleries: Iterable<Gallery>, p
   if (state.view === "downloads") {
     items = items.filter((gallery) => gallery.download?.state !== "quarantined" && matchesDownloadFilter(gallery, state));
   }
-  items = items.filter((gallery) => matchesQuery(gallery, search.committed));
+  if (search.committed.trim()) items = items.filter((gallery) => matchesQuery(gallery, search.committed));
 
   if (state.view === "explore") {
     if (state.exploreSort === "recent") {

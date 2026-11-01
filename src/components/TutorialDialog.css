@@ -9,9 +9,9 @@
 .tutorial-callout button { min-height: 34px; padding: 6px 12px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-soft); color: var(--text); }
 .tutorial-callout .tutorial-close { position: absolute; top: 8px; right: 8px; z-index: 1; min-width: 34px; padding: 0; font-size: 23px; background: transparent; border-color: transparent; }
 .tutorial-copy { animation: tutorial-enter 160ms ease-out; }
-.tutorial-callout h2 { margin: 0 28px 12px 0; font-size: 19px; line-height: 1.4; font-weight: 600; }
-.tutorial-callout p { margin: 0 0 14px; color: var(--text-soft); font-size: 14px; line-height: 1.7; word-break: keep-all; overflow-wrap: anywhere; }
-.tutorial-callout .tutorial-hint { color: var(--text-soft); font-size: 13px; }
+.tutorial-callout h2 { margin: 0 28px 12px 0; font-size: 21px; line-height: 1.4; font-weight: 600; }
+.tutorial-callout p { margin: 0 0 14px; color: var(--text-soft); font-size: 15px; line-height: 1.7; word-break: keep-all; overflow-wrap: anywhere; }
+.tutorial-callout .tutorial-hint { color: var(--text-soft); font-size: 14px; }
 .tutorial-spotlight.is-action-required { animation: tutorial-action-pulse 1.5s ease-in-out infinite; }
 @keyframes tutorial-action-pulse { 0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent); } 50% { box-shadow: 0 0 0 9px color-mix(in srgb, var(--primary) 32%, transparent), 0 0 24px color-mix(in srgb, var(--primary) 28%, transparent); } }
 .tutorial-callout #tutorial-description { white-space: pre-line; }
@@ -20,7 +20,7 @@
 .tutorial-callout .tutorial-next { background: var(--primary); color: var(--canvas); border-color: var(--primary); font-weight: 600; }
 .tutorial-callout button:hover { filter: brightness(1.13); }
 .tutorial-callout button:disabled { opacity: .48; cursor: default; filter: none; }
-.tutorial-callout .tutorial-error { color: var(--danger, #f39595); font-size: 13px; }
+.tutorial-callout .tutorial-error { color: var(--danger, #f39595); font-size: 14px; }
 @keyframes tutorial-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 1000px) { .tutorial-callout { width: min(320px, calc(100% - 32px)); padding: 18px; } }
 @media (prefers-reduced-motion: reduce) { .tutorial-copy, .tutorial-spotlight.is-action-required { animation: none; } }

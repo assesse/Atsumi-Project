@@ -11,11 +11,11 @@ use std::{
     collections::{HashMap, HashSet},
     fs::{self, OpenOptions},
     io::{Read, Write},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::{self, SyncSender},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     thread::{self, JoinHandle},
     time::Duration,
@@ -30,9 +30,84 @@ const QUEUE: usize = 128;
 pub mod channel_profile;
 type ProfileFetcher =
     Arc<dyn Fn(&str) -> Result<(String, Option<String>), StreamError> + Send + Sync>;
-enum AssetJob {
+enum AssetRequest {
     Image(String, String, Option<PathBuf>),
     Channel(String, PathBuf),
+}
+struct AssetJob {
+    request: AssetRequest,
+    // Kept alive through queueing, remote fetch and local mirror publication.
+    // Dropping a rejected/abandoned job also releases its recording writer.
+    _recording_ticket: Option<RecordingTicket>,
+}
+
+#[derive(Default)]
+struct RecordingWriters {
+    pending: usize,
+    fenced: bool,
+}
+static RECORDING_WRITERS: OnceLock<Mutex<HashMap<PathBuf, RecordingWriters>>> = OnceLock::new();
+fn recording_writers() -> &'static Mutex<HashMap<PathBuf, RecordingWriters>> {
+    RECORDING_WRITERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+// Callers supply roots already canonicalized/owned by the native capture store.
+// This hot-path check is lexical only: no filesystem access under capture locks.
+fn native_recording_root(root: &Path) -> bool {
+    root.is_absolute()
+        && root.as_os_str().len() <= 32768
+        && root.components().all(|c| matches!(c, Component::Prefix(_) | Component::RootDir | Component::Normal(_)))
+}
+struct RecordingTicket { root: PathBuf }
+impl RecordingTicket {
+    fn acquire(root: &Path) -> Option<Self> {
+        if !native_recording_root(root) { return None; }
+        let mut writers = recording_writers().lock().ok()?;
+        if !writers.contains_key(root) && writers.len() >= MAX_FILES { return None; }
+        let entry = writers.entry(root.to_owned()).or_default();
+        if entry.fenced || entry.pending >= MAX_FILES { return None; }
+        entry.pending += 1;
+        Some(Self { root: root.to_owned() })
+    }
+}
+impl Drop for RecordingTicket {
+    fn drop(&mut self) {
+        if let Ok(mut writers) = recording_writers().lock() {
+            if let Some(entry) = writers.get_mut(&self.root) {
+                entry.pending = entry.pending.saturating_sub(1);
+                if entry.pending == 0 && !entry.fenced { writers.remove(&self.root); }
+            }
+        }
+    }
+}
+
+/// Fast, conservative admission check. The actual copy must also hold a fence.
+pub(crate) fn pending(root: &Path) -> bool {
+    if !native_recording_root(root) { return true; }
+    recording_writers().lock().map_or(true, |writers| {
+        writers.get(root).is_some_and(|entry| entry.pending > 0 || entry.fenced)
+    })
+}
+pub(crate) struct RecordingAssetFence { root: PathBuf }
+/// Atomically require a drained queue and prevent new writers until Drop.
+/// No I/O, network or waiting for jobs occurs while the registry mutex is held.
+pub(crate) fn try_fence(root: &Path) -> Option<RecordingAssetFence> {
+    if !native_recording_root(root) { return None; }
+    let mut writers = recording_writers().lock().ok()?;
+    if !writers.contains_key(root) && writers.len() >= MAX_FILES { return None; }
+    let entry = writers.entry(root.to_owned()).or_default();
+    if entry.pending != 0 || entry.fenced { return None; }
+    entry.fenced = true;
+    Some(RecordingAssetFence { root: root.to_owned() })
+}
+impl Drop for RecordingAssetFence {
+    fn drop(&mut self) {
+        if let Ok(mut writers) = recording_writers().lock() {
+            if let Some(entry) = writers.get_mut(&self.root) {
+                entry.fenced = false;
+                if entry.pending == 0 { writers.remove(&self.root); }
+            }
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -275,9 +350,10 @@ impl ReplayAssetCache {
                         Err(mpsc::RecvTimeoutError::Timeout) => continue,
                         Err(_) => break,
                     };
-                    let (id, url, recording, profile_capture) = match job {
-                        AssetJob::Image(id, url, root) => (id, url, root, false),
-                        AssetJob::Channel(channel, root) => {
+                    let AssetJob { request, _recording_ticket } = job;
+                    let (id, url, recording, profile_capture) = match request {
+                        AssetRequest::Image(id, url, root) => (id, url, root, false),
+                        AssetRequest::Channel(channel, root) => {
                             // A single bounded worker, not one thread/request per UI
                             // update. Capture works even when chat saving is disabled.
                             // A descriptor alone does not mean the image was saved.
@@ -411,8 +487,12 @@ impl ReplayAssetCache {
         if seen.len() >= MAX_FILES || seen.contains(&key) {
             return;
         }
+        let Some(ticket) = RecordingTicket::acquire(root) else { return; };
         if sender
-            .try_send(AssetJob::Channel(channel.into(), root.to_owned()))
+            .try_send(AssetJob {
+                request: AssetRequest::Channel(channel.into(), root.to_owned()),
+                _recording_ticket: Some(ticket),
+            })
             .is_ok()
         {
             seen.insert(key);
@@ -439,8 +519,15 @@ impl ReplayAssetCache {
             if seen.contains(&key) {
                 continue;
             }
+            let ticket = if let Some(root) = root.as_deref() {
+                let Some(ticket) = RecordingTicket::acquire(root) else { continue; };
+                Some(ticket)
+            } else { None };
             if sender
-                .try_send(AssetJob::Image(id, url.clone(), root.clone()))
+                .try_send(AssetJob {
+                    request: AssetRequest::Image(id, url.clone(), root.clone()),
+                    _recording_ticket: ticket,
+                })
                 .is_ok()
             {
                 seen.insert(key);
@@ -962,5 +1049,124 @@ mod tests {
             assert!(read_recording(&root, &id).is_ok());
             assert!(budgets.len() <= 64);
         }
+    }
+
+    fn recording_rich(name: &str) -> ChatRich {
+        ChatRich {
+            profile_image_url: Some(format!("https://ssl.pstatic.net/{name}.png")),
+            ..Default::default()
+        }
+    }
+    fn await_recording_drain(root: &Path) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while pending(root) && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!pending(root), "recording asset jobs did not drain");
+    }
+
+    #[test]
+    fn recording_asset_fence_waits_for_running_and_queued_jobs_then_allows_retry() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release = Arc::new(Mutex::new(release_rx));
+        let cache = ReplayAssetCache::with_fetch(
+            dir.path(), true,
+            Arc::new(move |url| {
+                started_tx.send(url.to_owned()).map_err(|_| unavailable())?;
+                release.lock().map_err(|_| unavailable())?
+                    .recv_timeout(Duration::from_secs(3)).map_err(|_| unavailable())?;
+                Ok(data())
+            }),
+        ).unwrap();
+        cache.submit_recording(&root, Some(&recording_rich("first")));
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        cache.submit_recording(&root, Some(&recording_rich("second")));
+        assert_eq!(recording_writers().lock().unwrap().get(&root).unwrap().pending, 2);
+        assert!(try_fence(&root).is_none());
+        release_tx.send(()).unwrap();
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_eq!(recording_writers().lock().unwrap().get(&root).unwrap().pending, 1);
+        assert!(try_fence(&root).is_none());
+        release_tx.send(()).unwrap();
+        await_recording_drain(&root);
+
+        let fence = try_fence(&root).unwrap();
+        assert!(try_fence(&root).is_none());
+        let third = recording_rich("third");
+        cache.submit_recording(&root, Some(&third));
+        assert_eq!(recording_writers().lock().unwrap().get(&root).unwrap().pending, 0);
+        assert!(started_rx.try_recv().is_err());
+        drop(fence);
+        assert!(!pending(&root));
+        cache.submit_recording(&root, Some(&third));
+        assert!(started_rx.recv_timeout(Duration::from_secs(3)).unwrap().contains("third"));
+        release_tx.send(()).unwrap();
+        await_recording_drain(&root);
+        cache.shutdown_and_wait();
+        for name in ["first", "second", "third"] {
+            let rich = recording_rich(name);
+            let id = asset_id(rich.profile_image_url.as_ref().unwrap()).unwrap();
+            assert!(read_recording(&root, &id).is_ok());
+        }
+        assert!(!recording_writers().lock().unwrap().contains_key(&root));
+    }
+
+    #[test]
+    fn recording_asset_tickets_drop_on_shutdown_and_rejected_queue_send() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let release = Arc::new(Mutex::new(release_rx));
+        let cache = ReplayAssetCache::with_fetch(
+            dir.path(), true,
+            Arc::new(move |_| {
+                started_tx.send(()).map_err(|_| unavailable())?;
+                release.lock().map_err(|_| unavailable())?
+                    .recv_timeout(Duration::from_secs(3)).map_err(|_| unavailable())?;
+                Ok(data())
+            }),
+        ).unwrap();
+        cache.submit_recording(&root, Some(&recording_rich("running")));
+        started_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        for index in 0..(QUEUE + 1) {
+            cache.submit_recording(&root, Some(&recording_rich(&format!("queued-{index}"))));
+        }
+        // One running + the bounded queue. The rejected send already dropped its ticket.
+        assert_eq!(recording_writers().lock().unwrap().get(&root).unwrap().pending, QUEUE + 1);
+        cache.state.cancel.store(true, Ordering::Release);
+        release_tx.send(()).unwrap();
+        cache.shutdown_and_wait();
+        assert!(!pending(&root));
+        assert!(!recording_writers().lock().unwrap().contains_key(&root));
+        assert!(try_fence(&root).is_some());
+    }
+
+    #[test]
+    fn recording_asset_tickets_drop_on_failed_profile_and_fence_refusal_is_retryable() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = fs::canonicalize(dir.path()).unwrap();
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
+        let cache = ReplayAssetCache::with_fetchers(
+            dir.path(), true, Arc::new(|_| Ok(data())),
+            Arc::new(move |_| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Err(unavailable())
+            }),
+        ).unwrap();
+        let fence = try_fence(&root).unwrap();
+        cache.submit_channel(&root, &"a".repeat(32));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        drop(fence);
+        cache.submit_channel(&root, &"a".repeat(32));
+        await_recording_drain(&root);
+        cache.shutdown_and_wait();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(try_fence(&root).is_some());
+        assert!(try_fence(Path::new("relative-root")).is_none());
     }
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FluentIcon } from '../../components/FluentIcon';
+import { ContextMenuLabel } from '../../components/ContextMenuLabel';
 import { WindowMotion } from '../../components/WindowMotion';
 import { splitGalleryTitle } from '../../components/galleryCardLayout';
 import { emptyMediaSelection, retainMediaSelection, selectMedia } from './mediaSelection';
@@ -179,7 +180,7 @@ function ScreenshotScope({ provider, active, privacyMode, api = platformScreensh
   }, [active, privacyMode, confirm, !!menu, viewing]);
   const overlays = active && !privacyMode ? <>
     {menu ? <><div className="platform-shot-dismiss" onPointerDown={() => setMenu(null)} /><div ref={context} role="menu" data-card-context-menu className="platform-shot-menu" style={{ left: menu.x, top: menu.y }}>
-      <button role="menuitem" disabled={deleting} onClick={() => open(menu.id)}>열기</button><button role="menuitem" disabled={deleting || folderBusy} onClick={() => void folder(menu.id)}>폴더 열기</button><button role="menuitem" className="danger" disabled={deleting} onClick={() => { setConfirm(selected.includes(menu.id) ? selected.slice() : [menu.id]); setMenu(null); }}>삭제</button>
+      <button role="menuitem" disabled={deleting} onClick={() => open(menu.id)}><ContextMenuLabel icon="open">열기</ContextMenuLabel></button><button role="menuitem" disabled={deleting || folderBusy} onClick={() => void folder(menu.id)}><ContextMenuLabel icon="folder">폴더 열기</ContextMenuLabel></button><button role="menuitem" className="danger" disabled={deleting} onClick={() => { setConfirm(selected.includes(menu.id) ? selected.slice() : [menu.id]); setMenu(null); }}><ContextMenuLabel icon="remove">삭제</ContextMenuLabel></button>
     </div></> : null}
     <WindowMotion show={!!viewed}>{viewed ? <div className="platform-shot-backdrop"><div ref={viewer} role="dialog" aria-modal="true" aria-label="스크린샷 보기" className="platform-shot-viewer" tabIndex={-1}>
       <header><div><strong>{viewed.channelName}</strong><span>{title(viewed)}</span></div><button className="platform-shot-x" aria-label="스크린샷 닫기" onClick={() => setViewing(null)}><FluentIcon glyph="\uE711" /></button></header>

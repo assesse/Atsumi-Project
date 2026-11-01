@@ -21,6 +21,14 @@ async function loadPin(id: string) {
 }
 
 describe("Pinterest contracts", () => {
+  it("opens an exact native pin destination in the existing preview once and defers while private", async () => {
+    const api = mockApi(), supportedLinkRequest = { id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae2", source: "pinterest" as const, kind: "pin" as const, targetId: pin().id, url: `https://www.pinterest.com/pin/${pin().id}/` };
+    const draw = (privacyMode: boolean) => act(async () => root.render(<PinterestWorkspace active runtime="browser-mock" view="explore" privacyMode={privacyMode} api={api} supportedLinkRequest={supportedLinkRequest} />));
+    await draw(true); expect(api.get).not.toHaveBeenCalled();
+    await draw(false); expect(api.get).toHaveBeenCalledExactlyOnceWith(pin().id, expect.any(String));
+    expect(container.querySelector(".pinterest-detail")).not.toBeNull();
+    await draw(false); expect(api.get).toHaveBeenCalledOnce(); expect(api.download).not.toHaveBeenCalled();
+  });
   it("normalizes long IDs without number precision loss and rejects unsafe URLs", () => {
     expect(normalizePinterestInput("https://se.pinterest.com/pin/mountains--621004236103700020/?x=1")).toBe("621004236103700020");
     expect(normalizePinterestInput("621004236103700020")).toBe("621004236103700020");
@@ -77,6 +85,30 @@ describe("Pinterest session-native home", () => {
     await act(async () => verified(proof()));
     expect(api.discover).toHaveBeenCalledExactlyOnceWith("", "home", expect.any(String));
     expect(container.querySelector(".pinterest-card")).not.toBeNull();
+  });
+  it("prioritizes an incoming pin over automatic home loading on first activation", async () => {
+    const api = mockApi(), auth = account();
+    vi.mocked(api.discover).mockResolvedValue(result([pin("621004236103700021", "홈 핀")]));
+    const supportedLinkRequest = { id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae2", source: "pinterest" as const, kind: "pin" as const, targetId: pin().id, url: pin().sourceUrl };
+    await act(async () => root.render(<PinterestWorkspace active runtime="browser-mock" view="explore" privacyMode={false} api={api} accountApi={auth} supportedLinkRequest={supportedLinkRequest} />));
+    expect(api.get).toHaveBeenCalledExactlyOnceWith(pin().id, expect.any(String));
+    expect(api.discover).not.toHaveBeenCalled();
+    expect(container.querySelector(".pinterest-detail")).not.toBeNull();
+    expect(container).not.toHaveTextContent("진행 중인 불러오기");
+    expect(api.download).not.toHaveBeenCalled();
+    expect(loadPinterestFavorites()).toEqual([]);
+  });
+  it("waits for an existing browse request before opening the incoming pin once", async () => {
+    const api = mockApi(), auth = account(); let complete!: (value: ReturnType<typeof result>) => void;
+    vi.mocked(api.discover).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    await show(api, auth);
+    const supportedLinkRequest = { id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae2", source: "pinterest" as const, kind: "pin" as const, targetId: pin().id, url: pin().sourceUrl };
+    const draw = () => act(async () => root.render(<PinterestWorkspace active runtime="browser-mock" view="explore" privacyMode={false} api={api} accountApi={auth} supportedLinkRequest={supportedLinkRequest} />));
+    await draw(); expect(api.get).not.toHaveBeenCalled(); expect(api.cancel).not.toHaveBeenCalled();
+    await act(async () => complete(result([pin("621004236103700021", "홈 핀")])));
+    expect(api.get).toHaveBeenCalledExactlyOnceWith(pin().id, expect.any(String));
+    expect(container.querySelector(".pinterest-detail")).not.toBeNull();
+    await draw(); expect(api.get).toHaveBeenCalledOnce(); expect(api.discover).toHaveBeenCalledOnce();
   });
   it("appends opaque continuation with deduplication, stable cards and selection", async () => {
     const api = mockApi(), auth = account(), second = pin("621004236103700021", "두 번째");

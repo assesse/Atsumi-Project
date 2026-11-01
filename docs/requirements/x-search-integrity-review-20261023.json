@@ -1,0 +1,82 @@
+{
+  "date": "2026-10-23",
+  "status": "implemented_offline_verified_and_built_live_account_verification_pending",
+  "originalRequest": "Investigate X app tamper detection and revisit related-video implementation; diagnose and refine in-app media search using Jconoha bookmarks/likes, without Computer Use while the user works.",
+  "originalMessage": "01a16926-551c-7780-89ea-b34e0ebc6594",
+  "sourceCoverage": {
+    "workspace": "Active 2849 AGENTS read. Elevated git status confirms pre-existing CHZZK edits and the related-video diagnostic example; preserve these. 3b2a remains a backup.",
+    "inventory": "Active/pinned50 and archived3 EOF refreshed. Prior-known other main, UIUX, Danbooru and common-workflow original turn coverage remains unchanged; their actual newest original turns were checked. Current direct conversation and latest original30 turns cover new requests. Non-archived list has no pagination beyond50: no claim of discovering unknown older chats.",
+    "historicalSnapshots": "Previously fully read EOF snapshots remain hash-identical: main85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676; other799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21; specifications7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C; policy3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1. Known RELEASING revision and release2.3.0–2.3.3 documents were covered by refreshed review.",
+    "componentEvidence": [
+      "docs/requirements/x-official-split-return-20261020.json v6",
+      "docs/requirements/x-media-search-external-links-20261021.json E3559F89F78851A45C27BEA5D74CB2CF1EE7E251168DFBF0954F86334F4FFEF5",
+      ".runtime/requirements-audit/20261023-storage-and-related-video-preedit.json",
+      ".runtime/requirements-audit/20261023-x-related-video-transport-probe.json",
+      ".runtime/requirements-audit/20261023-x-related-video-transport-result.json",
+      ".runtime/requirements-audit/20261023-x-related-video-seeded-transport-result.json",
+      ".runtime/requirements-audit/x-media-search-result-replay-20261022.json"
+    ],
+    "unavailable": ["Historical durable01a03f16 source", "Unidentified Atsumi analysis1/2", "Historical unretained attachment pixels"]
+  },
+  "supersededApprovalState": "The older search contract says two media transfers are pending. Original reply01a1626c-2c60-7fe2-a002-2f1282f93746 actually approved the disarto_max UI video frame to Lens and yurygok2112814461946134911 UI image to SauceNAO. Later screen-verification deferral did not revoke them. Those exact approvals do not automatically authorize other Jconoha media; an asynchronous question separately requests a small public sample allowance. No new user-media transmission before that answer.",
+  "latestTransferApproval": {
+    "date": "2026-10-23",
+    "questionReference": "request_user_input_async/call_5711b6c5c1d74cb4b983bee1c6e9bad1/0",
+    "originalReply": "전체 소스 전송 가능. 개인정보 없음.",
+    "interpretation": "The user permits the X media search test inputs discussed in the question to be sent to Google Lens/SauceNAO. Transmission permission is no longer the blocker for relevant Jconoha bookmarks/likes samples. This is not authorization to upload source code, account databases, cookies, tokens, credentials or unrelated files, nor a request to bulk-export all account content.",
+    "unchangedRestrictions": "No Computer Use or foreground/focus changes while the user works. No account reactions, bookmark changes, account switching, challenge solving or authentication export. Do not alter the app's stored consent preference from this chat reply.",
+    "readOnlyFeasibilityReview": "Main and independent reviewer inspected the existing probe/provider paths. The probe accepts only the fixed neutral fixture. The provider calls window_visibility(true), including show/set_focus, BEFORE on_handoff on challenge/consent; cancelling in the callback cannot guarantee no disruption. Local control has no established trusted media-search invocation route, and existing related-video evidence contains no reusable collection media URLs. No probe/browser/app was launched and no user media was transmitted after this approval.",
+    "remainingExecutionConstraint": "Actual account-to-provider testing remains deferred because the existing path cannot guarantee the active no-Computer-Use/no-focus restriction. Do not label it transmission-approval pending. A future noninteractive diagnostic would need a pre-show human_required stop and bounded approved-media input; neither capability is claimed implemented here."
+  },
+  "retained": [
+    "No Computer Use, visible browser/app launch, focus stealing, account switching, privacy changes, likes, bookmarks, reposts or replies during this batch.",
+    "No cookie/header/token export, APK identity or attestation imitation, private API calls, guessed related-video routes, challenge bypass, retries or permission weakening.",
+    "Official X feed/preview split and source/account/generation fences remain. No local next-video queue presented as official recommendations.",
+    "Media search keeps first-use optional remembered transmission consent, independent provider profiles and human-only challenge handling. Results remain bounded plain candidates with uncertainty, not asserted creator identity.",
+    "No commits, pushes, releases, cleanup, unrelated CHZZK changes or app restart. Rust validation, if needed, uses CARGO_INCREMENTAL=0."
+  ],
+  "findings": [
+    "X officially documents genuine unmodified app/device integrity for liveness checks and write restrictions. This does not prove the prior empty related-video route was a tamper rejection.",
+    "Prior same-session home HTTP200 versus empty immersive route is inconclusive; web feature availability and live entry-path acceptance remain unverified without permitted UI observation.",
+    "Offline production extractor reproduces normal result-title phrases being misclassified as challenge, consent or quota because it scans all rendered result text as service notices.",
+    "Existing169 focused tests pass but omit result-text collision cases. SauceNAO live evidence uses a synthetic multipart file; production X-image URL retrieval is a separate unverified path."
+  ],
+  "plan": [
+    "Regression-first repair only confirmed content-versus-service-status collisions. Preserve hard challenge URL/title/widget signals, outside-result notices and incomplete-layout fail-closed behavior; do not invent no-match or error DOM layouts.",
+    "Inspect related-video/native browser assumptions against official browser guidance. Do not rewrite production around an unproved Android-only anti-tamper theory.",
+    "Use read-only account registry identification and safe local evidence. Run offline real production parser/API/panel tests, negative/security regressions and independent review. Separate these from actual account/provider E2E.",
+    "Record any further reproducible defect and precise amendment before production changes. Actual Jconoha provider transfer and human-required checks remain gated; do not claim them from fixtures."
+  ],
+  "confirmedFollowupPlan": [
+    "Preserve explicit service challenge URL/title/widget detection and notices outside result links/cards. Exclude only verified result-content text ranges from generic service-notice phrase matching; unknown/incomplete layouts remain fail-closed. Add collision and genuine mixed-notice regressions before the parser fix.",
+    "The existing related-video diagnostic incorrectly stops at the first ambiguous video article. Scan the remaining bounded actual articles for one unambiguous non-quote video permalink, without guessing IDs or routes. Preserve per-status response counts so an earlier403/429 is not erased by a later200. Unit/synthetic verification only; do not run the live probe or claim related-video support.",
+    "Native transmission-consent persistence failures already advise unchecking remember, but the panel replaces that known message with generic retry. Preserve only that exact trusted known failure text in the panel; arbitrary backend messages remain suppressed. Test exact/native versus untrusted errors."
+  ],
+  "implementationResults": [
+    "Verified complete result anchor/card text is excluded from weak service-status phrase matching. Hard URL/title/widget challenge signals and notices outside those result ranges still take precedence; incomplete or unfamiliar layouts remain fail-closed.",
+    "Independent review reproduced a remaining128-heading boundary. Heading collection now shares the existing6000-node traversal bound instead of a separate128 cap; output still caps at10 candidates. Late actual service notices remain effective.",
+    "The confirmation panel preserves the exact known native consent-settings persistence error and actionable uncheck-remember guidance. Arbitrary error text remains suppressed; no automatic retry or consent change was added.",
+    "The diagnostic-only related-video example scans up to100 actual articles past ambiguous video permalinks and preserves bounded per-status response counts. It does not add product related-video support, a new route or an identity override."
+  ],
+  "verification": {
+    "focusedFrontend": "436/436 passed across8 files: extractor, API, panel, recorded results, surface actions/input, preview tabs and shell menu dismissal. Production parser regression-first failures were reproduced before fixing.",
+    "typescript": "Focused strict TypeScript --noEmit passed for the modified panel/parser tests and their dependency closure.",
+    "nativeDiagnostic": "CARGO_INCREMENTAL=0 cargo test --example x_related_video_transport_probe --locked --offline -j2:9/9 passed, including17 synthetic DOM cases. The example main/live probe was never run.",
+    "independentReview": "No new P1/P2 or reproducible remaining changed-code defect found. Additional parser boundaries:129/200/1500 valid headings complete with10 candidates;2000 exceeds the node budget and fails closed; a genuine challenge after200 results still blocks.",
+    "gitDiffCheck": "Passed for the four modified production/test files; existing unrelated CHZZK changes preserved.",
+    "accountRegistry": "Read-only metadata check: Jconoha exists and is the saved active account among3 accounts. No cookies/tokens read or exported, collections opened or account changes made.",
+    "build": "CARGO_INCREMENTAL=0 with existing .runtime/tauri-dev-config.json: cargo build --bin atsumi --locked --offline -j2 succeeded in2m48s. Existing41 warnings; no compiler error. The development executable was built only, never launched. Installed release, app state and other programs were not changed."
+  },
+  "remainingUnverified": [
+    "Actual Jconoha bookmarks/likes search end-to-end is not claimed. Media transmission is now approved by latestTransferApproval. Computer Use/foreground navigation remain prohibited, and the existing native provider may show/focus a human-verification window. No existing guaranteed nondisruptive end-to-end test route was found.",
+    "Live SauceNAO production pbs image-URL fetch is distinct from prior synthetic multipart fixture success and remains unverified.",
+    "An observed provider no-match layout is unavailable. Do not invent an empty-result schema; unfamiliar layouts continue to report unsupported structure rather than fabricate success.",
+    "Actual official-web related-video entry/playback/next flow remains unverified. Prior home200 and empty direct immersive route do not prove tamper rejection or establish general web support.",
+    "Human confirmation and real authenticated provider behavior remain for a later permitted live check; offline synthetic tests do not substitute for them."
+  ],
+  "publicSources": [
+    "https://help.x.com/en/using-x/liveness-checks",
+    "https://help.x.com/en/using-x/x-supported-browsers",
+    "https://help.x.com/en/using-x/x-videos"
+  ]
+}

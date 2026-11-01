@@ -6,6 +6,7 @@
   if (window.__atsumiXSurface) return;
   let visible = false, pending = 0, lastStatus = '', menu = null, applied = false, verifiedOwner = null;
   let automaticPlayback = true, mediaIntent = null, mediaIntentUntil = 0, scrollMediaIntent = null;
+  let videoTransition = null, readyPublished = false, videoDeferrals = 0, sourceViewerAvailable = false;
   let visibilityEpoch = 0;
   let pointerRoot = null, pointerAt = 0, routingProbes = 0;
   let routeIntent = null;
@@ -13,6 +14,7 @@
   let watchedAccount = null, accountObserver = null, accountLoaded = null;
   let photoProbeRoute = '', photoProbeEpoch = 0, photoProbeTimers = [];
   const revealed = new WeakSet();
+  const initialVideoGaps = new WeakMap();
   const photoSecurity = 'input[type="password"],input[autocomplete="one-time-code"],[data-testid="ocfEnterTextTextInput"],[data-testid="LoginForm_Login_Button"],a[href^="/i/flow/"],a[href="/login"]';
   const signal = (kind, value = '') => {
     if (!visible && kind !== 'status') return;
@@ -40,6 +42,10 @@
   const postPath = raw => {
     const url = local(raw);
     return url && /^\/(?:[A-Za-z0-9_]{1,15}|i\/web)\/status\/[1-9]\d{4,24}(?:\/(?:photo|video)\/[1-4])?$/.test(url.pathname) ? url.pathname : null;
+  };
+  const mediaViewerPath = raw => {
+    const url=local(raw);
+    return url && /^\/[A-Za-z0-9_]{1,15}\/status\/[1-9]\d{4,24}\/(?:mediaviewer|mediaViewer)$/.test(url.pathname) ? url.pathname : null;
   };
   const reservedProfiles = new Set(['home','explore','search','notifications','messages','i','compose','settings','login','logout','signup','tos','privacy','help','about','download','jobs','communities','premium','grok','hashtag','intent','account','accounts']);
   const navigationPath = raw => {
@@ -72,6 +78,32 @@
       && !node.closest('[hidden],[aria-hidden="true"],[inert]') && !node.matches('script,style,template,input,textarea,select,option') && !node.querySelector(excluded))
       .map(node => /^@([A-Za-z0-9_]{1,15})$/.exec((node.textContent || '').trim())?.[1]?.toLowerCase()).filter(Boolean));
   };
+  const videoSourceRoot = target => {
+    if (!target?.isConnected || target.ownerDocument !== document
+      || target.closest('button,[role="button"],[role="slider"],input,textarea,select,[contenteditable="true"],video,audio,[hidden],[inert],[role="dialog"],[aria-modal="true"]')) return null;
+    const component=target.closest('[data-testid="videoComponent"]'),article=target.closest('article[data-testid="tweet"]');
+    if (!component || !article || component.closest('article')!==article
+      || !component.closest('[data-testid="videoPlayer"]') || !recoveryPresented(component)) return null;
+    const anchor=target.closest('a[href]'),path=anchor && navigationPath(anchor.getAttribute('href'));
+    if (anchor && component.contains(anchor) && path && !/\/(?:photo|video)\//.test(path)
+      && recoveryPresented(anchor)) return anchor;
+    // The native attribution has no href/role. Its small labelled avatar row
+    // contains an aria-hidden visual copy beside the accessible label. The
+    // observed next source navigation is authoritative, never the display name.
+    for (let node=target,depth=0;node && node!==component && depth<12;node=node.parentElement,depth++) {
+      const css=getComputedStyle(node);
+      if (css.display==='none' || css.visibility==='hidden' || css.visibility==='collapse' || css.opacity==='0') return null;
+      const text=(node.textContent || '').trim();
+      if (!text || text.length>480 || node.closest('[aria-hidden="true"]')
+        || node.querySelector('video,audio,button,[role="button"],[role="slider"],input,textarea,select,[contenteditable="true"]')) continue;
+      const avatars=node.querySelectorAll('img[src^="https://pbs.twimg.com/profile_images/"]');
+      if (avatars.length===1 && recoveryPresented(node)) return node;
+    }
+    return null;
+  };
+  const videoSourceEvidence = root => root.getAttribute('href') || JSON.stringify([
+    root.textContent,[...root.querySelectorAll('img')].map(node=>node.getAttribute('src')),
+  ]);
   const articlePath = element => {
     const article = element?.closest('article[data-testid="tweet"]');
     if (!article) return null;
@@ -148,7 +180,7 @@
     const articles = [...primary.querySelectorAll('article[data-testid="tweet"]')];
     return articles.length <= 64 && articles.some(article => own(article) && articlePath(article) === recovery.post);
   };
-  const recoverSourceRoute = intent => {
+  const recoverSourceRoute = (intent,onRestored) => {
     if (typeof window.dispatchEvent !== 'function' || typeof PopStateEvent !== 'function') return;
     let state;
     try { state = window.history.state; } catch { return; }
@@ -175,6 +207,7 @@
             if (value.node.scrollLeft !== value.left) value.node.scrollLeft = value.left;
           }
           cancelRouteRecovery();
+          onRestored?.();
         } else if (attempt < 3) {
           // Bounded, read-only paint checks; never repeat popstate or navigate.
           setTimeout(()=>restore(attempt+1),[50,150,300][attempt]);
@@ -219,6 +252,13 @@
     routeIntent=intent;if(background)signal('focus');signal('routeIntent',background?'armBackground':'arm');
     setTimeout(()=>{if(routeIntent===intent)cancelRouteIntent();},1000);
   };
+  const armVideoSourceIntent = (target,root,background) => {
+    if (!window.history || document.hidden || !routeOwnerCurrent() || window.getSelection()?.toString()) return;
+    const intent={root,article:target.closest('article[data-testid="tweet"]'),activation:target,
+      videoSource:true,evidence:videoSourceEvidence(root),background,path:location.pathname,epoch:visibilityEpoch,until:performance.now()+1000};
+    routeIntent=intent;if(background)signal('focus');signal('routeIntent',background?'armBackground':'armVideoSource');
+    setTimeout(()=>{if(routeIntent===intent)cancelRouteIntent();},1000);
+  };
   if (window.history) {
     for (const name of ['pushState','replaceState']) {
       const original=window.history[name];
@@ -231,16 +271,20 @@
             // Same-document state bookkeeping is not an activation. The next
             // real destination consumes the intent even when it is rejected.
             if (!url || url.pathname!==location.pathname || url.search || url.hash) {
-              const current=visible && intent.epoch===visibilityEpoch && intent.path===location.pathname
+              const current=visible && !document.hidden && intent.epoch===visibilityEpoch && intent.path===location.pathname
                 && intent.root.isConnected && performance.now()<=intent.until
-                && routeOwnerCurrent() && intent.root.contains(intent.user)
-                && quoteAuthors(intent.user,intent.root,intent.article).size===1
-                && quoteAuthors(intent.user,intent.root,intent.article).has(intent.author);
+                && routeOwnerCurrent() && (intent.videoSource
+                  ? videoSourceRoot(intent.activation)===intent.root && videoSourceEvidence(intent.root)===intent.evidence
+                  : intent.root.contains(intent.user) && quoteAuthors(intent.user,intent.root,intent.article).size===1
+                    && quoteAuthors(intent.user,intent.root,intent.article).has(intent.author));
               const path=url && !url.search && !url.hash && navigationPath(url.href);
               cancelRouteIntent();
               if (current && path && !/\/(?:photo|video)\//.test(path)) {
-                recoverSourceRoute(intent);
-                signal(intent.background?'previewBackground':'preview',path);
+                const open=()=>signal(intent.background?'previewBackground':intent.videoSource?'videoSourcePreview':'preview',path);
+                // Selecting a new preview conceals the old document. Finish
+                // its bounded source reconciliation before that revokes it.
+                recoverSourceRoute(intent,intent.videoSource?open:undefined);
+                if(!intent.videoSource)open();
                 return;
               }
             }
@@ -293,6 +337,9 @@
     if (!(box.width > 0 && box.height > 0 && right > left && bottom > top) || !recoveryPresented(media)) return false;
     let node = media.parentElement, depth = 0;
     for (;node && depth < 64;node = node.parentElement,depth++) {
+      // Root overflow clips to the viewport, already applied above. Its
+      // scrolled border box can be wholly above0 while this video is central.
+      if (node === document.documentElement || node === document.scrollingElement) continue;
       const css = getComputedStyle(node), clip = node.getBoundingClientRect();
       if (/^(hidden|clip|scroll|auto)$/.test(css.overflowX || css.overflow)) { left = Math.max(left,clip.left); right = Math.min(right,clip.right); }
       if (/^(hidden|clip|scroll|auto)$/.test(css.overflowY || css.overflow)) { top = Math.max(top,clip.top); bottom = Math.min(bottom,clip.bottom); }
@@ -330,6 +377,20 @@
     signal('wheel');
   }, {capture:true,passive:true});
   const mediaRoot = element => element?.closest('video,audio,[data-testid="videoPlayer"]');
+  const videoTransitionPost = root => {
+    const path = articlePath(root);
+    if (path) return path;
+    // The main detail post places its own timestamp below the media. This
+    // fallback is for the bounded player handoff only, not general routing.
+    const detail = postPath(location.pathname), article = root.closest('article[data-testid="tweet"]');
+    if (!detail || /\/(?:photo|video)\/[1-4]$/.test(detail) || !article || nestedRoot(root,article)
+      || window.__atsumiXAds?.blocked(root)) return null;
+    const times = [...article.querySelectorAll('time')];
+    if (times.length > 64) return null;
+    const paths = new Set(times.filter(node => node.closest('article') === article && !nestedRoot(node,article))
+      .map(node => postPath(node.closest('a')?.getAttribute('href'))).filter(Boolean));
+    return paths.size === 1 && paths.has(detail) ? detail : null;
+  };
   const paneBackControl = target => {
     const button = target?.closest('button[data-testid="app-bar-back"],[role="button"][data-testid="app-bar-back"]');
     if (!button || !button.closest('[data-testid="primaryColumn"]')
@@ -344,14 +405,23 @@
     if (event.target.closest('input,textarea,[contenteditable="true"]')) return;
     if (event.type === 'keydown' && ![' ','Enter','k','K'].includes(event.key)) return;
     if (['pointerdown','click'].includes(event.type) && event.button !== 0) return;
+    if (videoSourceRoot(event.target)) return;
     const root = mediaRoot(event.target);
     if (root) {
+      for (const video of root.matches('video') ? [root] : [...root.querySelectorAll('video')].slice(0,8)) {
+        initialVideoGaps.set(video,{source:video.currentSrc || video.src,done:true,manual:true});
+      }
       const now = performance.now();
       // The click following a pointerdown is the same gesture, not a second
       // manual token if the media already emitted play during pointerdown.
       if (event.type === 'click' && pointerRoot === root && now - pointerAt <= 1500) return;
       if (event.type === 'pointerdown') { pointerRoot = root; pointerAt = now; }
       mediaIntent = root; mediaIntentUntil = now + 1500;
+      const path = videoTransitionPost(root);
+      if (readyPublished && !document.hidden && routeOwnerCurrent() && nativeVideoPlayerReady(root)
+        && /^\/(?:[A-Za-z0-9_]{1,15}|i\/web)\/status\/[1-9]\d{4,24}$/.test(path || '')) {
+        videoTransition = {path,epoch:visibilityEpoch,until:now+2500,scheduled:false};
+      }
     }
   };
   const focusedMediaFrame = () => {
@@ -401,14 +471,63 @@
     }, 0);
   });
   window.__atsumiXSurface = Object.freeze({
-    visibility(value) { const next = value === true, resumed = next && !visible; if (next !== visible) { visibilityEpoch++; cancelRouteIntent(); cancelRouteRecovery(); dismissMenus(); } else if (!next) { cancelRouteRecovery(); dismissMenus(); } visible = next; window.__atsumiXInput?.visibility(visible); window.__atsumiXActions?.visibility(visible); if (!visible) { lastWheelClaim = -Infinity; scrollMediaIntent = null; window.__atsumiXAds?.clear(); stopPhotoProbe(); mediaIntent = null; pointerRoot = null; pause(); } else { if (resumed) window.__atsumiXAds?.update(verifiedOwner === config.owner); schedule(); } },
+    feedVideoMode:config.feed!=='preview',
+    sourceMediaViewerAvailable:()=>config.feed!=='preview'&&sourceViewerAvailable,
+    registerSourceMediaViewer(nonce,available=true) { if(nonce===config.nonce&&config.feed!=='preview')sourceViewerAvailable=available===true; },
+    visibility(value) { const next = value === true, resumed = next && !visible; if (next !== visible) { visibilityEpoch++; cancelRouteIntent(); cancelRouteRecovery(); dismissMenus(); } else if (!next) { cancelRouteRecovery(); dismissMenus(); } visible = next; window.__atsumiXInput?.visibility(visible); window.__atsumiXActions?.visibility(visible); if (!visible) { videoTransition = null; lastWheelClaim = -Infinity; scrollMediaIntent = null; window.__atsumiXAds?.clear(); stopPhotoProbe(); mediaIntent = null; pointerRoot = null; pause(); } else { if (resumed) window.__atsumiXAds?.update(verifiedOwner === config.owner); schedule(); } },
     refresh() { lastStatus = ''; schedule(); },
     pause,
     playback(value) { automaticPlayback = value === true; if (!automaticPlayback) pause(); },
     dismissMenu:dismissMenus,
     dismissMenus,
     archivePhotoOwner,
+    videoLayerReady:nativeVideoReady,
   });
+  const recoverInitialVideoGap = video => {
+    if (!visible || document.hidden || !automaticPlayback || !routeOwnerCurrent()) return;
+    let state = initialVideoGaps.get(video);
+    const source = video.currentSrc || video.src;
+    if (!state && nativeVideoResource(source)) {
+      state={source,done:false,href:location.href,epoch:visibilityEpoch,history:historyRevision};
+      initialVideoGaps.set(video,state);
+    }
+    // A fresh current observation after a pane returns may finish an untouched
+    // preparation. Completed attempts and explicit controls stay final.
+    if (state && !state.done && state.source === source && state.href === location.href && state.history === historyRevision) state.epoch = visibilityEpoch;
+    if (!state || state.done || state.epoch !== visibilityEpoch || state.history !== historyRevision || state.href !== location.href
+      || !video.isConnected || video.ownerDocument !== document
+      || video.tagName !== 'VIDEO' || video.ended || video.seeking || video.error
+      || video.currentTime < 0 || video.currentTime > 0.05 || video.readyState !== 1
+      || (video.currentSrc || video.src) !== state.source || !nativeVideoResource(state.source)
+      || window.__atsumiXAds?.blocked(video) || !scrollMediaPresented(video)) return;
+    try {
+      // Some original MSE streams start after 0 (observed: 1.227814s). A
+      // native player waits for a first frame before emitting HTML play.
+      // Prepare the missing prefix once; never choose/play/pause a player.
+      if (!video.buffered.length || video.buffered.length > 16) return;
+      const start = video.buffered.start(0), end = video.buffered.end(0), target = start + 0.01;
+      if (!Number.isFinite(start) || !Number.isFinite(end) || start <= 0.05 || start > 3 || end - start < 0.25
+        || !Number.isFinite(video.duration) || video.duration <= target || video.seekable.length > 16
+        || !Array.from({length:video.seekable.length},(_,i)=>i).some(i => video.seekable.start(i) <= target && video.seekable.end(i) > target)) return;
+      state.done = true;
+      video.currentTime = target;
+    } catch { state.done = true; } // A removed/changing range must not cause a seek loop.
+  };
+  for (const name of ['progress','loadedmetadata','durationchange','waiting']) document.addEventListener(name,event => {
+    if (event.isTrusted && event.target instanceof HTMLMediaElement) recoverInitialVideoGap(event.target);
+  },true);
+  document.addEventListener('seeking',event => {
+    if (!event.isTrusted || !(event.target instanceof HTMLMediaElement) || event.target.ownerDocument !== document) return;
+    // An untouched MSE initialization seek at0 is not a manual seek. Every
+    // actual user gesture is already marked in rememberMediaIntent.
+    if (event.target.currentTime <= 0.05) return;
+    initialVideoGaps.set(event.target,{source:event.target.currentSrc || event.target.src,done:true});
+  },true);
+  for (const name of ['pause','timeupdate']) document.addEventListener(name,event => {
+    if (!event.isTrusted || !(event.target instanceof HTMLMediaElement) || event.target.ownerDocument !== document
+      || name === 'timeupdate' && event.target.currentTime <= 0.05) return;
+    initialVideoGaps.set(event.target,{source:event.target.currentSrc || event.target.src,done:true});
+  },true);
   document.addEventListener('play', event => {
     if (!(event.target instanceof HTMLMediaElement) || event.target.ownerDocument !== document) return;
     if (!visible) { event.target.pause(); return; }
@@ -423,6 +542,13 @@
     mediaIntent = null;
     if (!manual && !automaticPlayback) { event.target.pause(); return; }
     signal('play', manual ? 'manual' : 'auto'); // Never synthesize playback.
+    const video = event.target, source = video.currentSrc || video.src;
+    if (video.tagName === 'VIDEO' && nativeVideoResource(source)) {
+      const previous = initialVideoGaps.get(video);
+      initialVideoGaps.set(video,{source,done:previous?.source === source && previous.done === true || previous?.manual === true && !previous.source,
+        href:location.href,epoch:visibilityEpoch,history:historyRevision});
+      recoverInitialVideoGap(video);
+    }
   }, true);
   document.addEventListener('click', event => {
     rememberMediaIntent(event);
@@ -436,6 +562,16 @@
     // ordinary app-bar Back even during the observer's first render frame.
     // Native photo/modal/media Back controls remain entirely source-owned.
     if (paneBackControl(target)) { event.preventDefault(); event.stopImmediatePropagation(); return; }
+    const sourceRoot=target && videoSourceRoot(target);
+    if (sourceRoot) {
+      if (document.hidden || !routeOwnerCurrent() || window.getSelection()?.toString()) return;
+      const anchor=target.closest('a[href]'),path=anchor && navigationPath(anchor.getAttribute('href'));
+      if (path) {
+        event.preventDefault();event.stopImmediatePropagation();if(background)signal('focus');
+        signal(background?'previewBackground':'videoSourcePreview',path);
+      } else armVideoSourceIntent(target,sourceRoot,background);
+      return;
+    }
     if (config.feed === 'preview' && !background) return;
     if (!target || target.closest('button,input,textarea,[contenteditable="true"],video,audio,[data-testid="videoPlayer"],[data-testid="tweetPhoto"],[role="dialog"],[aria-modal="true"]')) return;
     const anchor = target.closest('a[href]');
@@ -490,8 +626,15 @@
     }
     menu = document.createElement('div'); menu.className='atsumi-x-link-menu'; menu.setAttribute('role','menu');menu.setAttribute('aria-label','링크 메뉴');
     menu.style.cssText = 'position:fixed;z-index:2147483647;width:232px;max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;box-sizing:border-box;background:#000;color:#e7e9ea;border:1px solid #2f3336;border-radius:12px;padding:4px;box-shadow:0 0 12px #ffffff30;font:14px system-ui';
-    const button = document.createElement('button'); button.type='button';button.setAttribute('role','menuitem');button.textContent='외부 브라우저에서 열기';
-    button.style.cssText='display:block;box-sizing:border-box;width:100%;padding:12px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer';
+    const button = document.createElement('button'); button.type='button';button.setAttribute('role','menuitem');
+    button.style.cssText='display:grid;grid-template-columns:20px minmax(0,1fr);align-items:center;column-gap:8px;box-sizing:border-box;width:100%;padding:12px;border:0;border-radius:8px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer';
+    const slot=document.createElement('span');slot.setAttribute('aria-hidden','true');slot.dataset.menuIcon='external';
+    slot.style.cssText='display:grid;place-items:center;width:20px;height:20px;pointer-events:none';
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.8','stroke-linecap':'round','stroke-linejoin':'round',focusable:'false'}))svg.setAttribute(key,value);
+    svg.style.cssText='display:block;width:16px;height:16px;opacity:.9';
+    const glyph=document.createElementNS(svg.namespaceURI,'path');glyph.setAttribute('d','M14 3h7v7m0-7L10 14M10 3H3v18h18v-7');svg.append(glyph);slot.append(svg);
+    const label=document.createElement('span');label.textContent='외부 브라우저에서 열기';label.style.cssText='min-width:0;overflow-wrap:anywhere';button.append(slot,label);
     const ownedMenu=menu;
     button.addEventListener('click', e=>{
       if(!e.isTrusted||!visible||menu!==ownedMenu||!button.isConnected)return;
@@ -520,9 +663,9 @@
     if (!e.isTrusted || e.defaultPrevented || e.isComposing || e.ctrlKey || e.metaKey || e.altKey || e.target instanceof Element && e.target.closest('input,textarea,[contenteditable="true"]')) return;
     if(e.key==='Escape')cancelRouteIntent();
     if(e.key==='Escape'&&menu){e.preventDefault();e.stopImmediatePropagation();removeMenu();}
-    // X owns Escape for its dialogs/photos. Only close the outer preview when
-    // there is no official dialog, exact full-page photo, or native fullscreen.
-    else if(!window.__atsumiXInput&&e.key==='Escape'&&config.feed==='preview'&&!/\/photo\/[1-4]$/.test(postPath(location.pathname)||'')&&!document.querySelector('[role="dialog"],[aria-modal="true"]')&&!document.fullscreenElement){e.preventDefault();signal('close');}
+    // X owns Escape for its media layers. Closing an immersive video must not
+    // close the Atsumi preview that contains the original document.
+    else if(!window.__atsumiXInput&&e.key==='Escape'&&config.feed==='preview'&&!/\/photo\/[1-4]$/.test(postPath(location.pathname)||'')&&!nativeVideoReady()&&!document.querySelector('[role="dialog"],[aria-modal="true"]')&&!document.fullscreenElement){e.preventDefault();signal('close');}
   },true);
   // Hidden documents must still complete their initial identity/render proof.
   // Visibility controls playback/interactions, not the readiness observer.
@@ -640,6 +783,81 @@
     // never a route or image as an account identity, and cannot cover a gate.
     return allowFullPage && !document.querySelector(photoSecurity) && [...document.querySelectorAll('img')].slice(0,128).some(imageReady);
   }
+  function nativeVideoResource(raw, poster = false) {
+    if (typeof raw !== 'string' || !raw || raw.length > 8192) return false;
+    try {
+      const url = new URL(raw);
+      if (!poster && url.protocol === 'blob:') return url.origin === location.origin && !url.hash;
+      if (url.protocol !== 'https:' || url.port || url.username || url.password || url.hash) return false;
+      return poster ? url.hostname === 'pbs.twimg.com' && /^\/(?:ext_tw_video_thumb|amplify_video_thumb|tweet_video_thumb)\//.test(url.pathname)
+        : url.hostname === 'video.twimg.com' && /^\/(?:ext_tw_video|amplify_video|tweet_video)\//.test(url.pathname);
+    } catch { return false; }
+  }
+  function nativeVideoPlayerReady(player) {
+    if (!recoveryPresented(player)) return false;
+    const videos = player.tagName === 'VIDEO' ? [player] : [...player.querySelectorAll('video')].slice(0,8);
+    if (videos.some(video => {
+      const source = video.currentSrc || video.src;
+      return recoveryPresented(video) && (source ? nativeVideoResource(source) : nativeVideoResource(video.poster, true));
+    })) return true;
+    return !videos.length && player.matches('[data-testid="videoPlayer"]') && [...player.querySelectorAll('img')].slice(0,8)
+      .some(image => recoveryPresented(image) && nativeVideoResource(image.currentSrc || image.getAttribute('src'), true));
+  }
+  function nativeVideoReady() {
+    // X's immersive player replaces primaryColumn and navigation. Keep only
+    // this document's earlier account proof, never infer an owner from media.
+    if (verifiedOwner !== config.owner || document.querySelector(photoSecurity)
+      || !/^\/(?:[A-Za-z0-9_]{1,15}|i\/web)\/status\/[1-9]\d{4,24}\/video\/[1-4]$/.test(location.pathname)&&!mediaViewerPath(location.href)) return false;
+    const profiles = [...document.querySelectorAll('[data-testid="AppTabBar_Profile_Link"]')];
+    if (profiles.length > 8 || profiles.some(node => {
+      const url = local(node.getAttribute('href'));
+      return /^\/([A-Za-z0-9_]{1,15})\/?$/.exec(url?.pathname || '')?.[1]?.toLowerCase() !== config.owner;
+    })) return false;
+    const layers = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')].filter(recoveryPresented);
+    if (layers.length > 8) return false;
+    const root = layers.at(-1) || document.body;
+    if (!root) return false;
+    return [...root.querySelectorAll('video,[data-testid="videoPlayer"]')].slice(0,64).some(nativeVideoPlayerReady);
+  }
+  function sourcePageUnavailable() {
+    if(document.querySelector(photoSecurity)||!postPath(location.href)&&!mediaViewerPath(location.href))return false;
+    const layers=[...document.querySelectorAll('[role="dialog"],[aria-modal="true"]')].filter(recoveryPresented);
+    if(layers.length>8)return false;
+    const root=layers.at(-1)||document.querySelector('main[role="main"]');
+    if(!root)return false;
+    const messages=new Set(['이 페이지는 존재하지 않습니다. 다른 페이지를 검색해 보세요.','Hmm...this page doesn’t exist. Try searching for something else.','Hmm...this page doesn\'t exist. Try searching for something else.','このページは存在しません。他のページを検索してみましょう。']);
+    return [...root.querySelectorAll('span,p,h1,[role="alert"]')].slice(0,256).some(node=>!node.closest('article,[data-testid="tweet"],[hidden],[aria-hidden="true"],[inert]')&&recoveryPresented(node)&&messages.has((node.textContent||'').replace(/\s+/g,' ').trim()));
+  }
+  function deferVideoStatus() {
+    const intent = videoTransition, now = performance.now();
+    if (!intent) return false;
+    if (!visible || document.hidden || !readyPublished || intent.epoch !== visibilityEpoch
+      || now >= intent.until || !routeOwnerCurrent()) { videoTransition = null; return false; }
+    const path = postPath(location.pathname)||mediaViewerPath(location.href);
+    if (!/\/(?:video\/[1-4]|mediaviewer|mediaViewer)$/.test(path || '') || path.replace(/\/(?:video\/[1-4]|mediaviewer|mediaViewer)$/, '') !== intent.path) return false;
+    if (!intent.scheduled) {
+      intent.scheduled = true;videoDeferrals = Math.min(videoDeferrals+1,32);
+      const finish = () => {
+        if (videoTransition !== intent) return;
+        const remaining = intent.until-performance.now();
+        if (remaining > 0) { setTimeout(finish,Math.ceil(remaining)); return; }
+        videoTransition = null;schedule();
+      };
+      setTimeout(finish,Math.ceil(intent.until-now));
+    }
+    // Keep the last published state briefly; do not claim a new ready page.
+    // Hiding here prevents X from hydrating its replacement native player.
+    return true;
+  }
+  function videoDiagnosticShape() {
+    const videos = [...document.querySelectorAll('video')].slice(0,64);
+    return {players:Math.min(document.querySelectorAll('[data-testid="videoPlayer"]').length,64),videos:videos.length,
+      frames:Math.min(document.querySelectorAll('iframe').length,64),presented:videos.filter(recoveryPresented).length,
+      sources:videos.filter(video=>nativeVideoResource(video.currentSrc||video.src)).length,
+      posters:videos.filter(video=>nativeVideoResource(video.poster,true)).length,
+      dialogs:Math.min(document.querySelectorAll('[role="dialog"],[aria-modal="true"]').length,8),
+      sameOwner:verifiedOwner===config.owner,deferrals:videoDeferrals};
+  }
   function archivePhotoOwner() {
     // Supplement the native current-account/URL/generation checks with this
     // document's already observed owner. A photo author is not an account proof.
@@ -750,7 +968,7 @@
     const login = location.pathname==='/login'||location.pathname.startsWith('/i/flow/')||!observedOwner&&!!document.querySelector('a[href="/i/flow/login"],a[href="/login"]');
     const ownerConflict=!!observedOwner&&!!config.owner&&observedOwner!==config.owner;
     watchAccountPresentation(account,!!account&&observedOwner===config.owner&&!login);
-    if(login||ownerConflict){verifiedOwner=null;scrollMediaIntent=null;cancelRouteIntent();cancelRouteRecovery();dismissMenus();}
+    if(login||ownerConflict){verifiedOwner=null;videoTransition=null;readyPublished=false;scrollMediaIntent=null;cancelRouteIntent();cancelRouteRecovery();dismissMenus();}
     else if(observedOwner&&account)verifiedOwner=observedOwner;
     // Responsive X can remove desktop navigation after the pane is resized.
     // Keep only this document's earlier proof, never infer identity from posts.
@@ -759,15 +977,24 @@
     if(!login&&ownerConflict)state='ownerChanged';
     const primary = document.querySelector('[data-testid="primaryColumn"]');
     const photo = nativePhotoReady(!primary && owner === config.owner && verifiedOwner === config.owner && !ownerConflict && !login);
-    if(owner&&state!=='ownerChanged'&&state!=='loginRequired'&&(primary||photo)) {
+    const unavailable=owner===config.owner&&!ownerConflict&&!login&&sourcePageUnavailable();
+    const video = !unavailable && !primary && owner === config.owner && nativeVideoReady();
+    if (video) videoTransition = null;
+    if (unavailable)state='unavailable';
+    if (state === 'loading' && !primary && !photo && !video && owner === config.owner && deferVideoStatus()) return;
+    if(owner&&state!=='unavailable'&&state!=='ownerChanged'&&state!=='loginRequired'&&(primary||photo||video)) {
       state='ready';
       if(!applied) {
         const style=document.createElement('style');style.dataset.atsumiX='surface';
         style.textContent='header[role="banner"],[data-testid="sidebarColumn"],[data-testid="BottomBar"],[data-testid="SideNav_NewTweet_Button"],[data-testid="FloatingActionButton_Tweet"],[data-atsumi-x-composer="true"],[data-atsumi-x-collection-tabs="true"],[data-atsumi-x-pane-back="true"]{display:none!important}html,body,#react-root{min-width:0!important;background-color:#000!important}main[role="main"]{width:100%!important;max-width:none!important;min-width:0!important;flex:1!important;background-color:#000!important}main[role="main"]>div{width:100%!important;max-width:none!important}[data-testid="primaryColumn"]{width:100%!important;max-width:600px!important;min-width:0!important;margin:0 auto!important;border-left:0!important;border-right:0!important;background-color:#000!important}';
+        style.textContent+='body[data-atsumi-x-video-viewer] [data-testid="primaryColumn"]{max-width:none!important}';
         document.head.append(style);applied=true;
       }
       if(primary){trimHomeComposer(primary);trimCollectionTabs(primary);trimPaneBack(primary);}
       window.__atsumiXAds?.update(visible && owner === config.owner);
+      if (visible && automaticPlayback) for (const media of [...document.querySelectorAll('video')].slice(0,64)) {
+        if (media.readyState === 1 && media.currentTime <= 0.05) recoverInitialVideoGap(media);
+      }
       window.__atsumiXActions?.update();
       if(primary&&(config.feed==='foryou'||config.feed==='following')&&location.pathname==='/home') {
         const tabs=[...primary.querySelectorAll('[role="tablist"] [role="tab"]')];
@@ -786,9 +1013,11 @@
         if(button&&!revealed.has(button)){revealed.add(button);button.click();}
       }
     }
+    document.body?.toggleAttribute('data-atsumi-x-video-viewer',state==='ready'&&owner===config.owner&&!!mediaViewerPath(location.href));
     if(state!=='ready')window.__atsumiXAds?.clear();
     schedulePhotoProbe(state);
-    const statusValue={state,owner:owner||null,path:location.pathname,accountPresentation,proof:{profile:!!observedOwner,account:!!account,primary:!!primary,photo,login:!!login,...(config.diagnostics===true?{photoShape:photoDiagnosticShape(),accountShape:accountDiagnosticShape(account),adShape:window.__atsumiXAds?.diagnostic()||null}:{})}};
+    readyPublished = state === 'ready';
+    const statusValue={state,owner:owner||null,path:location.pathname,accountPresentation,proof:{profile:!!observedOwner,account:!!account,primary:!!primary,photo,video,login:!!login,...(config.diagnostics===true?{photoShape:photoDiagnosticShape(),accountShape:accountDiagnosticShape(account),adShape:window.__atsumiXAds?.diagnostic()||null,...(/\/video\/[1-4]$/.test(postPath(location.pathname)||'')?{videoShape:videoDiagnosticShape()}:{} )}:{})}};
     let status=JSON.stringify(statusValue);
     // Optional portrait candidates must not overflow the existing authenticated
     // 4096-character bridge envelope and discard ordinary readiness updates.

@@ -398,7 +398,7 @@ describe("ActivityDrawer download controls", () => {
     expect(container).toHaveTextContent("자동 분류 완료 · 신규 앨범 B 보존");
     await act(async () => {
       [...container.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent === "근거 보기")?.click();
+        .find((button) => button.textContent === "근거")?.click();
     });
     expect(onReviewOverlap).toHaveBeenCalledWith("review-1", failedGallery.id);
 
@@ -406,7 +406,7 @@ describe("ActivityDrawer download controls", () => {
     container.remove();
   });
 
-  it("merges live automatic activity into persistent review history and exposes acknowledgement and list-only restore", async () => {
+  it("merges automatic history without requiring approval and preserves list-only restore", async () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -454,7 +454,7 @@ describe("ActivityDrawer download controls", () => {
 
     const historyTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
       .find((button) => button.textContent?.includes("자동분류 검토"));
-    expect(historyTab?.querySelector('.activity-tab-count')).toHaveTextContent("1");
+    expect(historyTab?.querySelector('.activity-tab-count')).toBeNull();
     await act(async () => historyTab?.click());
 
     const historyPanel = container.querySelector("#activity-automation-panel");
@@ -463,22 +463,56 @@ describe("ActivityDrawer download controls", () => {
     expect(historyPanel).toHaveTextContent("격리 파일은 복원되지 않습니다");
     const buttons = [...(historyPanel?.querySelectorAll<HTMLButtonElement>("button") ?? [])];
     await act(async () => {
-      buttons.find((button) => button.textContent === "근거 보기")?.click();
-      buttons.find((button) => button.textContent === "목록에 복원")?.click();
-      buttons.find((button) => button.textContent === "확인 완료")?.click();
+      buttons.find((button) => button.textContent === "근거")?.click();
+      buttons.find((button) => button.textContent === "복원")?.click();
+      buttons.find((button) => button.textContent === "승인")?.click();
       buttons.find((button) => button.textContent === "더 보기")?.click();
     });
     expect(onReviewOverlap).toHaveBeenCalledWith("review-persistent", galleryId(501));
     expect(onRestore).toHaveBeenCalledWith("review-persistent", [galleryId(502), galleryId(503)]);
-    expect(onAcknowledge).toHaveBeenCalledWith("review-persistent");
+    expect(buttons.some(button => button.textContent === "승인")).toBe(false);
+    expect(onAcknowledge).not.toHaveBeenCalled();
     expect(onLoadMore).toHaveBeenCalledOnce();
-    expect(buttons.find((button) => button.textContent === "목록에 복원")).toHaveAttribute(
+    expect(buttons.find((button) => button.textContent === "복원")).toHaveAttribute(
       "title",
       expect.stringContaining("격리된 실제 파일은 복원하지 않습니다"),
     );
 
     await act(async () => root.unmount());
     container.remove();
+  });
+
+  it.each(["pending", "stale"] as const)("offers approval only while a %s manual record is unacknowledged", async (reviewState) => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    const acknowledge = vi.fn();
+    const render = async (acknowledgedAt?: string) => {
+      await act(async () => root.render(
+        <ActivityDrawer open galleries={[]} sessionDownloads={[]}
+          automationHistory={[{ reviewId: "manual-history", incomingGalleryId: galleryId(601),
+            title: "수기 검토 기록", occurredAt: "2026-10-31T12:00:00Z", reviewState,
+            removeIncomingCount: 0, removeExistingCount: 0, removedGalleryIds: [], acknowledgedAt }]}
+          onAcknowledgeAutomationHistory={acknowledge}
+          onClose={vi.fn()} onReview={vi.fn()} onRetry={vi.fn()} onCancel={vi.fn()} />,
+      ));
+    };
+    try {
+      await render();
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+        .find(button => button.textContent?.includes("자동분류 검토"))!.click());
+      const approval = [...container.querySelectorAll<HTMLButtonElement>("button")]
+        .find(button => button.textContent === "승인");
+      expect(approval).toBeEnabled();
+      await act(async () => approval!.click());
+      expect(acknowledge).toHaveBeenCalledExactlyOnceWith("manual-history");
+      await render("2026-10-31T12:01:00Z");
+      expect([...container.querySelectorAll("button")].some(button => button.textContent === "승인")).toBe(false);
+      expect(container.querySelector('[aria-label="승인 완료"]')).not.toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
   });
 
   it("offers manual review independently of automatic history and disables duplicate starts", async () => {
@@ -500,7 +534,7 @@ describe("ActivityDrawer download controls", () => {
       .find((button) => button.textContent?.includes("자동분류 검토"))!.click());
     const button = container.querySelector<HTMLButtonElement>(".activity-history-toolbar button")!;
     expect(button).toBeEnabled();
-    expect(button).toHaveTextContent("미확인 순차 검토");
+    expect(button).toHaveTextContent("검토 필요 목록");
     expect(button.closest("#activity-automation-panel")).not.toBeNull();
     expect(container).not.toHaveTextContent("수동 판단 순차 검토");
     await act(async () => button.click());

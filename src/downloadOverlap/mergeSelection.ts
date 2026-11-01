@@ -26,7 +26,8 @@ export function selectMergePages(candidate: DownloadOverlapCandidate, selection:
 
 /** Selected counterparts override the destination; only selected unique donor pages are inserted. */
 export function mergeOutputPages(candidate: DownloadOverlapCandidate, incomingCount: number,
-  request: Pick<DownloadOverlapMergeRequest, "sourceSide" | "selectedPages">): { side: MergeSide; page: number }[] {
+  request: Pick<DownloadOverlapMergeRequest, "sourceSide" | "selectedPages" | "targetSelectionOnly">): { side: MergeSide; page: number }[] {
+  if(request.targetSelectionOnly&&!request.selectedPages)throw new Error('일부만 남길 페이지를 선택해 주세요.');
   const selected = request.selectedPages ?? emptyMergeSelection();
   const counts = { existing: candidate.existing.pageCount, incoming: incomingCount };
   const pairs = [...candidate.pagePairs].sort((a,b) => a.existingSourcePage-b.existingSourcePage);
@@ -52,5 +53,5 @@ export function mergeOutputPages(candidate: DownloadOverlapCandidate, incomingCo
   }
   while (t <= counts[target]) output.push({ side: target, page: t++ });
   while (s <= counts[source]) { if (selected[source].includes(s)) output.push({ side: source, page: s }); s++; }
-  return output;
+  return request.targetSelectionOnly ? output.filter(p => p.side === source || selected[target].includes(p.page)) : output;
 }

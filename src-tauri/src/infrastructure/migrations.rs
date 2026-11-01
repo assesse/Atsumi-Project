@@ -2365,6 +2365,17 @@ pub const MIGRATIONS: &[Migration] = &[
             CREATE INDEX download_gallery_links_target_idx ON download_gallery_links(target_entry_id);
         "#,
     },
+    Migration {
+        version: 53,
+        name: "three_level_image_processing",
+        sql: r#"
+            ALTER TABLE settings ADD COLUMN processing_mode TEXT NOT NULL DEFAULT 'basic'
+                CHECK (processing_mode IN ('basic', 'game_priority', 'atsumi_priority'));
+            UPDATE settings SET processing_mode = CASE
+                WHEN high_performance_processing = 1 THEN 'game_priority'
+                ELSE 'basic' END;
+        "#,
+    },
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2528,6 +2539,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn processing_mode_migration_preserves_legacy_intent_and_other_settings() {
+        for (legacy, expected) in [(0, "basic"), (1, "game_priority")] {
+            let mut connection = migration_history(&[]);
+            for migration in MIGRATIONS.iter().filter(|item| item.version <= 52) {
+                connection.execute_batch(migration.sql).unwrap();
+                connection
+                    .execute(
+                        "INSERT INTO schema_migrations(version,name) VALUES (?1,?2)",
+                        params![migration.version, migration.name],
+                    )
+                    .unwrap();
+            }
+            connection.execute("UPDATE settings SET high_performance_processing=?1, revision=37, download_root='D:/kept', request_start_interval_ms=270", [legacy]).unwrap();
+            let report = MigrationRunner::run(&mut connection).unwrap();
+            assert_eq!(report.applied_versions, vec![53]);
+            let saved: (String, i64, i64, String, i64) = connection.query_row(
+                "SELECT processing_mode,high_performance_processing,revision,download_root,request_start_interval_ms FROM settings", [],
+                |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?,row.get(3)?,row.get(4)?))
+            ).unwrap();
+            assert_eq!(saved, (expected.into(), legacy, 37, "D:/kept".into(), 270));
+            assert!(connection
+                .execute("UPDATE settings SET processing_mode='unsupported'", [])
+                .is_err());
+            assert!(MigrationRunner::run(&mut connection)
+                .unwrap()
+                .applied_versions
+                .is_empty());
+        }
+    }
+
+    #[test]
     fn latest_owned_migration_preserves_settings_and_historical_runs_from_schema_47() {
         for previous_mode in ["newer_than_oldest_downloaded", "include_all_history"] {
             let mut connection = migration_history(&[]);
@@ -2592,7 +2634,7 @@ mod tests {
                 MigrationRunner::run(&mut connection)
                     .unwrap()
                     .applied_versions,
-                vec![48, 49, 50, 51, 52]
+                vec![48, 49, 50, 51, 52, 53]
             );
             let mode: String = connection
                 .query_row("SELECT auto_find_history_mode FROM settings", [], |row| {
@@ -2619,6 +2661,10 @@ mod tests {
             assert_eq!(
                 after.remove("privacy_on_startup"),
                 Some(rusqlite::types::Value::Integer(1))
+            );
+            assert_eq!(
+                after.remove("processing_mode"),
+                Some(rusqlite::types::Value::Text("basic".into()))
             );
             assert_eq!(after, settings_before);
             let old_run: (String, i64) = connection
@@ -2720,7 +2766,7 @@ mod tests {
             MigrationRunner::run(&mut connection)
                 .unwrap()
                 .applied_versions,
-            vec![47, 48, 49, 50, 51, 52]
+            vec![47, 48, 49, 50, 51, 52, 53]
         );
         let checkpoint: (i64, i64) = connection.query_row("SELECT high_water_gallery_id, incremental_runs_since_full FROM auto_find_artist_checkpoints WHERE favorite_namespace='artist'", [], |row| Ok((row.get(0)?, row.get(1)?))).unwrap();
         assert_eq!(checkpoint, (50000, 2));
@@ -2856,7 +2902,10 @@ mod tests {
             )
             .unwrap();
         let report = MigrationRunner::run(&mut connection).unwrap();
-        assert_eq!(report.applied_versions, vec![46, 47, 48, 49, 50, 51, 52]);
+        assert_eq!(
+            report.applied_versions,
+            vec![46, 47, 48, 49, 50, 51, 52, 53]
+        );
         for id in 1..=7 {
             let (first, json): (String, String) = connection
                 .query_row(
@@ -2905,7 +2954,7 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("upgrade adaptive downloads");
         assert_eq!(
             report.applied_versions,
-            vec![45, 46, 47, 48, 49, 50, 51, 52]
+            vec![45, 46, 47, 48, 49, 50, 51, 52, 53]
         );
         let settings: (i64, i64, i64, bool, i64) = connection.query_row(
             "SELECT revision, concurrent_image_requests, request_start_interval_ms, download_adaptive_concurrency, download_adaptive_max_requests FROM settings WHERE singleton = 1",
@@ -3068,7 +3117,7 @@ mod tests {
             report.applied_versions,
             vec![
                 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
-                36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+                36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
             ]
         );
         let historical_import_tables: i64 = connection
@@ -3168,10 +3217,10 @@ mod tests {
             report.applied_versions,
             vec![
                 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-                33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+                33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let favorite: String = connection
             .query_row(
                 "SELECT value FROM favorites WHERE namespace = 'artist'",
@@ -3228,7 +3277,7 @@ mod tests {
             report.applied_versions,
             vec![
                 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
-                43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+                43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
             ]
         );
         let columns = connection
@@ -3285,10 +3334,10 @@ mod tests {
             report.applied_versions,
             vec![
                 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-                44, 45, 46, 47, 48, 49, 50, 51, 52,
+                44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let settings: (i64, i64) = connection
             .query_row(
                 "SELECT max_columns, privacy_mode FROM settings WHERE singleton = 1",
@@ -3364,10 +3413,10 @@ mod tests {
             report.applied_versions,
             vec![
                 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-                45, 46, 47, 48, 49, 50, 51, 52
+                45, 46, 47, 48, 49, 50, 51, 52, 53
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let preserved: (String, i64, i64, i64) = connection
             .query_row(
                 r#"SELECT e.canonical_token, s.revision, s.artist_count, s.group_count
@@ -3452,10 +3501,10 @@ mod tests {
             report.applied_versions,
             vec![
                 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
-                47, 48, 49, 50, 51, 52
+                47, 48, 49, 50, 51, 52, 53
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let preserved: String = connection
             .query_row(
                 "SELECT title FROM galleries WHERE gallery_id=42",
@@ -3523,10 +3572,10 @@ mod tests {
             report.applied_versions,
             vec![
                 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-                48, 49, 50, 51, 52
+                48, 49, 50, 51, 52, 53
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, search_include_tags_json, search_exclude_tags_json FROM settings WHERE singleton = 1",
@@ -3587,10 +3636,10 @@ mod tests {
             report.applied_versions,
             vec![
                 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-                49, 50, 51, 52
+                49, 50, 51, 52, 53
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let settings: (i64, String, String) = connection
             .query_row(
                 "SELECT max_columns, auto_find_grouping, downloads_grouping FROM settings WHERE singleton = 1",
@@ -3678,10 +3727,10 @@ mod tests {
             report.applied_versions,
             vec![
                 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
-                51, 52
+                51, 52, 53
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let hidden: (i64, String) = connection
             .query_row(
                 "SELECT gallery_id, decision_id FROM duplicate_hidden_galleries WHERE gallery_id=3668987",
@@ -3800,10 +3849,10 @@ mod tests {
             report.applied_versions,
             vec![
                 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
-                52
+                52, 53
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
 
         let hidden = connection
             .prepare(
@@ -3871,10 +3920,11 @@ mod tests {
         assert_eq!(
             report.applied_versions,
             vec![
-                32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52
+                32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+                53
             ]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let settings: (i64, i64, String) = connection
             .query_row(
                 "SELECT max_columns, explore_page_size, download_overlap_auto_mode FROM settings WHERE singleton = 1",
@@ -3937,9 +3987,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v33 to current");
         assert_eq!(
             report.applied_versions,
-            vec![34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
+            vec![34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let modes: (String, String, String, i64) = connection
             .query_row(
                 "SELECT explore_display_mode, auto_find_display_mode, downloads_display_mode, max_columns FROM settings WHERE singleton = 1",
@@ -4019,9 +4069,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v34 to current");
         assert_eq!(
             report.applied_versions,
-            vec![35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
+            vec![35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let known: (Option<String>, Option<i64>) = connection
             .query_row(
                 "SELECT language, published_rank FROM galleries WHERE gallery_id = 701",
@@ -4077,9 +4127,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate v35 to current");
         assert_eq!(
             report.applied_versions,
-            vec![36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
+            vec![36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
         let preferences: (i64, i64, i64, i64) = connection
             .query_row(
                 "SELECT explore_page_size, preview_width, danbooru_page_size, danbooru_preview_width FROM settings WHERE singleton = 1",
@@ -4218,9 +4268,9 @@ mod tests {
         let report = MigrationRunner::run(&mut connection).expect("migrate legacy v37 to v38");
         assert_eq!(
             report.applied_versions,
-            vec![38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52]
+            vec![38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]
         );
-        assert_eq!(report.current_version, 52);
+        assert_eq!(report.current_version, 53);
 
         let counts: (i64, i64, i64, i64, i64) = connection
             .query_row(
@@ -4314,6 +4364,6 @@ mod tests {
 
         let second = MigrationRunner::run(&mut connection).expect("migration remains idempotent");
         assert!(second.applied_versions.is_empty());
-        assert_eq!(second.current_version, 52);
+        assert_eq!(second.current_version, 53);
     }
 }

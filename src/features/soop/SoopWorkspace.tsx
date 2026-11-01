@@ -16,6 +16,7 @@ import { SoopLivePaneGrid } from "./SoopLivePaneGrid";
 import "./SoopLiveShell.css";
 import { SoopOriginalPlayer } from "./SoopOriginalPlayer";
 import { soopOriginalApi, type SoopAccountSnapshot } from "../../api/soopOriginal";
+import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 
 export type SoopWorkspaceProps = {
   active: boolean; runtime: "tauri" | "browser-mock"; privacyMode: boolean;
@@ -25,6 +26,7 @@ export type SoopWorkspaceProps = {
   onWatchingChange?: (watching: boolean) => void;
   autoRecordApi?: SoopAutoRecordApi;
   previewWidth?: number;
+  supportedLinkRequest?: SupportedLinkRequest | null;
 };
 type Row = { key: number; input: string };
 type RowState = { id: string | null; profile: SoopChannel | null; loading: boolean; error: string };
@@ -70,7 +72,7 @@ function ChannelInput({ row, index, api, enabled, privacy, favorite, onInput, on
   </div>;
 }
 
-export function SoopWorkspace({ active, runtime, privacyMode, view: requestedView, onNotice, api: suppliedApi, onViewChange, onWatchingChange, autoRecordApi, previewWidth = 320 }: SoopWorkspaceProps) {
+export function SoopWorkspace({ active, runtime, privacyMode, view: requestedView, onNotice, api: suppliedApi, onViewChange, onWatchingChange, autoRecordApi, previewWidth = 320, supportedLinkRequest }: SoopWorkspaceProps) {
   // Accept an old/shared navigation value without restoring a removed sidebar page.
   const view = requestedView === "favorites" ? "explore" : requestedView;
   useEffect(() => { if (active && requestedView === "favorites") onViewChange?.("explore"); }, [active, requestedView, onViewChange]);
@@ -218,7 +220,7 @@ export function SoopWorkspace({ active, runtime, privacyMode, view: requestedVie
   </div>{reservations.error && !privacyMode ? <p className="soop-inline-error" role="alert">{reservations.error}</p> : null}</section>;
   return <section className={`soop-workspace${view === "live" ? " is-live-view" : ""}`} data-tour="soop-content" aria-label="SOOP" hidden={!active} inert={!active}>
     <div hidden={view !== "explore"}>
-      <SoopDiscovery api={api} active={active && view === "explore"} legacyFavoritesView={requestedView === "favorites"} privacyMode={privacyMode} onNotice={onNotice} previewWidth={previewWidth}
+      <SoopDiscovery api={api} active={active && view === "explore"} legacyFavoritesView={requestedView === "favorites"} privacyMode={privacyMode} onNotice={onNotice} previewWidth={previewWidth} supportedLinkRequest={supportedLinkRequest}
         isChannelFavorite={id => favorites.some(item => item.channelId === id)} onFavoriteChannel={item => toggleFavorite({ channelId: item.channelId, name: item.channelName })}
         onLive={item => { const channel: SoopChannel = { channelId: item.channelId, name: item.channelName, title: item.title, image: null, status: "live", viewers: item.views }; setRows([{ key: nextRow.current++, input: item.channelId }]); if(watching.some(old=>old.channelId===item.channelId))setResumeRequests(old=>({...old,[item.channelId]:(old[item.channelId]??0)+1}));setWatching(current => [current.find(old => old.channelId === item.channelId) ?? channel]); setAppliedMode("all"); closeDrawer(); onViewChange?.("live"); }} />
     </div>

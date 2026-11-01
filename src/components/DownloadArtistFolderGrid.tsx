@@ -1,5 +1,6 @@
 import {
-  Fragment,
+  memo,
+  startTransition,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -95,6 +96,118 @@ const visibleTagLabel = (tag: string): string => {
   return (separator >= 0 ? tag.slice(separator + 1) : tag).replaceAll("_", " ");
 };
 
+
+/** Stable folder buttons stay navigable; offscreen media/tag trees wait for visibility. */
+const DownloadArtistFolderCard = memo(function DownloadArtistFolderCard({
+  group, groupIndex, safeColumns, latest, active, collapsed, favoriteMetadata, thumbnailClient,
+  onToggle, onShowPreview, onHidePreview, onLeavePreview, onActivate,
+}: {
+  group: GalleryGroup; groupIndex: number; safeColumns: number; latest?: Gallery;
+  active: boolean; collapsed: boolean; favoriteMetadata: ReadonlySet<string>; thumbnailClient?: ThumbnailClient;
+  onToggle: (key: string) => void;
+  onShowPreview: (group: GalleryGroup, anchor: HTMLElement, interaction?: "pointer" | "keyboard") => void;
+  onHidePreview: (group: GalleryGroup) => void; onLeavePreview: (group: GalleryGroup) => void;
+  onActivate: (key: string) => void;
+}) {
+  const storageKey = galleryGroupStorageKey("downloads", group);
+  const headingId = `download-artist-folder-${groupIndex}`;
+  const priority: ThumbnailPriority = groupIndex < safeColumns ? "visible" : "prefetch";
+  const tagSummary = useMemo(() => active ? summarizeArtistFolderTags(group.items, favoriteMetadata, 6) : [],
+    [active, group.items, favoriteMetadata]);
+  const emptyTagLabel = active && group.items.some((gallery) => gallery.tagsKnown === false)
+    ? "태그 정보 미확인" : "표시할 태그가 없습니다";
+  return (
+                <article
+                  className={`download-artist-folder-card${collapsed ? " is-collapsed" : " is-expanded"}`}
+                  data-folder-key={group.key}
+                  role="listitem"
+                >
+                  <h2>
+                    <button
+                      type="button"
+                      id={headingId}
+                      className="download-artist-folder-button"
+                      aria-expanded={!collapsed}
+                      aria-controls={collapsed ? undefined : `${headingId}-contents`}
+                      aria-label={`${group.label} ${folderType(group)}, ${group.items.length}개 작품, ${collapsed ? "열기" : "닫기"}`}
+                      onFocus={(event) => {
+                        onActivate(group.key);
+                        const anchor = event.currentTarget.querySelector<HTMLElement>(".download-artist-folder-preview-stack");
+                        if (collapsed && anchor && event.currentTarget.matches(":focus-visible")) {
+                          onShowPreview(group, anchor, "keyboard");
+                        }
+                      }}
+                      onBlur={(event) => {
+                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) onHidePreview(group);
+                      }}
+                      onClick={() => {
+                        onHidePreview(group);
+                        onToggle(storageKey);
+                      }}
+                    >
+                      <span
+                        className="download-artist-folder-preview-stack"
+                        data-preview-count={latest ? 1 : 0}
+                        data-work-count={group.items.length}
+                        aria-hidden="true"
+                        onMouseEnter={(event) => {
+                          onActivate(group.key);
+                          if (collapsed) onShowPreview(group, event.currentTarget);
+                        }}
+                        onMouseLeave={() => {
+                          onLeavePreview(group);
+                        }}
+                      >
+                        {active && latest ? (
+                          <GalleryThumbnail
+                            as="span"
+                            className="download-artist-folder-preview is-preview-1"
+                            key={latest.id}
+                            thumbnailKey={galleryCoverThumbnailKey(latest)}
+                            consumer="downloads"
+                            priority={priority}
+                            alt=""
+                            expectedAspectRatio={expectedRatio(latest)}
+                            style={{ "--folder-cover-aspect": latest.thumbnailWidth && latest.thumbnailHeight ? latest.thumbnailWidth / latest.thumbnailHeight : 2 / 3 } as CSSProperties}
+                            data-gallery-id={Number(latest.id)}
+                            client={thumbnailClient}
+                          />
+                        ) : null}
+                        <i className="download-artist-folder-tab" aria-hidden="true" />
+                        <span className="download-artist-folder-type">{folderType(group)}</span>
+                      </span>
+                      <span className="download-artist-folder-copy">
+                        <strong className="download-artist-folder-name">{group.label}</strong>
+                        <span className="download-artist-folder-count">{group.items.length.toLocaleString()}개 작품</span>
+                        <span
+                          className={`download-artist-folder-tags${tagSummary.length ? "" : " is-empty"}`}
+                          aria-busy={!active || undefined}
+                          aria-label={tagSummary.length
+                            ? `자주 사용하거나 즐겨찾기한 태그: ${tagSummary.map((tag) => tag.value).join(", ")}`
+                            : emptyTagLabel}
+                        >
+                          {tagSummary.length ? tagSummary.map((tag) => (
+                            <span
+                              className={`download-artist-folder-tag${tag.favorite ? " is-favorite" : ""}`}
+                              title={`${tag.value} · 현재 불러온 앨범 ${tag.count}개에서 확인${tag.favorite ? " · 즐겨찾기" : ""}`}
+                              key={tag.value}
+                            >
+                              {tag.favorite ? <i aria-hidden="true">★</i> : null}
+                              <b>{visibleTagLabel(tag.value)}</b>
+                              <small>{tag.count}</small>
+                            </span>
+                          )) : active ? <span>{emptyTagLabel}</span> : null}
+                        </span>
+                        <span className="download-artist-folder-action" aria-hidden="true">
+                          {collapsed ? "작품 보기" : "열린 폴더"}<i>›</i>
+                        </span>
+                      </span>
+                    </button>
+                  </h2>
+                </article>
+  );
+});
+
 /**
  * A visual index of virtual artist folders. It deliberately does not reuse a
  * GalleryCard: the cover stack opens a bucket and never selects or downloads a
@@ -120,6 +233,25 @@ export function DownloadArtistFolderGrid({
   coverRetainer,
 }: DownloadArtistFolderGridProps) {
   const client = useThumbnailClient(thumbnailClient);
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [readyFolderKeys, setReadyFolderKeys] = useState<ReadonlySet<string>>(new Set());
+  const activateFolder = useCallback((key: string) => setReadyFolderKeys(current =>
+    current.has(key) ? current : new Set(current).add(key)), []);
+  useEffect(() => {
+    const grid = gridRef.current;
+    if (!grid || typeof IntersectionObserver !== "function") return;
+    const observer = new IntersectionObserver(entries => {
+      const keys = entries.filter(entry => entry.isIntersecting)
+        .map(entry => (entry.target as HTMLElement).dataset.folderKey!);
+      if (!keys.length) return;
+      startTransition(() => setReadyFolderKeys(current => {
+        const missing = keys.filter(key => !current.has(key));
+        return missing.length ? new Set([...current, ...missing]) : current;
+      }));
+    }, { root: grid.closest(".gallery-viewport"), rootMargin: "800px 0px", threshold: 0 });
+    grid.querySelectorAll("[data-folder-key]").forEach(node => observer.observe(node));
+    return () => observer.disconnect();
+  }, [groups]);
   const backgroundPreloader = useRef<GalleryCoverBackgroundPreloader | null>(null);
   const [previewedGroupKey, setPreviewedGroupKey] = useState<string | null>(null);
   const [overlayPosition, setOverlayPosition] = useState<PreviewOverlayPosition | null>(null);
@@ -131,10 +263,7 @@ export function DownloadArtistFolderGrid({
   // Older callers may still carry several expanded keys. Render only one
   // window even in that case, never a row-expanding grid of folder contents.
   const openedGroup = groups.find((group) => !collapsedGroupKeys.has(galleryGroupStorageKey("downloads", group)));
-  const rows = Array.from(
-    { length: Math.ceil(groups.length / safeColumns) },
-    (_, rowIndex) => groups.slice(rowIndex * safeColumns, (rowIndex + 1) * safeColumns),
-  );
+
   const style = {
     gridTemplateColumns: `repeat(${safeColumns}, minmax(0, 1fr))`,
     ...galleryPreviewPresetStyle(preset),
@@ -147,10 +276,6 @@ export function DownloadArtistFolderGrid({
     group.key,
     savedArtistPreviewGalleries(group.items, previewGalleryIdsByArtist?.get(group.label.trim().toLocaleLowerCase()), Math.max(12, hoverPreviewLimit * 2)),
   ])), [groups, previewGalleryIdsByArtist, hoverPreviewLimit]);
-  // Hover/open/selection should not recount every tag in the downloaded library.
-  const groupTagSummaries = useMemo(() => new Map(groups.map((group) => [
-    group.key, summarizeArtistFolderTags(group.items, favoriteMetadata, 6),
-  ])), [groups, favoriteMetadata]);
   const overlayPreviews = useMemo(
     () => (previewedGroup ? groupPreviews.get(previewedGroup.key) ?? [] : []).slice(0, hoverPreviewLimit),
     [hoverPreviewLimit, previewedGroup, groupPreviews],
@@ -223,27 +348,34 @@ export function DownloadArtistFolderGrid({
     };
   }, [previewedGroupKey, updateOverlayPosition]);
 
+  const previewsRef = useRef(groupPreviews);
+  previewsRef.current = groupPreviews;
   const showFolderPreview = useCallback((group: GalleryGroup, anchor: HTMLElement, interaction: "pointer" | "keyboard" = "pointer") => {
     previewInteraction.current = interaction;
     if (previewAnchor.current === anchor) return;
-    const sample = groupPreviews.get(group.key) ?? [];
+    const sample = previewsRef.current.get(group.key) ?? [];
     previewAnchor.current = anchor;
     setPreviewedGroupKey(group.key);
     onPreviewItems?.(sample.map((gallery) => gallery.id));
-  }, [groupPreviews, onPreviewItems]);
+  }, [onPreviewItems]);
 
   const hideFolderPreview = useCallback((group: GalleryGroup) => {
-    const sample = groupPreviews.get(group.key) ?? [];
+    const sample = previewsRef.current.get(group.key) ?? [];
     previewAnchor.current = null;
     previewInteraction.current = null;
     setPreviewedGroupKey((current) => current === group.key ? null : current);
     setOverlayPosition(null);
     onStopPreviewItems?.(sample.map((gallery) => gallery.id));
-  }, [groupPreviews, onStopPreviewItems]);
+  }, [onStopPreviewItems]);
+
+  const leaveFolderPreview = useCallback((group: GalleryGroup) => {
+    if (previewInteraction.current === "pointer") hideFolderPreview(group);
+  }, [hideFolderPreview]);
 
   return (
     <>
       <div
+        ref={gridRef}
         className="download-artist-folder-grid"
         data-group-view="downloads"
         data-preview-size={preset.key}
@@ -251,109 +383,15 @@ export function DownloadArtistFolderGrid({
         role="list"
         aria-label="다운로드 작가 폴더"
       >
-        {rows.map((row, rowIndex) => (
-          <Fragment key={row.map((group) => group.key).join("\u0000")}>
-            {row.map((group, columnIndex) => {
-              const groupIndex = rowIndex * safeColumns + columnIndex;
-              const storageKey = galleryGroupStorageKey("downloads", group);
-              const collapsed = openedGroup?.key !== group.key;
-              const latest = groupPreviews.get(group.key)?.[0];
-              const tagSummary = groupTagSummaries.get(group.key) ?? [];
-              const emptyTagLabel = group.items.some((gallery) => gallery.tagsKnown === false)
-                ? "태그 정보 미확인"
-                : "표시할 태그가 없습니다";
-              const priority: ThumbnailPriority = groupIndex < safeColumns ? "visible" : "prefetch";
-              const headingId = `download-artist-folder-${groupIndex}`;
-              return (
-                <article
-                  className={`download-artist-folder-card${collapsed ? " is-collapsed" : " is-expanded"}`}
-                  key={group.key}
-                  role="listitem"
-                >
-                  <h2>
-                    <button
-                      type="button"
-                      id={headingId}
-                      className="download-artist-folder-button"
-                      aria-expanded={!collapsed}
-                      aria-controls={collapsed ? undefined : `${headingId}-contents`}
-                      aria-label={`${group.label} ${folderType(group)}, ${group.items.length}개 작품, ${collapsed ? "열기" : "닫기"}`}
-                      onFocus={(event) => {
-                        const anchor = event.currentTarget.querySelector<HTMLElement>(".download-artist-folder-preview-stack");
-                        if (collapsed && anchor && event.currentTarget.matches(":focus-visible")) {
-                          showFolderPreview(group, anchor, "keyboard");
-                        }
-                      }}
-                      onBlur={(event) => {
-                        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hideFolderPreview(group);
-                      }}
-                      onClick={() => {
-                        hideFolderPreview(group);
-                        onToggle(storageKey);
-                      }}
-                    >
-                      <span
-                        className="download-artist-folder-preview-stack"
-                        data-preview-count={latest ? 1 : 0}
-                        data-work-count={group.items.length}
-                        aria-hidden="true"
-                        onMouseEnter={(event) => {
-                          if (collapsed) showFolderPreview(group, event.currentTarget);
-                        }}
-                        onMouseLeave={() => {
-                          if (previewInteraction.current === "pointer") hideFolderPreview(group);
-                        }}
-                      >
-                        {latest ? (
-                          <GalleryThumbnail
-                            as="span"
-                            className="download-artist-folder-preview is-preview-1"
-                            key={latest.id}
-                            thumbnailKey={galleryCoverThumbnailKey(latest)}
-                            consumer="downloads"
-                            priority={priority}
-                            alt=""
-                            expectedAspectRatio={expectedRatio(latest)}
-                            style={{ "--folder-cover-aspect": latest.thumbnailWidth && latest.thumbnailHeight ? latest.thumbnailWidth / latest.thumbnailHeight : 2 / 3 } as CSSProperties}
-                            data-gallery-id={Number(latest.id)}
-                            client={thumbnailClient}
-                          />
-                        ) : null}
-                        <i className="download-artist-folder-tab" aria-hidden="true" />
-                        <span className="download-artist-folder-type">{folderType(group)}</span>
-                      </span>
-                      <span className="download-artist-folder-copy">
-                        <strong className="download-artist-folder-name">{group.label}</strong>
-                        <span className="download-artist-folder-count">{group.items.length.toLocaleString()}개 작품</span>
-                        <span
-                          className={`download-artist-folder-tags${tagSummary.length ? "" : " is-empty"}`}
-                          aria-label={tagSummary.length
-                            ? `자주 사용하거나 즐겨찾기한 태그: ${tagSummary.map((tag) => tag.value).join(", ")}`
-                            : emptyTagLabel}
-                        >
-                          {tagSummary.length ? tagSummary.map((tag) => (
-                            <span
-                              className={`download-artist-folder-tag${tag.favorite ? " is-favorite" : ""}`}
-                              title={`${tag.value} · 현재 불러온 앨범 ${tag.count}개에서 확인${tag.favorite ? " · 즐겨찾기" : ""}`}
-                              key={tag.value}
-                            >
-                              {tag.favorite ? <i aria-hidden="true">★</i> : null}
-                              <b>{visibleTagLabel(tag.value)}</b>
-                              <small>{tag.count}</small>
-                            </span>
-                          )) : <span>{emptyTagLabel}</span>}
-                        </span>
-                        <span className="download-artist-folder-action" aria-hidden="true">
-                          {collapsed ? "작품 보기" : "열린 폴더"}<i>›</i>
-                        </span>
-                      </span>
-                    </button>
-                  </h2>
-                </article>
-              );
-            })}
-          </Fragment>
-        ))}
+        {groups.map((group, groupIndex) => <DownloadArtistFolderCard
+          key={group.key} group={group} groupIndex={groupIndex} safeColumns={safeColumns}
+          latest={groupPreviews.get(group.key)?.[0]}
+          active={typeof IntersectionObserver !== "function" || groupIndex < safeColumns * 2
+            || readyFolderKeys.has(group.key) || openedGroup?.key === group.key}
+          collapsed={openedGroup?.key !== group.key} favoriteMetadata={favoriteMetadata}
+          thumbnailClient={thumbnailClient} onToggle={onToggle} onShowPreview={showFolderPreview}
+          onHidePreview={hideFolderPreview} onLeavePreview={leaveFolderPreview} onActivate={activateFolder}
+        />)}
       </div>
       {openedGroup ? <DownloadArtistFolderWindow
         key={openedGroup.key}

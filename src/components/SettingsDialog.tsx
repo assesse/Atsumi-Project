@@ -8,6 +8,7 @@ import type {
   ExplorationExclusionRestoreResult,
   MaintenanceAction,
   MaintenanceResult,
+  ProcessingMode,
   SettingsPatch,
   SettingsSnapshot,
   StorageUsageSnapshot,
@@ -32,6 +33,7 @@ import {
 } from "../layout/galleryPreviewPresets";
 import { parseGlobalSearchTagInput } from "../search/globalSearchRules";
 import { DOWNLOAD_OVERLAP_AUTO_HELP } from "../state/downloadOverlapAuto";
+import { resolveProcessingMode } from "../state/processingMode";
 import type { AppUpdateCheckResult } from "../update/useAppUpdater";
 import { FluentIcon } from "./FluentIcon";
 import { DropdownSelect } from "./DropdownSelect";
@@ -67,6 +69,16 @@ type SettingsDialogProps = {
 
 const DEFAULT_FOLDER_NAME_TEMPLATE = "[{artist}] {title} [{group}] {id}";
 const EXCLUSION_RENDER_BATCH = 50;
+const PROCESSING_MODES = [
+  { value: "basic", label: "기본 · 최소 사용" },
+  { value: "game_priority", label: "중간 · 게임 우선" },
+  { value: "atsumi_priority", label: "고성능 · Atsumi 우선" },
+] as const;
+const PROCESSING_SUMMARY: Record<ProcessingMode, string> = {
+  basic: "적은 작업으로 자원 사용 최소화",
+  game_priority: "게임·다른 작업에 먼저 자원 배정",
+  atsumi_priority: "Atsumi 처리 속도 우선 · 다른 작업이 느려질 수 있음",
+};
 const exclusionReasonLabel = (kind: ExplorationExclusion["reasons"][number]["kind"]): string => ({
   manual: "직접 제외",
   duplicate_hidden: "중복 숨김",
@@ -503,6 +515,7 @@ export function SettingsDialog({
       privacyOnStartup: true,
       concurrentImageRequests: 5,
       downloadAdaptiveConcurrency: true,
+      processingMode: "basic",
       highPerformanceProcessing: false,
       downloadAdaptiveMaxRequests: 8,
       requestStartIntervalMs: 25,
@@ -1046,11 +1059,17 @@ export function SettingsDialog({
                 </div>
                 <div className="setting-row" hidden={activeTab !== "hitomi"}>
                   <SettingCopy
-                    title="고성능 처리 모드"
-                    summary="해시 계산·중복 대조 병렬 처리"
-                    detail="CPU와 사용 가능한 메모리에 맞춰 이미지 처리와 중복 대조를 병렬로 수행합니다. 팬 소음과 메모리 사용량이 늘 수 있습니다. 저장 즉시 처리 한도를 조절하며, 이미 시작한 작업은 안전하게 마칩니다. 무결성 검사와 판정 기준, HDD 보호 속도 및 서버 요청 제한은 그대로 유지합니다."
+                    title="처리 성능 모드"
+                    summary={PROCESSING_SUMMARY[resolveProcessingMode(draft)]}
+                    detail="이미지 해시·검증·중복 대조의 동시 작업 수를 PC의 논리 CPU 수와 메모리 여유에 맞춥니다. 기본은 최대 2개, 중간은 CPU 수의 1/4 범위에서 최대 4개, 고성능은 CPU 수에서 2개를 뺀 범위에서 최대 16개입니다(최소 1개). 중간은 Windows에 CPU·디스크·메모리 후순위로 맡기고, 고성능은 계산 우선순위를 높입니다. 중간도 게임 성능 영향을 완전히 없애지는 못합니다. CPU 사용률을 고정하는 제한은 아니며, 저장 후 진행 중인 이미지를 안전하게 마치고 새 정책을 적용합니다."
                   />
-                  <label className="setting-checkbox"><input type="checkbox" role="switch" checked={draft.highPerformanceProcessing ?? false} aria-label="고성능 처리 모드" onChange={(event) => patch("highPerformanceProcessing", event.target.checked)} /></label>
+                  <DropdownSelect<ProcessingMode>
+                    ariaLabel="처리 성능 모드"
+                    value={resolveProcessingMode(draft)}
+                    options={PROCESSING_MODES}
+                    onChange={(value) => patch("processingMode", value)}
+                    menuMinWidth={250}
+                  />
                 </div>
                 </section>
                 <section className="maintenance-panel" aria-labelledby="maintenance-panel-title" hidden={activeTab !== "hitomi"}>

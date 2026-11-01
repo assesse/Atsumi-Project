@@ -59,7 +59,7 @@ function ArchiveLibraryContent({record,items,pending,error,api,onList,onRead,onF
   </>;
 }
 
-type LibraryProps={runtime:"tauri"|"browser-mock";active?:boolean;privacyMode?:boolean;api?:XArchiveApi;accounts?:ReadonlyArray<{id:string;handle:string}>};
+type LibraryProps={runtime:"tauri"|"browser-mock";active?:boolean;privacyMode?:boolean;api?:XArchiveApi;accounts?:ReadonlyArray<{id:string;handle:string}>;onScopeChange?:()=>void};
 type LibraryTab="body"|"media";
 const accountKey=(accountId:string|undefined)=>accountId?`account:${accountId}`:"unknown";
 const inLibraryScope=(item:XArchiveSummary,tab:LibraryTab,account:string)=>item.intent===(tab==="body"?"archive":"media")&&(account==="all"||accountKey(item.accountId)===account);
@@ -74,7 +74,7 @@ function ArchiveTimelinePost({record,api,onOpen,selected}:{record:XArchiveRecord
   </div>;
 }
 /** Standalone sidebar view: local records never require a live X account or native pane. */
-export function XArchiveLibrary({runtime,active=true,privacyMode=false,api:provided,accounts=[]}:LibraryProps) {
+export function XArchiveLibrary({runtime,active=true,privacyMode=false,api:provided,accounts=[],onScopeChange}:LibraryProps) {
   const api=useMemo(()=>provided??createXArchiveApi(runtime),[provided,runtime]);
   const [items,setItems]=useState<XArchiveSummary[]>([]),[record,setRecord]=useState<XArchiveRecord|null>(null);
   const [tab,setTab]=useState<LibraryTab>("body"),[accountFilter,setAccountFilter]=useState("all"),[focusPost,setFocusPost]=useState<string|null>(null);
@@ -160,6 +160,7 @@ export function XArchiveLibrary({runtime,active=true,privacyMode=false,api:provi
   const openRecord=(value:XArchiveRecord,postId?:string)=>{setRecord(value);setFocusPost(postId??null);};
   const changeScope=(nextTab:LibraryTab,nextAccount:string)=>{
     if(nextTab===scope.current.tab&&nextAccount===scope.current.accountFilter)return;
+    onScopeChange?.();
     timelineScroll.current[`${scope.current.accountFilter}:${scope.current.tab}`]=timeline.current?.scrollTop??0;
     scopeCounts.current[`${scope.current.accountFilter}:${scope.current.tab}`]=visibleCount;
     scope.current={tab:nextTab,accountFilter:nextAccount};setTab(nextTab);setAccountFilter(nextAccount);

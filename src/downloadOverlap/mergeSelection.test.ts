@@ -27,6 +27,10 @@ describe("mixed merge choices",()=>{
     const result=mergeOutputPages(candidate,5,{sourceSide:"incoming",selectedPages:{existing:[2],incoming:[1,3]}});
     expect(result).toEqual([{side:"incoming",page:1},{side:"existing",page:2},{side:"existing",page:3},{side:"existing",page:4},{side:"incoming",page:3},{side:"existing",page:5}]);
   });
+  it("retains only explicit destination pages when its mode is partial",()=>{
+    expect(mergeOutputPages(candidate,5,{sourceSide:'incoming',selectedPages:{existing:[2],incoming:[1,3]},targetSelectionOnly:true}))
+      .toEqual([{side:'incoming',page:1},{side:'existing',page:2},{side:'incoming',page:3}]);
+  });
   it("rejects both counterparts, duplicate IDs and malformed evidence",()=>{
     expect(()=>mergeOutputPages(candidate,5,{sourceSide:"incoming",selectedPages:{existing:[1],incoming:[1]}})).toThrow();
     expect(()=>mergeOutputPages(candidate,5,{sourceSide:"incoming",selectedPages:{existing:[],incoming:[1,1]}})).toThrow();

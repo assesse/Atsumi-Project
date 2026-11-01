@@ -1,0 +1,87 @@
+{
+  "id": "hitomi-group-page-matching-20261101",
+  "state": "implemented-automatically-verified; actual-desktop-deferred",
+  "original": {
+    "thread": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turns": [
+      "01a192ae-93d4-7af2-a849-f3acc7484eba",
+      "01a192ab-3a97-7560-8d92-bcc76c4d4024"
+    ]
+  },
+  "requirements": [
+    "Recover direct same-page matches missed by monotonic alignment, including #3591810:9/#2540189:9/#3344963:8 and :58/:58/:61",
+    "Group #2540189:1 and #3344963:2 using their direct evidence even though the keeper has neither page",
+    "Classify #3591810:83-97 and #3344963:84-98 as common even while #2540189 is active; absence in one edition is not uniqueness across the group",
+    "Keep horizontal multi-edition layout, Ctrl/Shift selections, wheel axes, remembered outer size, short UI labels"
+  ],
+  "design": [
+    "Keep durable candidate.pagePairs, counts, confidence and automatic quarantine policy unchanged",
+    "Read-only native per-candidate supplementary page matching from existing verified cached hashes and matching artifact fingerprints; no image rehash/download/database writes",
+    "Keep strict original matches; recover only mutually unambiguous high confidence unmatched page pairs without source order restriction; bounded work, no threshold relaxation",
+    "Represent display evidence separately from destructive merge evidence; never send new out-of-order relations as if native merge already supported them; retain selections, block only unsafe merge selections with concise reason",
+    "Group common pages using directly validated edges; never infer unsupported A=C equivalence from A=B and B=C; no two different pages from one edition in one column",
+    "Classify pages by displayed group direct support, not active merge target; preserve source page numbers; annotate order changes compactly",
+    "Refresh supplemental evidence only for visible group relationships using revision/fingerprint keys; ignore late/stale responses and avoid polling/full-library reads",
+    "Content columns anchored to the keeper require a direct match from every peer to the keeper; keeper-less columns require pairwise direct matches. No transitive edge is fabricated."
+  ],
+  "audit": {
+    "reusedDocuments": 296,
+    "newDocument": "hitomi-group-review-interaction-20261101.json",
+    "inventory": "28 active, 3 archived EOF; other Atsumi revision unchanged; latest 3 current turns read through previous full read",
+    "missing": [
+      "original 01a03f16 handoff",
+      "unidentified historical analysis1/2",
+      "historical attachment pixels not in snapshots",
+      "inaccessible/unlisted sources"
+    ]
+  },
+  "acceptance": [
+    "Read-only real fingerprint regression for all user-supplied pages",
+    "Native tests for ambiguous/repeated/blank pages, bounds, cache mismatch/stale revisions, and no mutation",
+    "Frontend tests for direct peer-peer extras, active-edition invariant group labels, no inferred equivalence, preserved selections and unsafe merge guard",
+    "Types/build plus isolated browser layout and actual native API validation when idle; main desktop remains deferred unless explicitly resumed"
+  ],
+  "preserved": [
+    "Other chats changes",
+    "No recordings/download cancellation/drain/kill",
+    "No real album exclude/merge/approve for testing",
+    "No commit/push/release/PC shutdown"
+  ],
+  "verification": {
+    "frontendTests": 127,
+    "nativeTests": 6,
+    "realCachedFingerprintProbe": "passed; readonly",
+    "browserChecks": 21,
+    "resolutions": [
+      [
+        1920,
+        1080
+      ],
+      [
+        1280,
+        720
+      ],
+      [
+        736,
+        900
+      ]
+    ],
+    "types": [
+      "app",
+      "node"
+    ],
+    "build": "staging passed",
+    "realDesktop": "deferred per user 2026-10-25; BGD unavailable at last check",
+    "nativeBuild": "live debug build passed and relaunched",
+    "desktopStartup": {
+      "pid": 49160,
+      "nativeUnresponsive": false,
+      "reloadPending": false
+    }
+  },
+  "limitations": [
+    "Supplemental correspondence is display-only. Merging a selection involving recovered reordered pages is blocked to prevent duplicate insertion; selection remains.",
+    "Missing/stale or ambiguous direct evidence is not classified as proven additional content.",
+    "Actual installed/development UI interaction remains unverified until desktop test resumes."
+  ]
+}

@@ -3,6 +3,7 @@ import { createXApi, xError, type XApi, type XCommunity, type XFeed, type XPage,
 import { Author, Photo } from "./XMedia";
 import { XVideo } from "./XVideo";
 import { XImageViewer, type XImageSelection } from "./XImageViewer";
+import { ContextMenuLabel } from "../../components/ContextMenuLabel";
 import "./XWorkspace.css";
 
 export function XIcon({name}:{name:"heart"|"bookmark"|"reply"|"repost"|"views"|"share"|"refresh"}) {
@@ -290,6 +291,6 @@ export function XWorkspace({active,runtime,privacyMode,onNotice,api:provided}:{a
       </aside></div>
     </>}
     {imageSelection&&active&&!privacyMode?<XImageViewer api={api} selection={imageSelection} onChange={index=>setImageSelection(current=>current?{...current,index}:null)} onClose={()=>setImageSelection(null)}/>:null}
-    {context&&!privacyMode?<div role="menu" className="x-context-menu" style={{left:context.x,top:context.y}} onPointerDown={e=>e.stopPropagation()}><button role="menuitem" onClick={()=>{void api.open(context.post.id).catch(e=>notice.current(xError(e)));setContext(null);}}>외부 브라우저에서 열기</button></div>:null}
+    {context&&!privacyMode?<div role="menu" className="x-context-menu" style={{left:context.x,top:context.y}} onPointerDown={e=>e.stopPropagation()}><button role="menuitem" onClick={()=>{void api.open(context.post.id).catch(e=>notice.current(xError(e)));setContext(null);}}><ContextMenuLabel icon="external">외부 브라우저에서 열기</ContextMenuLabel></button></div>:null}
   </section>;
 }

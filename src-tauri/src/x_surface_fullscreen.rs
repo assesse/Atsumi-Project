@@ -10,10 +10,12 @@ const EXIT: &str = "if(document.fullscreenElement){void document.exitFullscreen(
 pub(super) struct Presentation {
     label: String,
     bounds: Rect,
+    companion: Option<(String, Rect)>,
 }
 impl Presentation {
     pub(super) fn rect(&self, pane: &Pane) -> Option<Rect> {
-        (self.label == pane.label).then(|| self.bounds.clone())
+        if self.label == pane.label { Some(self.bounds.clone()) }
+        else { self.companion.as_ref().filter(|(label,_)|*label==pane.label).map(|(_,rect)|rect.clone()) }
     }
 }
 
@@ -29,14 +31,14 @@ fn selected(data: &Surfaces, pane: &Pane) -> bool {
 /// Used in the existing interaction/media gate as well as painting. A hidden
 /// second document cannot claim autoplay or receive actions over fullscreen.
 pub(super) fn allows(data: &Surfaces, pane: &Pane) -> bool {
-    let mut owners = data.feeds.values().chain(data.preview.iter())
+    let owners = data.feeds.values().chain(data.preview.iter())
         .filter(|other| other.revision == pane.revision && selected(data, other)
-            && other.fullscreen.load(Ordering::Acquire));
-    match owners.next() {
-        None => true,
-        Some(owner) => overlay_free(data) && owner.label == pane.label
-            && owners.all(|other| other.label == pane.label),
-    }
+            && other.fullscreen.load(Ordering::Acquire)).collect::<Vec<_>>();
+    if owners.is_empty() { return true; }
+    if !overlay_free(data) { return false; }
+    // A feed-local fullscreen element does not cover the preview. Keep the
+    // previous exclusive policy only for preview's client-wide fullscreen.
+    owners.iter().find(|owner|owner.feed=="preview").is_none_or(|owner|owner.label==pane.label)
 }
 
 fn overlay_free(data: &Surfaces) -> bool {
@@ -54,6 +56,14 @@ fn client_rect(width: u32, height: u32, scale: f64) -> Option<Rect> {
     if !width.is_finite() || !height.is_finite() || width < 100.0 || height < 80.0
         || width > 32768.0 || height > 32768.0 { return None; }
     Some(Rect { x: 0.0, y: 0.0, width, height })
+}
+fn slot_presentation(data: &Surfaces, pane: &Pane, client: Rect) -> Option<Presentation> {
+    if pane.feed=="preview" { return Some(Presentation{label:pane.label.clone(),bounds:client,companion:None}); }
+    let viewport=data.viewport.as_ref()?;
+    let bounds=viewport.player.clone()?;
+    let companion=data.preview.as_ref().filter(|other|other.revision==pane.revision&&other.owner==pane.owner&&other.profile==pane.profile)
+        .zip(viewport.chat.as_ref()).map(|(other,rect)|(other.label.clone(),rect.clone()));
+    Some(Presentation{label:pane.label.clone(),bounds,companion})
 }
 
 fn exit(view: &Webview) {
@@ -98,11 +108,12 @@ fn changed(session: &XSession, app: &AppHandle, pane: &Arc<Pane>, entered: bool)
 /// Re-evaluated on each normal viewport update, including DPI/resize and
 /// privacy/overlay changes. Original slot rectangles are never overwritten.
 pub(super) fn presentation(session: &XSession, app: &AppHandle) -> Option<Presentation> {
-    let panes = {
+    let mut panes = {
         let data = session.surfaces.lock().unwrap_or_else(|error| error.into_inner());
         data.feeds.values().chain(data.preview.iter())
             .filter(|pane| pane.fullscreen.load(Ordering::Acquire)).cloned().collect::<Vec<_>>()
     };
+    panes.sort_by_key(|pane|pane.feed!="preview");
     let mut result = None;
     for pane in panes {
         let view = app.get_webview(&pane.label);
@@ -118,8 +129,12 @@ pub(super) fn presentation(session: &XSession, app: &AppHandle) -> Option<Presen
                 let size = view.window().inner_size().ok()?;
                 client_rect(size.width, size.height, view.window().scale_factor().ok()?)
             });
-        if let Some(bounds) = bounds.filter(|_| result.is_none()) {
-            result = Some(Presentation { label: pane.label.clone(), bounds });
+        let layout=bounds.and_then(|bounds|{
+            let data=session.surfaces.lock().unwrap_or_else(|error|error.into_inner());
+            slot_presentation(&data,&pane,bounds)
+        });
+        if let Some(layout) = layout.filter(|_| result.is_none()) {
+            result = Some(layout);
         } else {
             pane.fullscreen.store(false, Ordering::Release);
             if let Some(view) = view { exit(&view); }
@@ -200,20 +215,35 @@ mod tests {
         assert!(client_rect(u32::MAX, 1080, 1.0).is_none());
     }
     #[test]
-    fn fullscreen_owner_is_exclusive_without_mutating_normal_slots() {
+    fn preview_fullscreen_owner_remains_exclusive_without_mutating_normal_slots() {
         let (data, feed, preview) = surfaces();
         let original = data.viewport.as_ref().unwrap().player.clone();
         assert!(registered_visible(&data, &feed)); assert!(registered_visible(&data, &preview));
-        feed.fullscreen.store(true, Ordering::Release);
-        assert!(allows(&data, &feed)); assert!(!allows(&data, &preview));
-        assert!(registered_visible(&data, &feed)); assert!(!registered_visible(&data, &preview));
-        let presentation = Presentation { label: feed.label.clone(), bounds: client_rect(3440, 1440, 1.0).unwrap() };
-        assert_eq!(presentation.rect(&feed).unwrap().width, 3440.0);
-        assert!(presentation.rect(&preview).is_none());
+        preview.fullscreen.store(true, Ordering::Release);
+        assert!(!allows(&data, &feed)); assert!(allows(&data, &preview));
+        assert!(!registered_visible(&data, &feed)); assert!(registered_visible(&data, &preview));
+        let presentation = slot_presentation(&data,&preview,client_rect(3440,1440,1.0).unwrap()).unwrap();
+        assert_eq!(presentation.rect(&preview).unwrap().width, 3440.0);
+        assert!(presentation.rect(&feed).is_none());
         assert_eq!(data.viewport.as_ref().unwrap().player, original);
-        feed.fullscreen.store(false, Ordering::Release);
+        preview.fullscreen.store(false, Ordering::Release);
         assert!(allows(&data, &feed)); assert!(allows(&data, &preview));
         assert_eq!(data.viewport.as_ref().unwrap().player, original);
+    }
+    #[test]
+    fn feed_fullscreen_stays_inside_its_region_and_retains_current_preview_on_resize() {
+        let (mut data,feed,preview)=surfaces();feed.fullscreen.store(true,Ordering::Release);
+        assert!(allows(&data,&feed));assert!(allows(&data,&preview));
+        assert!(registered_visible(&data,&feed));assert!(registered_visible(&data,&preview));
+        let before=data.viewport.as_ref().unwrap().player.clone();
+        let layout=slot_presentation(&data,&feed,client_rect(3440,1440,1.0).unwrap()).unwrap();
+        assert_eq!(layout.rect(&feed),before);assert_eq!(layout.rect(&preview),data.viewport.as_ref().unwrap().chat);
+        assert_eq!(data.viewport.as_ref().unwrap().player,before);
+        data.viewport.as_mut().unwrap().player.as_mut().unwrap().width=450.0;
+        let resized=slot_presentation(&data,&feed,client_rect(3440,1440,1.0).unwrap()).unwrap();
+        assert_eq!(resized.rect(&feed).unwrap().width,450.0);assert!(resized.rect(&preview).is_some());
+        data.viewport.as_mut().unwrap().player=None;
+        assert!(slot_presentation(&data,&feed,client_rect(3440,1440,1.0).unwrap()).is_none());
     }
     #[test]
     fn old_document_exit_cannot_clear_new_fullscreen_and_hidden_feeds_do_not_own() {
@@ -234,7 +264,7 @@ mod tests {
         let (mut data, feed, preview) = surfaces();
         feed.fullscreen.store(true, Ordering::Release);
         assert!(overlay_free(&data));
-        assert!(allows(&data, &feed)); assert!(!allows(&data, &preview));
+        assert!(allows(&data, &feed)); assert!(allows(&data, &preview));
         data.viewport.as_mut().unwrap().occlusions.push(Hole { x: 2000.0, y: 0.0, width: 100.0, height: 100.0, radii: [0.0; 4] });
         assert!(!overlay_free(&data));
         assert!(!allows(&data, &feed)); assert!(!allows(&data, &preview));

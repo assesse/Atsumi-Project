@@ -35,6 +35,7 @@ pub use download::{
     DownloadListRequest, DownloadPage, DownloadReviewKind,
 };
 pub use download_overlap::{
+    DownloadOverlapDisplayMatchRequest, DownloadOverlapDisplayMatches,
     DownloadOverlapAutomationHistoryItem, DownloadOverlapAutomationHistoryListRequest,
     DownloadOverlapAutomationHistoryPage, DownloadOverlapCandidate,
     DownloadOverlapCandidateIdentity, DownloadOverlapDecisionAction, DownloadOverlapDecisionActor,
@@ -80,7 +81,7 @@ pub use settings::{
     download_root_for_display, gallery_preview_preset_widths, is_gallery_preview_width,
     normalize_collapsed_group_keys, normalize_gallery_preview_width, windows_path_for_display,
     AutoFindHistoryMode, DownloadOverlapAutoMode, GalleryDisplayMode, GalleryGroupingMode,
-    SettingsPatch, SettingsSnapshot,
+    ProcessingMode, SettingsPatch, SettingsSnapshot,
 };
 pub use tag_catalog::{
     canonical_tag_token, normalize_tag_name, TagCatalogEntry, TagCatalogStatus, TagNamespace,

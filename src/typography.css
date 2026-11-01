@@ -1,0 +1,4 @@
+:root, :host { --font-size-min: 13px; }
+/* Small copy must remain readable even inside an already-small parent. */
+small, sub, sup { font-size: max(var(--font-size-min), .875em); }
+textarea { font-family: inherit; }

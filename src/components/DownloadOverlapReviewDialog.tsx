@@ -45,8 +45,15 @@ import { artifactPageThumbnailKey, overlapReviewPageThumbnailKey, type Thumbnail
 import { FluentIcon } from "./FluentIcon";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 import "./DownloadOverlapReviewDialog.css";
+import { buildOverlapReviewGroup, overlapEvidenceKey } from "../downloadOverlap/groupReview";
+import { useOverlapReviewSize } from "./overlapReviewViewport";
+import type { EditionBatchHandler } from "../downloadOverlap/editionBatch";
+import { OverlapGroupReview, type GroupPageRender } from "./OverlapGroupReview";
+import type { PageEvidenceLoader } from "../downloadOverlap/useGroupPageEvidence";
+import { requiresManualOverlapApproval } from "../state/manualOverlapSequence";
 
 type Props = {
+  loadPageEvidence?: PageEvidenceLoader;
   completedPair?: boolean;
   open: boolean;
   review?: DownloadOverlapReview;
@@ -57,8 +64,9 @@ type Props = {
   automationHistoryPending?: boolean;
   automationReviewSequence?: { position: number; total: number; canPrevious: boolean; canNext: boolean; manual?: boolean };
   containmentGroup?: DownloadOverlapContainmentGroup;
+  relatedReviews?: readonly DownloadOverlapReview[];
   containmentLoading?: boolean;
-  batchProgress?: { completed: number; total: number };
+  batchProgress?: { completed: number; total: number; failure?: string; completedKeys?: string[]; failedKey?: string };
   browserFixture?: boolean;
   autoMode?: SettingsSnapshot["downloadOverlapAutoMode"];
   previewWidth: number;
@@ -68,6 +76,8 @@ type Props = {
   onRescan?: () => void;
   onDecision: (request: DownloadOverlapDecisionRequest) => void;
   onApplyContainmentBatch?: (itemKeys: string[]) => void;
+  onApplyEditions?: EditionBatchHandler;
+  preserveDraftOnHide?: boolean;
   onMergePages?: (request: DownloadOverlapMergeRequest) => void;
   onAcknowledgeAutomationHistory?: (reviewId: string) => void;
   onRestoreAutomationExclusions?: (reviewId: string, galleryIds: GalleryId[]) => void;
@@ -569,11 +579,14 @@ type PageMergeSelection = {
   reviewId: string;
   reviewRevision: number;
   candidateId: string;
+  evidence?: string;
   pages: MergeSelection;
   anchor: { side: MergePageSide; page: number };
 };
 
-function PageCell({ entryId, review, candidateId, page, side, pair, index, visible = true, mergeEnabled, mergeDisabled, mergeSourceBlocked, mergeSelection, thumbnailClient, onPreviewOpen, onPreviewClose, onMergeToggle }: {
+function PageCell({ displayLabel, displayMatch, entryId, review, candidateId, page, side, pair, index, visible = true, mergeEnabled, mergeDisabled, mergeSourceBlocked, mergeSelection, thumbnailClient, onPreviewOpen, onPreviewClose, onMergeToggle }: {
+  displayLabel?: string;
+  displayMatch?: GroupPageRender["displayMatch"];
   entryId: string;
   review: ReviewImageContext;
   candidateId: string;
@@ -598,11 +611,13 @@ function PageCell({ entryId, review, candidateId, page, side, pair, index, visib
   if (!page || !thumbnailKey) {
     return <div className="download-overlap-page-cell is-gap" aria-label="이 판본에는 대응 페이지 없음"><span>—</span></div>;
   }
-  const matched = Boolean(pair);
-  const matchLabel = pair
+  const matched = displayMatch?.matched ?? Boolean(pair);
+  const uncertain = displayMatch?.pending || displayMatch?.unverified;
+  const matchLabel = displayMatch ? (displayMatch.matched ? (displayMatch.counterparts?.join(" · ") ?? "직접 대응 확인") + (displayMatch.reordered ? " · 순서 다름" : "")
+    : displayMatch.pending ? "페이지 대응 확인 중" : displayMatch.unverified ? "페이지 대응 미확인" : "현재 비교 판본에서 대응 없음") : pair
     ? pair.exactSha256 ? "SHA-256 일치" : `시각 ${percent(pair.visualSimilarity)}`
     : "이 판본에만 있음";
-  const sideLabel = side === "existing" ? "기존 A" : "신규 B";
+  const sideLabel = displayLabel ?? (side === "existing" ? "기존 A" : "신규 B");
   const selected = mergeSelection?.pages[side].includes(page);
   const opposite = pair && mergeSelection?.pages[side === "existing" ? "incoming" : "existing"].includes(
     side === "existing" ? pair.incomingSourcePage : pair.existingSourcePage);
@@ -612,7 +627,7 @@ function PageCell({ entryId, review, candidateId, page, side, pair, index, visib
     : mergeEnabled ? " · Ctrl+클릭 선택 · Shift+클릭 범위 선택" : "";
   return (
     <GalleryThumbnail
-      className={`download-overlap-page-cell ${matched ? "is-matched" : "is-unique"}${mergeEnabled && !mergeSourceBlocked ? " can-merge" : ""}${mergeEnabled && mergeSourceBlocked ? " is-merge-source-blocked" : ""}${sideLocked ? " is-merge-side-locked" : ""}${mergeState ? ` is-merge-${mergeState}` : ""}`}
+      className={`download-overlap-page-cell ${matched ? "is-matched" : uncertain ? "is-unverified" : "is-unique"}${mergeEnabled && !mergeSourceBlocked ? " can-merge" : ""}${mergeEnabled && mergeSourceBlocked ? " is-merge-source-blocked" : ""}${sideLocked ? " is-merge-side-locked" : ""}${mergeState ? ` is-merge-${mergeState}` : ""}`}
       thumbnailKey={thumbnailKey}
       consumer="review"
       priority={index < 6 ? "visible" : "prefetch"}
@@ -642,7 +657,7 @@ function PageCell({ entryId, review, candidateId, page, side, pair, index, visib
     >
       {mergeState ? <span className="download-overlap-page-merge-state">{mergeState === "source" ? "보존" : "미선택"}</span> : null}
       <span className="download-overlap-page-number">{sideLabel} {page}p</span>
-      <span className="download-overlap-page-status">{matched ? "일치" : "추가"}</span>
+      <span className="download-overlap-page-status" title={matchLabel}>{matched ? <>일치{displayMatch?.reordered ? <span aria-label="순서 다름" title="원본 페이지 순서 다름"> ↔</span> : null}</> : displayMatch?.pending ? "확인 중" : displayMatch?.unverified ? "미확인" : "추가"}</span>
     </GalleryThumbnail>
   );
 }
@@ -857,7 +872,7 @@ function ContainmentBatchReview({ group, ambiguousCandidates, loading, disabled,
   loading: boolean;
   disabled: boolean;
   error?: string | null;
-  progress?: { completed: number; total: number };
+  progress?: { completed: number; total: number; failure?: string; completedKeys?: string[]; failedKey?: string };
   previewWidth: number;
   thumbnailClient?: ThumbnailClient;
   selectionOverrides: ReadonlyMap<string, boolean>;
@@ -964,7 +979,7 @@ function ContainmentBatchReview({ group, ambiguousCandidates, loading, disabled,
           {inProgress ? (
             <><span className="spinner" /> 선택 항목 처리 중 · {completed}/{total}</>
           ) : partialFailure ? (
-            <><FluentIcon glyph="\uE7BA" /> 일부 처리 후 중단 · {completed}/{total} 완료 · 처리되지 않은 선택은 유지됩니다.</>
+            <><FluentIcon glyph="\uE7BA" /><span>일부 처리 후 중단 · {completed}/{total} 완료 · 처리되지 않은 선택은 유지됩니다.<br />{progress?.failure ?? error}</span></>
           ) : loading ? (
             <><span className="spinner" /> 포함 후보를 다시 확인하는 중</>
           ) : (
@@ -1068,18 +1083,23 @@ function AutoPlanHelp() {
   </>;
 }
 
-export function DownloadOverlapReviewDialog({ open, review, loading = false, error = null, decisionPending: reviewDecisionPending = false, automationHistoryItem, automationHistoryPending = false, automationReviewSequence, containmentGroup, containmentLoading = false, batchProgress, browserFixture = false, autoMode = "off", previewWidth, thumbnailClient, onClose, onRetry, onRescan, onDecision, onApplyContainmentBatch, onMergePages, onAcknowledgeAutomationHistory, onRestoreAutomationExclusions, onPreviousAutomationReview, onNextAutomationReview, completedPair = false }: Props) {
+export function DownloadOverlapReviewDialog({ open, review, loadPageEvidence, loading = false, error = null, decisionPending: reviewDecisionPending = false, automationHistoryItem, automationHistoryPending = false, automationReviewSequence, containmentGroup, relatedReviews = [], containmentLoading = false, batchProgress, browserFixture = false, autoMode = "off", previewWidth, thumbnailClient, onClose, onRetry, onRescan, onDecision, onApplyContainmentBatch, onApplyEditions, preserveDraftOnHide = false, onMergePages, onAcknowledgeAutomationHistory, onRestoreAutomationExclusions, onPreviousAutomationReview, onNextAutomationReview, completedPair = false }: Props) {
   const decisionPending = reviewDecisionPending || automationHistoryPending;
   const historyItem = automationHistoryItem?.reviewId === review?.reviewId
     && automationHistoryItem?.incomingGalleryId === review?.incoming.galleryId
     ? automationHistoryItem : undefined;
+  const historyNeedsApproval = historyItem && requiresManualOverlapApproval({
+    ...historyItem, reviewState: review?.state ?? historyItem.reviewState,
+  });
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
   const opener = useRef<HTMLElement | null>(null);
   const [candidateId, setCandidateId] = useState<string | null>(null);
   const [containmentSelectionOverrides, setContainmentSelectionOverrides] = useState<Map<string, boolean>>(() => new Map());
   const containmentSelectionScope = useRef<string | null>(null);
-  const [pageMergeSelection, setPageMergeSelection] = useState<PageMergeSelection | null>(null);
+  const [pageSelections, setPageSelections] = useState<Record<string, PageMergeSelection>>({});
+  const [groupHover, setGroupHover] = useState<PageHoverPreview | null>(null);
+  const [groupExpanded, setGroupExpanded] = useState(false);
   const [pageMergeHint, setPageMergeHint] = useState<string | null>(null);
   const previousOpen = useRef(open);
 
@@ -1090,9 +1110,14 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
   const candidate = review?.candidates.find((item) => item.candidateId === candidateId)
     ?? pendingCandidates[0]
     ?? review?.candidates[0];
+  const pageSelectionKey = review && candidate ? review.reviewId + ":" + candidate.candidateId : "";
+  const pageMergeSelection = pageSelections[pageSelectionKey];
+  const setPageMergeSelection = (value: PageMergeSelection | null) => setPageSelections((current) => {
+    const next = { ...current }; if (value) next[pageSelectionKey] = value; else delete next[pageSelectionKey]; return next;
+  });
   const activePageMergeSelection = pageMergeSelection
     && pageMergeSelection.reviewId === review?.reviewId
-    && pageMergeSelection.reviewRevision === review?.revision
+    && review && candidate && pageMergeSelection.evidence === overlapEvidenceKey(review, candidate)
     && pageMergeSelection.candidateId === candidate?.candidateId
     ? pageMergeSelection
     : null;
@@ -1107,6 +1132,9 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
     [review],
   );
   const resolvedContainmentGroup = containmentGroup ?? fallbackContainmentGroup;
+  const groupView = useMemo(() => !completedPair && !historyItem && review?.state === "pending" ? buildOverlapReviewGroup(review, resolvedContainmentGroup, relatedReviews) : null,
+    [completedPair, historyItem, review, resolvedContainmentGroup, relatedReviews]);
+  useOverlapReviewSize(dialog, open && Boolean(groupView));
   const containmentScopeKey = resolvedContainmentGroup?.keeper.entryId ?? null;
   useEffect(() => {
     if (!containmentScopeKey || containmentSelectionScope.current === containmentScopeKey) return;
@@ -1135,20 +1163,21 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
 
   useEffect(() => {
     setCandidateId(review?.candidates.find((item) => item.decision === undefined)?.candidateId ?? review?.candidates[0]?.candidateId ?? null);
-  }, [review?.reviewId, review?.revision]);
+  }, [review?.reviewId]);
 
   useEffect(() => {
-    setPageMergeSelection(null);
     setPageMergeHint(null);
   }, [candidate?.candidateId, review?.reviewId, review?.revision]);
 
   useEffect(() => {
-    if (previousOpen.current && !open) {
-      setPageMergeSelection(null);
+    if (previousOpen.current && !open && !preserveDraftOnHide) {
+      setPageSelections({});
+      setGroupExpanded(false);
+      setGroupHover(null);
       setPageMergeHint(null);
     }
     previousOpen.current = open;
-  }, [open]);
+  }, [open,preserveDraftOnHide]);
 
   useEffect(() => {
     if (!open) return;
@@ -1194,6 +1223,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
     }
     setPageMergeSelection(pages.existing.length + pages.incoming.length ? {
       reviewId: review.reviewId, reviewRevision: review.revision, candidateId: candidate.candidateId,
+      evidence: overlapEvidenceKey(review, candidate),
       pages, anchor: range && activePageMergeSelection ? activePageMergeSelection.anchor : { side, page },
     } : null);
     setPageMergeHint(null);
@@ -1220,12 +1250,13 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
   if (!open && !review) return null;
 
   return (
-    <dialog className="review-dialog download-overlap-dialog" ref={dialog} aria-labelledby={titleId} aria-describedby={review ? safetyId : undefined} aria-busy={loading || decisionPending || containmentLoading} onCancel={(event) => { event.preventDefault(); onClose(); }} onClose={onClose}>
+    <dialog className={"review-dialog download-overlap-dialog" + (groupView ? " is-group-review" + (groupExpanded ? " is-expanded" : "") : "")} ref={dialog} aria-labelledby={titleId} aria-describedby={review && !groupView ? safetyId : undefined} aria-busy={loading || decisionPending || containmentLoading} onCancel={(event) => { event.preventDefault(); onClose(); }} onClose={onClose}>
       <div className="review-form">
         <header className="dialog-header">
           <div>
-            <span className="eyebrow">DOWNLOAD OVERLAP REVIEW</span>
-            <h2 id={titleId}>다운로드 판본 중복 검토</h2>
+            {!groupView && <span className="eyebrow">DOWNLOAD OVERLAP REVIEW</span>}
+            <h2 id={titleId}>{groupView ? groupView.confirmed ? "합본 검토" : "판본 비교" : "다운로드 판본 중복 검토"}</h2>
+            {groupView && autoMode === "strict_quarantine" ? <small className="overlap-group-auto" title="창을 닫으면 기존 자동 정리 기준으로 다시 검증합니다.">자동 정리</small> : null}
             {automationReviewSequence ? (
               <nav className="download-overlap-sequence" aria-label={automationReviewSequence.manual ? "수동 판단 순차 검토" : "자동 분류 순차 검토"}>
                 <button type="button" className="text-button" aria-label={automationReviewSequence.manual ? "이전 검토" : "이전 자동 분류"} title="판정하지 않고 이전 항목으로 이동합니다." disabled={decisionPending || !automationReviewSequence.canPrevious || !onPreviousAutomationReview} onClick={onPreviousAutomationReview}>
@@ -1238,7 +1269,10 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
               </nav>
             ) : null}
           </div>
-          <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="닫기" disabled={decisionPending} onClick={onClose}><FluentIcon glyph="\uE711" /></button>
+          <div className="overlap-group-window-actions">
+            {groupView ? <button type="button" className="icon-button small" title={groupExpanded ? "창 크기 복원" : "창 확대"} aria-label={groupExpanded ? "창 크기 복원" : "창 확대"} aria-pressed={groupExpanded} onClick={() => { setGroupExpanded((value) => !value); setGroupHover(null); }}><FluentIcon glyph={groupExpanded ? "\uE73F" : "\uE740"} /></button> : null}
+            <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="닫기" disabled={decisionPending && !preserveDraftOnHide} onClick={onClose}><FluentIcon glyph="\uE711" /></button>
+          </div>
         </header>
 
         {completedPair && onRescan && <button type="button" className="text-button" disabled={loading || decisionPending} onClick={onRescan}>두 앨범 다시 대조</button>}
@@ -1253,7 +1287,21 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
           </div>
         ) : review && candidate ? (
           <div className="review-scroll">
-            {error ? <div className="inline-error review-inline-error" role="alert">{error}</div> : null}
+            {error && !(groupView && batchProgress?.failure) ? <div className="inline-error review-inline-error" role="alert">{error}</div> : null}
+            {groupView ? <OverlapGroupReview key={groupView.keeper.entryId} loadPageEvidence={open ? loadPageEvidence : undefined} group={groupView} disabled={decisionPending} loading={containmentLoading} suspended={!open && preserveDraftOnHide}
+              progress={batchProgress} onApply={onApplyContainmentBatch} onApplyEditions={onApplyEditions} onDecision={onDecision} onMerge={onMergePages}
+              onClearPreview={() => setGroupHover(null)}
+              renderCover={(item, keeper) => <GalleryThumbnail className="overlap-group-cover"
+                thumbnailKey={reviewPageKey(item.review, item.candidate.candidateId,
+                  Boolean(keeper) === item.keeperIsIncoming ? "incoming" : "existing",
+                  keeper ? groupView.keeper.entryId : item.excluded.entryId, 1, 0)}
+                consumer="review" priority="visible" client={thumbnailClient} alt={(keeper ? groupView.keeper.title : item.excluded.title) + " 대표 페이지"} />}
+              renderPage={(props) => <PageCell displayLabel={props.label} displayMatch={props.displayMatch} entryId={props.side === "incoming" ? props.edition.review.incoming.entryId : props.edition.candidate.existing.entryId}
+                review={props.edition.review} candidateId={props.edition.candidate.candidateId} page={props.page} side={props.side} pair={props.pair}
+                index={props.index} visible={props.visible} mergeEnabled={props.canSelect} mergeDisabled={decisionPending}
+                mergeSelection={props.selection} thumbnailClient={thumbnailClient} onPreviewOpen={setGroupHover}
+                onPreviewClose={() => setGroupHover(null)} onMergeToggle={props.onToggle} />}
+            /> : <>
             <div className="review-summary">
               <span className="review-signal">{completedPair ? "완료 앨범 A/B 수동 대조" : historyItem ? "자동 처리 기록" : reviewPending ? "완료 전 일시 정지" : review.state === "stale" ? "보유 목록 재검사 중" : "처리된 판본 검토"}</span>
               <strong>{relationLabel[candidate.relation]} · 신뢰도 {percent(candidate.confidence)}</strong>
@@ -1361,10 +1409,11 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
               thumbnailClient={thumbnailClient}
               onMergeToggle={toggleMergePage}
             />
+            </>}
           </div>
         ) : null}
 
-        {reviewPending ? (
+        {reviewPending && !groupView ? (
           <div className="review-actions download-overlap-actions">
             <div className={`download-overlap-action-note${pageMergeCount ? " is-page-merge" : ""}`} role="note">
               {pageMergeCount ? <>
@@ -1394,7 +1443,7 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
             <ReviewAction help="현재 A/B 후보가 중복이 아니라고 기록하고 둘 다 보존합니다. 같은 판본 지문 쌍은 다음 탐지에서 제외되며, 기존 제외나 격리를 복구하지 않습니다."><button type="button" className="text-button" disabled={!candidate || decisionPending || pageMergeCount > 0 || Boolean(candidate.decision)} onClick={() => candidate && decide("false_positive_continue", candidate.candidateId)}>오탐 판정</button></ReviewAction>
             <ReviewAction help={completedPair ? "현재 A/B를 둘 다 보존으로 확정합니다. 완료 상태를 유지하며 다시 다운로드하거나 기존 제외를 복구하지 않습니다." : "현재 A/B 후보를 둘 다 보존으로 확정합니다. 기존에 제외·격리된 앨범을 복구하는 기능은 아닙니다. 남은 후보가 있으면 계속 검토하고, 마지막 후보이면 신규 B 완료 절차를 재개합니다."}><button type="button" className="primary-button" disabled={!candidate || decisionPending || pageMergeCount > 0 || Boolean(candidate.decision)} onClick={() => candidate && decide("keep_both_continue", candidate.candidateId)}>둘 다 보존</button></ReviewAction>
           </div>
-        ) : !historyItem ? (
+        ) : !historyItem && !groupView ? (
           <div className="review-actions download-overlap-readonly-actions">
             <div role="note">
               <FluentIcon glyph="\uE8A5" />
@@ -1408,27 +1457,28 @@ export function DownloadOverlapReviewDialog({ open, review, loading = false, err
         {historyItem ? (
           <div className="review-actions download-overlap-history-actions" aria-label="자동 분류 기록 처리" aria-busy={automationHistoryPending}>
             <div className="download-overlap-history-status" role="status">
-              <FluentIcon glyph={historyItem.acknowledgedAt ? "\uE73E" : "\uE8A5"} />
-              <span>{automationHistoryPending ? "처리 중…" : historyItem.acknowledgedAt ? "확인 완료한 자동 분류 기록" : `자동 분류 · 제외 ${historyItem.removedGalleryIds.length}개`}</span>
+              <FluentIcon glyph={historyNeedsApproval ? "\uE7BA" : "\uE73E"} />
+              <span>{automationHistoryPending ? "처리 중…" : historyItem.acknowledgedAt ? "승인 완료" : `${historyNeedsApproval ? "검토 필요" : "자동 분류"} · 제외 ${historyItem.removedGalleryIds.length}개`}</span>
             </div>
             {!historyItem.acknowledgedAt ? (
               <div className="download-overlap-history-commands">
                 {historyItem.removedGalleryIds.length > 0 ? (
                   <ReviewAction help="이 자동 분류로 제외된 앨범의 탐색·목록 제외를 해제하고 확인 완료합니다. 격리된 실제 파일은 복원하지 않습니다.">
                     <button type="button" className="text-button" disabled={loading || decisionPending || !onRestoreAutomationExclusions} onClick={() => onRestoreAutomationExclusions?.(historyItem.reviewId, historyItem.removedGalleryIds)}>
-                      <FluentIcon glyph="\uE777" /> 목록에 복원
+                      <FluentIcon glyph="\uE777" /> 복원
                     </button>
                   </ReviewAction>
                 ) : null}
-                <ReviewAction help={automationReviewSequence ? "자동 분류 결과를 유지하고 확인 완료한 뒤 다음 미확인 기록으로 이동합니다. 모두 확인하면 창을 닫습니다. 앨범이나 파일은 변경하지 않습니다." : "자동 분류 결과를 유지하고 기록을 확인 완료한 뒤 창을 닫습니다. 앨범이나 파일은 변경하지 않습니다."}>
+                {historyNeedsApproval ? <ReviewAction help="이 기록의 검토를 승인하고 창을 닫습니다. 남은 판본 판단이나 앨범·파일은 변경하지 않습니다.">
                   <button type="button" className="primary-button" disabled={loading || decisionPending || !onAcknowledgeAutomationHistory} onClick={() => onAcknowledgeAutomationHistory?.(historyItem.reviewId)}>
-                    <FluentIcon glyph="\uE73E" /> 확인 완료
+                    <FluentIcon glyph="\uE73E" /> 승인
                   </button>
-                </ReviewAction>
+                </ReviewAction> : null}
               </div>
             ) : null}
           </div>
         ) : null}
+        {groupView && groupHover ? createPortal(<PageHoverPreviewLayer key={groupHover.identity} preview={groupHover} previewWidth={previewWidth} thumbnailClient={thumbnailClient} />, groupHover.portalHost) : null}
       </div>
     </dialog>
   );

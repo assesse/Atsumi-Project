@@ -1,0 +1,41 @@
+{
+  "date": "2026-10-24",
+  "state": "implemented_built_automated_and_isolated_browser_verified_actual_provider_acceptance_pending",
+  "originalRequest": "영상 중간보다는, 썸네일을 기준으로 검색하는게 더 잘 찾아진다고 생각하는데. 재생전에 썸네일 기준 검색도 가능하게 해줘. 아니면 아예 썸네일을 기본값으로 잡던가.",
+  "originalReference": "Current direct reply to request_user_input_async/call_7c606ad88318478a864996f53051512a/0",
+  "audit": ".runtime/requirements-audit/20261024-x-thumbnail-search-preedit.json",
+  "supersedes": "The previous preplay batch intentionally did not add thumbnail search without authorization. The latest explicit request now authorizes and prefers it. Its no-silent-substitution and current-frame safety requirements remain unchanged.",
+  "implemented": [
+    "Video context menus place 썸네일로 검색 (기본) before the separate 현재 장면으로 검색 option, both using Google Lens. The default choice needs no video metadata, decoded frame or playback.",
+    "Freeze the selected video's exact observed official poster URL. Explicit video-thumbnail images before video hydration are supported. Preserve quote/selected-root ownership, one-shot native handoff and stale target rejection.",
+    "Resolve only the exact allowlisted public pbs.twimg.com poster via a new credential-free client, with redirects disabled and finite timeout, response size and image pixel limits. Send metadata-free resized JPEG pixels to Lens, not the poster URL or X credentials.",
+    "Keep provider consent and account/pane/generation cancellation. The same frozen thumbnail is displayed in consent, search and results. Missing, changed or invalid thumbnails fail explicitly without switching to a video frame or neighbouring image.",
+    "Retain existing image-to-SauceNAO, explicit current-frame-to-Lens, download, selection and external-opening behavior. No account operation, user-media transfer, forced app termination or publishing performed."
+  ],
+  "verification": {
+    "regressionFirst": "18 new failing frontend checks before implementation; 504/504 across six X search/action/input files passed after implementation and again against the final frontend state. Full tsconfig.app.json typecheck and changed-file whitespace check passed.",
+    "native": "cargo test --lib x_feed::surface::search:: --locked --offline -j2:41/41 passed, zero ignored. Covers provider separation, exact frozen selections, consent, cancellation, finite budgets, strict public poster URL parsing, response byte limits and metadata-free bounded JPEG export. The initial mistaken x_surface::search:: filter selected0 tests and is not counted as verification. Broader thumbnail name filter also passed57 with1 opt-in unrelated live test ignored.11 existing non-thumbnail warnings remain.",
+    "isolatedBrowser": "Actual headless Edge clicks on production action script selected the exact thumbnail at paused=true, time=0, readyState=0 and played.length=0. Play, pause, seek and canvas draw call counts all remained zero. Missing/recycled poster rejected; one-shot handoff and pre-hydration image passed. Network blocked or fulfilled with benign synthetic pixels; no user profile.",
+    "ui": "Actual component with a synthetic thumbnail rendered at1100x800 and360x420. Screenshots inspected; no horizontal overflow, footer accessible, native indexed result-open and close actions passed.",
+    "developmentBuild": "Existing development cargo-run watcher built and launched the new binary without forced termination. Read-only process evidence: active2849 debug executable PID46476. Binary written2026-10-24T07:39:26+09:00, 99215872bytes, SHA256558C11043B1CAF5B593B6EE6CBB9E2D3BCD13B75CA42E3BD01A3E9727AE6625A.",
+    "contradictionCheck": "Explicit thumbnail and frame choices remain distinct; no auto-play/seek, URL size upgrading, neighbour/quote borrowing, silent fallback or authentication sharing added. Other existing changes in the shared tree preserved."
+  },
+  "verifiedSourceSha256": {
+    "src-tauri/src/x_media_search_thumbnail.rs": "D520C4CA96C17C2C727B6A29AB749D39C27A2CF2CD1F680BC1A4EC1060AACA8B",
+    "src-tauri/src/x_surface_search.rs": "501E427B157DC26486632B730EE53235EB75F78FC3721D5F2BB94C4B37826CB2",
+    "src-tauri/src/x_surface_actions.js": "4ADF42B5D70E5CD4D0B477FC5BD18E614BC3EA71B0D834439F5634994074754E",
+    "src/features/x/XMediaSearchPanel.tsx": "A5B3D3B3391ABCB68FCCEBC362EE5FF4A9CC68CB3794E976FCCFC75DF1AE378F",
+    "src/features/x/xMediaSearchApi.ts": "40304BC4F4A2BC4B8C559DB171AB5D71A1A7F4A683E9D1A7E045A530237D7556"
+  },
+  "remaining": [
+    "The user's actual latest-liked video thumbnail and live Lens candidate relevance have not been verified. No claim that a matching source or author was found, or that end-to-end account acceptance is complete.",
+    "The current other-chat restriction against Computer Use while the user works remains in force. Only isolated synthetic browser operation and read-only process checks were performed."
+  ],
+  "artifacts": [
+    ".runtime/x-search-diagnostic-20261024/thumbnail-browser.json",
+    ".runtime/x-search-diagnostic-20261024/thumbnail-menu-browser.png",
+    ".runtime/x-search-diagnostic-20261024/thumbnail-panel-browser.json",
+    ".runtime/x-search-diagnostic-20261024/thumbnail-panel-1100x800.png",
+    ".runtime/x-search-diagnostic-20261024/thumbnail-panel-360x420.png"
+  ]
+}

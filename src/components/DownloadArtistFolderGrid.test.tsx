@@ -73,7 +73,8 @@ describe("DownloadArtistFolderGrid", () => {
     const container = document.createElement("div"); document.body.append(container);
     const root = createRoot(container);
     const width = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1800);
-    const render = (keys: Set<string>) => <DownloadArtistFolderGrid groups={groups} columns={2} previewWidth={280}
+    const render = (keys: Set<string>, suspended = false) => <DownloadArtistFolderGrid groups={groups} columns={2} previewWidth={280}
+      suspended={suspended}
       maximumColumns={3} onColumnsChange={onColumnsChange} favoriteMetadata={favoriteMetadata}
       collapsedGroupKeys={keys} onToggle={() => {}} renderGrid={renderGrid} thumbnailClient={client} />;
     try {
@@ -86,6 +87,11 @@ describe("DownloadArtistFolderGrid", () => {
       expect(tagReads).toBe(reads);
       expect(onColumnsChange).toHaveBeenLastCalledWith(3);
       expect(renderGrid).toHaveBeenLastCalledWith(groups[0]!.items, 'Alpha 다운로드 작품', 3);
+      const renders = renderGrid.mock.calls.length;
+      await act(async () => root.render(render(new Set(), true)));
+      await act(async () => root.render(render(new Set(), false)));
+      expect(renderGrid).toHaveBeenCalledTimes(renders);
+      expect(tagReads).toBe(reads);
       expect(document.querySelector<HTMLElement>('.download-artist-folder-window')?.style.getPropertyValue('--folder-preferred-width')).toBe('1700px');
     } finally { await act(async () => root.unmount()); width.mockRestore(); client.dispose(); container.remove(); }
   });
@@ -151,8 +157,11 @@ describe("DownloadArtistFolderGrid", () => {
       expect(subscribe).toHaveBeenCalledTimes(4);
 
       for (const [index, id] of expected.entries()) {
-        await act(async () => resolvers.get(id)?.({ kind: "image", url: `blob:https://atsumi.test/${id}`, width: 400, height: 600 }));
-        expect(resolve).toHaveBeenCalledTimes(Math.min(expected.length, 4 + index + 1));
+        await act(async () => {
+          resolvers.get(id)?.({ kind: "image", url: `blob:https://atsumi.test/${id}`, width: 400, height: 600 });
+          await new Promise(resolve => setTimeout(resolve, 0));
+        });
+        await vi.waitFor(() => expect(resolve).toHaveBeenCalledTimes(Math.min(expected.length, 4 + index + 1)));
       }
       expect(resolve.mock.calls.map(([request]) => requestId(request))).toEqual(expected);
       expect(retainer.size).toBe(expected.length);

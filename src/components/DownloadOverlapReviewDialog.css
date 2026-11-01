@@ -33,7 +33,7 @@
 
 .download-overlap-stale-note span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   line-height: 1.45;
 }
 
@@ -55,7 +55,7 @@
 }
 
 .download-overlap-containment h3 {
-  font-size: 17px;
+  font-size: 19px;
 }
 
 .download-overlap-containment p {
@@ -67,7 +67,7 @@
   flex: 0 0 auto;
   padding: 4px 8px;
   color: var(--success);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   font-weight: 700;
   background: color-mix(in srgb, var(--success) 11%, var(--surface-soft));
   border: 1px solid color-mix(in srgb, var(--success) 45%, var(--line));
@@ -111,7 +111,7 @@
   align-items: center;
   gap: 5px;
   color: var(--success);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   font-weight: 700;
 }
 
@@ -123,7 +123,7 @@
 }
 
 .download-overlap-containment-keeper strong {
-  font-size: 15px;
+  font-size: 16px;
 }
 
 .download-overlap-containment-keeper small {
@@ -238,7 +238,7 @@
   align-items: center;
   gap: 4px;
   color: var(--danger);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   font-weight: 700;
 }
 
@@ -247,7 +247,7 @@
   flex-wrap: wrap;
   gap: 5px 14px;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: var(--font-size-min);
 }
 
 .download-overlap-containment-facts b {
@@ -262,7 +262,7 @@
   justify-content: space-between;
   gap: 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-min);
 }
 
 .download-overlap-containment-row-actions .text-button {
@@ -309,7 +309,7 @@
 
 .download-overlap-containment-ambiguous span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-min);
 }
 
 .download-overlap-containment-ambiguous .text-button {
@@ -331,7 +331,7 @@
   align-items: center;
   gap: 7px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--font-size-min);
 }
 
 .download-overlap-containment-status .spinner,
@@ -379,7 +379,7 @@
   gap: 7px;
   padding: 8px 11px;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   line-height: 1.45;
   background: color-mix(in srgb, var(--primary) 7%, var(--surface));
   border-bottom: 1px solid color-mix(in srgb, var(--primary) 22%, var(--line));
@@ -461,7 +461,7 @@
   background: var(--success);
   border-radius: 999px;
   box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
-  font-size: 9px;
+  font-size: var(--font-size-min);
   font-weight: 800;
   line-height: 1.35;
 }
@@ -530,7 +530,7 @@
   gap: 8px;
   margin-top: 10px;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: var(--font-size-min);
 }
 
 .download-overlap-sequence > .text-button {
@@ -556,7 +556,7 @@
 
 .download-overlap-history-status {
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: var(--font-size-min);
 }
 
 .download-overlap-history-status > .fluent {
@@ -583,7 +583,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 999px;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-min);
   line-height: 18px;
   white-space: nowrap;
   cursor: pointer;
@@ -626,13 +626,13 @@
 .download-overlap-hidden-selection {
   padding: 4px 12px 0;
   color: var(--text-soft);
-  font-size: 11px;
+  font-size: var(--font-size-min);
 }
 
 .download-overlap-page-filter-empty {
   margin: 0;
   padding: 20px 8px;
   color: var(--text-soft);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   text-align: center;
 }

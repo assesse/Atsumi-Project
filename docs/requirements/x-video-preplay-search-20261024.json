@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-24",
+  "state": "implemented_built_isolated_browser_verified_actual_affected_video_pending",
+  "laterAmendment": "x-thumbnail-search-20261024 explicitly adds a separate default thumbnail action at the user's request. The historical no-thumbnail scope below is superseded only in that respect; current-frame capture guards and no silent substitution remain.",
+  "originalRequest": "영상 → 현재 장면으로 검색. Links are all unrelated; the user right-clicked before pressing play. Reinspect the latest liked post and fix.",
+  "audit": ".runtime/requirements-audit/20261024-x-video-preplay-search-preedit.json",
+  "retained": [
+    "The original current-frame contract remains: exact selected video, no automatic play/pause/seek or silent poster substitution.",
+    "Keep feed/preview, account and generation fences, remembered consent, indexed native links and independent provider sessions.",
+    "No Computer Use while the user works; no account changes, credential access, external media transfer, commits or releases in this batch."
+  ],
+  "findings": [
+    "Confirmed in real isolated Edge using a benign synthetic video: paused=true, time=0, readyState=4 and played.length=0. The visible poster was red; the old production capture submitted a black JPEG from the decoded frame underneath it.",
+    "The historical user frame was not retained/read, so this is a reproduced failure mechanism, not proof of the exact pixels previously sent for the reported post.",
+    "The native snapshot already retained the frozen search frame, but the UI hid it after consent, including remembered-consent searches.",
+    "Opaque Google /goto URLs were rendered as www.google.com twice, misleadingly suggesting a source domain. Their destinations cannot be inferred from that hostname."
+  ],
+  "implemented": [
+    "Reject paused never-played time-zero capture with play-once guidance, and reject capture during seeking. No frame or poster is sent on rejection. Paused-after-play and completed-seek current-frame searches remain allowed.",
+    "Display the same validated in-memory search JPEG during search, manual verification and final results/failure, without new downloads or recapture.",
+    "Present opaque Lens redirects as 결과 페이지 열기 / Google Lens 경유. Preserve exact original URL and native candidate/link indices. Direct source links retain their actual hostname."
+  ],
+  "verification": {
+    "regressionFirst": "Eight newly failing tests reproduced capture/preview/label defects before production fixes.",
+    "frontend": "486/486 tests passed across surface actions, input, panel, recorded provider results, API and extractor; complete tsconfig.app.json typecheck passed.",
+    "isolatedBrowser": "Real production action blocked pre-play capture, then successfully captured the exact paused frame after explicit test playback without altering playback/time. All network requests blocked; synthetic data only.",
+    "ui": "Real component rendered in isolated Edge at1100x800 and360x420 with the actual synthetic captured JPEG. No clipping/horizontal overflow; footer accessible; exact indexed link and close actions passed. Screenshots inspected.",
+    "nativeBuild": "CARGO_INCREMENTAL=0 cargo build --bin atsumi --locked --offline -j2 succeeded.40 existing warnings. No forced termination or manual app launch.",
+    "runningBuild": "The existing cargo-run development watcher independently restarted the app after the source edit. Read-only process check: PID46972, active2849 debug path, responsive, started2026-10-24T06:32:01+09:00. Executable SHA256 A4A38B097F4FB6C8523605A7729CA3B9A97D32D5A56891906206FE007E343339.",
+    "diff": "Whitespace check passed for the five changed code/test files. Existing unrelated edits preserved."
+  },
+  "remaining": [
+    "Actual latest-liked user video and Lens result relevance are not verified. User asked to compare the displayed submitted frame with the selected paused frame and report candidate relevance. No claim that original creator/source has been found.",
+    "Pre-play thumbnail search is not added implicitly; current-frame search explicitly asks for playback instead of silently searching a different image.",
+    "The separate previously diagnosed SauceNAO titleless/icon-link candidate omission remains outside this Lens capture repair."
+  ],
+  "artifacts": [
+    ".runtime/x-search-diagnostic-20261024/before-preplay-browser.json",
+    ".runtime/x-search-diagnostic-20261024/after-preplay-browser.json",
+    ".runtime/x-search-diagnostic-20261024/panel-browser.json"
+  ]
+}

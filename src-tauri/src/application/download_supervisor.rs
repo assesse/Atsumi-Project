@@ -15,6 +15,8 @@ use uuid::Uuid;
 #[path = "download_workers.rs"]
 mod workers;
 use workers::{FinalizationTask, PageTask, WorkQueue};
+#[path = "download_supervisor/overlap_display.rs"]
+mod overlap_display;
 
 use crate::{
     domain::{
@@ -355,20 +357,41 @@ impl DownloadSupervisor {
                     .into())
                 }
             }
-            let record_id = Uuid::new_v4().to_string();
-            let quarantine_relative_path = ArtifactRelativePath::new(format!(
-                ".atsumi-quarantine/{record_id}/{}",
-                bundle.artifact.relative_directory.as_str()
-            ))?;
-            let saga = QuarantineSaga {
-                record_id,
-                entry_id: entry_id.clone(),
-                original_relative_path: bundle.artifact.relative_directory.clone(),
-                quarantine_relative_path,
-                reason: reason.to_owned(),
-                state: QuarantineSagaState::PendingQuarantine,
+            // A failed atomic move leaves its durable journal pending. Reuse
+            // that exact operation on an explicit retry; a second INSERT would
+            // violate the one-active-quarantine-per-entry invariant forever.
+            // The original manifest has just been verified above, and the store
+            // still refuses missing sources, conflicting destinations and escapes.
+            let pending = self.inner.repository.pipeline_pending_quarantine_sagas()?
+                .into_iter().find(|saga| saga.entry_id == entry_id);
+            let saga = if let Some(saga) = pending {
+                if saga.state != QuarantineSagaState::PendingQuarantine
+                    || saga.original_relative_path != bundle.artifact.relative_directory
+                {
+                    return Err(DownloadPipelineError::new(
+                        DownloadPipelineErrorCode::QuarantineConflict,
+                        "The pending quarantine operation does not match the verified artifact",
+                        false,
+                    ).into());
+                }
+                saga
+            } else {
+                let record_id = Uuid::new_v4().to_string();
+                let quarantine_relative_path = ArtifactRelativePath::new(format!(
+                    ".atsumi-quarantine/{record_id}/{}",
+                    bundle.artifact.relative_directory.as_str()
+                ))?;
+                let saga = QuarantineSaga {
+                    record_id,
+                    entry_id: entry_id.clone(),
+                    original_relative_path: bundle.artifact.relative_directory.clone(),
+                    quarantine_relative_path,
+                    reason: reason.to_owned(),
+                    state: QuarantineSagaState::PendingQuarantine,
+                };
+                self.inner.repository.pipeline_quarantine_begin(&saga)?;
+                saga
             };
-            self.inner.repository.pipeline_quarantine_begin(&saga)?;
             self.inner.store.move_managed_directory(
                 &root,
                 &saga.original_relative_path,
@@ -4178,6 +4201,59 @@ mod tests {
     }
 
     #[test]
+    fn overlap_display_api_preserves_review_and_rejects_stale_or_missing_evidence() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        let (repository, service) = configured_repository(&root);
+        let source = Arc::new(FakeDownloadSource::new(8, None));
+        let (supervisor, _events) = launch(&repository, source.clone());
+        let first = service.download_queue_add(vec![581], "display-existing".into()).unwrap();
+        supervisor.enqueue_all(first.jobs).unwrap();
+        wait_for_state(&service, first.entries[0].entry_id.as_str(), JobState::Completed, 100.0);
+        let incoming = service.download_queue_add(vec![582], "display-incoming".into()).unwrap();
+        let entry_id = incoming.entries[0].entry_id.to_string();
+        supervisor.enqueue_all(incoming.jobs).unwrap();
+        let paused = wait_for_state(&service, &entry_id, JobState::ReviewRequired, 100.0);
+        let review_id = paused.review_id.unwrap();
+        let review = repository.overlap_review_get(&review_id).unwrap().unwrap();
+        let request = crate::domain::DownloadOverlapDisplayMatchRequest {
+            review_id: review_id.clone(), expected_revision: review.revision,
+            candidate_id: review.candidates[0].candidate_id.clone(),
+        };
+        let calls = source.calls();
+        let result = supervisor.overlap_display_matches(request.clone()).unwrap();
+        assert_eq!(result.revision, review.revision);
+        assert!(result.additional_pairs.is_empty());
+        assert_eq!(repository.overlap_review_get(&review_id).unwrap().unwrap(), review);
+        assert_eq!(source.calls(), calls);
+        let stale = crate::domain::DownloadOverlapDisplayMatchRequest {
+            expected_revision: review.revision + 1, ..request.clone()
+        };
+        assert!(matches!(supervisor.overlap_display_matches(stale), Err(ApplicationError::RevisionConflict { .. })));
+        let connection = rusqlite::Connection::open(root.join("state.sqlite3")).unwrap();
+        let original: String = connection.query_row(
+            "SELECT artifact_sha256 FROM duplicate_page_hashes WHERE entry_id=?1 AND source_page_number=1",
+            [&entry_id], |row| row.get(0)).unwrap();
+        connection.execute(
+            "UPDATE duplicate_page_hashes SET artifact_sha256=?1 WHERE entry_id=?2 AND source_page_number=1",
+            rusqlite::params!["0".repeat(64), entry_id]).unwrap();
+        assert!(supervisor.overlap_display_matches(request.clone()).is_err());
+        connection.execute(
+            "UPDATE duplicate_page_hashes SET artifact_sha256=?1 WHERE entry_id=?2 AND source_page_number=1",
+            rusqlite::params![original, entry_id]).unwrap();
+        assert!(supervisor.overlap_display_matches(request.clone()).is_ok());
+        // Only this disposable fixture is changed: a cached artifact fingerprint mismatch must fail closed.
+        let bad = connection.execute(
+            "UPDATE download_overlap_reviews SET incoming_fingerprint=?1 WHERE review_id=?2",
+            rusqlite::params!["f".repeat(64), review_id]).unwrap();
+        assert_eq!(bad, 1);
+        assert!(supervisor.overlap_display_matches(request).is_err());
+        assert_eq!(source.calls(), calls);
+        supervisor.shutdown_and_wait();
+    }
+
+
+    #[test]
     fn strong_same_artist_overlap_pauses_before_manifest_and_resumes_without_redownload() {
         let temp = tempdir().unwrap();
         let root = temp.path().to_path_buf();
@@ -5460,6 +5536,67 @@ mod tests {
             .pages
             .iter()
             .all(|page| page.relative_path.starts_with(relative_directory)));
+        supervisor.shutdown_and_wait();
+    }
+
+    #[test]
+    fn quarantine_retry_reuses_pending_journal_without_overwriting_destination() {
+        let temp = tempdir().unwrap();
+        let root = temp.path().to_path_buf();
+        let (repository, service) = configured_repository(&root);
+        let (supervisor, _events) = launch(&repository, Arc::new(FakeDownloadSource::new(1, None)));
+        let queued = service.download_queue_add(vec![99], "quarantine-retry".into()).unwrap();
+        let entry_id = queued.entries[0].entry_id.to_string();
+        supervisor.enqueue_all(queued.jobs).unwrap();
+        wait_for_state(&service, &entry_id, JobState::Completed, 100.0);
+        let entry = DownloadEntryId::new(entry_id.clone()).unwrap();
+        let bundle = repository.pipeline_artifact_bundle(&entry).unwrap().unwrap();
+        let saga = QuarantineSaga {
+            record_id: "retry-existing-journal".into(), entry_id: entry.clone(),
+            original_relative_path: bundle.artifact.relative_directory.clone(),
+            quarantine_relative_path: ArtifactRelativePath::new(".atsumi-quarantine/retry-existing-journal/gallery-99").unwrap(),
+            reason: "initial failed move".into(), state: QuarantineSagaState::PendingQuarantine,
+        };
+        repository.pipeline_quarantine_begin(&saga).unwrap();
+        let download_root = root.join("downloads");
+        let source = download_root.join(saga.original_relative_path.as_str());
+        let destination = download_root.join(saga.quarantine_relative_path.as_str());
+        // A competing destination must never be overwritten, and a failed retry
+        // must keep the same recoverable journal rather than inserting another.
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(destination.join("sentinel"), b"keep").unwrap();
+        assert!(supervisor.quarantine_entries(vec![entry_id.clone()], "manual retry".into()).is_err());
+        assert!(source.join("manifest.json").is_file());
+        assert_eq!(std::fs::read(destination.join("sentinel")).unwrap(), b"keep");
+        assert_eq!(repository.pipeline_pending_quarantine_sagas().unwrap().len(), 1);
+        std::fs::remove_file(destination.join("sentinel")).unwrap();
+        std::fs::remove_dir(&destination).unwrap();
+        let original_manifest = std::fs::read(source.join("manifest.json")).unwrap();
+        std::fs::write(source.join("manifest.json"), b"{}").unwrap();
+        assert!(supervisor.quarantine_entries(vec![entry_id.clone()], "manual retry".into()).is_err());
+        assert!(source.exists());
+        assert!(!destination.exists());
+        assert_eq!(repository.pipeline_pending_quarantine_sagas().unwrap().len(), 1);
+        std::fs::write(source.join("manifest.json"), original_manifest).unwrap();
+        let result = supervisor.quarantine_entries(vec![entry_id.clone()], "manual retry".into()).unwrap();
+        assert_eq!(result.len(), 1);
+        assert!(!source.exists());
+        assert!(destination.join("manifest.json").is_file());
+        assert!(repository.pipeline_pending_quarantine_sagas().unwrap().is_empty());
+        let after = repository.pipeline_artifact_bundle(&entry).unwrap().unwrap();
+        assert_eq!(after.artifact.state, DownloadArtifactState::Quarantined);
+        assert_eq!(after.pages.len(), bundle.pages.len());
+        for (before, after) in bundle.pages.iter().zip(after.pages.iter()) {
+            assert_eq!(before.sha256, after.sha256);
+        }
+        // Original paths stay in the artifact for restore; the existing journal
+        // (not a new UUID) owns the moved files and remains fully reversible.
+        assert_eq!(after.artifact.relative_directory, saga.original_relative_path);
+        assert_eq!(std::fs::read_dir(download_root.join(".atsumi-quarantine")).unwrap().count(), 1);
+        let restored = supervisor.restore_entries(vec![entry_id]).unwrap();
+        assert_eq!(restored[0].state, JobState::Completed);
+        assert!(source.join("0001.webp").is_file());
+        assert!(!destination.exists());
         supervisor.shutdown_and_wait();
     }
 

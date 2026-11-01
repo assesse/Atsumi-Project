@@ -387,6 +387,20 @@
       admittedPosts.add(record.url);
     }
   }
+  function threadBoundaryPlaceholder(item) {
+    // Observed in the official thread viewer: one empty SVG slide at either
+    // boundary navigates to another post. It is not a photo of this post.
+    const nodes=[...item.querySelectorAll('*')];
+    if(nodes.length<3||nodes.length>8||(item.textContent||'').trim()
+      ||nodes.some(node=>!['DIV','IMG'].includes(node.tagName)))return null;
+    const images=nodes.filter(node=>node.tagName==='IMG'),markers=nodes.filter(node=>node.getAttribute('aria-label')==='placeholder');
+    if(images.length!==1||markers.length!==1||images[0].parentElement!==markers[0]
+      ||images[0].getAttribute('alt')!=='placeholder'
+      ||!item.querySelector('[data-testid="swipe-to-dismiss"]')?.contains(markers[0]))return null;
+    const source=images[0].getAttribute('src');
+    if(source!=='data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%221%22%20height=%221%22%3E%3C/svg%3E')return null;
+    return images[0];
+  }
   function resolveCurrentCarouselPhoto(candidates, route, shown, trace=null) {
     // undefined preserves the legacy unambiguous non-carousel path. A detected
     // but conflicting/incomplete carousel returns null, including mid-transition.
@@ -415,12 +429,17 @@
     const lists = [...root.querySelectorAll(listSelector)];
     if (lists.length !== 1) return done('lists');
     const list = lists[0], items = [...list.querySelectorAll(itemSelector)];
-    if (items.length < 1 || items.length > 4 || index > items.length) return done('items');
+    if (items.length < 1 || items.length > 6) return done('items');
     if (items.some(item => item.closest(listSelector) !== list || item.parentElement?.closest(itemSelector))) return done('nestedItems');
+    const placeholders=items.map(threadBoundaryPlaceholder);
+    if(placeholders.some((node,i)=>node&&i!==0&&i!==items.length-1))return done('items');
+    const leading=placeholders[0]?1:0,trailing=placeholders.at(-1)?1:0;
+    const photoCount=items.length-leading-trailing,currentIndex=index+leading;
+    if(photoCount<1||photoCount>4||index>photoCount)return done('items');
     const parseCounter = value => {
       if (typeof value !== 'string' || value.length > 80) return null;
-      const match = /^(?:slide\s+)?([1-4])\s*(?:\/|of)\s*([1-4])(?:\s*-\s*carousel)?$/i.exec(value.trim()) ||
-        /^슬라이드\s*([1-4])\s*\/\s*([1-4])\s*-\s*회전 슬라이드$/.exec(value.trim());
+      const match = /^(?:slide\s+)?([1-6])\s*(?:\/|of)\s*([1-6])(?:\s*-\s*carousel)?$/i.exec(value.trim()) ||
+        /^슬라이드\s*([1-6])\s*\/\s*([1-6])\s*-\s*회전 슬라이드$/.exec(value.trim());
       return match && Number(match[1]) <= Number(match[2]) ? [Number(match[1]), Number(match[2])] : null;
     };
     const counters = [];
@@ -434,8 +453,8 @@
       }
     }
     if (!counters.length) return done('counterMissing');
-    if (counters.some(([current, total]) => current !== index || total !== items.length)) return done('counterMismatch');
-    const currentItem = items[index - 1];
+    if (counters.some(([current, total]) => current !== currentIndex || total !== items.length)) return done('counterMismatch');
+    const currentItem = items[currentIndex - 1];
     if (!shown(currentItem)) return done('currentHidden');
     for (let ordinal = 0; ordinal < items.length; ordinal++) {
       const item = items[ordinal];
@@ -492,6 +511,11 @@
       }
       return node ? done('clipDepth') : right > left && bottom > top;
     };
+    for(const placeholder of placeholders.filter(Boolean)){
+      const presented=exposed(placeholder);
+      if(presented===null)return null;
+      if(presented)return done('neighbourExposed');
+    }
     let current = null;
     for (const candidate of candidates) {
       if (!candidate.image?.isConnected) return done('detached');

@@ -11,11 +11,19 @@ function setup(html='<div role="dialog">'+image+buttons+'</div>',feed='preview',
   vi.spyOn(doc,'addEventListener').mockImplementation(((type:string,listener:EventListener)=>{(handlers[type]??=[]).push(listener as (event:unknown)=>void);original(type,listener);}) as typeof doc.addEventListener);
   vi.spyOn(Element.prototype,'getClientRects').mockImplementation(function(this:Element){return (this.hasAttribute('data-zero-size')?[]:[{width:30,height:30}]) as unknown as DOMRectList;});
   const message=vi.fn();
-  const win={top:null as unknown,chrome:{webview:{postMessage:message}},getComputedStyle:window.getComputedStyle.bind(window),__atsumiXInput:undefined as undefined|{visibility(value:boolean):void;key(value:string):boolean},__atsumiXSurface:undefined as undefined|{dismissMenu?():boolean;archivePhotoOwner?():string},__atsumiXActions:undefined as undefined|{visibility(value:boolean):void;update():void;ownsPhotoControl(node:Element):boolean}};
+  const win={top:null as unknown,chrome:{webview:{postMessage:message}},getComputedStyle:window.getComputedStyle.bind(window),__atsumiXInput:undefined as undefined|{visibility(value:boolean):void;key(value:string):boolean},__atsumiXSurface:undefined as undefined|{dismissMenu?():boolean;archivePhotoOwner?():string;videoLayerReady?():boolean},__atsumiXActions:undefined as undefined|{visibility(value:boolean):void;update():void;ownsPhotoControl(node:Element):boolean}};
   win.top=win;
   const location={origin:'https://x.com',href:'https://x.com'+path,protocol:'https:',hostname:'x.com',pathname:path};
   if(withActions){
-    vi.spyOn(Element.prototype,'getBoundingClientRect').mockReturnValue({x:20,y:20,left:20,top:20,right:620,bottom:620,width:600,height:600,toJSON:()=>({})});
+    vi.spyOn(Element.prototype,'getBoundingClientRect').mockImplementation(function(this:Element){
+      // Native navigation buttons have their own hitboxes, not the 600px photo
+      // rectangle. The action adapter deliberately avoids these source controls.
+      if(this.matches('button')){
+        const left=this.id==='previous'?24:580,top=this.id==='close'?24:300;
+        return{x:left,y:top,left,top,right:left+32,bottom:top+32,width:32,height:32,toJSON:()=>({})};
+      }
+      return{x:20,y:20,left:20,top:20,right:620,bottom:620,width:600,height:600,toJSON:()=>({})};
+    });
     win.__atsumiXSurface={archivePhotoOwner:()=> 'alice'};
     new Function('window','document','location','URL','Element','getComputedStyle','innerWidth','innerHeight',actionsScript.replace('__ATSUMI_X_ACTIONS__',JSON.stringify({nonce:'fixture',feed,owner:'alice'})))(
       win,doc,location,URL,Element,win.getComputedStyle,1000,1000,
@@ -55,6 +63,14 @@ it('forwards Escape for last-pane arbitration instead of closing its own preview
   const event=a.press('Escape');
   expect(event.preventDefault).toHaveBeenCalledOnce();expect(event.stopImmediatePropagation).toHaveBeenCalledOnce();
   expect(a.messages()).toEqual([['key','Escape']]);
+});
+it('closes the proved native video layer before its enclosing preview',()=>{
+  const a=setup('<button aria-label="Back" id="back"></button><div data-testid="videoPlayer"><video></video></div>','preview','/creator/status/123456/video/1');
+  a.win.__atsumiXSurface={videoLayerReady:()=>true};
+  const back=vi.spyOn(a.doc.querySelector<HTMLButtonElement>('#back')!,'click');
+  expect(a.win.__atsumiXInput!.key('Escape')).toBe(true);expect(back).toHaveBeenCalledOnce();expect(a.messages()).toEqual([]);
+  a.win.__atsumiXSurface={videoLayerReady:()=>false};
+  expect(a.win.__atsumiXInput!.key('Escape')).toBe(true);expect(a.messages()).toEqual([['close','']]);
 });
 it('consumes A/D and arrows once and maps them to two closed key values',()=>{
   const a=setup();

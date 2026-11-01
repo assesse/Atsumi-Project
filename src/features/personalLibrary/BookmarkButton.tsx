@@ -3,8 +3,8 @@ import { targetFor, targetKey } from "./api";
 import { usePersonalLibrary } from "./PersonalLibraryProvider";
 
 export function BookmarkIcon({ page }: { page?: number } = {}) {
-  return <svg className={`bookmark-icon${page ? " has-page-number" : ""}`} viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"><path d={page ? "M4 4a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v17l-8-4-8 4Z" : "M6 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17l-6-4-6 4Z"} />
-    {page ? <text x="12" y="10.5" textAnchor="middle" dominantBaseline="central" fill="currentColor" stroke="none" fontSize={page < 10 ? 10 : page < 100 ? 9 : page < 1000 ? 7 : 6} fontWeight="700">{page}</text> : null}
+  if(page)return <span className="bookmark-page-icon" aria-hidden="true"><BookmarkIcon/><span>{page}p</span></span>;
+  return <svg className="bookmark-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true"><path d="M6 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17l-6-4-6 4Z" />
   </svg>;
 }
 

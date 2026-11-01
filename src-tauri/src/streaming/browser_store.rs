@@ -284,12 +284,14 @@ struct Active {
 
 struct State {
     replay_leases: HashMap<String, Arc<()>>,
+    range_evictions: HashSet<String>,
     catalog: Vec<CatalogEntry>,
     recordings: VecDeque<BrowserRecording>,
     active: HashMap<String, Active>,
     closing: bool,
     merge_job: Option<(String, String)>,
     last_part_recording: Option<String>,
+    last_offload_recording: Option<String>,
     deleting: HashMap<String, String>,
     unverified: HashSet<String>,
     indexed: HashSet<String>,
@@ -370,12 +372,14 @@ impl BrowserCaptureStore {
             catalog_root,
             state: Arc::new(Mutex::new(State {
                 replay_leases: HashMap::new(),
+                range_evictions: HashSet::new(),
                 catalog,
                 recordings,
                 active: HashMap::new(),
                 closing: false,
                 merge_job: None,
                 last_part_recording: None,
+                last_offload_recording: None,
                 deleting: HashMap::new(),
                 unverified,
                 indexed,
@@ -463,6 +467,9 @@ impl BrowserCaptureStore {
         let mut recording = entry.recording();
         recording.archive =
             archive_root.map(|destination| archive::ArchiveTransfer::new(&root, destination));
+        if let Some(archive) = &mut recording.archive {
+            archive.rolling = progressive;
+        }
         ssd::ensure_headroom(&state, &recording)?;
         recording.progressive = progressive.then(ProgressiveSummary::default);
         let journal = OpenOptions::new()
@@ -832,6 +839,7 @@ impl BrowserCaptureStore {
                     && r.media_removed_at.is_none()
                     && r.segment_count > 0
                     && !state.active.contains_key(&r.id)
+                    && !archive::offload::needs_finalization(r)
                     && r.merge
                         .as_ref()
                         .is_none_or(|m| m.status == BrowserMergeStatus::Queued)
@@ -912,6 +920,16 @@ impl BrowserCaptureStore {
                 && !recording.deletion_pending
                 && running.as_deref() != Some(recording.id.as_str())
             {
+                if let Some(archive) = recording
+                    .archive
+                    .as_mut()
+                    .filter(|a| a.rolling && a.status != archive::ArchiveStatus::Complete)
+                {
+                    archive.retry_at = 0;
+                    archive.last_error = None;
+                    save_metadata(recording)?;
+                    count += 1;
+                }
                 if let Some(progress) = &mut recording.progressive {
                     if progress.last_error.take().is_some() {
                         save_metadata(recording)?;
@@ -1021,6 +1039,13 @@ impl BrowserCaptureStore {
         validate_id(id)?;
         self.ensure_recovered(id)?;
         let mut state = self.lock()?;
+        if state.range_evictions.contains(id) {
+            return Err(error(
+                "BROWSER_REPLAY_BUSY",
+                "검증된 녹화 구간을 이동 중입니다. 잠시 후 다시 열어 주세요.",
+                true,
+            ));
+        }
         let storage_lease = Some(
             state
                 .replay_leases
@@ -1032,7 +1057,12 @@ impl BrowserCaptureStore {
             .recordings
             .iter()
             .find(|r| r.id == id && !r.deletion_pending && r.media_removed_at.is_none())
+            .cloned()
             .ok_or_else(invalid)?;
+        let active = state.active.contains_key(id);
+        // The lease fences deletion/publication while slower archive opens and
+        // timeline reads happen without blocking capture append acknowledgments.
+        drop(state);
         if recording
             .progressive
             .as_ref()
@@ -1042,7 +1072,7 @@ impl BrowserCaptureStore {
                 .as_ref()
                 .is_none_or(|m| m.status != BrowserMergeStatus::Complete)
         {
-            let mut source = parts::replay_source(recording)?;
+            let mut source = parts::replay_source(&recording)?;
             source.storage_lease = storage_lease;
             return Ok(source);
         }
@@ -1052,7 +1082,7 @@ impl BrowserCaptureStore {
             .filter(|m| m.status == BrowserMergeStatus::Complete)
             .ok_or_else(invalid)?;
         if recording.status == BrowserRecordingStatus::Recording
-            || state.active.contains_key(id)
+            || active
             || !valid_merge(Some(merge), recording.segment_count, &recording.mime_type)
         {
             return Err(invalid());
@@ -1681,6 +1711,11 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
         recording.chat_count = metadata.chat_count;
         recording.merge = metadata.merge.clone();
         recording.progressive = metadata.progressive.clone();
+        if let Some(progressive) = &mut recording.progressive {
+            // An unverified display summary must not reduce the live disk guard.
+            progressive.offloaded_bytes = 0;
+            progressive.offloaded_segment_count = 0;
+        }
         recording.archive = metadata.archive.clone().filter(|a| a.valid(&recording.id));
         if !valid_merge(
             recording.merge.as_ref(),
@@ -1761,12 +1796,21 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
     });
     // Avoid reading or hashing historical media. Only bounded recent file metadata
     // and their first 16 bytes are checked; the durable journal contains all totals.
+    let resolver = (!cleaned_sources)
+        .then(|| archive::offload::Resolver::new(recording))
+        .transpose()?;
     for segment in &recording.segments {
         if cleaned_sources {
             break;
         }
         let checked = (|| -> Result<bool, StreamError> {
-            let mut file = open_regular(&root.join(&segment.file), MAX_SEGMENT)?;
+            let mut file = open_regular(
+                &resolver
+                    .as_ref()
+                    .ok_or_else(invalid)?
+                    .resolve(&segment.file)?,
+                MAX_SEGMENT,
+            )?;
             if file.metadata().map_err(|_| storage())?.len() != segment.bytes {
                 return Ok(false);
             }

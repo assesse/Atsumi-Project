@@ -1,0 +1,29 @@
+{
+  "id": "three-level-processing-20261030",
+  "source": "2026-10-30 direct three-level request and clarification in Atsumi 단부루",
+  "request": "Medium prioritizes games and other work; high prioritizes Atsumi processing over games and other work. Explain hardware-derived limits.",
+  "supersedes": ["Binary processing switch", "The earlier requirement that high performance must also yield to games"],
+  "modes": {
+    "basic": {"label": "기본 · 최소 사용", "sharedSlots": "min(clamp(logicalCPUs/2,1,2),memorySlots)", "parallelWorkers": 1, "windows": "Thread background resource mode"},
+    "game_priority": {"label": "중간 · 게임 우선", "sharedSlots": "min(clamp(logicalCPUs/4,1,4),memorySlots)", "parallelWorkers": "sharedSlots", "windows": "Thread background resource mode plus THREAD_PRIORITY_IDLE"},
+    "atsumi_priority": {"label": "고성능 · Atsumi 우선", "sharedSlots": "min(clamp(logicalCPUs-2,1,16),memorySlots)", "parallelWorkers": "sharedSlots", "windows": "Scoped THREAD_PRIORITY_ABOVE_NORMAL; no background mode"}
+  },
+  "memorySlots": "max(1,floor(min(totalPhysicalRAM/4,availablePhysicalRAM/2)/512MiB)); unknown RAM falls back to2; sampled at startup/settings application",
+  "interaction": [
+    "Existing Hitomi download/processing section uses the common styled dropdown and immediate autosave",
+    "Show selected mode and concise resource priority summary; details explain hardware bounds and limitation",
+    "No CPU-utilization polling, affinity, fixed CPU-percent claim or reserved-core claim",
+    "In-flight image stages finish under their captured mode; queued/new stages use the new mode; nested stages keep the same slot and priority lifetime",
+    "Restore original Windows thread priority before returning shared permits, including errors and unwinding",
+    "High mode can slow games and other work; medium reduces competition but cannot guarantee zero frame-time impact"
+  ],
+  "persistence": [
+    "Migration53 adds processing_mode; legacy disabled maps basic, enabled maps game_priority",
+    "Legacy highPerformanceProcessing remains a compatibility projection. Explicit processingMode wins in patches; legacytrue never silently activates Atsumi priority",
+    "Browser storage normalization and API validation follow the same mapping; retain unrelated preferences and revision conflict handling"
+  ],
+  "preserves": ["Hash algorithms/cache keys/duplicate decisions/integrity verification", "User files and databases", "Network/server limits and existing HDD pacing", "UI/playback/recording thread priority", "Normal app-owned exit path"],
+  "audit": ".runtime/requirements-audit/20261030-performance-modes-preedit.json",
+  "verification": ".runtime/requirements-audit/20261030-performance-modes-verification.json",
+  "state": "Implemented and reflected in the restarted development app.94 frontend and58 unique native tests, typecheck, frontend/development builds passed. Actual schema52->53 upgrade preserved every previous settings column and mapped enabled legacy preference to game_priority. PID47604 responds normally. Actual BGD interaction/game frame-time verification remains pending the existing startup-safety blocker."
+}

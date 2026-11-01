@@ -2087,12 +2087,11 @@ impl OfficialBrowser {
                         },
                     )
                 };
-                let finished = self
-                    .inner
-                    .store
-                    .lock()
-                    .map_err(|_| unavailable())?
-                    .finish_with_chat(
+                let finished = {
+                    // Register the final ancillary writer before the merge
+                    // worker can observe this recording's stopped state.
+                    let store = self.inner.store.lock().map_err(|_| unavailable())?;
+                    let finished = store.finish_with_chat(
                         &recording_id,
                         interrupted,
                         note,
@@ -2100,12 +2099,15 @@ impl OfficialBrowser {
                         &chat_status,
                         chat_count,
                     )?;
+                    // Queue/ticket registration is in-memory only; fetching
+                    // and file writes remain on the separate image worker.
+                    self.inner.replay_assets.submit_channel(
+                        Path::new(&finished.output_dir),
+                        &finished.channel_id,
+                    );
+                    finished
+                };
                 self.inner.merges.wake();
-                // One later retry for a transient profile fetch failure. This
-                // is not part of the video/chat write path and does no UI I/O.
-                self.inner
-                    .replay_assets
-                    .submit_channel(Path::new(&finished.output_dir), &finished.channel_id);
                 let interrupted = finished.status != BrowserRecordingStatus::Stopped;
                 let continuation = {
                     let mut state = self.inner.view.lock().map_err(|_| unavailable())?;

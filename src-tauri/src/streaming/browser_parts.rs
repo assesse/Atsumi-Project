@@ -15,6 +15,12 @@ pub struct ProgressiveSummary {
     pub segment_count: u64,
     pub duration_seconds: f64,
     pub last_error: Option<String>,
+    /// Original bytes whose verified archive copies permit SSD eviction.
+    /// Historical bytes_written remains untouched.
+    #[serde(default)]
+    pub offloaded_bytes: u64,
+    #[serde(default)]
+    pub offloaded_segment_count: u64,
 }
 
 #[derive(Clone)]
@@ -58,6 +64,8 @@ fn summary(parts: &[Part]) -> ProgressiveSummary {
         segment_count: parts.last().map_or(0, |p| p.end),
         duration_seconds: parts.last().map_or(0.0, |p| p.offset + p.duration),
         last_error: None,
+        offloaded_bytes: 0,
+        offloaded_segment_count: 0,
     }
 }
 pub(crate) fn load(record: &BrowserRecording) -> Result<Vec<Part>, StreamError> {
@@ -160,6 +168,16 @@ fn prefix(
         }
     }
     Ok((selected, length, format!("{:x}", hash.finalize())))
+}
+pub(super) fn range_sources(
+    record: &BrowserRecording,
+    part: &Part,
+) -> Result<(Vec<BrowserSegment>, String), StreamError> {
+    let (segments, _, hash) = prefix(record, part.first, Some(part.end))?;
+    if segments.len() as u64 != part.end - part.first {
+        return Err(invalid());
+    }
+    Ok((segments, hash))
 }
 pub(crate) fn validate_prefix(
     record: &BrowserRecording,
@@ -363,7 +381,12 @@ impl BrowserCaptureStore {
                 proof_file: proof.file,
                 proof_sha256: proof.sha256,
             });
-            let next = summary(&parts);
+            let mut next = summary(&parts);
+            next.offloaded_bytes = r.progressive.as_ref().map_or(0, |p| p.offloaded_bytes);
+            next.offloaded_segment_count = r
+                .progressive
+                .as_ref()
+                .map_or(0, |p| p.offloaded_segment_count);
             let data = serde_json::to_vec(&Index {
                 version: 1,
                 recording_id: r.id.clone(),
@@ -394,7 +417,13 @@ pub(crate) fn recover_summary(record: &mut BrowserRecording) {
         return;
     }
     match load(record) {
-        Ok(parts) => record.progressive = Some(summary(&parts)),
+        Ok(parts) => {
+            let mut next = summary(&parts);
+            let (bytes, segments) = archive::offload::evicted(record).unwrap_or((0, 0));
+            next.offloaded_bytes = bytes;
+            next.offloaded_segment_count = segments;
+            record.progressive = Some(next);
+        }
         Err(_) => {
             record.progressive.as_mut().unwrap().last_error =
                 Some("구간 병합 기록을 확인하지 못했습니다. 원본은 보존됩니다.".into())
@@ -494,13 +523,16 @@ pub(crate) fn replay_source(record: &BrowserRecording) -> Result<BrowserReplaySo
     let root = owned_root(&record.output_dir, &record.id)?;
     let mut media = Vec::new();
     let mut combined = Vec::new();
+    let resolver = archive::offload::Resolver::new(record)?;
     for part in &parts {
-        let file = open_regular(&root.join(&part.file), 256 * 1024 * 1024)?;
+        let media_path = resolver.resolve(&part.file)?;
+        let part_root = media_path.parent().ok_or_else(invalid)?;
+        let file = open_regular(&media_path, 256 * 1024 * 1024)?;
         if file.metadata().map_err(|_| storage())?.len() != part.bytes {
             return Err(storage());
         }
         media.push((file, part.clone()));
-        combined.extend(timeline_rows(&root, part, part.offset, part.duration)?);
+        combined.extend(timeline_rows(part_root, part, part.offset, part.duration)?);
         if combined.len() as u64 > MAX_JOURNAL {
             return Err(invalid());
         }
@@ -515,8 +547,8 @@ pub(crate) fn replay_source(record: &BrowserRecording) -> Result<BrowserReplaySo
     Ok(BrowserReplaySource {
         storage_lease: None,
         recording: record.clone(),
-        media: open_regular(&root.join(&first.file), 256 * 1024 * 1024)?,
-        timeline: open_regular(&root.join(&first.timeline_file), MAX_JOURNAL)?,
+        media: open_regular(&resolver.resolve(&first.file)?, 256 * 1024 * 1024)?,
+        timeline: open_regular(&resolver.resolve(&first.timeline_file)?, MAX_JOURNAL)?,
         duration: summary(&parts).duration_seconds,
         chat,
         parts: media,
@@ -525,7 +557,7 @@ pub(crate) fn replay_source(record: &BrowserRecording) -> Result<BrowserReplaySo
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     const CHANNEL: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const WEBM: &[u8] = &[

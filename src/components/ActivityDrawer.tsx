@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { DownloadOverlapAutomationHistoryItem } from "../api/contracts";
+import type { QueueSnapshot } from "../api/workConsole";
+import { queueRemainingLabel } from "../state/queueRemainingLabel";
 import type { DownloadState, Gallery, GalleryId } from "../core/types";
 import { runningDownloadStates } from "../state/downloadCancellation";
 import { linkedGalleryId } from "../state/downloadStatus";
@@ -8,9 +10,12 @@ import { FluentIcon } from "./FluentIcon";
 import { GalleryProcessingBadge } from "./GalleryProcessingBadge";
 import { splitGalleryTitle } from "./galleryCardLayout";
 import type { DownloadOverlapContainmentGroup } from "../state/downloadOverlapContainment";
+import { requiresManualOverlapApproval } from "../state/manualOverlapSequence";
 import "./ActivityDrawer.css";
 
 type ActivityDrawerProps = {
+  queueEstimate?: QueueSnapshot | null;
+  queueError?: string | null;
   queuePanel?: ReactNode;
   queueSummary?: ReactNode;
   containmentGroups?: DownloadOverlapContainmentGroup[];
@@ -131,6 +136,8 @@ const formatOccurredAt = (occurredAt: string): string => {
 };
 
 export function ActivityDrawer({
+  queueEstimate,
+  queueError,
   queuePanel,
   queueSummary,
   containmentGroups = [],
@@ -144,7 +151,6 @@ export function ActivityDrawer({
   automationHistoryLoading = false,
   automationHistoryError = null,
   automationHistoryTotalItems = 0,
-  automationHistoryUnacknowledgedItems = 0,
   automationHistoryPendingReviewIds = new Set(),
   automationSequenceLoading = false,
   danbooruActivities = [],
@@ -251,7 +257,12 @@ export function ActivityDrawer({
       <header>
         <div>
           <span className="eyebrow">ACTIVITY</span>
-          <h2>활동 기록</h2>
+          <div className="activity-title-row">
+            <h2>활동 기록</h2>
+            <small className="activity-remaining" title="다운로드·해시·검증을 포함한 예상 시간">
+              {queueRemainingLabel(queueEstimate, queueError)}
+            </small>
+          </div>
         </div>
         <button ref={closeButton} type="button" className="icon-button small" title="닫기" aria-label="활동 기록 닫기" onClick={onClose}>
           <FluentIcon glyph="\uE711" />
@@ -276,7 +287,7 @@ export function ActivityDrawer({
           className={`mini-command${activeSection === "automation" ? " is-active" : ""}`}
           onClick={() => setActiveSection("automation")}
         >
-          자동분류 검토{automationHistoryUnacknowledgedItems > 0 ? <span className="activity-tab-count" title={`미확인 ${automationHistoryUnacknowledgedItems}개`}>{automationHistoryUnacknowledgedItems}</span> : null}
+          자동분류 검토
         </button>
       </nav>
       <div className="activity-panel-content">
@@ -337,7 +348,7 @@ export function ActivityDrawer({
                         type="button"
                         className="mini-command"
                         onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}
-                      >근거 보기</button>
+                      >근거</button>
                     </div>
                   </article>
                 );
@@ -405,8 +416,8 @@ export function ActivityDrawer({
         <div id="activity-automation-panel" role="tabpanel" className="activity-list">
           {onStartAutomationSequence ? (
             <div className="activity-history-toolbar">
-              <button type="button" className="mini-command" disabled={automationSequenceLoading || automationHistoryPendingReviewIds.size > 0} onClick={onStartAutomationSequence} title="미확인 항목을 순서대로 검토합니다. 판단을 마치면 다음 항목으로 이동합니다.">
-                {automationSequenceLoading ? <><span className="spinner" /> 검토 목록 준비 중…</> : <><FluentIcon glyph="\uE8FD" /> 미확인 순차 검토</>}
+              <button type="button" className="mini-command" disabled={automationSequenceLoading || automationHistoryPendingReviewIds.size > 0} onClick={onStartAutomationSequence} title="수기 판단이 필요한 다운로드만 순서대로 검토합니다.">
+                {automationSequenceLoading ? <><span className="spinner" /> 검토 목록 준비 중…</> : <><FluentIcon glyph="\uE8FD" /> 검토 필요 목록</>}
               </button>
             </div>
           ) : null}
@@ -425,7 +436,7 @@ export function ActivityDrawer({
                     <small>영구 기록 반영 대기</small>
                   </div>
                   <div className="activity-actions">
-                    <button type="button" className="mini-command" onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}>근거 보기</button>
+                    <button type="button" className="mini-command" onClick={() => onReviewOverlap?.(activity.reviewId, activity.galleryId)}>근거</button>
                   </div>
                 </article>
               );
@@ -442,8 +453,8 @@ export function ActivityDrawer({
                   <small title={`${automationReviewStateLabel[item.reviewState]} · ${formatOccurredAt(item.occurredAt)}`}>{formatOccurredAt(item.occurredAt)}</small>
                 </div>
                 <div className="activity-actions automation-history-actions">
-                  {acknowledged ? <span className="activity-resolution" role="img" aria-label="확인 완료" title="확인 완료"><FluentIcon glyph="\uE73E" /></span> : null}
-                  <button type="button" className="mini-command" disabled={pending} onClick={() => onReviewOverlap?.(item.reviewId, item.incomingGalleryId)}>근거 보기</button>
+                  {acknowledged ? <span className="activity-resolution" role="img" aria-label="승인 완료" title="승인 완료"><FluentIcon glyph="\uE73E" /></span> : null}
+                  <button type="button" className="mini-command" disabled={pending} onClick={() => onReviewOverlap?.(item.reviewId, item.incomingGalleryId)}>근거</button>
                   {!acknowledged && item.removedGalleryIds.length > 0 ? (
                     <button
                       type="button"
@@ -451,10 +462,10 @@ export function ActivityDrawer({
                       title="탐색·목록 제외만 해제합니다. 격리된 실제 파일은 복원하지 않습니다."
                       disabled={pending}
                       onClick={() => onRestoreAutomationExclusions?.(item.reviewId, item.removedGalleryIds)}
-                    >목록에 복원</button>
+                    >복원</button>
                   ) : null}
-                  {!acknowledged ? (
-                    <button type="button" className="mini-command" disabled={pending} onClick={() => onAcknowledgeAutomationHistory?.(item.reviewId)}>확인 완료</button>
+                  {requiresManualOverlapApproval(item) ? (
+                    <button type="button" className="mini-command" title="이 기록의 검토를 승인합니다. 남은 판본 판단은 그대로 유지됩니다." disabled={pending} onClick={() => onAcknowledgeAutomationHistory?.(item.reviewId)}>승인</button>
                   ) : null}
                 </div>
               </article>

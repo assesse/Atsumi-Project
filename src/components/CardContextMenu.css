@@ -15,7 +15,7 @@
   box-shadow: 0 12px 38px #0008;
   animation: card-menu-in 120ms ease-out;
 }
-.card-context-menu-title { padding: 7px 9px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; }
+.card-context-menu-title { padding: 7px 9px 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--font-size-min); }
 .card-context-menu > button {
   display: flex;
   align-items: center;
@@ -30,7 +30,7 @@
   color: inherit;
   text-align: left;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
 }
 .card-context-menu > button:focus, .card-context-menu > button:hover:not(:disabled) { outline: none; background: var(--surface-hover); }
@@ -38,6 +38,6 @@
 .card-context-menu > button:disabled { opacity: .45; cursor: default; }
 .card-context-menu > button.is-danger { color: var(--danger, #e89595); }
 .card-context-menu > button.has-separator { margin-top: 5px; border-top: 1px solid var(--line); border-top-left-radius: 0; border-top-right-radius: 0; }
-.card-context-menu kbd { color: var(--muted); font: inherit; font-size: 11px; white-space: nowrap; }
+.card-context-menu kbd { flex-shrink: 0; color: var(--muted); font: inherit; font-size: var(--font-size-min); white-space: nowrap; }
 @keyframes card-menu-in { from { opacity: 0; translate: 0 -4px; } to { opacity: 1; translate: 0 0; } }
 @media (prefers-reduced-motion: reduce) { .card-context-menu { animation: none; } }

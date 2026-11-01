@@ -507,6 +507,29 @@ describe('read-only X point-in-time capture', () => {
   it('keeps the current-carousel predicate byte-identical between controls and capture',()=>{
     const select=(value:string,end:string)=>value.slice(value.indexOf('  function resolveCurrentCarouselPhoto('),value.indexOf(end,value.indexOf('  function resolveCurrentCarouselPhoto('))).trim();
     expect(select(script,'  // X photos can remove')).toBe(select(actionsScript,'  function currentPhoto('));
+    const boundary=(value:string)=>value.slice(value.indexOf('  function threadBoundaryPlaceholder('),value.indexOf('  function resolveCurrentCarouselPhoto(')).trim();
+    expect(boundary(script)).toBe(boundary(actionsScript));
+  });
+  const threadBoundary=(left:number)=>`<li data-left="${left}"><div data-left="${left}" data-testid="swipe-to-dismiss"><div data-left="${left}"><div data-left="${left}" aria-label="placeholder"><div data-left="${left}"></div><img data-left="${left}" alt="placeholder" src="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%221%22%20height=%221%22%3E%3C/svg%3E"></div></div></div></li>`;
+  const threadPhotos=(ordinal=1,leading=true,trailing=true)=>carousel(ordinal)
+    .replace(`슬라이드 ${ordinal}/2`,`슬라이드 ${ordinal+Number(leading)}/${2+Number(leading)+Number(trailing)}`)
+    .replace('<ul style="overflow-x:hidden">','<ul style="overflow-x:hidden">'+(leading?threadBoundary(-900):''))
+    .replace('</ul>',(trailing?threadBoundary(1500):'')+'</ul>');
+  it.each([[true,true],[true,false],[false,true]])('captures only the current local photo with clipped thread boundaries (%s/%s)',(leading,trailing)=>{
+    for(const ordinal of [1,2]){
+      const result=capture(threadPhotos(ordinal,leading,trailing),[],{path:`/author/status/123/photo/${ordinal}`,photoOwner:'alice'});
+      expect(result.records).toHaveLength(1);
+      expect(result.records[0].media).toEqual([{kind:'image',url:`https://pbs.twimg.com/media/${ordinal===1?'first':'second'}.jpg`,alt:ordinal===1?'first':'second'}]);
+    }
+  });
+  it.each(['interior','exposed','foreign image','missing marker','wrong counter'])('rejects uncertain thread-boundary capture: %s',change=>{
+    let html=threadPhotos();
+    if(change==='interior')html=html.replace(threadBoundary(-900),'').replace('</ul>',threadBoundary(-900)+'</ul>');
+    if(change==='exposed')html=html.replaceAll('data-left="-900"','data-left="20"');
+    if(change==='foreign image')html=html.replace('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%221%22%20height=%221%22%3E%3C/svg%3E','https://example.org/other.jpg');
+    if(change==='missing marker')html=html.replace('aria-label="placeholder"','');
+    if(change==='wrong counter')html=html.replace('슬라이드 2/4','슬라이드 1/4');
+    expect(capture(html,[],{path:'/author/status/123/photo/1',photoOwner:'alice'}).records).toEqual([]);
   });
   it.each([1,2])('captures exactly the proved current source slide %s without its clipped neighbour',ordinal=>{
     const result=capture(carousel(ordinal),[],{path:`/author/status/123/photo/${ordinal}`,photoOwner:'alice'});

@@ -31,8 +31,8 @@
 }
 
 .detail-close-copy { padding: 22px 24px 20px; }
-.detail-close-dialog h2 { margin: 0; font-size: 18px; font-weight: 650; line-height: 1.45; }
-.detail-close-dialog p { margin: 10px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.detail-close-dialog h2 { margin: 0; font-size: 20px; font-weight: 650; line-height: 1.45; }
+.detail-close-dialog p { margin: 10px 0 0; color: var(--muted); font-size: var(--font-size-min); line-height: 1.7; }
 .detail-close-dialog kbd { font: inherit; color: var(--text-soft); white-space: nowrap; }
 .detail-close-actions {
   display: flex;
@@ -51,7 +51,7 @@
   border: 1px solid var(--line-strong);
   border-radius: 8px;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
 }
 .detail-close-actions .detail-close-confirm { color: var(--primary-strong); background: var(--primary-soft); }

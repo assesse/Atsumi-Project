@@ -2,6 +2,8 @@ pub mod application;
 mod autostart;
 mod browser_identity;
 mod community;
+mod context_menu_policy;
+mod scrollbar_theme;
 mod diagnostics;
 pub mod domain;
 pub mod download_popularity;
@@ -9,6 +11,7 @@ mod frontend_origin;
 pub mod infrastructure;
 pub mod interface;
 mod local_control;
+mod media_search_navigation;
 mod native_focus;
 mod personal_library;
 pub mod pinterest;
@@ -873,7 +876,7 @@ fn initialize_backend(
     }
     startup::mark("merge_recovery_ready");
     let settings = ApplicationService::new(repository.clone()).settings_get()?;
-    application::image_work_budget::configure(settings.high_performance_processing);
+    application::image_work_budget::configure(settings.processing_mode);
     startup::mark("settings_ready");
     // Only application-managed tools; never search a recording folder or PATH.
     let media_bin = if cfg!(debug_assertions) {
@@ -1265,6 +1268,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
     infrastructure::telemetry::init();
 
     let result = tauri::Builder::default()
+        .plugin(context_menu_policy::init())
         .manage(pinterest_browser::PinterestBrowser::default())
         .manage(pinterest_session::PinterestSession::default())
         .manage(x_feed::XSession::default())
@@ -1447,7 +1451,12 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             restore_main_window(app, "restore Atsumi from the tray");
         })
         .on_page_load(|view, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                scrollbar_theme::apply(view, payload.url());
+            }
             if view.label() == "main" && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                #[cfg(debug_assertions)]
+                media_search_navigation::verification::install(view);
                 tracing::info!("main frontend document loaded");
                 if let Some(diagnostics) = view.app_handle().try_state::<Arc<ui_diagnostics::UiDiagnostics>>() {
                     diagnostics.record("document_loaded",serde_json::json!({"epoch":diagnostics.epoch()}));
@@ -1644,6 +1653,18 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             x_feed::surface::search::x_media_search_cancel,
             x_feed::surface::search::x_media_search_reset_consent,
             x_feed::surface::search::x_media_search_open_result,
+            x_feed::surface::search::x_media_search_page_evidence,
+            x_feed::surface::search::catalog::x_media_search_work_evidence,
+            x_feed::surface::search::catalog::x_media_search_open_work_evidence,
+            x_feed::surface::search::x_media_search_open_original,
+            x_feed::surface::search::x_media_search_open_lens_settings,
+            x_feed::surface::search::x_media_search_refresh_lens_results,
+            x_feed::surface::search::x_media_search_start_archive,
+            x_feed::surface::search::creator_links::x_media_search_creator_links,
+            x_feed::surface::search::creator_links::x_media_search_open_creator_link,
+            media_search_navigation::media_search_navigation_pending,
+            media_search_navigation::media_search_navigation_ack,
+            media_search_navigation::media_search_navigation_open_x,
             x_feed::archive_ipc::x_archive_inspect,
             x_feed::archive_ipc::x_archive_release,
             x_feed::archive_ipc::x_archive_save,
@@ -1838,6 +1859,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             interface::commands::duplicate_review_get,
             interface::commands::duplicate_decision_apply,
             interface::commands::download_overlap_review_get,
+            interface::commands::download_overlap_display_matches,
             interface::commands::download_overlap_automation_history_list,
             interface::commands::download_overlap_automation_history_acknowledge,
             interface::commands::download_overlap_decision_apply,

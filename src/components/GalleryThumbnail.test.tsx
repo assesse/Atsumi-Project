@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { galleryId } from "../core/types";
-import { ThumbnailClient, sourcePageThumbnailKey } from "../thumbnail";
+import { ThumbnailClient, sourcePageThumbnailKey, overlapReviewPageThumbnailKey } from "../thumbnail";
 import { mockGalleries } from "../data/mockGalleries";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 
@@ -18,6 +18,30 @@ afterEach(() => {
 });
 
 describe("GalleryThumbnail", () => {
+  it("retains subscriptions for equivalent keys and refreshes real evidence or source changes", async () => {
+    const resolve=vi.fn(() => ({kind:"image" as const,url:"https://images.example.test/stable.png",width:120,height:170}));
+    const client=new ThumbnailClient({resolve}), subscribe=vi.spyOn(client,"subscribe");
+    const container=document.createElement("div"); document.body.append(container);const root=createRoot(container);
+    const show=async(key:Parameters<typeof client.getSnapshot>[0])=>act(async()=>root.render(
+      <GalleryThumbnail thumbnailKey={key} consumer="review" priority="visible" client={client} alt="Stable cover" />
+    ));
+    try {
+      for(let i=0;i<20;i++)await show(overlapReviewPageThumbnailKey("review","candidate",1,"incoming",1));
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      expect(resolve).toHaveBeenCalledTimes(1);
+      const original=container.querySelector("img");
+      await show(overlapReviewPageThumbnailKey("review","candidate",1,"incoming",1));
+      expect(container.querySelector("img")).toBe(original);
+      await show(overlapReviewPageThumbnailKey("review","candidate",2,"incoming",1));
+      expect(subscribe).toHaveBeenCalledTimes(2);
+      expect(resolve).toHaveBeenCalledTimes(2);
+      await show({...coverKey,sourceKey:"original"});
+      await show({...coverKey,sourceKey:"replacement"});
+      expect(subscribe.mock.calls.at(-1)?.[0].key).toMatchObject({sourceKey:"replacement"});
+      expect(subscribe).toHaveBeenCalledTimes(4);
+    } finally {await act(async()=>root.unmount());client.dispose();container.remove();}
+  });
+
   it("renders a coordinator URL with intrinsic dimensions, containment and eager priority", async () => {
     const client = new ThumbnailClient({
       resolve: () => ({

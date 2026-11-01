@@ -52,6 +52,23 @@ it("recognizes an outside-article sibling placement only within its one-post cel
   const a=adapter(cell(post("Ad")));a.update();
   expect(a.hidden()).toBe(1);expect(a.doc.querySelector('[data-testid="cellInnerDiv"]')!.getAttribute("data-atsumi-x-ad-hidden")).toBe("promoted-v1");
 });
+const affiliated=(badge:string)=>post(badge).replace('</div><span class="badge">','<div role="link"><span>Affiliation</span></div></div><span class="badge">');
+it.each(["Ad","광고"])("reads the own %s badge past an affiliation link inside the one own author name",badge=>{
+  for(const html of [outer(affiliated(badge)),cell(affiliated(badge)),`<div data-testid="cellInnerDiv">${affiliated(badge)}${'<div data-testid="placementTracking"></div>'.repeat(2)}</div>`]){
+    const a=adapter(html+post("","Ordinary affiliated post"));a.update();
+    expect(a.hidden()).toBe(1);expect(a.win.__atsumiXAds!.blocked(a.article())).toBe(true);
+    expect(a.win.__atsumiXAds!.blocked(a.doc.querySelectorAll("article")[1]!)).toBe(false);
+    expect(a.win.__atsumiXAds!.diagnostic()).toMatchObject({metadataMissing:0,headerBadges:1});
+  }
+});
+it("keeps affiliation words independent of ad proof and restores a recycled affiliated ad",()=>{
+  for(const html of [outer(affiliated('')),affiliated('Ad'),outer(affiliated('Paid partnership')),outer(affiliated('Ad').replace('class="badge"','class="badge" hidden'))]){
+    const a=adapter(html);a.update();expect(a.hidden()).toBe(0);
+  }
+  const a=adapter(outer(affiliated('Ad')));a.update();expect(a.hidden()).toBe(1);
+  a.doc.querySelector('.badge')!.textContent='';a.changed(a.article());
+  expect(a.hidden()).toBe(0);expect(a.win.__atsumiXAds!.blocked(a.article())).toBe(false);
+});
 it.each([
   ["no badge",outer(post())],
   ["badge without placement",post("Ad")],
@@ -193,7 +210,7 @@ const diagnosticCaret='<button data-testid="caret">More</button>';
 const diagnosticArticle=(header:string)=>`<article data-testid="tweet">${header}<p data-testid="tweetText">Private body Ad</p></article>`;
 it.each<[string,string,Partial<HeaderShape>]>([
   ["a badge outside the first caret ancestor",`<div><div>${diagnosticName}${diagnosticCaret}</div><span>광고</span></div>`,{labelAbsent:1,outerLabel:1,stoppedContent:0}],
-  ["an affiliation role link inside the own name",`<div>${diagnosticName.replace('</div>','<div role="link">Affiliation</div></div>')}<span>Ad</span>${diagnosticCaret}</div>`,{stoppedRoleLink:1,roleLinkInName:1}],
+  ["an unrelated role link outside the own name",`<div>${diagnosticName}<div role="link">Other post</div><span>Ad</span>${diagnosticCaret}</div>`,{stoppedRoleLink:1,roleLinkInName:0}],
   ["a header control label",`<div>${diagnosticName}<button><span>Ad</span></button>${diagnosticCaret}</div>`,{labelControl:1,labelAbsent:0}],
   ["a hidden badge",`<div>${diagnosticName}<span hidden>Ad</span>${diagnosticCaret}</div>`,{labelHidden:1}],
   ["an author name word",`<div>${diagnosticName.replace('Creator','Ad')}${diagnosticCaret}</div>`,{labelAuthor:1,labelNonLeaf:1}],

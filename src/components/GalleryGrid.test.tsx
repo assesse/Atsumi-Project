@@ -4,6 +4,22 @@ import { describe, expect, it, vi } from "vitest";
 import { GalleryGrid } from "./GalleryGrid";
 
 describe("GalleryGrid row coordinator", () => {
+  it("uses preset geometry without forcing layout inside deferred album placeholders", async () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => { callback(0); return 1; });
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.closest(".progressive-gallery-placeholder")) throw new Error("Offscreen placeholder layout forced");
+      return { x: 0, y: 0, width: 200, height: 0, top: 0, right: 200, bottom: 0, left: 0, toJSON: () => ({}) };
+    });
+    const container = document.createElement("div"), root = createRoot(container);
+    try {
+      await act(async () => root.render(<GalleryGrid columns={2} previewWidth={220} selectionContext={false} ariaLabel="deferred row">
+        <article className="gallery-card"><div className="cover" data-thumbnail-intrinsic-width="2" data-thumbnail-intrinsic-height="3" /></article>
+        <div className="progressive-gallery-slot is-placeholder"><article className="gallery-card progressive-gallery-placeholder"><div className="cover" /></article></div>
+      </GalleryGrid>));
+      expect(container.querySelector<HTMLElement>(".progressive-gallery-slot")?.style.getPropertyValue("--gallery-card-height")).toBe("300px");
+    } finally { await act(async () => root.unmount()); rect.mockRestore(); raf.mockRestore(); }
+  });
+
   it("coalesces pixel resizing and ignores tag mutations and height-only feedback in a 60-card grid", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     let gridWidth = 1200;
@@ -149,7 +165,7 @@ describe("GalleryGrid row coordinator", () => {
       const grid = container.querySelector<HTMLElement>(".gallery-grid");
       expect(grid?.getAttribute("data-preview-size")).toBe("standard");
       expect(grid?.style.getPropertyValue("--preview-width")).toBe("220px");
-      expect(grid?.style.getPropertyValue("--card-title-size")).toBe("16px");
+      expect(grid?.style.getPropertyValue("--card-title-size")).toBe("17px");
       expect(grid?.style.getPropertyValue("--card-tag-max-rows")).toBe("3");
       expect(grid?.style.getPropertyValue("--card-tag-max-height")).toBe("80px");
     } finally {

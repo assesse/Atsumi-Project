@@ -1,18 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import projection from "../../../src-tauri/src/pinterest_session.js?raw";
 
 type Json = Record<string, unknown>;
 const image = { url: "https://i.pinimg.com/originals/aa/bb/cc/example.jpg", width: 400, height: 700 };
 const pin = (id = "1234567") => ({ id, title: "Fixture", images: { orig: image }, pinner: { username: "fixture", full_name: "Fixture author" } });
-function run(request: Json, initial: Json = {}, extra: { body?: Json; schemas?: Json[]; anchors?: unknown[]; host?: string; frame?: boolean; initialText?: string | null } = {}) {
-  const window = { top: null as unknown }; window.top = extra.frame ? {} : window;
+function run(request: Json, initial: Json = {}, extra: { body?: Json; schemas?: Json[]; anchors?: unknown[]; headerAnchors?: unknown[]; host?: string; path?: string; dom?: Record<string, unknown[]>; frame?: boolean; initialText?: string | null; window?: Json; fetch?: typeof fetch; appVersion?: string } = {}) {
+  const window: Json = extra.window ?? { top: null as unknown }; window.top = extra.frame ? {} : window;
+  window.getComputedStyle ??= (element: { testStyle?: Json }) => ({ display: "block", visibility: "visible", opacity: "1", ...element.testStyle });
   const document = {
     readyState: "complete",
-    getElementById: () => ({ textContent: extra.initialText === undefined ? JSON.stringify({ initialReduxState: initial }) : extra.initialText }),
-    querySelectorAll: (selector: string) => selector.startsWith("script") ? (extra.schemas ?? []).map(schema => ({ textContent: JSON.stringify(schema) })) : extra.anchors ?? [],
+    getElementById: (id: string) => ({ textContent: id === "__PWS_DATA__" ? JSON.stringify({ appVersion: extra.appVersion ?? "fixture" }) : extra.initialText === undefined ? JSON.stringify({ initialReduxState: initial }) : extra.initialText }),
+    querySelectorAll: (selector: string) => extra.dom?.[selector] ?? (selector.startsWith("script") ? (extra.schemas ?? []).map(schema => ({ textContent: JSON.stringify(schema) })) : selector.includes("header-profile") ? extra.headerAnchors ?? [] : extra.anchors ?? []),
     body: { textContent: JSON.stringify(extra.body ?? {}) },
   };
-  return Function("window", "location", "document", `return (\n${projection.replace("__ATSUMI_PINTEREST_REQUEST__", JSON.stringify({ nonce: "fixture-nonce", ...request }))}\n)`)(window, { protocol: "https:", hostname: extra.host ?? "www.pinterest.com", origin: "https://www.pinterest.com", href: "https://www.pinterest.com/" }, document) as Json;
+  return Function("window", "location", "document", "fetch", `return (\n${projection.replace("__ATSUMI_PINTEREST_REQUEST__", JSON.stringify({ nonce: "fixture-nonce", ...request }))}\n)`)(window, { protocol: "https:", hostname: extra.host ?? "www.pinterest.com", origin: "https://www.pinterest.com", href: `https://www.pinterest.com${extra.path ?? "/"}`, pathname: extra.path ?? "/", search: "", hash: "" }, document, extra.fetch ?? (() => { throw new Error("unexpected network"); })) as Json;
 }
 describe("Pinterest official document metadata projection", () => {
   it("does not mistake an anonymous homepage shell for an empty successful feed", () => {
@@ -126,7 +127,7 @@ describe("Pinterest closed diagnostic shapes (no continuation behavior change)",
       resources: { BaseSearchResource: { [key]: { data: [{ ...pin("987654321"), title: "SECRET_TITLE" }], nextBookmark: "SECRET_BOOKMARK" } }, SECRET_RESOURCE: "SECRET_EXTRA" },
     });
     const safe = diagnostics(value);
-    expect(Object.keys(safe).sort()).toEqual(["sourceBranch", "initialShape", "knownResourceMask", "resourceEntryCount", "structuredPinCount", "domPinCount", "dataShape", "entryShape", "keyShape", "bookmarkShape", "bookmarkLocationMask", "planReject"].sort());
+    expect(Object.keys(safe).sort()).toEqual(["sourceBranch", "initialShape", "knownResourceMask", "resourceEntryCount", "structuredPinCount", "domPinCount", "dataShape", "entryShape", "keyShape", "bookmarkShape", "bookmarkLocationMask", "planReject", "optionField", "optionShape"].sort());
     const encoded = JSON.stringify(safe);
     for (const secret of ["SECRET", "987654321", "BaseSearchResource", "query", "username", "https://"]) expect(encoded).not.toContain(secret);
   });
@@ -149,9 +150,23 @@ describe("Pinterest closed diagnostic shapes (no continuation behavior change)",
 });
 
 describe("Pinterest own saved boards", () => {
+  it("uses only the authenticated official header profile and rejects ownership conflicts", () => {
+    const initial = { session: { isAuthenticated: true }, resources: { UserResource: { x: { data: { username: "recommended" } } } } };
+    const headerAnchors = [{ href: "https://kr.pinterest.com/fixture/" }];
+    expect(run({ kind: "owner" }, initial, { headerAnchors })).toMatchObject({ state: "ready", ownerPath: "/fixture/" });
+    expect(run({ kind: "owner" }, initial)).toMatchObject({ state: "pending", ownerPath: null });
+    expect(run({ kind: "owner" }, { session: { isAuthenticated: false } }, { headerAnchors }).ownerPath).toBeNull();
+    expect(run({ kind: "owner" }, { session: { isAuthenticated: true, user: { username: "other" } } }, { headerAnchors }).ownerPath).toBeNull();
+    expect(run({ kind: "owner" }, initial, { headerAnchors: [...headerAnchors, { href: "/other/" }] }).ownerPath).toBeNull();
+    for (const href of ["https://evil.test/fixture/", "https://www.pinterest.com.evil.test/fixture/", "/fixture/?secret=x", "/fixture/board/", "https://user:pass@www.pinterest.com/fixture/"]) {
+      expect(run({ kind: "owner" }, initial, { headerAnchors: [{ href }] }).ownerPath).toBeNull();
+    }
+  });
   it("projects only an authenticated session-owned path, never a recommended user or secret", () => {
     const source = { session: { isAuthenticated: true, user: { username: "fixture", id: "SECRET_ID", email: "SECRET_EMAIL" } }, resources: { UserResource: { x: { data: { username: "someone_else" } } } } };
-    expect(run({ kind: "owner" }, source)).toEqual({ nonce: "fixture-nonce", state: "ready", authenticated: true, ownerPath: "/fixture/_saved/" });
+    const {diagnostics: projection,...value}=run({ kind: "owner" }, source);
+    expect(value).toEqual({ nonce: "fixture-nonce", state: "ready", authenticated: true, ownerPath: "/fixture/" });
+    expect(JSON.stringify(projection)).not.toMatch(/fixture|someone_else|SECRET/);
     expect(run({ kind: "status" }, source)).not.toHaveProperty("ownerPath");
     for (const session of [{ isAuthenticated: false, user: { username: "fixture" } }, { isAuthenticated: true }, { isAuthenticated: true, user: { username: "../settings" } }]) {
       expect(run({ kind: "owner" }, { ...source, session }).ownerPath).toBeNull();
@@ -169,12 +184,54 @@ describe("Pinterest own saved boards", () => {
     expect(value).toMatchObject({ state: "ready", pins: [], boards: [], exhausted: true });
     expect(run({ kind: "saved", owner: "fixture" }).state).toBe("pending");
   });
+  it("recognizes only the explicit rendered own-board empty state when hydration omits the resource", () => {
+    const visible = { closest: () => null, getBoundingClientRect: () => ({ width: 240, height: 100 }) };
+    const panel = { ...visible, textContent: "아이디어 정리하기 핀은 영감을 불러일으키는 불꽃입니다. 보드는 그러한 핀을 모은 곳입니다. 원하는 방식으로 핀을 정리할 수 있는 보드를 만들어 보세요. 보드 만들기", parentElement: null };
+    const button = { ...visible, textContent: "보드 만들기", parentElement: panel };
+    const markers = {
+      '[data-test-id="self-profile-header"]': [visible],
+      '[data-test-id="boards-tab"]': [{ ...visible, href: "/fixture/" }],
+      '[role="progressbar"], [role="alert"], [aria-busy="true"]': [],
+      button: [button],
+    };
+    const extra = { path: "/fixture/", headerAnchors: [{ href: "/fixture/" }], dom: markers };
+    const request = { kind: "saved", owner: "fixture" };
+    const source = { session: { isAuthenticated: true } };
+    expect(run(request, source, extra)).toMatchObject({ state: "ready", pins: [], boards: [], exhausted: true, limited: false, diagnostics: { planReject: "end" } });
+    for (const dom of [
+      { ...markers, '[data-test-id="self-profile-header"]': [] },
+      { ...markers, '[data-test-id="boards-tab"]': [{ ...visible, href: "/other/" }] },
+      { ...markers, '[role="progressbar"], [role="alert"], [aria-busy="true"]': [visible] },
+      { ...markers, button: [{ ...button, closest: () => ({}) }] },
+      { ...markers, button: [button, button] },
+      { ...markers, button: [{ ...button, parentElement: { ...panel, textContent: "보드 만들기" } }] },
+      ...["hidden", "collapse"].map(visibility => ({ ...markers, button: [{ ...button, parentElement: { ...panel, testStyle: { visibility } } }] })),
+      ...[{ opacity: "0" }, { display: "none" }].map(testStyle => ({ ...markers, button: [{ ...button, parentElement: { ...panel, testStyle } }] })),
+      { ...markers, button: [{ ...button, parentElement: { ...panel, inert: true } }] },
+      { ...markers, button: [{ ...button, parentElement: { ...panel, hasAttribute: (name: string) => name === "inert" } }] },
+    ]) expect(run(request, source, { ...extra, dom }).state).toBe("pending");
+    expect(run(request, source, { ...extra, path: "/other/" }).state).toBe("pending");
+    expect(run(request, source, { ...extra, headerAnchors: [{ href: "/other/" }] }).state).toBe("pending");
+    expect(run(request, { session: { isAuthenticated: false } }, extra).state).toBe("pending");
+    expect(run(request, { ...source, resources: { BoardsFeedResource: {} } }, extra).state).toBe("pending");
+    expect(run(request, { ...source, resources: { BoardsResource: {} } }, extra).state).toBe("pending");
+  });
 });
 
 describe("Pinterest observed-resource continuation candidate", () => {
   const feed = (resource: string, pairs: unknown[], bookmark: unknown = "next-page") => ({
     session: { isAuthenticated: true },
     resources: { [resource]: { [JSON.stringify(pairs)]: { data: [pin()], nextBookmark: bookmark } } },
+  });
+  it("preserves the official keyword gated:null without accepting other nullable options", () => {
+    const context = [["query", "landscape"], ["scope", "pins"]];
+    const value = run({ kind: "keyword", input: "landscape" }, feed("BaseSearchResource", [...context, ["gated", null]]));
+    expect(value.continuation).toEqual({ resource: "BaseSearchResource", options: { query: "landscape", scope: "pins", gated: null }, bookmark: "next-page" });
+    for (const pair of [["gated", {}], ["gated", []], ["page_size", null], ["username", null], ["board_id", null]]) {
+      expect(run({ kind: "keyword", input: "landscape" }, feed("BaseSearchResource", [...context, pair])).continuation).toBeNull();
+    }
+    expect(run({ kind: "keyword", input: "other" }, feed("BaseSearchResource", [...context, ["gated", null]])).continuation).toBeNull();
+    expect(run({ kind: "home" }, feed("UserHomefeedResource", [["page_size", 25], ["gated", null]])).continuation).toBeNull();
   });
   it("drops unknown fields only for the two observed kind/resource candidates", () => {
     const pairs = [["page_size", 25], ["unknown_fixture_option", { SECRET: "SECRET_VALUE" }]];
@@ -222,7 +279,7 @@ describe("Pinterest observed-resource continuation candidate", () => {
   });
   it("does not use echo-only resource options as next-page or terminal evidence", () => {
     const request = { kind: "home", input: "", resource: "UserHomefeedResource", options: { page_size: 25 }, bookmark: "current-page" };
-    for (const echo of ["current-page", "-end-", "different-unproven-option-value"]) {
+    for (const echo of ["current-page"]) {
       const value = run(request, {}, { body: { resource_response: { status: "success", data: [] }, resource: { options: { bookmarks: [echo] } } } });
       expect(value).toMatchObject({ state: "ready", pins: [], exhausted: false, limited: true, continuation: null });
     }
@@ -230,10 +287,54 @@ describe("Pinterest observed-resource continuation candidate", () => {
     expect(same).toMatchObject({ state: "ready", exhausted: false, limited: true, continuation: null, diagnostics: { planReject: "same_bookmark" } });
     const next = run(request, {}, { body: { resource_response: { status: "success", data: [], bookmark: "next-page" } } });
     expect(next).toMatchObject({ state: "ready", exhausted: false, limited: false, continuation: { bookmark: "next-page" } });
+    const resourceNext = run(request, {}, { body: { resource_response: { status: "success", data: [pin()] }, resource: { options: { bookmarks: ["next-page"] } } } });
+    expect(resourceNext).toMatchObject({ continuation: { bookmark: "next-page" }, limited: false });
+    const resourceEnd = run(request, {}, { body: { resource_response: { status: "success", data: [] }, resource: { options: { bookmarks: ["-end-"] } } } });
+    expect(resourceEnd).toMatchObject({ exhausted: true, limited: false, continuation: null });
   });
   it("keeps first empty documents pending and valid empty incomplete follow-ups limited", () => {
     expect(run({ kind: "home", input: "" })).toMatchObject({ state: "pending" });
     const value = run({ kind: "home", input: "", resource: "UserHomefeedResource", options: { page_size: 25 }, bookmark: "current" }, {}, { body: { resource_response: { status: "success", data: [] } } });
     expect(value).toMatchObject({ state: "ready", pins: [], exhausted: false, limited: true, continuation: null });
+  });
+});
+
+describe("Pinterest same-profile bounded resource transport", () => {
+  const request = { kind: "home", resource: "UserHomefeedResource", resourceUrl: "https://www.pinterest.com/resource/UserHomefeedResource/get/?source_url=%2F&data=fixture", options: { page_size: 25 }, bookmark: "current" };
+  const authenticated = { session: { isAuthenticated: true } };
+  it("requests once while polling and projects the real response instead of the document wrapper", async () => {
+    const window: Json = {};
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response(JSON.stringify({ resource_response: { status: "success", data: [pin()] }, resource: { options: { bookmarks: ["next"] } } })));
+    expect(run(request, authenticated, { window, fetch }).state).toBe("pending");
+    run(request, authenticated, { window, fetch });
+    await vi.waitFor(() => expect((window.__atsumiPinterestResource as Json).done).toBe(true));
+    expect(run(request, authenticated, { window, fetch })).toMatchObject({ state: "ready", pins: [{ id: "1234567" }], continuation: { bookmark: "next" } });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET", mode: "same-origin", credentials: "same-origin", redirect: "error", headers: { "X-App-Version": "fixture", "X-Requested-With": "XMLHttpRequest", "X-Pinterest-PWS-Handler": "www/index.js" } });
+    expect(new URL(String(fetch.mock.calls[0]?.[0])).searchParams.get("_")).toMatch(/^\d+$/);
+  });
+  it("does not send requests for missing authentication or a foreign/mismatched resource", () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    expect(run(request, { session: { isAuthenticated: false } }, { fetch }).state).toBe("unavailable");
+    for (const resourceUrl of ["https://evil.test/resource/UserHomefeedResource/get/", "https://www.pinterest.com/resource/UserSessionResource/delete/", "http://www.pinterest.com/resource/UserHomefeedResource/get/"]) {
+      expect(run({ ...request, resourceUrl }, authenticated, { fetch }).state).toBe("unavailable");
+    }
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it.each([401, 403, 500])("keeps HTTP %s failure distinct from an empty feed", async status => {
+    const window: Json = {};
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response("private server response", { status }));
+    run(request, authenticated, { window, fetch });
+    await vi.waitFor(() => expect((window.__atsumiPinterestResource as Json).done).toBe(true));
+    const result = run(request, authenticated, { window, fetch });
+    expect(result).toMatchObject({ state: "unavailable", diagnostics: { planReject: status === 500 ? "resource_http" : status === 403 ? "resource_forbidden" : "resource_auth" } });
+    expect(JSON.stringify(result)).not.toContain("private");
+  });
+  it("bounds a successful response body before parsing", async () => {
+    const window: Json = {};
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(new Response("x".repeat(5 * 1024 * 1024 + 1)));
+    run(request, authenticated, { window, fetch });
+    await vi.waitFor(() => expect((window.__atsumiPinterestResource as Json).done).toBe(true));
+    expect(run(request, authenticated, { window, fetch })).toMatchObject({ state: "unavailable", diagnostics: { planReject: "resource_oversize" } });
   });
 });

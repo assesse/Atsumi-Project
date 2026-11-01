@@ -310,8 +310,9 @@ impl StateRepository for SqliteRepository {
                         download_adaptive_max_requests = ?25,
                         chzzk_ssd_staging = ?26,
                         high_performance_processing = ?27,
-                        privacy_on_startup = ?28
-                    WHERE singleton = 1 AND revision = ?29
+                        privacy_on_startup = ?28,
+                        processing_mode = ?29
+                    WHERE singleton = 1 AND revision = ?30
                 "#,
                 params![
                     to_sql_integer(next.revision, "settings revision")?,
@@ -342,6 +343,7 @@ impl StateRepository for SqliteRepository {
                     next.chzzk_ssd_staging,
                     next.high_performance_processing,
                     next.privacy_on_startup,
+                    next.processing_mode.as_str(),
                     to_sql_integer(expected_revision, "expected settings revision")?,
                 ],
             )
@@ -9411,7 +9413,8 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                        auto_find_display_mode, downloads_display_mode,
                        danbooru_page_size, danbooru_preview_width,
                        download_adaptive_concurrency, download_adaptive_max_requests,
-                       chzzk_ssd_staging, high_performance_processing, privacy_on_startup
+                       chzzk_ssd_staging, high_performance_processing, privacy_on_startup,
+                       processing_mode
                 FROM settings
                 WHERE singleton = 1
             "#,
@@ -9446,6 +9449,7 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
                     row.get::<_, bool>(25)?,
                     row.get::<_, bool>(26)?,
                     row.get::<_, bool>(27)?,
+                    row.get::<_, String>(28)?,
                 ))
             },
         )
@@ -9456,6 +9460,9 @@ fn read_settings(connection: &Connection) -> Result<SettingsSnapshot, Repository
         download_root: values.1,
         chzzk_ssd_staging: values.25,
         high_performance_processing: values.26,
+        processing_mode: crate::domain::ProcessingMode::from_database(&values.28).ok_or_else(
+            || RepositoryError::Corrupt(format!("Unsupported processing mode {:?}", values.28)),
+        )?,
         folder_name_template: values.2,
         explore_page_size: stored_u32(values.16, "Explore page size")?,
         danbooru_page_size: stored_u32(values.21, "Danbooru page size")?,

@@ -109,6 +109,8 @@ pub struct DownloadOverlapMergeRequest {
     #[serde(default)]
     pub selected_pages: Option<composition::PageSelection>,
     #[serde(default)]
+    pub target_selection_only: bool,
+    #[serde(default)]
     pub automation: bool,
 }
 #[derive(Debug, Clone, Serialize)]
@@ -1285,6 +1287,32 @@ mod tests {
     }
 
     #[test]
+    fn partial_destination_preserves_exact_selected_bytes_backups_and_manifest_in_both_directions() {
+        for side in [DownloadOverlapMergeSide::Existing,DownloadOverlapMergeSide::Incoming] {
+            let f=Fixture::new(4,4); f.seed_hashes();
+            let (target_id,target_entry,source_id)=if side==DownloadOverlapMergeSide::Existing {(101,&f.incoming,102)}else{(102,&f.existing,101)};
+            let expected=[f.bytes(source_id,1),f.bytes(source_id,2),f.bytes(target_id,4)];
+            let original=f.bytes(target_id,2);
+            let mut req=f.request(side,true);req.source_pages=vec![1,2];req.target_selection_only=true;
+            req.selected_pages=Some(if side==DownloadOverlapMergeSide::Existing {composition::PageSelection{existing:vec![1,2],incoming:vec![4]}}else{composition::PageSelection{existing:vec![4],incoming:vec![1,2]}});
+            let result=f.service.apply(req).unwrap();
+            assert!(result.source_excluded);
+            let bundle=f.service.bundle(target_entry).unwrap();
+            assert_eq!(bundle.artifact.expected_page_count,3);
+            assert_eq!(bundle.gallery.metadata.source_page_count,3);
+            for (i,bytes) in expected.iter().enumerate(){assert_eq!(&f.bytes(target_id,(i+1) as u32),bytes);}
+            assert_eq!(fs::read(Path::new(&result.backup_path).join("0002.webp")).unwrap(),original);
+            verify_bundle(f.root.path(),&bundle).unwrap();
+            assert_eq!(f.repository.connection().unwrap().query_row("SELECT count(*) FROM duplicate_page_hashes WHERE entry_id=?1",[target_entry],|r|r.get::<_,usize>(0)).unwrap(),3);
+        }
+    }
+    #[test]
+    fn partial_destination_requires_explicit_selection_and_preserves_originals_on_rejection() {
+        let f=Fixture::new(4,4);let original=f.bytes(102,1);
+        let mut request=f.request(DownloadOverlapMergeSide::Incoming,true);request.target_selection_only=true;
+        assert!(f.service.apply(request).is_err());assert_eq!(f.bytes(102,1),original);
+    }
+    #[test]
     fn mixed_selection_rejects_dual_choice_crossing_alignment_and_changed_files() {
         for failure in ["both", "crossed", "file"] {
             let f = Fixture::new(4, 4);
@@ -1546,6 +1574,7 @@ mod tests {
             source_pages: vec![1, 2],
             exclude_source: true,
             selected_pages: None,
+            target_selection_only: false,
             automation: false,
         };
         let request = f.service.prepare_completed_merge(request).unwrap();
@@ -1772,6 +1801,7 @@ mod tests {
                 source_pages: vec![1],
                 exclude_source: exclude,
                 selected_pages: None,
+            target_selection_only: false,
                 automation: false,
             }
         }

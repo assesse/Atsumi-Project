@@ -1,0 +1,44 @@
+{
+  "date": "2026-10-24",
+  "state": "implemented_neutral_actual_app_and_official_profile_response_verified",
+  "originalReference": "Current conversation: latest numbered requests 1-4 after authorization for parallel agents and batched Computer Use",
+  "originalRequests": [
+    "다운로드 완료된 미디어도 검색이 가능해야함",
+    "찾은 결과는 가급적이면 답변의 원형을 유지. 지금보면 찾고난 후에 뭐 미리보기 이미지도 다 없어지고",
+    "찾지 못한경우 결과를 보여주면 좋겠음. 안되는 이유를 내가 그 시점의 브라우저로 직접 보고싶은데",
+    "이미지 검색에 아직 색인되지 않은 작품도, 알려진 X 게시자의 프로필에 명시된 Pixiv 등 외부 링크를 확인하고 싶음. 낮은 유사도의 다른 작가 후보와 구분할 것."
+  ],
+  "audit": ".runtime/requirements-audit/20261024-media-search-local-results-preedit.json",
+  "rules": [
+    "Keep established archive card, body, lightbox and context-menu interactions. Exact native archive manifest, post and asset identity; never admit an arbitrary frontend file path.",
+    "Downloaded images use SauceNAO; downloaded videos use their saved poster with Google Lens. No active X login is required to search local pixels. No silent change from thumbnail to current frame.",
+    "Preserve provider order, title, creator field, exact numeric score, metadata and bounded sanitized preview. A search match is not proof of authorship.",
+    "Retain the same provider browser after complete, empty and failed extraction; explicit original-page opening must not upload again. Expire after30minutes and close on cancel/stale context/shutdown.",
+    "Known original post and indexed X-result post can request profile-declared links separately. Read only profile header/bio/website, preserve unresolved short links, and never imply that the searched work exists at the linked site.",
+    "The original-post profile action can run before image-search consent; it does not upload the image or alter that consent.",
+    "Preserve finite resource limits, explicit search consent, provider session isolation and stale/account/privacy cancellation. Root alone performs a short UI batch; agents analyze and test offline."
+  ],
+  "supersedes": [
+    "Earlier result projection omitted preview images: sanitized provider previews now supported.",
+    "Earlier terminal search cleanup immediately destroyed the provider browser: same-job page retained for explicit inspection."
+  ],
+  "acceptance": [
+    "Search exact downloaded image from a real isolated app while X is logged out; inspect the selected image before upload.",
+    "Inspect actual provider response and original browser, including extraction failure; no blind resubmission.",
+    "Exercise context cancellation and exact archive file/hash ownership in automated regression checks.",
+    "Report actual-account profile-link validation and unavailable provider thumbnails separately from passed checks."
+  ],
+  "verificationRecord": ".runtime/requirements-audit/20261024-local-search-results-verification.json",
+  "verification": {
+    "actualApp": "Fresh isolated app without X login: local media context menu, exact neutral-image consent preview, actual SauceNAO search, result title/creator/exact52.25%score and ArtStation pottery thumbnail all displayed. Same original browser opened and compared visually; search panel cancellation and normal app exit passed.",
+    "actualFailure": "Separate fixed-neutral production probe returned unrecognized provider structure. Failure was reported honestly; original page retained/reopened/closed without resubmission.",
+    "actualProfileResponse": "Production extractor applied to fresh official profile-header response returned the profile-declared Pixiv link. Authenticated user's app-button-to-native-reader path is not claimed verified.",
+    "automated": "Latest native55/55; creator extractor18/18; provider extractor121/121; frontend panel/API/archive216/216 and full frontend typecheck passed. Development builds passed.",
+    "contradictionCheck": "No automatic alternate upload, score-based authorship assertion, guessed external identity, arbitrary local file admission, changed card interactions, cookie export or user-data deletion. Small images are no longer unnecessarily enlarged."
+  },
+  "limitations": [
+    "Downloaded video source search requires its saved poster; it does not silently substitute a decoded frame.",
+    "Search services can return weak matches, block a request or change structure. Preserve their data and expose the original page rather than claiming a verified source.",
+    "A profile-declared external link does not establish that the selected work is posted on that service."
+  ]
+}

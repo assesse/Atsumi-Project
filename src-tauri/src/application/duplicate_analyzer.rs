@@ -1,6 +1,6 @@
 use std::io::Cursor;
 
-use image::{imageops::FilterType, GenericImageView, ImageReader, Limits};
+use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageReader, Limits};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::domain::{
@@ -87,6 +87,9 @@ pub(crate) fn compute_page_hash(
     bytes: &[u8],
     profile: &HashProfile,
 ) -> Result<DuplicatePageHash, RepositoryError> {
+    // Enforce the same budget for downloads, library scans and preview hashes.
+    // A caller already holding an image slot reuses it on this thread.
+    let _image_work = super::image_work_budget::acquire(None);
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|_| RepositoryError::Other("managed page image format is unsupported".into()))?;
@@ -104,12 +107,12 @@ pub(crate) fn compute_page_hash(
             "managed page image has invalid dimensions".into(),
         ));
     }
-    let gray = image.to_luma8();
-    let stats_image = image::imageops::resize(&gray, 64, 64, FilterType::Triangle);
+    let gray = DynamicImage::ImageLuma8(image.to_luma8());
+    let stats_image = resize_hash_plane(&gray, 64, 64);
     let stats = image_stats(stats_image.as_raw());
-    let coarse = image::imageops::resize(&gray, 9, 8, FilterType::Triangle);
+    let coarse = resize_hash_plane(&gray, 9, 8);
     let coarse_d_hash = adjacent_hash_64(&coarse);
-    let detail = image::imageops::resize(&gray, 33, 32, FilterType::Triangle);
+    let detail = resize_hash_plane(&gray, 33, 32);
     let detail_d_hash_hex = detail_hash_hex(&detail);
     let p_hash = perceptual_hash(&gray);
     let low_information = stats.std_dev < profile.low_information_std_dev_threshold
@@ -382,8 +385,16 @@ fn detail_hash_hex(image: &image::GrayImage) -> String {
     hex_bytes(&bytes)
 }
 
-fn perceptual_hash(image: &image::GrayImage) -> u64 {
-    let resized = image::imageops::resize(image, 32, 32, FilterType::Triangle);
+fn resize_hash_plane(image: &DynamicImage, width: u32, height: u32) -> image::GrayImage {
+    // Same Luma8/Triangle implementation. The non-generic entry point keeps
+    // pixel loops in the optimized image dependency even in development builds.
+    image
+        .resize_exact(width, height, FilterType::Triangle)
+        .into_luma8()
+}
+
+fn perceptual_hash(image: &DynamicImage) -> u64 {
+    let resized = resize_hash_plane(image, 32, 32);
     let coefficients = dct_coefficients(&resized);
     let mut median_values = coefficients[1..].to_vec();
     median_values.sort_by(f64::total_cmp);
@@ -406,17 +417,23 @@ fn dct_coefficients(resized: &image::GrayImage) -> [f64; 64] {
         })
     });
     let mut coefficients = [0_f64; 64];
-    for v in 0..8 {
-        for u in 0..8 {
+    for u in 0..8 {
+        // The first multiplication is identical for all eight vertical
+        // frequencies. Reuse it without reassociating the sum (8 KiB/page).
+        let horizontal: [f64; 1024] = std::array::from_fn(|index| {
+            let x = index % 32;
+            let y = index / 32;
+            let pixel = f64::from(resized.get_pixel(x as u32, y as u32)[0]) - 127.5;
+            pixel * cosines[u][x]
+        });
+        for v in 0..8 {
             let mut sum = 0_f64;
-            for y in 0..32 {
-                for x in 0..32 {
-                    let pixel = f64::from(resized.get_pixel(x, y)[0]) - 127.5;
-                    sum +=
-                        pixel * cosines[u as usize][x as usize] * cosines[v as usize][y as usize];
+            for (row, vertical) in horizontal.chunks_exact(32).zip(&cosines[v]) {
+                for value in row {
+                    sum += value * vertical;
                 }
             }
-            coefficients[(v * 8 + u) as usize] = sum;
+            coefficients[v * 8 + u] = sum;
         }
     }
     // Keep the original multiplication and accumulation order exactly; changing
@@ -749,15 +766,14 @@ fn page_metric_matrix_with_workers(
     let rows: Vec<_> = parent.iter().zip(&parent_detail).collect();
     let result: Result<_, std::convert::Infallible> =
         super::processing_pool::try_map(&rows, workers, |(page, detail)| {
-            let _permit = if workers > 1 {
-                super::image_work_budget::acquire(None)
-            } else {
-                None
-            };
+            let _permit = super::image_work_budget::acquire(None);
             Ok(candidate
                 .iter()
                 .zip(&candidate_detail)
                 .map(|(other, other_detail)| {
+                    if !may_match_page(page, other) {
+                        return None;
+                    }
                     let distances = detail.as_ref()?.distances(other_detail.as_ref()?);
                     page_metric_with_distances(page, other, profile, distances)
                 })
@@ -770,34 +786,35 @@ fn align_metric_matrix(
     metrics: &[Vec<Option<PairMetric>>],
     maximum_tier: MatchTier,
 ) -> Vec<DuplicatePagePair> {
+    let _image_work = super::image_work_budget::acquire(None);
     let parent_len = metrics.len();
     let candidate_len = metrics.first().map_or(0, Vec::len);
     if metrics.iter().any(|row| row.len() != candidate_len) {
         return Vec::new();
     }
-    let mut scores = vec![vec![0_f64; candidate_len + 1]; parent_len + 1];
+    let mut previous = vec![0_f64; candidate_len + 1];
+    let mut current = vec![0_f64; candidate_len + 1];
     let mut directions = vec![vec![0_u8; candidate_len + 1]; parent_len + 1];
     for i in 1..=parent_len {
         for j in 1..=candidate_len {
-            let up = scores[i - 1][j];
-            let left = scores[i][j - 1];
+            let up = previous[j];
+            let left = current[j - 1];
             let diagonal = metrics[i - 1][j - 1]
                 .as_ref()
                 .filter(|metric| metric.tier <= maximum_tier)
-                .map_or(f64::NEG_INFINITY, |metric| {
-                    scores[i - 1][j - 1] + metric.score
-                });
+                .map_or(f64::NEG_INFINITY, |metric| previous[j - 1] + metric.score);
             if diagonal >= up && diagonal >= left {
-                scores[i][j] = diagonal;
+                current[j] = diagonal;
                 directions[i][j] = 3;
             } else if up >= left {
-                scores[i][j] = up;
+                current[j] = up;
                 directions[i][j] = 1;
             } else {
-                scores[i][j] = left;
+                current[j] = left;
                 directions[i][j] = 2;
             }
         }
+        std::mem::swap(&mut previous, &mut current);
     }
     let mut pairs = Vec::new();
     let (mut i, mut j) = (parent_len, candidate_len);
@@ -833,9 +850,24 @@ fn page_metric_candidate(
     candidate: &DuplicatePageHash,
     profile: &HashProfile,
 ) -> Option<PairMetric> {
+    if !may_match_page(parent, candidate) {
+        return None;
+    }
     let distances = PackedDetail::parse(&parent.detail_d_hash_hex)?
         .distances(&PackedDetail::parse(&candidate.detail_d_hash_hex)?);
     page_metric_with_distances(parent, candidate, profile, distances)
+}
+
+// Necessary conditions shared by *all* existing tiers, not a new threshold.
+// Strict is p<=16/coarse<=20; typesetting is a subset; heavy's remaining
+// branch is p<=28/coarse<=6. Exact SHA matches still require full evidence.
+fn may_match_page(parent: &DuplicatePageHash, candidate: &DuplicatePageHash) -> bool {
+    if parent.artifact_sha256 == candidate.artifact_sha256 {
+        return true;
+    }
+    let coarse = (parent.coarse_d_hash ^ candidate.coarse_d_hash).count_ones();
+    let perceptual = (parent.p_hash ^ candidate.p_hash).count_ones();
+    (perceptual <= 16 && coarse <= 20) || (perceptual <= 28 && coarse <= 6)
 }
 
 fn page_metric_with_distances(
@@ -1666,6 +1698,304 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn reference_cached_dct(image: &GrayImage) -> [f64; 64] {
+        static COSINES: std::sync::OnceLock<[[f64; 32]; 8]> = std::sync::OnceLock::new();
+        let cosines = COSINES.get_or_init(|| {
+            std::array::from_fn(|f| {
+                std::array::from_fn(|p| {
+                    ((std::f64::consts::PI * ((2 * p + 1) * f) as f64) / 64.0).cos()
+                })
+            })
+        });
+        let mut coefficients = [0.0; 64];
+        for v in 0..8 {
+            for u in 0..8 {
+                let mut sum = 0.0;
+                for y in 0..32 {
+                    for x in 0..32 {
+                        let pixel = f64::from(image.get_pixel(x, y)[0]) - 127.5;
+                        sum += pixel * cosines[u][x as usize] * cosines[v][y as usize];
+                    }
+                }
+                coefficients[v * 8 + u] = sum;
+            }
+        }
+        coefficients
+    }
+
+    #[test]
+    fn reused_horizontal_products_preserve_all_coefficient_bits() {
+        let mut seed = 123456789_u64;
+        for sample in 0..128 {
+            let image = GrayImage::from_fn(32, 32, |x, y| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                Luma([match sample % 4 {
+                    0 => sample as u8,
+                    1 => ((x + y) % 2 * 255) as u8,
+                    _ => seed as u8,
+                }])
+            });
+            assert_eq!(
+                dct_coefficients(&image).map(f64::to_bits),
+                reference_cached_dct(&image).map(f64::to_bits)
+            );
+        }
+    }
+
+    #[test]
+    fn optimized_dependency_resizes_preserve_every_hash_plane_byte() {
+        let mut seed = 0x9e3779b97f4a7c15_u64;
+        for (width, height) in [
+            (1, 1),
+            (1, 97),
+            (97, 1),
+            (9, 8),
+            (32, 32),
+            (53, 37),
+            (128, 193),
+            (640, 960),
+            (1280, 720),
+        ] {
+            for pattern in 0..3 {
+                let gray = GrayImage::from_fn(width, height, |x, y| {
+                    seed ^= seed << 13;
+                    seed ^= seed >> 7;
+                    seed ^= seed << 17;
+                    Luma([match pattern {
+                        0 => 127,
+                        1 => ((x + y) % 2 * 255) as u8,
+                        _ => seed as u8,
+                    }])
+                });
+                let image = DynamicImage::ImageLuma8(gray.clone());
+                for (w, h) in [(64, 64), (9, 8), (33, 32), (32, 32)] {
+                    assert_eq!(
+                        resize_hash_plane(&image, w, h),
+                        image::imageops::resize(&gray, w, h, FilterType::Triangle),
+                        "{width}x{height} -> {w}x{h}, pattern {pattern}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded synthetic DCT microbenchmark, exact coefficient comparison"]
+    fn profile_horizontal_product_reuse() {
+        let image = GrayImage::from_fn(32, 32, |x, y| {
+            Luma([((x * y + x * 7 + y * 113) % 256) as u8])
+        });
+        assert_eq!(
+            reference_cached_dct(&image).map(f64::to_bits),
+            dct_coefficients(&image).map(f64::to_bits)
+        );
+        let before = Instant::now();
+        for _ in 0..256 {
+            black_box(reference_cached_dct(black_box(&image)));
+        }
+        let old_ms = before.elapsed().as_secs_f64() * 1000.0;
+        let before = Instant::now();
+        for _ in 0..256 {
+            black_box(dct_coefficients(black_box(&image)));
+        }
+        eprintln!(
+            "dct_profile pages=256 old_ms={old_ms:.3} reused_ms={:.3} exact_bits=true",
+            before.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
+    // Reference kept only in tests: the pre-optimization score matrix and its
+    // precise diagonal/up/left tie-breaking are the compatibility oracle.
+    fn reference_alignment(
+        metrics: &[Vec<Option<PairMetric>>],
+        tier: MatchTier,
+    ) -> Vec<DuplicatePagePair> {
+        let n = metrics.len();
+        let m = metrics.first().map_or(0, Vec::len);
+        if metrics.iter().any(|row| row.len() != m) {
+            return vec![];
+        }
+        let mut scores = vec![vec![0.0; m + 1]; n + 1];
+        let mut directions = vec![vec![0_u8; m + 1]; n + 1];
+        for i in 1..=n {
+            for j in 1..=m {
+                let up = scores[i - 1][j];
+                let left = scores[i][j - 1];
+                let diagonal = metrics[i - 1][j - 1]
+                    .as_ref()
+                    .filter(|v| v.tier <= tier)
+                    .map_or(f64::NEG_INFINITY, |v| scores[i - 1][j - 1] + v.score);
+                let (score, direction) = if diagonal >= up && diagonal >= left {
+                    (diagonal, 3)
+                } else if up >= left {
+                    (up, 1)
+                } else {
+                    (left, 2)
+                };
+                scores[i][j] = score;
+                directions[i][j] = direction;
+            }
+        }
+        let (mut i, mut j) = (n, m);
+        let mut pairs = vec![];
+        while i > 0 && j > 0 {
+            match directions[i][j] {
+                3 => {
+                    pairs.push(metrics[i - 1][j - 1].as_ref().unwrap().pair.clone());
+                    i -= 1;
+                    j -= 1;
+                }
+                1 => i -= 1,
+                2 => j -= 1,
+                _ => break,
+            }
+        }
+        pairs.reverse();
+        pairs
+    }
+
+    #[test]
+    fn necessary_filter_preserves_every_threshold_boundary_and_exact_sha_exception() {
+        let profile = HashProfile::current();
+        let bits = |n: u32| if n == 64 { u64::MAX } else { (1_u64 << n) - 1 };
+        for exact in [false, true] {
+            for low in [false, true] {
+                for p in 0..=64 {
+                    for coarse in 0..=64 {
+                        let left = exact_hash(1, 1, 0);
+                        let mut right = exact_hash(2, 1, u64::from(!exact));
+                        right.p_hash = bits(p);
+                        right.coarse_d_hash = bits(coarse);
+                        right.low_information = low;
+                        for distances in [
+                            (0, 0),
+                            (112, 40),
+                            (140, 40),
+                            (160, 48),
+                            (260, 48),
+                            (261, 49),
+                        ] {
+                            let reference =
+                                page_metric_with_distances(&left, &right, &profile, distances);
+                            let filtered = may_match_page(&left, &right)
+                                .then(|| {
+                                    page_metric_with_distances(&left, &right, &profile, distances)
+                                })
+                                .flatten();
+                            assert_eq!(
+                                filtered, reference,
+                                "p={p} coarse={coarse} exact={exact} low={low}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        let mut malformed = exact_hash(1, 1, 0);
+        malformed.detail_d_hash_hex = "invalid".into();
+        assert!(page_metric_candidate(&malformed, &malformed, &profile).is_none());
+    }
+
+    #[test]
+    fn rolling_alignment_preserves_ties_gaps_and_all_match_tiers() {
+        let base = page_metric_candidate(
+            &exact_hash(1, 1, 0),
+            &exact_hash(2, 1, 0),
+            &HashProfile::current(),
+        )
+        .unwrap();
+        let mut random = 0x9e3779b97f4a7c15_u64;
+        for n in 0..24 {
+            for m in 0..24 {
+                let metrics: Vec<Vec<_>> = (0..n)
+                    .map(|i| {
+                        (0..m)
+                            .map(|j| {
+                                random ^= random << 13;
+                                random ^= random >> 7;
+                                random ^= random << 17;
+                                if random % 5 == 0 {
+                                    return None;
+                                }
+                                let mut value = base.clone();
+                                value.score = [0.0, 0.73, 0.84, 1.0][(random % 4) as usize];
+                                value.tier = [
+                                    MatchTier::Strict,
+                                    MatchTier::Typesetting,
+                                    MatchTier::HeavyTypesetting,
+                                ][(random % 3) as usize];
+                                value.pair.parent_source_page = i + 1;
+                                value.pair.candidate_source_page = j + 1;
+                                Some(value)
+                            })
+                            .collect()
+                    })
+                    .collect();
+                for tier in [
+                    MatchTier::Strict,
+                    MatchTier::Typesetting,
+                    MatchTier::HeavyTypesetting,
+                ] {
+                    assert_eq!(
+                        align_metric_matrix(&metrics, tier),
+                        reference_alignment(&metrics, tier),
+                        "{n}x{m}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "bounded before/after synthetic matrix benchmark; no files or user data"]
+    fn profile_prefilter_and_rolling_alignment() {
+        let pages: Vec<_> = (1..=1363)
+            .map(|n| {
+                let mut page = exact_hash(1, n, n as u64);
+                let seed = (n as u64).wrapping_mul(0x9e3779b97f4a7c15);
+                page.coarse_d_hash = seed;
+                page.p_hash = seed.rotate_left(17);
+                page.detail_d_hash_hex = format!("{seed:016x}").repeat(16);
+                page
+            })
+            .collect();
+        let packed: Vec<_> = pages
+            .iter()
+            .map(|v| PackedDetail::parse(&v.detail_d_hash_hex).unwrap())
+            .collect();
+        let profile = HashProfile::current();
+        let before = Instant::now();
+        let old: Vec<Vec<_>> = pages
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                pages
+                    .iter()
+                    .enumerate()
+                    .map(|(j, q)| {
+                        page_metric_with_distances(p, q, &profile, packed[i].distances(&packed[j]))
+                    })
+                    .collect()
+            })
+            .collect();
+        let old_metrics_ms = before.elapsed().as_secs_f64() * 1000.0;
+        let before = Instant::now();
+        let new = page_metric_matrix_with_workers(&pages, &pages, &profile, 1);
+        let new_metrics_ms = before.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(old, new);
+        let before = Instant::now();
+        let a = reference_alignment(&old, MatchTier::Strict);
+        let old_alignment_ms = before.elapsed().as_secs_f64() * 1000.0;
+        let before = Instant::now();
+        let b = align_metric_matrix(&new, MatchTier::Strict);
+        let new_alignment_ms = before.elapsed().as_secs_f64() * 1000.0;
+        assert_eq!(a, b);
+        eprintln!("prefilter_profile pages=1363 pairs={} old_metrics_ms={old_metrics_ms:.3} new_metrics_ms={new_metrics_ms:.3} old_alignment_ms={old_alignment_ms:.3} new_alignment_ms={new_alignment_ms:.3} old_score_bytes={} new_score_bytes={}",
+            pages.len() * pages.len(), 1364 * 1364 * 8, 2 * 1364 * 8);
     }
 
     #[test]

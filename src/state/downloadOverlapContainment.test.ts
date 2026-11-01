@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DownloadOverlapCandidate, DownloadOverlapReview } from "../api/contracts";
 import { galleryId } from "../core/types";
-import { buildDownloadOverlapContainmentGroup, prioritizeDownloadOverlapReviews } from "./downloadOverlapContainment";
+import { buildDownloadOverlapContainmentGroup, prioritizeDownloadOverlapReviews, refreshContainmentGroupReview } from "./downloadOverlapContainment";
 
 const ref = (id: number, pages: number) => ({ entryId: `entry-${id}`, galleryId: galleryId(id), title: `Album ${id}`, artists: ["artist"], pageCount: pages });
 const candidate = (id: number, reversed = false): DownloadOverlapCandidate => ({
@@ -50,5 +50,23 @@ describe("compilation review collection", () => {
     const other = review(1, [{ ...candidate(2), relation: "translation_edition" }]);
     expect(prioritizeDownloadOverlapReviews([other, child, parent]).map((item) => item.reviewId))
       .toEqual([parent.reviewId, child.reviewId, other.reviewId]);
+  });
+});
+
+
+describe("submitted containment evidence refresh", () => {
+  it("refreshes all sibling revisions while retaining completed rows, order and selection keys", () => {
+    const parent = review(3003760, [candidate(1), candidate(2)]);
+    const other = review(3, [candidate(3003760, true)]);
+    const group = buildDownloadOverlapContainmentGroup(galleryId(3003760), [parent, other])!;
+    const updated: DownloadOverlapReview = { ...parent, revision: 7,
+      candidates: [{ ...parent.candidates[0]!, decision: "existing_removed" }, parent.candidates[1]!, candidate(4)] };
+    const refreshed = refreshContainmentGroupReview(group, updated)!;
+    expect(refreshed.items.map((item) => item.key)).toEqual(group.items.map((item) => item.key));
+    expect(refreshed.items.filter((item) => item.review.reviewId === parent.reviewId)
+      .map((item) => [item.review.revision, item.candidate.decision])).toEqual([[7, "existing_removed"], [7, undefined]]);
+    expect(refreshed.items[2]).toBe(group.items[2]);
+    expect(group.items[0]!.review.revision).toBe(0);
+    expect(refreshContainmentGroupReview(refreshed, parent)).toBe(refreshed);
   });
 });

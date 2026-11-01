@@ -1,4 +1,4 @@
-import {useEffect,useLayoutEffect,useMemo,useRef,useState} from "react";
+import {useEffect,useLayoutEffect,useMemo,useRef,useState,cloneElement,type ReactElement,type MouseEventHandler} from "react";
 import {createPortal} from "react-dom";
 import Hls from "hls.js";
 import {isXArchiveLocalUrl,validXArchiveAsset,type XArchiveApi,type XArchiveAsset,type XArchiveRecord,type XCapturePost} from "./xArchiveApi";
@@ -64,7 +64,7 @@ export function ArchiveProvenance({record,onFolder}:{record:XArchiveRecord;onFol
     </div>
   </details>;
 }
-export function LocalVideo({url,poster,hls,allowed}:{url:string;poster?:string;hls:boolean;allowed:(url:string)=>boolean}){
+export function LocalVideo({url,poster,hls,allowed,onContextMenu}:{url:string;poster?:string;hls:boolean;allowed:(url:string)=>boolean;onContextMenu?:MouseEventHandler<HTMLElement>}){
   const element=useRef<HTMLVideoElement>(null),[started,setStarted]=useState(false),[error,setError]=useState("");
   useEffect(()=>{
     const video=element.current;if(!started||!video||!allowed(url))return;
@@ -79,10 +79,14 @@ export function LocalVideo({url,poster,hls,allowed}:{url:string;poster?:string;h
     }else if(!hls||video.canPlayType("application/vnd.apple.mpegurl")){video.src=url;void video.play().catch(()=>{});}else failed();
     return()=>{disposed=true;player?.destroy();video.pause();video.removeAttribute("src");video.load();};
   },[url,hls,started,allowed]);
-  return <figure className="x-archive-video">{started?<video ref={element} controls playsInline preload="metadata" poster={poster} aria-label="저장 영상" onError={()=>setError("저장된 영상을 재생하지 못했습니다.")}/>:<>{poster?<img src={poster} alt="저장된 영상 미리보기" loading="lazy"/>:null}<button type="button" className="x-archive-play" aria-label="저장 영상 재생" onClick={()=>setStarted(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7Z"/></svg></button></>}{error?<figcaption role="alert">{error}</figcaption>:null}</figure>;
+  return <figure className="x-archive-video" onContextMenu={onContextMenu}>{started?<video ref={element} controls playsInline preload="metadata" poster={poster} aria-label="저장 영상" onError={()=>setError("저장된 영상을 재생하지 못했습니다.")}/>:<>{poster?<img src={poster} alt="저장된 영상 미리보기" loading="lazy"/>:null}<button type="button" className="x-archive-play" aria-label="저장 영상 재생" onClick={()=>setStarted(true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 11 7-11 7Z"/></svg></button></>}{error?<figcaption role="alert">{error}</figcaption>:null}</figure>;
 }
 type ImageItem={src:string;alt:string;key:string};
-function LocalImageViewer({images,index,onClose}:{images:ImageItem[];index:number;onClose:()=>void}){
+function ArchiveMediaContext({record,post,api,asset,children}:{record:XArchiveRecord;post:XCapturePost;api:XArchiveApi;asset?:XArchiveAsset;children:ReactElement<{onContextMenu?:MouseEventHandler<HTMLElement>}>}){
+  const {onContextMenu,contextMenu}=useArchiveContextMenu(record,post,api,asset);
+  return <>{cloneElement(children,{onContextMenu})}{contextMenu}</>;
+}
+function LocalImageViewer({images,index,onClose,record,post,api}:{images:ImageItem[];index:number;onClose:()=>void;record:XArchiveRecord;post:XCapturePost;api:XArchiveApi}){
   const [current,setCurrent]=useState(index),dialog=useRef<HTMLDivElement>(null),close=useRef<HTMLButtonElement>(null);
   useEffect(()=>{const previous=document.activeElement;close.current?.focus();return()=>{if(previous instanceof HTMLElement&&previous.isConnected)previous.focus({preventScroll:true});};},[]);
   const item=images[current];if(!item)return null;
@@ -95,7 +99,7 @@ function LocalImageViewer({images,index,onClose}:{images:ImageItem[];index:numbe
   }}>
     <button ref={close} type="button" className="x-archive-image-close" aria-label="이미지 닫기" onClick={onClose}><ArchiveSymbol name="close"/></button>
     {images.length>1?<button type="button" className="x-archive-image-prev" aria-label="이전 이미지" disabled={!current} onClick={()=>setCurrent(value=>value-1)}>‹</button>:null}
-    <img src={item.src} alt={item.alt}/>
+    <ArchiveMediaContext key={item.key} record={record} post={post} api={api} asset={record.assets.find(asset=>asset.name===item.key)}><img src={item.src} alt={item.alt}/></ArchiveMediaContext>
     {images.length>1?<button type="button" className="x-archive-image-next" aria-label="다음 이미지" disabled={current===images.length-1} onClick={()=>setCurrent(value=>value+1)}>›</button>:null}
   </div>,document.body);
 }
@@ -109,11 +113,11 @@ function PostMedia({record,post,api,assets}:{record:XArchiveRecord;post:XCapture
   const videoPosters=new Set(videos.flatMap(asset=>{const poster=post.media.find(media=>media.url===asset.sourceUrl)?.poster;return poster?[poster]:[];}));
   const images=assets.filter(asset=>asset.kind==="image"||asset.kind==="poster"&&!videoPosters.has(asset.sourceUrl)).flatMap(asset=>{const src=local(asset);return src?[{src,key:asset.name,alt:post.media.find(media=>media.url===asset.sourceUrl)?.alt||"저장된 이미지"}]:[];});
   return <>
-    {images.length?<div className={`x-archive-timeline-images count-${Math.min(images.length,4)}`}>{images.map((item,index)=><button type="button" key={item.key} aria-label={`이미지 ${index+1} 크게 보기`} onClick={()=>setViewer(index)}><img src={item.src} alt={item.alt} loading="lazy" onError={event=>{event.currentTarget.hidden=true;setImageError(true);}}/></button>)}</div>:null}
+    {images.length?<div className={`x-archive-timeline-images count-${Math.min(images.length,4)}`}>{images.map((item,index)=><ArchiveMediaContext key={item.key} record={record} post={post} api={api} asset={assets.find(asset=>asset.name===item.key)}><button type="button" aria-label={`이미지 ${index+1} 크게 보기`} onClick={()=>setViewer(index)}><img src={item.src} alt={item.alt} loading="lazy" onError={event=>{event.currentTarget.hidden=true;setImageError(true);}}/></button></ArchiveMediaContext>)}</div>:null}
     {assets.some(asset=>["image","poster"].includes(asset.kind)&&!local(asset))?<p role="alert" className="x-archive-error">저장된 이미지 주소를 확인하지 못했습니다.</p>:null}
     {imageError?<p role="alert" className="x-archive-error">저장된 이미지를 표시하지 못했습니다.</p>:null}
-    {videos.map(asset=>{const url=local(asset),source=post.media.find(media=>media.url===asset.sourceUrl),poster=local(assets.find(item=>item.kind==="poster"&&item.sourceUrl===source?.poster));return url?<LocalVideo key={asset.name} url={url} poster={poster} hls={asset.kind==="video_hls"} allowed={allowed}/>:<p key={asset.name} role="alert" className="x-archive-error">저장된 영상 주소를 확인하지 못했습니다.</p>;})}
-    {viewer!==null?<LocalImageViewer images={images} index={viewer} onClose={()=>setViewer(null)}/>:null}
+    {videos.map(asset=>{const url=local(asset),source=post.media.find(media=>media.url===asset.sourceUrl),posterAsset=assets.find(item=>item.kind==="poster"&&item.sourceUrl===source?.poster),poster=local(posterAsset);return url?<ArchiveMediaContext key={asset.name} record={record} post={post} api={api} asset={posterAsset}><LocalVideo url={url} poster={poster} hls={asset.kind==="video_hls"} allowed={allowed}/></ArchiveMediaContext>:<p key={asset.name} role="alert" className="x-archive-error">저장된 영상 주소를 확인하지 못했습니다.</p>;})}
+    {viewer!==null?<LocalImageViewer images={images} index={viewer} record={record} post={post} api={api} onClose={()=>setViewer(null)}/>:null}
   </>;
 }
 function HistoricalActions({post,detail}:{post:XCapturePost;detail:boolean}){
@@ -186,8 +190,8 @@ export function XArchiveReader({record,api,onFolder,focusPostId}:{record:XArchiv
     {other.length?<section aria-label="함께 보관된 게시물">{other.map(post=><ArchivePost key={`${record.id}:${post.id}`} record={record} post={post} api={api}/>)}</section>:null}
   </div>;
 }
-function ArchiveMediaTile({record,post,api,src,alt,isVideo,onOpen}:{record:XArchiveRecord;post:XCapturePost;api:XArchiveApi;src?:string;alt:string;isVideo:boolean;onOpen:()=>void}){
-  const {onContextMenu,contextMenu}=useArchiveContextMenu(record,post,api);
+function ArchiveMediaTile({record,post,api,src,alt,isVideo,onOpen,asset}:{record:XArchiveRecord;post:XCapturePost;api:XArchiveApi;src?:string;alt:string;isVideo:boolean;onOpen:()=>void;asset?:XArchiveAsset}){
+  const {onContextMenu,contextMenu}=useArchiveContextMenu(record,post,api,asset);
   return <><button type="button" className="x-archive-media-tile" aria-label={`${label(post.presentation?.displayName||post.author)||"보관"} ${isVideo?"영상":"이미지"} 열기`} onClick={onOpen} onContextMenu={onContextMenu}>{src?<img src={src} alt={alt} loading="lazy"/>:null}{isVideo?<span className="x-archive-tile-video" aria-hidden="true">▶</span>:null}</button>{contextMenu}</>;
 }
 export function ArchiveMediaTiles({record,api,onOpen}:{record:XArchiveRecord;api:XArchiveApi;onOpen:(postId:string)=>void}){
@@ -202,6 +206,6 @@ export function ArchiveMediaTiles({record,api,onOpen}:{record:XArchiveRecord;api
     const isVideo=["video","video_hls"].includes(asset.kind),source=post.media.find(item=>item.url===asset.sourceUrl),poster=record.assets.find(item=>item.postId===post.id&&item.kind==="poster"&&item.sourceUrl===source?.poster);
     if(!local(asset))return null;
     const src=local(isVideo?poster:asset);
-    return <ArchiveMediaTile key={asset.name} record={record} post={post} api={api} src={src} alt={source?.alt||""} isVideo={isVideo} onOpen={()=>onOpen(post.id)}/>;
+    return <ArchiveMediaTile key={asset.name} record={record} post={post} api={api} src={src} alt={source?.alt||""} isVideo={isVideo} asset={isVideo?poster:asset} onOpen={()=>onOpen(post.id)}/>;
   })}</>;
 }

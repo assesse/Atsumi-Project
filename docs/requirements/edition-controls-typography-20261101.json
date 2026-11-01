@@ -1,0 +1,103 @@
+{
+  "id": "edition-controls-typography-20261101",
+  "state": "release-ready-with-explicit-desktop-tool-limits",
+  "original": {
+    "thread": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turn": "01a192e1-6557-7e13-89f5-4655844313a9",
+    "item": "01a192e1-65c9-76f3-9fc6-8dfecb103b6c",
+    "attachments": [
+      "codex-clipboard-63c6b94f-91b7-4521-98a5-e6a5c3c3afc1.png",
+      "codex-clipboard-1f04fe59-86d3-4e33-88fa-7e469f516b4b.png"
+    ]
+  },
+  "requirements": [
+    "Use conversational Ctrl/Shift page selection guidance",
+    "Wider sticky edition headers with readable titles and useful space distribution",
+    "Remove close-comparison X from row headers; top comparison toggles remain",
+    "Three mutually exclusive per-edition modes: keep, partial, remove, with matching colors and restrained animation",
+    "Ctrl/Shift page selection automatically activates partial mode from keep or remove",
+    "Preserve selections, evidence validation, horizontal virtualization, vertical/Shift-horizontal wheel routing, remembered outer window size",
+    "Minimum app text size equals current compact-card title: 13px; raise formerly small text and modestly raise heading sizes to preserve hierarchy",
+    "Adjust line height, control/card geometry and responsive layout for enlarged text"
+  ],
+  "design": [
+    "Stage changes away from live app",
+    "Edition mode changes are drafts, never destructive until explicit apply/confirmation",
+    "Existing source revisions, quarantine and merge safeguards remain enforced",
+    "Do not silently clear Ctrl/Shift selections on mode/filter/comparison changes",
+    "Shared minimum typography token and audited declaration changes; decorative icon geometry is independent from text sizing",
+    "Keep vendor/generated source assets intact; use adapters for isolated owned chat/player content",
+    "A partial destination keeps only explicit selected pages; original target and donor files remain protected by existing backup/quarantine transactions.",
+    "Apply freezes all compared or deliberately drafted editions; validates all plans before writes, reloads revision per operation and keeps unprocessed selections after failure.",
+    "Native work runs behind a nonmodal status; hidden review keeps drafts but suspends page rendering. Successful batch closes review and refreshes library once.",
+    "Multiple page-changing merges in one batch are rejected before writes because earlier merges invalidate later fingerprints; multi-edition keep/remove decisions and a single trailing partial merge are supported."
+  ],
+  "clarification": {
+    "answer": "선택 페이지를 합친 뒤 판본 제외",
+    "source": "call_bc8264c3315045358fbb1f94e4c97dbe"
+  },
+  "audit": {
+    "documents": 299,
+    "reuse": ".runtime/scrollbars-20261101/preedit.json",
+    "inventory": "28 active + 3 archived EOF; other Atsumi revisions unchanged; latest two current turns reach previously fully-read source",
+    "missing": [
+      "original 01a03f16 handoff",
+      "unidentified historical analysis1/2",
+      "historic attachment pixels absent from snapshots",
+      "inaccessible/unlisted sources"
+    ]
+  },
+  "acceptance": [
+    "Selection/mode reducer regressions, stale revisions and no-mutation-before-apply",
+    "Production component isolated browser interaction tests including Ctrl/Shift and filters",
+    "Font floor and clipping audits across app modes at 1920x1080,1280x720 and narrow dialogs",
+    "App/node types, focused regressions, build",
+    "Read-only active-work checks and default app-owned idle shutdown gate before integration; no drain/kill",
+    "Actual desktop mode transitions and readable headers; no actual album mutations.",
+    "Deferred-command app tests verify navigation while processing, complete closure and partial-failure retry scope."
+  ],
+  "preserved": [
+    "Other chats changes",
+    "No real album decisions for tests",
+    "No recordings/download cancellation",
+    "Commit/push/signed release explicitly authorized in current request; no PC shutdown."
+  ],
+  "verification": {
+    "artifact": ".runtime/edition-release-qa-20261101/",
+    "nativeTests": {
+      "passed": 2449,
+      "ignored": 93
+    },
+    "browserChecks": 26,
+    "reopenAndBatchTests": 38,
+    "receiptSafetyTests": 65,
+    "desktopInteraction": "Actual keep/partial/remove modes and header layout observed; physical Ctrl/Shift pointer testing not supported by current desktop input API. Production-component Chromium modifier tests passed.",
+    "realAlbumMutations": 0,
+    "frontendFullSuite": {
+      "files": 325,
+      "passed": 5125,
+      "failed": 0,
+      "log": ".runtime/edition-release-qa-20261101/frontend-frozen.log"
+    },
+    "release": "v2.4.0 signed packaging pending",
+    "knownChecks": "Repository-wide rustfmt and clippy are not clean; existing unrelated formatting/dead-code/style lint issues remain.",
+    "desktopFinalRestart": "v2.4.0 native build passed; app PID 31836 responsive, reloadPending false. Helper activation failed after restart; stopped input rather than bypass."
+  },
+  "superseded": {
+    "design": [
+      "Modes are scoped to the active saved pair, shown explicitly in the apply footer; each peer retains its own draft."
+    ],
+    "acceptance": [
+      "Actual main-desktop interaction remains deferred per standing instruction"
+    ],
+    "preserved": [
+      "No commit/push/release/PC shutdown"
+    ]
+  },
+  "currentRequest": {
+    "thread": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turn": "01a19498-44a3-7741-b62f-7c203e60d2b8",
+    "item": "01a19498-4812-7dd3-8616-06517f99a7d0",
+    "latest": "여러 판본 적용 범위 수정 및 백엔드 처리 중 UI 탐색 허용; 완료 시 검토 닫기; 실제 앨범 제거 없이 검증 후 릴리즈/배포"
+  }
+}

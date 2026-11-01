@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Gallery, GalleryDisplayMode } from "../core/types";
 import { resolveCompactGalleryColumns, resolveGalleryColumns } from "../layout/galleryColumns";
@@ -22,6 +22,8 @@ export function DownloadArtistFolderWindow({ group, folderType, id, contentsRef,
   const close = useRef(onClose);
   close.current = onClose;
   const [columns, setColumns] = useState(1);
+  const contents = useMemo(() => renderGrid(group.items, `${group.label} 다운로드 작품`, columns),
+    [group.items, group.label, columns, renderGrid]);
   useLayoutEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     closeButton.current?.focus({ preventScroll: true });
@@ -80,11 +82,11 @@ export function DownloadArtistFolderWindow({ group, folderType, id, contentsRef,
         <span>{folderType} · {group.items.length.toLocaleString()}개 작품</span>
         <button ref={closeButton} type="button" className="icon-button" aria-label="폴더 닫기" onClick={onClose}><FluentIcon glyph="\uE711" /></button>
       </header>
-      <section className="download-artist-folder-window-scroll" ref={(node) => {
+      <section className="download-artist-folder-window-scroll" tabIndex={-1} ref={(node) => {
         localContents.current = node;
         if (contentsRef) contentsRef.current = node;
       }}>
-        {renderGrid(group.items, `${group.label} 다운로드 작품`, columns)}
+        {contents}
       </section>
     </section>
   </div>, document.body);

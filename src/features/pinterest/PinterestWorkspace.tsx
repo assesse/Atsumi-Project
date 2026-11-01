@@ -13,6 +13,7 @@ import { PinterestMasonry } from "./PinterestMasonry";
 import { pinterestImageDimensions, type PinterestImageDimensions } from "./pinterestMasonryLayout";
 import { normalizePinterestInput, pinterestFavoriteKey, selectPinterestCard, type PinterestApi, type PinterestDiscovery, type PinterestDiscoveryKind, type PinterestDownload, type PinterestDownloadOutcome, type PinterestFavorite, type PinterestPin, type PinterestRemoved, type PinterestView } from "./types";
 import "./PinterestWorkspace.css";
+import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 
 export type PinterestWorkspaceProps = {
   active: boolean;
@@ -24,6 +25,7 @@ export type PinterestWorkspaceProps = {
   api?: PinterestApi;
   browserApi?: PinterestBrowserApi;
   accountApi?: PinterestAccountApi;
+  supportedLinkRequest?: SupportedLinkRequest | null;
 };
 
 type DetailTab = PinterestFavorite & { key: string };
@@ -91,7 +93,7 @@ function PinImage({ api, pin, page = 0, thumbnail = true, load = true, removedTo
   </div>;
 }
 
-export function PinterestWorkspace({ active, runtime, privacyMode, view, previewWidth = 180, onNotice, api: providedApi, browserApi: providedBrowser, accountApi: providedAccount }: PinterestWorkspaceProps) {
+export function PinterestWorkspace({ active, runtime, privacyMode, view, previewWidth = 180, onNotice, api: providedApi, browserApi: providedBrowser, accountApi: providedAccount, supportedLinkRequest }: PinterestWorkspaceProps) {
   const api = useMemo(() => providedApi ?? createPinterestApi(runtime), [providedApi, runtime]);
   const browserApi = useMemo(() => providedBrowser ?? createPinterestBrowserApi(runtime), [providedBrowser, runtime]);
   const accountApi = useMemo(() => providedAccount ?? createPinterestAccountApi(runtime), [providedAccount, runtime]);
@@ -100,6 +102,7 @@ export function PinterestWorkspace({ active, runtime, privacyMode, view, preview
   const [sessionRevision, setSessionRevision] = useState(0);
   const [accountStatus, setAccountStatus] = useState<PinterestAccountSnapshot["status"]>("unknown");
   const homeAttempted = useRef(false);
+  const handledSupportedLink = useRef<string | null>(null);
   const [officialSearch, setOfficialSearch] = useState<{ query: string; revision: number } | null>(null);
   const [officialVisible, setOfficialVisible] = useState(false);
   const [draft, setDraft] = useState("");
@@ -142,6 +145,7 @@ export function PinterestWorkspace({ active, runtime, privacyMode, view, preview
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; batchCancelled.current = true; if (requestRef.current) void api.cancel(requestRef.current).catch(() => {}); const ids = new Set(downloadRequests.current.values()); if (batchRequest.current) ids.add(batchRequest.current); for (const id of ids) void api.cancel(id).catch(() => {}); }; }, [api]);
   useEffect(() => {
     navigationRevision.current++;
+    setError(null);
     setDetail(null); setDetailTabs([]); setRemovedOpen(false); setSelected(new Set()); anchor.current = null;
     const position = viewPositions.current[`${view}:${favoriteCategory}`];
     setListPage(position?.page ?? 0);
@@ -253,9 +257,11 @@ export function PinterestWorkspace({ active, runtime, privacyMode, view, preview
   const currentLoad = useRef(load); currentLoad.current = load;
   useEffect(() => {
     if (!sessionEnabled || sessionGeneration.current === null || !active || privacyMode || view !== "explore" || homeAttempted.current || requestRef.current) return;
+    // An explicit destination owns first activation; do not race it with home.
+    if (supportedLinkRequest?.source === "pinterest" && handledSupportedLink.current !== supportedLinkRequest.id) return;
     homeAttempted.current = true;
     void currentLoad.current("", "home");
-  }, [active, privacyMode, sessionEnabled, sessionRevision, view]);
+  }, [active, privacyMode, sessionEnabled, sessionRevision, view, supportedLinkRequest]);
   const toggleFavorite = (pin: PinterestPin, page: number | null) => {
     const key = pinterestFavoriteKey(pin.id, page);
     const next = favorites.some(item => pinterestFavoriteKey(item.pin.id, item.page) === key)
@@ -387,6 +393,13 @@ export function PinterestWorkspace({ active, runtime, privacyMode, view, preview
       setCurrentTab(null); rememberListPage(0, 0); setOfficialVisible(false); openDetail({ pin, page: null });
     } finally { if (mounted.current && requestRef.current === requestId) { requestRef.current = null; setRequest(null); } }
   };
+  useEffect(() => {
+    if (!active || privacyMode || view !== "explore" || supportedLinkRequest?.source !== "pinterest" || handledSupportedLink.current === supportedLinkRequest.id || request || requestRef.current) return;
+    if (sessionEnabled && sessionGeneration.current === null) return;
+    handledSupportedLink.current = supportedLinkRequest.id;
+    homeAttempted.current = true;
+    void importOfficialPin(supportedLinkRequest.targetId).catch(cause => { if (mounted.current) setError(pinterestError(cause)); });
+  }, [active, privacyMode, view, supportedLinkRequest, request, sessionRevision, sessionEnabled]);
   const openDetails = (items: PinterestFavorite[]) => { if (!items.length) return; openDetail(items[0]!); setDetailTabs(items.map(detailTab)); };
   const detailSource = detailTabs.length > 1 ? detailTabs : entries.map(detailTab);
   const detailIndex = detailSource.findIndex(item => item.key === detail?.key);
@@ -586,7 +599,7 @@ function PinCard({ api, item, selected, multiple, favorite, pending, downloaded,
   </article><CardContextMenu anchor={menu.anchor} close={menu.close} label={pin.title} items={[
     { id: "open", label: "상세 열기", shortcut: "Enter", action: onOpen },
     { id: "favorite", label: favorite ? "즐겨찾기 해제" : "즐겨찾기 추가", action: onFavorite },
-    ...(onRestore ? [{ id: "restore", label: "보관함으로 복원", disabled: pending, action: onRestore }] : [{ id: "download", label: pending ? "다운로드 취소" : downloaded ? "원본 저장 완료" : "원본 다운로드", disabled: downloaded || pin.unsupportedVideo || !pin.media.length, action: onDownload }]),
+    ...(onRestore ? [{ id: "restore", label: "보관함으로 복원", disabled: pending, action: onRestore }] : [{ id: "download", icon: pending ? "cancel" as const : downloaded ? "check" as const : "download" as const, label: pending ? "다운로드 취소" : downloaded ? "원본 저장 완료" : "원본 다운로드", disabled: downloaded || pin.unsupportedVideo || !pin.media.length, action: onDownload }]),
     ...(onFolder ? [{ id: "folder", label: "저장 폴더 열기", action: onFolder }] : []),
     ...(onArchive ? [{ id: "archive", label: "보관함에서 제외", action: onArchive }] : []),
   ]} /></>;

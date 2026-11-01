@@ -1,0 +1,564 @@
+{
+  "version": 1,
+  "source": "Original generic search/page evidence, native X feed-region viewer and adjustable divider requests remain. Latest explicit human says the game ended and requests all remaining video entry/related transition/return/wide-feed checks through BGD, with repair until normal operation. This supersedes only the game-time BGD input deferral.",
+  "audit": [
+    ".runtime/requirements-audit/20261027-parsing-ads-video-preedit.json",
+    ".runtime/requirements-audit/20261027-page-evidence-preedit.json",
+    ".runtime/requirements-audit/20261027-feed-video-region-preedit.json",
+    ".runtime/requirements-audit/20261028-x-source-mediaviewer-preedit.json",
+    ".runtime/requirements-audit/20261028-source-viewer-neutral-probe-preedit.json",
+    ".runtime/requirements-audit/20261028-manual-failures-preedit.json",
+    ".runtime/requirements-audit/20261028-route-registration-preedit.json",
+    ".runtime/requirements-audit/20261028-published-thread-links-preedit.json",
+    ".runtime/requirements-audit/20261028-source-finalization-preedit.json",
+    ".runtime/requirements-audit/20261028-source-viewer-pane-width-preedit.json",
+    ".runtime/requirements-audit/20261028-source-viewer-canonical-suffix-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-final-resume-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-wide-entry-repair-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-immersive-search-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-immersive-search-hud-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-context-diagnostic-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-avatar-profile-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-saucenao-hidden-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-resize-pause-preedit.json",
+    ".runtime/requirements-audit/20261028-bgd-stable-source-modal-preedit.json",
+    ".runtime/requirements-audit/20261028-title-only-evidence-preedit.json",
+    ".runtime/requirements-audit/20261028-neutral-source-ui-entry-preedit.json",
+    ".runtime/requirements-audit/20261029-catalog-repair-preedit.json",
+    ".runtime/requirements-audit/20261029-catalog-live-sale-followup.json"
+  ],
+  "supersedes": [
+    "The earlier assistant interpretation as personally researching/identifying ten sample videos is superseded by the explicit request for a generic program. Preserve this distinction in historical records.",
+    "Feed fullscreen covering the entire app client and excluding the preview is superseded by feed-region-only presentation. Preview's existing exclusive fullscreen policy is unchanged.",
+    "A non-anchor affiliation role link inside the single own User-Name no longer invalidates ad-header metadata. Every unrelated/body/media/quote role link still stops inspection.",
+    "The previous absent-entry-only route opt-in produced404. The later paired-native-route compiler was not reliably intercepted in the actual document. Both are superseded by synchronous original module registration adaptation plus the verified immersive-pane dimension correction; historical evidence remains in the private parent audits.",
+    "Prior title-only wording 작품명 확인 based only on a readable VideoObject/ImageObject or generic CreativeWork is superseded by explicit upload/page/product/work context and candidate/association status. Preserve the historical test evidence without treating it as original-work proof."
+  ],
+  "pageEvidence": {
+    "interaction": "Current provider result titles are the navigation control, with a small destination host; extra destinations use compact inline host controls. Separate result-link cards are removed. Existing creator-profile links retain their separate role. Automatic 작품·판매 정보 reads current native-owned result and publisher links and presents actual declared codes/sale facts without requiring the page-information disclosure. That disclosure remains available for bounded page text and literal phrase highlighting.",
+    "isolation": "Trusted main IPC accepts job/provider/candidate/link indices, not an arbitrary URL. Current account/profile/privacy/job/generation fences are checked before and after work. Two bounded workers include redirect resolution in graceful-drain busy state. Closing/changing targets discards late UI results.",
+    "transport": "Anonymous public HTTP(S) HTML, no cookies/credentials/referrer/scripts/assets. Existing public-address DNS pinning, redirect/size/deadline/cancellation and ownership fences remain. Decode strictly using BOM, HTTP charset then HTML meta; support validated UTF-8/legacy encodings including Shift_JIS and refuse malformed/unsupported data. Inert HTML parsing and React text output preserve exact received values and provenance.",
+    "identifierFidelity": {
+      "audit": ".runtime/requirements-audit/20261028-identifier-fidelity-preedit.json",
+      "problem": "PropertyValue.name describes the property and was incorrectly eligible as identifier text; identifier arrays were ignored.",
+      "change": "Use explicit typed PropertyValue.value, preserve string leading zeros and numeric scalar values, keep propertyID/name only as a bounded label, retain exact value/array provenance. Reject untyped/arbitrary objects and references, keep primary-entity ownership and existing bounds.",
+      "primarySources": [
+        "https://schema.org/identifier",
+        "https://schema.org/PropertyValue"
+      ],
+      "tests": {
+        "red": 3,
+        "parserPassed": 8,
+        "parserIgnored": 1,
+        "nativeXPassed": 328,
+        "nativeXIgnored": 2,
+        "publicHttpPassed": 1,
+        "libraryBuild": true,
+        "fullBinBuild": true,
+        "cargoBinFresh": true
+      },
+      "proof": ".runtime/bgd-source-discovery-20261027/identifier-fidelity-build-proof.json",
+      "uiVerified": false,
+      "laterFlowAcceptance": {
+        "proof": ".runtime/requirements-audit/20261029-user-final-acceptance.json",
+        "scope": "Generic source-code display is user-accepted; individual PropertyValue array edge cases remain backed by the recorded automated tests."
+      }
+    },
+    "catalog": {
+      "sources": "Only current original-source post, connected same-author thread URL entities, original publisher profile-declared links and complete provider candidates. Observe the official source page's actual TweetDetail response; no constructed private API call, credential export, React state or other-author/quoted/disconnected URL traversal. Keep the existing profile-header-only extractor independent.",
+      "facts": "Primary-page JSON-LD/microdata and literal labelled code fields (품번/品番/SKU/ISBN etc), publisher-declared offers, price/currency/availability and explicit source/purchase-page links. PropertyValue.value is data; labels and URL/title digits never become inferred codes. Exclude related entities, nested products, quotes and multi-post body attribution; never confirm authorship from search similarity.",
+      "bounds": "2workers,24pages,2hops,2explicit links per page,32-second scan deadline including redirect resolution; source-thread reader18seconds; exact current-owner/profile/privacy/job fences throughout. In-memory current-job cache10minutes, finite partial/unavailable states, graceful-drain work tracking and no new DB/data reset.",
+      "provenance": "Code/sale facts retain source field, exact page URL/time and publisher-post or provider-root provenance. Clicking a work title or proved original post uses only immutable native report indices and existing in-app destination dispatch. Limit/depth/cursor/read failures remain partial rather than inferred absence.",
+      "identityAssociation": "Retain bounded original provider claims. Candidate-title agreement only groups search evidence; facts are source-specific. Use explicit original-source/identity/purchase links or checksum-valid ISBN/GTIN-family identity, never generic SKU/title similarity alone, for cross-page association. Preserve conflicts, page failures, editions and independent code/sale absence. Primary product price metadata additionally requires unique matching title, own product identifier and same-page OG/canonical URL; purchase labels come only from the unique same-page priced options form."
+    },
+    "providerNotice": "Exact SauceNAO low-similarity-only hidden notice completes as0with an honest explanation. Hidden low cards are not counted. Challenge, quota and consent retain higher priority. Actual final search/refresh shows this0notice and Lens10.",
+    "titleOnlyFollowup": {
+      "audit": ".runtime/requirements-audit/20261028-title-only-evidence-preedit.json",
+      "request": "Current direct user asks to remove achieved items from the blocked goal and continue remaining work; the general parser instruction supersedes personal identification of ten posts.",
+      "finding": "Exact primary declared work titles were silently dropped when codes and offers were empty.",
+      "change": "Optional titleEvidence from an unambiguous primary typed creative work/Product or unique Book/Product own microdata name. Preserve exact title/field provenance, reject ordinary heading/meta/news/other-item/related/multiple/truncated identities. Native indexed current-job navigation, ownership/URL/DNS/deadline/cancellation/data boundaries unchanged. Render title-confirmed/code-sale-unconfirmed honestly.",
+      "meaningfulRed": {
+        "native": 1,
+        "frontend": 1
+      },
+      "automated": {
+        "frontend": {
+          "files": 40,
+          "passed": 1915,
+          "log": "frontend-final.log"
+        },
+        "native": {
+          "passed": 405,
+          "ignored": 7,
+          "log": "native-final.log",
+          "qualification": "Broad run before adding one explicit ignored public-book HTTP test; production code unchanged afterward"
+        },
+        "publicHttp": {
+          "passed": 3,
+          "log": "public-native-http.log",
+          "qualification": "Real anonymous production fetch/parser for neutral public metadata, publisher ISBN9781718504448 and Gutenberg literal primary Book name; not app UI acceptance"
+        },
+        "typecheck": true,
+        "productionBundle": true,
+        "developmentBinBuild": true,
+        "ownNativeFormatCheck": true
+      },
+      "actual": {
+        "state": "positive-title-code-ui-passed; specialized-title-only-case-unverified",
+        "observed": "Automatic 작품·판매 정보 shows The Rust Programming Language, 3rd Edition and ISBN9781718504448 from original publisher-post link. 5 pages checked, 1 unavailable, honest partial/provenance.",
+        "evidence": [
+          ".runtime/bgd-x-positive-resume-20261028/book-isbn-real-results.png",
+          ".runtime/bgd-x-positive-resume-20261028/publisher-book-post.png"
+        ],
+        "qualification": "The user did not supply individual tested URLs, exact product codes, screenshots or a per-platform matrix. Do not invent these details or claim a specific BM243-KN001/Google-wrapped-Pixiv fixture was personally observed."
+      },
+      "remaining": "No required work remains. User accepted the final generic work-information/navigation test; particular unreported no-code fixtures are not claimed individually tested.",
+      "previousCompleted": [
+        {
+          "item": "일반 Lens 결과의 제목/실제 주소로 직접 연결",
+          "evidence": ".runtime/requirements-audit/20261028-bgd-final-verification.json#result-title-supported-dispatch",
+          "qualification": "Observed X title plus native Danbooru/Pixiv dispatcher passed. A real Google-wrapped Pixiv candidate is a separate unverified case."
+        },
+        {
+          "item": "기존 피드 출처→프리뷰 및 프리뷰 출처→별도 탭",
+          "evidence": "docs/requirements/x-video-source-and-direct-links-20261027.json#verification.actual",
+          "qualification": "Previously operated retained tabs/aliases/position; only regression in current immersive context remains."
+        },
+        {
+          "item": "영상 진입·관련 영상 왕복·복귀·넓은 피드/정지 위치 초기화",
+          "evidence": ".runtime/requirements-audit/20261028-bgd-final-verification.json",
+          "qualification": "Original X source player/playlist preserved; numeric narrow-wide and reverse visual proof scopes remain as recorded."
+        },
+        {
+          "item": "잘못된 SauceNAO 저유사도/서버 오류 판정",
+          "evidence": ".runtime/requirements-audit/20261028-bgd-final-verification.json#current-selected-video-search",
+          "qualification": "Accurate failure/empty states fixed; not a claim that third-party matching quality improved."
+        }
+      ],
+      "verification": ".runtime/requirements-audit/20261028-goal-remainder-verification.json",
+      "buildProof": ".runtime/bgd-x-remainder-20261028/build-proof.json",
+      "goalUi": {
+        "requested": true,
+        "applied": false,
+        "reason": "Official thread/goal/set origin=user was refused because this thread already has an active writer; no private storage edit or false complete/new-goal replacement used.",
+        "pendingOfficialControl": {
+          "script": ".runtime/requirements-audit/queued-goal-cleanup-20261028.cjs",
+          "plan": ".runtime/requirements-audit/20261028-goal-cleanup-pending.json",
+          "state": ".runtime/requirements-audit/20261028-goal-cleanup-queue-state.json",
+          "successOnlyIf": ".runtime/requirements-audit/20261028-goal-cleanup-updated.json",
+          "qualification": "Bounded official RPC attempt after current writer releases; existing objective/creation/budget/accounting guarded. No success claimed before readback."
+        },
+        "completion": {
+          "status": "complete",
+          "proof": ".runtime/requirements-audit/20261029-goal-completion.json",
+          "objectiveReplaced": false,
+          "remainingRequired": []
+        }
+      },
+      "previousActualBeforePositiveUi": {
+        "state": "partially-operated; positive-title-code-ui-not-yet-verified",
+        "observed": "New development binary launched in owned BGD child session. Fixed public No Starch Press link opened exact official X profile in the retained right preview. This is setup/navigation proof, not a fabricated provider result or title/code UI acceptance.",
+        "evidence": [
+          ".runtime/bgd-x-remainder-20261028/nostarch-profile.png",
+          ".runtime/bgd-x-remainder-20261028/keyboard-pagedown-after-dismiss.png"
+        ],
+        "blocker": "At20:46:06 a new League of Legends.exe process started in main session. At20:46:19 BGD real mouse close click returned SendInput error87. Existing host23356/child2 remain Active. Recovery chat corroborated timing and recommended preserving session until game idle; no game/security/startup/input-API change or reset was made. Keyboard response does not prove mouse recovery.",
+        "recoveryThread": "01a16a1b-cbdf-77d2-a25b-838f09baa9b9",
+        "cleanup": {
+          "normalAppApi": {
+            "pid": 29044,
+            "accepted": true,
+            "phase": "exited",
+            "forceTermination": false
+          },
+          "bgd": {
+            "layer": "codex-aead7a857a034472b13b258d896ba0fd",
+            "released": true,
+            "desktopLeftRunning": true
+          },
+          "ownViteStopped": true,
+          "dataReset": false,
+          "publication": false
+        }
+      }
+    },
+    "positiveUiFollowup": {
+      "proof": ".runtime/requirements-audit/20261028-positive-ui-followup.json",
+      "completed": [
+        "Actual title+ISBN automatic report",
+        "Real SauceNAO candidate title→Pixiv floating work",
+        "Actual Lens exact1 source agreement and exact0→visual alternative10",
+        "Original Lens close/refresh preserves other provider",
+        "Stored-account switch/return clears old preview/search",
+        "Actual120-second consent expiration",
+        "remember-consent-preference: passed-user-operated",
+        "in-flight-close-late-response: passed-user-operated",
+        "work-information-and-title-navigation: passed-user-operated"
+      ],
+      "qualification": "The user did not supply individual tested URLs, exact product codes, screenshots or a per-platform matrix. Do not invent these details or claim a specific BM243-KN001/Google-wrapped-Pixiv fixture was personally observed."
+    },
+    "descriptionFieldFollowup": {
+      "audit": ".runtime/requirements-audit/20261028-labelled-description-preedit.json",
+      "state": "implemented-built-and-user-flow-accepted",
+      "finding": "Primary Product.description contained an explicitly labelled 제품번호 omitted by former parser",
+      "change": "Read bounded explicit description field lists, preserve literal code/label provenance, reject prose/ambiguous/related/wrong/oversized code inputs. Qualify retailer metadata label as 판매처 등록 ID without altering source values.",
+      "meaningfulRed": 2,
+      "native": {
+        "passed": 114,
+        "ignored": 4,
+        "log": ".runtime/bgd-x-positive-resume-20261028/description-search-tests.log"
+      },
+      "publicHttp": {
+        "passed": 4,
+        "log": ".runtime/bgd-x-positive-resume-20261028/public-followup-tests.log",
+        "newObservedCode": "BM243-KN001"
+      },
+      "formatCheck": true,
+      "build": {
+        "passed": true,
+        "log": ".runtime/bgd-x-positive-resume-20261028/description-build.log",
+        "exeSha256": "2B4500FBA7BC009BB3B44711EADAA0B84AEA701414AE6F7AF6A58906B75908DB",
+        "bytes": 102648320,
+        "parserSha256": "47CEF7C7EEDB7A56F58932F86315AC7B035CF94FD0D204E755826648C94F45CA",
+        "pageEvidenceSha256": "131237AFB8AC19463A42575FE0B1910EEA2F88417C6CBA771BDFF20C3F433FFD",
+        "pid": 48884,
+        "devUrl": "http://127.0.0.1:1420/"
+      },
+      "secondaryLabel": {
+        "state": "built-and-user-flow-accepted-without-specific-fixture-claim",
+        "change": "Page-information meta product:retailer_item_id uses the same 판매처 등록 ID label as the catalog report; literal source value and provenance are unchanged.",
+        "test": {
+          "passed": 1,
+          "log": ".runtime/bgd-x-positive-resume-20261028/retailer-label-exact-tests.log"
+        },
+        "initialFilterCorrection": "First partial-name test command with --exact selected zero tests. Not counted; the fully-qualified test name then ran and passed one test.",
+        "formatCheck": true,
+        "build": {
+          "passed": true,
+          "log": ".runtime/bgd-x-positive-resume-20261028/retailer-label-build.log",
+          "exeSha256": "F91B82C73502B7309356A3A5933A89E6CD6D57EB51FB09029965ADE3D4182B31",
+          "pageEvidenceSha256": "34348C5D220443E07DE121C41C964F767A9C1AEB59FBF25A0B598F68A2910743",
+          "pid": 31952,
+          "devUrl": "http://127.0.0.1:1420/"
+        },
+        "normalRestart": {
+          "previousPid": 48884,
+          "accepted": true,
+          "phase": "exited",
+          "force": false,
+          "evidence": ".runtime/bgd-x-positive-resume-20261028/retailer-label-normal-exit.json"
+        }
+      },
+      "userAcceptance": ".runtime/requirements-audit/20261029-user-final-acceptance.json"
+    },
+    "relevanceGap": {
+      "id": "catalog-candidate-relevance-20261029",
+      "state": "implemented-and-verified",
+      "proof": ".runtime/requirements-audit/20261029-catalog-repair-verification.json",
+      "unresolved": [],
+      "diagnosis": ".runtime/requirements-audit/20261029-catalog-relevance-diagnosis.json",
+      "previousState": "diagnosed-incomplete",
+      "completed": [
+        "Preserve and reconcile provider candidate titles, source identities and confidence evidence instead of discarding everything except URLs/provider positions before the work scan. Conflicting candidates must remain candidates, not a confirmed original.",
+        "Distinguish an upload/page label from an original work name and from a retail product; readable structured metadata alone is not work-identity proof. Avoid promoting the only readable lower-ranked page into the original-work summary.",
+        "Associate codes and sale facts with the particular candidate through explicit identity/source-link evidence. Preserve a known candidate when destination fetching fails, and represent missing sale/code facts independently and honestly."
+      ],
+      "qualifications": [
+        "Actual BGD acceptance used a neutral public publisher post, not a retransmission or personal identification of the original private/adult image. The earlier upload-title counterexample is covered by regression cases and the generic candidate/source separation design; its exact remote page was not newly operated.",
+        "Only explicit original/same-author source links, appropriate typed identity relations, and checksum-valid global identifiers support cross-page association. Similar titles or similarity scores alone only group candidates; generic SKU equality is not a global identity.",
+        "Facts retain their literal source page, field and value. Different editions/identifiers, ambiguous pages and mismatched fetched titles stay separate or unlinked. Read failures do not erase provider titles, similarity or creator metadata.",
+        "This generic program does not invent a missing product code, guarantee original-image identity, independent stock availability, or universal site support. Search engines may return unrelated results; unreadable/client-rendered/gated pages remain explicitly partial.",
+        "Actual navigation in this new repair verified the native original-post index returning to the exact X post. A click on the unsupported external publisher retail-title destination and every historic platform fixture were not repeated; existing user/platform acceptance is retained.",
+        "The historical goal already completed by official control was not replaced or reopened through private state edits. Only the current issue/requirement pending lists are resolved."
+      ]
+    }
+  },
+  "ads": "Measured diagnostics for the screenshot's class show missing metadata due to a role link in User-Name. Exempt only that own-name structural link; continue requiring the independent own visible Ad/광고 badge and exclusive placement. Reversible cosmetic markers, recycling cleanup and all conservative false-positive boundaries remain.",
+  "video": {
+    "entry": "Before original webpack registration, wrap exactly the one publicly inspected source route factory and its own verified JSX/UI-rollout imports. Only in this app feed, use the source's same lazy immersive component in place of the exact two-Explore-presentation-rollout wrapper. Keep every age/account/security wrapper, source player/history/time handoff/control and playlist request unchanged. Enable the optional original published entry only after the matching runtime imports execute. Unknown/ambiguous source retains original behavior.",
+    "readiness": "The dedicated native-viewer/hydration recognizer accepts exactly the source-published mediaviewer and mediaViewer suffix spellings, cached same-document owner and actual displayed native video/poster proof. Ordinary post/quote/search identities remain strict. Exact displayed source404 outside articles is finite unavailable and keeps source recovery controls visible; terminal errors are not perpetual skeletons.",
+    "geometry": "The original source viewer fills its existing feed WebView. Native feed fullscreen is contained by the player slot and retains the current preview; preview fullscreen retains the prior exclusive policy. Recheck current ownership/revision/privacy/overlays/visibility on presentation and resize.",
+    "divider": "X-only narrow dark pointer/keyboard separator,22..78percent bounded ratio, local persistence, double-click reset and cancellation/unmount cleanup. Preserve child identities and retained feed/preview navigation.",
+    "paneMeasurement": "Inside only the exact verified original immersive layout factory, get(screen) uses its own original get(window) and caps the branch width below the verified large breakpoint. Real CSS/window geometry is unchanged. This prevents the original component returning to an ordinary post at very wide feed widths. Actual590px/1062px entry and original related playback pass.",
+    "presentationContinuity": {
+      "cause": "The original responsive router changes inline/modal child trees at its modal breakpoint, recreating a paused original player. Exact published DOM events proved same currentTweet, node removal/recreation and0s metadata/play without user Play.",
+      "change": "Require exact original JSX, rollout and ModalRoute imports and original default presentation predicates. Only the exact full immersiveMediaViewer registration gains original shouldAlwaysDisplayModal()=>true; preserve source ModalRoute, original props, security gates, player/history/time/control and playlist. Unknown shapes/props decline the optional adapter.",
+      "actual": "Same original post/node2/paused5.03s observed at590px and1062px; reverse590px frame/progress/preview visibly retained, then original narrow/wide next/previous roundtrips and back-to-feed pass.",
+      "audit": ".runtime/requirements-audit/20261028-bgd-stable-source-modal-preedit.json"
+    },
+    "selectedSearch": "Current original viewer cell/query and complete HUD/avatar structure prove the selected video before source-search admission; stale root/menu rejected. HUD unmount is accepted only with exact current original video/overlay proof. Existing immutable source job ownership and no-player-call rule retained."
+  },
+  "verification": {
+    "state": "The three catalog relevance gaps are implemented and verified in the actual BGD app. Provider candidate claims survive page failures; upload/page/product/work roles are separated; code and sale facts remain attached to their own source and require explicit source/identity evidence for association. The public publisher post produced the correct title, ISBN9781718504448, USD59.99 print/free-ebook option and USD47.99 ebook option while unrelated Pixiv/LinkedIn candidates stayed separate. Original-post navigation returned to the correct in-app X post. Existing video, consent and supported-platform acceptance is preserved. No mandatory work remains in this repair batch; exact private counterexample and universal site/stock/original-image identity are not claimed individually verified.",
+    "human": "The manual report confirms divider drag works and ads are absent in the inspected feed. It proves the prior video entry and separate result-link cards were unacceptable. Preserve these distinctions; do not extrapolate ad acceptance to an untested immersive carousel.",
+    "automated": {
+      "frontendFiles": 39,
+      "frontendPassed": 1884,
+      "nativeXPassed": 399,
+      "nativeXIgnored": 7,
+      "neutralDiagnosticPassed": 14,
+      "sourceAdapterFocusedPassed": 25,
+      "typecheck": true,
+      "frontendProductionBuild": true,
+      "developmentBuild": true,
+      "formatOwnNewNativeFiles": true,
+      "neutralPublisherHttpPassed": 1,
+      "nativePassed": 399,
+      "nativeIgnored": 7,
+      "developmentBinBuild": true,
+      "focusedAdapterAndCompatPassed": 25,
+      "meaningfulNewRedBeforeFix": 3
+    },
+    "actualReadOnly": "Actual production observer/parser matched the exact neutral source post and projected2published links from one TweetDetail200, with a continuation cursor correctly marked partial. After pane-width and suffix corrections, the neutral observation ended in the actual source viewer, with2videos inside the displayed original modalContainer and1with decoded media ready; the source issued its own ImmersiveMedia request and received200. Final actual Atsumi25908 reports successful media compilation, entryAdapter:true and viewerReady:true, and was normally exited through its app-owned API. This is not a feed click, playback, recommendation-relevance, next-scroll or return-position test.",
+    "latestNeutralViewer": ".runtime/x-viewer-source-20261028/neutral-viewer-canonical-proof.json",
+    "latestBuildProof": ".runtime/requirements-audit/20261029-catalog-repair-verification.json",
+    "privateVerification": ".runtime/requirements-audit/20261028-bgd-final-verification.json",
+    "previousVerificationEvidence": ".runtime/requirements-audit/20261028-before-final-bgd-contract.json",
+    "sourceCompatibilityLimit": "Original public source shapes may change and exact guards decline unknown shapes. Anonymous, client-rendered or gated product pages remain partial; source-declared availability is not independently verified stock or original-image identity. General positive identifier UI is now passed. Specific title-only-without-code, real Google-wrapped Pixiv, and current immersive credit are scoped additional cases, while Google authentication/age and original private uploads require the user.",
+    "requiredActual": [
+      "Real feed video click fills only feed region, preview stays present, original controls render; close returns to retained feed position.",
+      "Original related playlist next/previous with wheel, manual pause/seek and resize including wide feed; no skeleton takeover, skipped centered item or invented local queue.",
+      "New immersive video attribution/search actions preserve the current selected post and original collection context.",
+      "New clickable result title and compact extra hosts open exact Danbooru/Pixiv/X targets inside Atsumi; new work title/original-post provenance dispatch stays indexed and current-job fenced.",
+      "Actual automatic code/sale panel shows source-declared facts or an honest partial/unavailable result; account/privacy/refresh/close cancels stale projection.",
+      "No ad reappears in related-video presentation; existing normal-feed ad/divider observations remain separate human evidence."
+    ],
+    "constraint": "BGD only, in its child session. Necessary development restarts and final test cleanup use the app-owned authenticated normal-exit/drain path, never force/data reset. No game/security/login changes, social writes, commit/push/release or PC shutdown.",
+    "previous": ".runtime/requirements-audit/20261028-before-final-bgd-contract.json",
+    "actualBatches": [
+      {
+        "id": "video-entry",
+        "state": "passed-actual-bgd",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/stable-modal-real-entry.png",
+          ".runtime/bgd-x-final-20261028/stable-modal-reentry.png",
+          ".runtime/bgd-x-final-20261028/stable-modal-wide-entry.png"
+        ]
+      },
+      {
+        "id": "genuine-related-next-previous",
+        "state": "passed-actual-bgd",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/stable-modal-original-wheel-roundtrip.json",
+          ".runtime/bgd-x-final-20261028/stable-modal-wide-wheel-roundtrip.json"
+        ]
+      },
+      {
+        "id": "close-return-preview",
+        "state": "passed-actual-bgd",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/stable-modal-roundtrip-return.png",
+          ".runtime/bgd-x-final-20261028/stable-modal-return-seed-feed.png",
+          ".runtime/bgd-x-final-20261028/stable-modal-wide-return.png",
+          ".runtime/bgd-x-final-20261028/stable-modal-final-restored-layout.png"
+        ]
+      },
+      {
+        "id": "resize-paused-time",
+        "state": "reproduced-repaired-actual-bgd",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/resize-dom-events-before-repair.json",
+          ".runtime/bgd-x-final-20261028/public-router-modal-branch.json",
+          ".runtime/bgd-x-final-20261028/stable-modal-middle-baseline.json",
+          ".runtime/bgd-x-final-20261028/stable-modal-middle-wide.json",
+          ".runtime/bgd-x-final-20261028/stable-modal-paused-narrow-return.png",
+          ".runtime/bgd-x-final-20261028/stable-modal-final-divider.json"
+        ]
+      },
+      {
+        "id": "current-selected-video-search",
+        "state": "passed-actual-bgd",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/industrial-search-menu.png",
+          ".runtime/bgd-x-final-20261028/industrial-frame-search-open.png",
+          ".runtime/bgd-x-final-20261028/post-build-video-search-results.png",
+          ".runtime/bgd-x-final-20261028/post-build-video-search-refreshed.png",
+          ".runtime/bgd-x-final-20261028/post-build-search-closed.png"
+        ]
+      },
+      {
+        "id": "result-title-supported-dispatch",
+        "state": "passed-with-explicit-scope",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/actual-x-title-target.png",
+          ".runtime/bgd-x-final-20261028/supported-dan-current.png",
+          ".runtime/bgd-x-final-20261028/supported-pixiv-settled.png",
+          ".runtime/bgd-x-final-20261028/supported-pixiv-artwork-ready.png",
+          ".runtime/bgd-x-final-20261028/supported-x-profile-ready.png"
+        ]
+      },
+      {
+        "id": "automatic-declared-sale-facts",
+        "state": "passed-partial-result-semantics",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/industrial-provider-results.png",
+          ".runtime/bgd-x-final-20261028/post-build-video-search-results.png",
+          ".runtime/bgd-x-final-20261028/work-title-open.png",
+          ".runtime/bgd-x-final-20261028/work-title-return.png"
+        ]
+      },
+      {
+        "id": "ads-ordinary-privacy-launch",
+        "state": "passed-observed-scope",
+        "evidence": [
+          ".runtime/bgd-x-final-20261028/ordinary-final-launch.png",
+          ".runtime/bgd-x-final-20261028/ordinary-privacy-on.png",
+          ".runtime/bgd-x-final-20261028/ordinary-privacy-settled.png",
+          ".runtime/bgd-x-final-20261028/stable-modal-wide-wheel-roundtrip-up.png"
+        ]
+      },
+      {
+        "id": "remember-consent-preference",
+        "state": "passed-user-operated",
+        "evidence": [
+          ".runtime/requirements-audit/20261029-user-final-acceptance.json"
+        ]
+      },
+      {
+        "id": "in-flight-close-late-response",
+        "state": "passed-user-operated",
+        "evidence": [
+          ".runtime/requirements-audit/20261029-user-final-acceptance.json"
+        ]
+      },
+      {
+        "id": "work-information-and-title-navigation",
+        "state": "passed-user-operated",
+        "evidence": [
+          ".runtime/requirements-audit/20261029-user-final-acceptance.json"
+        ]
+      }
+    ],
+    "remainingHistorical": [],
+    "automatedLatest": {
+      "frontend": {
+        "files": 40,
+        "passed": 1915,
+        "log": "frontend-final.log"
+      },
+      "native": {
+        "passed": 405,
+        "ignored": 7,
+        "log": "native-final.log",
+        "qualification": "Broad run before adding one explicit ignored public-book HTTP test; production code unchanged afterward"
+      },
+      "publicHttp": {
+        "passed": 3,
+        "log": "public-native-http.log",
+        "qualification": "Real anonymous production fetch/parser for neutral public metadata, publisher ISBN9781718504448 and Gutenberg literal primary Book name; not app UI acceptance"
+      },
+      "typecheck": true,
+      "productionBundle": true,
+      "developmentBinBuild": true,
+      "ownNativeFormatCheck": true
+    },
+    "latestRemainingReview": ".runtime/requirements-audit/20261029-catalog-repair-verification.json",
+    "previousSummaryBeforePositiveFollowup": {
+      "state": "Requested original-video entry, genuine next/previous wheel roundtrips, native close/retained feed and right preview, very-wide entry and responsive paused-position repair passed actual BGD. Supporting title/dispatcher/search/sale-panel/ordinary-launch/privacy checks have explicit scopes. Historical human account/age/private-search and positive-code UI branches remain qualified. Current goal-resume follow-up fixes dropped title-only evidence and passes40files1915frontend/405native and3real public HTTP checks; positive title/code UI still unverified after a newly started game coincided with BGD mouse87.",
+      "sourceCompatibilityLimit": "Original public source shapes may change and exact guards decline unknown shapes. Actual narrow/wide original player and playlist operation passed. Anonymous/client-rendered/gated product pages can remain partial; declared availability may conflict with visible sold state and is not independently verified. Positive identifier-specific live UI, Google-wrapped Pixiv and human-only account/age branches remain explicitly unverified.",
+      "remainingHistorical": [
+        "Human Google login/age verification and unrestricted-image persistence; no authentication automated",
+        "Original supplied private-image job and actual exact-empty fallback; no new private upload",
+        "Real Google-wrapped Pixiv case when encountered; native Pixiv dispatcher passed separately",
+        "Account-switch/expired/stale-job UI branches; automated ownership/cancellation tests passed and real privacy hide/restore/search close/refresh passed",
+        "Positive identifier-specific live UI; actual source-declared sale/partial panel and public ISBN native HTTP parse passed separately"
+      ]
+    },
+    "previousSummaryBeforeHumanAcceptance": {
+      "state": "Actual BGD video entry, genuine related-video next/previous, return, retained preview and narrow/wide paused-time behavior passed. Actual generic source report shows publisher title and ISBN9781718504448; source-declared retail SKU/price semantics, real SauceNAO-title→Pixiv, Lens-title→X, exact0→visual alternatives, original-window close/refresh, stored-account switch/return and real120-second consent expiration passed. The remaining essential followup is restoring the original remembered search consent and checking late-response close plus the newly added explicit primary-description product-code/retailer-label display. Native public HTTP extracted BM243-KN001,114 relevant native tests and the existing metadata-fidelity test passed, and the latest debug build succeeded. BGD input currently coincides with game-time error87; do not mark those remaining UI steps passed or claim cleanup has happened for this active layer.",
+      "remainingHistorical": [
+        "Restore original remember-consent preference and complete in-flight close/late-response actual check after BGD input works",
+        "Actual new primary-description product code and retailer label on rebuilt app; native real public HTTP and114 regression tests passed",
+        "Optional specific-case coverage: Google-wrapped Pixiv, title-only without-code/sale app case, and current immersive source-credit when encountered. Actual SauceNAO Pixiv, generic positive ISBN/SKU/sale UI and previous source-credit flows already passed.",
+        "Human Google login/age and original private-image result remain outside agent-operated acceptance"
+      ]
+    },
+    "remainingRequired": [],
+    "userAcceptance": {
+      "proof": ".runtime/requirements-audit/20261029-user-final-acceptance.json",
+      "report": "셋다 검사했고 정상",
+      "checks": [
+        "remember-consent-preference",
+        "in-flight-close-late-response",
+        "work-information-and-title-navigation"
+      ],
+      "qualifications": [
+        "The user did not supply individual tested URLs, exact product codes, screenshots or a per-platform matrix. Do not invent these details or claim a specific BM243-KN001/Google-wrapped-Pixiv fixture was personally observed.",
+        "Google authentication/age verification and original private-image retransmission are personal service/account procedures, not newly performed agent work.",
+        "Third-party source shapes, access restrictions and matching quality remain bounded dependencies; original identity, actual stock and universal site support are not guaranteed.",
+        "The prior personal identification of ten liked videos was explicitly superseded by the request for a generic parsing program. Prior source-credit/tab, video and direct-link acceptance is preserved."
+      ]
+    },
+    "goalCompletion": {
+      "status": "complete",
+      "proof": ".runtime/requirements-audit/20261029-goal-completion.json",
+      "objectiveReplaced": false,
+      "remainingRequired": []
+    },
+    "previousSummaryBeforeRelevanceCounterexample": "Current requested X source-search and feed-video batch is complete: prior actual BGD acceptance covers original video entry, genuine related next/previous, return/wide-feed continuity, source-credit retained tabs, direct platform destinations, exact-zero alternatives, accurate provider states and positive title/ISBN/SKU evidence. The user now reports all three supplied final manual checks normal: remembered search preference, in-flight cancellation without late-result resurrection, and source-declared work/code display with title navigation. No mandatory implementation or UI check remains in this batch. Specific unreported fixtures and personal Google account/age procedures remain scoped qualifications, not open implementation tasks. Game-time BGD input diagnosis is separate and does not invalidate user-operated acceptance.",
+    "reopenedIssue": {
+      "id": "catalog-candidate-relevance-20261029",
+      "state": "implemented-and-verified",
+      "proof": ".runtime/requirements-audit/20261029-catalog-repair-verification.json",
+      "unresolved": [],
+      "diagnosis": ".runtime/requirements-audit/20261029-catalog-relevance-diagnosis.json",
+      "previousState": "diagnosed-incomplete",
+      "completed": [
+        "Preserve and reconcile provider candidate titles, source identities and confidence evidence instead of discarding everything except URLs/provider positions before the work scan. Conflicting candidates must remain candidates, not a confirmed original.",
+        "Distinguish an upload/page label from an original work name and from a retail product; readable structured metadata alone is not work-identity proof. Avoid promoting the only readable lower-ranked page into the original-work summary.",
+        "Associate codes and sale facts with the particular candidate through explicit identity/source-link evidence. Preserve a known candidate when destination fetching fails, and represent missing sale/code facts independently and honestly."
+      ],
+      "qualifications": [
+        "Actual BGD acceptance used a neutral public publisher post, not a retransmission or personal identification of the original private/adult image. The earlier upload-title counterexample is covered by regression cases and the generic candidate/source separation design; its exact remote page was not newly operated.",
+        "Only explicit original/same-author source links, appropriate typed identity relations, and checksum-valid global identifiers support cross-page association. Similar titles or similarity scores alone only group candidates; generic SKU equality is not a global identity.",
+        "Facts retain their literal source page, field and value. Different editions/identifiers, ambiguous pages and mismatched fetched titles stay separate or unlinked. Read failures do not erase provider titles, similarity or creator metadata.",
+        "This generic program does not invent a missing product code, guarantee original-image identity, independent stock availability, or universal site support. Search engines may return unrelated results; unreadable/client-rendered/gated pages remain explicitly partial.",
+        "Actual navigation in this new repair verified the native original-post index returning to the exact X post. A click on the unsupported external publisher retail-title destination and every historic platform fixture were not repeated; existing user/platform acceptance is retained.",
+        "The historical goal already completed by official control was not replaced or reopened through private state edits. Only the current issue/requirement pending lists are resolved."
+      ]
+    },
+    "previousSummaryBeforeCatalogRepair": "Reopened by the user-supplied actual search counterexample: generic metadata extraction and navigation passed, but original-work candidate reconciliation and candidate-bound code/sale association are incomplete. Readable result7 metadata was presented as 작품명 확인 despite conflicting provider evidence. Diagnosis is complete; production repair has not been applied. Existing video, source-link, consent and cancellation acceptance remains valid.",
+    "catalogRepair": {
+      "proof": ".runtime/requirements-audit/20261029-catalog-repair-verification.json",
+      "automated": {
+        "frontend": {
+          "files": 38,
+          "passed": 1875,
+          "log": ".runtime/bgd-catalog-repair-20261029/frontend-tests.log"
+        },
+        "native": {
+          "passed": 126,
+          "ignored": 4,
+          "filter": "x_feed::surface::search",
+          "log": ".runtime/bgd-catalog-repair-20261029/native-tests.log"
+        },
+        "publicPublisherHttp": {
+          "passed": 1,
+          "log": ".runtime/bgd-catalog-repair-20261029/public-publisher-test.log"
+        },
+        "typecheck": true,
+        "frontendProductionBuild": {
+          "passed": true,
+          "log": ".runtime/bgd-catalog-repair-20261029/frontend-build-final.log"
+        },
+        "developmentBinBuild": {
+          "passed": true,
+          "log": ".runtime/bgd-catalog-repair-20261029/build.log"
+        },
+        "ownNativeFormatCheck": true,
+        "qualification": "Relevant frontend/native suites, not a newly rerun full repository suite. An earlier wrong filter that ran zero tests is excluded."
+      },
+      "actual": [
+        ".runtime/bgd-catalog-repair-20261029/final-title-isbn-price-observed.json",
+        ".runtime/bgd-catalog-repair-20261029/50-final-catalog.png",
+        ".runtime/bgd-catalog-repair-20261029/51-other-candidates.json.result.json",
+        ".runtime/bgd-catalog-repair-20261029/53-candidate-detail.png",
+        ".runtime/bgd-catalog-repair-20261029/55-open-origin.json.result.json",
+        ".runtime/bgd-catalog-repair-20261029/57-close-public-preview.json.result.json"
+      ],
+      "remainingRequired": []
+    }
+  },
+  "updatedAt": "2026-10-29T11:30:51.501Z",
+  "sourceBeforeFinalBgd": "Historical game-time deferral was superseded by the explicit game-ended BGD request, and the requested original video batch passed. Current direct request prunes achieved goal items and continues remaining generic title/code evidence. During this new remaining batch, a new game process began and mouse87 recurred; preserve the current child session and existing completed evidence."
+}

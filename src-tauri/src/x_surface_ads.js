@@ -22,6 +22,11 @@
     headerShape:emptyHeader() });
   let last = empty();
   const own = (article, node) => node.closest(articleSelector) === article && !node.closest(excluded);
+  const blockedHeader = (header, name) => [...header.querySelectorAll(excluded + ',[data-testid="socialContext"]')]
+    // Source affiliation links inside the one own User-Name are metadata, not
+    // another post. Every content/context node and unrelated role link keeps
+    // its existing stop boundary; affiliation text itself is never ad proof.
+    .some(node => !(node.matches('[role="link"]:not(a)') && name.contains(node)));
   function shown(node) {
     for (let current = node, depth = 0; current instanceof Element; current = current.parentElement, depth++) {
       if (depth >= 64) return false;
@@ -114,7 +119,7 @@
       for (; header && header !== article && distance < 8; header = header.parentElement, distance++) {
         // A header must stop before body/media/context. The word "Ad" in any
         // of those, or inside an author name, is never promotion evidence.
-        if (header.querySelector(excluded + ',[data-testid="socialContext"]')) break;
+        if (blockedHeader(header, names[0])) break;
         const carets = [...header.querySelectorAll('[data-testid="caret"]')].filter(node => own(article, node));
         if (carets.length !== 1) continue;
         const badges = [...header.querySelectorAll('span,div')];
@@ -143,7 +148,7 @@
     let header = names[0].parentElement, distance = 0, firstCaret = false;
     for (; header && header !== article && distance < 8; header = header.parentElement, distance++) {
       const content = header.querySelector('[data-testid="tweetText"],[data-testid="tweetPhoto"],[data-testid="videoPlayer"],video,audio,iframe,[data-testid="quoteTweet"],[data-testid="quotedTweet"]');
-      const roleLinks = [...header.querySelectorAll('[role="link"]:not(a)')];
+      const roleLinks = [...header.querySelectorAll('[role="link"]:not(a)')].filter(node => !names[0].contains(node));
       const context = header.querySelector('[data-testid="socialContext"]');
       if (content || roleLinks.length || context) {
         // A stop after the first eligible header is only an outer-search boundary.

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { memo, useLayoutEffect, useRef, type ReactNode } from "react";
 import type { Gallery, GalleryDisplayMode } from "../core/types";
 import { splitGalleryTitle } from "./galleryCardLayout";
 
@@ -13,7 +13,7 @@ type ProgressiveGallerySlotProps = {
  * Keeps a stable grid cell while the comparatively expensive interactive card
  * is mounted only around the current scroll position.
  */
-export function ProgressiveGallerySlot({ gallery, active, displayMode = "detail", children }: ProgressiveGallerySlotProps) {
+export const ProgressiveGallerySlot = memo(function ProgressiveGallerySlot({ gallery, active, displayMode = "detail", children }: ProgressiveGallerySlotProps) {
   const slotRef = useRef<HTMLDivElement>(null);
   const { primary: displayTitle } = splitGalleryTitle(gallery.title, gallery.subtitle);
 
@@ -71,4 +71,5 @@ export function ProgressiveGallerySlot({ gallery, active, displayMode = "detail"
       )}
     </div>
   );
-}
+}, (previous, next) => previous.gallery === next.gallery && previous.active === next.active
+  && previous.displayMode === next.displayMode && (!next.active || previous.children === next.children));

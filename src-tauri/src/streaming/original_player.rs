@@ -87,6 +87,10 @@ fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
             include_bytes!("../../../public/original-player/frame.css"),
             "text/css; charset=utf-8",
         ),
+        "/scrollbars.css" => (
+            include_bytes!("../../../src/scrollbars.css"),
+            "text/css; charset=utf-8",
+        ),
         _ => return accepted::asset(path),
     })
 }
@@ -234,6 +238,7 @@ mod tests {
             ("/player-vendor-Ct4cRQDi.css", "text/css"),
             ("/chzzk-theme.css", "text/css"),
             ("/frame.css", "text/css"),
+            ("/scrollbars.css", "text/css"),
             ("/accepted-vod-template.js", "text/javascript"),
             ("/recording-metadata.js", "text/javascript"),
             ("/original-surfaces.js", "text/javascript"),

@@ -4,6 +4,8 @@ import "./generated/accepted/fonts.css";
 import originalStyles from "./generated/accepted/original.css?raw";
 import searchStyles from "./generated/accepted/replay-search.css?raw";
 import adapterStyles from "./OriginalChzzkChatSurface.css?raw";
+import typographyStyles from "../../typography.css?raw";
+import scrollbarStyles from "../../scrollbars.css?raw";
 
 // A document's :root does not match inside a ShadowRoot. Keep the original
 // tokens/values intact and scope their five declarations to this host instead.
@@ -19,9 +21,11 @@ export function OriginalChzzkChatSurface({ children }: { children: (surface: Sha
   }, []);
   return <aside ref={host} className="recording-replay-chat theme_dark" aria-label="저장 채팅 다시보기">
     {surface && createPortal(<>
+      <style>{typographyStyles}</style>
       <style>{shadowChatStyles}</style>
       <style>{searchStyles}</style>
       <style>{adapterStyles}</style>
+      <style>{scrollbarStyles}</style>
       <style>{`.recording-replay-menu-anchor{display:flex;align-items:center;gap:4px}.recording-replay-dismiss{display:grid;place-items:center;position:static;width:30px;height:30px;flex:none;padding:4px;border:0;border-radius:6px;color:inherit;background:transparent;cursor:pointer}.recording-replay-dismiss:hover{background:#ffffff18}.recording-replay-dismiss svg{width:22px;height:22px}`}</style>
       <div className="original-chat-root theme_dark" data-theme="dark">{children(surface)}</div>
     </>, surface)}

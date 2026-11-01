@@ -11,7 +11,7 @@ type Envelope={kind:string;value:string};
 type SearchOptions={searchEnabled?:unknown;searchCapabilities?:unknown};
 const enabledSearch={searchEnabled:true,searchCapabilities:{image:true,video:true}};
 const nativeAddEventListener=EventTarget.prototype.addEventListener;
-function adapter(html=tweet(),options:{host?:string;subframe?:boolean;photoOwner?:string;path?:string;diagnostics?:boolean;hostTimers?:boolean}&SearchOptions={}) {
+function adapter(html=tweet(),options:{host?:string;subframe?:boolean;photoOwner?:string;path?:string;sourceViewer?:boolean;diagnostics?:boolean;hostTimers?:boolean}&SearchOptions={}) {
   const host=options.host??"x.com",doc=new DOMParser().parseFromString(html,"text/html"),timers:Array<()=>void>=[];
   const cancelledTimers=new Set<number>();let timerSerial=0;
   const base=doc.createElement("base");base.href="https://"+host+"/";doc.head.append(base);
@@ -23,12 +23,12 @@ function adapter(html=tweet(),options:{host?:string;subframe?:boolean;photoOwner
     }
     return nativeAddEventListener.call(this,name,handler,options);
   });
-  const path=options.path??"/home",message=vi.fn(),location={origin:"https://"+host,href:"https://"+host+path,pathname:path};
+  const path=options.path??"/home",message=vi.fn(),location={origin:"https://"+host,href:"https://"+host+path,pathname:path.split('?')[0]!};
   const proof=vi.fn(()=>options.photoOwner??"");
   const windowEvents=new EventTarget();
   const win={chrome:{webview:{postMessage:message}},top:null as unknown,innerWidth:800,innerHeight:900,
     addEventListener:windowEvents.addEventListener.bind(windowEvents),
-    __atsumiXSurface:{archivePhotoOwner:proof,dismissMenu:vi.fn()},__atsumiXActions:undefined as undefined|{visibility(value:boolean):void;update():void;dismissMenus():boolean;progress(id:string,value:unknown):void;receipt(id:string,value:unknown):void;result(id:string,state:string,message:string):void;ownsPhotoControl(node:unknown):boolean;photoDiagnostic():Record<string,unknown>|null;takeSearch(id:string):Record<string,unknown>|null;searchResult(id:string,value:unknown):void}};
+    __atsumiXSurface:{archivePhotoOwner:proof,sourceMediaViewerAvailable:()=>options.sourceViewer===true,dismissMenu:vi.fn()},__atsumiXActions:undefined as undefined|{visibility(value:boolean):void;update():void;dismissMenus():boolean;progress(id:string,value:unknown):void;receipt(id:string,value:unknown):void;result(id:string,state:string,message:string):void;ownsPhotoControl(node:unknown):boolean;photoDiagnostic():Record<string,unknown>|null;contextDiagnostic():Record<string,unknown>|null;takeSearch(id:string):Record<string,unknown>|null;searchResult(id:string,value:unknown):void}};
   win.top=options.subframe?{}:win;
   let serial=0;
   const crypto={randomUUID:()=>`00000000-0000-4000-8000-${String(++serial).padStart(12,"0")}`};
@@ -59,6 +59,7 @@ const anotherPost=(index:number)=>tweet().replaceAll('/creator/status/123456',`/
 const showSearchTarget=(node:Element)=>vi.spyOn(node,'getBoundingClientRect').mockReturnValue({x:20,y:30,left:20,top:30,right:420,bottom:330,width:400,height:300,toJSON:()=>({})});
 const searchIntent=(a:ReturnType<typeof adapter>)=>{const message=a.messages().find(item=>item.kind==='search');if(!message)throw new Error('Expected explicit search intent');return JSON.parse(message.value) as {id:string;kind:string;provider:string;path:string};};
 const jpeg='data:image/jpeg;base64,/9j/2Q==';
+const thumbnailLabel='썸네일로 검색 (기본)';
 const expectUnavailableSearch=(fixture:ReturnType<typeof adapter>)=>{
   expect(fixture.doc.querySelector('.atsumi-x-save-notice')?.textContent).toBe('검색 서비스 연결 검증이 아직 끝나지 않았습니다. 미디어는 전송하지 않았습니다.');
   expect(fixture.messages()).toHaveLength(0);
@@ -76,16 +77,94 @@ function videoSearchFixture(quotedMedia=false,options:SearchOptions=enabledSearc
   vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockReturnValue({drawImage} as unknown as CanvasRenderingContext2D);
   a.visible();a.context(video);return {...a,video,seek,play,pause,drawImage,toDataURL};
 }
+const immersiveCell=(id='654321',author='selected')=>`<div data-testid="cellInnerDiv-tweet-${id}"><div data-testid="videoComponent"><video src="blob:https://x.com/${id}" poster="https://pbs.twimg.com/ext_tw_video_thumb/${id}/pu/img/frame.jpg"></video></div><div data-testid="immersive-video-controls-${id}"></div><button data-testid="immersive-tweet-back-button-${id}"></button><div data-testid="immersive-tweet-ui-content-container-${id}"><div data-testid="UserAvatar-Container-${author}"><a href="/${author}"><img alt="" src="https://pbs.twimg.com/profile_images/avatar.jpg"></a></div><a data-testid="tweetText" href="/${author}/status/${id}">Caption</a><a href="/attributed/status/987654">Source credit</a></div></div>`;
+function immersiveSearchFixture(path='/pinned/status/123456/mediaViewer?currentTweet=654321&currentTweetUser=selected',diagnostics=false) {
+  const a=adapter(immersiveCell()+immersiveCell('987654','neighbour'),{...enabledSearch,path,sourceViewer:true,diagnostics});
+  const cell=a.doc.querySelector('[data-testid="cellInnerDiv-tweet-654321"]')!,overlay=cell.querySelector('[data-testid="immersive-video-controls-654321"]')!,video=cell.querySelector('video')!;
+  showSearchTarget(video);Object.defineProperties(video,{videoWidth:{value:1280},videoHeight:{value:720},readyState:{value:2},mediaKeys:{value:null}});video.currentTime=7.5;
+  const drawImage=vi.fn(),play=vi.spyOn(video,'play'),pause=vi.spyOn(video,'pause'),seek=vi.spyOn(video,'currentTime','set');
+  vi.spyOn(HTMLCanvasElement.prototype,'toDataURL').mockReturnValue(jpeg);vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockReturnValue({drawImage} as unknown as CanvasRenderingContext2D);
+  a.visible();return {...a,cell,overlay,video,drawImage,play,pause,seek};
+}
+it.each(['mediaViewer','mediaviewer'])('binds immersive %s search to the current source item, not the pinned post or source credit',suffix=>{
+  const a=immersiveSearchFixture(`/pinned/status/123456/${suffix}?currentTweet=654321&currentTweetUser=selected`),before=a.location.href;
+  const event=a.context(a.overlay);expect(event.preventDefault).toHaveBeenCalled();expect(a.menuButton(thumbnailLabel)).toBeDefined();expect(a.menuButton('개별 다운로드')).toBeUndefined();
+  a.activate(a.menuButton('현재 장면으로 검색'));const intent=searchIntent(a);expect(intent.path).toBe('/selected/status/654321');
+  expect(a.win.__atsumiXActions!.takeSearch(intent.id)).toEqual({...intent,sourceUrl:before,dataUrl:jpeg,width:1280,height:720,time:7.5});
+  expect(a.drawImage).toHaveBeenCalledExactlyOnceWith(a.video,0,0,1280,720);expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();expect(a.seek).not.toHaveBeenCalled();expect(a.location.href).toBe(before);expect(a.actions()).toHaveLength(0);
+});
+it('accepts the original initial viewer item before currentTweet is published, including an empty caption',()=>{
+  const a=immersiveSearchFixture('/selected/status/654321/mediaViewer');a.cell.querySelector('[data-testid="tweetText"]')!.remove();a.context(a.video);a.activate(a.menuButton(thumbnailLabel));
+  const intent=searchIntent(a);expect(intent.path).toBe('/selected/status/654321');expect(a.win.__atsumiXActions!.takeSearch(intent.id)?.thumbnailUrl).toContain('/654321/');expect(a.drawImage).not.toHaveBeenCalled();
+});
+it('searches the source-published current video while its original playing HUD is unmounted',()=>{
+  const a=immersiveSearchFixture();a.cell.querySelector('[data-testid^="immersive-tweet-ui-content-container-"]')!.remove();a.context(a.overlay);
+  a.activate(a.menuButton('현재 장면으로 검색'));const intent=searchIntent(a);expect(intent.path).toBe('/selected/status/654321');expect(a.win.__atsumiXActions!.takeSearch(intent.id)?.time).toBe(7.5);
+  expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();expect(a.seek).not.toHaveBeenCalled();
+});
+it('reports only the actual closed context admission stage in debug builds and exposes no media or post identity',()=>{
+  const a=immersiveSearchFixture(undefined,true);a.context(a.overlay);
+  expect(a.win.__atsumiXActions!.contextDiagnostic()).toEqual({stage:'menuPlaced',trusted:true,visible:true,node:true,reason:'proved',menuConnected:true});
+  a.win.__atsumiXActions!.dismissMenus();expect(a.win.__atsumiXActions!.contextDiagnostic()?.menuConnected).toBe(false);
+  a.cell.querySelector('[data-testid="tweetText"]')!.setAttribute('href','/foreign/status/987654');a.context(a.overlay);
+  expect(a.win.__atsumiXActions!.contextDiagnostic()).toEqual({stage:'event',trusted:true,visible:true,node:true,reason:'caption',menuConnected:false});
+  const b=immersiveSearchFixture();b.context(b.overlay);expect(b.win.__atsumiXActions!.contextDiagnostic()).toBeNull();
+});
+it('also binds an own avatar wrapped by one exact profile anchor without borrowing other HUD profile links',()=>{
+  const a=immersiveSearchFixture(),avatar=a.cell.querySelector('[data-testid="UserAvatar-Container-selected"]')!,link=avatar.querySelector('a')!;
+  avatar.replaceWith(link);link.replaceChildren(avatar);a.context(a.overlay);a.activate(a.menuButton(thumbnailLabel));
+  expect(a.win.__atsumiXActions!.takeSearch(searchIntent(a).id)?.path).toBe('/selected/status/654321');
+});
+it.each(['missing','multiple','foreign','query','outside-hud'])('does not borrow an unrelated profile for an immersive %s avatar link',reason=>{
+  const a=immersiveSearchFixture(),avatar=a.cell.querySelector('[data-testid="UserAvatar-Container-selected"]')!,link=avatar.querySelector('a')!;
+  if(reason==='missing')link.remove();
+  if(reason==='multiple')avatar.append(link.cloneNode(true));
+  if(reason==='foreign')link.setAttribute('href','/attributed');
+  if(reason==='query')link.setAttribute('href','/selected?unproved=1');
+  if(reason==='outside-hud'){avatar.replaceChildren();const wrapper=a.doc.createElement('a');wrapper.href='/selected';a.cell.append(wrapper);wrapper.append(avatar);}
+  const event=a.context(a.overlay);expect(event.preventDefault).not.toHaveBeenCalled();expect(a.menuButton('현재 장면으로 검색')).toBeUndefined();expect(a.messages()).toHaveLength(0);
+});
+it.each(['unverified','partial-query','duplicate-query','wrong-author','wrong-caption','missing-avatar','duplicate-cell','missing-overlay','duplicate-video','missing-back','duplicate-hud','ad','neighbour','hidden','ordinary-route'])('rejects an unproved immersive %s search target',reason=>{
+  const a=immersiveSearchFixture();let target:Element=a.overlay;
+  if(reason==='unverified')a.win.__atsumiXSurface.sourceMediaViewerAvailable=()=>false;
+  if(reason==='partial-query')a.location.href='https://x.com/pinned/status/123456/mediaViewer?currentTweet=654321';
+  if(reason==='duplicate-query')a.location.href+='&currentTweet=654321';
+  if(reason==='wrong-author')a.location.href=a.location.href.replace('currentTweetUser=selected','currentTweetUser=foreign');
+  if(reason==='wrong-caption')a.cell.querySelector('a[data-testid="tweetText"]')!.setAttribute('href','/pinned/status/123456');
+  if(reason==='missing-avatar')a.cell.querySelector('[data-testid^="UserAvatar-Container-"]')!.remove();
+  if(reason==='duplicate-cell')a.doc.body.append(a.cell.cloneNode(true));
+  if(reason==='missing-overlay')a.overlay.remove();
+  if(reason==='duplicate-video')a.video.parentElement!.append(a.video.cloneNode(true));
+  if(reason==='missing-back')a.cell.querySelector('button')!.remove();
+  if(reason==='duplicate-hud')a.cell.append(a.cell.querySelector('[data-testid^="immersive-tweet-ui-content-container-"]')!.cloneNode(true));
+  if(reason==='ad'){const ad=a.doc.createElement('span');ad.dataset.testid='immersive-tweet-ad-label';a.cell.append(ad);}
+  if(reason==='neighbour')target=a.doc.querySelector('[data-testid="immersive-video-controls-987654"]')!;
+  if(reason==='hidden')a.video.style.visibility='hidden';
+  if(reason==='ordinary-route'){a.location.href='https://x.com/pinned/status/123456';a.location.pathname='/pinned/status/123456';}
+  const event=a.context(target);expect(event.preventDefault).not.toHaveBeenCalled();expect(a.menuButton('현재 장면으로 검색')).toBeUndefined();expect(a.messages()).toHaveLength(0);expect(a.drawImage).not.toHaveBeenCalled();
+});
+it.each(['selection','resource','visibility'])('rechecks immersive %s identity both on activation and one-shot intake',change=>{
+  for(const afterActivation of [false,true]){
+    const a=immersiveSearchFixture();a.context(a.overlay);const button=a.menuButton('현재 장면으로 검색');expect(button).toBeDefined();
+    if(afterActivation)a.activate(button);
+    if(change==='selection')a.location.href=a.location.href.replace('currentTweet=654321','currentTweet=987654').replace('currentTweetUser=selected','currentTweetUser=neighbour');
+    if(change==='resource')a.video.src='blob:https://x.com/recycled';
+    if(change==='visibility')a.win.__atsumiXActions!.visibility(false);
+    if(afterActivation)expect(a.win.__atsumiXActions!.takeSearch(searchIntent(a).id)).toBeNull();
+    else{a.activate(button);expect(a.messages().some(item=>item.kind==='search')).toBe(false);expect(a.drawImage).not.toHaveBeenCalled();}
+    expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();expect(a.seek).not.toHaveBeenCalled();
+  }
+});
 it.each([undefined,false,'true',1,null])("keeps search dormant without explicit native capability (%s) while preserving downloads and external choices",searchEnabled=>{
   const options={...enabledSearch,searchEnabled};
   const a=adapter(undefined,options),target=a.doc.querySelector('#image')!;showSearchTarget(target);a.visible();a.context(target);
-  expect(a.menuButton('작가·원본 찾기')).toBeUndefined();expect(a.menuButton('전체')).toBeDefined();expect(a.menuButton('외부 브라우저에서 열기')).toBeDefined();
-  a.activate(a.menuButton('전체'));expect(a.actions()).toHaveLength(1);expect(a.actions()[0]).toMatchObject({kind:'all',path:'/creator/status/123456'});
+  expect(a.menuButton('작가·원본 찾기')).toBeUndefined();expect(a.menuButton('전체 다운로드')).toBeDefined();expect(a.menuButton('외부 브라우저에서 열기')).toBeDefined();
+  a.activate(a.menuButton('전체 다운로드'));expect(a.actions()).toHaveLength(1);expect(a.actions()[0]).toMatchObject({kind:'all',path:'/creator/status/123456'});
   a.context(target);a.activate(a.menuButton('외부 브라우저에서 열기'));expect(a.messages().at(-1)).toEqual({kind:'external',value:'/creator/status/123456'});
   const video=videoSearchFixture(false,options);expect(video.menuButton('현재 장면으로 검색')).toBeUndefined();
   expect(video.drawImage).not.toHaveBeenCalled();expect(video.toDataURL).not.toHaveBeenCalled();expect(video.doc.querySelector('canvas')).toBeNull();
   const photo=photoAdapter(undefined,options);photo.visible();photo.context(photo.doc.querySelector('#full-photo')!);
-  expect(photo.menuButton('작가·원본 찾기')).toBeUndefined();expect(photo.menuButton('개별')).toBeDefined();expect(photo.menuButton('외부 브라우저에서 열기')).toBeDefined();
+  expect(photo.menuButton('작가·원본 찾기')).toBeUndefined();expect(photo.menuButton('개별 다운로드')).toBeDefined();expect(photo.menuButton('외부 브라우저에서 열기')).toBeDefined();
   const quote=adapter(tweet(quoted),options);quote.visible();const quoteEvent=quote.context(quote.doc.querySelector('#quote-image')!);
   expect(quoteEvent.preventDefault).not.toHaveBeenCalled();expect(quote.doc.querySelector('[role="menu"]')).toBeNull();
   for(const fixture of [a,video,photo,quote]){
@@ -101,7 +180,7 @@ it.each([
   const options={searchEnabled:true,searchCapabilities};
   const a=adapter(undefined,options),target=a.doc.querySelector('#image')!;showSearchTarget(target);a.visible();a.context(target);
   expect(a.menuButton('작가·원본 찾기')).toBeDefined();
-  expect(a.menuButton('전체')).toBeDefined();expect(a.menuButton('외부 브라우저에서 열기')).toBeDefined();
+  expect(a.menuButton('전체 다운로드')).toBeDefined();expect(a.menuButton('외부 브라우저에서 열기')).toBeDefined();
   a.activate(a.menuButton('작가·원본 찾기'));
   if(searchCapabilities.image){const intent=searchIntent(a);expect(a.win.__atsumiXActions!.takeSearch(intent.id)?.provider).toBe('saucenao');}
   else expectUnavailableSearch(a);
@@ -109,7 +188,7 @@ it.each([
   if(searchCapabilities.video){const intent=searchIntent(video);expect(video.win.__atsumiXActions!.takeSearch(intent.id)?.provider).toBe('lens');expect(video.drawImage).toHaveBeenCalledOnce();}
   else{expectUnavailableSearch(video);expect(video.drawImage).not.toHaveBeenCalled();expect(video.toDataURL).not.toHaveBeenCalled();}
   const photo=photoAdapter(undefined,options);photo.visible();photo.context(photo.doc.querySelector('#full-photo')!);
-  expect(photo.menuButton('작가·원본 찾기')).toBeDefined();expect(photo.menuButton('개별')).toBeDefined();photo.activate(photo.menuButton('작가·원본 찾기'));
+  expect(photo.menuButton('작가·원본 찾기')).toBeDefined();expect(photo.menuButton('개별 다운로드')).toBeDefined();photo.activate(photo.menuButton('작가·원본 찾기'));
   if(searchCapabilities.image)expect(photo.win.__atsumiXActions!.takeSearch(searchIntent(photo).id)?.provider).toBe('saucenao');
   else expectUnavailableSearch(photo);
   const quote=adapter(tweet(quoted),options),quotedImage=quote.doc.querySelector('#quote-image')!;showSearchTarget(quotedImage);quote.visible();const event=quote.context(quotedImage);
@@ -117,7 +196,7 @@ it.each([
   if(searchCapabilities.image)expect(quote.win.__atsumiXActions!.takeSearch(searchIntent(quote).id)?.provider).toBe('saucenao');
   else expectUnavailableSearch(quote);
   const quotedVideo=videoSearchFixture(true,options);expect(quotedVideo.menuButton('현재 장면으로 검색')).toBeDefined();
-  expect(quotedVideo.menuButton('개별')).toBeUndefined();
+  expect(quotedVideo.menuButton('개별 다운로드')).toBeUndefined();
   quotedVideo.activate(quotedVideo.menuButton('현재 장면으로 검색'));
   if(searchCapabilities.video)expect(quotedVideo.win.__atsumiXActions!.takeSearch(searchIntent(quotedVideo).id)?.provider).toBe('lens');
   else{expectUnavailableSearch(quotedVideo);expect(quotedVideo.drawImage).not.toHaveBeenCalled();expect(quotedVideo.toDataURL).not.toHaveBeenCalled();}
@@ -128,7 +207,7 @@ it.each([undefined,null,false,true,'true',[],{image:true},{video:true},{image:tr
   "keeps search menus visible but reports malformed readiness without capture or dispatch: %j",searchCapabilities=>{
     const options={searchEnabled:true,searchCapabilities};
     const a=adapter(undefined,options),target=a.doc.querySelector('#image')!;showSearchTarget(target);a.visible();a.context(target);
-    expect(a.menuButton('작가·원본 찾기')).toBeDefined();expect(a.menuButton('전체')).toBeDefined();a.activate(a.menuButton('작가·원본 찾기'));
+    expect(a.menuButton('작가·원본 찾기')).toBeDefined();expect(a.menuButton('전체 다운로드')).toBeDefined();a.activate(a.menuButton('작가·원본 찾기'));
     const video=videoSearchFixture(false,options);expect(video.menuButton('현재 장면으로 검색')).toBeDefined();video.activate(video.menuButton('현재 장면으로 검색'));expect(video.drawImage).not.toHaveBeenCalled();expect(video.toDataURL).not.toHaveBeenCalled();
     const photo=photoAdapter(undefined,options);photo.visible();photo.context(photo.doc.querySelector('#full-photo')!);expect(photo.menuButton('작가·원본 찾기')).toBeDefined();photo.activate(photo.menuButton('작가·원본 찾기'));
     const quote=adapter(tweet(quoted),options),quotedImage=quote.doc.querySelector('#quote-image')!;showSearchTarget(quotedImage);quote.visible();quote.context(quotedImage);expect(quote.menuButton('작가·원본 찾기')).toBeDefined();quote.activate(quote.menuButton('작가·원본 찾기'));
@@ -164,12 +243,69 @@ it("captures only current decoded video pixels for Lens without seeking or chang
   expect(a.seek).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
   expect(JSON.stringify(a.messages())).not.toContain('base64');expect(JSON.stringify(a.messages())).not.toContain('frame.jpg');
 });
+it("offers the exact poster as the first video search, including before metadata or playback",()=>{
+  const a=videoSearchFixture();Object.defineProperties(a.video,{currentTime:{value:0},readyState:{value:0},videoWidth:{value:0},videoHeight:{value:0}});
+  const labels=[...a.doc.querySelectorAll('[role="menuitem"]')].map(node=>node.textContent);
+  expect(labels.indexOf(thumbnailLabel)).toBeGreaterThanOrEqual(0);expect(labels.indexOf(thumbnailLabel)).toBeLessThan(labels.indexOf('현재 장면으로 검색'));
+  a.activate(a.menuButton(thumbnailLabel));const intent=searchIntent(a);
+  expect(intent).toMatchObject({kind:'thumbnail',provider:'lens'});
+  expect(a.win.__atsumiXActions!.takeSearch(intent.id)).toEqual({...intent,sourceUrl:'https://x.com/home',thumbnailUrl:a.video.poster});
+  expect(a.drawImage).not.toHaveBeenCalled();expect(a.toDataURL).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();expect(a.seek).not.toHaveBeenCalled();
+});
+it.each(['missing','foreign','profile','token','relative','svg','encoded','duplicate','changed'])("never substitutes a video frame or another image for an invalid %s poster",reason=>{
+  const a=videoSearchFixture();
+  const invalid:Record<string,string>={missing:'',foreign:'https://evil.test/poster.jpg',profile:'https://pbs.twimg.com/profile_images/123/a.jpg',token:'https://pbs.twimg.com/tweet_video_thumb/a.jpg?token=secret',relative:'/poster.jpg',svg:'https://pbs.twimg.com/tweet_video_thumb/a.svg',encoded:'https://pbs.twimg.com/tweet_video_thumb/a%2ejpg',duplicate:'https://pbs.twimg.com/tweet_video_thumb/a.jpg?name=small&name=large'};
+  if(reason!=='changed'){a.video.poster=invalid[reason]!;a.context(a.video);}
+  const choice=a.menuButton(thumbnailLabel);expect(choice).toBeDefined();
+  if(reason==='changed')a.video.poster='https://pbs.twimg.com/amplify_video_thumb/222/img/Changed.jpg';
+  a.activate(choice);expect(a.messages().some(message=>message.kind==='search')).toBe(false);expect(a.drawImage).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();
+  expect(a.doc.querySelector('.atsumi-x-save-notice')?.textContent).toMatch(/썸네일|변경/);
+});
+it("binds thumbnail selection to the exact quoted video and rechecks it before native handoff",()=>{
+  const a=videoSearchFixture(true);a.activate(a.menuButton(thumbnailLabel));const intent=searchIntent(a);
+  expect(intent.kind).toBe('thumbnail');a.video.poster='https://pbs.twimg.com/tweet_video_thumb/changed.jpg';
+  expect(a.win.__atsumiXActions!.takeSearch(intent.id)).toBeNull();expect(a.actions()).toHaveLength(0);
+});
+it("searches an explicitly rendered video thumbnail before a video element has been hydrated",()=>{
+  const url='https://pbs.twimg.com/amplify_video_thumb/123456/img/Poster.jpg?name=small';
+  const a=adapter(tweet(`<div data-testid="videoPlayer"><img id="poster-only" src="${url}"></div>`),enabledSearch),poster=a.doc.querySelector('#poster-only')!;
+  showSearchTarget(poster);Object.defineProperties(poster,{complete:{value:true},naturalWidth:{value:640},naturalHeight:{value:360}});a.visible();a.context(poster);
+  expect(a.menuButton('현재 장면으로 검색')).toBeUndefined();a.activate(a.menuButton(thumbnailLabel));
+  expect(a.win.__atsumiXActions!.takeSearch(searchIntent(a).id)).toMatchObject({kind:'thumbnail',provider:'lens',thumbnailUrl:url});
+});
+it("gates thumbnail search on the video provider capability without blocking ordinary menu actions",()=>{
+  const a=videoSearchFixture(false,{searchEnabled:true,searchCapabilities:{image:true,video:false}});
+  expect(a.menuButton(thumbnailLabel)).toBeDefined();a.activate(a.menuButton(thumbnailLabel));expectUnavailableSearch(a);expect(a.drawImage).not.toHaveBeenCalled();
+});
+it.each([true,false])("does not send a never-played time-zero frame hidden behind the initial display (poster=%s)",poster=>{
+  const a=videoSearchFixture();Object.defineProperty(a.video,'currentTime',{value:0});
+  if(!poster)a.video.removeAttribute('poster');
+  expect(a.video.paused).toBe(true);expect(a.video.played.length).toBe(0);
+  a.activate(a.menuButton('현재 장면으로 검색'));
+  expect(a.messages().some(message=>message.kind==='search')).toBe(false);
+  expect(a.drawImage).not.toHaveBeenCalled();expect(a.toDataURL).not.toHaveBeenCalled();
+  expect(a.doc.querySelector('.atsumi-x-save-notice')?.textContent).toContain('영상을 한 번 재생');
+  expect(a.seek).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
+});
+it("allows a paused return to the first frame after actual playback without changing the video",()=>{
+  const a=videoSearchFixture();Object.defineProperties(a.video,{currentTime:{value:0},played:{value:{length:1,start:()=>0,end:()=>1}}});
+  a.activate(a.menuButton('현재 장면으로 검색'));
+  expect(a.win.__atsumiXActions!.takeSearch(searchIntent(a).id)).toMatchObject({time:0,dataUrl:jpeg});
+  expect(a.drawImage).toHaveBeenCalledOnce();expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();expect(a.seek).not.toHaveBeenCalled();
+});
+it("does not capture a previous decoded image while the selected video is seeking",()=>{
+  const a=videoSearchFixture();Object.defineProperty(a.video,'seeking',{value:true});
+  a.activate(a.menuButton('현재 장면으로 검색'));
+  expect(a.messages().some(message=>message.kind==='search')).toBe(false);expect(a.drawImage).not.toHaveBeenCalled();
+  expect(a.doc.querySelector('.atsumi-x-save-notice')?.textContent).toContain('장면 이동이 끝난 뒤');
+  expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();expect(a.seek).not.toHaveBeenCalled();
+});
 it("searches exact quoted media without borrowing parent media or granting quoted download ownership",()=>{
   const a=adapter(tweet(quoted),enabledSearch),image=a.doc.querySelector('#quote-image')!;showSearchTarget(image);a.visible();a.context(image);
-  expect(a.menuButton('개별')).toBeUndefined();expect(a.menuButton('전체')).toBeUndefined();expect(a.menuButton('게시물 보관')).toBeUndefined();
+  expect(a.menuButton('개별 다운로드')).toBeUndefined();expect(a.menuButton('전체 다운로드')).toBeUndefined();expect(a.menuButton('게시물 보관')).toBeUndefined();
   a.activate(a.menuButton('작가·원본 찾기'));const request=searchIntent(a),payload=a.win.__atsumiXActions!.takeSearch(request.id);
   expect(payload?.imageUrl).toBe('https://pbs.twimg.com/media/Quote?format=jpg');expect(payload?.path).toBe('/creator/status/123456');expect(payload).not.toHaveProperty('artist');
-  const b=videoSearchFixture(true);expect(b.menuButton('개별')).toBeUndefined();b.activate(b.menuButton('현재 장면으로 검색'));
+  const b=videoSearchFixture(true);expect(b.menuButton('개별 다운로드')).toBeUndefined();b.activate(b.menuButton('현재 장면으로 검색'));
   expect(b.win.__atsumiXActions!.takeSearch(searchIntent(b).id)?.dataUrl).toBe(jpeg);expect(b.drawImage.mock.calls[0]?.[0]).toBe(b.video);
 });
 it("rejects quoted media moved to another quote or ambiguous grouped media before capture",()=>{
@@ -769,6 +905,49 @@ function provedCarousel(options:{path?:string;photoOwner?:string;diagnostics?:bo
   };
   return {...a,slide,place};
 }
+const threadPlaceholder='<li><div data-testid="swipe-to-dismiss"><div><div aria-label="placeholder"><div></div><img alt="placeholder" src="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%221%22%20height=%221%22%3E%3C/svg%3E"></div></div></div></li>';
+function threadCarousel(leading=true,trailing=true) {
+  const a=provedCarousel({diagnostics:true});
+  const list=a.doc.querySelector("ul")!;
+  if(leading)list.insertAdjacentHTML("afterbegin",threadPlaceholder);
+  if(trailing)list.insertAdjacentHTML("beforeend",threadPlaceholder);
+  const placeholders=[...list.querySelectorAll<HTMLImageElement>('img[alt="placeholder"]')];
+  for(const imageNode of placeholders){
+    for(const node of [imageNode,...imageNode.closest("li")!.querySelectorAll("div"),imageNode.closest("li")!]){
+      vi.spyOn(node,"getBoundingClientRect").mockReturnValue({x:710,y:50,left:710,top:50,right:1350,bottom:690,width:640,height:640,toJSON:()=>({})});
+    }
+  }
+  const select=(ordinal:number)=>{
+    a.slide(ordinal);
+    a.doc.querySelector("span")!.textContent=`슬라이드 ${ordinal+Number(leading)}/${list.children.length} - 회전 슬라이드`;
+  };
+  select(1);
+  return {...a,list,placeholders,select};
+}
+it.each([[true,true],[true,false],[false,true]])("keeps local photo identity with official thread boundary placeholders (%s/%s)",(leading,trailing)=>{
+  for(const ordinal of [1,2]){
+    const a=threadCarousel(leading,trailing);a.select(ordinal);a.visible();
+    expect(a.win.__atsumiXActions!.photoDiagnostic()).toMatchObject({reason:"ready",carouselProof:"ready",controlPresent:true});
+    a.activate(a.doc.querySelector<HTMLButtonElement>('[data-atsumi-photo-save]')!);
+    expect(a.actions()[0]).toMatchObject({kind:"one",path:"/creator/status/123456",media:ordinal===1?image:otherImage});
+  }
+});
+it("supports four local photos plus two observed thread placeholders without widening route ordinals",()=>{
+  const a=threadCarousel();a.list.insertBefore(a.doc.createElement("li"),a.list.lastElementChild);a.list.insertBefore(a.doc.createElement("li"),a.list.lastElementChild);
+  a.select(2);a.visible();
+  expect(a.win.__atsumiXActions!.photoDiagnostic()).toMatchObject({reason:"ready",carouselProof:"ready"});
+  a.location.pathname="/creator/status/123456/photo/5";a.win.__atsumiXActions!.update();
+  expect(a.doc.querySelector('[data-atsumi-photo-save]')).toBeNull();
+});
+it.each(["interior","real image","missing marker","wrong counter","exposed placeholder"])("rejects ambiguous thread slide evidence: %s",change=>{
+  const a=threadCarousel();
+  if(change==="interior")a.list.insertBefore(a.list.firstElementChild!,a.list.children[2]!);
+  if(change==="real image")a.placeholders[0]!.src="https://example.org/other.jpg";
+  if(change==="missing marker")a.placeholders[0]!.parentElement!.removeAttribute("aria-label");
+  if(change==="wrong counter")a.doc.querySelector("span")!.textContent="슬라이드 1/4 - 회전 슬라이드";
+  if(change==="exposed placeholder")for(const node of [a.placeholders[0]!,...a.placeholders[0]!.closest("li")!.querySelectorAll("div"),a.placeholders[0]!.closest("li")!])vi.mocked(node.getBoundingClientRect).mockReturnValue({x:60,y:50,left:60,top:50,right:700,bottom:690,width:640,height:640,toJSON:()=>({})});
+  a.visible();expect(a.doc.querySelector('[data-atsumi-photo-save]')).toBeNull();expect(a.actions()).toHaveLength(0);
+});
 it.each<[string,string,(a:ReturnType<typeof provedCarousel>)=>void]>([
   ["missing counter","counterMissing",a=>a.doc.querySelector("span")!.remove()],
   ["mismatched counter","counterMismatch",a=>{a.doc.querySelector("span")!.textContent="슬라이드 2/2 - 회전 슬라이드";}],
@@ -914,12 +1093,12 @@ it("does not borrow a deduplicated identical resource from another slide to prov
 });
 it("rechecks the photo binding when a stale context menu is activated after a slide change",()=>{
   const a=provedCarousel();a.visible();a.context(a.doc.querySelector("#full-photo")!);
-  const old=a.menuButton("개별");
+  const old=a.menuButton("개별 다운로드");
   expect(old).not.toBeUndefined();
   a.slide(2);a.activate(old);
   expect(a.actions()).toHaveLength(0);
   a.win.__atsumiXActions!.update();a.context(a.doc.querySelector("#other-photo")!);
-  a.activate(a.menuButton("개별"));
+  a.activate(a.menuButton("개별 다운로드"));
   expect(a.actions().at(-1)).toMatchObject({media:otherImage});
 });
 it("settles a photo only on bounded source load, transition or resize and cancels stale owners/routes/visibility",()=>{
@@ -1135,7 +1314,7 @@ it.each([
   expect(a.doc.querySelectorAll('[data-atsumi-media-save]')).toHaveLength(2);
   expect(a.doc.querySelectorAll('#outer > [data-atsumi-media-rail] > [data-atsumi-media-save]')).toHaveLength(1);
   expect(a.doc.querySelector('#inner [data-atsumi-media-save]')).toBeNull();
-  a.context(a.doc.querySelector("video")!);a.activate(a.menuButton("개별"));
+  a.context(a.doc.querySelector("video")!);a.activate(a.menuButton("개별 다운로드"));
   expect(a.actions()[0]).toMatchObject({kind:"one",media:poster});
 });
 it("reconciles existing controls when native hydration wraps, replaces or unwraps a media boundary",()=>{
@@ -1159,10 +1338,10 @@ it("reconciles existing controls when native hydration wraps, replaces or unwrap
 it("keeps separate sibling media controls and their observed one-media selectors independent",()=>{
   const a=adapter(tweet('<div id="sibling" data-testid="tweetPhoto"><img id="other-image" src="'+otherImage+'"></div>'));a.visible();
   expect(a.doc.querySelectorAll('[data-atsumi-media-save]')).toHaveLength(2);
-  a.context(a.doc.querySelector("#other-image")!);a.activate(a.menuButton("개별"));
+  a.context(a.doc.querySelector("#other-image")!);a.activate(a.menuButton("개별 다운로드"));
   expect(a.actions()[0]).toMatchObject({kind:"one",media:otherImage});
   a.win.__atsumiXActions!.result(a.actions()[0].id,"done","Saved");
-  a.context(a.doc.querySelector("#image")!);a.activate(a.menuButton("개별"));
+  a.context(a.doc.querySelector("#image")!);a.activate(a.menuButton("개별 다운로드"));
   expect(a.actions()[1]).toMatchObject({kind:"one",media:image});
 });
 it.each(["https://evil.test/media.jpg","https://pbs.twimg.com.evil.test/media.jpg","http://pbs.twimg.com/media.jpg","https://pbs.twimg.com:444/media.jpg","https://user:pass@pbs.twimg.com/media.jpg","https://pbs.twimg.com/media.jpg#fragment","file:///C:/private.jpg"])("never submits an unadmitted displayed media selector %s",url=>{
@@ -1219,8 +1398,11 @@ it("does not intercept exact author/quoted links or linkless quoted text as the 
 it("offers one/all media and external context actions for the exact owned media",()=>{
   const a=adapter();a.visible();const e=a.context(a.doc.querySelector("#image")!);
   expect(e.preventDefault).toHaveBeenCalledOnce();expect(e.stopImmediatePropagation).toHaveBeenCalledOnce();
-  expect(a.menuButton("개별")).not.toBeUndefined();expect(a.menuButton("게시물 보관")).not.toBeUndefined();
-  a.activate(a.menuButton("외부 브라우저에서 열기"));expect(a.messages()).toEqual([{kind:"external",value:"/creator/status/123456"}]);
+  expect(a.menuButton("개별 다운로드")).not.toBeUndefined();expect(a.menuButton("게시물 보관")).not.toBeUndefined();
+  const choice=a.menuButton("외부 브라우저에서 열기"),icon=choice.querySelector("svg path")!;
+  expect(choice.textContent).toBe("외부 브라우저에서 열기");expect(icon).not.toBeNull();
+  a.activate(choice,{target:icon,isTrusted:false});expect(a.messages()).toHaveLength(0);
+  a.activate(choice,{target:icon});expect(a.messages()).toEqual([{kind:"external",value:"/creator/status/123456"}]);
 });
 it("opens body/comment selection only through the trusted current-post context choice",()=>{
   const a=adapter();a.visible();a.context(a.doc.querySelector("#image")!);
@@ -1290,8 +1472,8 @@ it("offers only the current observed photo on article-less full-page routes with
   expect(a.doc.querySelector('[data-atsumi-post-save],[data-atsumi-media-save]')).toBeNull();
   a.emit(button,"pointerenter",a.event(button));expect(a.doc.querySelector('[role="menu"]')).toBeNull();
   a.context(a.doc.querySelector("#full-photo")!);expect(a.doc.querySelectorAll('[role="menuitem"]')).toHaveLength(2);
-  expect(a.menuButton("전체")).toBeUndefined();expect(a.menuButton("본문·댓글 선택 보관")).toBeUndefined();
-  a.activate(a.menuButton("개별"));
+  expect(a.menuButton("전체 다운로드")).toBeUndefined();expect(a.menuButton("본문·댓글 선택 보관")).toBeUndefined();
+  a.activate(a.menuButton("개별 다운로드"));
   expect(a.actions()[0]).toMatchObject({path:"/creator/status/123456",kind:"one",media:image});
   a.win.__atsumiXActions!.result(a.actions()[0].id,"done","Saved");a.activate(button);
   expect(a.actions()[1]).toMatchObject({path:"/creator/status/123456",kind:"one",media:image});
@@ -1302,15 +1484,175 @@ it("reveals the standalone photo button only over the proved photo/control or ke
   a.emit(a.doc,"pointerover",a.event(photo,{isTrusted:false}));expect(button.hasAttribute("data-media-hover")).toBe(false);
   a.emit(a.doc,"pointerover",a.event(photo));expect(button.hasAttribute("data-media-hover")).toBe(true);
   a.emit(a.doc,"pointerout",a.event(photo,{relatedTarget:button}));expect(button.hasAttribute("data-media-hover")).toBe(true);
-  a.emit(a.doc,"pointerout",a.event(button,{relatedTarget:a.doc.body}));expect(button.hasAttribute("data-media-hover")).toBe(false);
+  a.emit(a.doc,"pointerout",a.event(button,{relatedTarget:a.doc.body,clientX:750,clientY:800}));expect(button.hasAttribute("data-media-hover")).toBe(false);
   a.emit(a.doc,"pointerover",a.event(a.doc.body));expect(button.hasAttribute("data-media-hover")).toBe(false);
   expect(a.doc.querySelector("style")!.textContent).toContain(".atsumi-x-photo-action[data-media-hover],.atsumi-x-photo-action:focus{opacity:1;pointer-events:auto}");
   expect(a.actions()).toHaveLength(0);
 });
+const photoRect=(left:number,top:number,width:number,height:number)=>({x:left,y:top,left,top,right:left+width,bottom:top+height,width,height,toJSON:()=>({})});
+const photoButtonRect=(button:HTMLElement)=>photoRect(Number.parseFloat(button.style.left),Number.parseFloat(button.style.top),32,32);
+const overlap=(a:DOMRect|ReturnType<typeof photoRect>,b:DOMRect|ReturnType<typeof photoRect>)=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
+it("places the photo action clear of native ellipsis hitboxes without changing their layout or gestures",()=>{
+  const a=photoAdapter(photoHtml+'<button id="native-more" aria-label="More">…</button><a id="native-link" href="/settings">Settings</a>');
+  const more=a.doc.querySelector<HTMLElement>('#native-more')!,link=a.doc.querySelector<HTMLElement>('#native-link')!;
+  vi.mocked(more.getBoundingClientRect).mockReturnValue(photoRect(652,50,48,48));
+  vi.mocked(link.getBoundingClientRect).mockReturnValue(photoRect(612,50,40,48));
+  const before=[more.outerHTML,link.outerHTML];a.visible();
+  const button=a.doc.querySelector<HTMLElement>('[data-atsumi-photo-save]')!;
+  expect(button).not.toBeNull();expect(overlap(photoButtonRect(button),more.getBoundingClientRect())).toBe(false);
+  expect(overlap(photoButtonRect(button),link.getBoundingClientRect())).toBe(false);
+  expect([more.outerHTML,link.outerHTML]).toEqual(before);
+  for(const type of ['pointerdown','pointerup','mousedown','mouseup','click']){
+    const event=a.event(more,{button:0});a.emit(a.doc,type,event);expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+  }
+});
+it("keeps the photo action reachable across a noninteractive image wrapper and its padded control bridge",()=>{
+  const a=photoAdapter();a.visible();
+  const button=a.doc.querySelector<HTMLButtonElement>('[data-atsumi-photo-save]')!,photo=a.doc.querySelector('#full-photo')!,host=a.doc.querySelector('#photo-host')!;
+  a.emit(a.doc,'pointerover',a.event(photo));expect(button.hasAttribute('data-media-hover')).toBe(true);
+  a.emit(a.doc,'pointerout',a.event(photo,{relatedTarget:host,clientX:658,clientY:62}));
+  a.emit(a.doc,'pointerover',a.event(host,{clientX:658,clientY:62}));expect(button.hasAttribute('data-media-hover')).toBe(true);
+  a.emit(a.doc,'pointermove',a.event(host,{clientX:668,clientY:62}));expect(button.hasAttribute('data-media-hover')).toBe(true);
+  a.emit(a.doc,'pointerover',a.event(button,{clientX:668,clientY:62}));a.activate(button);
+  expect(a.actions()).toHaveLength(1);expect(a.actions()[0]).toMatchObject({kind:'one',media:image,path:'/creator/status/123456'});
+  a.emit(a.doc,'pointermove',a.event(host,{clientX:750,clientY:800}));expect(button.hasAttribute('data-media-hover')).toBe(false);
+  a.emit(a.doc,'pointermove',a.event(host,{clientX:668,clientY:62}));expect(button.hasAttribute('data-media-hover')).toBe(false);
+});
+it.each(['image','route','owner','scope'])('revokes the reachable photo action before a %s change is reconciled',change=>{
+  const a=photoAdapter('<div id="photo-dialog" role="dialog">'+photoHtml+'</div>');a.visible();
+  const button=a.doc.querySelector<HTMLButtonElement>('[data-atsumi-photo-save]')!,photo=a.doc.querySelector('#full-photo')!;
+  a.emit(a.doc,'pointerover',a.event(photo));expect(button.hasAttribute('data-media-hover')).toBe(true);
+  if(change==='image')photo.setAttribute('src',otherImage);
+  else if(change==='route')a.location.pathname='/creator/status/123456/photo/2';
+  else if(change==='owner')a.proof.mockReturnValue('bob');
+  else{const next=a.doc.createElement('div');next.setAttribute('role','dialog');next.append(a.doc.querySelector('#photo-host')!);a.doc.querySelector('#photo-dialog')!.replaceWith(next);}
+  a.activate(button);expect(a.actions()).toHaveLength(0);
+  a.emit(a.doc,'pointermove',a.event(button));expect(button.hasAttribute('data-media-hover')).toBe(false);
+  expect(a.win.__atsumiXActions!.ownsPhotoControl(button)).toBe(false);
+});
+it("keeps the off-image bridge reachable without revealing it from unrelated background movement",()=>{
+  const a=photoAdapter(),photo=a.doc.querySelector<HTMLElement>('#full-photo')!;
+  vi.mocked(photo.getBoundingClientRect).mockReturnValue(photoRect(780,50,20,200));a.visible();
+  const button=a.doc.querySelector<HTMLButtonElement>('[data-atsumi-photo-save]')!;
+  a.emit(a.doc,'pointerover',a.event(a.doc.body,{clientX:778,clientY:62}));expect(button.hasAttribute('data-media-hover')).toBe(false);
+  a.emit(a.doc,'pointerover',a.event(photo,{clientX:790,clientY:62}));
+  a.emit(a.doc,'pointerout',a.event(photo,{relatedTarget:a.doc.body,clientX:778,clientY:62}));expect(button.hasAttribute('data-media-hover')).toBe(true);
+  a.emit(a.doc,'pointermove',a.event(a.doc.body,{clientX:770,clientY:62}));expect(button.hasAttribute('data-media-hover')).toBe(true);
+  a.emit(a.doc,'pointerover',a.event(button,{clientX:770,clientY:62}));a.activate(button);expect(a.actions()[0]).toMatchObject({kind:'one',media:image});
+  a.emit(a.doc,'pointerout',a.event(button,{relatedTarget:null}));expect(button.hasAttribute('data-media-hover')).toBe(false);
+});
+it.each([photoRect(-20,-20,50,50),photoRect(780,870,40,40),photoRect(10,10,12,12),photoRect(120,50,200,700)])(
+  'keeps a clipped or small photo control inside the viewport (%j)',rect=>{
+    const a=photoAdapter();vi.mocked(a.doc.querySelector<HTMLElement>('#full-photo')!.getBoundingClientRect).mockReturnValue(rect);a.visible();
+    const button=a.doc.querySelector<HTMLElement>('[data-atsumi-photo-save]')!;expect(button).not.toBeNull();const bounds=photoButtonRect(button);
+    expect(bounds.left).toBeGreaterThanOrEqual(8);expect(bounds.top).toBeGreaterThanOrEqual(8);
+    expect(bounds.right).toBeLessThanOrEqual(792);expect(bounds.bottom).toBeLessThanOrEqual(892);
+  },
+);
+it("repositions the same focused photo control after a resize without changing photo keyboard ownership",()=>{
+  const a=photoAdapter(photoHtml+'<button id="native-more">…</button>'),photo=a.doc.querySelector<HTMLElement>('#full-photo')!,more=a.doc.querySelector<HTMLElement>('#native-more')!;
+  vi.mocked(more.getBoundingClientRect).mockReturnValue(photoRect(652,50,48,48));a.visible();
+  const button=a.doc.querySelector<HTMLButtonElement>('[data-atsumi-photo-save]')!,focus=vi.spyOn(button,'focus');
+  a.emit(button,'focus',a.event(button));const previous=button.style.left;
+  vi.mocked(photo.getBoundingClientRect).mockReturnValue(photoRect(100,50,400,640));
+  vi.mocked(more.getBoundingClientRect).mockReturnValue(photoRect(452,50,48,48));
+  a.emit(a.windowEvents,'resize',{type:'resize',isTrusted:true});expect(a.timers).toHaveLength(1);a.timers[0]!();
+  expect(a.doc.querySelector('[data-atsumi-photo-save]')).toBe(button);expect(button.style.left).not.toBe(previous);
+  expect(overlap(photoButtonRect(button),more.getBoundingClientRect())).toBe(false);
+  expect(a.win.__atsumiXActions!.ownsPhotoControl(button)).toBe(true);expect(focus).not.toHaveBeenCalled();
+});
+it("ignores hidden native hitboxes and fails closed when no bounded unobstructed photo-control slot exists",()=>{
+  const a=photoAdapter(photoHtml+'<button hidden>…</button>'.repeat(300)+'<a style="display:none" href="/settings">Settings</a>'.repeat(300));a.visible();
+  expect(a.doc.querySelector<HTMLElement>('[data-atsumi-photo-save]')!.style.left).toBe('660px');
+  for(const html of [photoHtml+'<button id="cover">Covered</button>',photoHtml+'<button>Action</button>'.repeat(257)]){
+    const b=photoAdapter(html);b.visible();expect(b.doc.querySelector('[data-atsumi-photo-save]')).toBeNull();
+    b.context(b.doc.querySelector('#full-photo')!);expect(b.menuButton('개별 다운로드')).toBeDefined();
+  }
+});
+it("does not intercept native menu/footer gestures or retain hover after leaving through their wrapper",()=>{
+  const a=photoAdapter(photoHtml+'<div id="native-menu" role="menu"><button role="menuitem">Copy link</button></div><footer><button id="native-footer">Reply</button></footer>');
+  const nativeMenu=a.doc.querySelector<HTMLElement>('#native-menu')!,menuItem=nativeMenu.querySelector<HTMLElement>('button')!,footer=a.doc.querySelector<HTMLElement>('#native-footer')!;
+  vi.mocked(nativeMenu.getBoundingClientRect).mockReturnValue(photoRect(620,45,80,120));
+  vi.mocked(menuItem.getBoundingClientRect).mockReturnValue(photoRect(620,45,80,40));
+  vi.mocked(footer.getBoundingClientRect).mockReturnValue(photoRect(60,730,640,40));
+  const before=[nativeMenu.outerHTML,footer.outerHTML];a.visible();const button=a.doc.querySelector<HTMLButtonElement>('[data-atsumi-photo-save]')!;
+  expect(overlap(photoButtonRect(button),nativeMenu.getBoundingClientRect())).toBe(false);
+  a.emit(a.doc,'pointerover',a.event(a.doc.querySelector('#full-photo')!));
+  for(const target of [menuItem,footer])for(const type of ['pointerdown','pointerup','click','keydown']){
+    const event=a.event(target,{button:0,key:'Enter'});a.emit(a.doc,type,event);expect(event.stopImmediatePropagation).not.toHaveBeenCalled();
+  }
+  a.emit(a.doc,'pointerout',a.event(a.doc.querySelector('#full-photo')!,{relatedTarget:footer,clientX:350,clientY:750}));
+  expect(button.hasAttribute('data-media-hover')).toBe(false);expect(a.actions()).toHaveLength(0);
+  expect([nativeMenu.outerHTML,footer.outerHTML]).toEqual(before);
+});
+it("rechecks hover-revealed native chrome once after its handler without rescanning on every pointer move",()=>{
+  const a=photoAdapter(photoHtml+'<button id="native-more" style="opacity:0">…</button>'),more=a.doc.querySelector<HTMLElement>('#native-more')!,photo=a.doc.querySelector('#full-photo')!;
+  vi.mocked(more.getBoundingClientRect).mockReturnValue(photoRect(652,50,48,48));a.visible();
+  const button=a.doc.querySelector<HTMLElement>('[data-atsumi-photo-save]')!;expect(button.style.left).toBe('660px');
+  a.emit(a.doc,'pointerover',a.event(photo));more.style.opacity='1';
+  a.emit(a.doc,'pointerover',a.event(photo));expect(a.timers).toHaveLength(1);a.timers[0]!();
+  expect(overlap(photoButtonRect(button),more.getBoundingClientRect())).toBe(false);
+  const scan=vi.spyOn(a.doc,'querySelectorAll');
+  for(let i=0;i<60;i++)a.emit(a.doc,'pointermove',a.event(photo,{clientX:120+i,clientY:200}));
+  expect(scan).not.toHaveBeenCalled();expect(a.timers).toHaveLength(1);expect(button.hasAttribute('data-media-hover')).toBe(true);
+  a.emit(a.doc,'pointermove',a.event(a.doc.body,{clientX:750,clientY:800}));expect(button.hasAttribute('data-media-hover')).toBe(false);
+});
+it("repositions after a nearby native opacity transition completes later than the initial hover refresh",()=>{
+  const a=photoAdapter(photoHtml+'<button id="native-more" style="opacity:0">…</button>'),more=a.doc.querySelector<HTMLElement>('#native-more')!,photo=a.doc.querySelector('#full-photo')!;
+  vi.mocked(more.getBoundingClientRect).mockReturnValue(photoRect(652,50,48,48));a.visible();
+  const button=a.doc.querySelector<HTMLElement>('[data-atsumi-photo-save]')!;
+  a.emit(a.doc,'pointerover',a.event(photo));expect(a.timers).toHaveLength(1);a.timers[0]!();
+  expect(button.style.left).toBe('660px');expect(more.style.opacity).toBe('0');
+  more.style.opacity='1';
+  a.emit(a.doc,'transitionend',a.event(more,{type:'transitionend',propertyName:'opacity'}));
+  a.emit(a.doc,'transitionend',a.event(more,{type:'transitionend',propertyName:'opacity'}));
+  expect(a.timers).toHaveLength(2);a.timers[1]!();
+  expect(a.doc.querySelector('[data-atsumi-photo-save]')).toBe(button);expect(button.hasAttribute('data-media-hover')).toBe(true);
+  expect(overlap(photoButtonRect(button),more.getBoundingClientRect())).toBe(false);expect(a.actions()).toHaveLength(0);
+});
+it("handles a bounded nearby native-chrome wrapper fade without taking its input or retaining a stale photo refresh",()=>{
+  const a=photoAdapter(photoHtml+'<div id="native-chrome"><button id="native-more">…</button></div>'),wrapper=a.doc.querySelector<HTMLElement>('#native-chrome')!,more=a.doc.querySelector<HTMLElement>('#native-more')!;
+  vi.mocked(more.getBoundingClientRect).mockReturnValue(photoRect(652,50,48,48));a.visible();
+  const button=a.doc.querySelector<HTMLElement>('[data-atsumi-photo-save]')!;expect(button.style.left).not.toBe('660px');
+  wrapper.style.opacity='0';const event=a.event(wrapper,{type:'transitionend',propertyName:'opacity'});a.emit(a.doc,'transitionend',event);
+  expect(event.stopImmediatePropagation).not.toHaveBeenCalled();expect(a.timers).toHaveLength(1);a.timers[0]!();expect(button.style.left).toBe('660px');
+  wrapper.style.opacity='1';a.emit(a.doc,'transitionend',a.event(wrapper,{type:'transitionend',propertyName:'opacity'}));
+  expect(a.timers).toHaveLength(2);a.doc.querySelector('#full-photo')!.setAttribute('src',otherImage);a.timers[1]!();
+  expect(button.style.left).toBe('660px');expect(a.win.__atsumiXActions!.ownsPhotoControl(button)).toBe(false);expect(a.actions()).toHaveLength(0);
+});
+it("ignores unrelated, synthetic, oversized or hidden chrome transitions",()=>{
+  const a=photoAdapter(photoHtml+'<button id="near">…</button><button id="far">Settings</button><div id="large">'+'<button>Item</button>'.repeat(17)+'</div><div id="plain">Plain</div>');
+  const near=a.doc.querySelector<HTMLElement>('#near')!,far=a.doc.querySelector<HTMLElement>('#far')!;
+  vi.mocked(near.getBoundingClientRect).mockReturnValue(photoRect(652,50,48,48));vi.mocked(far.getBoundingClientRect).mockReturnValue(photoRect(740,800,32,32));
+  a.doc.querySelector<HTMLElement>('#large')!.style.display='none';a.visible();
+  for(const [target,extra] of [
+    [near,{propertyName:'color'}],[near,{isTrusted:false}],[far,{}],
+    [a.doc.querySelector('#plain')!,{}],[a.doc.querySelector('#large')!,{}],[a.doc.querySelector('[data-atsumi-photo-save]')!,{}],
+  ] as const)a.emit(a.doc,'transitionend',a.event(target,{type:'transitionend',propertyName:'opacity',...extra}));
+  near.hidden=true;a.emit(a.doc,'transitionend',a.event(near,{type:'transitionend',propertyName:'opacity'}));
+  expect(a.timers).toHaveLength(0);expect(a.actions()).toHaveLength(0);
+});
+it.each(['exit','hidden','route','owner'])('discards the deferred hover placement after %s',change=>{
+  const a=photoAdapter(),photo=a.doc.querySelector('#full-photo')!;a.visible();
+  const button=a.doc.querySelector<HTMLElement>('[data-atsumi-photo-save]')!;a.emit(a.doc,'pointerover',a.event(photo));
+  if(change==='exit')a.emit(a.doc,'pointerout',a.event(photo,{relatedTarget:null}));
+  else if(change==='hidden')a.win.__atsumiXActions!.visibility(false);
+  else if(change==='route')a.location.pathname='/creator/status/123456/photo/2';
+  else a.proof.mockReturnValue('bob');
+  const left=button.style.left;expect(a.timers).toHaveLength(1);a.timers[0]!();expect(button.style.left).toBe(left);expect(a.actions()).toHaveLength(0);
+  if(change==='hidden')expect(a.doc.querySelector('[data-atsumi-photo-save]')).toBeNull();
+});
+it("uses explicit context-menu download labels while retaining compact toolbar labels",()=>{
+  const a=adapter();a.visible();a.context(a.doc.querySelector('#image')!);
+  expect([...a.doc.querySelectorAll('[role="menuitem"]')].slice(0,2).map(node=>node.textContent)).toEqual(['개별 다운로드','전체 다운로드']);
+  expect(a.doc.querySelector<HTMLElement>('[data-atsumi-media-save]')!.title).toBe('전체');
+  a.activate(a.menuButton('개별 다운로드'));expect(a.actions()[0]).toMatchObject({kind:'one',media:image,path:'/creator/status/123456'});
+  a.context(a.doc.querySelector('#image')!);a.activate(a.menuButton('전체 다운로드'));expect(a.actions()[1]).toMatchObject({kind:'all',path:'/creator/status/123456'});
+});
 it("gives the current-photo context menu an exact photo route without claiming full-post scope",()=>{
   const a=photoAdapter();a.visible();expect(a.context(a.doc.body).preventDefault).not.toHaveBeenCalled();
   expect(a.context(a.doc.querySelector("#full-photo")!).preventDefault).toHaveBeenCalledOnce();
-  expect([...a.doc.querySelectorAll('[role="menuitem"]')].map(item=>item.textContent)).toEqual(["개별","외부 브라우저에서 열기"]);
+  expect([...a.doc.querySelectorAll('[role="menuitem"]')].map(item=>item.textContent)).toEqual(["개별 다운로드","외부 브라우저에서 열기"]);
   a.activate(a.menuButton("외부 브라우저에서 열기"));expect(a.messages()).toEqual([{kind:"external",value:"/creator/status/123456/photo/1"}]);
 });
 it("offers only the independent current modal photo while ignoring background feed and article media",()=>{
@@ -1348,12 +1690,12 @@ it("uses modal context only for its actual photo and rejects stale overlay ident
   const a=photoAdapter(tweet()+'<div id="modal" role="dialog">'+photoHtml+'</div>');a.visible();
   const imageNode=a.doc.querySelector("#full-photo")!;
   expect(a.context(imageNode).preventDefault).toHaveBeenCalledOnce();
-  expect(a.menuButton("전체")).toBeUndefined();
-  const choice=a.menuButton("개별");
+  expect(a.menuButton("전체 다운로드")).toBeUndefined();
+  const choice=a.menuButton("개별 다운로드");
   const next=a.doc.createElement("div");next.setAttribute("role","dialog");next.append(a.doc.querySelector("#photo-host")!);
   a.doc.querySelector("#modal")!.replaceWith(next);
   a.activate(choice);expect(a.message).not.toHaveBeenCalled();
-  a.win.__atsumiXActions!.update();a.context(imageNode);a.activate(a.menuButton("개별"));
+  a.win.__atsumiXActions!.update();a.context(imageNode);a.activate(a.menuButton("개별 다운로드"));
   expect(a.actions()[0]).toMatchObject({kind:"one",media:image});
 });
 it("supports the existing exact painted sizing-photo case inside the scoped modal",()=>{
@@ -1391,14 +1733,14 @@ it("matches only the exact visible painted background for a transparent full-pag
   const a=photoAdapter();const host=a.doc.querySelector<HTMLElement>("#photo-host")!,sizing=a.doc.querySelector<HTMLElement>("#full-photo")!;
   host.style.backgroundImage='url("'+image+'")';sizing.style.opacity="0";a.visible();
   expect(a.doc.querySelector('[data-atsumi-photo-save]')).not.toBeNull();
-  expect(a.context(host).preventDefault).toHaveBeenCalledOnce();a.activate(a.menuButton("개별"));expect(a.actions()[0].media).toBe(image);
+  expect(a.context(host).preventDefault).toHaveBeenCalledOnce();a.activate(a.menuButton("개별 다운로드"));expect(a.actions()[0].media).toBe(image);
   const b=photoAdapter();b.doc.querySelector<HTMLElement>("#photo-host")!.style.backgroundImage='url("'+otherImage+'")';b.doc.querySelector<HTMLElement>("#full-photo")!.style.opacity="0";b.visible();
   expect(b.doc.querySelector('[data-atsumi-photo-save]')).toBeNull();
 });
 it("revokes photo controls and pending menu choices when proof, route, image or visibility changes",()=>{
   for(const change of ["proof","route","image","hidden"]){
     const a=photoAdapter();a.visible();const button=a.doc.querySelector<HTMLButtonElement>('[data-atsumi-photo-save]')!;
-    a.context(a.doc.querySelector("#full-photo")!);const choice=a.menuButton("개별");
+    a.context(a.doc.querySelector("#full-photo")!);const choice=a.menuButton("개별 다운로드");
     if(change==="proof")a.proof.mockReturnValue("");
     else if(change==="route")a.location.pathname="/creator/status/123456/photo/2";
     else if(change==="image")a.doc.querySelector("#full-photo")!.setAttribute("src",otherImage);
@@ -1414,8 +1756,8 @@ it("grants photo keyboard focus only to the exact current connected photo contro
   const ordinary=a.doc.createElement("button");ordinary.dataset.atsumiPhotoSave="true";a.doc.body.append(ordinary);
   expect(owns(ordinary)).toBe(false);expect(owns(null)).toBe(false);expect(owns(a.doc.querySelector("#full-photo"))).toBe(false);
   a.context(a.doc.querySelector("#full-photo")!);
-  expect(owns(button)).toBe(false);expect(owns(a.menuButton("개별"))).toBe(false);
-  a.activate(a.menuButton("개별"));expect(owns(button)).toBe(true);
+  expect(owns(button)).toBe(false);expect(owns(a.menuButton("개별 다운로드"))).toBe(false);
+  a.activate(a.menuButton("개별 다운로드"));expect(owns(button)).toBe(true);
   expect(owns(a.doc.querySelector(".atsumi-x-save-notice button"))).toBe(false);
   a.win.__atsumiXActions!.visibility(false);expect(owns(button)).toBe(false);
   a.visible();expect(owns(button)).toBe(false);

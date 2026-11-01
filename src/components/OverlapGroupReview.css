@@ -1,0 +1,85 @@
+.overlap-group { display:grid; gap:12px; padding:14px; min-width:0; }
+.overlap-group-overview,.overlap-group-completed-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,340px),1fr)); gap:10px; min-width:0; }
+.overlap-group-keeper,.overlap-group-edition { position:relative; display:grid; grid-template-columns:96px minmax(0,1fr); grid-template-rows:1fr auto; align-items:start; column-gap:14px; row-gap:10px; min-width:0; padding:12px; border:1px solid var(--line); border-radius:7px; background:var(--surface-soft); }
+.overlap-group-keeper { border-color:color-mix(in srgb,var(--success) 50%,var(--line)); box-shadow:inset 3px 0 var(--success); background:color-mix(in srgb,var(--success) 7%,var(--surface)); }
+.overlap-group-cover { grid-column:1; grid-row:1 / 3; width:96px; height:136px; border-radius:5px; overflow:hidden; }
+.overlap-group-keeper>div:not(.gallery-thumbnail),.overlap-group-edition-info { grid-column:2; grid-row:1; min-width:0; display:grid; gap:7px; }
+.overlap-group-keeper>div>span { color:var(--success); font-size:var(--font-size-min); }
+.overlap-group-keeper strong,.overlap-group-edition-info strong { font-size:14px; line-height:1.45; overflow-wrap:anywhere; overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; }
+.overlap-group-keeper small,.overlap-group-edition-info>span { color:var(--muted); font-size:var(--font-size-min); }
+.overlap-group-edition-info>span { display:flex; flex-wrap:wrap; gap:6px 10px; }
+.overlap-group-edition-info small { font-size:var(--font-size-min); }
+.overlap-group-total { grid-column:2; grid-row:2; color:var(--muted); font-size:var(--font-size-min); align-self:end; padding-bottom:8px; }
+.overlap-group-edition>input { position:absolute; left:16px; top:16px; z-index:1; width:16px; height:16px; margin:0; accent-color:var(--success); cursor:pointer; }
+.overlap-group-edition>input:disabled { opacity:.4; cursor:default; }
+.overlap-group-edition-actions { grid-column:2; grid-row:2; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:5px 8px; min-width:0; align-self:end; }
+.overlap-group-badge { color:var(--muted); font-size:var(--font-size-min); }
+.overlap-group-badge.is-contained,.overlap-group-badge.is-kept { color:var(--success); }
+.overlap-group-badge.is-uncertain,.overlap-group-badge.is-stale { color:var(--warning); }
+.overlap-group-badge.is-failed { color:var(--danger,#f39199); }
+.overlap-group-edition-actions>button { flex:0 0 96px; width:96px; min-width:96px; max-width:96px; height:36px; padding:0 8px; white-space:nowrap; margin-left:auto; display:grid; place-items:center; }
+.overlap-group-edition-actions>button[aria-pressed=true] { border-color:var(--primary); color:var(--primary); }
+.overlap-group-completed { border:1px solid var(--line); border-radius:6px; }
+.overlap-group-completed>summary { padding:9px 12px; color:var(--muted); cursor:pointer; font-size:var(--font-size-min); }
+.overlap-group-completed-grid { padding:0 10px 10px; }
+.overlap-group-batch { display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:var(--font-size-min); }
+.overlap-group-batch>span { color:var(--muted); display:flex; align-items:center; gap:8px; }
+.overlap-group-comparison { min-width:0; border:1px solid var(--line); border-radius:7px; overflow:hidden; }
+.overlap-group-comparison>header { display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--surface-soft); }
+.overlap-group-comparison>header strong { font-size:14px; }
+.overlap-group-comparison>header small { font-size:var(--font-size-min); color:var(--muted); font-weight:400; margin-left:8px; }
+.overlap-group-comparison>header>div { margin-left:auto; display:flex; gap:5px; }
+.overlap-group-selection-count { color:var(--success); font-size:var(--font-size-min); white-space:nowrap; }
+.overlap-group-selection-guide { margin:0; padding:6px 12px; color:var(--muted); background:var(--surface-soft); font-size:var(--font-size-min); line-height:1.5; border-bottom:1px solid var(--line); }
+.overlap-group-selection-guide kbd { font:inherit; color:var(--text-soft); }
+.overlap-group-grid-scroll { height:min(var(--comparison-height),64vh); min-height:min(230px,calc(100vh - 220px)); max-height:calc(100vh - 180px); resize:none; overflow:auto; overscroll-behavior-x:contain; overscroll-behavior-y:auto; position:relative; background:var(--surface); outline:none; }
+.overlap-group-grid-scroll:focus-visible { box-shadow:inset 0 0 0 2px var(--primary); }
+.overlap-group-grid-row { display:flex; height:var(--comparison-row-height); border-bottom:1px solid var(--line); box-sizing:border-box; }
+.overlap-group-row-head { position:sticky; left:0; z-index:3; flex:0 0 var(--comparison-label-width); width:var(--comparison-label-width); box-sizing:border-box; display:flex; flex-direction:column; align-items:stretch; gap:10px; padding:12px; overflow:hidden; border-right:1px solid var(--line); background:var(--surface); }
+.overlap-group-row-title { min-width:0; flex:1; display:flex; flex-direction:column; gap:8px; border:0; background:none; color:var(--text); text-align:left; cursor:pointer; padding:0; }
+.overlap-group-row-title strong { font-size:14px; line-height:1.45; overflow-wrap:anywhere; overflow:hidden; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; }
+.overlap-group-row-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; color:var(--muted); font-size:13px; line-height:1.4; }
+.overlap-group-row-meta b { color:var(--text); }
+.overlap-group-grid-row.is-keeper .overlap-group-row-meta b { color:var(--success); }
+.overlap-group-grid-row.is-active .overlap-group-row-head { box-shadow:inset 3px 0 var(--primary); }
+.overlap-edition-modes { --mode-color:var(--success); --mode-index:0; position:relative; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); flex:none; padding:3px; border:1px solid var(--line); border-radius:7px; background:var(--surface-soft); isolation:isolate; }
+.overlap-edition-modes[data-mode=partial] { --mode-color:var(--warning); --mode-index:1; }
+.overlap-edition-modes[data-mode=remove] { --mode-color:var(--danger,#f39199); --mode-index:2; }
+.overlap-edition-modes::before { content:''; position:absolute; z-index:-1; left:3px; top:3px; bottom:3px; width:calc((100% - 6px)/3); transform:translateX(calc(var(--mode-index)*100%)); border-radius:4px; background:color-mix(in srgb,var(--mode-color) 19%,var(--surface)); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--mode-color) 65%,transparent); transition:transform 160ms ease,background-color 160ms ease,box-shadow 160ms ease; }
+.overlap-edition-modes button { min-width:0; height:30px; padding:0 3px; border:0; border-radius:4px; background:transparent; color:var(--muted); font:inherit; font-size:13px; white-space:nowrap; cursor:pointer; transition:color 160ms ease; }
+.overlap-edition-modes button[aria-pressed=true] { color:var(--mode-color); font-weight:600; }
+.overlap-edition-modes button:disabled { opacity:.5; cursor:default; }
+.overlap-edition-modes button:focus-visible,.overlap-group-row-title:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
+@media(prefers-reduced-motion:reduce) { .overlap-edition-modes::before,.overlap-edition-modes button { transition:none; } }
+.overlap-group-grid-cell { position:relative; z-index:0; isolation:isolate; flex:0 0 var(--comparison-page-width); width:var(--comparison-page-width); box-sizing:border-box; min-width:0; padding:6px; }
+.overlap-group-page-spacer { flex-shrink:0; }
+.overlap-group-grid-row.is-keeper { background:color-mix(in srgb,var(--surface) 96%,var(--success)); }
+.overlap-group-grid-row.is-active { background:color-mix(in srgb,var(--surface) 96%,var(--primary)); }
+.overlap-group-grid-cell .download-overlap-page-cell { width:100%; height:170px; min-height:0; margin:0; }
+.overlap-group-grid-cell .download-overlap-page-cell img { object-fit:contain; }
+.overlap-group-grid-cell .download-overlap-page-cell.is-filtered { border:0; background:none; box-shadow:none; }
+.overlap-group-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; padding:10px; background:var(--surface-soft); border-top:1px solid var(--line); flex-wrap:wrap; }
+.overlap-group-actions>strong { margin-right:auto; font-size:var(--font-size-min); }
+.overlap-group-actions>span { font-size:var(--font-size-min); color:var(--success); }
+.overlap-group-empty { padding:20px; color:var(--muted); font-size:var(--font-size-min); }
+.overlap-group .inline-error { margin:0; font-size:var(--font-size-min); padding:8px 10px; }
+.download-overlap-dialog.is-group-review { width:min(1360px,calc(100vw - 36px)); min-width:min(640px,calc(100vw - 24px)); max-width:calc(100vw - 24px); min-height:min(420px,calc(100vh - 24px)); max-height:calc(100vh - 24px); resize:both; }
+.download-overlap-dialog.is-group-review.is-expanded { width:calc(100vw - 24px) !important; height:calc(100vh - 24px) !important; resize:none; }
+.overlap-group-window-actions { display:flex; align-items:center; gap:8px; }
+.overlap-group-window-actions .icon-button { display:grid; place-items:center; padding:0; }
+.download-overlap-dialog.is-group-review .review-scroll { padding-bottom:0; }
+@media(max-width:700px) {
+ .overlap-group { padding:8px; }
+ .overlap-group-comparison>header { flex-wrap:wrap; }
+ .overlap-group-comparison>header>div { margin-left:0; }
+ .overlap-group-selection-count { font-size:var(--font-size-min); }
+}
+.overlap-group .download-overlap-page-filter { border:1px solid var(--line-strong); border-radius:5px; color:var(--text); background:var(--surface); padding:4px 10px; font:inherit; font-size:var(--font-size-min); cursor:pointer; }
+.overlap-group .download-overlap-page-filter[aria-pressed="true"] { color:var(--primary); border-color:var(--primary); background:color-mix(in srgb,var(--primary) 12%,var(--surface)); }
+.overlap-group .download-overlap-page-filter[aria-pressed="false"] { color:var(--muted); opacity:.6; }
+.overlap-group .primary-button { background:var(--primary); color:var(--on-primary,#201b20); border:1px solid var(--primary); border-radius:6px; padding:8px 12px; font:inherit; font-size:var(--font-size-min); cursor:pointer; }
+.overlap-group .primary-button:disabled { opacity:.5; cursor:default; }
+.overlap-group-auto { display:inline-block; margin-top:4px; color:var(--muted); font-size:var(--font-size-min); }
+
+.overlap-group .download-overlap-page-cell.is-unverified { border:1px dashed var(--line-strong); }
+.overlap-group .download-overlap-page-cell.is-unverified .download-overlap-page-status { color:var(--muted); background:var(--surface); }

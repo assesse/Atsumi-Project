@@ -441,3 +441,22 @@ mod tests {
         assert!(review_value.get("decisions").is_none());
     }
 }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DownloadOverlapDisplayMatchRequest {
+    pub review_id: String,
+    pub expected_revision: u64,
+    pub candidate_id: String,
+}
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadOverlapDisplayMatches {
+    pub review_id: String,
+    pub revision: u64,
+    pub candidate_id: String,
+    pub incoming_fingerprint: String,
+    pub existing_fingerprint: String,
+    /// Display only; not a replacement for the durable monotonic page_pairs.
+    pub additional_pairs: Vec<DownloadOverlapPagePair>,
+}

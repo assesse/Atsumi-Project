@@ -41,11 +41,11 @@ dialog.settings-dialog { width: min(616px, calc(100vw - 32px)); }
 .settings-dialog .maintenance-item:not(:has(.maintenance-options)) { grid-template-areas: "copy" "action"; }
 .settings-dialog .maintenance-copy p { line-height: 1.6; }
 .settings-dialog .settings-about-details dd { min-width: 0; overflow-wrap: anywhere; }
-.settings-dialog .settings-save-status { color: var(--muted); font-size: 12px; white-space: nowrap; }
-.settings-dialog .settings-save-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--danger); font-size: 13px; }
+.settings-dialog .settings-save-status { color: var(--muted); font-size: var(--font-size-min); white-space: nowrap; }
+.settings-dialog .settings-save-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--danger); font-size: 14px; }
 .settings-dialog .settings-save-error button { flex-shrink: 0; }
 .settings-dialog .settings-performance-group { margin-top: 20px; padding: 0 14px; border: 1px solid var(--line); border-radius: 8px; }
-.settings-dialog .settings-performance-group h3 { margin: 16px 0 4px; font-size: 14px; }
+.settings-dialog .settings-performance-group h3 { margin: 16px 0 4px; font-size: 15px; }
 .settings-dialog .settings-performance-group .setting-row:last-child { border-bottom: 0; }
 @media (max-width: 560px) {
   .settings-dialog .dialog-header { padding-inline: 16px; }

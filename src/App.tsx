@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { backend } from "./api/backend";
 import { createDanbooruApi } from "./api/featureClients";
 import { AppShell, useAppShell } from "./app/AppShell";
@@ -12,6 +12,7 @@ import { createRecordingUpdateGuard } from "./api/recordingUpdateGuard";
 import { CommonNavigationContext, type NavigationRequest } from "./app/CommonNavigation";
 import { CommunityWorkspace } from "./features/community/CommunityWorkspace";
 import type { WorkKey } from "./features/community/api";
+import { subscribeSupportedLinks, type SupportedLinkRequest } from "./app/supportedLinkNavigation";
 
 const danbooruApi = createDanbooruApi(backend);
 
@@ -28,11 +29,20 @@ function Workspaces() {
   useEffect(() => { if (shell.tutorialSource) setCommunityOpen(false); }, [shell.tutorialSource]);
   const [reviewWork, setReviewWork] = useState<WorkKey | null>(null);
   const [navigationRequest, setNavigationRequest] = useState<NavigationRequest | null>(null);
-  const selectSource = (source: ContentSource) => { setCommunityOpen(false); setNavigationRequest(null); shell.selectSource(source); };
+  const [supportedLinkRequest, setSupportedLinkRequest] = useState<SupportedLinkRequest | null>(null);
+  const linkHandler = useRef((request: SupportedLinkRequest) => {});
+  linkHandler.current = request => { setCommunityOpen(false); setNavigationRequest(null); setSupportedLinkRequest(request); shell.selectSource(request.source); };
+  useEffect(() => {
+    if (backend.runtime !== "tauri") return;
+    let disposed = false, stop: (() => void) | undefined;
+    void subscribeSupportedLinks(request => { if (!disposed) linkHandler.current(request); }).then(unsubscribe => { if (disposed) unsubscribe(); else stop = unsubscribe; }, () => {});
+    return () => { disposed = true; stop?.(); };
+  }, []);
+  const selectSource = (source: ContentSource) => { setCommunityOpen(false); setNavigationRequest(null); setSupportedLinkRequest(null); shell.selectSource(source); };
   const { settings, loading } = shell.settingsStore;
   return (
     <CommonNavigationContext.Provider value={{ communityOpen, openCommunity: (work) => { if (!work && !hasCommunity(shell.source)) return; if (work && work.source !== shell.source) shell.selectSource(work.source); setReviewWork(work ?? null); setCommunityOpen(true); } }}>
-    <HitomiFeature active={shell.source === "hitomi" && !communityOpen} navigationRequest={navigationRequest}>
+    <HitomiFeature active={shell.source === "hitomi" && !communityOpen} navigationRequest={navigationRequest} supportedLinkRequest={supportedLinkRequest}>
       {(gallery) => {
         const workspaces = {
           hitomi: gallery.workspace,
@@ -40,6 +50,7 @@ function Workspaces() {
             <DanbooruWorkspace
               active={shell.source === "danbooru" && !communityOpen}
               navigationRequest={navigationRequest}
+              supportedLinkRequest={supportedLinkRequest}
               backend={danbooruApi}
               railCollapsed={shell.railCollapsed}
               pageSize={settings.danbooruPageSize}
@@ -80,13 +91,14 @@ function Workspaces() {
           runtime={backend.runtime}
           active={shell.source === "chzzk" && !communityOpen}
           navigationRequest={navigationRequest}
+          supportedLinkRequest={supportedLinkRequest}
           railCollapsed={shell.railCollapsed}
           onOpenSettings={() => shell.setSettingsOpen(true)}
           onToggleRail={shell.toggleRail}
           onSourceChange={selectSource}
 
         />
-        {platformSources.filter(source => visitedPlatforms.has(source) || shell.source === source).map(source => <PlatformWorkspace key={source} source={source} active={shell.source === source && !communityOpen} runtime={backend.runtime} onSourceChange={selectSource} />)}
+        {platformSources.filter(source => visitedPlatforms.has(source) || shell.source === source).map(source => <PlatformWorkspace key={source} source={source} active={shell.source === source && !communityOpen} runtime={backend.runtime} onSourceChange={selectSource} supportedLinkRequest={supportedLinkRequest} />)}
         </>;
       }}
     </HitomiFeature>

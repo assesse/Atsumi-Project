@@ -165,6 +165,62 @@ pub(crate) fn source_hash(
     hash_file(&mut file, cancel)
 }
 
+/// A rolling transfer may evict only the inputs of a fully verified immutable
+/// range. Bind its journal prefix, originals and derivatives to the proof made
+/// after full A/V decoding; copying alone is not permission to delete a source.
+pub(super) fn verified_part_files(
+    record: &BrowserRecording,
+    part: &parts::Part,
+    cancel: &AtomicBool,
+) -> Result<Vec<(String, u64, String)>, StreamError> {
+    let root = owned_root(&record.output_dir, &record.id)?;
+    let mut input = pinned_file(&root.join(&part.proof_file), MAX_PROOF)?;
+    let proof_bytes = input.metadata().map_err(|_| storage())?.len();
+    if hash_file(&mut input, cancel)? != part.proof_sha256 {
+        return Err(invalid());
+    }
+    input.seek(SeekFrom::Start(0)).map_err(|_| storage())?;
+    let proof: Proof = serde_json::from_reader(BufReader::new(input)).map_err(|_| invalid())?;
+    let (sources, journal_hash) = parts::range_sources(record, part)?;
+    if proof.version != 1
+        || proof.recording_id != record.id
+        || proof.journal_sha256 != journal_hash
+        || !proof.derivatives.is_empty()
+        || !proof.artifacts.is_empty()
+        || proof.artifact_manifest_sha256.is_some()
+        || proof.segments.len() != sources.len()
+    {
+        return Err(invalid());
+    }
+    let mut files = Vec::new();
+    for (source, expected) in sources.iter().zip(&proof.segments) {
+        if source.index != expected.index
+            || source.bytes != expected.bytes
+            || source_hash(&root.join(&source.file), source.bytes, cancel)? != expected.sha256
+        {
+            return Err(invalid());
+        }
+        files.push((source.file.clone(), source.bytes, expected.sha256.clone()));
+    }
+    for (name, hash) in [
+        (&part.file, &proof.media_sha256),
+        (&part.timeline_file, &proof.timeline_sha256),
+    ] {
+        let mut input = pinned_file(&root.join(name), 256 * 1024 * 1024)?;
+        let bytes = input.metadata().map_err(|_| storage())?.len();
+        if (name == &part.file && bytes != part.bytes) || hash_file(&mut input, cancel)? != *hash {
+            return Err(invalid());
+        }
+        files.push((name.clone(), bytes, hash.clone()));
+    }
+    files.push((
+        part.proof_file.clone(),
+        proof_bytes,
+        part.proof_sha256.clone(),
+    ));
+    Ok(files)
+}
+
 /// Bind a final export to the exact ranges and raw inputs verified earlier.
 /// Changed ranges or changed originals never authorize source cleanup.
 pub(crate) fn verified_range_inputs(
@@ -373,6 +429,14 @@ impl BrowserCaptureStore {
         job: &BrowserMergeJob,
         outcome: CleanupOutcome,
     ) -> Result<(), StreamError> {
+        self.finish_cleanup_preempted(job, outcome, false)
+    }
+    pub(crate) fn finish_cleanup_preempted(
+        &self,
+        job: &BrowserMergeJob,
+        outcome: CleanupOutcome,
+        preempted: bool,
+    ) -> Result<(), StreamError> {
         let mut state = self.lock()?;
         let index = merge_job_index(&state, job)?;
         let recording = &mut state.recordings[index];
@@ -385,10 +449,12 @@ impl BrowserCaptureStore {
         cleanup.deleted_segments = cleanup.deleted_segments.max(outcome.deleted);
         cleanup.status = if outcome.complete {
             BrowserSourceCleanupStatus::Complete
+        } else if preempted {
+            BrowserSourceCleanupStatus::Pending
         } else {
             BrowserSourceCleanupStatus::Blocked
         };
-        cleanup.last_error = (!outcome.complete).then(|| CLEANUP_ERROR.to_owned());
+        cleanup.last_error = (!outcome.complete && !preempted).then(|| CLEANUP_ERROR.to_owned());
         // If this write fails, the durable Pending marker permits idempotent
         // recovery. The successful merge is never downgraded or overwritten.
         let result = save_metadata(recording);
@@ -701,6 +767,40 @@ mod tests {
     }
     fn source(root: &Path, index: u64) -> PathBuf {
         root.join(segment_name(index, "webm"))
+    }
+
+    #[test]
+    fn live_preemption_requeues_cleanup_but_shutdown_stays_blocked() {
+        for preempted in [true, false] {
+            let (_dir, store, recording) = fixture();
+            publish(&store);
+            let job = store.take_cleanup_job().unwrap().unwrap();
+            let outcome = remove_verified_sources(&job, &AtomicBool::new(true));
+            assert!(!outcome.complete);
+            store
+                .finish_cleanup_preempted(&job, outcome, preempted)
+                .unwrap();
+            let snapshot = store.snapshot().unwrap();
+            let cleanup = snapshot[0]
+                .merge
+                .as_ref()
+                .unwrap()
+                .source_cleanup
+                .as_ref()
+                .unwrap();
+            assert_eq!(
+                cleanup.status,
+                if preempted {
+                    BrowserSourceCleanupStatus::Pending
+                } else {
+                    BrowserSourceCleanupStatus::Blocked
+                }
+            );
+            assert!(source(Path::new(&recording.output_dir), 0).exists());
+            if preempted {
+                assert!(clean(&store).complete);
+            }
+        }
     }
 
     #[test]

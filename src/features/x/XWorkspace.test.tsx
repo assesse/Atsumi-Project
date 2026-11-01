@@ -5,6 +5,7 @@ import { XOfficialWorkspace as XWorkspace, XWorkspace as ApplicationXWorkspace }
 import { createXSurfaceApi, type XSurfaceApi, type XSurfaceSnapshot, type XSnapshot } from "./api";
 import { observeNativePlayerGeometry } from "../platforms/nativePlayerGeometry";
 import type { XArchiveApi } from "./xArchiveApi";
+import * as supportedNavigation from "../../app/supportedLinkNavigation";
 vi.mock("../platforms/nativePlayerGeometry",()=>({
   measureNativePlayerGeometry:vi.fn((_left,_right,options)=>({...options,player:{x:220,y:60,width:600,height:900},chat:{x:820,y:60,width:900,height:900},occlusions:[]})),
   observeNativePlayerGeometry:vi.fn(()=>()=>{}),
@@ -28,6 +29,16 @@ const button=(label:string)=>[...host.querySelectorAll<HTMLButtonElement>("butto
 const click=(label:string)=>act(async()=>button(label).click());
 const deferred=<T,>()=>{let resolve!:(value:T)=>void;let reject!:(cause:unknown)=>void;const promise=new Promise<T>((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
 it("exports the official split as the real application workspace",()=>{expect(ApplicationXWorkspace).toBe(XWorkspace);});
+it("waits for a current native surface before opening an exact native-retained result ID",async()=>{
+  const opened=vi.spyOn(supportedNavigation,"openSupportedXTarget").mockResolvedValue(undefined),api=mock(),waiting=deferred<XSurfaceSnapshot>();
+  vi.mocked(api.surface).mockReturnValueOnce(waiting.promise);
+  const supportedLinkRequest={id:"97ea02a0-b626-40c2-ab6b-5cf601e81ae2",source:"x" as const,kind:"post" as const,targetId:"/alice/status/123456",url:"https://x.com/alice/status/123456"};
+  const draw=()=>act(async()=>root.render(<XWorkspace api={api} active privacyMode={false} view="explore" runtime="tauri" onNotice={vi.fn()} supportedLinkRequest={supportedLinkRequest}/>));
+  await draw();expect(opened).not.toHaveBeenCalled();
+  await act(async()=>waiting.resolve(surface("foryou",{generation:9})));
+  expect(opened).toHaveBeenCalledExactlyOnceWith(supportedLinkRequest.id,9);
+  await draw();expect(opened).toHaveBeenCalledOnce();expect(api.selectPreview).not.toHaveBeenCalled();
+});
 it("reports unsupported browser runtime, never pretends a projection is the live feed",async()=>{await expect(createXSurfaceApi("browser-mock").surface("foryou",1,false)).rejects.toThrow("데스크톱");});
 it("uses real official surfaces instead of copying posts, media, or engagement counts",async()=>{
   const api=mock();await render(api);expect(api.surface).toHaveBeenCalledWith("foryou",expect.any(Number),false);
@@ -55,6 +66,11 @@ it("renders full preview slot, close and loading skeleton without fabricated soc
   const api=mock();vi.mocked(api.surface).mockResolvedValue(surface("foryou",{preview:true,previewState:"loading"}));await render(api);
   expect(host.querySelector('[aria-label="미리보기 불러오는 중"]')).not.toBeNull();expect(button("미리보기 닫기")).not.toBeNull();expect(host.querySelector('[aria-label="X 원본 미리보기"]')).not.toBeNull();expect(host.querySelector('[role="tab"] span')?.textContent).toBe("미리보기");
   await click("미리보기 닫기");expect(api.closePreview).toHaveBeenCalledExactlyOnceWith(1,"first");expect(host.textContent).toContain("게시물을 선택하면");
+});
+it.each(['unavailable','error','timeout','ownerChanged','loginRequired'])('does not cover a terminal %s preview with an endless loading skeleton',async previewState=>{
+  const api=mock();vi.mocked(api.surface).mockResolvedValue(surface('foryou',{preview:true,previewState,error:'X 상세 화면을 불러오지 못했습니다.'}));await render(api);
+  expect(host.querySelector('[aria-label="미리보기 불러오는 중"]')).toBeNull();expect(button('미리보기 닫기')).not.toBeUndefined();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('불러오지 못했습니다');
 });
 it("does not start site work while private or inactive",async()=>{const api=mock();await render(api,false);await render(api,true,true);expect(api.surface).not.toHaveBeenCalled();expect(api.account).not.toHaveBeenCalled();expect(button("X 로그인")).toBeDisabled();});
 it("revokes native content and late responses when privacy is enabled",async()=>{

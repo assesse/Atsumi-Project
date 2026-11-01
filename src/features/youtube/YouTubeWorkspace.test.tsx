@@ -1,4 +1,4 @@
-import { act } from 'react';
+import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { YouTubeWorkspace, type YouTubeWorkspaceProps } from './YouTubeWorkspace';
@@ -39,6 +39,27 @@ async function draftInput(value: string, index: number) { await act(async () => 
 async function detail() { await act(async () => container.querySelector('.youtube-card')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))); }
 
 describe('YouTube app discovery', () => {
+  it('resolves the first supported video link through StrictMode mount replay without manual retry', async () => {
+    const supportedLinkRequest = { id: '97ea02a0-b626-40c2-ab6b-5cf601e81ae2', source: 'youtube' as const, kind: 'video' as const, targetId: video.id, url: video.url };
+    let complete!: (value: YouTubeMetadata) => void;
+    vi.mocked(api.metadata).mockImplementationOnce(() => new Promise(resolve => { complete = resolve; }));
+    await act(async () => root.render(<StrictMode><YouTubeWorkspace active runtime="browser-mock" privacyMode={false} view="explore" api={api} mediaApi={media} supportedLinkRequest={supportedLinkRequest} /></StrictMode>));
+    expect(api.metadata).toHaveBeenCalledOnce();
+    await act(async () => complete({ ...video, isLive: false }));
+    expect(container.querySelector('.youtube-detail')).toHaveTextContent(video.title);
+    expect(button('영상 재생')).not.toBeDisabled();
+    expect(button('다운로드')).not.toBeDisabled();
+    expect(container).not.toHaveTextContent('현재 라이브인지 확인하지 못했습니다');
+    expect(playerLifecycle.open).not.toHaveBeenCalled(); expect(media.download).not.toHaveBeenCalled();
+  });
+  it('opens a native result in existing video details without starting playback or downloading', async () => {
+    const supportedLinkRequest = { id: '97ea02a0-b626-40c2-ab6b-5cf601e81ae2', source: 'youtube' as const, kind: 'video' as const, targetId: video.id, url: video.url };
+    await render({ privacyMode: true, supportedLinkRequest }); expect(api.metadata).not.toHaveBeenCalled();
+    await render({ supportedLinkRequest }); expect(api.metadata).toHaveBeenCalledOnce(); expect(container.querySelector('.youtube-detail')).not.toBeNull();
+    await render({ supportedLinkRequest }); expect(api.metadata).toHaveBeenCalledOnce(); expect(playerLifecycle.open).not.toHaveBeenCalled(); expect(media.download).not.toHaveBeenCalled();
+    await render({ supportedLinkRequest: { ...supportedLinkRequest, id: '97ea02a0-b626-40c2-ab6b-5cf601e81ae3', kind: 'channel', targetId: channel.id, url: channel.url } });
+    expect(api.search).toHaveBeenCalledWith({ query: '', channel: channel.url, filter: 'all', sort: 'relevance' });
+  });
   it('fences viewer recording updates and clears by exact mounted attempt while preserving replacement',async()=>{
     const live={...video,isLive:true};saveYouTubeFavorites(localStorage,[{...live,savedAt:1}]);
     vi.mocked(api.search!).mockResolvedValue({items:[live]});await render();await search();await detail();await click(button('영상 재생'));

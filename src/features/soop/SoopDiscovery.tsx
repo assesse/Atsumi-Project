@@ -3,10 +3,12 @@ import type { SoopApi, SoopHomePage, SoopSearchItem, SoopSearchKind, SoopSearchR
 import { platformMediaApi, type PlatformMediaApi } from "../platforms/platformMedia";
 import "./SoopDiscovery.css";
 import { splitGalleryTitle } from "../../components/galleryCardLayout";
+import { ContextMenuLabel } from "../../components/ContextMenuLabel";
 import { SoopVodPlayer } from "./SoopVodPlayer";
 import type { SoopVodApi } from "../../api/soopVod";
 import { scheduleSoopImage } from "./soopImageQueue";
 import { SoopPortrait } from "./SoopPortrait";
+import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 
 type Tab = { id: string; request: SoopSearchRequest; title: string; items: SoopSearchItem[]; page: number; requestedPage: number; more: boolean; loading: boolean; error: string; warnings?: string[]; generation: number };
 type SavedVideo = Pick<SoopSearchItem, "id" | "kind" | "title" | "channelId" | "channelName" | "duration" | "restricted" | "thumbnailKey">;
@@ -47,15 +49,17 @@ function MediaThumbnail({ item, api, privacy, active }: { item: SoopSearchItem; 
   return <div ref={target} className="soop-result-image">{url && !privacy ? <img src={url} alt="" /> : <span aria-hidden="true">{privacy ? "" : item.kind === "channel" ? "○" : "▷"}</span>}</div>;
 }
 
-export function SoopDiscovery({ api, active, privacyMode, legacyFavoritesView = false, onLive, onFavoriteChannel, isChannelFavorite, onNotice, mediaApi = platformMediaApi, previewWidth = 320, vodApi }: {
+export function SoopDiscovery({ api, active, privacyMode, legacyFavoritesView = false, onLive, onFavoriteChannel, isChannelFavorite, onNotice, mediaApi = platformMediaApi, previewWidth = 320, vodApi, supportedLinkRequest }: {
   api: SoopApi; active: boolean; privacyMode: boolean; legacyFavoritesView?: boolean;
   onLive: (item: SoopSearchItem) => void; onFavoriteChannel: (item: SoopSearchItem) => void; isChannelFavorite: (id: string) => boolean;
   onNotice?: (message: string) => void; mediaApi?: PlatformMediaApi; previewWidth?: number; vodApi?: SoopVodApi;
+  supportedLinkRequest?: SupportedLinkRequest | null;
 }) {
   const [query, setQuery] = useState(""); const [kind, setKind] = useState<SoopSearchKind | "saved">(legacyFavoritesView ? "saved" : "all");
   const [home, setHome] = useState<SoopHomePage | null>(null), [homeLoading, setHomeLoading] = useState(false), [homeError, setHomeError] = useState("");
   const [homeRetry, setHomeRetry] = useState(0);
   const homeAttempted = useRef(false);
+  const handledSupportedLink = useRef<string | null>(null);
   const [savedDraft, setSavedDraft] = useState(""), [savedQuery, setSavedQuery] = useState("");
   const savedOnly = kind === "saved";
   useEffect(() => { if (legacyFavoritesView) setKind("saved"); }, [legacyFavoritesView]);
@@ -172,6 +176,12 @@ export function SoopDiscovery({ api, active, privacyMode, legacyFavoritesView = 
   function creator(item: SoopSearchItem, background: boolean) { search({ kind: "video", keyword: item.channelName, channelId: item.channelId, page: 1 }, background); }
   function closeDetail() { setPlayingVod(null); setDetail(null); }
   function open(item: SoopSearchItem) { setSelected([]); anchor.current = null; if (item.kind === "channel") creator(item, false); else { if (detail?.id !== item.id || detail.kind !== item.kind) setPlayingVod(null); setDetail(item); } }
+  useEffect(() => {
+    if (!active || privacyMode || supportedLinkRequest?.source !== "soop" || handledSupportedLink.current === supportedLinkRequest.id) return;
+    handledSupportedLink.current = supportedLinkRequest.id;
+    if (supportedLinkRequest.kind === "channel") search({ kind: "video", keyword: "", channelId: supportedLinkRequest.targetId, page: 1 });
+    else if (supportedLinkRequest.kind === "video") open({ id: supportedLinkRequest.targetId, kind: "video", title: `SOOP 영상 #${supportedLinkRequest.targetId}`, channelId: "", channelName: "", thumbnailKey: null, views: null, duration: null, restricted: false });
+  }, [active, privacyMode, supportedLinkRequest]);
   function closeTab(id: string) { const next = tabs.filter(v => v.id !== id); setTabs(next); if (selectedTab === id) setSelectedTab(next.at(-1)?.id ?? ""); setSelected([]); }
   const visible = active && !privacyMode;
   useEffect(() => {
@@ -231,8 +241,8 @@ export function SoopDiscovery({ api, active, privacyMode, legacyFavoritesView = 
     {!items.length && (savedOnly || (!currentTab?.loading && !homeLoading)) ? <p className="soop-discovery-empty">{privacyMode ? "프라이버시 모드" : savedOnly ? savedQuery ? "검색 결과가 없습니다." : "영상의 별표를 눌러 저장하세요." : !currentTab ? homeError ? "" : "메인 콘텐츠를 불러오세요." : currentTab.error ? "" : "검색 결과가 없습니다."}</p> : null}
     {!savedOnly && currentTab?.more ? <button type="button" className="soop-load-more" disabled={currentTab.loading} onClick={() => void load(currentTab.id, { ...currentTab.request, page: currentTab.page + 1 }, true)}>{currentTab.loading ? <span className="soop-spinner" aria-label="불러오는 중" /> : "더 보기"}</button> : null}
     {menu && visible ? <><div className="soop-context-scrim" onPointerDown={() => setMenu(null)} /><div className="soop-context-menu" role="menu" style={{ left: menu.x, top: menu.y }} onKeyDown={event => { if (event.key === "Escape") setMenu(null); }}>
-      <button role="menuitem" onClick={() => { open(menu.item); setMenu(null); }}>열기</button><button role="menuitem" onClick={() => { favorite(menu.item); setMenu(null); }}>{saved(menu.item) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</button>
-      {menu.item.kind === "video" ? <button role="menuitem" disabled={menu.item.restricted} onClick={() => { void download([menu.item]); setMenu(null); }}>다운로드</button> : null}<button role="menuitem" onClick={() => { creator(menu.item, false); setMenu(null); }}>채널 영상</button>
+      <button role="menuitem" onClick={() => { open(menu.item); setMenu(null); }}><ContextMenuLabel icon="open">열기</ContextMenuLabel></button><button role="menuitem" onClick={() => { favorite(menu.item); setMenu(null); }}><ContextMenuLabel icon="favorite">{saved(menu.item) ? "즐겨찾기 해제" : "즐겨찾기 추가"}</ContextMenuLabel></button>
+      {menu.item.kind === "video" ? <button role="menuitem" disabled={menu.item.restricted} onClick={() => { void download([menu.item]); setMenu(null); }}><ContextMenuLabel icon="download">다운로드</ContextMenuLabel></button> : null}<button role="menuitem" onClick={() => { creator(menu.item, false); setMenu(null); }}><ContextMenuLabel icon="creator">채널 영상</ContextMenuLabel></button>
     </div></> : null}
     {detail ? <div className="soop-detail-shade" hidden={!visible} inert={!visible} onClick={closeDetail}>
       <section className={`soop-detail${playingVod === detail.id && detail.kind === "video" ? " is-playing-vod" : ""}`} role="dialog" aria-modal="true" aria-label="영상 상세" onClick={event => event.stopPropagation()} onKeyDown={event => { if (event.key === "Escape") closeDetail(); }}>

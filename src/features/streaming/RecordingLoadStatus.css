@@ -11,7 +11,7 @@
   border-radius: 7px;
   background: var(--surface, #211e26);
   color: var(--notice-color);
-  font-size: 12px;
+  font-size: var(--font-size-min);
   line-height: 1.5;
 }
 .recording-notice.is-loading { --notice-color: var(--source-teal, #63b7b4); }

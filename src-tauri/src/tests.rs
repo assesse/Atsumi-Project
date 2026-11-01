@@ -100,7 +100,7 @@ fn primary_group_migration_preserves_existing_gallery_rows() {
         vec![
             4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26,
             27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48,
-            49, 50, 51, 52,
+            49, 50, 51, 52, 53,
         ]
     );
     let stored: (String, Option<String>) = connection
@@ -186,7 +186,7 @@ fn lifecycle_migration_preserves_v6_download_graph_and_enables_cancelled() {
         vec![
             7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
             29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50,
-            51, 52,
+            51, 52, 53,
         ]
     );
     let lifecycle: (i64, String, Option<String>, i64) = connection
@@ -297,7 +297,7 @@ fn visible_metadata_migration_defaults_existing_auto_find_candidates() {
         report.applied_versions,
         vec![
             11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
+            33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53,
         ]
     );
     let metadata: (String, String) = connection
@@ -362,7 +362,7 @@ fn settings_constraint_migration_clamps_legacy_values() {
         vec![
             2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
             26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
-            48, 49, 50, 51, 52,
+            48, 49, 50, 51, 52, 53,
         ]
     );
     let tightened: (i64, i64, i64, i64, i64, i64, i64) = connection
@@ -405,6 +405,7 @@ fn default_settings_match_the_approved_foundation_values() {
             "downloadRoot": "",
             "chzzkSsdStaging": false,
             "highPerformanceProcessing": false,
+            "processingMode": "basic",
             "folderNameTemplate": "[{artist}] {title} [{group}] {id}",
             "explorePageSize": 50,
             "danbooruPageSize": 60,
@@ -485,6 +486,7 @@ fn processing_mode_survives_database_reopen_without_changing_other_settings() {
             )
             .unwrap();
         let mut expected = initial;
+        expected.processing_mode = crate::domain::ProcessingMode::GamePriority;
         expected.high_performance_processing = true;
         expected.revision += 1;
         assert_eq!(enabled, expected);
@@ -505,6 +507,51 @@ fn processing_mode_survives_database_reopen_without_changing_other_settings() {
             .unwrap()
             .high_performance_processing
     );
+}
+
+#[test]
+fn all_three_processing_modes_survive_reopen_and_do_not_change_unrelated_preferences() {
+    use crate::domain::ProcessingMode;
+    let temporary = tempfile::tempdir().unwrap();
+    let database = temporary.path().join("three-modes.sqlite3");
+    for mode in [
+        ProcessingMode::GamePriority,
+        ProcessingMode::AtsumiPriority,
+        ProcessingMode::Basic,
+    ] {
+        let expected = {
+            let repository = Arc::new(SqliteRepository::open(&database).unwrap());
+            let service = ApplicationService::new(repository);
+            let previous = service.settings_get().unwrap();
+            let saved = service
+                .settings_update(
+                    SettingsPatch {
+                        processing_mode: Some(mode),
+                        ..Default::default()
+                    },
+                    previous.revision,
+                )
+                .unwrap();
+            let mut expected = previous.clone();
+            expected.revision += 1;
+            expected.processing_mode = mode;
+            expected.high_performance_processing = mode != ProcessingMode::Basic;
+            assert_eq!(saved, expected);
+            assert!(service
+                .settings_update(
+                    SettingsPatch {
+                        processing_mode: Some(ProcessingMode::Basic),
+                        ..Default::default()
+                    },
+                    previous.revision
+                )
+                .is_err());
+            assert_eq!(service.settings_get().unwrap(), expected);
+            expected
+        };
+        let reopened = SqliteRepository::open(&database).unwrap();
+        assert_eq!(reopened.settings_get().unwrap(), expected);
+    }
 }
 
 #[test]
@@ -700,6 +747,7 @@ fn settings_display_normalization_does_not_move_or_rewrite_existing_artifacts() 
 fn settings_validation_matches_the_approved_ui_ranges() {
     let limits = SettingsSnapshot {
         privacy_on_startup: true,
+        processing_mode: Default::default(),
         high_performance_processing: false,
         chzzk_ssd_staging: false,
         revision: 0,
@@ -1141,18 +1189,25 @@ fn download_library_projection_keeps_one_latest_entry_per_gallery() {
             .expect("complete older job");
     }
 
-    let second = service
+    // Current queue admission correctly reuses completed work. Seed the older
+    // duplicate-entry history directly to exercise the library projection.
+    let reused = service
         .download_queue_add(vec![gallery_id.get()], "download-library-second".into())
-        .expect("queue newer download");
-    let second_entry_id = second.entries[0].entry_id.clone();
-    repository
-        .connection()
-        .expect("open repository connection")
-        .execute(
-            "UPDATE download_entries SET created_at='2026-08-02T00:00:00.000Z', updated_at='2026-08-02T00:00:00.000Z' WHERE entry_id=?1",
-            [second_entry_id.as_str()],
-        )
-        .expect("date newer entry");
+        .expect("reuse completed download");
+    assert_eq!(reused.entries[0].entry_id, first_entry_id);
+    let second_entry_id = "download-library-legacy-newer".to_string();
+    let connection = repository.connection().expect("open fixture connection");
+    connection.execute(
+        "INSERT INTO download_entries (entry_id,gallery_id,revision,state,progress,created_at,updated_at)
+         VALUES (?1,?2,0,'queued',0.0,'2026-08-02T00:00:00.000Z','2026-08-02T00:00:00.000Z')",
+        params![second_entry_id,gallery_id.get()],
+    ).expect("seed newer legacy entry");
+    connection.execute(
+        "INSERT INTO download_jobs (job_id,request_id,entry_id,gallery_id,revision,state,completed_units,total_units,attempt,created_at,updated_at)
+         VALUES ('legacy-job','legacy-request',?1,?2,0,'queued',0,100,1,'2026-08-02T00:00:00.000Z','2026-08-02T00:00:00.000Z')",
+        params![second_entry_id,gallery_id.get()],
+    ).expect("seed newer legacy job");
+    drop(connection);
 
     let page = service
         .download_library_page_list(DownloadListRequest {
@@ -1165,7 +1220,7 @@ fn download_library_projection_keeps_one_latest_entry_per_gallery() {
 
     assert_eq!(page.total_items, 1);
     assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0].download.entry_id, second_entry_id);
+    assert_eq!(page.items[0].download.entry_id.as_str(), second_entry_id);
     assert_eq!(page.items[0].download.state, JobState::Queued);
 }
 

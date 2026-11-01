@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDanbooruApi, type DanbooruApi } from "../api/featureClients";
@@ -73,6 +73,51 @@ describe("DanbooruWorkspace", () => {
     window.localStorage.removeItem("atsumi.danbooru-state.v1");
     window.localStorage.removeItem("atsumi.danbooru-search-preferences.v1");
     vi.clearAllMocks();
+  });
+  it("opens a first incoming post once after StrictMode effect replay and clears loading",async()=>{
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
+    const container=document.createElement('div');document.body.append(container);const root=createRoot(container);
+    const request={id:'33523210-cb8b-4b2e-8d4a-e485d84270f4',source:'danbooru' as const,kind:'post' as const,targetId:String(post.id),url:`https://danbooru.donmai.us/posts/${post.id}`};
+    try{
+      await act(async()=>root.render(<StrictMode><DanbooruWorkspace supportedLinkRequest={request} backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()}/></StrictMode>));
+      await act(async()=>settle());
+      expect(container.querySelector('.danbooru-detail')?.textContent).toContain(`POST #${post.id}`);
+      expect(container.querySelector('.danbooru-content')).toHaveAttribute('aria-busy','false');
+      const exactCalls=vi.mocked(backend.danbooruSearch).mock.calls.filter(([query])=>query.pageSize===1);
+      expect(exactCalls).toHaveLength(1);
+    }finally{await act(async()=>root.unmount());container.remove();vi.unstubAllGlobals();}
+  });
+  it('retries an unfinished incoming link after privacy cancellation without accepting its late result',async()=>{
+    vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
+    const container=document.createElement('div');document.body.append(container);const root=createRoot(container);
+    const request={id:'33523210-cb8b-4b2e-8d4a-e485d84270f4',source:'danbooru' as const,kind:'post' as const,targetId:String(post.id),url:`https://danbooru.donmai.us/posts/${post.id}`};
+    let complete!:(value:Awaited<ReturnType<DanbooruApi['danbooruSearch']>>)=>void;
+    const search=vi.fn<DanbooruApi['danbooruSearch']>().mockImplementationOnce(()=>new Promise(resolve=>{complete=resolve;})).mockResolvedValue({ok:true,data:{items:[post],page:1,hasMore:false}});
+    const localApi={...danbooruApi,danbooruSearch:search};
+    const draw=(privacyMode:boolean)=>act(async()=>root.render(<DanbooruWorkspace privacyMode={privacyMode} supportedLinkRequest={request} backend={localApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()}/>));
+    try{
+      await draw(false);expect(search).toHaveBeenCalledOnce();
+      await draw(true);await act(async()=>complete({ok:true,data:{items:[nextPost],page:1,hasMore:false}}));
+      expect(container.querySelector('.danbooru-detail')).toBeNull();
+      await draw(false);await act(async()=>settle());
+      expect(search).toHaveBeenCalledTimes(2);expect(container.querySelector('.danbooru-detail')).toHaveTextContent(`POST #${post.id}`);
+      expect(container.querySelector('.danbooru-content')).toHaveAttribute('aria-busy','false');
+      await draw(true);await draw(false);expect(search).toHaveBeenCalledTimes(2);
+    }finally{await act(async()=>root.unmount());container.remove();vi.unstubAllGlobals();}
+  });
+  it("opens the exact indexed result in the existing detail after an inactive first mount", async () => {
+    const container = document.createElement("div"); document.body.append(container); const root = createRoot(container);
+    const request = { id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae2", source: "danbooru" as const, kind: "post" as const, targetId: String(post.id), url: `https://danbooru.donmai.us/posts/${post.id}` };
+    const draw = (active: boolean, privacyMode = false) => act(async () => root.render(<DanbooruWorkspace active={active} privacyMode={privacyMode} supportedLinkRequest={request} backend={danbooruApi} railCollapsed={false} pageSize={50} previewWidth={220} onToggleRail={vi.fn()} onSourceChange={vi.fn()} onOpenSettings={vi.fn()} />));
+    try {
+      await draw(false); expect(backend.danbooruSearch).not.toHaveBeenCalled();
+      await draw(true, true); expect(container.querySelector(".danbooru-detail")).toBeNull();
+      await draw(true); await act(async () => settle());
+      expect(backend.danbooruSearch).toHaveBeenCalledWith({ tags: String(post.id), page: 1, pageSize: 1 });
+      expect(container.querySelector(".danbooru-detail")?.textContent).toContain(`POST #${post.id}`);
+      const exactCalls = () => vi.mocked(backend.danbooruSearch).mock.calls.filter(([request]) => request.pageSize === 1);
+      expect(exactCalls()).toHaveLength(1); await draw(true); expect(exactCalls()).toHaveLength(1);
+    } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
   it.each(DANBOORU_SORTS)("requests the server sort $value from its actual dropdown option", async ({ label, metatag, description }) => {

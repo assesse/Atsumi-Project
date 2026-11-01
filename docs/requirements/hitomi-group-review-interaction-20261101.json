@@ -1,0 +1,57 @@
+{
+  "id": "hitomi-group-review-interaction-20261101",
+  "state": "implemented-automated-verified-live-ui-deferred",
+  "original": {
+    "thread": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turn": "01a19296-bb0b-7a33-8130-1a0e8efc91e6",
+    "item": "01a19296-bbcd-7020-801a-4c8447d3d09c"
+  },
+  "requests": [
+    "Fix content/badges painting over sticky edition labels during horizontal scrolling.",
+    "Wheel without Shift moves vertically (inner then outer); Shift+wheel only horizontally. Keep Ctrl zoom untouched.",
+    "Show short Ctrl+click selection / Shift+click range guidance.",
+    "Rename processed fold to 이미 처리된 판본.",
+    "Use themed keyboard focus ring; no native black ring on Shift.",
+    "Remove inner comparison manual resize; persist manually resized outer review dialog across reopen/restart. Keep normal size distinct from maximize and viewport clamping.",
+    "Use larger representative covers and compact responsive edition cards with useful metadata; fixed comparison button dimensions across toggles."
+  ],
+  "supersedes": [
+    "20261031 manual resize of inner comparison pane",
+    "20261031 full-width thin edition rows"
+  ],
+  "preserved": [
+    "Current grouped multi-edition horizontal comparison",
+    "Ctrl/Shift selections and evidence revision validation",
+    "True complete-containment batch eligibility; no live decisions for testing",
+    "No downloads/recording cancellation, drain or kill; idle gate before integration",
+    "Prior thumbnail subscription fix; no releases/commits"
+  ],
+  "audit": {
+    "documentsVerified": 296,
+    "newFullyReadContract": "hitomi-group-review-polish-20261031.json",
+    "threads": "28 active +3 archived EOF; other Atsumi revisions unchanged; current delta read through previous full read",
+    "unavailable": [
+      "Original handoff01a03f16",
+      "Unidentified historical analysis1/2",
+      "Historical attachment pixels outside snapshots",
+      "Unlisted/inaccessible sources"
+    ]
+  },
+  "acceptance": [
+    "Reproduce initial wheel/bleed/focus failures with actual browser events and screenshots",
+    "Ordinary wheel moves outer dialog when comparison fits or reaches edge; Shift changes only scrollLeft",
+    "Badges remain below sticky label paint/hit-test layer",
+    "Ctrl selection survives all new layout/size actions",
+    "Manual dialog resize survives close/reload, maximize and smaller viewport without corrupting normal size",
+    "Stable compare button bounds and larger covers at1920/1280/736 viewports",
+    "Typecheck, focused regression, build; actual UI only when safe from user input"
+  ],
+  "verification": {
+    "regression": "62 passed in 5 files",
+    "types": "app/node passed",
+    "build": "passed",
+    "browser": "17 assertions/results; native wheel/Shift/drag; 1920x1080/1280x720/736x900",
+    "desktop": "Development app startup and read-only health verified; actual comparison UI is deferred. BGD disconnected; no host input.",
+    "record": ".runtime/group-review-interaction-20261101/verification.json"
+  }
+}

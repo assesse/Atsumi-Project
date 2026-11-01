@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 import { useAppShell } from "../../app/AppShell";
 import type { ContentSource, WorkspaceViewId } from "../../app/workspaceRegistry";
 import { SideRail } from "../../components/SideRail";
@@ -19,8 +20,9 @@ export type PlatformSource = typeof platformSources[number];
 export const isPlatformSource = (source: ContentSource): source is PlatformSource => platformSources.some(item => item === source);
 
 /** Only presentation is shared. Each provider owns its data and interaction state. */
-export function PlatformWorkspace({ source, active, runtime, onSourceChange }: {
+export function PlatformWorkspace({ source, active, runtime, onSourceChange, supportedLinkRequest }: {
   source: PlatformSource; active: boolean; runtime: "tauri" | "browser-mock"; onSourceChange: (source: ContentSource) => void;
+  supportedLinkRequest?: SupportedLinkRequest | null;
 }) {
   const shell = useAppShell();
   const previewWidth = useVideoPreviewWidth(source === "youtube" || source === "soop" ? source : null);
@@ -32,6 +34,12 @@ export function PlatformWorkspace({ source, active, runtime, onSourceChange }: {
   const [xView, setXView] = useState<WorkspaceViewId<"x">>("explore");
   const [xAccountTarget, setXAccountTarget] = useState<HTMLDivElement | null>(null);
   const [watching, setWatching] = useState(false);
+  useEffect(() => {
+    if (!active || supportedLinkRequest?.source !== source) return;
+    if (source === "youtube" || source === "soop") setVideoView("explore");
+    else if (source === "x") setXView("explore");
+    else setImageView("explore");
+  }, [active, source, supportedLinkRequest]);
   const videoSource = source === "youtube" || source === "soop";
   const immersive = videoSource && watching && videoView === "live" && !shell.tutorialOpen;
   const common = { active, runtime, privacyMode: shell.privacyMode, onNotice: shell.showToast };
@@ -46,11 +54,11 @@ export function PlatformWorkspace({ source, active, runtime, onSourceChange }: {
       {source === "x" ? <SideRail {...rail} source="x" view={xView} onNavigate={setXView} footer={<div className="x-sidebar-slot" ref={setXAccountTarget}/>} /> : source === "youtube" || source === "soop" ? <SideRail {...rail} source={source} view={videoView === "favorites" ? "explore" : videoView} onNavigate={setVideoView} /> : <SideRail {...rail} source={source} view={imageView} onNavigate={setImageView} />}
     </LiveEdgePanel>
     <main className="platform-main">
-      {source === "youtube" ? <ReloadableView load={loadYouTube} viewProps={{ ...common, previewWidth, view: videoView, onViewChange: setVideoView, onWatchingChange: setWatching }} />
-        : source === "x" ? <ReloadableView load={loadX} viewProps={{ ...common, view: xView, accountPortalTarget: xAccountTarget }} />
-        : source === "soop" ? <ReloadableView load={loadSoop} viewProps={{ ...common, previewWidth, view: videoView, onViewChange: setVideoView, onWatchingChange: setWatching }} />
-        : source === "pinterest" ? <ReloadableView load={loadPinterest} viewProps={{ ...common, previewWidth: imagePreviewWidth, view: imageView }} />
-        : <ReloadableView load={loadPixiv} viewProps={{ ...common, previewWidth: imagePreviewWidth, view: imageView, onViewChange: setImageView }} />}
+      {source === "youtube" ? <ReloadableView load={loadYouTube} viewProps={{ ...common, previewWidth, view: videoView, onViewChange: setVideoView, onWatchingChange: setWatching, supportedLinkRequest }} />
+        : source === "x" ? <ReloadableView load={loadX} viewProps={{ ...common, view: xView, accountPortalTarget: xAccountTarget, supportedLinkRequest }} />
+        : source === "soop" ? <ReloadableView load={loadSoop} viewProps={{ ...common, previewWidth, view: videoView, onViewChange: setVideoView, onWatchingChange: setWatching, supportedLinkRequest }} />
+        : source === "pinterest" ? <ReloadableView load={loadPinterest} viewProps={{ ...common, previewWidth: imagePreviewWidth, view: imageView, supportedLinkRequest }} />
+        : <ReloadableView load={loadPixiv} viewProps={{ ...common, previewWidth: imagePreviewWidth, view: imageView, onViewChange: setImageView, supportedLinkRequest }} />}
     </main>
   </div>;
 }

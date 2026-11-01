@@ -24,6 +24,8 @@ mod fullscreen;
 mod actions;
 #[path = "x_surface_search.rs"]
 pub mod search;
+#[path = "x_surface_source_compat.rs"]
+mod source_compat;
 
 const ERROR: &str = "X 화면을 열지 못했습니다. 새로고침하거나 로그인 상태를 확인해 주세요.";
 const LOGIN: &str = "X 로그인이 필요합니다. 계정 메뉴에서 로그인해 주세요.";
@@ -58,6 +60,7 @@ struct RouteIntent {
     generation: u64,
     since: Instant,
     background: bool,
+    video_source: bool,
     origin: PreviewOpenOrigin,
 }
 #[derive(Clone, Copy)]
@@ -125,6 +128,10 @@ struct DocumentProof {
     primary: bool,
     #[serde(default)]
     photo: bool,
+    #[serde(default)]
+    video: bool,
+    #[serde(default, rename = "videoShape")]
+    video_shape: Option<VideoShape>,
     login: bool,
     #[serde(default, rename = "photoShape")]
     photo_shape: Option<PhotoShape>,
@@ -191,6 +198,20 @@ impl AdHeaderShape {
             "labelScope":self.label_scope.min(160),"labelNonLeaf":self.label_non_leaf.min(160),
             "labelHidden":self.label_hidden.min(160),"outerLabel":self.outer_label.min(160)
         })
+    }
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct VideoShape {
+    players: u8, videos: u8, frames: u8, presented: u8, sources: u8, posters: u8,
+    dialogs: u8, same_owner: bool, deferrals: u8,
+}
+impl VideoShape {
+    fn diagnostic(&self) -> serde_json::Value {
+        serde_json::json!({"players":self.players.min(64),"videos":self.videos.min(64),
+            "frames":self.frames.min(64),"presented":self.presented.min(64),"sources":self.sources.min(64),
+            "posters":self.posters.min(64),"dialogs":self.dialogs.min(8),
+            "sameOwner":self.same_owner,"deferrals":self.deferrals.min(32)})
     }
 }
 #[derive(Deserialize)]
@@ -488,6 +509,25 @@ fn profile_path(value: &str) -> bool {
 fn navigation_path(value: &str) -> bool {
     post_path(value) || profile_path(value)
 }
+pub(crate) fn media_search_path(value: &str) -> bool { navigation_path(value) }
+
+/// Called only with a native-retained indexed result destination. Keep the same
+/// profile, surface lane and navigation epoch as an ordinary official-page click.
+pub(crate) async fn open_media_search_target(session: &XSession, app: &AppHandle, generation: u64, path: &str) -> Result<SurfaceSnapshot, String> {
+    if !navigation_path(path) { return Err(ERROR.into()); }
+    let revision = session.revision.load(Ordering::Acquire);
+    let _lane = session.surface_lane.lock().await;
+    let registry = session.registry(app)?;
+    let owner = registry.accounts.iter().find(|entry| entry.id == registry.active).ok_or(LOGIN)?.handle.to_lowercase();
+    let (feed, origin) = {
+        let data = session.surfaces.lock().unwrap_or_else(|p| p.into_inner());
+        if generation != data.generation || revision != session.revision.load(Ordering::Acquire)
+            || data.feeds.get(&data.active).is_none_or(|pane| pane.owner != owner || pane.revision != revision) { return Err(STALE.into()); }
+        (data.active.clone(), preview_origin(&data))
+    };
+    open_preview(session, app, path, &owner, &feed, false, origin).await?;
+    Ok(snapshot(session))
+}
 fn external_link_url(value: &str) -> Option<Url> {
     if value.is_empty() || value.len() > 2048
         || value.chars().any(|c| c.is_whitespace() || c.is_control() || c == '\\') {
@@ -519,7 +559,7 @@ fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
         return None;
     }
     let (kind, value) = (pairs[0].1.to_string(), pairs[1].1.to_string());
-    if !matches!(kind.as_str(), "status" | "preview" | "previewBackground" | "close" | "external" | "externalLink" | "play" | "focus" | "wheel" | "key" | "archive" | "archiveCancel" | "archiveStatus" | "archiveChoose" | "search" | "routeIntent")
+    if !matches!(kind.as_str(), "status" | "preview" | "previewBackground" | "videoSourcePreview" | "close" | "external" | "externalLink" | "play" | "focus" | "wheel" | "key" | "archive" | "archiveCancel" | "archiveStatus" | "archiveChoose" | "search" | "routeIntent")
         && !(cfg!(debug_assertions) && matches!(kind.as_str(), "routeProbe" | "photoProbe")) {
         return None;
     }
@@ -530,9 +570,10 @@ fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
         .is_ok_and(|probe| matches!(probe.route, PhotoRoute::Photo) && (1..=4).contains(&probe.sample)) {
         return None;
     }
-    if matches!(kind.as_str(), "preview" | "previewBackground" | "external") && !navigation_path(&value) {
+    if matches!(kind.as_str(), "preview" | "previewBackground" | "videoSourcePreview" | "external") && !navigation_path(&value) {
         return None;
     }
+    if kind == "videoSourcePreview" && !actions::base_post_path(&value) && !profile_path(&value) { return None; }
     if kind == "externalLink" && external_link_url(&value).is_none() { return None; }
     if matches!(kind.as_str(), "close" | "focus" | "wheel") && !value.is_empty() {
         return None;
@@ -543,7 +584,7 @@ fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
     if kind == "play" && !matches!(value.as_str(), "auto" | "manual") {
         return None;
     }
-    if kind == "routeIntent" && !matches!(value.as_str(), "arm" | "armBackground" | "cancel") { return None; }
+    if kind == "routeIntent" && !matches!(value.as_str(), "arm" | "armBackground" | "armVideoSource" | "cancel") { return None; }
     if kind == "archive" && actions::Action::parse(&value).is_none() { actions::rejected_submission(); return None; }
     if kind == "archiveCancel" && !actions::canonical_request_id(&value) { return None; }
     if kind == "archiveStatus" && !actions::canonical_request_id(&value) { return None; }
@@ -643,10 +684,11 @@ fn snapshot(session: &XSession) -> SurfaceSnapshot {
             Some("X 화면 응답을 기다리는 중입니다. 계속 표시되지 않으면 새로고침해 주세요.".into())
         }
         "error" => Some(ERROR.into()),
+        "unavailable" => Some("X에서 이 페이지를 열 수 없습니다. X 화면의 뒤로 가기 또는 새로고침을 이용해 주세요.".into()),
         _ => match preview_state.as_str() {
             "loginRequired" => Some(LOGIN.into()),
             "ownerChanged" => Some(OWNER.into()),
-            "timeout" | "error" => Some(
+            "timeout" | "error" | "unavailable" => Some(
                 "X 상세 화면을 불러오지 못했습니다. 닫은 뒤 게시물을 다시 선택해 주세요.".into(),
             ),
             _ => None,
@@ -886,7 +928,7 @@ fn paint_current(session: &XSession, app: &AppHandle) {
             rect = fullscreen.rect(&pane);
         }
         let visible = pane.revision == session.revision.load(Ordering::Acquire)
-            && pane_state(&pane) == "ready"
+            && matches!(pane_state(&pane).as_str(), "ready" | "unavailable")
             && rect.as_ref()
                 .zip(viewport.as_ref())
                 .is_some_and(|(r, v)| unobscured(r, v));
@@ -1019,7 +1061,7 @@ fn intercept_source_navigation(session: &XSession, app: &AppHandle, pane: &Arc<P
         let Some(intent) = data.route_intents.remove(&pane.label) else { return false; };
         (intent, data.generation)
     };
-    if pane.feed == "preview" && !intent.0.background || !interaction_allowed(session, pane) { return false; }
+    if pane.feed == "preview" && !intent.0.background && !intent.0.video_source || !interaction_allowed(session, pane) { return false; }
     let Some(current) = app.get_webview(&pane.label).and_then(|view| view.url().ok()) else { return false; };
     if !route_intent_target(&intent.0, intent.1, &current, target) { return false; }
     let host = session.clone(); let owned = app.clone(); let source = pane.clone();
@@ -1224,14 +1266,14 @@ fn handle_signal(session: &XSession, app: &AppHandle, pane: &Arc<Pane>, kind: &s
         };
         if !matches!(
             status.state.as_str(),
-            "ready" | "loading" | "loginRequired" | "ownerChanged"
+            "ready" | "loading" | "unavailable" | "loginRequired" | "ownerChanged"
         ) || status.path.len() > 1000
             || !status.path.starts_with('/')
         {
             return;
         }
         if guard_pane_root(session, app, pane, &status) { return; }
-        let state = if status.state == "ready" && status.owner.as_deref() != Some(&pane.owner) {
+        let state = if matches!(status.state.as_str(),"ready"|"unavailable") && status.owner.as_deref() != Some(&pane.owner) {
             "ownerChanged"
         } else {
             &status.state
@@ -1241,7 +1283,9 @@ fn handle_signal(session: &XSession, app: &AppHandle, pane: &Arc<Pane>, kind: &s
             let feed = match pane.feed.as_str() { "foryou"=>"foryou", "following"=>"following", "communities"=>"communities", "likes"=>"likes", "bookmarks"=>"bookmarks", "preview"=>"preview", _=>"other" };
             super::debug_shape("official-surface", "readiness", &serde_json::json!({
                 "feed":feed,"state":state,"profileLink":proof.profile,"accountSwitcher":proof.account,
-                "primaryColumn":proof.primary,"photoDialog":proof.photo,"login":proof.login,
+                "primaryColumn":proof.primary,"photoDialog":proof.photo,"videoLayer":proof.video,"login":proof.login,
+                "sameDocumentOwner":status.owner.as_deref()==Some(pane.owner.as_str()),
+                "videoShape":proof.video_shape.as_ref().map(VideoShape::diagnostic),
                 "photoShape":proof.photo_shape.as_ref().map(PhotoShape::diagnostic),
                 "accountShape":proof.account_shape.as_ref().map(AccountShape::diagnostic),
                 "adShape":proof.ad_shape.as_ref().map(AdShape::diagnostic)
@@ -1327,13 +1371,13 @@ fn handle_signal(session: &XSession, app: &AppHandle, pane: &Arc<Pane>, kind: &s
             let source = app.get_webview(&pane.label).and_then(|view| view.url().ok());
             let mut data = session.surfaces.lock().unwrap_or_else(|p| p.into_inner());
             data.route_intents.remove(&pane.label);
-            if matches!(value, "arm" | "armBackground") {
+            if matches!(value, "arm" | "armBackground" | "armVideoSource") {
                 if let Some(source) = source.filter(|url| allowed(url)
                     && !url.path().starts_with("/__atsumi_surface__/")) {
                     let generation = data.generation;
                     let origin = preview_origin(&data);
                     data.route_intents.insert(pane.label.clone(), RouteIntent {
-                        source, generation, since: Instant::now(), background: value == "armBackground", origin,
+                        source, generation, since: Instant::now(), background: value == "armBackground", video_source: value == "armVideoSource", origin,
                     });
                 }
             }
@@ -1350,7 +1394,7 @@ fn handle_signal(session: &XSession, app: &AppHandle, pane: &Arc<Pane>, kind: &s
             };
             finish_preview_close(session, app, old, true);
         }
-        "preview" | "previewBackground" if pane.feed != "preview" || kind == "previewBackground" => {
+        "preview" | "previewBackground" | "videoSourcePreview" if pane.feed != "preview" || kind != "preview" => {
             let host = session.clone();
             let app = app.clone();
             let pane = pane.clone();
@@ -1396,6 +1440,7 @@ async fn create(
     });
     let config = serde_json::json!({"nonce":pane.nonce,"feed":feed,"owner":owner,"diagnostics":cfg!(debug_assertions),"searchEnabled":search::available(),"searchCapabilities":search::capabilities()}).to_string();
     let script = [
+        source_compat::initialization(&config),
         include_str!("x_surface_ads.js").replace("__ATSUMI_X_ADS__", &config),
         include_str!("x_surface_actions.js").replace("__ATSUMI_X_ACTIONS__", &config),
         include_str!("x_surface_input.js").replace("__ATSUMI_X_INPUT__", &config),
@@ -1485,6 +1530,7 @@ async fn create(
             install_bridge(&view, host.clone(), child.clone())?;
             install_native_audio(&view, host.clone(), child.clone())?;
             fullscreen::install(&view, host.clone(), child.clone())?;
+            source_compat::install(&view, host.clone(), child.clone());
             // Passive only: unlike extracted readers, original documents keep
             // their normal source media network/playback behavior intact.
             if surface_media::install(&view, child.media.clone(), host.revision.clone()).is_err() {
@@ -1603,8 +1649,17 @@ async fn open_preview(
     Ok(())
 }
 fn existing_preview(data: &Surfaces, path: &str, owner: &str, revision: u64) -> Option<String> {
-    data.preview_tabs.iter().find(|tab| tab.path == path && tab.pane.revision == revision
+    data.preview_tabs.iter().find(|tab| same_preview_target(&tab.path,path) && tab.pane.revision == revision
         && tab.pane.owner == owner).map(|tab| tab.pane.label.clone())
+}
+fn same_preview_target(left: &str, right: &str) -> bool {
+    if left == right { return true; }
+    // The native video source opens /i/status/id, then X supplies its actual
+    // canonical /handle/status/id. Reuse that exact observed post identity;
+    // profiles, media subroutes and unrelated author paths remain distinct.
+    let alias = |path: &str| path.starts_with("/i/status/") || path.starts_with("/i/web/status/");
+    (alias(left) || alias(right)) && actions::base_post_path(left) && actions::base_post_path(right)
+        && left.rsplit('/').next() == right.rsplit('/').next()
 }
 fn observe_preview_path(data: &mut Surfaces, pane: &Pane, path: &str, current: &Url) {
     if pane.feed != "preview" || !allowed(current) || current.path() != path || !navigation_path(path) { return; }
@@ -2239,7 +2294,7 @@ mod tests {
         let mut data=session.surfaces.lock().unwrap();
         let generation=data.generation;
         let origin=preview_origin(&data);
-        data.route_intents.insert(feed.label.clone(),RouteIntent{source:Url::parse("https://x.com/home").unwrap(),generation,since:Instant::now(),background:false,origin});
+        data.route_intents.insert(feed.label.clone(),RouteIntent{source:Url::parse("https://x.com/home").unwrap(),generation,since:Instant::now(),background:false,video_source:false,origin});
         let panes=suspend_documents(&mut data);
         assert_eq!(panes.len(),2);assert_eq!(data.generation,generation+1);
         assert_eq!(data.active,"foryou");assert!(Arc::ptr_eq(data.feeds.get("foryou").unwrap(),&feed));
@@ -2432,7 +2487,7 @@ mod tests {
     #[test]
     fn source_requested_navigation_intent_is_single_document_generation_and_deadline_scoped() {
         let current = Url::parse("https://x.com/home").unwrap();
-        let intent = RouteIntent { source:current.clone(),generation:9,since:Instant::now(),background:false,
+        let intent = RouteIntent { source:current.clone(),generation:9,since:Instant::now(),background:false,video_source:false,
             origin: PreviewOpenOrigin { order:0, selection:0 } };
         let target = Url::parse("https://x.com/bob/status/123456").unwrap();
         assert!(route_intent_target(&intent, 9, &current, &target));
@@ -2445,12 +2500,25 @@ mod tests {
         assert!(!route_intent_target(&intent, 9, &Url::parse("https://x.com/i/bookmarks").unwrap(), &target));
         let expired = RouteIntent { since:Instant::now()-Duration::from_millis(1001),..intent };
         assert!(!route_intent_target(&expired, 9, &current, &target));
-        for value in ["arm","armBackground","cancel"] {
+        for value in ["arm","armBackground","armVideoSource","cancel"] {
             let url=Url::parse(&format!("https://x.com/__atsumi_surface__/nonce?kind=routeIntent&value={value}")).unwrap();
             assert!(signal(&url,"nonce").is_some());
         }
         for value in ["", "https://x.com/bob", "click", "/bob"] {
             let url=Url::parse(&format!("https://x.com/__atsumi_surface__/nonce?kind=routeIntent&value={value}")).unwrap();
+            assert!(signal(&url,"nonce").is_none());
+        }
+    }
+    #[test]
+    fn video_source_preview_bridge_accepts_only_exact_post_or_profile_targets() {
+        for path in ["/creator", "/creator/status/123456", "/i/status/987654"] {
+            let mut url=Url::parse("https://x.com/__atsumi_surface__/nonce").unwrap();
+            url.query_pairs_mut().append_pair("kind","videoSourcePreview").append_pair("value",path);
+            assert_eq!(signal(&url,"nonce"),Some(("videoSourcePreview".into(),path.into())));
+        }
+        for path in ["/settings", "/creator/status/123456/video/1", "/creator/status/123456/photo/1", "https://x.com/creator", "/creator?x=1"] {
+            let mut url=Url::parse("https://x.com/__atsumi_surface__/nonce").unwrap();
+            url.query_pairs_mut().append_pair("kind","videoSourcePreview").append_pair("value",path);
             assert!(signal(&url,"nonce").is_none());
         }
     }
@@ -2495,6 +2563,21 @@ mod tests {
         ] {
             observe_preview_path(&mut data, &pane, path, &Url::parse(url).unwrap());
             assert_eq!(data.preview_tabs[0].path, current.path());
+        }
+    }
+    #[test]
+    fn observed_canonical_post_reuses_only_its_matching_native_status_alias() {
+        let (session, _, pane) = playback_fixture();
+        let mut data = session.surfaces.lock().unwrap();
+        let canonical = Url::parse("https://x.com/bob/status/654321").unwrap();
+        observe_preview_path(&mut data, &pane, canonical.path(), &canonical);
+        for path in ["/i/status/654321", "/i/web/status/654321"] {
+            assert_eq!(existing_preview(&data,path,"alice",pane.revision).as_deref(),Some(pane.label.as_str()));
+            assert!(existing_preview(&data,path,"other",pane.revision).is_none());
+            assert!(existing_preview(&data,path,"alice",pane.revision+1).is_none());
+        }
+        for path in ["/i/status/654322", "/i/web/status/654322", "/i/status/654321/video/1", "/i/status/654321/photo/1", "/bob", "/other/status/654321"] {
+            assert!(existing_preview(&data,path,"alice",pane.revision).is_none());
         }
     }
     #[test]
@@ -2643,15 +2726,21 @@ mod tests {
         assert!(!claim_input(&session, &preview));
     }
     #[test]
-    fn fullscreen_and_closed_preview_cannot_leave_keys_owned_by_an_ineligible_pane() {
+    fn feed_local_fullscreen_preserves_pane_focus_and_closed_preview_returns_keys_to_feed() {
         let (session, feed, preview) = playback_fixture();
         assert!(claim_input(&session, &preview));
         feed.fullscreen.store(true, Ordering::Release);
         {
             let data = session.surfaces.lock().unwrap();
+            assert_eq!(input_target(&data, &feed).unwrap().label, preview.label);
+        }
+        assert!(claim_input(&session, &feed));
+        {
+            let data = session.surfaces.lock().unwrap();
             assert_eq!(input_target(&data, &feed).unwrap().label, feed.label);
         }
         feed.fullscreen.store(false, Ordering::Release);
+        assert!(claim_input(&session, &preview));
         let mut data = session.surfaces.lock().unwrap();
         let generation = data.generation;
         take_preview(&mut data, Some(&preview.label), Some(generation)).unwrap();
@@ -2824,6 +2913,30 @@ mod tests {
             let value = format!(r#"{{"state":"loading","owner":null,"path":"/home","proof":{proof}}}"#);
             assert!(serde_json::from_str::<DocumentStatus>(&value).is_err());
         }
+    }
+    #[test]
+    fn native_video_readiness_keeps_the_closed_status_contract() {
+        let value = serde_json::json!({"state":"ready","owner":"alice","path":"/creator/status/123456/video/1",
+            "proof":{"profile":false,"account":false,"primary":false,"photo":false,"video":true,"login":false}});
+        let status: DocumentStatus = serde_json::from_value(value.clone()).unwrap();
+        assert!(status.proof.unwrap().video);
+        let mut diagnostic = value.clone();
+        diagnostic["proof"]["videoShape"] = serde_json::json!({"players":255,"videos":255,"frames":255,
+            "presented":255,"sources":255,"posters":255,"dialogs":255,"sameOwner":true,"deferrals":255});
+        let shape = serde_json::from_value::<DocumentStatus>(diagnostic.clone()).unwrap()
+            .proof.unwrap().video_shape.unwrap().diagnostic();
+        assert_eq!(shape["videos"],64);assert_eq!(shape["dialogs"],8);assert_eq!(shape["deferrals"],32);
+        diagnostic["proof"]["videoShape"]["sourceUrl"] = serde_json::json!("private");
+        assert!(serde_json::from_value::<DocumentStatus>(diagnostic).is_err());
+        let mut legacy = value.clone();
+        legacy["proof"].as_object_mut().unwrap().remove("video");
+        assert!(!serde_json::from_value::<DocumentStatus>(legacy).unwrap().proof.unwrap().video);
+        let mut invalid = value.clone();
+        invalid["proof"]["video"] = serde_json::json!("true");
+        assert!(serde_json::from_value::<DocumentStatus>(invalid).is_err());
+        let mut extra = value;
+        extra["proof"]["sourceUrl"] = serde_json::json!("private");
+        assert!(serde_json::from_value::<DocumentStatus>(extra).is_err());
     }
     #[test]
     fn photo_diagnostic_is_closed_bounded_and_contains_no_source_strings() {

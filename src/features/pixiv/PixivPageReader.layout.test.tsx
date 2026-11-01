@@ -60,7 +60,7 @@ describe.skipIf(!browser)("Pixiv reader chrome: offline production CSS geometry"
     for (const r of results) {
       expect(r.overflow, r.name).toBeLessThanOrEqual(1); expect(Math.abs(r.stage.width - (r.reader.width - 2)), r.name).toBeLessThan(1); expect(Math.abs(r.stage.height - (r.reader.height - 2)), r.name).toBeLessThan(1);
       expect(Math.abs(r.count.x + r.count.width / 2 - r.reader.x - r.reader.width / 2), r.name).toBeLessThan(1);
-      expect(r.font, r.name).toEqual({ size: "18px", weight: "600" });
+      expect(r.font, r.name).toEqual({ size: "20px", weight: "600" });
       expect(overlaps(r.count, r.left) || overlaps(r.count, r.right) || overlaps(r.left, r.right), r.name).toBe(false);
       expect(r.favorites.x, r.name).toBeGreaterThanOrEqual(r.pin.x + r.pin.width); expect(Math.abs(r.favorites.y + r.favorites.height / 2 - r.pin.y - r.pin.height / 2), r.name).toBeLessThan(1);
       expect(r.toolbar.y, r.name).toBeGreaterThanOrEqual(r.title.y + r.title.height); expect(r.navigation.y, r.name).toBeGreaterThanOrEqual(r.toolbar.y + r.toolbar.height);

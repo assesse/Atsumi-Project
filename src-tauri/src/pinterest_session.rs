@@ -147,7 +147,8 @@ fn valid_plan(plan: &Plan) -> bool {
                             | "prepend"
                             | "is_prefetch"
                             | "num_pins"
-                    ) && (value.is_boolean()
+                    ) && ((plan.resource == "BaseSearchResource" && key == "gated" && value.is_null())
+                        || value.is_boolean()
                         || value
                             .as_f64()
                             .is_some_and(|n| n.is_finite() && n.abs() <= 10000.0)
@@ -185,7 +186,8 @@ fn plan_matches_request(plan: &Plan, kind: &str, input: &str, path: &str) -> boo
     }
 }
 fn saved_owner(path: &str) -> Option<&str> {
-    let owner = path.strip_prefix('/')?.strip_suffix("/_saved/")?;
+    let profile = path.strip_prefix('/')?;
+    let owner = profile.strip_suffix("/_saved/").or_else(|| profile.strip_suffix('/'))?;
     if owner.is_empty() || owner.len() > 100 || !owner.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
         return None;
     }
@@ -224,6 +226,8 @@ struct ProjectionDiagnostic {
     cursor: bool,
     exhausted: bool,
     limited: bool,
+    option_field: u64,
+    option_shape: u64,
 }
 impl ProjectionDiagnostic {
     fn from_value(value: &Value, kind: &str, previous: Option<&Plan>, cursor: bool) -> Option<Self> {
@@ -231,6 +235,8 @@ impl ProjectionDiagnostic {
             "home" => "pinterest_home_projection",
             "keyword" => "pinterest_keyword_projection",
             "profile" => "pinterest_profile_projection",
+            "owner" => "pinterest_owner_projection",
+            "saved" => "pinterest_saved_projection",
             _ => return None,
         };
         let diagnostic = value.get("diagnostics")?.as_object()?;
@@ -244,6 +250,7 @@ impl ProjectionDiagnostic {
             Some("hydration") => "hydration",
             Some("dom_fallback") => "dom_fallback",
             Some("resource_response") => "resource_response",
+            Some("owner_projection") => "owner_projection",
             _ => "none",
         };
         let mut reason = match item("planReject").as_str() {
@@ -257,6 +264,18 @@ impl ProjectionDiagnostic {
             Some("option_size") => "OPTION_SIZE",
             Some("context_mismatch") => "CONTEXT_MISMATCH",
             Some("same_bookmark") => "SAME_BOOKMARK",
+            Some("owner_missing") => "OWNER_MISSING",
+            Some("resource_empty") => "RESOURCE_EMPTY",
+            Some("resource_oversize") => "RESOURCE_OVERSIZE",
+            Some("resource_shape") => "RESOURCE_SHAPE",
+            Some("resource_error") => "RESOURCE_ERROR",
+            Some("resource_data") => "RESOURCE_DATA",
+            Some("resource_json") => "RESOURCE_JSON",
+            Some("resource_auth") => "RESOURCE_AUTH",
+            Some("resource_http") => "RESOURCE_HTTP",
+            Some("resource_forbidden") => "RESOURCE_FORBIDDEN",
+            Some("resource_transport") => "RESOURCE_TRANSPORT",
+            Some("resource_version") => "RESOURCE_VERSION",
             _ => "UNKNOWN",
         };
         if !value["continuation"].is_null() {
@@ -278,15 +297,16 @@ impl ProjectionDiagnostic {
             stage, source, reason,
             initial: code("initialShape", &["absent", "over_limit", "invalid_json", "redux_object", "redux_missing"]),
             key: code("keyShape", &["pairs", "object", "other", "invalid_json"]),
-            data: code("dataShape", &["array", "results_array", "other", "missing"]),
-            entry: code("entryShape", &["pin_objects", "id_only", "mixed", "empty", "other"]),
+            data: code("dataShape", &["array", "results_array", "other", "missing", "session_id", "session_object"]),
+            entry: code("entryShape", &["pin_objects", "id_only", "mixed", "empty", "other", "mapped_username", "session_username"]),
             bookmark: code("bookmarkShape", &["absent", "empty", "end", "string", "array", "other"]),
             locations: count("bookmarkLocationMask", 15),
-            resources: count("knownResourceMask", 31),
+            resources: count("knownResourceMask", 127),
             entries: count("resourceEntryCount", 4),
             structured: count("structuredPinCount", 60),
             dom: count("domPinCount", 60),
             cursor, exhausted, limited: !cursor && !exhausted,
+            option_field: count("optionField", 20), option_shape: count("optionShape", 5),
         })
     }
     fn emit(&self) {
@@ -298,6 +318,7 @@ impl ProjectionDiagnostic {
             init_bytes = self.locations, metadata_requests = self.resources,
             pages = self.entries, count = self.structured, eligible = self.dom,
             success = self.cursor, finished = self.exhausted, incremental = self.limited,
+            column = self.option_field, active_count = self.option_shape,
             "Pinterest bounded projection shape"
         );
     }
@@ -523,6 +544,7 @@ impl PinterestSession {
             let view = app.get_webview_window(&label).ok_or(ERROR)?;
             let started = Instant::now();
             let mut last_auth = None;
+            let mut last_projection = None;
             while started.elapsed() < Duration::from_secs(12) {
                 check(cancel)?;
                 if generation != self.generation() {
@@ -552,7 +574,11 @@ impl PinterestSession {
                 if value["state"] == "ready" || value["state"] == "unavailable" {
                     return Ok(value);
                 }
+                last_projection = Some(value);
                 std::thread::sleep(Duration::from_millis(180));
+            }
+            if let Some(value) = last_projection.as_ref() {
+                log_projection_diagnostic(value, request["kind"].as_str().unwrap_or(""), None, false);
             }
             if last_auth == Some(false) {
                 self.proof(generation, last_auth)?;
@@ -578,6 +604,7 @@ impl PinterestSession {
         let path = if kind == "saved" {
             if !input.is_empty() { return Err(ERROR.into()); }
             let owner = self.observe(app, "https://www.pinterest.com/".parse().unwrap(), json!({"kind":"owner"}), cancel)?;
+            log_projection_diagnostic(&owner, "owner", None, false);
             let (status, owner_generation) = self.proof(requested_generation, owner["authenticated"].as_bool())?;
             if status != "signedIn" || owner_generation != requested_generation {
                 return Err("내 보드는 Pinterest 로그인 후 이용할 수 있습니다.".into());
@@ -618,13 +645,13 @@ impl PinterestSession {
             }
             self.with_generation(requested_generation, || Ok(()))?;
         }
-        let url = match plan {
-            Some(plan) => resource_url(&path, plan)?,
-            None => format!("https://www.pinterest.com{path}")
-                .parse()
-                .map_err(|_| ERROR)?,
-        };
-        let value = self.observe(app, url, json!({ "kind": kind, "input": input, "owner": if kind == "saved" { saved_owner(&path) } else { None }, "resource": plan.as_ref().map(|p| &p.resource), "options": plan.as_ref().map(|p| &p.options), "bookmark": plan.as_ref().map(|p| &p.bookmark) }), cancel)?;
+        let resource = plan.map(|plan| resource_url(&path, plan)).transpose()?;
+        let url = format!("https://www.pinterest.com{path}").parse().map_err(|_| ERROR)?;
+        let value = self.observe(app, url, json!({ "kind": kind, "input": input, "owner": if kind == "saved" { saved_owner(&path) } else { None }, "resource": plan.as_ref().map(|p| &p.resource), "resourceUrl": resource.as_ref().map(|url| url.as_str()), "options": plan.as_ref().map(|p| &p.options), "bookmark": plan.as_ref().map(|p| &p.bookmark) }), cancel)?;
+        if value["state"] != "ready" {
+            log_projection_diagnostic(&value, kind, plan, false);
+            return Err(ERROR.into());
+        }
         let (auth_status, generation) = if plan.is_none() {
             self.proof(requested_generation, value["authenticated"].as_bool())?
         } else {
@@ -1028,14 +1055,15 @@ mod tests {
         assert!(!valid_plan(&plan));
     }
     #[test]
-    fn projection_never_reads_credentials_or_invokes_privileged_actions() {
+    fn projection_keeps_credentials_private_and_uses_only_bounded_resource_gets() {
         let script = include_str!("pinterest_session.js");
         for word in [
             "document.cookie",
             "localStorage",
             "sessionStorage",
-            "fetch(",
-            "XMLHttpRequest",
+            "new XMLHttpRequest",
+            "XMLHttpRequest(",
+            "window.XMLHttpRequest",
             "__TAURI",
             "document.forms",
             "outerHTML",
@@ -1044,6 +1072,22 @@ mod tests {
         }
         assert!(script.contains("isAuthenticated"));
         assert!(script.contains("pins.length < 60"));
+        // The official X-Requested-With header is not an XHR constructor.
+        assert_eq!(script.matches("XMLHttpRequest").count(), 1);
+        assert!(script.contains("\"X-Requested-With\": \"XMLHttpRequest\""));
+        assert_eq!(script.matches("fetch(").count(), 1);
+        for guard in [
+            "if (authenticated !== true)",
+            "url.origin !== \"https://www.pinterest.com\"",
+            "url.pathname !== `/resource/${request.resource}/get/`",
+            "!resourceNames.includes(request.resource)",
+            "pending.nonce !== request.nonce",
+            "method: \"GET\", mode: \"same-origin\", credentials: \"same-origin\", redirect: \"error\"",
+            "setTimeout(() => controller.abort(), 8000)",
+            "bytes > 5 * 1024 * 1024",
+        ] {
+            assert!(script.contains(guard), "missing resource boundary: {guard}");
+        }
     }
     #[test]
     fn stale_proof_cannot_restore_a_previous_session() {
@@ -1187,7 +1231,7 @@ mod tests {
         assert!(!safe.to_string().contains("SECRET"));
         let hostile = json!({"diagnostics": {
             "sourceBranch":"SECRET_ACCOUNT", "initialShape":"SECRET_QUERY", "planReject":"SECRET_BOOKMARK",
-            "knownResourceMask":32, "resourceEntryCount":5, "structuredPinCount":61, "domPinCount":-1,
+            "knownResourceMask":128, "resourceEntryCount":5, "structuredPinCount":61, "domPinCount":-1,
             "bookmarkLocationMask":16, "dataShape":["SECRET_OPTION"], "keyShape":null
         }});
         let safe = serde_json::to_value(ProjectionDiagnostic::from_value(&hostile, "home", None, false).unwrap()).unwrap();
@@ -1246,7 +1290,7 @@ mod tests {
             "diag_stage":"pinterest_keyword_projection", "diag_operation":"dom_fallback", "error_code":"MISSING_BOOKMARK",
             "schema_version":1, "status":4, "attempt":0, "width":0, "height":0, "track_index":0, "init_bytes":0,
             "metadata_requests":4, "pages":0, "count":0, "eligible":12,
-            "success":false, "finished":false, "incremental":true
+            "success":false, "finished":false, "incremental":true, "column":0, "active_count":0
         }));
         assert!(!serde_json::to_string(&*rows).unwrap().contains("SECRET"));
     }
@@ -1289,6 +1333,26 @@ mod tests {
         assert!(!plan_matches_request(&plan, "home", "", "/"));
     }
     #[test]
+    fn only_observed_keyword_gated_option_may_preserve_null() {
+        let mut plan = Plan { resource: "BaseSearchResource".into(), options: json!({"query":"landscape","scope":"pins","gated":null}), bookmark:"next".into() };
+        let path = crate::pinterest::session_discovery_path("landscape", "keyword").unwrap();
+        assert!(valid_plan(&plan));
+        assert!(plan_matches_request(&plan, "keyword", "landscape", &path));
+        assert!(!plan_matches_request(&plan, "keyword", "other", &path));
+        for key in ["query", "scope", "username", "board_id", "page_size"] {
+            let mut invalid = plan.clone();
+            invalid.options[key] = Value::Null;
+            assert!(!valid_plan(&invalid));
+        }
+        for value in [json!([]), json!({})] {
+            let mut invalid = plan.clone();
+            invalid.options["gated"] = value;
+            assert!(!valid_plan(&invalid));
+        }
+        plan.resource = "UserHomefeedResource".into();
+        assert!(!valid_plan(&plan));
+    }
+    #[test]
     fn empty_nonterminal_followup_keeps_prior_results_limited_not_finished() {
         assert!(empty_discovery_is_error(true, true, false, false, false));
         assert!(!empty_discovery_is_error(true, true, false, false, true));
@@ -1301,6 +1365,8 @@ mod tests {
     fn saved_board_cursor_is_bound_to_the_verified_owner() {
         let plan = Plan { resource: "BoardsFeedResource".into(), options: json!({"username":"fixture","page_size":25}), bookmark:"next".into() };
         assert!(plan_matches_request(&plan, "saved", "", "/fixture/_saved/"));
+        assert!(plan_matches_request(&plan, "saved", "", "/fixture/"));
+        assert!(!plan_matches_request(&plan, "saved", "", "/different/"));
         assert!(!plan_matches_request(&plan, "saved", "", "/different/_saved/"));
         assert!(!plan_matches_request(&plan, "saved", "fixture", "/fixture/_saved/"));
         assert!(!plan_matches_request(&plan, "home", "", "/"));

@@ -1,0 +1,116 @@
+{
+  "id": "atsumi-shared-scrollbars-20261101",
+  "state": "implemented-automatically-verified; actual-desktop-deferred",
+  "original": {
+    "thread": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turn": "01a192ce-fbc5-7ba0-97de-09efe34c695e",
+    "userItem": "01a192ce-fc3d-7811-a574-3f008559df98",
+    "attachment": "codex-clipboard-8db47692-d3ed-42ad-8462-6129692e3306.png",
+    "request": "요 스크롤 바 아츠미에 맞춰서 디자인 ... 공통적으로 사용 ... 스크롤 내용과 완전히 구분되는 듯한 디자인이 아니면 ... 포함된 내용처럼 ... 전체 적용"
+  },
+  "requirements": [
+    "One Atsumi scrollbar theme across app content, horizontal and vertical",
+    "Transparent track and corner, no native arrow buttons, quiet ink-neutral thumb with clearer hover and active state",
+    "Keep native scrolling and keyboard interaction; preserve comparison ordinary vertical wheel and Shift horizontal wheel",
+    "Preserve intentional hidden strips, stable gutters, native video/auth isolation, current selections and other chats' changes",
+    "No content typography/background changes and no JavaScript scroll emulation",
+    "Forced colors uses system scrollbar; touch target retains usable width"
+  ],
+  "scope": [
+    "Main React document, every source mode and dialog",
+    "CHZZK replay ShadowRoot",
+    "Sandboxed local player iframe through existing public-asset protocol",
+    "Explicit native X/CHZZK/SOOP/YouTube/Pinterest content webviews; authentication/service popups and uncontrolled third-party frames excluded"
+  ],
+  "design": [
+    "Single src/scrollbars.css consumed by all owned documents",
+    "Remove existing conflicting per-component thumb color/width declarations; preserve hidden scrollbar rules",
+    "Native webviews receive only idempotent style insertion on permitted content documents after load, no network/IPC/events/API patches",
+    "10px native scrollbar hit area, 6px visible rounded thumb, transparent padding; 14px touch hit area",
+    "No active recording/download cancellation/drain; graceful app-owned restart only when idle"
+  ],
+  "audit": {
+    "documents": 298,
+    "inventory": "28 active + 3 archived EOF; other Atsumi revisions unchanged; latest 3 turns read through previously fully-read turn",
+    "snapshots": [
+      ".runtime/scrollbars-20261101/chat-audit.json",
+      ".runtime/scrollbars-20261101/preedit.json"
+    ],
+    "missing": [
+      "original 01a03f16 handoff",
+      "unidentified historical analysis1/2",
+      "historic attachment pixels not present in snapshots",
+      "inaccessible/unlisted sources"
+    ]
+  },
+  "acceptance": [
+    "App/node types and staging frontend build",
+    "Isolated browser visual checks across theme surfaces, shadow root and iframe at 1920x1080, 1280x720 and 736x900",
+    "Native wheel/Shift wheel/keyboard/thumb drag and forced colors/coarse pointer checks",
+    "Native scope policy tests and existing player/chat regression tests",
+    "Idle-gated integration, debug build and startup health; actual main-desktop UI verification deferred by standing request"
+  ],
+  "preserved": [
+    "No data/album/selection changes",
+    "No source sync from 3b2a",
+    "No commit/push/release/PC shutdown"
+  ],
+  "verification": {
+    "at": "2026-10-31T16:53:22.144Z",
+    "state": "implemented-automatically-verified; actual-desktop-deferred",
+    "frontendTests": 86,
+    "nativeScopeTests": 2,
+    "nativePlayerTests": 5,
+    "browserChecks": 40,
+    "resolutions": [
+      [
+        1920,
+        1080
+      ],
+      [
+        1280,
+        720
+      ],
+      [
+        736,
+        900
+      ]
+    ],
+    "checks": [
+      "native wheel, horizontal wheel, thumb drag, PageDown",
+      "comparison ordinary wheel vertical, Shift wheel horizontal",
+      "native scrollbar styling, hidden strips, stable gutters",
+      "shadow root and opaque sandbox iframe",
+      "forced colors system fallback and coarse pointer hit area",
+      "all non-scrollbar CSS declarations unchanged"
+    ],
+    "types": [
+      "app",
+      "node"
+    ],
+    "frontendBuild": "passed; existing chunk-size/dynamic-import warnings",
+    "nativeBuild": "active 2849 debug build passed in 1m09s",
+    "screenshots": ".runtime/scrollbars-20261101/browser-qa",
+    "actualDesktop": "deferred per 2026-10-25 request; BGD host unavailable and child disconnected",
+    "externalNativeViews": "scoped stylesheet integration implemented; actual online surface appearance deferred",
+    "shutdown": {
+      "pid": 49160,
+      "accepted": true,
+      "phase": "exited"
+    },
+    "startup": {
+      "pid": 25628,
+      "nativeUnresponsive": false,
+      "reloadPending": false
+    },
+    "contradictionCheck": {
+      "sharedVisualTheme": true,
+      "nativeScrollControlsPreserved": true,
+      "hiddenStripsAndGuttersPreserved": true,
+      "allOtherCssDeclarationsPreserved": true,
+      "noDataMutations": true,
+      "authenticationAndServicePopupsUntouched": true,
+      "mainDesktopInteractionDeferred": true
+    }
+  }
+}

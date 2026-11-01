@@ -230,6 +230,42 @@ impl GalleryDisplayMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessingMode {
+    #[default]
+    Basic,
+    GamePriority,
+    AtsumiPriority,
+}
+
+impl ProcessingMode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Basic => "basic",
+            Self::GamePriority => "game_priority",
+            Self::AtsumiPriority => "atsumi_priority",
+        }
+    }
+
+    pub fn from_database(value: &str) -> Option<Self> {
+        match value {
+            "basic" => Some(Self::Basic),
+            "game_priority" => Some(Self::GamePriority),
+            "atsumi_priority" => Some(Self::AtsumiPriority),
+            _ => None,
+        }
+    }
+
+    pub const fn from_legacy(enabled: bool) -> Self {
+        if enabled {
+            Self::GamePriority
+        } else {
+            Self::Basic
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsSnapshot {
@@ -249,6 +285,9 @@ pub struct SettingsSnapshot {
     pub privacy_on_startup: bool,
     pub cache_limit_gb: u32,
     pub concurrent_image_requests: u32,
+    #[serde(default)]
+    pub processing_mode: ProcessingMode,
+    // Compatibility projection for older clients. processing_mode is canonical.
     #[serde(default)]
     pub high_performance_processing: bool,
     #[serde(default = "default_download_adaptive_concurrency")]
@@ -285,6 +324,7 @@ impl Default for SettingsSnapshot {
             privacy_on_startup: true,
             cache_limit_gb: DEFAULT_CACHE_LIMIT_GB,
             concurrent_image_requests: DEFAULT_CONCURRENT_IMAGE_REQUESTS,
+            processing_mode: ProcessingMode::Basic,
             high_performance_processing: false,
             download_adaptive_concurrency: DEFAULT_DOWNLOAD_ADAPTIVE_CONCURRENCY,
             download_adaptive_max_requests: DEFAULT_DOWNLOAD_ADAPTIVE_MAX_REQUESTS,
@@ -319,6 +359,7 @@ pub struct SettingsPatch {
     pub privacy_on_startup: Option<bool>,
     pub cache_limit_gb: Option<u32>,
     pub concurrent_image_requests: Option<u32>,
+    pub processing_mode: Option<ProcessingMode>,
     pub high_performance_processing: Option<bool>,
     pub download_adaptive_concurrency: Option<bool>,
     pub download_adaptive_max_requests: Option<u32>,
@@ -411,9 +452,12 @@ impl SettingsSnapshot {
         if let Some(value) = patch.concurrent_image_requests {
             next.concurrent_image_requests = value;
         }
-        if let Some(value) = patch.high_performance_processing {
-            next.high_performance_processing = value;
+        if let Some(value) = patch.processing_mode {
+            next.processing_mode = value;
+        } else if let Some(value) = patch.high_performance_processing {
+            next.processing_mode = ProcessingMode::from_legacy(value);
         }
+        next.high_performance_processing = next.processing_mode != ProcessingMode::Basic;
         if let Some(value) = patch.download_adaptive_concurrency {
             next.download_adaptive_concurrency = value;
         }
@@ -587,6 +631,7 @@ mod processing_settings_tests {
             original
         );
         let mut expected = original.clone();
+        expected.processing_mode = ProcessingMode::GamePriority;
         expected.high_performance_processing = true;
         expected.revision += 1;
         assert_eq!(
@@ -597,6 +642,47 @@ mod processing_settings_tests {
                 })
                 .unwrap(),
             expected
+        );
+    }
+
+    #[test]
+    fn processing_modes_are_explicit_and_legacy_true_never_enables_atsumi_priority() {
+        for mode in [
+            ProcessingMode::Basic,
+            ProcessingMode::GamePriority,
+            ProcessingMode::AtsumiPriority,
+        ] {
+            let original = SettingsSnapshot::default();
+            let next = original
+                .apply_patch(SettingsPatch {
+                    processing_mode: Some(mode),
+                    high_performance_processing: Some(mode == ProcessingMode::Basic),
+                    ..Default::default()
+                })
+                .unwrap();
+            let mut expected = original;
+            expected.revision += 1;
+            expected.processing_mode = mode;
+            expected.high_performance_processing = mode != ProcessingMode::Basic;
+            assert_eq!(next, expected);
+            assert_eq!(
+                serde_json::to_value(&next).unwrap()["processingMode"],
+                mode.as_str()
+            );
+        }
+        for invalid in [
+            serde_json::json!("fast"),
+            serde_json::json!(true),
+            serde_json::json!(2),
+        ] {
+            assert!(serde_json::from_value::<SettingsPatch>(
+                serde_json::json!({"processingMode": invalid})
+            )
+            .is_err());
+        }
+        assert_eq!(
+            ProcessingMode::from_legacy(true),
+            ProcessingMode::GamePriority
         );
     }
 }

@@ -69,8 +69,9 @@
         return true;
       }
       const layers = dialogs(), photo = photoRoot();
-      if (layers.length || photo) {
-        const close = control(layers.length ? layers[layers.length - 1] : photo, 'close');
+      const video = window.__atsumiXSurface?.videoLayerReady?.() === true ? document.body : null;
+      if (layers.length || photo || video) {
+        const close = control(layers.length ? layers[layers.length - 1] : photo || video, 'close');
         if (close) close.click(); else nativeEscape();
         return true; // Unknown native layers never dismiss an outer preview.
       }

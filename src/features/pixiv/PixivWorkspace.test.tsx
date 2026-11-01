@@ -27,6 +27,18 @@ async function submitSearch() { await act(async () => { host.querySelector("form
 describe("Pixiv workspace interaction", () => {
   beforeEach(() => { Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true }); localStorage.clear(); host = document.createElement("div"); document.body.append(host); root = createRoot(host); });
   afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.useRealTimers(); vi.restoreAllMocks(); });
+  it("opens a retained native artwork/artist destination once after privacy is disabled", async () => {
+    const api = apiFactory();
+    const request = { id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae2", source: "pixiv" as const, kind: "artwork" as const, targetId: "123", url: "https://www.pixiv.net/artworks/123" };
+    const draw = (privacyMode: boolean, supportedLinkRequest: import("../../app/supportedLinkNavigation").SupportedLinkRequest = request) => act(async () => root.render(<PixivWorkspace active runtime="browser-mock" privacyMode={privacyMode} view="explore" api={api} supportedLinkRequest={supportedLinkRequest} />));
+    await draw(true); expect(api.detail).not.toHaveBeenCalled();
+    await draw(false); expect(api.detail).toHaveBeenCalledExactlyOnceWith("123");
+    expect(document.querySelector(".pixiv-reader")).not.toBeNull();
+    await draw(false); expect(api.detail).toHaveBeenCalledOnce();
+    await draw(false, { ...request, id: "97ea02a0-b626-40c2-ab6b-5cf601e81ae3", kind: "artist", targetId: "4912", url: "https://www.pixiv.net/users/4912" });
+    expect(api.search).toHaveBeenCalledWith({ query: "4912", mode: "artist", page: 1 });
+    expect(document.querySelector(".pixiv-reader")).toBeNull();
+  });
   const discovery = (prefix = "Home"): PixivDiscovery => ({
     sections: [
       { id: "followed", title: "팔로우 신작", kind: "followed", items: [work] },

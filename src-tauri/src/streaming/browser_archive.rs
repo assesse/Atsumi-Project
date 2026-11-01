@@ -10,6 +10,9 @@ const MARKER: &str = "ssd-archive-owner.json";
 const MAX_FILES: usize = 65_536;
 const RETRY_MS: u64 = 300_000;
 
+#[path = "browser_offload.rs"]
+pub(crate) mod offload;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArchiveStatus {
@@ -30,6 +33,9 @@ pub struct ArchiveTransfer {
     #[serde(default)]
     pub retry_at: u64,
     pub last_error: Option<String>,
+    /// Only new progressive captures may evacuate immutable ranges while live.
+    #[serde(default)]
+    pub rolling: bool,
 }
 impl ArchiveTransfer {
     pub(super) fn new(source: &Path, destination: &Path) -> Self {
@@ -40,6 +46,7 @@ impl ArchiveTransfer {
             token: uuid::Uuid::new_v4().simple().to_string(),
             retry_at: 0,
             last_error: None,
+            rolling: false,
         }
     }
     pub(super) fn valid(&self, id: &str) -> bool {
@@ -108,7 +115,10 @@ impl BrowserCaptureStore {
                     .get(&r.id)
                     .is_none_or(|lease| Arc::strong_count(lease) == 1)
                 && r.archive.as_ref().is_some_and(|a| {
-                    a.valid(&r.id) && a.status != ArchiveStatus::Complete && a.retry_at <= now_ms()
+                    a.valid(&r.id)
+                        && a.status != ArchiveStatus::Complete
+                        && a.retry_at <= now_ms()
+                        && !crate::streaming::replay_assets::pending(Path::new(&a.source_dir))
                 })
                 && r.merge.as_ref().is_some_and(|m| {
                     m.status == BrowserMergeStatus::Complete
@@ -191,6 +201,7 @@ impl BrowserCaptureStore {
         &self,
         job: &BrowserMergeJob,
         result: Result<(), StreamError>,
+        preempted: bool,
     ) -> Result<(), StreamError> {
         let mut next = {
             let state = self.lock()?;
@@ -213,12 +224,20 @@ impl BrowserCaptureStore {
             }
             Err(cause) => {
                 a.status = if next.output_dir == a.source_dir {
-                    ArchiveStatus::Blocked
+                    if preempted {
+                        ArchiveStatus::Pending
+                    } else {
+                        ArchiveStatus::Blocked
+                    }
                 } else {
                     ArchiveStatus::CleanupPending
                 };
-                a.last_error = Some(bounded_text(&cause.message, 512));
-                a.retry_at = now_ms().saturating_add(RETRY_MS);
+                a.last_error = (!preempted).then(|| bounded_text(&cause.message, 512));
+                a.retry_at = if preempted {
+                    0
+                } else {
+                    now_ms().saturating_add(RETRY_MS)
+                };
             }
         }
         let saved = save_metadata(&next); // no global locks; may be a slow HDD
@@ -237,6 +256,14 @@ impl BrowserCaptureStore {
 }
 
 pub(crate) fn run(store: &BrowserCaptureStore, job: &BrowserMergeJob, cancel: &AtomicBool) {
+    run_background(store, job, cancel, &AtomicBool::new(false));
+}
+pub(crate) fn run_background(
+    store: &BrowserCaptureStore,
+    job: &BrowserMergeJob,
+    cancel: &AtomicBool,
+    preempted: &AtomicBool,
+) {
     let result = (|| {
         check(cancel)?;
         let a = job
@@ -245,6 +272,11 @@ pub(crate) fn run(store: &BrowserCaptureStore, job: &BrowserMergeJob, cancel: &A
             .as_ref()
             .filter(|a| a.valid(&job.recording.id))
             .ok_or_else(invalid)?;
+        // Stop enqueues its final profile refresh before releasing the host
+        // store mutex. Drain/fence queued and running ancillary writers before
+        // snapshot/copy/publication; no network wait holds a capture mutex.
+        let _assets = crate::streaming::replay_assets::try_fence(Path::new(&a.source_dir))
+            .ok_or_else(|| failed("녹화 부가정보 저장이 진행 중입니다. 완료 후 이동합니다."))?;
         if job.recording.output_dir == a.source_dir {
             save_metadata(&job.recording)?;
             let next = copy_recording(job, cancel)?;
@@ -258,7 +290,7 @@ pub(crate) fn run(store: &BrowserCaptureStore, job: &BrowserMergeJob, cancel: &A
     if let Err(cause) = &result {
         tracing::warn!(recording_id=%job.recording.id, code=%cause.code, reason=%cause.message, "SSD archive transfer deferred");
     }
-    if let Err(cause) = store.finish_archive(job, result) {
+    if let Err(cause) = store.finish_archive(job, result, preempted.load(Ordering::Acquire)) {
         tracing::warn!(code=%cause.code, "SSD archive transfer state could not be persisted");
     }
 }
@@ -318,7 +350,10 @@ fn inventory(root: &Path) -> Result<Vec<(String, u64, std::time::SystemTime)>, S
                 .ok_or_else(invalid)?
                 .to_owned();
             relative(&name)?;
-            if matches!(name.as_str(), "recording.json" | RECEIPT | MARKER) {
+            if matches!(
+                name.as_str(),
+                "recording.json" | RECEIPT | MARKER | offload::INDEX
+            ) {
                 continue;
             }
             entries.push((
@@ -588,16 +623,25 @@ fn copy_recording(
         }
     }
     ensure_space(&root, needed)?;
-    let mut files = Vec::new();
+    // Rolling captures retain verified originals on the destination. Include
+    // them in the final receipt even though their SSD copies are already gone.
+    let mut files = offload::retained_files(recording, cancel)?;
     for (name, size, _) in &entries {
         check(cancel)?;
         let input = nested(&source, name, false)?;
         let output = nested(&root, name, true)?;
-        files.push(Copied {
+        let copied = Copied {
             name: name.clone(),
             bytes: *size,
             sha256: copy_file(&input, &output, *size, &a.token, cancel)?,
-        });
+        };
+        if let Some(previous) = files.iter().find(|f| f.name == copied.name) {
+            if previous.bytes != copied.bytes || previous.sha256 != copied.sha256 {
+                return Err(invalid());
+            }
+        } else {
+            files.push(copied);
+        }
     }
     if inventory(&source)? != entries {
         return Err(failed(

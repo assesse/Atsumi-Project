@@ -1459,6 +1459,15 @@ pub async fn download_overlap_review_get(
     )
 }
 
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn download_overlap_display_matches(
+    state: State<'_, AppState>, request: crate::domain::DownloadOverlapDisplayMatchRequest,
+) -> Result<ApiResult<crate::domain::DownloadOverlapDisplayMatches>, ApiError> {
+    let downloads = state.downloads.clone();
+    Ok(run_application_blocking("download_overlap_display_matches", move || downloads.overlap_display_matches(request)).await)
+}
+
 #[tauri::command(rename_all = "camelCase")]
 pub async fn download_overlap_automation_history_list(
     state: State<'_, AppState>,
@@ -1787,13 +1796,12 @@ pub async fn settings_update(
     expected_revision: u64,
 ) -> Result<ApiResult<SettingsSnapshot>, ApiError> {
     let cache_limit_changed = patch.cache_limit_gb.is_some();
-    let processing_changed = patch.high_performance_processing.is_some();
+    let processing_changed =
+        patch.processing_mode.is_some() || patch.high_performance_processing.is_some();
     match state.service.settings_update(patch, expected_revision) {
         Ok(snapshot) => {
             if processing_changed {
-                crate::application::image_work_budget::configure(
-                    snapshot.high_performance_processing,
-                );
+                crate::application::image_work_budget::configure(snapshot.processing_mode);
             }
             if let Err(error) = state.thumbnails.reconfigure(ThumbnailRuntimeConfigDto {
                 concurrent_image_requests: snapshot.concurrent_image_requests,

@@ -1,0 +1,85 @@
+{
+  "date": "2026-10-24",
+  "status": "implemented_offline_verified_debug_app_started_user_acceptance_pending",
+  "originalMessage": "01a169c7-68db-74f1-bdf0-a32aedc76026",
+  "requests": [
+    "X media context-menu labels: 개별 다운로드 and 전체 다운로드.",
+    "Expanded-photo download control must not overlap X's own ellipsis menu and must remain reachable when the pointer leaves the image toward the control.",
+    "Fix failure to read provider results, including reported SauceNAO Creator/Source/Material metadata and Lens result lists, without inventing source or artist matches."
+  ],
+  "audit": {
+    "workspace": "Active2849 AGENTS read; pre-existing CHZZK and previous X parser/panel edits preserved.3b2a remains backup.",
+    "inventory": "Active50/pinned and archive3/null refreshed; known other main/UIUX/Danbooru/workflow newest originals unchanged. Current latest3 plus prior1 link to audited01a16926.195 requirements and154 audit files before this contract. No claim to discover unknown older chats beyond the listing limit.",
+    "fullReadSnapshotHashes": [
+      "main85487C5F2EDCCA6D946CD1B9BBBBDE9E9142942059FBC44F637954D607615676",
+      "other799F75C9037808630EB2A8FAF2973C450D16AE9A3C343D12E2B4CF8DBF931A21",
+      "specifications7DDBD2B002417CE0EFAE1AB711BF132792E7649CE3A0FC7A384DE3273CB0B84C",
+      "policy3A717CA48E76FE03ADD949BB7682F8D45E475D99D30286A549A14AAD843E91E1"
+    ],
+    "applicableContracts": [
+      "x-native-actions-and-focus-20261020.json",
+      "x-menus-preview-tabs-20261020.json",
+      "x-archive-browsing-and-actions-20261020.json",
+      "x-media-queue-progress-20261021.json",
+      "x-original-save-stable-progress-20261021.json",
+      "x-media-search-external-links-20261021.json",
+      "x-search-integrity-review-20261023.json"
+    ],
+    "unavailable": ["Historical durable01a03f16", "Unidentified analysis1/2", "Historical unretained attachments"],
+    "runtime": "Read-only authoritative process check found installed Atsumi PID27772, no cargo/rustc or development app. Native source/test edits do not replace or restart the running installed executable. Do not launch the development app alongside it."
+  },
+  "restrictions": [
+    "No Computer Use, app restart, focus changes, account reaction, login automation or provider-human-check automation.",
+    "Existing transmission approval remains recorded but this batch uses generic neutral result-shape fixtures; do not seek, fetch or upload the attached sensitive media or its specific source targets.",
+    "No release/push/commit, file cleanup, cookie/token export, archive rewrite, capture-identity weakening or unrelated CHZZK edits.",
+    "Preserve original image-download policy, pending queue, progress/coalescing, current-photo identity, source menus and feed/preview retention.",
+    "Build with CARGO_INCREMENTAL=0 and bounded concurrency only; do not claim native UI or actual account/provider E2E from offline tests."
+  ],
+  "conflictsResolved": [
+    "Latest context-menu label instruction supersedes the older compact-menu labels. Progress/status wording remains compact 전체/개별; it is not part of this change.",
+    "Fullscreen placement and hover reachability may change; X's own ellipsis menu must not be hidden, moved or intercepted.",
+    "A screenshot proves displayed results exist but not their DOM shape. Do not assert the actual cause from a synthetic H3/div fixture or fabricate result URLs."
+  ],
+  "plan": [
+    "Change exact native context menu labels, including current-photo menu, without changing action targets or saved-state semantics.",
+    "Reproduce current-photo overlap and image-to-control pointer loss with bounded synthetic geometry. Place owned control clear of visible native controls inside the viewport; preserve visibility over the image, reachable bridge/control and keyboard focus, then hide when leaving. Retain exact photo/pane/generation fences and source input behavior.",
+    "Regression-first generic SauceNAO coverage for explicit Creator fields, including plain text, and a titleless metadata card with an observed Source link. Preserve numeric score, exact source URLs, bounded visible-only extraction and unsupported/ambiguous-state rejection. Material is not a title or creator. Keep a genuinely missing title as an empty string through both native validators so the existing frontend title-information-unavailable label is used; reject whitespace/control/oversized title data and preserve nonempty source-link validation. No fabricated work title.",
+    "Investigate Lens semantic result headings/list cards separately. Support only defensible visible semantic result structures, never arbitrary page links or AI overview citations. Record any missing actual layout evidence and do not claim this screenshot's exact result is verified.",
+    "Focused and broader relevant offline tests, strict typecheck, independent review and build-only verification; no actual UI manipulation or account/network validation."
+  ],
+  "searchRoutingFinding": "Production image search selects SauceNAO only; Google Lens is selected for video JPEG frames. The user's manual Lens screenshot does not establish that Atsumi executed that Lens path for this image. Do not silently add a second provider upload or a private request/fallback. Fix the confirmed SauceNAO metadata omission first and report the Lens routing/layout distinction accurately.",
+  "implementation": {
+    "contextMenu": "Changed only the three context-menu labels to 개별 다운로드 / 전체 다운로드. Compact progress and hover tooltip labels remain unchanged.",
+    "expandedPhoto": "Bounded native-hitbox avoidance, retained image-to-control hover bridge, exact-photo click checks, deferred hover/chrome-opacity placement updates and cheap release-only pointer movement. No source controls are moved, hidden or invoked. A fixture-only input hitbox correction preserves existing keyboard tests.",
+    "saucenao": "Explicit plain/linked Creator is read. A titleless card requires one explicit Creator and Source in the same validated card, numeric similarity and a safe source URL. It emits an empty title and only verified source/creator links, never a title inferred from Material or an arbitrary neighbouring anchor. Duplicate, conflicting, hidden and unsafe fields remain rejected.",
+    "nativeValidation": "Both native validators accept exact empty title only; whitespace-only, control and oversized titles remain invalid, and creator/source label/link restrictions remain intact.",
+    "lens": "No new layout support or second-provider image upload added. Existing verified Lens path remains for video frames; the reported manual image-search screenshot is not an observed Atsumi Lens execution."
+  },
+  "verification": {
+    "regressionFirst": "Confirmed failures before repair: two titleless Creator/Source integration cases, parser metadata cases, native-button collision, wrapper hover loss, four stale-photo click variants and delayed native opacity transition.",
+    "frontend": "Final nine targeted Vitest suites: 684 passed, zero failed. Production extractor -> frontend validation -> panel -> indexed result-open regression uses neutral synthetic metadata and asserts no network request. Existing captured neutral provider DTO replays remain passing; neither is live provider acceptance.",
+    "native": "cargo test --lib x_feed::surface::search:: --locked --offline -j2 -- --test-threads=1: 37 passed, zero failed. Final later delta only concerns photo JavaScript; native validator logic is unchanged.",
+    "typecheck": "Focused strict TypeScript including parser, panel, recorded-result chain, actions and input tests: exit 0.",
+    "review": "Independent read-only final review found no additional P1/P2 in designated files. Final actions hash BD611D23C155DE7F2724633746E72AFE84B57768B37AC34F75E3206BF995D400; extractor C6293B5307F11C75FAF38ED36D0F3A93D9EC24C8A96BC335D6B9F08F94F54895. Scoped git diff --check passed.",
+    "build": "Final cargo build --bin atsumi --locked --offline -j2 succeeded in 2m28s, including delayed-opacity delta. CARGO_INCREMENTAL=0. Existing unused/private-interface warnings remain; not a warning-free build. Debug atsumi.exe SHA256 4D11DDBE381092A01C79519E64A015C7511ADDE3AA150B4FC7FFDCE25EE14465, 99168256 bytes, 2026-10-24 02:44:15 KST. Final source hashes match reviewed/tested snapshot. Installed PID27772 remains unchanged; no launch or installed-binary replacement.",
+    "preserved": "Installed Atsumi left running. No Computer Use, provider request, selected-media upload, account reaction, restart, release, cleanup or unrelated CHZZK edit. Existing incremental-cache files last modified before this batch remain untouched.",
+    "remaining": [
+      "Installed-app deployment and actual fullscreen pointer/native-menu/resize acceptance were not performed under the no-Computer-Use/no-restart restriction.",
+      "The user's particular source image and reported live search result were not fetched, uploaded or replayed. The metadata omission is reproduced with neutral synthetic fields; actual provider markup may differ.",
+      "Manual Lens image-search results are not automatically aggregated by the current image-to-SauceNAO flow; the screenshot's precise Lens DOM layout has not been validated."
+    ]
+  },
+  "launchFollowup": {
+    "authorization": "User explicitly said the app was closed and requested starting the repaired media-search version for their own testing. This supersedes the preceding batch's no-restart restriction for this launch only; no new search upload, account reaction or UI manipulation was performed.",
+    "preflight": "No Atsumi/cargo/rustc process before launch; reviewed source and executable hashes matched the preceding tested build. Pre-existing unrelated source changes were not edited.",
+    "launch": "Started the established 2849 tools/start_debug_app_hidden.ps1 with hidden console, CARGO_INCREMENTAL=0, CARGO_BUILD_JOBS=2 and CARGO_NET_OFFLINE=true. Normal run_tauri_dev routing keeps Vite and embedded devUrl on 127.0.0.1:1420. Previous debug logs copied into .runtime/x-search-pre-restart-20261024-025404 before the launcher's normal log rotation.",
+    "observed": "2026-10-24 02:54:16 KST: debug atsumi.exe PID3360, MainWindowTitle Atsumi, Responding true; localhost frontend HTTP200 and root element present. Cargo cached dev check finished in 0.85s. Running executable SHA256 4D11DDBE381092A01C79519E64A015C7511ADDE3AA150B4FC7FFDCE25EE14465 matches tested build.",
+    "scope": "Only the repaired development app was started, not a published release or installed-executable replacement. Login/storage data was not reset. Actual specific-image search and fullscreen visual acceptance remain for the user's test."
+  },
+  "acceptance": [
+    "Right-click labels are explicit, target payloads unchanged, compact progress text unchanged.",
+    "Control avoids source ellipsis hitbox, remains reachable across image/control boundaries, survives focus/resize correctly and cannot save a stale/adjacent photo.",
+    "Supported explicit metadata fields yield exact source/creator candidates; unknown values are not inferred. Missing/malformed/hidden/ambiguous results and actual challenge/quota notices are not reported as successful matches.",
+    "Actual deployed-app fullscreen and real provider results remain separately unverified until permitted and observed."
+  ]
+}

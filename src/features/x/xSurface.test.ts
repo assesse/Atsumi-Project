@@ -39,6 +39,99 @@ function adapter(html=identity+'<main role="main"><div data-testid="primaryColum
   return {doc,win,location,flush,update,status,handlers,windowHandlers,message,observations,timers,sourcePush,sourceReplace};
 }
 afterEach(()=>vi.restoreAllMocks());
+function initialGapAdapter() {
+  const a=wheelPlaybackAdapter();a.win.__atsumiXSurface!.playback(true);
+  const media={time:0,start:1.227814,end:9.009341,ready:1,paused:false,seeking:false,error:null as null|{code:number},ranges:1};
+  Object.defineProperties(a.video,{
+    currentSrc:{value:'blob:https://x.com/initial-buffer-gap',configurable:true},
+    currentTime:{get:()=>media.time,set:(value:number)=>{media.time=value;},configurable:true},
+    duration:{value:131.466,configurable:true},readyState:{get:()=>media.ready},
+    paused:{get:()=>media.paused},seeking:{get:()=>media.seeking},error:{get:()=>media.error},
+    buffered:{get:()=>({length:media.ranges,start:()=>media.start,end:()=>media.end})},
+    seekable:{value:{length:1,start:()=>0,end:()=>131.466}},
+  });
+  const seek=vi.spyOn(a.video,'currentTime','set');
+  const event=(name:string,trusted=true)=>(a.handlers[name]??[]).forEach(handler=>handler({isTrusted:trusted,target:a.video}));
+  return {...a,media,seek,event};
+}
+it('recovers a source-requested video from its missing initial prefix only once, without playing or selecting media',()=>{
+  const a=initialGapAdapter();a.event('play');
+  expect(a.seek).toHaveBeenCalledOnce();expect(a.media.time).toBeCloseTo(1.237814);
+  a.media.time=0;a.event('waiting');a.event('progress');a.event('play');
+  expect(a.seek).toHaveBeenCalledOnce();expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
+});
+it.each(['progress','loadedmetadata','durationchange','waiting'])('can recover when the initial buffer arrives at the source %s event',name=>{
+  const a=initialGapAdapter();a.media.ranges=0;a.event('play');expect(a.seek).not.toHaveBeenCalled();
+  a.media.ranges=1;a.event(name);expect(a.seek).toHaveBeenCalledOnce();
+});
+it('does not mistake the source MSE initialization seek at zero for a user seek',()=>{
+  const a=initialGapAdapter();a.event('seeking');a.event('play');expect(a.seek).toHaveBeenCalledOnce();
+});
+it('prepares an untouched initial buffer before the source can emit HTML play',()=>{
+  const a=initialGapAdapter();a.media.paused=true;a.event('loadedmetadata');expect(a.seek).toHaveBeenCalledOnce();
+  expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
+});
+it('uses the viewport for the scrolled document root instead of clipping a central native video against its negative border box',()=>{
+  const a=initialGapAdapter();a.doc.documentElement.style.overflowY='scroll';a.doc.documentElement.style.overflowX='auto';
+  Object.defineProperty(a.doc,'scrollingElement',{value:a.doc.documentElement});
+  vi.spyOn(a.doc.documentElement,'getBoundingClientRect').mockReturnValue({...a.box,top:-1200,bottom:-280,height:920});
+  a.event('loadedmetadata');expect(a.seek).toHaveBeenCalledOnce();
+  const b=wheelPlaybackAdapter();b.doc.documentElement.style.overflowY='scroll';
+  Object.defineProperty(b.doc,'scrollingElement',{value:b.doc.documentElement});
+  vi.spyOn(b.doc.documentElement,'getBoundingClientRect').mockReturnValue({...b.box,top:-1200,bottom:-280,height:920});
+  b.wheel();b.message.mockClear();b.handlers.play![0]!({isTrusted:true,target:b.video});
+  expect(bridgeValues(b)).toEqual(['manual']);expect(b.pause).not.toHaveBeenCalled();
+});
+it.each(['initially-hidden','pending-before-hide'])('can prepare the same untouched initial stream after a native pane returns (%s)',kind=>{
+  const a=initialGapAdapter();a.media.ranges=0;
+  if(kind==='pending-before-hide')a.event('loadedmetadata');
+  a.win.__atsumiXSurface!.visibility(false);a.media.ranges=1;a.event('loadedmetadata');expect(a.seek).not.toHaveBeenCalled();
+  a.win.__atsumiXSurface!.visibility(true);a.event('progress');expect(a.seek).toHaveBeenCalledOnce();
+  expect(a.play).not.toHaveBeenCalled();
+});
+it('preserves a seek back to zero after the native video has already progressed',()=>{
+  const a=initialGapAdapter();a.media.time=2;a.event('timeupdate');a.media.time=0;a.event('seeking');a.event('play');
+  expect(a.seek).not.toHaveBeenCalled();
+});
+it.each(['buffer-zero','large-gap','tiny-range','already-progressed','ready','paused','seeking','error','synthetic','foreign-resource','hidden-pane','hidden-document','owner','login','offscreen','ad','manual-seek','changed-resource','changed-route'])('preserves a %s source player instead of seeking',change=>{
+  const a=initialGapAdapter();
+  if(change==='buffer-zero')a.media.start=0;
+  if(change==='large-gap')a.media.start=4;
+  if(change==='tiny-range')a.media.end=a.media.start+0.1;
+  if(change==='already-progressed')a.media.time=5;
+  if(change==='ready')a.media.ready=4;
+  if(change==='paused'){a.media.paused=true;a.event('pause');}
+  if(change==='seeking')a.media.seeking=true;
+  if(change==='error')a.media.error={code:3};
+  if(change==='foreign-resource')Object.defineProperty(a.video,'currentSrc',{value:'blob:https://example.com/foreign'});
+  if(change==='hidden-pane')a.win.__atsumiXSurface!.visibility(false);
+  if(change==='hidden-document')Object.defineProperty(a.doc,'hidden',{value:true});
+  if(change==='owner')a.doc.querySelector('[data-testid="AppTabBar_Profile_Link"]')!.setAttribute('href','/bob');
+  if(change==='login'){const input=a.doc.createElement('input');input.type='password';a.doc.body.append(input);}
+  if(change==='offscreen')vi.mocked(a.video.getBoundingClientRect).mockReturnValue({...a.box,top:1000,bottom:1200});
+  if(change==='ad')Object.defineProperty(a.win,'__atsumiXAds',{value:{blocked:()=>true}});
+  if(['manual-seek','changed-resource','changed-route'].includes(change)){
+    a.media.ranges=0;a.event('play');a.media.ranges=1;
+    if(change==='manual-seek'){
+      a.handlers.pointerdown!.forEach(handler=>handler({isTrusted:true,target:a.video,button:0}));a.event('seeking');
+    }
+    if(change==='changed-resource')Object.defineProperty(a.video,'currentSrc',{value:'blob:https://x.com/replaced'});
+    if(change==='changed-route'){a.location.href='https://x.com/bookmarks';a.location.pathname='/bookmarks';}
+  }else a.event('play',change!=='synthetic');
+  a.event('progress',change!=='synthetic');expect(a.seek).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();
+});
+it.each(['hydrating-wrapper','unmeasured-video'])('keeps native autoplay when the original %s cannot be classified geometrically',kind=>{
+  const player='<div data-testid="videoPlayer"><video src="blob:https://x.com/neutral-first-play"></video></div>';
+  const body=kind==='hydrating-wrapper'?player:'<article data-testid="tweet">'+player+'</article>';
+  const a=adapter(identity+'<main data-testid="primaryColumn">'+body+'</main>');
+  Object.defineProperty(a.doc,'hidden',{value:false,configurable:true});a.flush();a.win.__atsumiXSurface!.visibility(true);a.flush();
+  const video=a.doc.querySelector('video')!,pause=vi.spyOn(video,'pause').mockImplementation(()=>{});
+  // Native play may precede a usable article/geometry observation. The source
+  // owns player hydration; refusing this play must not prevent it completing.
+  vi.spyOn(video,'getBoundingClientRect').mockReturnValue({x:0,y:0,left:0,right:0,top:0,bottom:0,width:0,height:0,toJSON:()=>({})});
+  a.message.mockClear();a.handlers.play![0]!({isTrusted:true,target:video});
+  expect(pause).not.toHaveBeenCalled();expect(bridgeValues(a)).toEqual(['auto']);
+});
 it.each(['foryou','preview'])('revalidates ad suppression synchronously before the %s pane resumes',feed=>{
   const ad='<div data-testid="cellInnerDiv"><article data-testid="tweet"><div><div data-testid="User-Name"><a href="/creator">Creator</a></div><span class="badge">Ad</span><button data-testid="caret">More</button></div><p data-testid="tweetText">Body</p></article><div data-testid="placementTracking"></div></div>';
   const a=adapter(identity+'<main data-testid="primaryColumn">'+ad+'</main>',feed,'x.com',false,false,true);
@@ -60,6 +153,7 @@ it('does not reuse a previous ad proof after account ownership changes while con
   a.win.__atsumiXSurface!.visibility(true);expect(a.doc.querySelector('[data-atsumi-x-ad-hidden]')).toBeNull();
 });
 it.each(['foryou','preview'])('trusted wheel claims only the visible %s pane without scrolling, focusing, or unmuting source media',feed=>{
+  let now=1000;vi.spyOn(performance,'now').mockImplementation(()=>now);
   const a=adapter(undefined,feed);Object.defineProperty(a.doc,'hidden',{value:false,configurable:true});
   a.flush();a.win.__atsumiXSurface!.visibility(true);a.flush();a.message.mockClear();
   const target=a.doc.querySelector('[data-testid="tweetText"]')!,video=a.doc.querySelector('video')!;
@@ -71,6 +165,8 @@ it.each(['foryou','preview'])('trusted wheel claims only the visible %s pane wit
   expect(event.preventDefault).not.toHaveBeenCalled();expect(event.stopPropagation).not.toHaveBeenCalled();expect(focus).not.toHaveBeenCalled();expect(play).not.toHaveBeenCalled();
   expect({muted:video.muted,volume:video.volume,src:video.src}).toEqual(before);
   expect(vi.mocked(a.doc.addEventListener).mock.calls.find(([name])=>name==='wheel')?.[2]).toEqual({capture:true,passive:true});
+  now+=149;a.handlers.wheel!.forEach(handler=>handler(event));expect(a.message).toHaveBeenCalledTimes(1);
+  now+=1;a.handlers.wheel!.forEach(handler=>handler(event));expect(a.message).toHaveBeenCalledTimes(2);
 });
 it.each(['synthetic','hidden-pane','hidden-document','ctrl','meta','alt','zero','nonfinite','foreign','detached','editor','menu','hidden-node','outside'])('rejects a %s wheel ownership claim',kind=>{
   const a=adapter();Object.defineProperty(a.doc,'hidden',{value:false,configurable:true});a.flush();a.win.__atsumiXSurface!.visibility(true);a.flush();
@@ -281,6 +377,152 @@ it('requires fresh full proof after a mismatch and keeps login above stale accou
   profile.setAttribute('href','/alice');a.update();expect(a.status().state).toBe('loading');
   a.doc.body.append(account);a.update();expect(a.status()).toMatchObject({state:'ready',owner:'alice'});
   a.location.pathname='/i/flow/login';profile.setAttribute('href','/bob');a.update();expect(a.status().state).toBe('loginRequired');
+});
+const nativeVideo='<div data-testid="videoPlayer"><video src="https://video.twimg.com/ext_tw_video/123456/pu/vid/avc1/640x360/Fixture.mp4" poster="https://pbs.twimg.com/ext_tw_video_thumb/123456/pu/img/Fixture.jpg"></video></div>';
+function videoHandoff(extra:Record<string,unknown>={}) {
+  const a=adapter(identity+'<main data-testid="primaryColumn">'+post.replace('<video></video>',nativeVideo)+'</main>');
+  Object.defineProperty(a.doc,'hidden',{value:false,configurable:true});
+  a.flush();a.win.__atsumiXSurface!.visibility(true);a.flush();
+  const target=a.doc.querySelector('video')!;
+  const event={type:'pointerdown',isTrusted:true,button:0,target,...extra};
+  a.handlers.pointerdown!.forEach(handler=>handler(event));
+  a.doc.body.innerHTML='';a.location.pathname='/creator/status/123456/video/1';
+  return a;
+}
+it('lets a proved genuine video gesture cross the transient empty source layout before hydration',()=>{
+  vi.spyOn(performance,'now').mockReturnValue(100);
+  const a=videoHandoff();const previous=a.status();a.message.mockClear();a.update();
+  expect(a.message).not.toHaveBeenCalled(); // No false loading or fabricated ready message.
+  a.doc.body.innerHTML=nativeVideo;a.update();a.flush();
+  expect(a.status()).toMatchObject({state:'ready',proof:{video:true}});expect(previous.state).toBe('ready');
+});
+function detailVideoHandoff(body:string,feed='foryou') {
+  const detail='/creator/status/123456';
+  const a=adapter(identity+'<main data-testid="primaryColumn"><article data-testid="tweet"><div data-testid="User-Name"><a href="/creator">Creator</a></div>'+body+'</article></main>',feed);
+  a.location.pathname=detail;a.location.href='https://x.com'+detail;
+  Object.defineProperty(a.doc,'hidden',{value:false,configurable:true});
+  a.flush();a.win.__atsumiXSurface!.visibility(true);a.flush();
+  a.handlers.pointerdown!.forEach(handler=>handler({type:'pointerdown',isTrusted:true,button:0,target:a.doc.querySelector('video')!}));
+  a.doc.body.innerHTML='';a.location.pathname=detail+'/video/2';a.message.mockClear();
+  return a;
+}
+it.each(['foryou','preview'])('keeps the %s video handoff for the current detail timestamp below the media',feed=>{
+  vi.spyOn(performance,'now').mockReturnValue(100);
+  const a=detailVideoHandoff(nativeVideo+'<a href="/creator/status/123456"><time>today</time></a>',feed);
+  a.update();expect(a.message).not.toHaveBeenCalled();
+  a.doc.body.innerHTML=nativeVideo;a.update();a.flush();
+  expect(a.status()).toMatchObject({state:'ready',owner:'alice',proof:{video:true}});
+});
+it.each([
+  nativeVideo,
+  nativeVideo+'<a href="/other/status/654321"><time>elsewhere</time></a>',
+  nativeVideo+'<a href="/creator/status/123456"><time>today</time></a><a href="/other/status/654321"><time>other</time></a>',
+  '<div data-testid="quoteTweet">'+nativeVideo+'</div><a href="/creator/status/123456"><time>outer</time></a>',
+  nativeVideo+'<div data-testid="quoteTweet"><a href="/creator/status/123456"><time>quoted</time></a></div>',
+])('does not borrow detail identity for an unproved or nested video handoff %#',body=>{
+  vi.spyOn(performance,'now').mockReturnValue(100);
+  const a=detailVideoHandoff(body);a.update();
+  expect(a.status()).toMatchObject({state:'loading',proof:{video:false}});
+});
+it('expires video handoff without extending its deadline on observer updates',()=>{
+  let clock=100;vi.spyOn(performance,'now').mockImplementation(()=>clock);
+  const a=videoHandoff();a.message.mockClear();a.update();expect(a.message).not.toHaveBeenCalled();
+  clock=2700;for(let i=0;i<5;i++)a.update();
+  expect(a.status()).toMatchObject({state:'loading',proof:{video:false}});
+});
+it('does not defer a wrong post, untrusted or modified gesture, concealment, or security transition',()=>{
+  vi.spyOn(performance,'now').mockReturnValue(100);
+  for(const extra of [{isTrusted:false},{ctrlKey:true},{button:2}]){
+    const a=videoHandoff(extra);a.update();expect(a.status().state).toBe('loading');
+  }
+  const wrong=videoHandoff();wrong.location.pathname='/other/status/654321/video/1';wrong.update();expect(wrong.status().state).toBe('loading');
+  const hidden=videoHandoff();hidden.win.__atsumiXSurface!.visibility(false);hidden.update();expect(hidden.status().state).toBe('loading');
+  for(const html of ['<input type="password">','<a href="/i/flow/login">Login</a>',identity.replace('/alice','/bob')]){
+    const a=videoHandoff();a.doc.body.innerHTML=html;a.update();expect(a.status().state).not.toBe('ready');
+  }
+});
+it.each(['foryou','preview'])('keeps the %s native multi-video layer ready when X removes the ordinary column and navigation',feed=>{
+  const a=adapter(undefined,feed);a.flush();a.doc.body.innerHTML=nativeVideo+nativeVideo;
+  const videos=[...a.doc.querySelectorAll('video')],play=videos.map(video=>vi.spyOn(video,'play')),pause=videos.map(video=>vi.spyOn(video,'pause'));
+  for(const ordinal of [1,2,3,4]){
+    a.location.pathname='/creator/status/123456/video/'+ordinal;a.update();
+    expect(a.status()).toMatchObject({state:'ready',owner:'alice',proof:{primary:false,profile:false,account:false,video:true}});
+  }
+  for(const spy of [...play,...pause])expect(spy).not.toHaveBeenCalled();
+  a.location.pathname='/home';a.update();expect(a.status().state).toBe('loading');
+});
+it.each(['foryou','preview'].flatMap(feed=>['mediaviewer','mediaViewer'].map(suffix=>({feed,suffix}))))('keeps the source $suffix ready for the same verified $feed document',({feed,suffix})=>{
+  const a=adapter(undefined,feed);a.flush();a.doc.body.innerHTML=nativeVideo;
+  a.location.pathname='/creator/status/123456/'+suffix;a.location.href='https://x.com'+a.location.pathname;
+  const video=a.doc.querySelector('video')!,play=vi.spyOn(video,'play'),pause=vi.spyOn(video,'pause');a.update();
+  expect(a.status()).toMatchObject({state:'ready',owner:'alice',proof:{primary:false,video:true}});
+  expect(play).not.toHaveBeenCalled();expect(pause).not.toHaveBeenCalled();
+  a.doc.body.innerHTML=identity.replace('/alice','/bob')+nativeVideo;a.update();expect(a.status().state).toBe('ownerChanged');
+});
+it.each(['mediaviewer','mediaViewer'])('keeps a genuine current video transition alive for source %s hydration',suffix=>{
+  vi.spyOn(performance,'now').mockReturnValue(100);const a=videoHandoff();
+  a.location.pathname='/creator/status/123456/'+suffix;a.location.href='https://x.com'+a.location.pathname;a.message.mockClear();a.update();expect(a.message).not.toHaveBeenCalled();
+  a.doc.body.innerHTML=nativeVideo;a.update();a.flush();expect(a.status()).toMatchObject({state:'ready',proof:{video:true}});
+});
+it('does not broaden ordinary post identity or admit unpublished viewer suffixes',()=>{
+  for(const path of ['/creator/status/123456/MEDIAVIEWER','/creator/status/123456/mediaViewer/extra','/creator/STATUS/123456/mediaViewer']){
+    const a=adapter();a.flush();a.doc.body.innerHTML=nativeVideo;a.location.pathname=path;a.location.href='https://x.com'+path;a.update();
+    expect(a.status().state).toBe('loading');
+  }
+});
+it('reports a visible source404 over background feed videos as unavailable instead of ready or endless loading',()=>{
+  const a=adapter();a.flush();
+  a.location.pathname='/creator/status/123456/mediaviewer';a.location.href='https://x.com'+a.location.pathname;
+  a.doc.body.innerHTML=identity+'<main role="main"><div data-testid="primaryColumn">'+post+'</div></main><div role="dialog"><span>이 페이지는 존재하지 않습니다. 다른 페이지를 검색해 보세요.</span><button>검색</button></div>';
+  a.update();expect(a.status()).toMatchObject({state:'unavailable',owner:'alice',proof:{primary:true,video:false}});
+  expect(a.doc.querySelector('[role="dialog"] button')?.textContent).toBe('검색');
+});
+it.each(['quoted','hidden','unknown-owner','login'])('does not accept %s text as a source404 proof',kind=>{
+  const a=adapter();a.flush();a.location.pathname='/creator/status/123456/mediaviewer';a.location.href='https://x.com'+a.location.pathname;
+  const text='<span>이 페이지는 존재하지 않습니다. 다른 페이지를 검색해 보세요.</span>';
+  a.doc.body.innerHTML=identity+'<main role="main"><div data-testid="primaryColumn">'+(kind==='quoted'?'<article data-testid="tweet">'+text+'</article>':'')+'</div></main>'+(kind==='quoted'?'':'<div role="dialog"'+(kind==='hidden'?' hidden':'')+'>'+text+'</div>');
+  if(kind==='unknown-owner')a.doc.querySelector('[data-testid="AppTabBar_Profile_Link"]')!.setAttribute('href','/bob');
+  if(kind==='login')a.doc.body.insertAdjacentHTML('beforeend','<input type="password">');
+  a.update();expect(a.status().state).not.toBe('unavailable');
+});
+it('enables the feed entry only through its document-owned delivery nonce and never in preview',()=>{
+  for(const feed of ['foryou','preview']){
+    const a=adapter(undefined,feed),api=a.win.__atsumiXSurface as unknown as {registerSourceMediaViewer(nonce:string):void;sourceMediaViewerAvailable():boolean};
+    expect(api.sourceMediaViewerAvailable()).toBe(false);api.registerSourceMediaViewer('foreign');expect(api.sourceMediaViewerAvailable()).toBe(false);
+    api.registerSourceMediaViewer('fixture');expect(api.sourceMediaViewerAvailable()).toBe(feed==='foryou');
+  }
+});
+it('recognizes an original video poster during hydration and a same-origin blob without starting playback',()=>{
+  for(const html of [nativeVideo.replace(/ src="[^"]+"/,''),nativeVideo.replace(/ src="[^"]+"/,' src="blob:https://x.com/fixture"').replace(/ poster="[^"]+"/,''),'<div data-testid="videoPlayer"><img src="https://pbs.twimg.com/amplify_video_thumb/123456/img/Fixture.jpg"></div>']){
+    const a=adapter();a.flush();a.doc.body.innerHTML=html;a.location.pathname='/i/web/status/123456/video/1';a.update();expect(a.status()).toMatchObject({state:'ready',proof:{video:true}});
+  }
+});
+it('does not infer a video account or ready state from a route, hidden player, foreign resource or authentication gate',()=>{
+  const fresh=adapter(nativeVideo);fresh.location.pathname='/creator/status/123456/video/1';fresh.flush();expect(fresh.status()).toMatchObject({state:'loading',owner:null});
+  for(const html of ['', '<div data-testid="videoPlayer"></div>', '<div hidden>'+nativeVideo+'</div>', '<div style="display:none">'+nativeVideo+'</div>', '<div inert>'+nativeVideo+'</div>', '<div aria-hidden="true">'+nativeVideo+'</div>',nativeVideo.replace(/src="[^"]+"/,'src="https://evil.test/video.mp4"').replace(/poster="[^"]+"/,''),nativeVideo.replace(/src="[^"]+"/,'src="blob:https://evil.test/fixture"').replace(/poster="[^"]+"/,''),nativeVideo+'<div role="dialog">Unrelated dialog</div>',nativeVideo+'<input type="password">',nativeVideo+'<input autocomplete="one-time-code">',nativeVideo+'<a href="/i/flow/login">Login</a>']){
+    const a=adapter();a.flush();a.doc.body.innerHTML=html;a.location.pathname='/creator/status/123456/video/1';a.update();expect(a.status().state).not.toBe('ready');
+  }
+  for(const path of ['/home','/creator/status/123456','/creator/status/123456/video/0','/creator/status/123456/video/5','/creator/status/123456/video/1/extra']){
+    const a=adapter();a.flush();a.doc.body.innerHTML=nativeVideo;a.location.pathname=path;a.update();expect(a.status().state).toBe('loading');
+  }
+});
+it('revokes native video readiness after an account conflict or login transition',()=>{
+  const a=adapter();a.flush();a.doc.body.innerHTML=identity.replace('/alice','/bob')+nativeVideo;a.location.pathname='/creator/status/123456/video/1';a.update();expect(a.status().state).toBe('ownerChanged');
+  a.doc.body.innerHTML=nativeVideo;a.update();expect(a.status().state).toBe('loading');
+  const b=adapter();b.flush();b.doc.body.innerHTML=nativeVideo;b.location.pathname='/i/flow/login';b.update();expect(b.status().state).toBe('loginRequired');b.location.pathname='/creator/status/123456/video/1';b.update();expect(b.status().state).toBe('loading');
+});
+it('does not let a trusted poster override a foreign hydrated player or contradictory account evidence',()=>{
+  for(const html of [nativeVideo.replace('video.twimg.com','video.twimg.com.evil.test'),nativeVideo.replace(/ src="[^"]+"/,' src="blob:https://evil.test/fixture"'),identity+identity.replace('/alice','/bob')+nativeVideo]){
+    const a=adapter();a.flush();a.doc.body.innerHTML=html;a.location.pathname='/creator/status/123456/video/1';a.update();expect(a.status().state).not.toBe('ready');
+  }
+});
+it('keeps an original video dialog ready without admitting unrelated overlays',()=>{
+  const a=adapter();a.flush();a.doc.body.innerHTML='<div role="dialog">'+nativeVideo+'</div>';a.location.pathname='/creator/status/123456/video/2';a.update();expect(a.status()).toMatchObject({state:'ready',proof:{video:true}});
+});
+it('leaves Escape to the proved native video layer when the keyboard adapter is absent',()=>{
+  const a=adapter(undefined,'preview');a.flush();a.win.__atsumiXSurface!.visibility(true);a.flush();a.doc.body.innerHTML=nativeVideo;a.location.pathname='/creator/status/123456/video/1';a.update();a.message.mockClear();
+  const key={target:a.doc.body,key:'Escape',isTrusted:true,preventDefault:vi.fn(),stopImmediatePropagation:vi.fn()};a.handlers.keydown![0]!(key);
+  expect(key.preventDefault).not.toHaveBeenCalled();expect(a.message).not.toHaveBeenCalled();
 });
 const nativePhoto='<div role="dialog"><button aria-label="Close">Close</button><img src="https://pbs.twimg.com/media/PhotoFixture?format=jpg&amp;name=large"></div>';
 it('keeps an exact native photo dialog visible after the proven owner layout loses primaryColumn',()=>{
@@ -637,7 +879,7 @@ it('uses the same black surface, spacing and focus treatment for a plain-link co
   const a=visibleAdapter(),menu=openLinkMenu(a),button=menu.querySelector<HTMLButtonElement>('button')!;
   expect(menu.getAttribute('aria-label')).toBe('링크 메뉴');
   expect(menu.style).toMatchObject({background:'rgb(0, 0, 0)',color:'rgb(231, 233, 234)',borderRadius:'12px',padding:'4px',width:'232px',overflow:'auto'});
-  expect(button.style).toMatchObject({display:'block',width:'100%',padding:'12px',textAlign:'left',boxSizing:'border-box'});
+  expect(button.style).toMatchObject({display:'grid',gridTemplateColumns:'20px minmax(0,1fr)',columnGap:'8px',width:'100%',padding:'12px',textAlign:'left',boxSizing:'border-box'});
   expect(button.textContent).toBe('외부 브라우저에서 열기');
   const css=a.doc.querySelector('style[data-atsumi-x="link-menu"]')!.textContent;
   expect(css).toContain('#16181c');expect(css).toContain('outline:2px solid #1d9bf0');
@@ -700,6 +942,78 @@ function sourceRouteAdapter(quote=linklessQuote,feed='foryou'){
 }
 const bridgeEntries=(a:ReturnType<typeof adapter>)=>a.message.mock.calls.map(([raw])=>{const url=new URL(raw.slice('ATSUMI_X_SURFACE_V1:'.length));return [url.searchParams.get('kind'),url.searchParams.get('value')];});
 function flushRouteTasks(a:ReturnType<typeof adapter>){for(let i=0;i<20&&a.timers.length;i++)a.flush();expect(a.timers).toHaveLength(0);}
+// Public rendered source shape observed in BGD: no anchor/role/testid on the
+// attribution row, with an accessible label and an aria-hidden visual copy.
+const videoSourceFixture='<div data-testid="videoPlayer"><div data-testid="videoComponent"><video id="source-video"></video><div id="source-row"><span>Example source 님의</span><div aria-hidden="true"><img src="https://pbs.twimg.com/profile_images/123/avatar_normal.jpg"><span id="source-label">Example source</span></div></div><button id="source-play">Play</button><div role="slider" id="source-seek">Seek</div></div></div>';
+it.each(['foryou','preview'])('opens a linkless video source from %s in a retained preview using only its actual next route',feed=>{
+  const a=sourceRouteAdapter(videoSourceFixture,feed),label=a.doc.querySelector('#source-label')!;
+  a.doc.documentElement.scrollTop=380;
+  const event=clickTarget(a,label);
+  expect(event.preventDefault).not.toHaveBeenCalled();
+  expect(bridgeEntries(a)).toEqual([['routeIntent','armVideoSource']]);
+  a.win.history!.pushState(null,'','/i/status/987654');
+  flushRouteTasks(a);expect(a.win.dispatchEvent).toHaveBeenCalledOnce();
+  expect(bridgeEntries(a).at(-1)).toEqual(['videoSourcePreview','/i/status/987654']);
+  expect(a.location.href).toBe('https://x.com/home');expect(a.doc.documentElement.scrollTop).toBe(380);
+  expect(a.sourcePush).not.toHaveBeenCalled();
+});
+it('opens an explicit canonical video-source anchor and preserves Ctrl background semantics',()=>{
+  for(const feed of ['foryou','preview'])for(const background of [false,true]){
+    const a=sourceRouteAdapter(videoSourceFixture,feed);
+    a.doc.querySelector('#source-row')!.innerHTML='<a href="/source/status/987654"><span id="source-link">Source</span></a>';
+    const event=clickTarget(a,a.doc.querySelector('#source-link')!,{ctrlKey:background});
+    expect(event.preventDefault).toHaveBeenCalledOnce();
+    expect(bridgeEntries(a).at(-1)).toEqual([background?'previewBackground':'videoSourcePreview','/source/status/987654']);
+    expect(a.sourcePush).not.toHaveBeenCalled();
+  }
+});
+it('does not let a video source gesture claim manual playback',()=>{
+  const a=sourceRouteAdapter(videoSourceFixture),label=a.doc.querySelector('#source-label')!,video=a.doc.querySelector('#source-video')!;
+  a.handlers.pointerdown![0]!({type:'pointerdown',target:label,isTrusted:true,button:0});
+  clickTarget(a,label,{type:'click'});a.message.mockClear();
+  a.handlers.play![0]!({target:video,isTrusted:true});
+  expect(bridgeEntries(a)).toEqual([['play','auto']]);
+});
+it('restores the original preview before a new source tab conceals that native document',()=>{
+  const a=sourceRouteAdapter(videoSourceFixture,'preview'),primary=a.doc.querySelector('[data-testid="primaryColumn"]')!,original=primary.innerHTML;
+  let selected=false;
+  a.doc.documentElement.scrollTop=375;
+  a.win.addEventListener('popstate',()=>{primary.innerHTML=original;});
+  a.message.mockImplementation((raw:string)=>{
+    if(new URL(raw.slice('ATSUMI_X_SURFACE_V1:'.length)).searchParams.get('kind')==='videoSourcePreview'){
+      selected=true;
+      for(const video of a.doc.querySelectorAll('video'))vi.spyOn(video,'pause').mockImplementation(()=>{});
+      a.win.__atsumiXSurface!.visibility(false);
+    }
+  });
+  clickTarget(a,a.doc.querySelector('#source-label')!);a.win.history!.pushState(null,'','/source/status/987654');
+  // Native routing finishes its own render after pushState returns.
+  primary.textContent='New source detail';a.doc.documentElement.scrollTop=0;
+  flushRouteTasks(a);
+  expect(selected).toBe(true);expect(primary.innerHTML).toBe(original);expect(a.doc.documentElement.scrollTop).toBe(375);
+});
+it('keeps player controls and unproved video text native, and revokes changed source intents',()=>{
+  for(const mode of ['play','seek','video','missing-avatar','hidden','other-profile-avatar','synthetic','selection','changed-label','changed-avatar','detached','owner','expired']){
+    const a=sourceRouteAdapter(videoSourceFixture),label=a.doc.querySelector('#source-label')!;
+    let target=label;
+    if(mode==='play')target=a.doc.querySelector('#source-play')!;
+    if(mode==='seek')target=a.doc.querySelector('#source-seek')!;
+    if(mode==='video')target=a.doc.querySelector('#source-video')!;
+    if(mode==='missing-avatar')a.doc.querySelector('#source-row img')!.remove();
+    if(mode==='other-profile-avatar')a.doc.querySelector('#source-row img')!.setAttribute('src','https://evil.test/profile_images/123/avatar.jpg');
+    if(mode==='hidden')a.doc.querySelector('#source-row')!.setAttribute('hidden','');
+    if(mode==='selection')a.win.getSelection=()=>({toString:()=> 'selected'});
+    clickTarget(a,target,{isTrusted:mode!=='synthetic'});
+    if(mode==='changed-label')label.textContent='Changed';
+    if(mode==='changed-avatar')a.doc.querySelector('#source-row img')!.setAttribute('src','https://pbs.twimg.com/profile_images/456/changed.jpg');
+    if(mode==='detached')label.remove();
+    if(mode==='owner')a.doc.querySelector('[data-testid="AppTabBar_Profile_Link"]')!.setAttribute('href','/other');
+    if(mode==='expired')a.flush();
+    a.win.history!.pushState(null,'','/source/status/987654');
+    expect(bridgeEntries(a).filter(([kind])=>kind==='videoSourcePreview'||kind==='preview')).toEqual([]);
+    expect(a.sourcePush).toHaveBeenCalledOnce();
+  }
+});
 it('uses only the exact navigation requested by a trusted linkless quote activation, once',()=>{
   for(const method of ['pushState','replaceState'] as const){
     const a=sourceRouteAdapter(),before=a.doc.documentElement.outerHTML;

@@ -120,7 +120,7 @@ const prepareContainmentBatchApp = async (failSecond = false) => {
     return {
       candidateId: `containment-batch-candidate-${index}`,
       existing: reverse ? keeper : small,
-      existingFingerprint: String(index).repeat(64),
+      existingFingerprint: reverse ? "a".repeat(64) : String(index).repeat(64),
       relation: reverse ? "existing_contains_incoming" : "incoming_contains_existing",
       confidence: 0.99,
       matchedPages: small.pageCount, exactPages: small.pageCount, visualPages: 0,
@@ -528,6 +528,30 @@ describe("App Phase 3A backend flow", () => {
     container.remove();
   });
 
+  it("keeps already received download summaries when a later buffered page fails", async () => {
+    const entries: DownloadEntry[] = mockGalleries.slice(0, 2).map((gallery, index) => ({
+      entryId: `buffered-library-${index}`, galleryId: gallery.id, revision: 1, state: "completed", progress: 100,
+    }));
+    const library = vi.mocked(backend.downloadLibraryPageList).mockImplementation(async ({ page }) => {
+      if (page > 2) throw new Error("library temporarily unavailable");
+      return { ok: true, data: libraryPageFromEntries({ page, totalItems: 600,
+        entries: Array.from({ length: 200 }, () => entries[page - 1]!),
+      }) };
+    });
+    vi.spyOn(backend, "downloadEntriesList").mockRejectedValue(new Error("fallback unavailable"));
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await act(async () => { await vi.waitFor(() => expect(library).toHaveBeenCalledWith({ page: 3, pageSize: 200 })); await settle(); });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      await act(async () => { clickButtonContaining(container.querySelector(".gallery-grouping-control") as HTMLElement, "전체"); await settle(); });
+      expect(container.querySelector(`[data-gallery-id="${entries[0]!.galleryId}"]`)).not.toBeNull();
+      expect(container.querySelector(`[data-gallery-id="${entries[1]!.galleryId}"]`)).not.toBeNull();
+      expect(backend.downloadEntriesList).toHaveBeenCalledWith({ page: 3, pageSize: 200 });
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
   it("hydrates every download page so an old quarantined Explore result is still blinded", async () => {
     const pageOneEntries: DownloadEntry[] = Array.from({ length: 200 }, (_, index) => ({
       entryId: `older-download-${index}`,
@@ -768,18 +792,18 @@ describe("App Phase 3A backend flow", () => {
         container.querySelector<HTMLButtonElement>('[aria-label="합본 우선 검토"] button')!.click();
         await settle();
       });
-      await vi.waitFor(() => expect(container.querySelectorAll(".download-overlap-containment-item")).toHaveLength(3));
-      const rows = [...container.querySelectorAll<HTMLElement>(".download-overlap-containment-item")];
-      rows.forEach((row, index) => {
-        expect(row).toHaveTextContent(`Contained volume ${index + 1}`);
+      await vi.waitFor(() => expect(container.querySelectorAll(".overlap-group-edition")).toHaveLength(3));
+      const rows = [...container.querySelectorAll<HTMLElement>(".overlap-group-edition")];
+      rows.forEach((row) => {
+        expect(row).toHaveTextContent("Contained volume");
         expect(row.querySelector('input[type="checkbox"]')).toBeChecked();
       });
-      expect(container.querySelector(".download-overlap-containment-keeper")).toHaveTextContent("Containment keeper anthology");
+      expect(container.querySelector(".overlap-group-keeper")).toHaveTextContent("Containment keeper anthology");
       // Another operation advanced each review after the grouped screen loaded.
       fixture.reviews.set(fixture.direct.reviewId, { ...fixture.direct, revision: 11 });
       fixture.reviews.set(fixture.reverse.reviewId, { ...fixture.reverse, revision: 19 });
       await act(async () => {
-        container.querySelector<HTMLButtonElement>(".download-overlap-containment-apply")!.click();
+        container.querySelector<HTMLButtonElement>(".overlap-group-batch button")!.click();
         await settle();
       });
       await vi.waitFor(() => expect(fixture.decision).toHaveBeenCalledTimes(3));
@@ -797,8 +821,50 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
+  it.each([false,true])("applies every edition draft in the background and preserves failures (failure=%s)",async(fail)=>{
+    const fixture=await prepareContainmentBatchApp(fail);vi.spyOn(window,'confirm').mockReturnValue(true);
+    const original=fixture.decision.getMockImplementation()!;let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+    fixture.decision.mockImplementation(async request=>{await gate;return original(request);});
+    const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
+    try{
+      await act(async()=>{root.render(<TestApp/>);await settle();});
+      await act(async()=>{host.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')!.click();await settle();});
+      await vi.waitFor(()=>expect(host.querySelector('[aria-label="합본 우선 검토"] button')).not.toBeNull());
+      await act(async()=>{host.querySelector<HTMLButtonElement>('[aria-label="합본 우선 검토"] button')!.click();await settle();});
+      for(const ref of fixture.refs.slice(1)){
+        await act(async()=>host.querySelector<HTMLButtonElement>('[aria-label="#'+ref.galleryId+' 비교"]')!.click());
+        const row=host.querySelector('[data-edition-row="'+ref.galleryId+'"]')!;
+        await act(async()=>[...row.querySelectorAll<HTMLButtonElement>('.overlap-edition-modes button')].find(b=>b.textContent==='제거')!.click());
+      }
+      expect(fixture.decision).not.toHaveBeenCalled();
+      await act(async()=>{host.querySelector<HTMLButtonElement>('.overlap-group-actions .primary-button')!.click();await settle();});
+      expect(host.querySelector('.download-overlap-dialog[open]')).toBeNull();
+      expect(host.querySelector('.overlap-batch-status')).toHaveTextContent('0/3');
+      await act(async()=>{clickButtonContaining(host,'Explore');await settle();});
+      await submitExploreSearch(host);
+      expect(host.querySelector('.gallery-grid')).not.toBeNull();
+      await act(async()=>{release();await settle(80);});
+      await vi.waitFor(()=>expect(fixture.decision).toHaveBeenCalledTimes(fail?2:3));
+      if(fail){
+        expect(host.querySelector('.overlap-batch-status')).toHaveTextContent('1/3');
+        await act(async()=>host.querySelector<HTMLButtonElement>('.overlap-batch-status button')!.click());
+        expect(host.querySelector('.download-overlap-dialog')).toHaveAttribute('open');
+        expect(host).toHaveTextContent('Fixture destination is occupied');
+        const remaining=host.querySelector('[data-edition-row="'+fixture.refs[2]!.galleryId+'"] .overlap-edition-modes');
+        expect(remaining).toHaveAttribute('data-mode','remove');
+        expect(host.querySelector('.overlap-group-actions .primary-button')).toHaveTextContent('2개 적용');
+      }else{
+        expect(fixture.appliedIds).toHaveLength(3);
+        expect(host.querySelector('.download-overlap-dialog[open]')).toBeNull();
+        expect(host.querySelector('.overlap-batch-status')).toBeNull();
+        expect(host).toHaveTextContent('3개 판본 적용 완료');
+      }
+    }finally{release();await act(async()=>root.unmount());host.remove();}
+  });
+
   it("keeps the first containment batch exclusion after the second fails and leaves remaining editions unchanged", async () => {
     const fixture = await prepareContainmentBatchApp(true);
+    const thumbnailRequests = vi.spyOn(testThumbnailClient, "subscribe");
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -813,9 +879,9 @@ describe("App Phase 3A backend flow", () => {
         container.querySelector<HTMLButtonElement>('[aria-label="합본 우선 검토"] button')!.click();
         await settle();
       });
-      await vi.waitFor(() => expect(container.querySelectorAll(".download-overlap-containment-item")).toHaveLength(3));
+      await vi.waitFor(() => expect(container.querySelectorAll(".overlap-group-edition")).toHaveLength(3));
       await act(async () => {
-        container.querySelector<HTMLButtonElement>(".download-overlap-containment-apply")!.click();
+        container.querySelector<HTMLButtonElement>(".overlap-group-batch button")!.click();
         await settle();
       });
       await vi.waitFor(() => expect(fixture.decision).toHaveBeenCalledTimes(2));
@@ -824,6 +890,19 @@ describe("App Phase 3A backend flow", () => {
       expect(fixture.reviews.get(fixture.direct.reviewId)!.candidates[1]!.decision).toBeUndefined();
       expect(fixture.reviews.get(fixture.reverse.reviewId)).toEqual(fixture.reverse);
       expect(container).toHaveTextContent("1/3개 처리 완료 · 나머지는 변경하지 않았습니다.");
+      const siblingRequests = thumbnailRequests.mock.calls.map(([request]) => request.key)
+        .filter((key) => key.kind === "overlap-review-page" && key.reviewId === fixture.direct.reviewId
+          && key.candidateId === fixture.direct.candidates[1]!.candidateId);
+      expect(siblingRequests).toEqual(expect.arrayContaining([
+        expect.objectContaining({ reviewRevision: fixture.direct.revision + 7 }),
+      ]));
+      const batchStatus = container.querySelector(".overlap-group > .inline-error");
+      expect(batchStatus).toHaveTextContent(`#${fixture.refs[2]!.galleryId} 처리 실패`);
+      expect(batchStatus).toHaveTextContent("Fixture destination is occupied");
+      const remaining = container.querySelectorAll<HTMLInputElement>('.overlap-group-edition input[type="checkbox"]');
+      expect(container.querySelectorAll(".overlap-group-completed .overlap-group-edition")).toHaveLength(1);
+      expect([...remaining].filter((item) => item.disabled)).toHaveLength(0);
+      expect([...remaining].filter((item) => item.checked && !item.disabled)).toHaveLength(2);
       await act(async () => {
         container.querySelector<HTMLButtonElement>('.download-overlap-dialog button[aria-label="닫기"]')!.click();
         await settle();
@@ -1524,7 +1603,7 @@ describe("App Phase 3A backend flow", () => {
     } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
-  it("returns from an artist search to its originating album and restores the closed search with Ctrl+Shift+T", async () => {
+  it("closes artist search independently of its originating album and restores search with Ctrl+Shift+T", async () => {
     const container=document.createElement("div"); document.body.append(container);
     const root=createRoot(container);
     try {
@@ -1541,8 +1620,7 @@ describe("App Phase 3A backend flow", () => {
       expect(container.querySelector(".detail-workspace")).toBeNull();
       expect(container.querySelectorAll(".explore-context-bar [role=tab]")).toHaveLength(2);
       await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true,cancelable:true})); await settle(); });
-      expect(container.querySelector(".detail-workspace")).toHaveAttribute("aria-label","Archive of Rain 상세");
-      expect(container.querySelector<HTMLElement>(".detail-body")!.scrollTop).toBe(321);
+      expect(container.querySelector(".detail-workspace")).toBeNull();
       expect(container.querySelectorAll(".explore-context-bar [role=tab]")).toHaveLength(1);
       await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown",{key:"T",ctrlKey:true,shiftKey:true,bubbles:true,cancelable:true})); await settle(); });
       expect(container.querySelectorAll(".explore-context-bar [role=tab]")).toHaveLength(2);
@@ -1554,6 +1632,57 @@ describe("App Phase 3A backend flow", () => {
       const undo=new KeyboardEvent("keydown",{key:"z",ctrlKey:true,bubbles:true,cancelable:true});
       await act(async () => input.dispatchEvent(undo));
       expect(undo.defaultPrevented).toBe(false);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("selects albums with Ctrl+A before card focus while preserving editors and foreground details", async () => {
+    vi.spyOn(backend, "searchSubmit").mockResolvedValue({ ok: true, data: { queryId: "first-selection", firstPage: selectionFixturePage() } });
+    const queue = vi.spyOn(backend, "downloadQueueAdd");
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    const key = async (target: HTMLElement) => {
+      const event = new KeyboardEvent("keydown", { key: "a", ctrlKey: true, bubbles: true, cancelable: true });
+      await act(async () => { target.dispatchEvent(event); await settle(); });
+      return event;
+    };
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(container);
+      expect(container.querySelector(".selection-toolbar")).toBeEmptyDOMElement();
+      expect((await key(document.body)).defaultPrevented).toBe(true);
+      expect(container.querySelector(".selection-toolbar")).toHaveTextContent("2개 선택됨");
+      expect(document.activeElement).toBe(container.querySelector(".gallery-viewport"));
+      const input = container.querySelector<HTMLInputElement>('[aria-label="검색"]')!;
+      expect((await key(input)).defaultPrevented).toBe(false);
+      await act(async () => {
+        document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        await settle();
+      });
+      expect(container.querySelector(".detail-workspace")).not.toBeNull();
+      expect(container.querySelectorAll('.detail-tabs [role="tab"]')).toHaveLength(2);
+      expect(queue).not.toHaveBeenCalled();
+      expect((await key(document.body)).defaultPrevented).toBe(false);
+    } finally { await act(async () => root.unmount()); container.remove(); }
+  });
+
+  it("closing a floating album does not return to its old view after switching to Downloads", async () => {
+    const container = document.createElement("div"); document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      await submitExploreSearch(container);
+      await act(async () => {
+        container.querySelector('[data-gallery-id="4051038"]')!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, detail: 2 }));
+        await settle();
+      });
+      await act(async () => { clickButtonContaining(container, "Downloads"); await settle(); });
+      expect(container.querySelector(".detail-workspace")).not.toBeNull();
+      await act(async () => {
+        document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+        await settle();
+      });
+      expect(container.querySelector(".detail-workspace")).toBeNull();
+      expect(container.querySelector('.nav-item.is-active')).toHaveTextContent("Downloads");
     } finally { await act(async () => root.unmount()); container.remove(); }
   });
 
@@ -2983,6 +3112,7 @@ describe("App Phase 3A backend flow", () => {
   });
 
   it.each([false, true])("keeps Ctrl-selected merge pages and applies source exclusion only after success (failure=%s)", async (fail) => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     const fixture = await prepareContainmentBatchApp();
     const review = { ...fixture.direct, candidates: [fixture.direct.candidates[0]!] };
     fixture.reviews.set(review.reviewId, review);
@@ -3011,29 +3141,30 @@ describe("App Phase 3A backend flow", () => {
       });
       const dialog = container.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
       expect(dialog).toHaveAttribute("open");
-      const sourceCell = (page: number) => dialog.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="기존 A ${page}페이지"]`)!;
+      const compare = dialog.querySelector<HTMLButtonElement>(`[aria-label="#${source.galleryId} 비교"]`);
+      if (compare && compare.getAttribute("aria-pressed") !== "true") await act(async () => compare.click());
+      const sourceCell = (page: number) => dialog.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="#${source.galleryId} ${page}페이지"], .download-overlap-page-cell[aria-label^="기존 A ${page}페이지"]`)!;
       for (const page of [3, 1]) await act(async () => {
         sourceCell(page).dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, button: 0 }));
       });
       expect(dialog.querySelectorAll(".is-merge-source")).toHaveLength(2);
       expect(dialog.querySelectorAll(".is-merge-target")).toHaveLength(2);
-      const apply = [...dialog.querySelectorAll<HTMLButtonElement>(".download-overlap-merge-apply")].find((button) => button.textContent === "B에 병합")!;
-      expect(apply).toHaveTextContent("B에 병합");
-      await act(async () => { apply.click(); });
+      const apply = [...dialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === `#${fixture.keeper.galleryId}에 병합` || button.textContent === "B에 병합" || button.textContent === "1개 적용")!;
+      expect(apply).toHaveTextContent("1개 적용");
+      await act(async () => { apply.click(); await settle(); });
       expect(merge).toHaveBeenCalledExactlyOnceWith({
         reviewId: review.reviewId, expectedRevision: review.revision,
         candidateId: review.candidates[0]!.candidateId,
-        sourceSide: "existing", sourcePages: [1, 3], excludeSource: true,
+        sourceSide: "existing", sourcePages: [1, 3], excludeSource: true, targetSelectionOnly: false,
         selectedPages: { existing: [1, 3], incoming: [] },
       });
-      expect(apply).toBeDisabled();
-      expect(dialog.querySelector(".download-overlap-merge-clear")).toBeDisabled();
-      await act(async () => {
-        apply.click();
-        sourceCell(2).dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true, button: 0 }));
-      });
+      expect(dialog).not.toHaveAttribute("open");
+      expect(container.querySelector('.overlap-batch-status')).toHaveTextContent('0/1');
+      await act(async()=>container.querySelector<HTMLButtonElement>('.overlap-batch-status button')!.click());
+      expect(dialog).toHaveAttribute('open');
+      expect(dialog.querySelector('.overlap-group-actions .primary-button')).toBeDisabled();
+      expect(dialog.querySelectorAll('.is-merge-source')).toHaveLength(2);
       expect(merge).toHaveBeenCalledOnce();
-      expect(dialog.querySelectorAll(".is-merge-source")).toHaveLength(2);
       expect(invalidate).not.toHaveBeenCalled();
       expect(fixture.appliedIds).toEqual([]);
 
@@ -3059,14 +3190,13 @@ describe("App Phase 3A backend flow", () => {
         expect(dialog).toHaveAttribute("open");
         expect(dialog).toHaveTextContent("Fixture merge verification failed; original files retained");
         expect(dialog.querySelectorAll(".is-merge-source")).toHaveLength(2);
-        expect(apply).not.toBeDisabled();
+        expect(dialog.querySelector(".overlap-group-actions .primary-button")).not.toBeDisabled();
         expect(invalidate).not.toHaveBeenCalled();
         expect(fixture.appliedIds).toEqual([]);
         await act(async () => dialog.querySelector<HTMLButtonElement>('button[aria-label="닫기"]')!.click());
       } else {
         expect(container.querySelector(".download-overlap-dialog[open]")).toBeNull();
-        expect(container).toHaveTextContent("2장 교체");
-        expect(container).toHaveTextContent("에 병합 완료");
+        expect(container).toHaveTextContent("1개 판본 적용 완료");
         expect(invalidate).toHaveBeenCalledOnce();
         const predicate = invalidate.mock.calls[0]![0];
         expect(predicate({ kind: "gallery-cover", galleryId: fixture.keeper.galleryId })).toBe(true);
@@ -3145,7 +3275,7 @@ describe("App Phase 3A backend flow", () => {
       expect(overlapGet).toHaveBeenCalledWith("app-overlap-review");
       expect(globalGet).not.toHaveBeenCalled();
       expect(container.querySelector(".download-overlap-dialog")).toHaveAttribute("open");
-      expect(container.textContent).toContain("다운로드 판본 중복 검토");
+      expect(container.querySelector(".download-overlap-dialog h2")).toHaveTextContent("판본 비교");
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -3578,12 +3708,12 @@ describe("App Phase 3A backend flow", () => {
 
       await act(async () => {
         [...container.querySelectorAll<HTMLButtonElement>("#activity-automation-panel button")]
-          .find((button) => button.textContent === "목록에 복원")?.click();
+          .find((button) => button.textContent === "복원")?.click();
         await settle();
       });
       expect(restoreExclusions).toHaveBeenCalledWith(removedGalleryIds);
       expect(historyAcknowledge).toHaveBeenCalledWith(historyItem.reviewId);
-      expect(container.querySelector('#activity-automation-panel [aria-label="확인 완료"]')).not.toBeNull();
+      expect(container.querySelector('#activity-automation-panel [aria-label="승인 완료"]')).not.toBeNull();
       expect(container.querySelector('[aria-label="활동 기록"] .activity-count')).toBeNull();
       expect(container).toHaveTextContent("격리된 실제 파일은 복원하지 않았습니다");
     } finally {
@@ -3592,7 +3722,7 @@ describe("App Phase 3A backend flow", () => {
     }
   });
 
-  const prepareAutomationEvidenceApp = async () => {
+  const prepareAutomationEvidenceApp = async (state: DownloadOverlapReview["state"] = "pending") => {
     const settings = await backend.settingsGet();
     if (!settings.ok) throw new Error(settings.error.message);
     vi.spyOn(backend, "settingsGet").mockResolvedValue({
@@ -3603,7 +3733,7 @@ describe("App Phase 3A backend flow", () => {
       incomingGalleryId: galleryId(4_053_291),
       title: "자동 분류 근거에서 처리",
       occurredAt: "2026-09-04T01:30:00Z",
-      reviewState: "resolved",
+      reviewState: state,
       removeIncomingCount: 0,
       removeExistingCount: 1,
       removedGalleryIds: [galleryId(4_051_038)],
@@ -3619,7 +3749,7 @@ describe("App Phase 3A backend flow", () => {
         pageCount: 24,
       },
       revision: 3,
-      state: "resolved",
+      state,
       profileVersion: 1,
       policyVersion: 1,
       incomingFingerprint: "a".repeat(64),
@@ -3645,7 +3775,7 @@ describe("App Phase 3A backend flow", () => {
         longestAlignedRun: 20,
         rank: index + 1,
         pagePairs: [],
-        decision: "existing_removed" as const,
+        decision: state === "pending" && index === 1 ? undefined : "existing_removed" as const,
       })),
       createdAt: historyItem.occurredAt,
       updatedAt: historyItem.occurredAt,
@@ -3694,7 +3824,7 @@ describe("App Phase 3A backend flow", () => {
       clickButtonContaining(container, "자동분류 검토");
     });
     await act(async () => {
-      clickButtonContaining(container.querySelector<HTMLElement>("#activity-automation-panel")!, "근거 보기");
+      clickButtonContaining(container.querySelector<HTMLElement>("#activity-automation-panel")!, "근거");
       await settle();
     });
     const dialog = document.querySelector<HTMLDialogElement>(".download-overlap-dialog");
@@ -3702,7 +3832,27 @@ describe("App Phase 3A backend flow", () => {
     return dialog;
   };
 
-  it.each(["목록에 복원", "확인 완료"])("completes %s from automatic classification evidence and synchronizes the activity history", async (action) => {
+  it("keeps completed automatic evidence inspectable without an approval action", async () => {
+    const fixture = await prepareAutomationEvidenceApp("resolved");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => { root.render(<TestApp />); await settle(); });
+      const dialog = await openAutomationEvidence(container);
+      const actions = [...dialog.querySelectorAll<HTMLButtonElement>("button")];
+      expect(actions.some(button => button.textContent?.includes("승인"))).toBe(false);
+      expect(actions.some(button => button.textContent?.includes("복원"))).toBe(true);
+      expect(fixture.historyAcknowledge).not.toHaveBeenCalled();
+      expect(fixture.restoreExclusions).not.toHaveBeenCalled();
+      expect(fixture.decisionApply).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => root.unmount());
+      container.remove();
+    }
+  });
+
+  it.each(["복원", "승인"])("completes %s from automatic classification evidence and synchronizes the activity history", async (action) => {
     const fixture = await prepareAutomationEvidenceApp();
     let finishAcknowledgement: (() => void) | undefined;
     fixture.historyAcknowledge.mockImplementationOnce(() => new Promise((resolve) => {
@@ -3726,13 +3876,13 @@ describe("App Phase 3A backend flow", () => {
       });
       expect(fixture.historyAcknowledge).toHaveBeenCalledExactlyOnceWith(fixture.historyItem.reviewId);
       const restoreButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent?.includes("목록에 복원"))!;
+        .find((button) => button.textContent?.includes("복원"))!;
       const acknowledgeButton = [...dialog.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent?.includes("확인 완료"))!;
+        .find((button) => button.textContent?.includes("승인"))!;
       expect(restoreButton).toBeDisabled();
       expect(acknowledgeButton).toBeDisabled();
       expect(dialog).toBeInTheDocument();
-      if (action === "목록에 복원") {
+      if (action === "복원") {
         expect(fixture.restoreExclusions).toHaveBeenCalledExactlyOnceWith(fixture.historyItem.removedGalleryIds);
       } else {
         expect(fixture.restoreExclusions).not.toHaveBeenCalled();
@@ -3750,8 +3900,8 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       const panel = container.querySelector<HTMLElement>("#activity-automation-panel")!;
-      expect(panel?.querySelector('[aria-label="확인 완료"]')).not.toBeNull();
-      expect([...panel.querySelectorAll("button")].some((button) => button.textContent === "목록에 복원")).toBe(false);
+      expect(panel?.querySelector('[aria-label="승인 완료"]')).not.toBeNull();
+      expect([...panel.querySelectorAll("button")].some((button) => button.textContent === "복원")).toBe(false);
     } finally {
       await act(async () => root.unmount());
       container.remove();
@@ -3774,7 +3924,7 @@ describe("App Phase 3A backend flow", () => {
         await settle();
       });
       const dialog = await openAutomationEvidence(container);
-      const action = failure === "acknowledge" ? "확인 완료" : "목록에 복원";
+      const action = failure === "acknowledge" ? "승인" : "복원";
       await act(async () => {
         clickButtonContaining(dialog, action);
         await settle();
@@ -3788,7 +3938,7 @@ describe("App Phase 3A backend flow", () => {
       if (failure === "restore-acknowledge") expect(container).toHaveTextContent("목록 제외 1개는 해제했지만 기록 확인 처리는 실패했습니다");
 
       await act(async () => {
-        clickButtonContaining(dialog, failure === "restore-acknowledge" ? "확인 완료" : action);
+        clickButtonContaining(dialog, failure === "restore-acknowledge" ? "승인" : action);
         await settle();
       });
       expect(document.querySelector(".download-overlap-dialog")).toBeNull();
@@ -3819,7 +3969,7 @@ describe("App Phase 3A backend flow", () => {
       const dialog = await openAutomationEvidence(container);
       expect(dialog).toHaveTextContent("자동 분류 근거에서 처리");
       expect([...dialog.querySelectorAll("button")].some((button) =>
-        button.textContent?.includes("목록에 복원") || button.textContent?.includes("확인 완료"))).toBe(false);
+        button.textContent?.includes("복원") || button.textContent?.includes("승인"))).toBe(false);
       expect(fixture.restoreExclusions).not.toHaveBeenCalled();
       expect(fixture.historyAcknowledge).not.toHaveBeenCalled();
     } finally {
@@ -3863,7 +4013,7 @@ describe("App Phase 3A backend flow", () => {
       });
       const firstDialog = await openAutomationEvidence(container);
       await act(async () => {
-        clickButtonContaining(firstDialog, "확인 완료");
+        clickButtonContaining(firstDialog, "승인");
         await settle();
       });
       await act(async () => {
@@ -3873,7 +4023,7 @@ describe("App Phase 3A backend flow", () => {
       const nextRow = [...container.querySelectorAll<HTMLElement>("#activity-automation-panel article")]
         .find((row) => row.textContent?.includes(nextHistoryItem.title))!;
       await act(async () => {
-        clickButtonContaining(nextRow, "근거 보기");
+        clickButtonContaining(nextRow, "근거");
         await settle();
       });
       expect(document.querySelector(".download-overlap-dialog")).toHaveTextContent(nextHistoryItem.title);
@@ -3884,7 +4034,7 @@ describe("App Phase 3A backend flow", () => {
       const nextDialog = document.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
       expect(nextDialog).toHaveTextContent(nextHistoryItem.title);
       expect([...nextDialog.querySelectorAll<HTMLButtonElement>("button")]
-        .find((button) => button.textContent?.includes("확인 완료"))).not.toBeDisabled();
+        .find((button) => button.textContent?.includes("승인"))).not.toBeDisabled();
       expect(fixture.historyAcknowledge).toHaveBeenCalledExactlyOnceWith(fixture.historyItem.reviewId);
     } finally {
       await act(async () => root.unmount());
@@ -3910,7 +4060,7 @@ describe("App Phase 3A backend flow", () => {
       return { ...fixture.review, reviewId, entryId: entry.entryId,
         incoming: { ...fixture.review.incoming, galleryId: entry.galleryId, title: `수동 판단 ${entry.galleryId}` },
         state: resolved.has(reviewId) ? "resolved" : "pending",
-        candidates: fixture.review.candidates.map(candidate => ({ ...candidate, decision: undefined })),
+        candidates: fixture.review.candidates.slice(0,1).map(candidate => ({ ...candidate, decision: undefined })),
       };
     };
     fixture.reviewGet.mockImplementation(async reviewId => ({ ok: true, data: reviewFor(reviewId) }));
@@ -3926,9 +4076,9 @@ describe("App Phase 3A backend flow", () => {
       container.querySelector<HTMLButtonElement>('button[aria-label="활동 기록"]')!.click();
       await settle();
     });
-    expect(container).not.toHaveTextContent("미확인 순차 검토");
+    expect(container).not.toHaveTextContent("검토 필요 목록");
     await act(async () => { clickButtonContaining(container, "자동분류 검토"); await settle(); });
-    await act(async () => { clickButtonContaining(container, "미확인 순차 검토"); await settle(); });
+    await act(async () => { clickButtonContaining(container, "검토 필요 목록"); await settle(); });
     return document.querySelector<HTMLDialogElement>(".download-overlap-dialog")!;
   };
 

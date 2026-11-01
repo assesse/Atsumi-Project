@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
+import { ContextMenuLabel, cardContextMenuIcon, type ContextMenuIcon } from "./ContextMenuLabel";
 import "./CardContextMenu.css";
 
 export type CardMenuItem = {
   id: string;
   label: string;
+  icon?: ContextMenuIcon | null;
   shortcut?: string;
   disabled?: boolean;
   danger?: boolean;
@@ -105,6 +107,6 @@ function OpenCardMenu({ anchor, close, label, items }: {
     <div className="card-context-menu-title" title={label}>{label}</div>
     {items.map((item) => <button type="button" key={item.id} role="menuitem" tabIndex={-1} disabled={item.disabled}
       className={`${item.danger ? "is-danger" : ""}${item.separator ? " has-separator" : ""}`}
-      onClick={() => { if (!item.keepOpen) close(true); item.action(); }}><span>{item.label}</span>{item.shortcut ? <kbd>{item.shortcut}</kbd> : null}</button>)}
+      onClick={() => { if (!item.keepOpen) close(true); item.action(); }}><ContextMenuLabel icon={item.icon === undefined ? cardContextMenuIcon(item.id) : item.icon}>{item.label}</ContextMenuLabel>{item.shortcut ? <kbd>{item.shortcut}</kbd> : null}</button>)}
   </div>, anchor.owner.closest("dialog[open]") ?? document.body);
 }

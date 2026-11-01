@@ -1,0 +1,74 @@
+{
+  "id": "hitomi-containment-retry-20261031",
+  "originals": [
+    "01a089ee-56ed-7322-a750-c034423826c2 / 01a1918d-fb2a-7f10-8fae-696e024807c1 / 01a1918d-fc48-7983-9756-4ca227f79697",
+    "docs/requirements/overlap-page-filters-20261017.json"
+  ],
+  "audit": {
+    "baseline": ".runtime/requirements-audit/20261031-hitomi-ui-postprocess-preedit.json",
+    "inventory": ".runtime/requirements-audit/20261030-cpu-work-inventory.json",
+    "currentOriginal": ".runtime/requirements-audit/20261031-containment-current-original.json",
+    "coverage": "Active27/EOF and archived3/EOF enumerated. Main latest10 reaches old anchor01a18dc4; all new originals read. Other development revisions unchanged: main1793109867,Danbooru1793318688,common1792074984,UI1792073766 (54turns/EOF). Verified historical source SHA25685487c5f/799f75c9/7ddbd2b0. Reuse286document baseline hashes; changed policy74batches, performance and new processing/menu/UI contracts read.",
+    "unavailable": [
+      "Original handoff01a03f16; text available elsewhere",
+      "Unidentified historic analysis1/2",
+      "Historical attachment pixels outside snapshots",
+      "Unlisted/inaccessible sources"
+    ],
+    "integrationPreflight": ".runtime/containment-fix-20261031/integration-preflight.json"
+  },
+  "findings": [
+    "2604586:10 direct containment edges;6 automatic exclusions and1 human exclusion,3 pending.97 visual matches,0SHA exact.",
+    "2253375: pending_quarantine from2026-10-30T21:56:54.643Z, original exists/destination absent; FILESYSTEM_ERROR at54.773Z; retries10:37:51/10:39:14 DATABASE_ERROR. Fresh journal conflicts with active-entry unique index.",
+    "Frozen group retains old review versions after each decision, causing thumbnail EvidenceChanged."
+  ],
+  "changes": [
+    "Reuse matching pending quarantine journal on explicit retry, with unchanged artifact/manifest/path safety checks; conflicting restore or duplicate paths must stop.",
+    "Refresh frozen batch row evidence by exact review/candidate identity, retain membership/order/selected remaining rows; report failing gallery/cause.",
+    "Log bounded path-free OS move failure details.",
+    "Visualize actual relations and propose group-first UI; do not silently remove page-level Ctrl/Shift/manual A/B controls."
+  ],
+  "invariants": [
+    "No direct live DB mutation/history deletion/forced-completed state",
+    "Do not exclude remaining real albums merely to test",
+    "Preserve revision/fingerprint/preservation-witness/threshold checks",
+    "Preserve other chats' changes; no commit/push/release",
+    "Normal app-owned exit only and no interruption of active work"
+  ],
+  "acceptance": [
+    "Reproduce old pending-journal failure and verify safe retry in isolated native fixture",
+    "Sequential batch latest revisions and partial failure preserve selected identities",
+    "Thumbnail requests use fresh evidence revision",
+    "Typecheck,scoped tests,build and separately documented actual UI verification"
+  ],
+  "state": "integrated_and_available_validation_complete",
+  "verification": ".runtime/containment-fix-20261031/verification.json",
+  "integrationManifest": ".runtime/containment-fix-20261031/integration-manifest.json",
+  "proposal": [
+    "One keeper and all directly related editions in one group view.",
+    "Summarize complete page coverage; open pair-level page evidence only on request.",
+    "For uncertain relations allow multiple peer columns aligned by keeper page; keep independent evidence on each edge.",
+    "Use explicit statuses: excluded, needs review, failed; label candidates by album/chapter rather than unexplained ordinal alone.",
+    "Keep completed rows folded and retry only unresolved selections; preserve Ctrl/Shift page selections across display filters."
+  ],
+  "completedAt": "2026-10-31T12:51:45.401Z",
+  "finalVerification": ".runtime/containment-fix-20261031/group-verification.json",
+  "actualAppVerification": ".runtime/containment-fix-20261031/actual-app-qa/checks.json",
+  "scopeLimits": [
+    "Ctrl/Shift selection through filters, close/reopen, virtual scroll and evidence revision is verified by isolated React browser and automated regression. Native modifier+mouse combination was not repeated because the Computer Use API has no hold-modifier click operation.",
+    "Responsive1920x1080,1280x720,736x900 checks used isolated browser. Actual native screen was2887x1281; attempted window sizing did not establish1920x1080 and is not claimed.",
+    "No live album exclusion or page merge was invoked as a test. Mutation safety covered by isolated native quarantine tests and frontend batch fixtures; app automatic recovery was observed separately.",
+    "Capture3591810-scrolled.png showed an occluding Codex window; excluded from UI evidence. Use3591810-scrolled-verified.png and associated accessibility text."
+  ],
+  "followupStatus": "PAUSED",
+  "previousRuntimeBlocker": {
+    "processId": 21064,
+    "activeDownloads": 0,
+    "recordingsAtInitialExitGate": 1,
+    "finalNormalExitGate": "409 active_work_confirmation_required",
+    "appStopped": false,
+    "liveSourceChanged": false,
+    "liveDatabaseWrites": false,
+    "realExclusionsExecuted": false
+  }
+}

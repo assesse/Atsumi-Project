@@ -2744,6 +2744,9 @@ fn render_html(record: &ArchiveRecord) -> String {
 
 #[cfg(test)]
 mod tests {
+    // These tests share the real process-wide two-slot queue and registry.
+    // Serialize fixtures, while their internal worker threads still exercise concurrency.
+    static ARCHIVE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     use super::*;
     fn document() -> CaptureDocument {
         CaptureDocument {
@@ -2793,6 +2796,7 @@ mod tests {
     }
     #[test]
     fn isolated_save_queue_bounds_two_running_and_twenty_waiting_without_chooser_overtake() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let queue = SaveQueue::default();
         queue.admit("running-a", false).unwrap();
         queue.admit("running-b", false).unwrap();
@@ -2812,6 +2816,7 @@ mod tests {
     }
     #[test]
     fn isolated_save_queue_fifo_is_preserved_when_later_workers_arrive_first() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let queue = Arc::new(SaveQueue::default());
         for id in ["a", "b", "c", "d"] { queue.admit(id, true).unwrap(); }
         let (events, receive) = std::sync::mpsc::channel();
@@ -2838,6 +2843,7 @@ mod tests {
     }
     #[test]
     fn isolated_save_queue_cancelled_head_releases_only_its_place() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let queue = Arc::new(SaveQueue::default());
         queue.admit("head", true).unwrap();queue.admit("next", true).unwrap();
         assert!(queue.wait("head", || false).is_err());
@@ -2848,6 +2854,7 @@ mod tests {
     }
     #[test]
     fn queued_capture_admission_registers_all_work_and_releases_overflow_cancel_and_early_errors() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let mut pending: Vec<_> = (0..SAVE_OUTSTANDING_LIMIT).map(|_| state.reserve_queued(uuid::Uuid::new_v4().to_string()).unwrap()).collect();
         let ids: Vec<_> = pending.iter().map(|entry| entry.job.id.clone()).collect();
@@ -2864,6 +2871,7 @@ mod tests {
     }
     #[test]
     fn queued_snapshot_owns_selected_content_after_draft_release_and_expiry() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let mut doc = document();let mut other = doc.records[0].clone();
         other.id = "456".into();other.url = "https://x.com/owner/status/456".into();
@@ -2882,6 +2890,7 @@ mod tests {
     }
     #[test]
     fn queued_epoch_invalidation_rejects_waiting_snapshot_before_any_publication() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();let capture = draft(&state);let request = request(&capture);
         let pending = state.reserve_queued(request.request_id.clone()).unwrap();
         let ticket = state.prepare_queued(pending, request).unwrap();
@@ -2891,6 +2900,7 @@ mod tests {
     }
     #[test]
     fn queued_preparation_rejects_wrong_identity_and_unstarted_save_cannot_write() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();let capture = draft(&state);let save_request = request(&capture);
         let wrong = state.reserve_queued(uuid::Uuid::new_v4().to_string()).unwrap();let id = wrong.job.id.clone();
         assert!(state.prepare_queued(wrong, save_request).is_err());assert!(!active_ids().contains(&id));
@@ -2901,6 +2911,7 @@ mod tests {
     }
     #[test]
     fn queued_work_and_direct_chooser_share_global_execution_slots_without_overtake() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let first = XArchiveState::default();let second = XArchiveState::default();
         let first_draft = draft(&first);let second_draft = draft(&second);
         let first_job = first.reserve(request(&first_draft)).unwrap();
@@ -2916,6 +2927,7 @@ mod tests {
     }
     #[test]
     fn immediate_draft_leases_allow_repeated_complete_and_partial_saves_without_eviction() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let chooser = draft(&state);
         let root = tempfile::tempdir().unwrap();
@@ -2940,6 +2952,7 @@ mod tests {
     }
     #[test]
     fn immediate_draft_lease_releases_early_selection_failure_cancel_and_stale_returns() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let chooser = draft(&state);
         for early_exit in 0..12 {
@@ -2967,6 +2980,7 @@ mod tests {
     }
     #[test]
     fn chooser_draft_remains_retryable_after_save_failure_until_exact_release() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let capture = draft(&state);
         let root = tempfile::tempdir().unwrap();
@@ -2987,6 +3001,7 @@ mod tests {
     }
     #[test]
     fn draft_release_requires_exact_canonical_identity_and_preserves_reserved_jobs() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let capture = draft(&state);
         let other = draft(&state);
@@ -3015,6 +3030,7 @@ mod tests {
     }
     #[test]
     fn draft_leases_preserve_eight_live_chooser_limit_and_expiry() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let choices: Vec<_> = (0..8).map(|_| draft(&state)).collect();
         let doc = document();
@@ -3036,6 +3052,7 @@ mod tests {
     }
     #[test]
     fn old_draft_lease_cannot_revoke_new_epoch_or_another_capture() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let old = draft(&state);
         let lease = state.lease_draft(&old);
@@ -3068,6 +3085,7 @@ mod tests {
     }
     #[test]
     fn restrict_media_keeps_only_the_exact_observed_frozen_resource() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let first = "https://pbs.twimg.com/media/first?format=jpg&name=large";
         let other = "https://pbs.twimg.com/media/other?format=jpg&name=large";
         let mut job = media_job(vec![
@@ -3084,6 +3102,7 @@ mod tests {
     }
     #[test]
     fn restrict_media_distinguishes_unavailable_videos_with_different_posters() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let first = "https://pbs.twimg.com/ext_tw_video_thumb/123/pu/img/first.jpg";
         let other = "https://pbs.twimg.com/ext_tw_video_thumb/456/pu/img/other.jpg";
         let mut job = media_job(vec![
@@ -3102,6 +3121,7 @@ mod tests {
     }
     #[test]
     fn restrict_media_never_admits_unknown_or_ambiguous_selectors() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let image = "https://pbs.twimg.com/media/first?format=jpg";
         let poster = "https://pbs.twimg.com/ext_tw_video_thumb/123/pu/img/first.jpg";
         let mut job = media_job(vec![
@@ -3122,6 +3142,7 @@ mod tests {
     }
     #[test]
     fn frozen_ids_only_and_epoch_revocation() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let s = XArchiveState::default();
         let d = draft(&s);
         let root = tempfile::tempdir().unwrap();
@@ -3133,6 +3154,7 @@ mod tests {
     }
     #[test]
     fn reservation_is_immediately_counted_cancellable_and_released() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let draft = draft(&state);
         let req = request(&draft);
@@ -3147,6 +3169,7 @@ mod tests {
     }
     #[test]
     fn archive_progress_reports_scoped_ordered_stages_and_success_only_after_reopen() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let draft = draft(&state);
         let request = request(&draft);
@@ -3186,6 +3209,7 @@ mod tests {
     }
     #[test]
     fn chooser_snapshot_joins_fifo_and_reports_waiting_before_verified_completion() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let draft = draft(&state);
         let first = state.reserve(request(&draft)).unwrap();
@@ -3213,6 +3237,7 @@ mod tests {
     }
     #[test]
     fn chooser_waiting_cancellation_reports_terminal_without_starting_a_save() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let draft = draft(&state);
         let _first = state.reserve(request(&draft)).unwrap();
@@ -3244,6 +3269,7 @@ mod tests {
     }
     #[test]
     fn logical_progress_excludes_avatar_and_poster_without_removing_saved_helpers() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let image = captured_media("image", "https://pbs.twimg.com/media/one.jpg", None);
         let avatar = captured_media("avatar", "https://pbs.twimg.com/profile_images/123/a_normal.jpg", None);
         let other_avatar = captured_media("avatar", "https://pbs.twimg.com/profile_images/456/b_normal.jpg", None);
@@ -3267,6 +3293,7 @@ mod tests {
     }
     #[test]
     fn logical_progress_counts_unavailable_media_as_processed_not_successful() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (reserved, progress, _) = reporting_media_job(vec![
             captured_media("image", "https://pbs.twimg.com/media/one.jpg", None),
             captured_media("image", "https://pbs.twimg.com/media/two.jpg", None),
@@ -3284,6 +3311,7 @@ mod tests {
     }
     #[test]
     fn current_transfer_has_only_its_own_bytes_and_never_claims_a_whole_job_total() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (_, progress, samples) = reporting_media_job(vec![captured_media("image", "https://pbs.twimg.com/media/one.jpg", None)]);
         {
             let _transfer = progress.begin_transfer(Some(10));
@@ -3309,6 +3337,7 @@ mod tests {
     }
     #[test]
     fn overlong_current_response_keeps_real_bytes_and_revokes_the_wrong_header_total() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (_, progress, samples) = reporting_media_job(vec![captured_media("image", "https://pbs.twimg.com/media/one.jpg", None)]);
         let transfer = progress.begin_transfer(Some(2));
         progress.update(ArchiveProgressStage::Downloading, Some(3), false, false, true);
@@ -3334,6 +3363,7 @@ mod tests {
     }
     #[test]
     fn response_read_tracks_header_and_real_chunks_then_clears_before_asset_validation() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (reserved, progress, samples) = reporting_media_job(vec![captured_media("image", "https://pbs.twimg.com/media/one.jpg", None)]);
         let mut reader = ChunkedProgressReader { bytes: std::io::Cursor::new(vec![1, 2, 3, 4]), progress, seen: vec![] };
         let mut total = 0;
@@ -3347,6 +3377,7 @@ mod tests {
     }
     #[test]
     fn missing_and_inaccurate_lengths_do_not_invent_totals_or_accept_truncated_bytes() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for (declared, limit, success, received) in [(None, 8, true, 3), (Some(5), 8, false, 3), (Some(2), 8, false, 3), (None, 2, false, 3), (Some(0), 8, false, 0), (Some(9), 8, false, 0)] {
             let (reserved, progress, _) = reporting_media_job(vec![captured_media("image", "https://pbs.twimg.com/media/one.jpg", None)]);
             let result = read_transfer(&mut std::io::Cursor::new(vec![1, 2, 3]), declared, limit, &reserved.job, &mut 0);
@@ -3370,6 +3401,7 @@ mod tests {
     }
     #[test]
     fn transfer_metadata_clears_on_read_error_and_cancel_without_discarding_received_bytes() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for cancel in [false, true] {
             let (reserved, progress, samples) = reporting_media_job(vec![captured_media("image", "https://pbs.twimg.com/media/one.jpg", None)]);
             let mut reader = InterruptedProgressReader { first: true, cancel: cancel.then(|| reserved.job.cancel.clone()) };
@@ -3383,6 +3415,7 @@ mod tests {
     }
     #[test]
     fn sequential_hls_responses_reset_transfer_bytes_but_count_one_logical_video() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let (reserved, progress, samples) = reporting_media_job(vec![captured_media("video", "https://video.twimg.com/ext_tw_video/123/pu/pl/root.m3u8", None)]);
         let mut total = 0;
         for size in [1, 2, 3] {
@@ -3397,6 +3430,7 @@ mod tests {
     }
     #[test]
     fn archive_progress_preserves_real_byte_counts_throttles_chunks_and_ignores_late_updates() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let reserved = media_job(vec![captured_media("image", "https://pbs.twimg.com/media/one.jpg", None)]);
         let snapshots = Arc::new(Mutex::new(Vec::new()));
         let sink = snapshots.clone();
@@ -3422,6 +3456,7 @@ mod tests {
     }
     #[test]
     fn archive_progress_cancel_and_write_failure_never_emit_complete() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for cancel in [false, true] {
             let state = XArchiveState::default();
             let draft = draft(&state);
@@ -3448,6 +3483,7 @@ mod tests {
     }
     #[test]
     fn archive_progress_partial_is_a_truthful_committed_result_not_full_success() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let mut document = document();
         document.records[0].truncated = true;
@@ -3465,6 +3501,7 @@ mod tests {
     }
     #[test]
     fn duplicate_reservation_cannot_drop_the_original() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let draft = draft(&state);
         let req = request(&draft);
@@ -3477,6 +3514,7 @@ mod tests {
     }
     #[test]
     fn never_labels_html_error_payload_a_video_segment() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for ext in ["mp4", "m4s", "ts", "aac", "vtt"] {
             assert!(!valid_segment(b"<html>server error</html>", ext));
         }
@@ -3488,6 +3526,7 @@ mod tests {
     }
     #[test]
     fn observed_x_subtitle_path_keeps_the_exact_video_scope() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = media_url(
             "https://video.twimg.com/amplify_video/123/pl/root.m3u8?tag=29&v=030&variant_version=1",
             true,
@@ -3517,6 +3556,7 @@ mod tests {
     }
     #[test]
     fn webvtt_requires_text_header_and_well_formed_cue_times() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let source = "WEBVTT\r\n\r\n00:00:00.920 --> 00:00:01.920\r\n<X-word-ms ms=120,60 index=1>Caption</X-word-ms>\r\n\r\n2\r\n00:02.460 --> 00:03.501 align:start\r\nAnother caption\r\n";
         assert!(valid_segment(source.as_bytes(), "vtt"));
         for source in [
@@ -3533,6 +3573,7 @@ mod tests {
     }
     #[test]
     fn unavailable_optional_subtitles_do_not_destroy_video_audio_or_surviving_tracks() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let master = "#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"en\",URI=\"sub.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",URI=\"audio.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=100,CODECS=\"mp4a.40.2,avc1.64001F\",SUBTITLES=\"subs\",AUDIO=\"audio\"\nvideo.m3u8";
         assert!(subtitle_reference(master, "sub.m3u8").unwrap());
         assert!(!subtitle_reference(master, "audio.m3u8").unwrap());
@@ -3552,6 +3593,7 @@ mod tests {
     }
     #[test]
     fn mixed_use_hls_uri_is_never_an_optional_subtitle() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let subtitles =
             "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"en\",URI=\"bad.m3u8\"";
         for required in [
@@ -3587,6 +3629,7 @@ mod tests {
     }
     #[test]
     fn published_hls_references_only_registered_local_assets_for_the_same_post() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let local = "asset-00000000-0000-4000-8000-000000000001.m3u8";
         let asset = ArchiveAsset {
             name: local.into(),
@@ -3627,6 +3670,7 @@ mod tests {
     }
     #[test]
     fn failed_optional_branch_cannot_contribute_video_evidence() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut root_proof = false;
         let failed: Result<(), String> = hls_branch(&mut root_proof, |branch| {
             *branch = true;
@@ -3651,6 +3695,7 @@ mod tests {
     }
     #[test]
     fn issue_cap_cannot_publish_a_record_that_read_will_reject() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let issue = || ArchiveIssue {
             post_id: "123".into(),
             kind: "subtitle".into(),
@@ -3664,6 +3709,7 @@ mod tests {
     }
     #[test]
     fn successful_cached_child_retains_proof_without_discarded_branch_leakage() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let node = HlsNode {
             name: "asset-video-init.mp4".into(),
             has_video: true,
@@ -3683,6 +3729,7 @@ mod tests {
     }
     #[test]
     fn audio_only_container_is_not_a_proven_video() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         fn atom(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
             let mut v = ((body.len() + 8) as u32).to_be_bytes().to_vec();
             v.extend_from_slice(kind);
@@ -3704,6 +3751,7 @@ mod tests {
     }
     #[test]
     fn immutable_offline_reopen_with_sanitized_html() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let s = XArchiveState::default();
         let d = draft(&s);
         let root = tempfile::tempdir().unwrap();
@@ -3749,6 +3797,7 @@ mod tests {
     }
     #[test]
     fn historical_presentation_and_loaded_reply_survive_immutable_save_and_reopen() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let doc = presentation_document();
         assert!(validate_document(&doc).is_ok());
@@ -3779,6 +3828,7 @@ mod tests {
     }
     #[test]
     fn display_only_quote_emoji_and_observed_order_survive_new_immutable_save_and_reopen() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let doc = display_quote_document();
         assert!(validate_document(&doc).is_ok());
         assert_eq!(archive_post_selection(&doc, "123"), ["123", "456"]);
@@ -3801,6 +3851,7 @@ mod tests {
     }
     #[test]
     fn display_only_quote_cannot_smuggle_identity_relationships_or_foreign_resources() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let raw = serde_json::to_value(display_quote_document()).unwrap();
         for field in ["id", "url", "relation", "conversationId", "script"] {
             let mut changed = raw.clone();
@@ -3834,6 +3885,7 @@ mod tests {
     }
     #[test]
     fn display_only_quote_references_stay_same_post_and_are_pruned_for_single_media() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = display_quote_document();
         let avatar = "https://pbs.twimg.com/profile_images/123/observed.jpg";
         let image = "https://pbs.twimg.com/media/observed.jpg";
@@ -3862,6 +3914,7 @@ mod tests {
     }
     #[test]
     fn display_only_quote_video_enrichment_is_poster_scoped_and_legacy_fields_stay_absent() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = display_quote_document();
         let poster = "https://pbs.twimg.com/ext_tw_video_thumb/111/pu/img/p.jpg";
         let video = "https://video.twimg.com/ext_tw_video/111/pu/pl/master.m3u8";
@@ -3882,6 +3935,7 @@ mod tests {
     }
     #[test]
     fn native_default_save_expands_only_the_exact_loaded_detail_conversation() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = presentation_document();
         let mut unknown = doc.records[1].clone();
         unknown.id = "999".into(); unknown.url = "https://x.com/replier/status/999".into();
@@ -3902,6 +3956,7 @@ mod tests {
     }
     #[test]
     fn historical_presentation_rejects_forged_identity_relationships_and_unbounded_values() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let raw = serde_json::to_value(presentation_document()).unwrap();
         for (field, value) in [
             ("handle", serde_json::json!("someone_else")),
@@ -3940,6 +3995,7 @@ mod tests {
     }
     #[test]
     fn a_selected_loaded_reply_remains_readable_without_its_root_record() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = presentation_document();
         doc.records.remove(0);
         assert!(validate_document(&doc).is_ok());
@@ -3953,6 +4009,7 @@ mod tests {
     }
     #[test]
     fn quote_avatar_is_only_an_existing_same_post_asset_and_single_media_narrowing_clears_it() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = presentation_document();
         let avatar = "https://pbs.twimg.com/profile_images/123/observed.jpg";
         let image = "https://pbs.twimg.com/media/observed.jpg";
@@ -3978,6 +4035,7 @@ mod tests {
     }
     #[test]
     fn shared_own_and_quote_media_occurrences_do_not_duplicate_the_captured_resource() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = presentation_document();
         let image = "https://pbs.twimg.com/media/shared.jpg";
         let avatar = "https://pbs.twimg.com/profile_images/123/shared.jpg";
@@ -4000,6 +4058,7 @@ mod tests {
     }
     #[test]
     fn own_media_occurrence_absence_differs_from_an_explicit_empty_capture() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = presentation_document();
         assert!(doc.records[0].presentation.as_ref().unwrap().media_urls.is_none());
         assert!(serde_json::to_value(&doc).unwrap()["records"][0]["presentation"].get("mediaUrls").is_none());
@@ -4012,6 +4071,7 @@ mod tests {
     }
     #[test]
     fn native_observed_video_enrichment_keeps_both_proved_occurrences_and_no_unrelated_video() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut doc = presentation_document();
         let poster = "https://pbs.twimg.com/ext_tw_video_thumb/111/pu/img/p.jpg";
         let video = "https://video.twimg.com/ext_tw_video/111/pu/pl/master.m3u8";
@@ -4047,6 +4107,7 @@ mod tests {
     }
     #[test]
     fn photo_only_capture_preserves_exact_scope_without_fabricated_text() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let doc: CaptureDocument = serde_json::from_value(photo_document_value()).unwrap();
         assert!(validate_document(&doc).is_ok());
         let encoded = serde_json::to_value(&doc).unwrap();
@@ -4090,6 +4151,7 @@ mod tests {
     }
     #[test]
     fn older_captures_default_to_normal_post_scope() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut raw = serde_json::to_value(document()).unwrap();
         raw["records"][0].as_object_mut().unwrap().remove("photoOnly");
         let old: CaptureDocument = serde_json::from_value(raw).unwrap();
@@ -4112,6 +4174,7 @@ mod tests {
     }
     #[test]
     fn transient_capture_diagnostic_is_closed_and_never_serialized() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut raw = serde_json::to_value(document()).unwrap();
         let shape = serde_json::json!({
             "photoRoute":true,"articles":0,"dialogs":0,"images":65535,"imagesOverLimit":true,
@@ -4169,6 +4232,7 @@ mod tests {
     }
     #[test]
     fn transient_quote_diagnostic_is_closed_bounded_and_never_serialized() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut raw = serde_json::to_value(document()).unwrap();
         let shape = quote_diagnostic_shape();
         raw["quoteDiagnostic"] = shape.clone();
@@ -4202,6 +4266,7 @@ mod tests {
     }
     #[test]
     fn transient_quote_diagnostic_rejects_unknown_identity_text_and_nonclosed_types() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut base = serde_json::to_value(document()).unwrap();
         base["quoteDiagnostic"] = quote_diagnostic_shape();
         for key in ["url", "text", "owner", "postId", "html", "labels"] {
@@ -4239,6 +4304,7 @@ mod tests {
     }
     #[test]
     fn absent_quote_diagnostic_preserves_legacy_document_shape() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let fixture = document();
         assert!(fixture.quote_diagnostic.is_none());
         let mut raw = serde_json::to_value(&fixture).unwrap();
@@ -4251,6 +4317,7 @@ mod tests {
     }
     #[test]
     fn photo_only_requires_media_and_discloses_scope_in_portable_html() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let doc: CaptureDocument = serde_json::from_value(photo_document_value()).unwrap();
         let capture = state.freeze(
@@ -4270,6 +4337,7 @@ mod tests {
     }
     #[test]
     fn altered_file_or_manifest_rejected() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let s = XArchiveState::default();
         let d = draft(&s);
         let root = tempfile::tempdir().unwrap();
@@ -4279,6 +4347,7 @@ mod tests {
     }
     #[test]
     fn generic_media_urls_remain_observed_and_never_gain_credentials() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let raw = "https://pbs.twimg.com/media/abc?format=jpg&name=large";
         assert_eq!(media_url(raw, false).unwrap().as_str(), raw);
         for u in [
@@ -4293,6 +4362,7 @@ mod tests {
     }
     #[test]
     fn original_image_request_preserves_observed_id_and_format_and_is_idempotent() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for (source, expected) in [
             ("https://pbs.twimg.com/media/Ab_c-1?format=jpg&name=small", "https://pbs.twimg.com/media/Ab_c-1?format=jpg&name=orig"),
             ("https://pbs.twimg.com/media/Ab_c-1.jpeg?name=thumb", "https://pbs.twimg.com/media/Ab_c-1?format=jpeg&name=orig"),
@@ -4308,6 +4378,7 @@ mod tests {
     }
     #[test]
     fn original_image_request_rejects_unknown_format_id_query_or_origin() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for source in [
             "https://pbs.twimg.com/media/one", "https://pbs.twimg.com/media/one?name=large",
             "https://pbs.twimg.com/media/one.avif", "https://pbs.twimg.com/media/one.JPG",
@@ -4336,6 +4407,7 @@ mod tests {
     }
     #[test]
     fn original_image_saves_received_bytes_with_observed_identity_and_request_provenance() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = tempfile::tempdir().unwrap();
         let post = document().records.remove(0);
         let source = "https://pbs.twimg.com/media/one.png?name=small";
@@ -4359,6 +4431,7 @@ mod tests {
     }
     #[test]
     fn original_image_has_one_attempt_and_never_retries_display_size_or_hides_cancellation() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = tempfile::tempdir().unwrap();
         let post = document().records.remove(0);
         let media = captured_media("image", "https://pbs.twimg.com/media/one?format=png&name=small", None);
@@ -4376,6 +4449,7 @@ mod tests {
     }
     #[test]
     fn original_image_rejects_unproven_url_before_fetch_and_invalid_or_different_format_after_fetch() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = tempfile::tempdir().unwrap();
         let post = document().records.remove(0);
         let mut assets = Vec::new();
@@ -4392,6 +4466,7 @@ mod tests {
     }
     #[test]
     fn original_image_policy_does_not_upgrade_avatar_or_poster() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = tempfile::tempdir().unwrap();
         let post = document().records.remove(0);
         let mut assets = Vec::new();
@@ -4411,6 +4486,7 @@ mod tests {
     }
     #[test]
     fn original_provenance_is_same_captured_post_image_only_and_legacy_metadata_is_unchanged() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let source = "https://pbs.twimg.com/media/one?format=png&name=small";
         let mut document = document();
         document.records[0].media = vec![captured_media("image", source, None)];
@@ -4451,6 +4527,7 @@ mod tests {
     }
     #[test]
     fn new_and_legacy_original_records_reopen_and_serve_local_verified_bytes() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let state = XArchiveState::default();
         let draft = draft(&state);
         let root = tempfile::tempdir().unwrap();
@@ -4483,6 +4560,7 @@ mod tests {
     }
     #[test]
     fn inspect_diagnostics_are_fixed_categories_preserving_closed_query_validation() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for (url, category) in [
             (
                 "https://pbs.twimg.com/media/example?format=jpg&name=16385x360",
@@ -4518,6 +4596,7 @@ mod tests {
     }
     #[test]
     fn observed_image_dimensions_are_bounded_and_never_rewritten_or_guessed() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for dimension in ["360x360", "640x360", "4096x4096", "16384x1", "1x16384"] {
             let observed =
                 format!("https://pbs.twimg.com/media/example?format=jpg&name={dimension}");
@@ -4568,6 +4647,7 @@ mod tests {
     }
     #[test]
     fn live_encrypted_byterange_or_remote_unknown_hls_not_complete() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for p in [
             "#EXTM3U\n#EXTINF:2\na.ts",
             "#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"secret\"\n#EXT-X-ENDLIST\na.ts",
@@ -4581,6 +4661,7 @@ mod tests {
     }
     #[test]
     fn mp4_requires_complete_box_graph() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let mut data = vec![];
         for (kind, body) in [
             (b"ftyp", b"test".as_slice()),
@@ -4598,6 +4679,7 @@ mod tests {
     }
     #[test]
     fn no_network_or_private_state_in_capture_script() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         for denied in [
             "fetch(",
             "XMLHttpRequest",
@@ -4615,6 +4697,7 @@ mod tests {
     }
     #[test]
     fn hidden_stage_is_not_a_completed_archive() {
+        let _queue_fixture = ARCHIVE_TEST_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let root = tempfile::tempdir().unwrap();
         fs::create_dir(root.path().join(".partial-test")).unwrap();
         assert!(list(root.path()).unwrap().is_empty());

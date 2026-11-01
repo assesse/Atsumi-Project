@@ -20,6 +20,7 @@ export class GalleryCoverBackgroundPreloader {
   private active = 0;
   private pumping = false;
   private disposed = false;
+  private pumpTimer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
     private readonly client: ThumbnailClient,
@@ -60,6 +61,8 @@ export class GalleryCoverBackgroundPreloader {
 
   dispose(): void {
     this.disposed = true;
+    clearTimeout(this.pumpTimer);
+    this.pumpTimer = undefined;
     for (const entry of this.entries.values()) entry.release?.();
     this.entries.clear();
     this.queued = [];
@@ -68,10 +71,12 @@ export class GalleryCoverBackgroundPreloader {
   }
 
   private pump(): void {
-    if (this.disposed || this.pumping) return;
+    if (this.disposed || this.pumping || this.pumpTimer !== undefined) return;
     this.pumping = true;
+    let started = 0;
     try {
-      while (this.active < this.concurrency && this.queueIndex < this.queued.length) {
+      while (started < 16 && this.active < this.concurrency && this.queueIndex < this.queued.length) {
+        started += 1;
         const entry = this.queued[this.queueIndex++]!;
         entry.status = "loading";
         this.active += 1;
@@ -84,6 +89,17 @@ export class GalleryCoverBackgroundPreloader {
     } finally {
       this.pumping = false;
     }
+    if (this.active < this.concurrency && this.queueIndex < this.queued.length) this.schedulePump();
+  }
+
+  private schedulePump(): void {
+    if (this.disposed || this.pumpTimer !== undefined || this.queueIndex >= this.queued.length) return;
+    // Cache hits can settle synchronously. Yield a task instead of draining
+    // thousands of covers in one effect/microtask chain ahead of user input.
+    this.pumpTimer = setTimeout(() => {
+      this.pumpTimer = undefined;
+      this.pump();
+    }, 0);
   }
 
   private settle(entry: CoverPreload): void {
@@ -97,6 +113,6 @@ export class GalleryCoverBackgroundPreloader {
     if (snapshot.status === "resolved") this.retainer?.visit("downloads", [entry.gallery]);
     entry.release?.();
     entry.release = undefined;
-    this.pump();
+    this.schedulePump();
   }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { startTransition, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { galleryId, type GalleryId } from "../core/types";
 
 type ProgressiveGalleryWindowOptions = {
@@ -68,7 +68,9 @@ export function useProgressiveGalleryWindow({
       return undefined;
     }
 
+    let disposed = false;
     const observer = new IntersectionObserver((entries) => {
+      if (disposed) return;
       const entered: GalleryId[] = [];
       const left: GalleryId[] = [];
       const next = new Set(activeIdsRef.current);
@@ -92,7 +94,7 @@ export function useProgressiveGalleryWindow({
       }
       if (changed) {
         activeIdsRef.current = next;
-        setActiveIds(next);
+        startTransition(() => setActiveIds(next));
       }
       if (left.length) onLeaveRef.current?.(left);
       if (entered.length) onEnterRef.current?.(entered);
@@ -103,7 +105,7 @@ export function useProgressiveGalleryWindow({
     });
 
     elements.forEach((element) => observer.observe(element));
-    return () => observer.disconnect();
+    return () => { disposed = true; observer.disconnect(); };
   }, [enabled, observeKey, overscanPixels, retainEntered, rootRef]);
 
   return activeIds;

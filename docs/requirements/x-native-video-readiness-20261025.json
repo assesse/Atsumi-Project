@@ -1,0 +1,34 @@
+{
+  "date": "2026-10-25",
+  "state": "implemented-preview-and-primary-native-detail-verified-natural-home-feed-entry-still-qualified",
+  "latestActual20261026": {
+    "request": "BGD스킬을 이용해서 남은 검증들 처리해줘.",
+    "audit": ".runtime/requirements-audit/20261026-bgd-video-handoff-preedit.json",
+    "outcome": ".runtime/requirements-audit/20261026-bgd-verification-outcome.json",
+    "failure": "Actual left native current-detail DOM has its own timestamp below the media, outside User-Name. Clicking the playing second video failed to arm the2500ms handoff; concealment then interrupted video-layer hydration and left skeletons.",
+    "repair": "Separate videoTransitionPost fallback only for one exact own timestamp matching the current base-post path, excluding nested quote/link/button and ambiguous/foreign evidence. General articlePath and all native owner/security/resource/visibility fences stay unchanged. No new source play/pause/mute/URL selection.",
+    "checks": "Seven actual-shape regressions added; positive cases failed before repair.218 adapter tests,1717 unique X tests across initial run and isolated-browser retry, typecheck, scoped diff check and debug build passed. Complete current source embedded in executable; withdrawn selector absent.",
+    "actual": "Same left native detail reproduction now opens and plays second video, switches2→3→4, returns with Escape and retains the right preview. Final ordinary launch/home/own Likes and graceful shutdown also observed.",
+    "qualification": "The neutral public post was explicitly opened in the left original document for the primary-detail reproduction. This does not prove natural home-timeline discovery/entry or repair the independent center2/bottom3 autoplay issue. Historical checks below retain their original dates and scope."
+  },
+  "original": "Current Atsumi conversation: repeated freeze immediately after clicking a video in a feed containing multiple videos; appshot 2026-10-25T06:06:30.922Z",
+  "audit": ".runtime/requirements-audit/20261025-x-video-readiness-preedit.json",
+  "preserves": ["x-official-split-return-20261020.json", "x-native-actions-and-focus-20261020.json", "x-menus-preview-tabs-20261020.json"],
+  "diagnosis": "Actual PID17532 source-shape log transitions from home/ready to an exact video route/loading at15:06:04 KST as primaryColumn and desktop account navigation disappear. The shell is still responsive. The former readiness predicate accepted primaryColumn and photos only; conceal then hid the original video and paused its media.",
+  "decisions": [
+    "Recognize the original full-page or modal video layer after this same document proved its account. Recheck exact video route, contradictory current profile evidence, security screens, presented original player and permitted source/poster. Do not infer identity from post authors or media.",
+    "A thumbnail may establish a still-hydrating original player. Once a media source exists, a thumbnail cannot override a foreign source. Account conflict/login revokes cached proof.",
+    "Actual first-candidate replay found an empty layout between the user's click and the replacement player. Keep the last published state for at most2500ms only after a trusted ordinary gesture on a permitted observed video, bound to the exact post and visibility epoch. Do not publish a fabricated new ready message. No deferral for untrusted/modified/wrong-post/stale/hidden/security/owner-conflict input; mutation updates cannot extend its deadline. Player readiness or expiry ends it.",
+    "Keep X responsible for selecting, loading and playing videos; no synthetic play, source substitution, forced reload/navigation, source mute change or replacement player.",
+    "The existing input adapter lets the proved original video layer consume Escape before closing the outer Atsumi preview. Photo/native fullscreen and ordinary preview behavior remain.",
+    "Video readiness is a closed boolean in the existing native status contract. Old status messages default to false; arbitrary fields and non-boolean values remain rejected. Existing generation, owner, viewport, archive and download fences remain."
+  ],
+  "checks": {
+    "before": "New frontend regressions reproduce three loading-versus-ready failures in the old source;200 existing assertions passed.",
+    "focused": "Final xSurface, xSurfaceInput and XWorkspace:300 passed. TypeScript check passed.",
+    "native": "x_feed::surface::tests:52 passed including closed video status compatibility and existing playback/input/account/viewport fences.",
+    "broader": "Historical first run:1680 passed,1 pre-existing capture/controls predicate mismatch. Latest remaining-verification request explicitly includes that failure: archive selection and its strict thread-boundary helper now match the retained controls;500 focused capture/controls and all32 X files/1695 tests passed, plus typecheck. Exact current photo and ambiguous/exposed/foreign boundary refusal remain tested.",
+    "actual": "Historical first candidate PID46364 failed at15:30:55 and was not accepted. Final bounded-handoff candidate actual PID46464: neutral notjignes/2113958988949942538 inline playback countdown0:20→0:16, video body expanded to/video/1, next-slide buttons traversed/2,/3,/4, Escape returned to exact post retaining outer preview tab; native preview remained ready. This verifies the preview path, not primary-feed readiness loss. Primary-feed YorshCP four-animation post was identified but not activated before concurrent desktop input and a user source-search changed the feed; final primary-feed reproduction remains pending. See .runtime/requirements-audit/20261025-remaining-qa-outcome.json."
+  },
+  "acceptance": ["Actual multi-video native activation stays presented instead of returning shell skeleton", "Native video close/return and right-preview ownership remain correct", "Unproved account, contradictory profile, login/security, hidden/empty player, foreign media and invalid routes are not promoted", "No data reset, social mutation, account/privacy automation, forced termination or release", "Actual unverified cases and prior supported-platform link checks remain explicit"]
+}

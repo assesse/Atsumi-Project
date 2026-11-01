@@ -1,3 +1,177 @@
 /* Requested change: hide only the redundant floating mute notice.
    Keep actual muted state, the volume controls and their accessible labels. */
 .chzzk_player .pzp-pc__mute-indicator { display: none !important; }
+
+/* Readable local player labels. */
+.pzp-ui-track-badge__badge {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-ui-setting-home-item__label,.pzp-pc--size-small .pzp-ui-setting-home-item__label,.pzp-mobile--size-small .pzp-ui-setting-home-item__label {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-ui-setting-home-item__value,.pzp-pc--size-small .pzp-ui-setting-home-item__value,.pzp-mobile--size-small .pzp-ui-setting-home-item__value {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-ui-setting-home-item__tooltip {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-ui-setting-pane-item__slot small {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-ui-setting-pane-item__value,.pzp-pc--size-small .pzp-ui-setting-pane-item__value,.pzp-mobile--size-small .pzp-ui-setting-pane-item__value {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-ui-number {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-medium .pzp-channel-profile__info-count,.pzp-pc--size-m .pzp-channel-profile__info-count,.pzp-mobile--size-normal .pzp-channel-profile__info-count,.pzp-pc--size-small .pzp-channel-profile__info-count,.pzp-pc--size-s .pzp-channel-profile__info-count,.pzp-mobile--size-small .pzp-channel-profile__info-count,.pzp-mobile--size-extra-small .pzp-channel-profile__info-count {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-ui-recommend-card__channel {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-medium .pzp-ui-content-count__number,.pzp-pc--size-medium .pzp-ui-content-count__label,.pzp-pc--size-m .pzp-ui-content-count__number,.pzp-pc--size-m .pzp-ui-content-count__label,.pzp-mobile--size-normal .pzp-ui-content-count__number,.pzp-mobile--size-normal .pzp-ui-content-count__label,.pzp-mobile--size-m .pzp-ui-content-count__number,.pzp-mobile--size-m .pzp-ui-content-count__label {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-ui-content-count__number,.pzp-pc--size-small .pzp-ui-content-count__label,.pzp-pc--size-s .pzp-ui-content-count__number,.pzp-pc--size-s .pzp-ui-content-count__label,.pzp-mobile--size-small .pzp-ui-content-count__number,.pzp-mobile--size-small .pzp-ui-content-count__label,.pzp-mobile--size-s .pzp-ui-content-count__number,.pzp-mobile--size-s .pzp-ui-content-count__label {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-ui-outlined-button {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-subscription-success-toast {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-subscription-canceled-toast {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-highlight-point__tooltip {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-vod-time__current-time,.pzp-pc--size-s .pzp-vod-time__current-time,.pzp-mobile--size-small .pzp-vod-time__current-time,.pzp-mobile--size-s .pzp-vod-time__current-time {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-vod-time__duration,.pzp-pc--size-s .pzp-vod-time__duration,.pzp-mobile--size-small .pzp-vod-time__duration,.pzp-mobile--size-s .pzp-vod-time__duration {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-vod-time__bar,.pzp-pc--size-s .pzp-vod-time__bar,.pzp-mobile--size-small .pzp-vod-time__bar,.pzp-mobile--size-s .pzp-vod-time__bar {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-m .pzp-mute-indicator__text,.pzp-pc--size-s .pzp-mute-indicator__text,.pzp-mobile--size-normal .pzp-mute-indicator__text,.pzp-mobile--size-small .pzp-mute-indicator__text,.pzp-mobile--size-extra-small .pzp-mute-indicator__text {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-settings span {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-setting-subtitle-pane .pzp-ui-setting-pane-item__value span,.pzp-mobile--size-small .pzp-setting-subtitle-pane .pzp-ui-setting-pane-item__value span {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-setting-subtitle-option-pane .pzp-setting-subtitle-option-pane__item span,.pzp-mobile--size-small .pzp-setting-subtitle-option-pane .pzp-setting-subtitle-option-pane__item span {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-setting-quality-pane .pzp-ui-setting-pane-item__value span,.pzp-mobile--size-small .pzp-setting-quality-pane .pzp-ui-setting-pane-item__value span {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-setting-playbackrate-pane .pzp-ui-setting-pane-item__value span,.pzp-mobile--size-small .pzp-setting-playbackrate-pane .pzp-ui-setting-pane-item__value span {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc-ui-error-dialog--small .pzp-pc-ui-error-dialog__help-text[data-v-112a8c8f] {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc-ui-error-dialog--extra-small .pzp-pc-ui-error-dialog__message[data-v-112a8c8f] {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc-ui-error-dialog--extra-small .pzp-pc-ui-error-dialog__help-text[data-v-112a8c8f] {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-medium .pzp-content-info__content-count,.pzp-pc--size-medium .pzp-content-info__content-text,.pzp-pc--size-m .pzp-content-info__content-count,.pzp-pc--size-m .pzp-content-info__content-text,.pzp-mobile--size-normal .pzp-content-info__content-count,.pzp-mobile--size-normal .pzp-content-info__content-text,.pzp-mobile--size-m .pzp-content-info__content-count,.pzp-mobile--size-m .pzp-content-info__content-text {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-content-info__content-count,.pzp-pc--size-small .pzp-content-info__content-text,.pzp-pc--size-s .pzp-content-info__content-count,.pzp-pc--size-s .pzp-content-info__content-text,.pzp-mobile--size-small .pzp-content-info__content-count,.pzp-mobile--size-small .pzp-content-info__content-text,.pzp-mobile--size-s .pzp-content-info__content-count,.pzp-mobile--size-s .pzp-content-info__content-text {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-content-channel-name,.pzp-pc--size-s .pzp-content-channel-name {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-ui-setting-tooltip {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-medium .pzp-ui-around-video-panel__time,.pzp-pc--size-m .pzp-ui-around-video-panel__time {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-medium .pzp-ui-around-video-panel__title,.pzp-pc--size-m .pzp-ui-around-video-panel__title {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-medium .pzp-ui-around-video-panel__text,.pzp-pc--size-m .pzp-ui-around-video-panel__text {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-s .pzp-setting-intro-loop__name,.pzp-mobile--size-small .pzp-setting-intro-loop__name {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-setting-shortkeys-item--multiline .pzp-setting-shortkeys-item__label {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc-help-panel__more {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-double-tap-overlay__wrap .pzp-double-tap-overlay__text,.pzp-pc--size-s .pzp-double-tap-overlay__wrap .pzp-double-tap-overlay__text {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-mobile--size-small .pzp-double-tap-overlay__wrap .pzp-double-tap-overlay__text,.pzp-mobile--size-s .pzp-double-tap-overlay__wrap .pzp-double-tap-overlay__text {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-small .pzp-setting-subtitle-option-pane__property,.pzp-pc--size-s .pzp-setting-subtitle-option-pane__property {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc.pzp-pc--size-small .pzp-pc__duration-indicator,.pzp-pc.pzp-pc--size-s .pzp-pc__duration-indicator {
+    font-size: 13px;
+    line-height: 1.4
+}
+.pzp-pc--size-l .pzp-pc__bottom-buttons .pzp-ui-text,.pzp-pc--size-m .pzp-pc__bottom-buttons .pzp-ui-text {
+    font-size: 13px;
+    line-height: 1.4
+}
+.chzzk_player.ai_caption .pzp-setting-subtitle-pane__header .pzp-ui-setting-pane-header__title:before {
+    font-size: 13px;
+    line-height: 1.4
+}

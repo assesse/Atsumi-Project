@@ -79,3 +79,28 @@ export function prioritizeDownloadOverlapReviews(reviews: readonly DownloadOverl
     || a.createdAt.localeCompare(b.createdAt)
     || a.reviewId.localeCompare(b.reviewId));
 }
+
+/** Advance evidence revisions without changing the submitted batch's membership,
+ * order or item keys. Processed rows remain visible; new candidates never get
+ * silently added to the user's selection. The apply path revalidates every edge. */
+export function refreshContainmentGroupReview(
+  group: DownloadOverlapContainmentGroup | undefined,
+  review: DownloadOverlapReview,
+): DownloadOverlapContainmentGroup | undefined {
+  if (!group) return group;
+  let changed = false;
+  const items = group.items.map((item) => {
+    if (item.review.reviewId !== review.reviewId || item.review.entryId !== review.entryId
+      || review.revision < item.review.revision) return item;
+    const candidate = review.candidates.find((next) => next.candidateId === item.candidate.candidateId
+      && next.existing.entryId === item.candidate.existing.entryId);
+    if (!candidate) return item;
+    changed = true;
+    return { ...item, review, candidate, excluded: item.keeperIsIncoming ? candidate.existing : review.incoming };
+  });
+  if (!changed) return group;
+  const keeper = review.incoming.entryId === group.keeper.entryId
+    ? review.incoming
+    : review.candidates.find((candidate) => candidate.existing.entryId === group.keeper.entryId)?.existing ?? group.keeper;
+  return { keeper, items };
+}

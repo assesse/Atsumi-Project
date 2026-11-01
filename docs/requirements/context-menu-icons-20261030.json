@@ -1,0 +1,25 @@
+{
+  "id": "context-menu-icons-20261030",
+  "request": "직접 구현한 우클릭 메뉴에 공통 앞쪽 여백을 두고 중요한·자주 쓰는 기능을 아이콘으로 표시한다. 모든 플랫폼을 검토한다.",
+  "source": "2026-10-30 direct user request in Atsumi development chat",
+  "scope": {
+    "sharedCards": ["Hitomi cards/details/excluded albums/personal favorites", "Danbooru", "Pixiv", "Pinterest"],
+    "independentMenus": ["SOOP discovery", "YouTube discovery/channel cards", "YouTube/SOOP saved media and screenshots", "X native post/media/search/plain-link menus", "X local archive and retained clean workspace"],
+    "reviewedWithoutNewMenus": ["CHZZK/Mado discovery, recordings and screenshots have no separate app-owned context menu"],
+    "excluded": ["Browser or site default context menus", "Normal account/source/playback-speed dropdowns", "Direct tag right-click favorite actions"]
+  },
+  "presentation": {
+    "leadingColumnPx": 20,
+    "iconPx": 16,
+    "labelGapPx": 8,
+    "strokePx": 1.8,
+    "color": "Inherit existing foreground, disabled and danger colors",
+    "alignment": "Every row reserves the same slot, including less frequent informational actions without an icon",
+    "state": "Completed downloads use a check; cancellable downloads use a cross; retries/restoration use a return arrow; Pixiv incomplete files do not show a completion check",
+    "accessibility": "Decorative SVG is hidden from accessible naming and keyboard focus; the complete button retains its original action"
+  },
+  "preserves": ["Action labels/order and callbacks", "Keyboard and focus restoration", "Selected source identity and trusted native-X activation", "Existing menu colors and hover states", "No new download, account or data behavior"],
+  "audit": ".runtime/requirements-audit/20261030-context-menus-preedit.json",
+  "verification": ".runtime/requirements-audit/20261030-context-menus-verification.json",
+  "state": "Implemented in the running development build. Relevant1277 automated tests passed across the initial run and targeted repairs; typecheck and18 offline layout scenes passed. Actual BGD menu interaction remains unverified because the disconnected session has an unresolved startup-safety block."
+}

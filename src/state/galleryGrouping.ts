@@ -18,6 +18,8 @@ export type ArtistFolderTag = {
 };
 
 const UNKNOWN_DAY = "날짜 정보 없음";
+const artistCollator = new Intl.Collator("ko");
+const tagCollator = new Intl.Collator("en");
 
 const dateKey = (value: string | undefined): string => {
   const match = value?.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -75,9 +77,19 @@ export function groupGalleries(
       if (leftUnknown !== rightUnknown) return leftUnknown ? 1 : -1;
       return rightIdentity.localeCompare(leftIdentity);
     }
-    return left.label.localeCompare(right.label, "ko");
+    return artistCollator.compare(left.label, right.label);
   });
   return result;
+}
+
+/** A metadata response for one album must not invalidate every other folder. */
+export function retainUnchangedGalleryGroups(previous: readonly GalleryGroup[], next: GalleryGroup[]): GalleryGroup[] {
+  const byKey = new Map(previous.map(group => [group.key, group]));
+  return next.map(group => {
+    const prior = byKey.get(group.key);
+    return prior && prior.label === group.label && prior.items.length === group.items.length
+      && prior.items.every((gallery, index) => gallery === group.items[index]) ? prior : group;
+  });
 }
 
 export const galleryGroupStorageKey = (
@@ -148,6 +160,6 @@ export function summarizeArtistFolderTags(
     .sort((left, right) =>
       Number(right.favorite) - Number(left.favorite)
       || right.count - left.count
-      || left.value.localeCompare(right.value, "en"))
+      || tagCollator.compare(left.value, right.value))
     .slice(0, Math.trunc(limit));
 }

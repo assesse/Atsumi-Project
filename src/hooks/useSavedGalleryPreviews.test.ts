@@ -236,8 +236,12 @@ describe("useSavedGalleryPreviews", () => {
       expect(fixture.current.previews.get(completedGallery.id)).toEqual(manual);
       await fixture.render(galleryMap({ ...completedGallery, pageDimensions: [{ sourcePage: 7, width: 800, height: 1200 }] }));
       expect(backend.galleryPreviewList).toHaveBeenCalledTimes(1);
+      const currentPreviews = fixture.current.previews;
+      const currentArtists = fixture.current.artistGalleryIds;
 
       await act(async () => resolveInitial?.({ ok: true, data: [initial] }));
+      expect(fixture.current.previews).toBe(currentPreviews);
+      expect(fixture.current.artistGalleryIds).toBe(currentArtists);
       expect(fixture.current.previews.get(completedGallery.id)).toEqual(manual);
       expect(fixture.current.artistGalleryIds.get("preview artist")).toEqual(newerArtistIds);
       expect(backend.galleryPreviewList).toHaveBeenCalledTimes(1);

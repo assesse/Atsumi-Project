@@ -436,10 +436,51 @@ describe("browser backend settings contract", () => {
     await expect(backend.settingsUpdate({ highPerformanceProcessing: "yes" as unknown as boolean }, current.data.revision))
       .resolves.toMatchObject({ ok: false, error: { details: { field: "highPerformanceProcessing" } } });
     const updated = await backend.settingsUpdate({ highPerformanceProcessing: true }, current.data.revision);
-    expect(updated).toEqual({ ok: true, data: { ...current.data, revision: current.data.revision + 1, highPerformanceProcessing: true } });
+    expect(updated).toEqual({ ok: true, data: { ...current.data, revision: current.data.revision + 1, processingMode: "game_priority", highPerformanceProcessing: true } });
     expect(JSON.parse(window.localStorage.getItem("atsumi.browser.settings.v1") ?? "{}"))
       .toMatchObject({ highPerformanceProcessing: true });
-    if (updated.ok) await backend.settingsUpdate({ highPerformanceProcessing: current.data.highPerformanceProcessing ?? false }, updated.data.revision);
+    if (updated.ok) await backend.settingsUpdate({ processingMode: current.data.processingMode ?? "basic" }, updated.data.revision);
+  });
+
+  it("saves all processing modes without changing network settings and rejects invalid or stale changes", async () => {
+    const original = await backend.settingsGet();
+    if (!original.ok) throw new Error(original.error.message);
+    let current = original.data;
+    try {
+      await expect(backend.settingsUpdate({ processingMode: "fast" as never }, current.revision))
+        .resolves.toMatchObject({ ok: false, error: { details: { field: "processingMode" } } });
+      for (const mode of ["game_priority", "atsumi_priority", "basic"] as const) {
+        const changed = await backend.settingsUpdate({ processingMode: mode, highPerformanceProcessing: mode === "basic" }, current.revision);
+        expect(changed).toEqual({ ok: true, data: { ...current, revision: current.revision + 1, processingMode: mode, highPerformanceProcessing: mode !== "basic" } });
+        await expect(backend.settingsUpdate({ processingMode: "basic" }, current.revision)).resolves.toMatchObject({ ok: false });
+        if (!changed.ok) throw new Error(changed.error.message);
+        current = changed.data;
+        expect(JSON.parse(window.localStorage.getItem("atsumi.browser.settings.v1") ?? "{}")).toMatchObject({ processingMode: mode });
+      }
+    } finally {
+      await backend.settingsUpdate({ processingMode: original.data.processingMode ?? "basic" }, current.revision);
+    }
+  });
+
+  it("loads legacy preferences into game priority and preserves explicitly saved modes after reload", async () => {
+    const saved = window.localStorage.getItem("atsumi.browser.settings.v1");
+    try {
+      for (const [stored, mode] of [
+        [{ highPerformanceProcessing: true }, "game_priority"],
+        [{ highPerformanceProcessing: false }, "basic"],
+        [{ highPerformanceProcessing: true, processingMode: "basic" }, "basic"],
+        [{ highPerformanceProcessing: false, processingMode: "atsumi_priority" }, "atsumi_priority"],
+      ] as const) {
+        window.localStorage.setItem("atsumi.browser.settings.v1", JSON.stringify(stored));
+        vi.resetModules();
+        const fresh = (await import("./backend")).backend;
+        await expect(fresh.settingsGet()).resolves.toMatchObject({ ok: true, data: { processingMode: mode, highPerformanceProcessing: mode !== "basic" } });
+      }
+    } finally {
+      if (saved === null) window.localStorage.removeItem("atsumi.browser.settings.v1");
+      else window.localStorage.setItem("atsumi.browser.settings.v1", saved);
+      vi.resetModules();
+    }
   });
 
   it("persists the Explore page size used by new searches", async () => {
@@ -2563,4 +2604,18 @@ describe("browser backend active-work exit contract", () => {
     });
     await backend.explorationExclusionsRestore([failedCandidate.existing.galleryId]);
   });
+});
+
+it("keeps supplemental display reads separate from review decisions and rejects stale requests",async()=>{
+ const f=prepareOverlapMergeContract("incoming");
+ try{
+  const before=JSON.stringify(f.review),c=f.review.candidates[0]!;
+  const request={reviewId:f.review.reviewId,expectedRevision:f.review.revision,candidateId:c.candidateId};
+  expect(await backend.downloadOverlapDisplayMatches(request)).toMatchObject({ok:true,data:{
+   reviewId:f.review.reviewId,revision:f.review.revision,candidateId:c.candidateId,
+   incomingFingerprint:f.review.incomingFingerprint,existingFingerprint:c.existingFingerprint,additionalPairs:[]}});
+  expect(JSON.stringify(f.state.downloadOverlapReviews.get(f.review.reviewId))).toBe(before);
+  expect((await backend.downloadOverlapDisplayMatches({...request,expectedRevision:999})).ok).toBe(false);
+  expect((await backend.downloadOverlapDisplayMatches({...request,candidateId:"missing"})).ok).toBe(false);
+ }finally{f.restore();}
 });

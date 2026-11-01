@@ -1,0 +1,25 @@
+{
+  "id": "native-context-menu-policy-20261030",
+  "cpuClarificationSupersededBy": "three-level-processing-20261030.json; the context-menu policy itself is unchanged",
+  "source": "2026-10-30 direct follow-up, item2, with WebView2 default-menu screenshot",
+  "request": "Prevent unrelated default browser context menus where Atsumi has no intentional right-click action; make behavior understandable without explanatory notices.",
+  "supersedes": "The previous icon task excluded default menus from its scope; this request now authorizes suppressing their unrelated commands.",
+  "interaction": [
+    "App-owned DOM/React context menus retain all existing actions, keyboard behavior and icon presentation",
+    "Blank, background and unselected non-editable surfaces show no native browser menu and no explanatory toast",
+    "Editable controls retain native undo, redo, cut, copy, paste, plain-text paste, delete and select-all commands when supplied by WebView2, with original enabled states",
+    "Selected non-editable text retains native copy only",
+    "Default navigation, reload, Save As, print, capture, search, extension and devtools entries are suppressed"
+  ],
+  "implementation": {
+    "scope": "All Tauri-created Windows webviews, including main, child, auth and popup views, through on_webview_ready",
+    "api": "WebView2 ContextMenuRequested / native MenuItems filtering by unlocalized command Name",
+    "bounds": "Synchronous callback; at most256 entries; reverse removal; unknown/failed menus stay hidden",
+    "privacy": "Read only target flags and command names; never inspect field values, selections, clipboard contents, passwords or URLs",
+    "compatibility": "If the runtime cannot install filtering, disable native default menus as a fallback; DOM menus and editing keyboard shortcuts still work. Native text menus then remain unavailable and a diagnostic is logged."
+  },
+  "cpuClarification": "The user's high-performance responsiveness requirement continues to apply. Existing image work already uses Windows thread background scheduling in both modes, plus shared concurrency/memory/HDD limits; no utilization polling loop. Whole-process priority changes, EcoQoS and worker-process/Job Object CPU caps are possible further designs, not implemented by this explanatory follow-up. CPU priority alone cannot guarantee zero game frame-time impact from shared memory/cache/disk/GPU resources.",
+  "audit": ".runtime/requirements-audit/20261030-native-context-preedit.json",
+  "verification": ".runtime/requirements-audit/20261030-native-context-verification.json",
+  "state": "Native policy and3 contract tests passed; development build completed and PID62636 responds normally. BGD interaction remains unverified because the session is disconnected after an unresolved startup-safety rejection."
+}

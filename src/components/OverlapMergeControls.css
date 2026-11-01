@@ -9,7 +9,7 @@
 }
 .download-overlap-dialog .review-summary > span:last-child { text-align: left; }
 .download-overlap-dialog .review-summary .review-signal { align-self: flex-start; color: var(--muted); }
-.download-overlap-dialog .download-overlap-action-note { font-size: 12px; line-height: 1.6; }
+.download-overlap-dialog .download-overlap-action-note { font-size: var(--font-size-min); line-height: 1.6; }
 .overlap-destination-button { transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease; }
 .download-overlap-dialog .overlap-destination-button.is-merge { color: #b5f4d0; background: #24523e; border-color: #508d69; }
 .download-overlap-dialog .overlap-destination-button.is-merge:hover:not(:disabled) { background: #306a50; }

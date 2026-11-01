@@ -3,6 +3,7 @@ import { galleryId, type Gallery } from "../core/types";
 import {
   galleryGroupStorageKey,
   groupGalleries,
+  retainUnchangedGalleryGroups,
   latestDownloadedGallery,
   recentDownloadedGalleries,
   summarizeArtistFolderTags,
@@ -24,6 +25,17 @@ const gallery = (id: number, artist: string, publishedAt: string): Gallery => ({
 });
 
 describe("groupGalleries", () => {
+  it("retains unrelated folder identities when one album changes, without hiding reordering", () => {
+    const first = gallery(1, "Alpha", "2026-10-30");
+    const second = gallery(2, "Beta", "2026-10-30");
+    const old = groupGalleries([first, second], "artist", item => item.publishedAt);
+    const updated = { ...first, tags: ["tag:updated"] };
+    const next = retainUnchangedGalleryGroups(old, groupGalleries([updated, second], "artist", item => item.publishedAt));
+    expect(next[0]).not.toBe(old[0]);
+    expect(next[0]?.items[0]).toBe(updated);
+    expect(next[1]).toBe(old[1]);
+    expect(retainUnchangedGalleryGroups(next, [...next].reverse())[0]).toBe(next[1]);
+  });
   it("groups artist-less albums by their real group, without mixing a same-named artist or rewriting source metadata", () => {
     const items = [4210586, 3295979, 2779132].map(id => ({ ...gallery(id, "Unknown artist", "2026-10-06"), group: "toropucchi" }));
     const groups = groupGalleries([

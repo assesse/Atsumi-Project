@@ -2,7 +2,7 @@
 //! Only the explicitly approved agent-created neutral-shapes.jpg fixture is sent.
 //! The normal provider profile namespace is deliberately reused without copying
 //! cookies; this harness registers no X/data/plugin/IPC services.
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -22,11 +22,21 @@ struct Candidate {
     creator: Option<String>,
     similarity: Option<f64>,
     links: Vec<SearchLink>,
+    thumbnail_data: Option<String>,
+    source_metadata: Vec<SearchMetadata>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SearchMetadata {
+    label: String,
+    value: String,
 }
 #[allow(dead_code)]
 enum ProviderInput {
     ImageUrl(String),
+    ImageFile(Vec<u8>),
     Jpeg(Vec<u8>),
+    LensResults { url: tauri::Url, expires: Instant },
 }
 struct ProviderRequest {
     job_id: String,
@@ -34,6 +44,61 @@ struct ProviderRequest {
 }
 #[path = "../src/x_media_search_provider.rs"]
 mod provider;
+
+fn result_url(value: &str) -> Option<tauri::Url> {
+    if value.is_empty()
+        || value.len() > 2048
+        || value
+            .chars()
+            .any(|c| c.is_control() || c.is_whitespace() || c == '\\')
+    {
+        return None;
+    }
+    let url = tauri::Url::parse(value).ok()?;
+    (matches!(url.scheme(), "http" | "https")
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.host_str().is_some()
+        && url.as_str().len() <= 2048)
+        .then_some(url)
+}
+fn open_result_browser(value: &str) -> Result<(), String> {
+    if result_url(value).is_none() {
+        return Err("Invalid explicit result link".into());
+    }
+    #[cfg(windows)]
+    {
+        unsafe {
+            use windows::{
+                core::PCWSTR,
+                Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL},
+            };
+            let wide = value.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
+            let result = ShellExecuteW(
+                None,
+                windows::core::w!("open"),
+                PCWSTR(wide.as_ptr()),
+                None,
+                None,
+                SW_SHOWNORMAL,
+            );
+            if result.0 as isize > 32 {
+                Ok(())
+            } else {
+                Err("External browser unavailable".into())
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        Err("External browser unavailable".into())
+    }
+}
+fn open_provider_result(_: &tauri::AppHandle, value: &str) -> Result<(), String> {
+    // The isolated probe has no platform workspace; only explicit result links
+    // can use its ordinary external-browser adapter.
+    open_result_browser(value)
+}
 
 const CONTROL: &str = "x-search-probe-control";
 const CONTROL_HTML: &str = r#"<head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>body{background:#101014;color:#eee;font:16px system-ui;padding:28px;line-height:1.6}button{padding:12px 18px;margin-right:12px;font:inherit}p{max-width:650px}</style></head><body><h2>검색 서비스 직접 확인</h2><p id="message"></p><button id="continue" disabled>확인 완료 · 계속</button><button id="cancel">취소</button></body>"#;
@@ -68,7 +133,10 @@ fn phase(stage: &'static str) {
     }
 }
 fn redact_evidence(mut value: serde_json::Value) -> serde_json::Value {
-    if matches!(value.get("state").and_then(serde_json::Value::as_str),Some("challenge"|"consent")) {
+    if matches!(
+        value.get("state").and_then(serde_json::Value::as_str),
+        Some("challenge" | "consent")
+    ) {
         // Replace the whole document so new diagnostics cannot accidentally
         // retain challenge IPs, query tokens or account-specific text.
         value["document"] = serde_json::json!({"classification":"Human verification or consent required; document omitted."});
@@ -148,6 +216,14 @@ fn main() {
         return;
     }
     let mut context = tauri::generate_context!();
+    if std::env::var("ATSUMI_SYNTHETIC_FRESH_PROFILE").as_deref() == Ok("1") {
+        // The fixed neutral diagnostic can request a fresh identity without
+        // reading or modifying the app's existing search/account profiles.
+        context.config_mut().identifier = format!(
+            "local.atsumi.search-probe-{}",
+            uuid::Uuid::new_v4().simple()
+        );
+    }
     context.config_mut().app.windows.clear();
     context.config_mut().app.tray_icon = None;
     tauri::Builder::default().setup(|app| {
@@ -178,6 +254,9 @@ fn main() {
         let stopped=cancel.clone();
         let handoff:Arc<dyn Fn(String)+Send+Sync>=Arc::new(move |message| {
             phase("handoff_received");
+            if std::env::var("ATSUMI_SYNTHETIC_NO_HUMAN_WAIT").as_deref()==Ok("1") {
+                phase("handoff_recorded_without_interaction");stopped.store(true,Ordering::Release);return;
+            }
             let display=control_script(&handoff_continue,&handoff_cancel,true,&message);
             handoff_waiting.store(true,Ordering::Release);
             if prepare_control(&handoff_app,display,&stopped).is_err(){phase("handoff_control_failed");handoff_waiting.store(false,Ordering::Release);stopped.store(true,Ordering::Release);return;}
@@ -195,14 +274,39 @@ fn main() {
                 // The recorded approved fixture is small and has no user data.
                 if input.len()!=11793 || format!("{:X}",Sha256::digest(&input))!="4D2FEB4CF3F6A87DBF830A583B43108A21A25E246AC14DCDA8C68A2C110390FF" {return Err("Approved fixture identity changed; no upload".into());}
                 let evidence=Arc::new(Mutex::new(None));
-                let outcome=provider::probe(handle.clone(),ProviderRequest{job_id:uuid::Uuid::new_v4().to_string(),input:ProviderInput::Jpeg(input)},cancel,resume,handoff,service,evidence.clone());
+                let retained=std::env::var("ATSUMI_SYNTHETIC_RETAIN_ORIGINAL").as_deref()==Ok("1");
+                let job_id=uuid::Uuid::new_v4().to_string();
+                let selected=if retained&&service=="saucenao" {ProviderInput::ImageFile(input)} else {ProviderInput::Jpeg(input)};
+                let request=ProviderRequest{job_id:job_id.clone(),input:selected};
+                let outcome=if retained {
+                    provider::run(handle.clone(),request,cancel.clone(),resume,handoff)
+                } else {
+                    provider::probe(handle.clone(),request,cancel.clone(),resume,handoff,service,evidence.clone())
+                };
+                let mut retained_report=serde_json::Value::Null;
+                if retained {
+                    let before=provider::page_state(&job_id);
+                    let settings=service=="lens"&&std::env::var("ATSUMI_SYNTHETIC_LENS_SETTINGS").as_deref()==Ok("1");
+                    let shown=if settings {provider::show_lens_settings(&handle,&job_id)} else {provider::show_original(&handle,&job_id)};
+                    let until=Instant::now()+Duration::from_secs(if settings {30} else {15});
+                    while shown.is_ok()&&!cancel.load(Ordering::Acquire)&&Instant::now()<until {std::thread::sleep(Duration::from_millis(50));}
+                    let refreshed=if settings&&shown.is_ok()&&!cancel.load(Ordering::Acquire) {
+                        Some(provider::refresh_lens_results(&handle,&job_id,cancel.clone()).map(|items|serde_json::json!({"candidateCount":items.len(),"thumbnailCount":items.iter().filter(|v|v.thumbnail_data.is_some()).count()})))
+                    } else {None};
+                    provider::close_original(&job_id);
+                    let deadline=Instant::now()+Duration::from_secs(3);
+                    while provider::busy()&&Instant::now()<deadline {std::thread::sleep(Duration::from_millis(25));}
+                    retained_report=serde_json::json!({"productionRun":true,"before":before,"show":shown,"lensSettings":settings,"refresh":refreshed,"after":provider::page_state(&job_id),"closeAcknowledged":!provider::busy(),"resubmitted":false});
+                }
                 let document=evidence.lock().unwrap_or_else(|p|p.into_inner()).take().map(redact_evidence);
-                let report=serde_json::json!({"outcome":outcome,"evidence":document});
+                let summary=match &outcome {Ok(items)=>serde_json::json!({"success":true,"candidateCount":items.len(),"thumbnailCount":items.iter().filter(|v|v.thumbnail_data.is_some()).count(),"metadataCount":items.iter().map(|v|v.source_metadata.len()).sum::<usize>()}),Err(error)=>serde_json::json!({"success":false,"error":error})};
+                let thumbnails=provider::take_thumbnail_probe(&job_id);
+                let report=serde_json::json!({"outcome":outcome,"summary":summary,"originalPage":retained_report,"thumbnails":thumbnails,"evidence":document});
                 let stamp=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|"Evidence clock unavailable")?.as_millis();
                 std::fs::write(root.join(format!("{service}-persistent-probe-{stamp}.json")),serde_json::to_vec_pretty(&report).map_err(|_|"Evidence serialization failed")?).map_err(|_|"Evidence write failed")?;
                 Ok(report)
             })();
-            match result {Ok(report)=>println!("{}",serde_json::json!({"outcome":report["outcome"],"evidenceSaved":true})),Err(error)=>println!("{}",serde_json::json!({"error":error}))}
+            match result {Ok(report)=>println!("{}",serde_json::json!({"summary":report["summary"],"originalPage":report["originalPage"],"thumbnails":report["thumbnails"],"evidenceSaved":true})),Err(error)=>println!("{}",serde_json::json!({"error":error}))}
             handle.exit(0);
         });
         Ok(())
@@ -215,14 +319,14 @@ mod control_tests {
     #[test]
     fn human_document_redaction_covers_current_and_future_diagnostic_fields() {
         for state in ["challenge", "consent"] {
-            let input=serde_json::json!({"state":state,"origin":"https://www.google.com","path":"/sorry/index","document":{"title":"SECRET_IP","body":"SECRET_IP","outline":["SECRET_TOKEN"],"textBlocks":[{"text":"SECRET_IP"}],"futureField":"SECRET_TOKEN"}});
-            let output=redact_evidence(input).to_string();
+            let input = serde_json::json!({"state":state,"origin":"https://www.google.com","path":"/sorry/index","document":{"title":"SECRET_IP","body":"SECRET_IP","outline":["SECRET_TOKEN"],"textBlocks":[{"text":"SECRET_IP"}],"futureField":"SECRET_TOKEN"}});
+            let output = redact_evidence(input).to_string();
             assert!(!output.contains("SECRET_"));
             assert!(!output.contains("textBlocks"));
             assert!(output.contains("document omitted"));
         }
-        let result=serde_json::json!({"state":"complete","document":{"title":"Observed result"}});
-        assert_eq!(redact_evidence(result.clone()),result);
+        let result = serde_json::json!({"state":"complete","document":{"title":"Observed result"}});
+        assert_eq!(redact_evidence(result.clone()), result);
     }
     #[test]
     fn control_html_is_json_encoded_not_nested_escaped_javascript() {

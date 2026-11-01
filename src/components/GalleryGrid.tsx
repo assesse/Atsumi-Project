@@ -58,7 +58,10 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
         const cover = card?.querySelector<HTMLElement>(":scope > .cover");
         const width = Number(cover?.dataset.thumbnailIntrinsicWidth ?? 1);
         const height = Number(cover?.dataset.thumbnailIntrinsicHeight ?? 1);
-        const coverWidth = cover?.getBoundingClientRect().width ?? 0;
+        // Offscreen placeholders have the preset cover width. Reading their
+        // descendants would force content-visibility to lay out the whole folder.
+        const coverWidth = card?.classList.contains("progressive-gallery-placeholder")
+          ? preset.width : cover?.getBoundingClientRect().width ?? 0;
         return {
           index,
           top: host?.offsetTop ?? 0,
@@ -147,7 +150,7 @@ export function GalleryGrid({ columns, previewWidth, selectionContext, ariaLabel
       resize?.disconnect();
       mutation?.disconnect();
     };
-  }, [columns, displayMode, preset.key]);
+  }, [columns, displayMode, preset.key, previewWidth]);
 
   return (
     <div

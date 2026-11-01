@@ -332,7 +332,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(maintenanceItems).toHaveLength(2);
       const [quickRepair, rebuild] = maintenanceItems;
       const orderedHitomiLabels = [...container.querySelectorAll<HTMLElement>(".setting-row")].filter(row => !row.closest("[hidden]")).map(row => row.querySelector("strong")?.textContent);
-      expect(orderedHitomiLabels).toEqual(["앨범 카드 최대 열 수", "Hitomi 카드 미리보기 크기", "Related galleries 미리보기 크기", "Hitomi 페이지당 앨범 수", "Auto Find 기록 기준", "갤러리 폴더 이름", "다운로드 판본 자동 판정", "동시 이미지 요청", "다운로드 동시 요청 자동 조절", "자동 조절 최대 요청", "요청 시작 간격", "고성능 처리 모드"]);
+      expect(orderedHitomiLabels).toEqual(["앨범 카드 최대 열 수", "Hitomi 카드 미리보기 크기", "Related galleries 미리보기 크기", "Hitomi 페이지당 앨범 수", "Auto Find 기록 기준", "갤러리 폴더 이름", "다운로드 판본 자동 판정", "동시 이미지 요청", "다운로드 동시 요청 자동 조절", "자동 조절 최대 요청", "요청 시작 간격", "처리 성능 모드"]);
       expect(container.querySelector(".search-rules-panel")!.compareDocumentPosition(container.querySelector(".search-catalog-panel")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       expect(container.querySelector(".exclusion-manager")!.compareDocumentPosition(container.querySelector(".maintenance-panel")!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
       expect(quickRepair).toHaveTextContent("빠른 복구");
@@ -429,10 +429,19 @@ describe("SettingsDialog operational boundaries", () => {
       const adaptive = container.querySelector<HTMLInputElement>('[aria-label="다운로드 동시 요청 자동 조절"]');
       const adaptiveMaximum = container.querySelector<HTMLInputElement>('[aria-label="자동 조절 최대 요청"]');
       expect(adaptive).toBeChecked();
-      const performance = container.querySelector<HTMLInputElement>('[aria-label="고성능 처리 모드"]');
-      expect(performance).not.toBeChecked();
+      const performance = container.querySelector<HTMLButtonElement>('[aria-label="처리 성능 모드"]');
+      expect(performance).toHaveTextContent("기본 · 최소 사용");
       await act(async () => performance?.click());
-      expect(performance).toBeChecked();
+      expect(container.querySelectorAll('[role="option"]')).toHaveLength(3);
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent === "중간 · 게임 우선")!.click());
+      expect(performance).toHaveTextContent("중간 · 게임 우선");
+      expect(onSave).toHaveBeenCalledWith({ processingMode: "game_priority" });
+      expect(performance?.closest('.setting-row')).toHaveTextContent("게임·다른 작업에 먼저 자원 배정");
+      await act(async () => performance?.click());
+      await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent === "고성능 · Atsumi 우선")!.click());
+      expect(performance).toHaveTextContent("고성능 · Atsumi 우선");
+      expect(onSave).toHaveBeenCalledWith({ processingMode: "atsumi_priority" });
+      expect(performance?.closest('.setting-row')).toHaveTextContent("다른 작업이 느려질 수 있음");
       expect(adaptiveMaximum).toHaveValue(8);
       expect(adaptiveMaximum).toHaveAttribute("min", "1");
       expect(adaptiveMaximum).toHaveAttribute("max", "8");
@@ -558,7 +567,7 @@ describe("SettingsDialog operational boundaries", () => {
         relatedPreviewWidth: 240,
         privacyOnStartup: false,
         downloadAdaptiveConcurrency: false,
-        highPerformanceProcessing: true,
+        processingMode: "atsumi_priority",
         downloadAdaptiveMaxRequests: 6,
         searchIncludeTags: ["female:glasses", "webtoon"],
         searchExcludeTags: ["male:glasses"],

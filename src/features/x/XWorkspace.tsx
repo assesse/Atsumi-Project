@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { WorkspaceViewId } from "../../app/workspaceRegistry";
 import { createXSurfaceApi, isXArchiveChooseRequest, xError, type XArchiveChooseRequest, type XSurfaceApi, type XFeed, type XSnapshot, type XSurfaceSnapshot } from "./api";
@@ -6,9 +6,13 @@ import { measureNativePlayerGeometry, observeNativePlayerGeometry } from "../pla
 import { XArchiveLibrary, XArchiveTools } from "./XArchivePanel";
 import type { XArchiveApi } from "./xArchiveApi";
 import { XPreviewTabs } from "./XPreviewTabs";
+import { XSplitPane } from "./XSplitPane";
 import { XMediaSearchPanel } from "./XMediaSearchPanel";
+import {createXMediaSearchApi} from "./xMediaSearchApi";
+import {ArchiveSearchContext,type ArchiveSearchAction} from "./XArchiveSearchContext";
 import { bindXShellMenuDismissal } from "./xShellMenuDismissal";
 import "./XWorkspace.css";
+import { openSupportedXTarget, type SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 
 // Survives component remounts and fences reordered native commands.
 let serial = 0;
@@ -43,10 +47,24 @@ function AccountPortrait({account,id,handle}:{account:XSnapshot|null;id:string;h
   useEffect(()=>setFailed(false),[image]);
   return <span className="x-account-avatar" aria-hidden="true">{image&&!failed?<img src={image} alt="" onError={()=>setFailed(true)}/>:handle.slice(0,1).toUpperCase()}</span>;
 }
-export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:provided,archiveApi,view="explore",accountPortalTarget}:{active:boolean;runtime:"tauri"|"browser-mock";privacyMode:boolean;onNotice:(message:string)=>void;api?:XSurfaceApi;archiveApi?:XArchiveApi;view?:WorkspaceViewId<"x">;accountPortalTarget?:HTMLElement|null}) {
+export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:provided,archiveApi,view="explore",accountPortalTarget,supportedLinkRequest}:{active:boolean;runtime:"tauri"|"browser-mock";privacyMode:boolean;onNotice:(message:string)=>void;api?:XSurfaceApi;archiveApi?:XArchiveApi;view?:WorkspaceViewId<"x">;accountPortalTarget?:HTMLElement|null;supportedLinkRequest?:SupportedLinkRequest|null}) {
   const api=useMemo(()=>provided??createXSurfaceApi(runtime),[provided,runtime]);
   const feed:XFeed=view==="likes"||view==="bookmarks"?view:"foryou";
   const local=view==="local";
+  const searchApi=useMemo(()=>createXMediaSearchApi(runtime),[runtime]);
+  const [archiveSearchScope,setArchiveSearchScope]=useState(0);
+  const localSearchContext=useMemo(()=>local&&active&&!privacyMode?crypto.randomUUID():null,[local,active,privacyMode,archiveSearchScope]);
+  const currentLocalSearchContext=useRef(localSearchContext);currentLocalSearchContext.current=localSearchContext;
+  const archiveSearchIds=useRef(new Set<string>());
+  useEffect(()=>()=>{for(const id of archiveSearchIds.current)void searchApi.cancel(id).catch(()=>{});archiveSearchIds.current.clear();},[searchApi,localSearchContext]);
+  const searchArchive=useCallback<ArchiveSearchAction>(async(record,post,asset)=>{
+    if(!localSearchContext||currentLocalSearchContext.current!==localSearchContext||!record.document.records.includes(post)||!record.assets.includes(asset)||asset.postId!==post.id)throw new Error("저장된 미디어를 다시 선택해 주세요.");
+    const id=crypto.randomUUID();archiveSearchIds.current.add(id);
+    try{
+      await searchApi.startArchive({id,archiveId:record.id,postId:post.id,assetName:asset.name,localContext:localSearchContext,kind:asset.kind==="poster"?"thumbnail":"image"});
+      if(currentLocalSearchContext.current!==localSearchContext){await searchApi.cancel(id);archiveSearchIds.current.delete(id);}
+    }catch(error){archiveSearchIds.current.delete(id);throw error;}
+  },[searchApi,localSearchContext]);
   const [account,setAccount]=useState<XSnapshot|null>(null);
   const [surface,setSurface]=useState<XSurfaceSnapshot|null>(null),[error,setError]=useState<string|null>(null);
   const [authError,setAuthError]=useState<string|null>(null);
@@ -54,6 +72,8 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
   const [menu,setMenu]=useState(false),[reload,setReload]=useState(0);
   const [previewBusy,setPreviewBusy]=useState(false);
   const previewOperation=useRef<symbol|null>(null);
+  const handledSupportedLink=useRef<string|null>(null);
+  const nativeRouteReady=useRef(false);
   const previewPanelId=useId();
   const [archiveChoice,setArchiveChoice]=useState<XArchiveChooseRequest|null>(null);
   const archiveAdmission=useRef<string|null>(null);
@@ -62,6 +82,12 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
   const lastViewport=useRef<{api:XSurfaceApi;generation:number}|null>(null);
   const live=useRef({active,privacyMode,feed,local,busy,pending,surface,account,menu});live.current={active,privacyMode,feed,local,busy,pending,surface,account,menu};
   const accept=(value:XSurfaceSnapshot)=>setSurface(previous=>previous&&previous.generation>value.generation||JSON.stringify(previous)===JSON.stringify(value)?previous:value);
+  useEffect(()=>{
+    if(runtime!=="tauri"||!nativeRouteReady.current||!active||privacyMode||local||busy||pending||!surface||surface.feed!==feed||surface.state!=="ready"||supportedLinkRequest?.source!=="x"||handledSupportedLink.current===supportedLinkRequest.id)return;
+    handledSupportedLink.current=supportedLinkRequest.id;
+    const generation=surface.generation;
+    void openSupportedXTarget(supportedLinkRequest.id,generation).then(()=>api.surfaceStatus()).then(value=>{if(live.current.active&&!live.current.privacyMode&&live.current.surface?.generation===generation)accept(value);}).catch(cause=>{if(live.current.active&&!live.current.privacyMode)notice.current(xError(cause));});
+  },[runtime,active,privacyMode,local,busy,pending,surface?.generation,surface?.state,feed,supportedLinkRequest,api]);
   const releaseArchiveChoice=(id:string)=>{
     if(archiveAdmission.current!==id)return;
     archiveAdmission.current=null;setArchiveChoice(previous=>previous?.id===id?null:previous);
@@ -75,6 +101,7 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
   }),[api]);
 
   useEffect(()=>{
+    nativeRouteReady.current=false;
     epoch.current++;flow.current++;setMenu(false);setSurface(null);setPending(false);setBusy(null);
     // Ordinary tab/platform switches conceal retained native documents. Privacy
     // and explicit account operations still use the destructive session reset.
@@ -85,6 +112,7 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
 
   useEffect(()=>{
     if(!active||privacyMode||busy)return;
+    nativeRouteReady.current=false;
     const request=++epoch.current, order=nextOrder(), force=refresh.current;
     refresh.current=false;setPending(true);setError(null);
     const current=()=>request===epoch.current&&live.current.active&&!live.current.privacyMode;
@@ -96,7 +124,7 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
         if(state.error)setAuthError(state.error);
         if(state.open){setBusy("login");return;}
         if(local)return;
-        const value=await api.surface(feed,order,force);if(current()&&value.feed===feed)accept(value);
+        const value=await api.surface(feed,order,force);if(current()&&value.feed===feed){nativeRouteReady.current=true;accept(value);}
       }catch(cause){if(current()){setSurface(null);if(!local)setError(xError(cause));}}
       finally{if(current())setPending(false);}
     })();
@@ -239,7 +267,7 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
     {privacyMode?<p className="x-notice">프라이버시 모드</p>:<>
       {message?<p className="x-notice" role="alert">{message}</p>:null}
       {busy&&!local?<p className="x-notice" role="status">{busy==="login"?"공식 X 창에서 로그인해 주세요. 완료되면 자동으로 돌아옵니다.":"계정 전환 중"}</p>:null}
-      {local?<XArchiveLibrary runtime={runtime} api={archiveApi} active={active} privacyMode={privacyMode} accounts={account?.accounts??[]}/>:<div className="x-body">
+      {local?<ArchiveSearchContext.Provider value={localSearchContext?searchArchive:null}><XArchiveLibrary runtime={runtime} api={archiveApi} active={active} privacyMode={privacyMode} accounts={account?.accounts??[]} onScopeChange={()=>setArchiveSearchScope(value=>value+1)}/></ArchiveSearchContext.Provider>:<XSplitPane>
         <div className="x-native-feed" ref={left} aria-label="X 공식 타임라인" aria-busy={pending||surface?.state==="loading"}>
           {active&&!busy&&(pending||surface?.state==="loading")?<Skeleton label="피드 불러오는 중"/>:null}
         </div>
@@ -249,17 +277,17 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
             onSelect={id=>changePreview(id)} onClose={id=>changePreview(id,true)}/>:null}
           <div className="x-native-preview" ref={right} id={previewPanelId} role={surface?.preview?"tabpanel":undefined}
             aria-labelledby={surface?.preview?`${previewPanelId}-tab-${surface.previews.findIndex(tab=>tab.id===surface.activePreviewId)}`:undefined}>
-            {!surface?.preview?<p className="x-preview-empty">게시물을 선택하면 여기에 표시됩니다.</p>:surface.previewState!=="ready"?<Skeleton label="미리보기 불러오는 중"/>:null}
+            {!surface?.preview?<p className="x-preview-empty">게시물을 선택하면 여기에 표시됩니다.</p>:surface.previewState==="loading"?<Skeleton label="미리보기 불러오는 중"/>:null}
           </div>
         </aside>
-      </div>}
+      </XSplitPane>}
       {!local?(['feed','preview'] as const).map(pane=><XArchiveTools key={pane} runtime={runtime} api={archiveApi} pane={pane}
         generation={surface?.generation??null} contextKey={`${account?.active??""}:${feed}:${surface?.generation??""}:${pane==="preview"?surface?.activePreviewId:"feed"}`}
         active={active&&!busy&&!pending} privacyMode={privacyMode} disabled={!surface||surface.feed!==feed||surface.state!=="ready"||pane==="preview"&&(!surface.preview||surface.previewState!=="ready")}
         showLibrary={false} showControls={false} chooseRequest={archiveChoice?.pane===pane?archiveChoice:null} onChooseDone={releaseArchiveChoice} onNotice={onNotice}/>):null}
     </>}
-    <XMediaSearchPanel runtime={runtime} active={active&&!local&&!busy&&!pending} privacyMode={privacyMode}
-      accountId={account?.active??null} generation={surface?.generation??null} feed={feed} onNotice={onNotice}/>
+    <XMediaSearchPanel runtime={runtime} api={searchApi} active={active&&(local||!busy&&!pending)} privacyMode={privacyMode} localContext={localSearchContext}
+      accountId={local?null:account?.active??null} generation={local?null:surface?.generation??null} feed={feed} onNotice={onNotice} navigationRequestId={supportedLinkRequest?.id??null}/>
   </section>;
 }
 // The current explicit requirement uses original X documents in both panes.

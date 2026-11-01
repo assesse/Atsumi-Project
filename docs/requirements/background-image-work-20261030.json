@@ -1,0 +1,20 @@
+{
+  "id": "background-image-work-20261030",
+  "supersededInPartBy": {"contract": "three-level-processing-20261030.json", "scope": "The binary UI, mode ceilings and game-first high priority policy. Shared budget, integrity preservation and scope lifetime remain applicable."},
+  "request": "이미지 해시 등의 CPU 포화로 다른 프로그램이 끊기는 문제를 완화한다.",
+  "source": "2026-10-30 direct user request in Atsumi development chat",
+  "supersedes": ["2026-09-25 maximum-throughput preference and logical-CPU-minus-two / 16-worker ceiling where they conflict with desktop responsiveness"],
+  "preserves": ["Existing high-performance checkbox and saved preference", "Original hash bytes, cache keys and similarity criteria", "Integrity verification and HDD pacing", "Normal app shutdown and all user data"],
+  "behavior": [
+    "Normal shared full-image budget: min(2, max(1, logical CPUs / 2))",
+    "High-performance shared budget: min(8, max(1, logical CPUs / 2), existing memory budget)",
+    "Windows thread-bound background scheduling only during heavy image work; restore before queue release and DB persistence",
+    "Standalone duplicate workers, internal hashes, preview hashes, integrity decode/SHA and overlap comparisons share the budget",
+    "Nested same-thread stages retain one slot until the last scope drops; queued cancellation remains responsive",
+    "No process affinity, power plan, video/recording priority, security or game settings changes"
+  ],
+  "acceptance": ["Shared contention ceiling", "Nested and error/unwind lifetime", "Cancellation", "Windows priority restoration", "Identical real-image hashes", "Regression checks and development build", "Actual app behavior separately verified or explicitly pending"],
+  "audit": ".runtime/requirements-audit/20261030-cpu-work-preedit.json",
+  "verification": ".runtime/requirements-audit/20261030-cpu-work-verification.json",
+  "state": "Implemented. Native172 checks including32 real images and Windows priority restoration, frontend7 checks, typecheck, formatting and development build passed. Runtime log confirms16logical CPUs/high mode/shared cap8. Actual BGD interaction remains unverified because the existing startup-safety guard rejects logon; no bypass attempted."
+}

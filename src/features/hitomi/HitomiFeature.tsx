@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { markUi } from "../../diagnostics/uiDiagnostics";
 import { readNavigationCheckpoint, writeNavigationCheckpoint } from "../../state/navigationCheckpoint";
 import type { BackgroundOpenOptions } from "../../state/downloadStatus";
@@ -58,6 +58,8 @@ import { AutoFindPager } from "../../components/AutoFindPager";
 import { DetailWorkspace } from "../../components/DetailWorkspace";
 import { DownloadArtistFolderGrid } from "../../components/DownloadArtistFolderGrid";
 import { DuplicateReviewDialog } from "../../components/DuplicateReviewDialog";
+import { executeEditionBatch, type EditionBatchHandler, type EditionBatchProgress } from '../../downloadOverlap/editionBatch';
+import { OverlapBatchStatus } from '../../components/OverlapBatchStatus';
 import { DownloadOverlapReviewDialog } from "../../components/DownloadOverlapReviewDialog";
 import { ExploreContextBar, type ExploreContextTab } from "../../components/ExploreContextBar";
 import { InternalDuplicateDialog } from "../../components/InternalDuplicateDialog";
@@ -103,9 +105,11 @@ import { mergeDownloadEntries, mergeDownloadLibraryPage, mergeGalleryDetail, mer
 import { galleryQueryReducer, initialGalleryQueryState, type GalleryQueryState } from "../../state/galleryQuery";
 import { ExplorePageSession } from "../../state/explorePageSession";
 import { isPendingAutoFindCandidate, visibleGalleries } from "../../state/selectors";
+import { useVisibleGalleries } from "../../hooks/useVisibleGalleries";
 import {
   galleryGroupStorageKey,
   groupGalleries,
+  retainUnchangedGalleryGroups,
   type GalleryGroup,
   type GalleryGrouping,
 } from "../../state/galleryGrouping";
@@ -115,8 +119,8 @@ import {
   DOWNLOAD_OVERLAP_AUTO_REASON_CODE,
   DOWNLOAD_OVERLAP_AUTO_RULE_VERSION,
 } from "../../state/downloadOverlapAuto";
-import { buildDownloadOverlapContainmentGroup, prioritizeDownloadOverlapReviews, type DownloadOverlapContainmentGroup } from "../../state/downloadOverlapContainment";
-import { collectManualOverlapReviews, type ManualOverlapItem } from "../../state/manualOverlapSequence";
+import { buildDownloadOverlapContainmentGroup, prioritizeDownloadOverlapReviews, refreshContainmentGroupReview, type DownloadOverlapContainmentGroup } from "../../state/downloadOverlapContainment";
+import { collectManualOverlapReviews, requiresManualOverlapApproval, type ManualOverlapItem } from "../../state/manualOverlapSequence";
 import { initialUiState, uiReducer } from "../../state/uiState";
 import { useDownloadPopularity } from "../../hooks/useDownloadPopularity";
 import type { DownloadSort } from "../../api/downloadPopularity";
@@ -291,6 +295,7 @@ export type GalleryWorkspaceBridge = {
 
 type HitomiFeatureProps = {
   active: boolean;
+  supportedLinkRequest?: import("../../app/supportedLinkNavigation").SupportedLinkRequest | null;
   navigationRequest?: import("../../app/CommonNavigation").NavigationRequest | null;
   children: (bridge: GalleryWorkspaceBridge) => ReactNode;
 };
@@ -305,7 +310,7 @@ export function HitomiFeature(props: HitomiFeatureProps) {
   return <PersonalLibraryProvider notify={shell.showToast}><HitomiFeatureContent {...props} /></PersonalLibraryProvider>;
 }
 
-function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFeatureProps) {
+function HitomiFeatureContent({ active, children, navigationRequest, supportedLinkRequest }: HitomiFeatureProps) {
   const shell = useAppShell();
   const [personalLibraryOpen, setPersonalLibraryOpen] = useState(false);
   const [personalLibraryVisited, setPersonalLibraryVisited] = useState(false);
@@ -315,6 +320,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     openExitConfirm, setActivityOpen, setSettingsOpen, toggleRail, selectSource,
   } = shell;
   const shellRef = useRef(shell);
+  const handledSupportedLink = useRef<string | null>(null);
   shellRef.current = shell;
   const thumbnailClient = useThumbnailClient();
   const [downloadProgress] = useState(() => new DownloadProgressStore());
@@ -382,7 +388,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   const [overlapInventory, setOverlapInventory] = useState<DownloadOverlapReview[]>([]);
   const [overlapInventoryLoading, setOverlapInventoryLoading] = useState(false);
   const [overlapInventoryRefresh, setOverlapInventoryRefresh] = useState(0);
-  const [containmentBatchProgress, setContainmentBatchProgress] = useState<{ completed: number; total: number }>();
+  const [reviewBackgrounded, setReviewBackgrounded] = useState(false);
+  const [editionBatchProgress, setEditionBatchProgress] = useState<EditionBatchProgress | null>(null);
+  const [containmentBatchProgress, setContainmentBatchProgress] = useState<{ completed: number; total: number; failure?: string; completedKeys?: string[]; failedKey?: string }>();
   const [containmentKeeperId, setContainmentKeeperId] = useState<GalleryId | null>(null);
   const [containmentBatchGroup, setContainmentBatchGroup] = useState<DownloadOverlapContainmentGroup>();
   const [downloadOverlapLoading, setDownloadOverlapLoading] = useState(false);
@@ -847,17 +855,6 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     });
   }, [hydrateRestoredContext, replaceActiveExploreContextId]);
 
-  const returnToOrigin = useCallback((origin?: NavigationOrigin) => {
-    if (!origin) return false;
-    const context = origin.contextId ? exploreContexts.current.get(origin.contextId) : undefined;
-    if (origin.view === "explore" && context) restoreExploreContext(context);
-    else dispatch({ type: "navigate", view: origin.view });
-    if (origin.detailId !== null && uiRef.current.detail.tabs.includes(origin.detailId as GalleryId)) {
-      dispatch({ type: "detail.activate", id: origin.detailId as GalleryId });
-    } else dispatch({ type: "detail.minimize", minimized: true });
-    return true;
-  }, [restoreExploreContext]);
-
   useEffect(() => {
     if (!shell.backgroundReady || checkpointRestored.current) return;
     checkpointRestored.current=true;
@@ -951,8 +948,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       dispatch({ type: "selection.clear" });
       dispatch({ type: "search.commit", view: "explore", value: "" });
     }
-    returnToOrigin(context.origin);
-  }, [replaceActiveExploreContextId, replaceExploreContextIds, restoreExploreContext, returnToOrigin, rememberClosed, snapshotActiveExploreContext]);
+    // Search tabs and floating details close independently. Retain saved origins
+    // for compatibility, but do not jump back across browsing surfaces.
+  }, [replaceActiveExploreContextId, replaceExploreContextIds, restoreExploreContext, rememberClosed, snapshotActiveExploreContext]);
 
   const navigateView = useCallback((view: ViewId) => {
     setPersonalLibraryOpen(false);
@@ -1038,7 +1036,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   }, []);
 
   const acknowledgeDownloadOverlapAutomationHistory = useCallback(async (reviewId: string) => {
-    if (!beginDownloadOverlapAutomationHistoryMutation(reviewId)) return false;
+    const item = downloadOverlapAutomationHistory.find((known) => known.reviewId === reviewId);
+    if (!item || !requiresManualOverlapApproval(item) || !beginDownloadOverlapAutomationHistoryMutation(reviewId)) return false;
     try {
       const result = await backend.downloadOverlapAutomationHistoryAcknowledge(reviewId);
       if (!result.ok) {
@@ -1055,7 +1054,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     } finally {
       finishDownloadOverlapAutomationHistoryMutation(reviewId);
     }
-  }, [applyAcknowledgedDownloadOverlapAutomationHistory, beginDownloadOverlapAutomationHistoryMutation, finishDownloadOverlapAutomationHistoryMutation, hydrateDownloadOverlapAutomationHistoryMeta, showToast]);
+  }, [applyAcknowledgedDownloadOverlapAutomationHistory, beginDownloadOverlapAutomationHistoryMutation, downloadOverlapAutomationHistory, finishDownloadOverlapAutomationHistoryMutation, hydrateDownloadOverlapAutomationHistoryMeta, showToast]);
 
   const restoreDownloadOverlapAutomationExclusions = useCallback(async (
     reviewId: string,
@@ -1552,7 +1551,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       const existing = [...exploreContexts.current.values()].find((item) => item.requestKey === key);
       if (existing) {
         if (!options.background) {
-          // Revisiting an existing search still needs a return edge to the invoking album.
+          // Keep legacy origin metadata, without using it to navigate on close.
           if (uiRef.current.detail.activeId !== null && !uiRef.current.detail.minimized) existing.origin = captureNavigationOrigin();
           activateExploreContext(existing.id);
         }
@@ -1666,10 +1665,24 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     void (async () => {
       const nextIds: GalleryId[] = [];
       const nextIdSet = new Set<GalleryId>();
+      let pendingItems: DownloadLibraryPage["items"] = [];
+      let lastPublished = 0;
+      const publish = () => {
+        if (cancelled || token !== downloadHydrationToken.current || !pendingItems.length) return;
+        const items = pendingItems;
+        const ids = [...nextIds];
+        pendingItems = [];
+        lastPublished = performance.now();
+        startTransition(() => {
+          setGalleries(current => cancelled || token !== downloadHydrationToken.current ? current
+            : mergeDownloadLibraryPage(current, { page: 1, totalItems: ids.length, items }).galleries);
+          setDownloadIds(current => cancelled || token !== downloadHydrationToken.current ? current : ids);
+        });
+      };
       let page = 1;
       let totalItems = 0;
       let loadedItems = 0;
-      do {
+      try { do {
         let result: DownloadLibraryPage | null = null;
         try {
           const loaded = await backend.downloadLibraryPageList({ page, pageSize: 200 });
@@ -1681,6 +1694,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
           const fallback = await backend.downloadEntriesList({ page, pageSize: 200 });
           if (cancelled || token !== downloadHydrationToken.current) return;
           if (!fallback.ok) {
+            publish();
             setDownloadsError(fallback.error.message);
             return;
           }
@@ -1689,26 +1703,27 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         if (cancelled || token !== downloadHydrationToken.current) return;
         if (result.items.length === 0) break;
         loadedItems += result.items.length;
-        setGalleries((current) => mergeDownloadLibraryPage(current, result).galleries);
+        pendingItems.push(...result.items);
         for (const item of result.items) {
           const id = item.gallery.id;
           if (nextIdSet.has(id)) continue;
           nextIdSet.add(id);
           nextIds.push(id);
         }
-        setDownloadIds([...nextIds]);
+        if (page === 1 || pendingItems.length >= 800 || performance.now() - lastPublished >= 150) publish();
         totalItems = result.totalItems;
         page += 1;
         // Retain every loaded summary, but yield between batches so native input
         // and the first usable frame are not starved by a large saved library.
         if (loadedItems < totalItems) await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
       } while (loadedItems < totalItems);
+      } finally { publish(); }
     })().catch(() => {
       if (!cancelled && token === downloadHydrationToken.current) {
         setDownloadsError("다운로드 목록 backend에 연결하지 못했습니다.");
       }
     }).finally(() => {
-      if (!cancelled && token === downloadHydrationToken.current) setDownloadsLoading(false);
+      if (!cancelled && token === downloadHydrationToken.current) startTransition(() => setDownloadsLoading(false));
     });
     return () => {
       cancelled = true;
@@ -1729,43 +1744,71 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       return false;
     }
   }, [savedPreviews.save, showToast]);
+  const displayGalleryCache = useRef(new WeakMap<Gallery, {
+    projected: Gallery; favorites: ReadonlySet<string>; recordedMatches?: readonly string[];
+  }>());
   const displayGalleries = useMemo<ReadonlyMap<GalleryId, Gallery>>(() => {
     const next = new Map<GalleryId, Gallery>();
     galleries.forEach((gallery, id) => {
       const matchedFavoriteToken = autoFindMatchedFavoriteTokens.get(id);
-      const favorite = autoFindFavoriteMatches(gallery, favoriteMetadata, matchedFavoriteToken).length > 0;
       const representativePreview = savedPreviews.previews.get(id);
+      const cached = displayGalleryCache.current.get(gallery);
+      if (cached && cached.favorites === favoriteMetadata && cached.recordedMatches === matchedFavoriteToken
+        && cached.projected.representativePreview === representativePreview) {
+        next.set(id, cached.projected);
+        return;
+      }
+      const favorite = autoFindFavoriteMatches(gallery, favoriteMetadata, matchedFavoriteToken).length > 0;
       const validPreview = representativePreview?.sourcePage && representativePreview.entryId === gallery.download?.entryId
         && gallery.download?.state === "completed";
-      next.set(id, !representativePreview && gallery.favorite === favorite ? gallery : {
-        ...gallery, favorite, representativePreview,
-        ...(validPreview && representativePreview.width && representativePreview.height
-          ? { thumbnailWidth: representativePreview.width, thumbnailHeight: representativePreview.height } : {}),
-      });
+      const projected = cached && cached.projected.favorite === favorite && cached.projected.representativePreview === representativePreview
+        ? cached.projected : !representativePreview && gallery.favorite === favorite ? gallery : {
+          ...gallery, favorite, representativePreview,
+          ...(validPreview && representativePreview.width && representativePreview.height
+            ? { thumbnailWidth: representativePreview.width, thumbnailHeight: representativePreview.height } : {}),
+        };
+      displayGalleryCache.current.set(gallery, { projected, favorites: favoriteMetadata, recordedMatches: matchedFavoriteToken });
+      next.set(id, projected);
     });
     return next;
   }, [autoFindMatchedFavoriteTokens, favoriteMetadata, galleries, savedPreviews.previews]);
+  const favoriteDisplayCache = useRef<ReadonlySet<string>>(new Set());
+  const favoriteTokenCache = useRef(new WeakMap<Gallery, { favorites: ReadonlySet<string>; aliases: string[] }>());
   const favoriteMetadataForDisplay = useMemo<ReadonlySet<string>>(() => {
     const next = new Set(favoriteMetadata);
     galleries.forEach((gallery) => {
+      if (!favoriteMetadata.size) return;
+      const cached = favoriteTokenCache.current.get(gallery);
+      if (cached?.favorites === favoriteMetadata) {
+        cached.aliases.forEach(token => next.add(token));
+        return;
+      }
+      const aliases: string[] = [];
+      const addAlias = (token: string) => {
+        if (favoriteMetadata.has(normalizeMetadataToken(token))) { aliases.push(token); next.add(token); }
+      };
       const artistToken = `artist:${gallery.artist}`;
-      if (favoriteMetadata.has(normalizeMetadataToken(artistToken))) next.add(artistToken);
+      addAlias(artistToken);
       if (gallery.group) {
         const token = `group:${gallery.group}`;
-        if (favoriteMetadata.has(normalizeMetadataToken(token))) next.add(token);
+        addAlias(token);
       }
       gallery.tags.forEach((tag) => {
-        if (favoriteMetadata.has(normalizeMetadataToken(tag))) next.add(tag);
+        addAlias(tag);
       });
       (gallery.series ?? []).forEach((series) => {
         const token = `series:${series}`;
-        if (favoriteMetadata.has(normalizeMetadataToken(token))) next.add(token);
+        addAlias(token);
       });
       (gallery.characters ?? []).forEach((character) => {
         const token = `character:${character}`;
-        if (favoriteMetadata.has(normalizeMetadataToken(token))) next.add(token);
+        addAlias(token);
       });
+      favoriteTokenCache.current.set(gallery, { favorites: favoriteMetadata, aliases });
     });
+    const previous = favoriteDisplayCache.current;
+    if (previous.size === next.size && [...next].every(value => previous.has(value))) return previous;
+    favoriteDisplayCache.current = next;
     return next;
   }, [favoriteMetadata, galleries]);
 
@@ -1799,7 +1842,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   }, [displayGalleries, downloadIds, exploreIds, pendingAutoFindIds, ui.view]);
   // Explore is a submitted server query. Draft language/sort controls must not
   // filter or reorder the existing response before the next search is submitted.
-  const visible = useMemo(() => ui.view === "explore" ? scopedGalleries : visibleGalleries(ui, scopedGalleries, popularity.ranks), [ui, scopedGalleries, popularity.ranks]);
+  const visible = useVisibleGalleries(ui, scopedGalleries, popularity.ranks);
   const actionableVisibleIds = useMemo(
     () => visible
       .filter((gallery) => gallery.download?.state !== "quarantined"
@@ -1809,9 +1852,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   );
   galleriesRef.current = displayGalleries;
   const allGalleries = useMemo(() => [...displayGalleries.values()], [displayGalleries]);
-  const pendingOverlapIdsKey = JSON.stringify([...new Set(allGalleries.flatMap((gallery) =>
+  const pendingOverlapIdsKey = useMemo(() => JSON.stringify([...new Set(allGalleries.flatMap((gallery) =>
     gallery.download?.state === "review_required" && gallery.download.reviewKind === "gallery_duplicate"
-      && gallery.download.reviewId ? [gallery.download.reviewId] : []))].sort());
+      && gallery.download.reviewId ? [gallery.download.reviewId] : []))].sort()), [allGalleries]);
   const overlapInventoryEnabled = shell.activityOpen || downloadOverlapReviewId !== null;
   useEffect(() => {
     if (!overlapInventoryEnabled) return;
@@ -1913,11 +1956,11 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       const result = await backend.gallerySummaryGet(id);
       if (!result.ok) return;
       hydratedCardDetails.current.add(id);
-      setGalleries((current) => mergeGalleryPage(current, {
+      startTransition(() => setGalleries((current) => mergeGalleryPage(current, {
         page: 1,
         totalPages: 1,
         items: [result.data],
-      }).galleries);
+      }).galleries));
     } catch {
       // The durable local summary remains usable; a later viewport entry can retry.
     } finally {
@@ -1978,6 +2021,12 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     dispatch({ type: "detail.open", id, activate: !options?.background });
     void hydrateDetail(id);
   }, [hydrateDetail, captureNavigationOrigin]);
+  useEffect(() => {
+    if (!active || shell.privacyMode || shell.privacyModePending || supportedLinkRequest?.source !== "hitomi" || handledSupportedLink.current === supportedLinkRequest.id) return;
+    handledSupportedLink.current = supportedLinkRequest.id;
+    setPersonalLibraryOpen(false); shell.setActivityOpen(false);
+    openDetail(galleryId(Number(supportedLinkRequest.targetId)));
+  }, [active, shell.privacyMode, shell.privacyModePending, supportedLinkRequest, openDetail]);
   const openSavedItem = useCallback((item: Bookmark, options?: SavedItemOpenOptions) => {
     const saved = galleryFor(item);
     setGalleries((current) => {
@@ -2032,8 +2081,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     if (!detail.tabs.includes(id)) return;
     rememberClosed({ kind: "detail", ids: [id], activeId: id, before: [...detail.tabs], at: performance.now() });
     dispatch({ type: "detail.close", id });
-    if (detail.activeId === id && !detail.minimized) returnToOrigin(detailOrigins.current.get(id));
-  }, [rememberClosed, returnToOrigin]);
+  }, [rememberClosed]);
   const closeAllDetails = useCallback(() => {
     const detail = uiRef.current.detail;
     rememberClosed({ kind: "detail", ids: [...detail.tabs], activeId: detail.activeId, before: [...detail.tabs], at: performance.now() });
@@ -2183,6 +2231,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         return;
       }
       setDownloadOverlapReview(result.data);
+      setContainmentBatchGroup((current) => refreshContainmentGroupReview(current, result.data));
       if (result.data.state === "stale") setDownloadsRefresh((value) => value + 1);
     } catch {
       if (token === downloadOverlapReviewToken.current) {
@@ -2193,11 +2242,17 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     }
   }, []);
   const openReview = useCallback((id: GalleryId) => {
+    if (downloadOverlapDecisionPendingRef.current) {
+      showToast("판본 적용 중입니다. 진행 표시에서 검토를 다시 열 수 있습니다.");
+      return;
+    }
+    setReviewBackgrounded(false);
+    setEditionBatchProgress(null);
     cancelAutomationReviewSequence();
     setContainmentKeeperId(null);
     setContainmentBatchGroup(undefined);
     setContainmentBatchProgress(undefined);
-    const download = displayGalleries.get(id)?.download;
+    const download = galleriesRef.current.get(id)?.download;
     if (download?.state === "review_required" && download.reviewKind === "gallery_duplicate") {
       if (!download.reviewId) {
         showToast("다운로드 판본 검토 ID가 없어 상태를 다시 불러옵니다.");
@@ -2226,7 +2281,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     setDuplicateReviewError(null);
     dispatch({ type: "overlay.review", galleryId: id });
     void hydrateDuplicateReview(candidate.candidateId);
-  }, [cancelAutomationReviewSequence, displayGalleries, duplicateSnapshot?.candidates, hydrateDownloadOverlapReview, hydrateDuplicateReview, hydrateDuplicateSnapshot, showToast]);
+  }, [cancelAutomationReviewSequence, duplicateSnapshot?.candidates, hydrateDownloadOverlapReview, hydrateDuplicateReview, hydrateDuplicateSnapshot, showToast]);
   const closeDuplicateReview = useCallback(() => {
     if (duplicateDecisionPendingRef.current) return;
     duplicateReviewToken.current += 1;
@@ -2240,6 +2295,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     if (downloadOverlapDecisionPendingRef.current
       || (downloadOverlapReviewId !== null
         && downloadOverlapAutomationHistoryPendingRef.current.has(downloadOverlapReviewId))) return;
+    setReviewBackgrounded(false);setEditionBatchProgress(null);
     cancelAutomationReviewSequence();
     downloadOverlapReviewToken.current += 1;
     setDownloadOverlapReviewId(null);
@@ -2252,6 +2308,12 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     dispatch({ type: "overlay.review", galleryId: null });
   }, [cancelAutomationReviewSequence, downloadOverlapReviewId]);
   const showAutomaticOverlapReview = useCallback((reviewId: string, id: GalleryId) => {
+    if (downloadOverlapDecisionPendingRef.current) {
+      showToast("판본 적용 중입니다. 진행 표시에서 검토를 다시 열 수 있습니다.");
+      return;
+    }
+    setEditionBatchProgress(null);
+    setReviewBackgrounded(false);
     setContainmentKeeperId(null);
     setContainmentBatchGroup(undefined);
     setContainmentBatchProgress(undefined);
@@ -2262,7 +2324,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     setDownloadOverlapError(null);
     dispatch({ type: "overlay.review", galleryId: id });
     void hydrateDownloadOverlapReview(reviewId);
-  }, [hydrateDownloadOverlapReview]);
+  }, [hydrateDownloadOverlapReview, showToast]);
   const navigateAutomationReviewSequence = useCallback((index: number) => {
     const session = automationReviewSessionRef.current;
     const current = session?.items[session.index];
@@ -2396,9 +2458,12 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     if (downloadOverlapDecisionPendingRef.current
       || downloadOverlapAutomationHistoryPendingRef.current.has(request.reviewId)) return;
     if (automaticOverlapInFlightRef.current) { showToast("진행 중인 자동 판정이 끝난 뒤 다시 시도해 주세요."); return; }
-    const candidate = downloadOverlapReview?.candidates.find((item) => item.candidateId === request.candidateId);
-    if (!downloadOverlapReview || !candidate || downloadOverlapReview.reviewId !== request.reviewId) return;
-    const targetEntryId = request.sourceSide === "existing" ? downloadOverlapReview.entryId : candidate.existing.entryId;
+    const sourceReview = downloadOverlapReview?.reviewId === request.reviewId ? downloadOverlapReview
+      : containmentBatchGroup?.items.find((item) => item.review.reviewId === request.reviewId)?.review
+        ?? overlapInventory.find((item) => item.reviewId === request.reviewId);
+    const candidate = sourceReview?.candidates.find((item) => item.candidateId === request.candidateId);
+    if (!sourceReview || !candidate) return;
+    const targetEntryId = request.sourceSide === "existing" ? sourceReview.entryId : candidate.existing.entryId;
     downloadOverlapDecisionPendingRef.current = true;
     setDownloadOverlapDecisionPending(true);
     setDownloadOverlapError(null);
@@ -2406,7 +2471,14 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       const result = await backend.downloadOverlapMerge({ ...request, excludeSource: true });
       if (!result.ok) {
         if (result.error.code === "REVISION_CONFLICT") {
-          await hydrateDownloadOverlapReview(request.reviewId);
+          if (request.reviewId === downloadOverlapReviewId) await hydrateDownloadOverlapReview(request.reviewId);
+          else {
+            const fresh = await backend.downloadOverlapReviewGet(request.reviewId);
+            if (fresh.ok) {
+              setContainmentBatchGroup((group) => refreshContainmentGroupReview(group, fresh.data));
+              setOverlapInventory((items) => items.map((item) => item.reviewId === request.reviewId ? fresh.data : item));
+            }
+          }
           setDownloadOverlapError("검토가 변경되었습니다. 최신 대응 페이지를 확인하고 다시 선택해 주세요.");
         } else setDownloadOverlapError(result.error.message);
         return;
@@ -2433,7 +2505,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       downloadOverlapDecisionPendingRef.current = false;
       setDownloadOverlapDecisionPending(false);
     }
-  }, [closeDownloadOverlapReview, downloadOverlapReview, hydrateDownloadOverlapReview, recordSessionDownloadActivity, refreshMergedGallery, showToast, thumbnailClient]);
+  }, [closeDownloadOverlapReview, downloadOverlapReview, downloadOverlapReviewId, containmentBatchGroup, overlapInventory, hydrateDownloadOverlapReview, recordSessionDownloadActivity, refreshMergedGallery, showToast, thumbnailClient]);
   const applyDownloadOverlapDecision = useCallback(async (request: DownloadOverlapDecisionRequest) => {
     if (downloadOverlapDecisionPendingRef.current
       || downloadOverlapAutomationHistoryPendingRef.current.has(request.reviewId)) return;
@@ -2445,14 +2517,24 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       const result = await backend.downloadOverlapDecisionApply(request);
       if (!result.ok) {
         if (result.error.code === "REVISION_CONFLICT") {
-          await hydrateDownloadOverlapReview(request.reviewId);
+          if (request.reviewId === downloadOverlapReviewId) await hydrateDownloadOverlapReview(request.reviewId);
+          else {
+            const fresh = await backend.downloadOverlapReviewGet(request.reviewId);
+            if (fresh.ok) {
+              setContainmentBatchGroup((group) => refreshContainmentGroupReview(group, fresh.data));
+              setOverlapInventory((items) => items.map((item) => item.reviewId === request.reviewId ? fresh.data : item));
+            }
+          }
           setDownloadOverlapError("다른 창에서 검토가 변경되어 최신 내용을 다시 불러왔습니다.");
           return;
         }
         setDownloadOverlapError(result.error.message);
         return;
       }
-      setDownloadOverlapReview(result.data.review);
+      const sameReview = request.reviewId === downloadOverlapReviewId;
+      if (sameReview) setDownloadOverlapReview(result.data.review);
+      setContainmentBatchGroup((group) => refreshContainmentGroupReview(group, result.data.review));
+      setOverlapInventory((items) => items.map((item) => item.reviewId === request.reviewId ? result.data.review : item));
       const excludedGalleryId = request.action === "remove_incoming"
         ? result.data.review.incoming.galleryId
         : request.action === "remove_existing_continue"
@@ -2469,7 +2551,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       setOverlapInventoryRefresh((value) => value + 1);
       if (result.data.resumed || result.data.cancelled) {
         downloadOverlapDecisionPendingRef.current = false;
-        if (!automationReviewSessionRef.current) closeDownloadOverlapReview();
+        if (sameReview && !automationReviewSessionRef.current) closeDownloadOverlapReview();
         showToast(result.data.cancelled
           ? "신규 앨범 B를 취소했습니다. 기존 앨범 A와 다른 보유 파일은 변경하지 않았습니다."
           : request.action === "remove_existing_continue"
@@ -2486,7 +2568,51 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       downloadOverlapDecisionPendingRef.current = false;
       setDownloadOverlapDecisionPending(false);
     }
-  }, [closeDownloadOverlapReview, hydrateDownloadOverlapReview, recordSessionDownloadActivity, showToast]);
+  }, [closeDownloadOverlapReview, downloadOverlapReviewId, hydrateDownloadOverlapReview, recordSessionDownloadActivity, showToast]);
+
+  const applyEditionBatch: EditionBatchHandler = useCallback(async (operations, report) => {
+    if (downloadOverlapDecisionPendingRef.current || automaticOverlapInFlightRef.current) {
+      return {completedKeys:[],total:operations.length,failure:'진행 중인 판정이 끝난 뒤 다시 적용해 주세요.'};
+    }
+    downloadOverlapDecisionPendingRef.current=true;
+    setDownloadOverlapDecisionPending(true);setDownloadOverlapError(null);setReviewBackgrounded(true);dispatch({type:"overlay.review",galleryId:null});
+    const initial={completedKeys:[],total:operations.length};setEditionBatchProgress(initial);report(initial);
+    const changedReviews=new Map<string,DownloadOverlapReview>();const hidden=new Set<GalleryId>();
+    // Release the modal before I/O; refresh the library once after the batch.
+    await new Promise<void>(resolve=>window.setTimeout(resolve,0));
+    const result=await executeEditionBatch(operations,{
+      load:id=>backend.downloadOverlapReviewGet(id),decide:request=>backend.downloadOverlapDecisionApply(request),merge:request=>backend.downloadOverlapMerge(request),
+      onReview:review=>{changedReviews.set(review.reviewId,review);},
+      onProgress:progress=>{report(progress);setEditionBatchProgress(progress);},
+      onDecision:(operation,value)=>{
+        changedReviews.set(value.review.reviewId,value.review);if(operation.kind!=='decision')return;
+        const id=operation.request.action==='remove_incoming'?value.review.incoming.galleryId
+          :operation.request.action==='remove_existing_continue'?value.review.candidates.find(c=>c.candidateId===operation.request.candidateId)?.existing.galleryId:undefined;
+        if(id!==undefined)hidden.add(id);
+      },
+      onMerge:(operation,merged)=>{
+        const targetEntryId=operation.kind==='merge'&&operation.request.sourceSide==='existing'?operation.incomingEntryId:operation.existingEntryId;
+        refreshMergedGallery(merged.targetGalleryId);
+        thumbnailClient.invalidate(key=>key.kind==='overlap-review-page'?merged.affectedReviewIds.includes(key.reviewId)
+          :key.kind==='artifact-page'?key.entryId===targetEntryId:key.galleryId===merged.targetGalleryId);
+        if(merged.sourceExcluded)hidden.add(merged.sourceGalleryId);
+      },
+    });
+    downloadOverlapDecisionPendingRef.current=false;setDownloadOverlapDecisionPending(false);
+    startTransition(()=>{
+      setOverlapInventory(items=>items.map(item=>changedReviews.get(item.reviewId)??item));
+      setContainmentBatchGroup(group=>{let next=group;for(const review of changedReviews.values())next=refreshContainmentGroupReview(next,review);return next;});
+      if(hidden.size)setDuplicateHiddenGalleryIds(current=>new Set([...current,...hidden]));
+      for(const id of hidden)recordSessionDownloadActivity(id,'cancelled');
+      if(result.completedKeys.length){setDownloadsRefresh(value=>value+1);setOverlapInventoryRefresh(value=>value+1);}
+    });
+    if(result.failure){
+      setDownloadOverlapError(result.failure);const fresh=downloadOverlapReviewId?changedReviews.get(downloadOverlapReviewId):undefined;
+      if(fresh?.state==='pending')setDownloadOverlapReview(fresh);
+      showToast(result.completedKeys.length+'/'+result.total+' 처리 · 남은 검토 필요');
+    }else{setEditionBatchProgress(null);closeDownloadOverlapReview();showToast(result.completedKeys.length+'개 판본 적용 완료');}
+    return result;
+  },[closeDownloadOverlapReview,downloadOverlapReviewId,recordSessionDownloadActivity,refreshMergedGallery,showToast,thumbnailClient]);
 
   const applyContainmentBatch = useCallback(async (itemKeys: string[]) => {
     if (downloadOverlapDecisionPendingRef.current || !containmentGroup
@@ -2499,16 +2625,22 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     downloadOverlapDecisionPendingRef.current = true;
     setDownloadOverlapDecisionPending(true);
     setDownloadOverlapError(null);
-    setContainmentBatchProgress({ completed: 0, total: items.length });
+    setContainmentBatchProgress({ completed: 0, total: items.length, completedKeys: [] });
     setContainmentBatchGroup(containmentGroup);
     let completed = 0;
+    const completedKeys: string[] = [];
+    let failedKey: string | undefined;
     let batchError: string | undefined;
+    let failedGalleryId: GalleryId | undefined;
     try {
       for (const original of items) {
+        failedGalleryId = original.excluded.galleryId;
+        failedKey = original.key;
         // Every decision is separately durable. Never reuse another review's
         // revision, or continue a batch after a failed/stale containment proof.
         const loaded = await backend.downloadOverlapReviewGet(original.review.reviewId);
         if (!loaded.ok) throw new Error(loaded.error.message);
+        setContainmentBatchGroup((current) => refreshContainmentGroupReview(current, loaded.data));
         const fresh = buildDownloadOverlapContainmentGroup(containmentGroup.keeper.galleryId, [loaded.data])
           ?.items.find((item) => item.key === original.key && item.excluded.entryId === original.excluded.entryId);
         if (!fresh) throw new Error("포함관계 또는 처리 상태가 변경되었습니다. 최신 목록에서 다시 확인해 주세요.");
@@ -2525,7 +2657,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         });
         if (!result.ok) throw new Error(result.error.message);
         completed += 1;
-        setContainmentBatchProgress({ completed, total: items.length });
+        completedKeys.push(original.key);
+        setContainmentBatchGroup((current) => refreshContainmentGroupReview(current, result.data.review));
+        setContainmentBatchProgress({ completed, total: items.length, completedKeys: [...completedKeys] });
         setDuplicateHiddenGalleryIds((current) => new Set([...current, fresh.excluded.galleryId]));
         recordSessionDownloadActivity(fresh.excluded.galleryId, "cancelled");
         setOverlapInventory((current) => current.map((review) => review.reviewId === result.data.review.reviewId ? result.data.review : review));
@@ -2534,7 +2668,9 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       }
       showToast(`합본 #${containmentGroup.keeper.galleryId} 보존 · 포함 앨범 ${completed}개 제외 완료. 나머지 관계는 별도 검토로 유지합니다.`);
     } catch (error) {
-      batchError = `${completed}/${items.length}개 처리 완료 · 나머지는 변경하지 않았습니다. ${error instanceof Error ? error.message : "일괄 처리를 완료하지 못했습니다."}`;
+      const failure = `${failedGalleryId === undefined ? "" : `#${failedGalleryId} 처리 실패 · `}${error instanceof Error ? error.message : "일괄 처리를 완료하지 못했습니다."}`;
+      setContainmentBatchProgress({ completed, total: items.length, failure, completedKeys: [...completedKeys], failedKey });
+      batchError = `${completed}/${items.length}개 처리 완료 · 나머지는 변경하지 않았습니다. ${failure}`;
       setDownloadOverlapError(batchError);
       showToast(batchError);
     } finally {
@@ -3117,14 +3253,15 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
 
   const queueGalleries = useCallback(
     async (ids: GalleryId[]) => {
+      const galleryMap = galleriesRef.current;
       const uniqueIds = [...new Set(ids)].filter((id) => !duplicateHiddenGalleryIds.has(id)
         && !pendingDownloadEntriesRef.current.has(galleriesRef.current.get(id)?.download?.entryId ?? ""));
-      const newGalleryIds = uniqueIds.filter((id) => !galleries.get(id)?.download);
+      const newGalleryIds = uniqueIds.filter((id) => !galleryMap.get(id)?.download);
       const retryGalleryIds = uniqueIds.filter((id) => {
-        const download = galleries.get(id)?.download;
+        const download = galleryMap.get(id)?.download;
         return download !== undefined && retryableDownloadStates.has(download.state);
       });
-      const retryEntryIds = retryGalleryIds.map((id) => galleries.get(id)!.download!.entryId);
+      const retryEntryIds = retryGalleryIds.map((id) => galleryMap.get(id)!.download!.entryId);
       if (!newGalleryIds.length && !retryEntryIds.length) {
         showToast("현재 상태에서 시작할 수 있는 항목이 없습니다.");
         dispatch({ type: "selection.clear" });
@@ -3160,7 +3297,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       }
       dispatch({ type: "selection.clear" });
     },
-    [duplicateHiddenGalleryIds, galleries, recordSessionDownloadActivity, showToast],
+    [duplicateHiddenGalleryIds, recordSessionDownloadActivity, showToast],
   );
 
   const retryAvailableDownloads = useCallback(async (ids: GalleryId[]) => {
@@ -3806,6 +3943,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
     if (galleryViewport.current) galleryViewport.current.scrollTop = 0;
   }, [downloadsPage, downloadsPagination.page, ui.grouping.downloads, ui.view]);
 
+  const previousDownloadGroups = useRef<GalleryGroup[]>([]);
   const groupedVisible = useMemo(() => {
     if (ui.view !== "auto-find" && ui.view !== "downloads") return [];
     const grouping = ui.grouping[ui.view] as GalleryGrouping;
@@ -3818,12 +3956,14 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       const order = new Map(renderedVisible.map((gallery, index) => [gallery.id, index]));
       groups.sort((a, b) => (order.get(a.items[0]!.id) ?? Infinity) - (order.get(b.items[0]!.id) ?? Infinity));
     }
-    return groups;
+    const shared = retainUnchangedGalleryGroups(previousDownloadGroups.current, groups);
+    previousDownloadGroups.current = shared;
+    return shared;
   }, [autoFindDiscoveryDates, autoFindMatchedFavoriteTokens, favoriteMetadata, renderedVisible, ui.grouping, ui.view]);
-  const artistDetailPreloadKey = active && ui.view === "downloads" && ui.grouping.downloads === "artist"
+  const artistDetailPreloadKey = useMemo(() => active && ui.view === "downloads" && ui.grouping.downloads === "artist"
     ? JSON.stringify([...new Set(groupedVisible.flatMap((group) => group.items
       .filter((gallery) => gallery.tagsKnown === false).map((gallery) => gallery.id)))])
-    : "";
+    : "", [active, ui.view, ui.grouping.downloads, groupedVisible]);
   useEffect(() => {
     const ids = artistDetailPreloadKey ? JSON.parse(artistDetailPreloadKey) as GalleryId[] : [];
     artistDetailWanted.current = new Set(ids);
@@ -3875,8 +4015,12 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
   visibleIdsRef.current = selectionScopeIds;
   const retainedSelectionIds = artistFolderMode ? selectionScopeIds : actionableVisibleIds;
   useLayoutEffect(() => {
+    if (!ui.selection.ids.size && ui.selection.anchorId === null) return;
+    const allowed = new Set(retainedSelectionIds);
+    if ([...ui.selection.ids].every(id => allowed.has(id))
+      && (ui.selection.anchorId === null || allowed.has(ui.selection.anchorId))) return;
     dispatch({ type: "selection.retain", ids: retainedSelectionIds });
-  }, [retainedSelectionIds]);
+  }, [retainedSelectionIds, ui.selection]);
   const selectedIds = useMemo(() => [...ui.selection.ids].filter((id) => !artistFolderMode || selectionScope.has(id)),
     [artistFolderMode, selectionScope, ui.selection.ids]);
   const multiSelectionMode = selectedIds.length >= 2;
@@ -4059,14 +4203,22 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       }
 
       const galleryContext = Boolean(target.closest(".gallery-viewport, .selection-toolbar, .download-artist-folder-window"));
-      if (!galleryContext) return;
-
       if (primaryModifier && event.key.toLocaleLowerCase() === "a" && !event.altKey && !event.repeat) {
+        // A freshly opened list still has focus on the view button or body.
+        // Do not require selecting a card before selecting the album list.
+        const foreignLayer = [...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="menu"]')]
+          .some((element) => !element.hidden && !element.closest('[hidden]')
+            && !element.classList.contains("download-artist-folder-window"));
+        if (shell.settingsOpen || shell.activityOpen || shell.exitConfirmOpen || foreignLayer
+          || ui.overlays.reviewGalleryId !== null || (ui.detail.activeId !== null && !ui.detail.minimized)
+          || target.closest('.detail-workspace, .activity-panel, [role="menu"], [role="textbox"], [contenteditable]')) return;
         event.preventDefault();
         if (event.shiftKey) dispatch({ type: "selection.clear" });
         else dispatch({ type: "selection.all", ids: selectionScopeIds });
+        if (!target.matches(".gallery-card")) activeGalleryViewport.current?.focus({ preventScroll: true });
         return;
       }
+      if (!galleryContext) return;
 
       const card = target.closest<HTMLElement>(".gallery-card");
       const cardIsDirectTarget = card === target;
@@ -4204,7 +4356,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       void hydrateDuplicateReview(exclusionContext.legacyCandidateId);
     }
   };
-  const renderGalleryGrid = (items: Gallery[], ariaLabel: string, columns = galleryColumns) => (
+  const renderGalleryGrid = useCallback((items: Gallery[], ariaLabel: string, columns = galleryColumns) => (
     <GalleryGrid
       columns={columns}
       previewWidth={previewWidth}
@@ -4266,14 +4418,21 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         ) : card;
       })}
     </GalleryGrid>
-  );
+  ), [galleryColumns, previewWidth, multiSelectionMode, currentGalleryDisplayMode, ui.view, ui.selection.ids,
+    duplicateHiddenGalleryIds, explorationExcludedGalleryIds, favoriteMetadataForDisplay, duplicateCandidateCounts,
+    internalDuplicateResultCounts, internalArtifactProgress, effectiveKeyboardFocusId, selectGallery, openDetail,
+    openArtifact, openDownloadFolder, openReview, openInternalReview, openStatusDetail, searchMetadata,
+    toggleMetadataFavorite, restoringExclusions, pendingDownloadEntries, queueGalleryFromMenu, excludeGalleryFromMenu,
+    inspectExclusion, restoreExclusionFromMenu, nearbyDownloadIds]);
+  const galleryGridContent = useMemo(() => ui.view !== "explore" && ui.grouping[ui.view] !== "all" ? null
+    : renderGalleryGrid(renderedVisible, ui.view === "explore" ? config.title : `${config.title} 전체 목록`),
+  [renderGalleryGrid, renderedVisible, ui.view, ui.grouping, config.title]);
   const persistedAutomaticReviewIds = new Set(
     downloadOverlapAutomationHistory.map((item) => item.reviewId),
   );
   const unreadAutomaticOverlapSessionCount = [...unreadAutomaticOverlapReviewIds]
     .filter((reviewId) => !persistedAutomaticReviewIds.has(reviewId)).length;
   const activityBadgeCount = unreadActivityCount
-    + downloadOverlapAutomationHistoryUnacknowledgedItems
     + unreadAutomaticOverlapSessionCount;
 
   return (
@@ -4578,7 +4737,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                 ? void excludeAutoFindCandidates(selectedIds)
                 : showToast("후보 제외는 Auto Find 화면에서 사용할 수 있습니다.")}
           />
-          <section id="gallery-viewport" data-tour="hitomi-albums" ref={galleryViewport} className="gallery-viewport">
+          <section id="gallery-viewport" data-tour="hitomi-albums" ref={galleryViewport} className="gallery-viewport" tabIndex={-1}>
             {settingsLoading ? (
               <div className="loading-state" role="status"><span className="spinner" /> 저장된 화면 설정을 불러오는 중</div>
             ) : ((ui.view === "explore" && query.phase === "submitting" && !visible.length)
@@ -4600,7 +4759,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
             ) : visible.length ? (
               (ui.view === "auto-find" || ui.view === "downloads") ? (
                 ui.grouping[ui.view] === "all"
-                  ? renderGalleryGrid(renderedVisible, `${config.title} 전체 목록`)
+                  ? galleryGridContent
                   : ui.view === "downloads" && ui.grouping.downloads === "artist"
                     ? <DownloadArtistFolderGrid
                         groups={groupedVisible}
@@ -4629,7 +4788,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
                         onToggle={toggleGroupCollapsed}
                         renderGrid={renderGalleryGrid}
                       />
-              ) : renderGalleryGrid(renderedVisible, config.title)
+              ) : galleryGridContent
             ) : (
               <div className="empty-state"><FluentIcon glyph="\uE11A" /><h2>표시할 갤러리가 없습니다</h2><p>{ui.view === "auto-find" ? "즐겨찾기 작가나 그룹을 추가한 뒤 명시적으로 갱신하거나 현재 검색·언어 필터를 바꿔 보세요." : "검색어나 언어·상태 필터를 바꿔 보세요."}</p></div>
             )}
@@ -4709,6 +4868,8 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
       })}
 
       <ActivityDrawer
+        queueEstimate={workQueue.snapshot}
+        queueError={workQueue.error}
         queueSummary={<QueueSummary snapshot={workQueue.snapshot} scoped={workQueue.query.sequence !== undefined} error={workQueue.error} />}
         queuePanel={<WorkQueuePanel snapshot={workQueue.snapshot} query={workQueue.query} error={workQueue.error} onQuery={workQueue.setQuery} onRefresh={workQueue.refresh} onCancelEntries={cancelQueueEntries} onOpen={(id, options) => { if (!options?.background) closeActivity(); openDetail(id, options); }} />}
         containmentGroups={priorityContainmentGroups}
@@ -4824,12 +4985,17 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         onMergePages={(request) => void applyCompletedPairMerge(request)}
       />
 
+      {editionBatchProgress ? <OverlapBatchStatus progress={editionBatchProgress} onReview={()=>{setReviewBackgrounded(false);if(downloadOverlapReview)dispatch({type:"overlay.review",galleryId:downloadOverlapReview.incoming.galleryId});}} /> : null}
       <DownloadOverlapReviewDialog
+        loadPageEvidence={(request) => backend.downloadOverlapDisplayMatches(request)}
+        relatedReviews={overlapInventory}
         containmentGroup={containmentBatchGroup ?? containmentGroup ?? undefined}
         containmentLoading={overlapInventoryLoading}
         onApplyContainmentBatch={(keys) => void applyContainmentBatch(keys)}
+        onApplyEditions={applyEditionBatch}
+        preserveDraftOnHide={Boolean(editionBatchProgress)}
         batchProgress={containmentBatchProgress}
-        open={ui.overlays.reviewGalleryId !== null && downloadOverlapReviewId !== null}
+        open={!reviewBackgrounded && ui.overlays.reviewGalleryId !== null && downloadOverlapReviewId !== null}
         review={downloadOverlapReview ?? undefined}
         loading={downloadOverlapLoading}
         error={downloadOverlapError}
@@ -4858,7 +5024,7 @@ function HitomiFeatureContent({ active, children, navigationRequest }: HitomiFea
         autoMode={settings.downloadOverlapAutoMode}
         previewWidth={previewWidth}
         thumbnailClient={thumbnailClient}
-        onClose={closeDownloadOverlapReview}
+        onClose={()=>{if(downloadOverlapDecisionPendingRef.current){setReviewBackgrounded(true);dispatch({type:"overlay.review",galleryId:null});}else closeDownloadOverlapReview();}}
         onRetry={() => downloadOverlapReviewId && void hydrateDownloadOverlapReview(downloadOverlapReviewId)}
         onDecision={(request) => void applyDownloadOverlapDecision(request)}
         onMergePages={(request) => void applyDownloadOverlapMerge(request)}
@@ -4910,7 +5076,7 @@ function GalleryAccordionGroups({
   onToggle,
   renderGrid,
 }: GalleryAccordionGroupsProps) {
-  const titleSize = Math.round(Math.max(14, Math.min(17, previewWidth / 18)));
+  const titleSize = Math.round(Math.max(15, Math.min(19, previewWidth / 18 + 1)));
   return (
     <div className="gallery-groups" data-group-view={view}>
       {groups.map((group) => {

@@ -46,7 +46,7 @@ async function mount(start = 1, count = 5) {
   const button = (label: string) => dialog.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
   const click = async (label: string) => { await act(async () => button(label).click()); };
   const key = async (key: string, target: EventTarget = window) => { await act(async () => target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))); };
-  const pages = () => [...dialog.querySelectorAll<HTMLButtonElement>(".bookmark-toggle")].map((b) => b.querySelector("svg text")?.textContent);
+  const pages = () => [...dialog.querySelectorAll<HTMLButtonElement>(".bookmark-toggle")].map((b) => b.querySelector(".bookmark-page-icon > span")?.textContent?.replace(/p$/, ""));
   return { dialog, button, click, key, pages, resolve };
 }
 

@@ -1411,7 +1411,10 @@ mod tests {
             }
             connection
                 .execute_batch(
-                    "DROP TABLE auto_find_candidate_matches;
+                    "DROP TABLE download_gallery_links;
+                     ALTER TABLE download_jobs DROP COLUMN linked_gallery_id;
+                     ALTER TABLE settings DROP COLUMN processing_mode;
+                     DROP TABLE auto_find_candidate_matches;
                      ALTER TABLE auto_find_candidates DROP COLUMN artists_json;
                      DROP TABLE download_tuning_profiles;
                      ALTER TABLE settings DROP COLUMN download_adaptive_concurrency;
@@ -1423,7 +1426,7 @@ mod tests {
                      DROP TABLE hitomi_popularity_snapshots;
                      DROP TABLE overlap_page_merges;
                      ALTER TABLE duplicate_candidates DROP COLUMN artifact_stale;
-                     DELETE FROM schema_migrations WHERE version IN (44, 45, 46, 47, 48, 49, 50, 51);",
+                     DELETE FROM schema_migrations WHERE version IN (44, 45, 46, 47, 48, 49, 50, 51, 52, 53);",
                 )
                 .unwrap();
         }
@@ -1474,9 +1477,9 @@ mod tests {
             let migrated = MigrationRunner::run(&mut connection).unwrap();
             assert_eq!(
                 migrated.applied_versions,
-                vec![43, 44, 45, 46, 47, 48, 49, 50, 51]
+                vec![43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53]
             );
-            assert_eq!(migrated.current_version, 51);
+            assert_eq!(migrated.current_version, 53);
             assert!(MigrationRunner::run(&mut connection)
                 .unwrap()
                 .applied_versions

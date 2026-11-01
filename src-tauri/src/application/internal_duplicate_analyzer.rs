@@ -206,6 +206,7 @@ pub(crate) fn detect_internal_groups_with_progress(
     profile: &HashProfile,
     mut on_pair_progress: impl FnMut(u64, u64),
 ) -> InternalDetection {
+    let mut image_work = super::image_work_budget::acquire(None);
     let prepared = artifact
         .pages
         .iter()
@@ -236,7 +237,11 @@ pub(crate) fn detect_internal_groups_with_progress(
                 }
             }
             if compared_pairs >= next_report || compared_pairs == total_pairs {
+                // Progress callbacks can persist to the DB; do that at normal
+                // priority without holding a CPU slot needed by another worker.
+                drop(image_work.take());
                 on_pair_progress(compared_pairs, total_pairs);
+                image_work = super::image_work_budget::acquire(None);
                 next_report = compared_pairs.saturating_add(report_interval);
             }
         }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BackendClient } from "../api/backend";
 import type { ArtistPreview, Gallery, GalleryId, GalleryPreview } from "../core/types";
 
@@ -59,12 +59,13 @@ export function useSavedGalleryPreviews(backend: BackendClient, galleries: Reado
           const result = await backend.galleryPreviewList(batch);
           if (!mounted.current) return;
           if (result.ok) {
-            setPreviews((current) => {
+            startTransition(() => setPreviews((current) => {
+              if (!result.data.some((preview) => !current.has(preview.galleryId))) return current;
               const next = new Map(current);
               // A newer completion/manual-selection event may have beaten this snapshot.
               result.data.forEach((preview) => { if (!next.has(preview.galleryId)) next.set(preview.galleryId, preview); });
               return next;
-            });
+            }));
           } else batch.forEach((id) => requestedGalleries.current.delete(id));
         } catch { batch.forEach((id) => requestedGalleries.current.delete(id)); }
       }
@@ -74,14 +75,15 @@ export function useSavedGalleryPreviews(backend: BackendClient, galleries: Reado
           const result = await backend.artistPreviewList(batch);
           if (!mounted.current) return;
           if (result.ok) {
-            setArtists((current) => {
+            startTransition(() => setArtists((current) => {
+              if (!result.data.some((preview) => !current.has(preview.artist.trim().toLocaleLowerCase()))) return current;
               const next = new Map(current);
               result.data.forEach((preview) => {
                 const key = preview.artist.trim().toLocaleLowerCase();
                 if (!next.has(key)) next.set(key, preview);
               });
               return next;
-            });
+            }));
           } else batch.forEach((artist) => requestedArtists.current.delete(artist));
         } catch { batch.forEach((artist) => requestedArtists.current.delete(artist)); }
       }

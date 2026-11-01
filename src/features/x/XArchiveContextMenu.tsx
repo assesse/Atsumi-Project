@@ -1,9 +1,11 @@
-import {useLayoutEffect,useRef,useState,type MouseEvent as ReactMouseEvent} from "react";
+import {useContext,useLayoutEffect,useRef,useState,type MouseEvent as ReactMouseEvent} from "react";
 import {createPortal} from "react-dom";
 import {xError} from "./api";
-import {validXArchiveId,type XArchiveApi,type XArchiveRecord,type XCapturePost} from "./xArchiveApi";
+import {validXArchiveAsset,validXArchiveId,type XArchiveApi,type XArchiveAsset,type XArchiveRecord,type XCapturePost} from "./xArchiveApi";
+import {ArchiveSearchContext} from "./XArchiveSearchContext";
+import {ContextMenuLabel} from "../../components/ContextMenuLabel";
 
-type MenuBinding={record:XArchiveRecord;post:XCapturePost;api:XArchiveApi;anchor:HTMLElement;restore:HTMLElement|null;x:number;y:number};
+type MenuBinding={record:XArchiveRecord;post:XCapturePost;api:XArchiveApi;asset?:XArchiveAsset;anchor:HTMLElement;restore:HTMLElement|null;x:number;y:number};
 const visible=(node:HTMLElement)=>{
   if(!node.isConnected||document.hidden)return false;
   for(let current:HTMLElement|null=node;current;current=current.parentElement){
@@ -21,13 +23,16 @@ const validPost=(record:XArchiveRecord,post:XCapturePost)=>{
 };
 
 /** An explicit local action: no remote reads and no live-feed cache identity. */
-export function useArchiveContextMenu(record:XArchiveRecord,post:XCapturePost,api:XArchiveApi){
+export function useArchiveContextMenu(record:XArchiveRecord,post:XCapturePost,api:XArchiveApi,asset?:XArchiveAsset){
+  const search=useContext(ArchiveSearchContext);
   const [opened,setOpened]=useState<MenuBinding|null>(null),[error,setError]=useState("");
-  const live=useRef({record,post,api});live.current={record,post,api};
+  const live=useRef({record,post,api,asset,search});live.current={record,post,api,asset,search};
   const current=useRef<MenuBinding|null>(null),menu=useRef<HTMLDivElement>(null),button=useRef<HTMLButtonElement>(null);
   const mounted=useRef(false),revision=useRef(0);
   const owns=(value:MenuBinding)=>mounted.current&&live.current.record===value.record&&live.current.post===value.post
-    &&live.current.api===value.api&&visible(value.anchor)&&validPost(value.record,value.post);
+    &&live.current.api===value.api&&live.current.asset===value.asset&&visible(value.anchor)&&validPost(value.record,value.post);
+  const searchable=(value:MenuBinding)=>!!value.asset&&record.assets.includes(value.asset)&&value.asset.postId===post.id
+    &&validXArchiveAsset(value.asset.name)&&["image","poster"].includes(value.asset.kind);
   const dismiss=(restore=false)=>{
     const previous=current.current;current.current=null;revision.current++;setOpened(null);
     if(restore&&previous?.restore&&visible(previous.restore))previous.restore.focus({preventScroll:true});
@@ -35,7 +40,7 @@ export function useArchiveContextMenu(record:XArchiveRecord,post:XCapturePost,ap
   useLayoutEffect(()=>{
     mounted.current=true;current.current=null;revision.current++;setOpened(null);setError("");
     return()=>{mounted.current=false;current.current=null;revision.current++;};
-  },[record,post,api]);
+  },[record,post,api,asset,search]);
   const shown=opened&&opened.record===record&&opened.post===post&&opened.api===api?opened:null;
   useLayoutEffect(()=>{
     if(!shown)return;
@@ -52,7 +57,10 @@ export function useArchiveContextMenu(record:XArchiveRecord,post:XCapturePost,ap
       else if(event.key==="Tab")dismiss(true);
       else if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Home","End","a","A","d","D"].includes(event.key)){
         // While this menu owns focus, do not move the underlying local photo.
-        event.preventDefault();event.stopImmediatePropagation();button.current?.focus({preventScroll:true});
+        event.preventDefault();event.stopImmediatePropagation();
+        const items=[...element.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')],index=items.findIndex(item=>item===document.activeElement);
+        const next=event.key==="End"?items.length-1:event.key==="Home"?0:event.key==="ArrowUp"?(index-1+items.length)%items.length:event.key==="ArrowDown"?(index+1)%items.length:Math.max(0,index);
+        items[next]?.focus({preventScroll:true});
       }
     };
     window.addEventListener("pointerdown",outside,true);window.addEventListener("contextmenu",outside,true);
@@ -71,7 +79,7 @@ export function useArchiveContextMenu(record:XArchiveRecord,post:XCapturePost,ap
     if(!visible(target)||!validPost(record,post))return;
     const focus=document.activeElement instanceof HTMLElement&&document.activeElement!==document.body?document.activeElement:null;
     const anchor=event.currentTarget,rect=(focus&&anchor.contains(focus)?focus:anchor).getBoundingClientRect();
-    const next={record,post,api,anchor:target,restore:focus,x:event.clientX||rect.left+12,y:event.clientY||rect.top+Math.min(rect.height,24)};
+    const next={record,post,api,asset,anchor:target,restore:focus,x:event.clientX||rect.left+12,y:event.clientY||rect.top+Math.min(rect.height,24)};
     current.current=next;setOpened(next);
   };
   const openSource=()=>{
@@ -83,10 +91,17 @@ export function useArchiveContextMenu(record:XArchiveRecord,post:XCapturePost,ap
       });
     }catch(cause){if(request===revision.current&&owns(value))setError(xError(cause));}
   };
+  const findSource=()=>{
+    const value=current.current,action=live.current.search;
+    if(!value||!action||!owns(value)||!searchable(value)||!value.asset){dismiss();return;}
+    dismiss();const request=revision.current;
+    void action(value.record,value.post,value.asset).catch(cause=>{if(request===revision.current&&owns(value))setError(xError(cause));});
+  };
   const contextMenu=<>
     {shown?createPortal(<div className="x-archive-context-menu" role="menu" aria-label="보관 게시물 메뉴" ref={menu}
       onContextMenu={event=>{event.preventDefault();event.stopPropagation();}} onClick={event=>event.stopPropagation()}>
-      <button ref={button} type="button" role="menuitem" onClick={openSource}>외부 브라우저에서 열기</button>
+      <button ref={button} type="button" role="menuitem" onClick={openSource}><ContextMenuLabel icon="external">외부 브라우저에서 열기</ContextMenuLabel></button>
+      {search&&searchable(shown)?<button type="button" role="menuitem" onClick={findSource}><ContextMenuLabel icon="search">{shown.asset?.kind==="poster"?"썸네일로 검색 (기본)":"작가·원본 찾기"}</ContextMenuLabel></button>:null}
     </div>,document.body):null}
     {error?<p className="x-archive-error" role="alert">{error}</p>:null}
   </>;

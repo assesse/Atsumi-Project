@@ -1,0 +1,67 @@
+{
+  "id": "chzzk-rolling-offload-20261023",
+  "status": "implementation-and-synthetic-tests-passed; live-app-acceptance-pending",
+  "latestUserRequest": "녹화 중에도 일정 단위로 병합해서 D로 옮기면 되잖아. SSD 공간 때문에 녹화가 끊기지 않게 개선해줘.",
+  "originals": [
+    "2026-10-23 current direct request",
+    "01a0cc94-1da0-7272-b7d8-a84404baf0d2 / 01a0cc94-1e2c-7f23-a34f-e83c82056707",
+    "01a12a4c-724c-7d13-801d-3d92da01fe1e",
+    "01a0862c-6058-7442-a6fe-38d660288ee2"
+  ],
+  "supersedes": "CHZZK_SSD_STAGING_20260923.md restriction that archive transfer starts only after the entire recording ends",
+  "preserves": [
+    "Same official incoming video, no additional downloader or player restart",
+    "Original compressed media, journal indexes and chat clocks unchanged",
+    "Full merge decode and SHA-256 proof before cleanup; no unverified media deletion",
+    "New-recording-only SSD policy; captured destination and opt-in unchanged",
+    "Native-owned paths, no-follow and pinned-directory checks, fail closed on collisions",
+    "Existing recordings and user files are never development test fixtures"
+  ],
+  "plan": [
+    "Reuse verified 180-second/48-MiB progressive ranges",
+    "Copy each completed range and its original fragments to the captured archive destination; verify each copy and persist a durable receipt before removing only matching SSD copies",
+    "Resolve archived range media through verified receipts while the growing tail remains on SSD",
+    "After capture closes, consolidate the remaining immutable bundle on the destination before existing final merge and cleanup",
+    "Reserve space for resident unoffloaded bytes rather than lifetime recorded bytes",
+    "Defer unbounded Final/Cleanup/end-Archive while any capture is active; cooperatively preempt owned background jobs without cancelling capture",
+    "Drain and fence recording ancillary asset writers before ended-recording archive publication"
+  ],
+  "acceptance": [
+    "Append continues while prior ranges copy and clean; no packet identity change",
+    "Cancellation, unavailable/full destination and collisions preserve SSD inputs",
+    "Crashes at copy, receipt, publication and cleanup boundaries recover twice idempotently",
+    "No symlink, junction, traversal, replaced directory or hard-link deletion",
+    "Active replay handles and original video/chat timing survive migration",
+    "Final merge still rereads and verifies every retained original on the destination",
+    "Synthetic Windows cross-volume checks and actual app validation are reported separately"
+  ],
+  "verification": {
+    "date": "2026-10-23",
+    "browserFocused": "159 passed, 0 failed, 10 ignored; fresh pass after canonical-path repair",
+    "replayAssetsFocused": "16 passed, 0 failed",
+    "realToolsProgressiveRegression": "Explicit ignored synthetic FFmpeg progressive publish/replay/final export passed on the final test binary",
+    "realToolsRollingCrossVolume": "Explicit ignored synthetic C temp -> new D:/Astumi/atsumi-rolling-fixture-* test passed: live range offload/replay, retained original SHA, unmerged tail consolidation, final full A/V decode, source clock timeline, verified cleanup, chat preservation and twice recovery",
+    "repairedDuringVerification": "The first real cross-volume test exposed an unprefixed Windows destination alias rejected by read-only owned_root. saved_root now canonicalizes the verified destination base consistently with destination(); added a pure regression and reran the cross-volume test successfully",
+    "safetyCases": [
+      "D-only receipt, C/D cleanup-completion mismatch and partial SSD unlink recover twice",
+      "Cancelled transfer, destination collision, source mutation and malicious byte totals preserve originals",
+      "Append after worker snapshot and while eviction phase is fenced does not lose the acknowledged tail",
+      "Existing replay lease blocks eviction and new replay cannot race through the eviction phase",
+      "D publication with incomplete C cleanup blocks final merge until cleanup succeeds",
+      "Owned background preemption does not set global shutdown or cancel capture; cleanup/archive requeue differs from shutdown",
+      "Legacy metadata defaults to rolling=false; pending/running ancillary writers fence transfer"
+    ],
+    "pending": [
+      "Installed-app UI and real live-broadcast acceptance; app not started and real recording files/settings untouched",
+      "Sustained multi-channel live capture/copy throughput under disk pressure and prolonged replay lease"
+    ],
+    "diffCheck": "git diff --check passed; existing repository CRLF normalization warnings only"
+  },
+  "operationalLimits": [
+    "The confirmed-SSD start threshold remains 20 GiB; active safety headroom remains 10 GiB plus resident original bytes and segment reserve",
+    "An open in-app replay conservatively delays migration of that recording; a short eviction phase rejects a new replay with a retryable busy response",
+    "If at least one channel records continuously, final single-file export, source cleanup and stopped-recording consolidation may remain queued; verified range replay and archived originals remain available",
+    "Destination unavailable/full, corruption or another writer is not completion; retain inputs and retry with the existing backoff",
+    "Actual installed-app/UI/live-broadcast acceptance is pending; passing synthetic fixtures is not claimed as live verification"
+  ]
+}

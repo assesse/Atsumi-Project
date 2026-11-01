@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-25",
+  "state": "implemented-specified-supported-targets-actually-verified-with-content-and-entry-scope-limits",
+  "actualBGD20261026": {
+    "outcome": ".runtime/requirements-audit/20261026-bgd-verification-outcome.json",
+    "hitomi": "Fixed supported link opened matching #4234573,57-page Floating Detail. No download/library mutation.",
+    "ordinary": "Final rebuilt development app launched without the opt-in verification control; actual home feed and own Likes rendered. App-owned graceful exit and task-layer cleanup completed.",
+    "wrappedX": "A real Lens Google-goto result also opened the matching native X preview. Other supported target identities/entry kinds retain their previous actual matrix below.",
+    "limits": "Passing a specified destination is not blanket playback/account acceptance for all resources. Natural primary home-feed multi-video entry and some Lens wrapper/expiry cases remain explicitly open. The historical actual field below retains the pre-BGD deferral status."
+  },
+  "originals": [
+    "01a05948-cd33-7c23-a67c-17509e6ae5ab: Danbooru-looking SauceNAO result fails to open",
+    "Current direct request: 그럼 수정해줘. 단부루뿐 아니라 픽시브 같은 다른 지원 플랫폼 링크도 앱 안에서 제대로 열리는지 실제로 확인해주고.",
+    "01a16e60-2afc-71b2-b1d4-f0e8c794ab66: 단부루나 픽시브처럼 앱에서 지원하는 플랫폼은 앱으로 연결해줘",
+    "Current follow-up: 검증 코드 때문에 멈추는 것부터 수정하고 지원 플랫폼 링크를 실제로 확인; explicit exception to terminate only hung PID44324"
+  ],
+  "audit": ".runtime/requirements-audit/20261025-supported-link-repair-preedit.json",
+  "startupFollowupAudit": ".runtime/requirements-audit/20261025-supported-link-startup-repair-preedit.json",
+  "diagnosis": ".runtime/requirements-audit/20261025-supported-link-window-diagnosis.json",
+  "preserves": "docs/requirements/x-parallel-source-search-20261025.json",
+  "decisions": [
+    "Use the managed main Window for showing, restoring and focusing a supported destination. Additional visible or hidden native Webviews do not invalidate the host Window.",
+    "Keep native indexed selection, trusted-main IPC, exact URL classification and canonical target validation, pending delivery, acknowledgment and X generation fences.",
+    "Every destination enters its existing feature workflow. Navigation does not save media, start recording, send reactions or change authentication/privacy settings.",
+    "An explicit debug-only fixed-index, nonce-bound control may exercise the real full application and existing sessions. It accepts no arbitrary URL input or new privileged IPC, is off in normal launches and excluded from release compilation.",
+    "Actual destination operation is reported separately from unit tests. Missing/deleted resources, authentication and provider failures must remain explicit; selecting the platform alone is not a completed detail check.",
+    "Debug verification must return from the main page-load handler immediately. URL queries, native child creation and the control window are created on a worker; the initial about:blank control is rendered explicitly."
+  ],
+  "acceptance": [
+    "Real multi-Webview host lookup succeeds while native child views remain registered and hidden.",
+    "Canonical and legacy Danbooru post links reach the exact requested post in Atsumi.",
+    "Pixiv creator/artwork links use the existing in-app artist/reader paths.",
+    "Pinterest, Hitomi, YouTube, SOOP, CHZZK and X preserve their supported destination kinds and current behavior.",
+    "Actual desktop clicks and target identities are recorded with every unverified content/account path identified.",
+    "Development app is returned to a normal non-probe launch after verification, with user data preserved."
+  ],
+  "verification": {
+    "native": "3 supported-link tests pass; multi-view regression exercises 14 supported destination forms twice, with visible then hidden native child.",
+    "frontend": "9 supported platform/search test files, 526 tests passed; full TypeScript check passed.",
+    "actual": "2026-10-25 actual PID46464/43464: legacy/current Danbooru exact12439739 Floating Detail; Pixiv artists32715112/4912 and artwork144440262 existing preview; Pinterest exact621004236103700020 image preview, including repaired first activation; YouTube film and NASA channel list; SOOP aflol LCK_KR VOD list; CHZZK valid bfe2a317d2b5ffb300b5af556a727afa named slot; X NASA original profile and neutral four-video post preview. Latest PID44604 first incoming YouTube aqz-KE-bpKQ link loaded the exact title/thumbnail without retry; original movie played0:02 through2:41 and normal viewing-end returned Play. No save/favorite/auth/recording writes. Hitomi and ordinary-launch UI verification are now explicitly deferred by latest user direction. Historical matrix remains in .runtime/requirements-audit/20261025-remaining-qa-outcome.json; latest pending batch in20261025-deferred-computer-use.json."
+  }
+}

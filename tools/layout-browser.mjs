@@ -129,7 +129,9 @@ try {
   const portFile = path.join(profile, "DevToolsActivePort");
   let port, endpoint;
   for(let attempt=0;attempt<100;attempt++){
-    if(child.exitCode!==null)throw Error("Offline browser did not start");
+    // Edge can exit its launcher successfully before the browser child writes
+    // DevToolsActivePort. A zero exit is not a failure; keep the bounded wait.
+    if(child.exitCode!==null&&child.exitCode!==0)throw Error("Offline browser did not start: "+child.exitCode);
     try {
       const lines=fs.readFileSync(portFile,"utf8").trim().split(/\r?\n/);
       if(/^\d+$/.test(lines[0]??"")&&lines[1]?.startsWith("/devtools/browser/")){[port,endpoint]=lines;break;}

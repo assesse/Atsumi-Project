@@ -1,0 +1,61 @@
+{
+  "id": "hitomi-group-review-20261031",
+  "state": "integrated_and_available_validation_complete",
+  "originals": [
+    {
+      "threadId": "01a089ee-56ed-7322-a750-c034423826c2",
+      "turnId": "01a191ae-acc2-7230-9f03-1aabf9679c7e",
+      "itemId": "01a191ae-ad57-7d72-9157-d6bb72873ceb",
+      "text": "그럼 제안한 합본 중심 구조로 개선해줘. 불확실한 판본도 여러 개를 같이 비교할 수 있게 하고, Ctrl로 선택한 페이지는 유지해줘. 녹화는 중단하지 말고 끝난 뒤 수정본 반영하고 검증까지 해줘. 설명을 늘어놓지 말고 레이아웃/UI 자체가 별도 설명 없이 이해되도록."
+    }
+  ],
+  "audit": {
+    "prior": ".runtime/requirements-audit/20261031-containment-current-original.json",
+    "inventory": ".runtime/requirements-audit/20261030-cpu-work-inventory.json",
+    "coverage": "Active28 and archived3, both EOF. New current latest4 reaches previously read prior turn. Other Atsumi chat revisions unchanged. Reuse fully read previous snapshot; policy/performance and7 newly added contracts fully read in prior batch; no new document changes.",
+    "unavailable": [
+      "Original handoff01a03f16",
+      "Unidentified historic analysis1/2",
+      "Historical attachment pixels outside snapshots",
+      "Unlisted/inaccessible sources"
+    ],
+    "integrationPreflight": ".runtime/containment-fix-20261031/integration-preflight.json"
+  },
+  "changes": [
+    "One keeper with directly related editions, completed rows folded; no repeated default A/B below confirmed containment group.",
+    "Multiple uncertain editions in simultaneous keeper-aligned columns. No transitive Ai/Aj identity inference.",
+    "Per-relation Ctrl/Shift selections survive comparison columns, filters and unrelated review-revision advances; real fingerprint/mapping changes require re-selection.",
+    "Compact identity/status/action layout; no explanatory banners. Uncertain editions never automatically batch-excluded.",
+    "Preserve previous pending-quarantine retry fix; batch partial success keeps unresolved selection."
+  ],
+  "superseded": [
+    "20261017 candidate-switch selection clearing replaced by per-relation stable selections; evidence-change safety retained."
+  ],
+  "invariants": [
+    "No active recording interruption or live watched-source edits before idle. Stage only now.",
+    "No live DB writes/forced completion/history deletion or real exclusion for tests.",
+    "Preserve integrity/profile/policy/fingerprint/revision/preservation witnesses and original media.",
+    "No commit/push/release/PC shutdown."
+  ],
+  "acceptance": [
+    "Pure direct/reverse edge and multi-column alignment tests; gaps remain distinct.",
+    "UI Ctrl/Shift selection retained through hide/reopen/filter/focus; unrelated revision preserves, changed evidence invalidates.",
+    "Partial batch1/4 retains3 and displays exact failed ID; fresh thumbnail revisions.",
+    "Typechecks/scoped tests/isolated responsive browser checks with screenshots.",
+    "After all recording/writers finish, independent idle recheck; normal app-owned exit, guarded integration/build/restart and actual app operation, separately qualified."
+  ],
+  "stage": ".runtime/containment-fix-20261031/stage",
+  "verification": ".runtime/containment-fix-20261031/group-verification.json",
+  "integrationManifest": ".runtime/containment-fix-20261031/integration-manifest.json",
+  "followupAutomationId": "ui",
+  "completedAt": "2026-10-31T12:51:45.401Z",
+  "finalVerification": ".runtime/containment-fix-20261031/group-verification.json",
+  "actualAppVerification": ".runtime/containment-fix-20261031/actual-app-qa/checks.json",
+  "scopeLimits": [
+    "Ctrl/Shift selection through filters, close/reopen, virtual scroll and evidence revision is verified by isolated React browser and automated regression. Native modifier+mouse combination was not repeated because the Computer Use API has no hold-modifier click operation.",
+    "Responsive1920x1080,1280x720,736x900 checks used isolated browser. Actual native screen was2887x1281; attempted window sizing did not establish1920x1080 and is not claimed.",
+    "No live album exclusion or page merge was invoked as a test. Mutation safety covered by isolated native quarantine tests and frontend batch fixtures; app automatic recovery was observed separately.",
+    "Capture3591810-scrolled.png showed an occluding Codex window; excluded from UI evidence. Use3591810-scrolled-verified.png and associated accessibility text."
+  ],
+  "followupStatus": "PAUSED"
+}

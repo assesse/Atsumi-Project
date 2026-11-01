@@ -1,0 +1,43 @@
+{
+  "date": "2026-10-25",
+  "state": "implemented_actual_dual_search_and_google_photo_response_verified_account_route_acceptance_limited",
+  "originalReference": "Current conversation: latest publisher automatic-link request and following concise layout/parallel Google/supported-platform navigation request",
+  "originalRequests": [
+    "게시자 프로필 링크 확인은 별도 버튼으로 만들지말고, 바로 그냥 같이 알려줘.",
+    "설명을 주구장창쓰지말고, 레이아웃 자체가 그것을 설명하게 구현해.",
+    "saucenao말고 google검색도 항상 병렬로 요청하고, 그것도 결과가 없는 경우 확인 할 수 있게 해줘.",
+    "단부루나 픽시브처럼 앱에서 지원하는 플랫폼은 앱으로 연결해줘"
+  ],
+  "audit": ".runtime/requirements-audit/20261024-parallel-search-preedit.json",
+  "supersedes": [
+    "x-local-search-and-source-evidence-20261024: separate explicit profile lookup actions and single provider selection by media kind",
+    "Earlier no-automatic-second-provider rule is replaced by explicit dual-provider search after consent naming both destinations",
+    "Supported native resources open through existing platform workflows instead of always opening an external browser",
+    "Repeated provenance/usage paragraphs replaced by original-publisher and provider-result sections, brief status labels and optional transfer details"
+  ],
+  "rules": [
+    "Automatically read only the original publisher's declared links, independent of provider search progress and action locking. Do not follow arbitrary low-score result publishers or infer authorship.",
+    "SauceNAO and Google Lens each run independently on the same frozen selection. Source URL versus sanitized pixels remains explicit; do not send account credentials or video contents.",
+    "Version remembered consent for both destinations; previous single-provider consent is not reused silently.",
+    "Each provider has its own results, status, manual verification, cancellation and original browser lifetime. First results remain usable while another provider runs or waits.",
+    "No results or extraction failure retains same-job original browser if created; opening it does not repeat upload.",
+    "Native indexed destination validation precedes app navigation. Exact supported targets reuse their existing app detail/creator flow. Opaque redirects and unsupported targets are not guessed.",
+    "Preserve archive identity, source context, privacy/generation cancellation, existing card/favorite/download semantics and resource limits.",
+    "Parallel agents implement and review offline; only root performs the bounded actual UI batch. No goal, publishing or data cleanup."
+  ],
+  "verification": {
+    "actual": ".runtime/requirements-audit/20261025-parallel-search-actual-qa.json",
+    "native": ".runtime/requirements-audit/20261025-dual-provider-native-outcome.json",
+    "navigation": ".runtime/requirements-audit/20261025-supported-result-navigation-handoff.json",
+    "liveEvidence": "Isolated actual desktop: downloaded image search, simultaneous SauceNAO/Lens responses and same-job original browser for each. Actual Lens photo/title extraction repaired and verified with neutral-image host probe, then exact response replayed in production panel at wide/narrow sizes.",
+    "limits": "Authenticated publisher-link success and every supported platform destination have not been clicked end to end. Empty/failure rendering and navigation adapters have automated coverage; both original browsers were tested on successful actual responses. Opaque Google redirects remain external when no exact supported destination is known."
+  },
+  "acceptance": [
+    "No publisher lookup button; profile links automatically appear and pending lookup does not disable image search/results",
+    "Both service results render independently and same original browser remains inspectable on empty/failure",
+    "Late/cancelled/context-changed replies do not reappear; old consent is not broadened",
+    "Supported destinations open the intended existing app content",
+    "Wide and small layouts remain readable and keep close controls reachable",
+    "Actual app requests and navigation verified separately from offline synthetic fixtures"
+  ]
+}

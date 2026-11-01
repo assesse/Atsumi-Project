@@ -10,8 +10,10 @@ import {
   ThumbnailClient,
   ThumbnailProvider,
 } from "./thumbnail";
+import "./typography.css";
 import "./styles.css";
 import "./atsumi-ink.css";
+import "./scrollbars.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Atsumi root element is missing");

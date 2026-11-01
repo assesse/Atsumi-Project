@@ -167,14 +167,25 @@ pub(super) fn ensure_headroom(
         .recordings
         .iter()
         .filter(|r| {
-            r.archive.is_some()
+            r.archive
+                .as_ref()
+                .is_some_and(|a| a.status != archive::ArchiveStatus::Complete)
                 && r.media_removed_at.is_none()
                 && r.merge
                     .as_ref()
                     .is_none_or(|m| m.status != BrowserMergeStatus::Complete)
-                && Path::new(&r.output_dir).starts_with(volume)
+                && r.archive
+                    .as_ref()
+                    .is_some_and(|a| Path::new(&a.source_dir).starts_with(volume))
         })
-        .fold(HEADROOM, |sum, r| sum.saturating_add(r.bytes_written));
+        .fold(HEADROOM, |sum, r| {
+            let evicted = if state.unverified.contains(&r.id) {
+                0
+            } else {
+                r.progressive.as_ref().map_or(0, |p| p.offloaded_bytes)
+            };
+            sum.saturating_add(r.bytes_written.saturating_sub(evicted))
+        });
     if fs2::available_space(volume).map_err(|_| storage())? < reserve.saturating_add(MAX_SEGMENT) {
         return Err(error("BROWSER_CAPTURE_DISK_FULL", "SSD의 녹화·병합 여유 공간이 부족합니다. 확정된 영상은 보존됩니다. 공간을 확보한 뒤 다시 녹화해 주세요.", true));
     }

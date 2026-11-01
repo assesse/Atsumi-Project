@@ -1,0 +1,37 @@
+{
+  "id": "hitomi-ui-postprocess-20261031",
+  "originals": [
+    "01a089ee-56ed-7322-a750-c034423826c2 / 01a18d42-c7b2-7013-9c34-3bfc478a7cef / 01a18d42-c950-7010-a8a5-e6ef7c53064d",
+    "01a089ee-56ed-7322-a750-c034423826c2 / 01a18dc4-7dab-7861-9310-01198a50d0d6 / 01a18dc4-7f81-73a1-b65f-cdd86efd1ffe"
+  ],
+  "audit": {
+    "baseline": ".runtime/requirements-audit/20261030-performance-modes-inventory.json",
+    "coverage": "Fresh history inventory:28 active/EOF,3 archived/EOF. Verified historical source SHA256s85487C5F,799F75C9,7DDBD2B0 unchanged; reuse fully read coverage recorded by prior inventory/library batch. Read current latest10 turns and Danbooru latest8, including newest three-mode instruction. Newly discoverable UI/UX chat read through all54 turns to EOF; common/platform chat3 turns/EOF. Original handoff text present in UI/UX final turn.",
+    "documents": "Baseline290 documents compared:286 unchanged. Changed implementation policy, processing performance, background image work and native menu contracts read; new three-level processing and library responsiveness contracts read. Preserve all72 prior implementation batches.",
+    "unavailable": ["Original durable handoff chat01a03f16 (handoff text available)", "Unidentified historical analysis1/2 chats", "Historical attachment pixels not in source snapshots", "Other main fresh read exceeds provider response size; unchanged revision1793109867 and verified full snapshot reused"]
+  },
+  "supersedes": [
+    "Wait until November1 / empty persisted queue: latest user says start now because Atsumi exited. No running Atsumi/cargo/rustc process observed. Preserve persisted unfinished jobs.",
+    "Coupled parent-navigation return on closing detail/search: suspend automatic cross-context return, retain independent tabs, history, close/undo and stored origins.",
+    "Deferred Computer Use for this batch: user explicitly authorizes BGD, falling back to Computer Use. BGD host dead/disconnected; use permitted fallback."
+  ],
+  "changes": [
+    "Measured full hash preparation96 synthetic640x960 images:35.5s versus comparison3.4ms. Route the same Triangle grayscale resizes through image0.25.10 DynamicImage::resize_exact, whose inspected implementation calls the same imageops::resize but compiles inside the optimized dependency. Compare all four output planes byte-for-byte and full hash/classification regressions; no profile version or image-decoder limit changes.",
+    "Hash hot-path follow-up: reuse pixel times horizontal cosine before each vertical frequency, retaining each coefficient's multiply/accumulate order bit-for-bit. Differential coefficient/hash regression and bounded profile required before adoption.",
+    "Show coarse remaining queue ETA beside activity title using existing snapshot only, including hashing/verifying; unknown/stale/error is not zero/completed.",
+    "Remove close-triggered returnToOrigin navigation, preserving other browsing and retained state.",
+    "Allow Ctrl+A from album-list browsing context before card focus, but preserve inputs, editors, dialogs, detail/preview and unrelated panels.",
+    "Benchmark exact necessary-condition prefilter before expensive page metrics and rolling-row alignment scores. Preserve floating point accumulation, tie-breaking, exact-SHA exception, malformed-hash behavior and all matching tiers.",
+    "Evaluate available GPU path with synthetic data; adopt only if measured benefit, equivalent output, bounded resources and no security/integrity weakening. No mandatory GPU dependency."
+  ],
+  "invariants": ["Preserve existing three processing modes and global permits", "No changes to integrity validation, cached hash versions, candidate eligibility or duplicate thresholds", "No source-ID validation bypass", "No cancelling/retrying/deleting user jobs", "Preserve previous library responsiveness and unrelated dirty files", "No account writes, commit, push, release or PC shutdown"],
+  "acceptance": [
+    "ETA covers active postprocessing and unknown/error cases without new polling; title layout remains compact.",
+    "Closing search does not reopen floating detail; closing detail does not navigate history/view. Independent close/restore/selection work.",
+    "Ctrl+A works before any album selection, preserves input text selection and unrelated foreground layers.",
+    "Differential native tests compare every metric, alignment and classification to reference, including exact hashes, all tiers, invalid input and ties; bounded before/after timing.",
+    "Relevant regressions, typecheck, frontend/native builds and actual app interaction; explicitly report unverified paths instead of claiming perfect performance."
+  ],
+  "verification": ".runtime/requirements-audit/20261031-hitomi-ui-postprocess-verification.json",
+  "state": "Implemented and built.132 unique frontend and58 native automated checks passed. Actual Computer Use verified title ETA, initial Ctrl+A, editing selection, and independent search/detail close. GPU synthetic benchmark completed but not integrated. Existing startup recovery leaves1332 artifact-less jobs interrupted; existing queue query measured6664ms. Both reported without retry/cancellation or unsupported all-bottlenecks-fixed claim."
+}

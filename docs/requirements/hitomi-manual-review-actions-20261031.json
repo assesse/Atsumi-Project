@@ -1,0 +1,63 @@
+{
+  "id": "hitomi-manual-review-actions-20261031",
+  "state": "implemented_and_verified",
+  "originals": [
+    {
+      "threadId": "01a089ee-56ed-7322-a750-c034423826c2",
+      "turnId": "01a1924a-7f44-72e2-95b2-140cd825dc93",
+      "items": [
+        "01a1924a-7fb2-76f1-9828-19526459cbbf",
+        "01a1924b-b97a-7280-a106-17cdfd40ec1e"
+      ]
+    }
+  ],
+  "request": [
+    "Rename existing manual-only sequential review entry to 검토 필요 목록; do not include resolved/cancelled downloads.",
+    "Use 근거 / 복원 / 승인 labels. Approval is exposed only for pending/stale manual-review records that have not been acknowledged.",
+    "Trust completed automatic decisions without mandatory user approval; preserve evidence and explicit list restore."
+  ],
+  "audit": {
+    "reused": ".runtime/containment-fix-20261031/integration-preflight.json",
+    "inventory": "20261030-cpu-work-inventory.json",
+    "activeThreads": 28,
+    "archivedThreads": 3,
+    "bothEOF": true,
+    "currentLatestReached": "01a191ae-acc2-7230-9f03-1aabf9679c7e",
+    "otherRevisions": {
+      "main": 1793109867,
+      "danbooru": 1793318688,
+      "common": 1792074984,
+      "ui": 1792073766
+    },
+    "snapshotHashesVerified": true,
+    "documents": "286 baseline hashes plus8 newer contracts checked. Current policy/performance and changed contracts reused from fully read integration snapshot or reread; current correction read directly.",
+    "unavailable": [
+      "Original handoff01a03f16",
+      "Unidentified historic analysis1/2",
+      "Historical attachment pixels outside snapshots",
+      "Unlisted/inaccessible sources"
+    ]
+  },
+  "invariants": [
+    "No automatic acknowledgement migration or new automatic exclusion policy. Existing approval remains record acknowledgement; unresolved album decisions remain required.",
+    "Preserve actual pending review collection/pagination/revision guards, Ctrl/Shift selections, restoration file semantics and original data.",
+    "No live file exclusion/merge/restore/approval merely for testing.",
+    "Normal app-owned shutdown only; no recording drain or kill; no commit/push/release."
+  ],
+  "acceptance": [
+    "State matrix resolved/cancelled has no approval; pending/stale unacknowledged has approval; acknowledged has no repeat approval.",
+    "Manual queue excludes terminal jobs and still covers all pending pages.",
+    "Short labels consistent in activity and evidence dialog; completed automation does not contribute acknowledgement nag badges.",
+    "Scoped regression, typecheck/build, actual display/navigation validation without user data decisions."
+  ],
+  "verification": ".runtime/manual-review-actions-20261031/verification.json",
+  "completedAt": "2026-10-31T14:26:03.556Z",
+  "validation": {
+    "regressionTests": 134,
+    "typecheck": "app + node passed",
+    "build": "frontend + developer launch passed",
+    "actualUi": "labels, per-state approval visibility, completed evidence, pending-only queue entrance verified",
+    "actualDataMutations": "not performed; isolated regression coverage",
+    "additionalDesktopNavigation": "stopped on user input; not required for unchanged navigation implementation"
+  }
+}

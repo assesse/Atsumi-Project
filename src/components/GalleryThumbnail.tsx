@@ -289,9 +289,13 @@ export function GalleryThumbnail({
     return () => observer.disconnect();
   }, [identity, priority]);
 
+  // Parents may create an equivalent structured key on every scroll render.
+  // Include every source field (not just cache identity), so evidence changes
+  // still replace the subscription while unchanged keys keep their live asset.
+  const serializedKey = JSON.stringify(thumbnailKey);
   const request = useMemo(
-    () => ({ key: thumbnailKey, consumer, priority: effectivePriority } as const),
-    [consumer, effectivePriority, thumbnailKey],
+    () => ({ key: JSON.parse(serializedKey) as ThumbnailKey, consumer, priority: effectivePriority } as const),
+    [consumer, effectivePriority, serializedKey],
   );
   const subscribe = useCallback(
     (listener: () => void) => shouldSubscribe
@@ -300,8 +304,8 @@ export function GalleryThumbnail({
     [client, request, shouldSubscribe],
   );
   const getSnapshot = useCallback(
-    () => shouldSubscribe ? client.getSnapshot(thumbnailKey) : deferredSnapshot,
-    [client, shouldSubscribe, thumbnailKey],
+    () => shouldSubscribe ? client.getSnapshot(request.key) : deferredSnapshot,
+    [client, shouldSubscribe, request],
   );
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const asset = snapshot.status === "resolved" ? snapshot.asset : null;
@@ -397,7 +401,7 @@ export function GalleryThumbnail({
           title={snapshot.message}
           style={{ ...fullBleedStyle, display: "grid", placeItems: "center", color: "#64767d", fontStyle: "normal" }}
         >
-          {thumbnailKey.kind === "overlap-review-page" ? <span style={{ padding: 4, fontSize: 11, textAlign: "center" }}>{thumbnailFailureLabel(snapshot.code)}</span> : "×"}
+          {thumbnailKey.kind === "overlap-review-page" ? <span style={{ padding: 4, fontSize: "var(--font-size-min)", textAlign: "center" }}>{thumbnailFailureLabel(snapshot.code)}</span> : "×"}
         </i>
       ) : (
         <i className="thumbnail-loading" aria-hidden="true" />

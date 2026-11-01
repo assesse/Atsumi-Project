@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
+import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
 import { CardContextMenu, isCardControl, useCardContextMenu } from "../../components/CardContextMenu";
 import { splitGalleryTitle } from "../../components/galleryCardLayout";
 import { normalizeImagePreviewWidth } from "../platforms/imagePreviewPreferences";
@@ -20,6 +21,7 @@ export type PixivWorkspaceProps = {
   view: PixivView; onNotice?: (message: string) => void; api?: PixivApi;
   onViewChange?: (view: PixivView) => void;
   previewWidth?: number;
+  supportedLinkRequest?: SupportedLinkRequest | null;
 };
 type Entry = { work: PixivWork; page?: number; download?: PixivDownload };
 type SearchTab = { id: string; label: string; query: string; mode: PixivMode; page: number; items: PixivWork[]; hasMore: boolean; discovery?: PixivDiscovery; homeSuggestions?: PixivHomeSuggestions; homeCursor?: string; appendBusy: boolean; appendError: string; busy: boolean; error: string; token: number; scroll: number; returnDetail?: { value: PixivDetail; page: number; view: PixivView } };
@@ -53,12 +55,13 @@ function PixivImage({ url, title, privacyMode, loader, detail = false }: { url?:
   </div>;
 }
 
-export function PixivWorkspace({ active, runtime, privacyMode, view: outerView, onNotice, onViewChange, api: injected, previewWidth = 180 }: PixivWorkspaceProps) {
+export function PixivWorkspace({ active, runtime, privacyMode, view: outerView, onNotice, onViewChange, api: injected, previewWidth = 180, supportedLinkRequest }: PixivWorkspaceProps) {
   const safeOnly = usePixivSafeOnly(), appliedSafeOnly = useRef(safeOnly);
   const requestSafeOnly = useRef(safeOnly); requestSafeOnly.current = safeOnly;
   const [discoveryOverride, setDiscoveryOverride] = useState(false);
   const view = discoveryOverride ? "explore" : outerView;
   const visibleView = useRef({ active, view, privacyMode }); visibleView.current = { active, view, privacyMode };
+  const handledSupportedLink = useRef<string | null>(null);
   useEffect(() => { if (!active || privacyMode) pixivReadings.clear(); return () => pixivReadings.clear(); }, [active, privacyMode]);
   useEffect(() => setDiscoveryOverride(false), [outerView]);
   const workspace = useRef<HTMLElement>(null);
@@ -386,6 +389,16 @@ export function PixivWorkspace({ active, runtime, privacyMode, view: outerView, 
     catch (reason) { if (token === detailGeneration.current) setDetailError(errorText(reason)); }
     finally { if (token === detailGeneration.current) setDetailLoading(false); }
   };
+  useEffect(() => {
+    if (!active || privacyMode || !accountReady || supportedLinkRequest?.source !== "pixiv" || handledSupportedLink.current === supportedLinkRequest.id) return;
+    handledSupportedLink.current = supportedLinkRequest.id;
+    setDiscoveryOverride(true); onViewChange?.("explore");
+    if (supportedLinkRequest.kind === "artwork") void openDetail(supportedLinkRequest.targetId);
+    else if (supportedLinkRequest.kind === "artist") {
+      detailGeneration.current++; setDetailInput(null); setDetail(null); setReaderOpen(false); setDetailLoading(false);
+      void search(supportedLinkRequest.targetId, "artist", 1, `작가 #${supportedLinkRequest.targetId}`);
+    }
+  }, [active, privacyMode, accountReady, supportedLinkRequest]);
   const closeDetail = useCallback((immediate = false) => {
     setReaderOpen(false);
     detailGeneration.current++; clearTimeout(closeTimer.current);
@@ -538,7 +551,7 @@ export function PixivWorkspace({ active, runtime, privacyMode, view: outerView, 
     <CardContextMenu anchor={context.anchor} close={context.close} label={contextEntry?.work.title ?? "작품"} items={contextEntry ? [
       { id: "open", label: "상세 보기", shortcut: "Enter", action: () => { void openDetail(contextEntry.work, contextEntry.page); } },
       { id: "favorite", label: favorite(contextEntry.work, contextEntry.page) ? "즐겨찾기 해제" : "즐겨찾기", action: () => toggleFavorite(contextEntry.work, contextEntry.page) },
-      { id: "download", label: incomplete.has(contextEntry.work.id) ? "파일 확인 필요" : downloaded.has(contextEntry.work.id) ? "저장 완료" : progress.some(row => row.id === contextEntry.work.id) ? "다운로드 취소" : "원본 다운로드", disabled: contextEntry.work.type === "ugoira" || downloaded.has(contextEntry.work.id), action: () => { if (progress.some(row => row.id === contextEntry.work.id)) void api.cancel(contextEntry.work.id).catch(reason => notice(errorText(reason))); else void download(contextEntry.work); } },
+      { id: "download", icon: incomplete.has(contextEntry.work.id) ? null : downloaded.has(contextEntry.work.id) ? "check" : progress.some(row => row.id === contextEntry.work.id) ? "cancel" : "download", label: incomplete.has(contextEntry.work.id) ? "파일 확인 필요" : downloaded.has(contextEntry.work.id) ? "저장 완료" : progress.some(row => row.id === contextEntry.work.id) ? "다운로드 취소" : "원본 다운로드", disabled: contextEntry.work.type === "ugoira" || downloaded.has(contextEntry.work.id), action: () => { if (progress.some(row => row.id === contextEntry.work.id)) void api.cancel(contextEntry.work.id).catch(reason => notice(errorText(reason))); else void download(contextEntry.work); } },
       { id: "source", label: "Pixiv에서 열기", action: () => openOriginal(contextEntry.work.id) },
       ...(downloaded.has(contextEntry.work.id) ? [
         { id: "folder", label: "저장 폴더 열기", action: () => { void api.libraryAction(contextEntry.work.id, "open").catch(reason => notice(errorText(reason))); } },

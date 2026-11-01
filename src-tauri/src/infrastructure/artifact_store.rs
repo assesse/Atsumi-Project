@@ -238,19 +238,22 @@ impl ArtifactStore for FilesystemArtifactStore {
         reject_symlink_leaf(&final_path)?;
         reject_symlink_leaf(&part_path)?;
         let bytes = normalized_webp_bytes_with_cancellation(page, Some(cancellation))?;
+        let sha256 = {
+            let _image_work = crate::application::image_work_budget::acquire(Some(cancellation))
+                .ok_or_else(DownloadPipelineError::cancelled)?;
+            format!("{:x}", Sha256::digest(bytes.as_ref()))
+        };
         let expected_part = StoredPage {
             source_page_number: page.source_page_number,
             relative_path: part_relative_path.clone(),
             byte_length: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
-            sha256: ArtifactSha256::new(format!("{:x}", Sha256::digest(bytes.as_ref()))).map_err(
-                |error| {
-                    DownloadPipelineError::new(
-                        DownloadPipelineErrorCode::HashMismatch,
-                        error.to_string(),
-                        false,
-                    )
-                },
-            )?,
+            sha256: ArtifactSha256::new(sha256).map_err(|error| {
+                DownloadPipelineError::new(
+                    DownloadPipelineErrorCode::HashMismatch,
+                    error.to_string(),
+                    false,
+                )
+            })?,
             storage_format: ArtifactStorageFormat::Webp,
             source_revision: page.source_revision.clone(),
             verified_at: now_unix_ms(),
@@ -509,7 +512,10 @@ impl ArtifactStore for FilesystemArtifactStore {
                 false,
             ));
         }
-        fs::rename(&source_path, &destination_path).map_err(|_| {
+        fs::rename(&source_path, &destination_path).map_err(|error| {
+            // Keep OS diagnostics without logging user directory names or titles.
+            tracing::warn!(operation = "move_managed_directory", error_kind = ?error.kind(),
+                os_error = error.raw_os_error(), "Managed artifact move failed");
             DownloadPipelineError::new(
                 DownloadPipelineErrorCode::Filesystem,
                 "The managed artifact folder could not be moved atomically",
@@ -659,6 +665,7 @@ fn read_checked_page_bytes(
             false,
         ));
     }
+    let _image_work = crate::application::image_work_budget::acquire(None);
     let bytes = fs::read(&path)
         .map_err(|_| filesystem_error("The verified page could not be read for scanning"))?;
     let actual_sha = format!("{:x}", Sha256::digest(&bytes));
@@ -774,7 +781,7 @@ fn normalized_webp_bytes_with_cancellation<'a>(
         return Ok(Cow::Borrowed(&page.bytes));
     }
     // Hold one slot through decoding, conversion and output validation. The
-    // lower-level decode helpers must not acquire the same budget recursively.
+    // nested decode/hash stages reuse the current thread's slot.
     let _image_work = crate::application::image_work_budget::acquire(cancellation)
         .ok_or_else(DownloadPipelineError::cancelled)?;
     if page.source_format == DownloadSourceImageFormat::Webp {
@@ -871,6 +878,7 @@ fn verify_checkpoint_webp_file(
     relative_path: ArtifactRelativePath,
     expected: &StoredPage,
 ) -> Result<StoredPage, DownloadPipelineError> {
+    let _image_work = crate::application::image_work_budget::acquire(None);
     if expected.storage_format != ArtifactStorageFormat::Webp {
         return Err(DownloadPipelineError::new(
             DownloadPipelineErrorCode::ManifestInvalid,
