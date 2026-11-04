@@ -29,7 +29,7 @@ export function hasReplayableRanges(recording: BrowserRecording): boolean {
 /** Shared by individual and batch actions; never restart work already running. */
 export function canRetryRecording(recording: BrowserRecording): boolean {
   if (recording.mediaRemovedAt != null || recording.deletionPending || recording.summaryPending || recording.storageCheckPending
-    || recording.archive?.status === "copying" || recording.merge?.status === "merging"
+    || !!recording.workProgress || recording.archive?.status === "copying" || recording.merge?.status === "merging"
     || recording.merge?.sourceCleanup?.status === "pending") return false;
   // An active recorder may retry a failed saved-range/archive writer. Batch
   // selection excludes active recordings, but the existing individual repair remains.

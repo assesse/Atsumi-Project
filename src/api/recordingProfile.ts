@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { ApiResult } from "./contracts";
 
-export type RecordingProfile = { name: string | null; image: string | null };
+export type RecordingProfile = { name: string | null; image: string | null; currentImage?: boolean };
 const cache = new Map<string, { at: number; value: Promise<RecordingProfile> }>();
 export function recordingProfile(id: string): Promise<RecordingProfile> {
   if (!isTauri()) return Promise.resolve({ name: null, image: null });

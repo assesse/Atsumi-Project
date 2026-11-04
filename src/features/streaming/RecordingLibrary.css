@@ -97,3 +97,11 @@
 .recording-library-end-reason { color: var(--text-soft); font-size: var(--font-size-min); }
 .recording-library-attempts { margin-top: 18px; color: var(--text-soft); font-size: var(--font-size-min); }
 .recording-library-attempts > summary { cursor: pointer; padding: 10px 0; }
+
+.recording-work {display:flex;flex-direction:column;gap:4px;width:100%;min-width:0;margin-top:6px}
+.recording-work-track {display:block;height:3px;width:100%;overflow:hidden;background:color-mix(in srgb,var(--accent,#d68ca0) 15%,transparent)}
+.recording-work-track > span {display:block;height:100%;background:var(--accent,#d68ca0);transition:width .25s linear}
+.recording-work-track > .is-indeterminate {width:30%;animation:recording-work-sweep 1.8s ease-in-out infinite alternate}
+.recording-work-detail {align-self:flex-end;color:var(--text-muted,#aaa);font-size:inherit}
+@keyframes recording-work-sweep {to{transform:translateX(230%)}}
+@media (prefers-reduced-motion:reduce) {.recording-work-track > .is-indeterminate {animation:none}}

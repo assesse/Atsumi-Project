@@ -147,14 +147,19 @@
 .x-sidebar-controls .x-floating-account-menu button:hover:not(:disabled),.x-sidebar-controls .x-floating-account-menu button:focus-visible{background:#16181c}
 /* Retained native previews: one compact row, no whole-page React recreation. */
 .x-preview-tabs-heading{flex:none;min-width:0;border-bottom:1px solid #2f3336;background:#000}
-.x-preview-tabs{display:flex;align-items:stretch;gap:0;min-width:0;width:100%;height:44px;overflow-x:auto;overflow-y:hidden;overscroll-behavior:contain;}
-.x-preview-tab{display:flex;align-items:center;position:relative;flex:0 0 auto;min-width:100px;max-width:220px;border-right:1px solid #2f3336;color:#71767b}
+.x-preview-tabs{display:flex;align-items:stretch;gap:0;min-width:0;width:100%;height:60px;overflow-x:auto;overflow-y:hidden;overscroll-behavior:contain;}
+.x-preview-tab{display:flex;align-items:center;position:relative;flex:0 0 auto;min-width:170px;max-width:300px;border-right:1px solid #2f3336;color:#71767b}
 .x-preview-tab.is-active{color:#e7e9ea;background:#101113}
 .x-preview-tab.is-active::after{content:"";position:absolute;bottom:0;left:0;right:0;height:3px;background:#1d9bf0;pointer-events:none}
 .x-official-workspace .x-preview-tab>button[role=tab]{display:flex;align-items:center;align-self:stretch;min-width:0;flex:1;padding:0 10px 0 14px;border:0;border-radius:0;white-space:nowrap;text-align:left;font-size:15px;font-weight:600}
-.x-preview-tab>button[role=tab]>span{overflow:hidden;text-overflow:ellipsis}
+.x-preview-tab-avatar{display:grid;place-items:center;flex:0 0 32px;width:32px;height:32px;overflow:hidden;border-radius:50%;background:#202327;color:#71767b;margin-right:8px}
+.x-preview-tab-avatar img{width:100%;height:100%;object-fit:cover}
+.x-preview-tab-avatar svg{width:24px;height:24px}
+.x-preview-tab-copy{display:flex;flex-direction:column;min-width:0;gap:2px}
+.x-preview-tab-name,.x-preview-tab-line{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.x-preview-tab-line{font-size:13px;font-weight:400;color:#8b98a5}
 .x-official-workspace .x-preview-tab>button.x-preview-tab-close{display:grid;place-items:center;flex:0 0 28px;width:28px;height:28px;min-width:28px;min-height:28px;margin:0 6px 0 0;padding:0;border:0;border-radius:50%;line-height:0}
 .x-preview-tab-close>svg{display:block;width:16px;height:16px;vertical-align:initial}
 .x-official-workspace .x-preview-tab>button:hover:not(:disabled){background:#16181c}
 .x-official-workspace .x-preview-tab>button:focus-visible{outline:2px solid #1d9bf0;outline-offset:-2px}
-@media(max-width:700px){.x-preview-tab{max-width:190px}.x-preview-tabs{height:40px}}
+@media(max-width:700px){.x-preview-tab{max-width:240px;min-width:160px}.x-preview-tabs{height:60px}}

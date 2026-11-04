@@ -24,7 +24,8 @@ it("never loads remote profile images and respects privacy", async () => {
   await act(async () => root.render(<RecordedChannel id="recording-1" name="name" image="https://example.invalid/private" />));
   expect(container.querySelector("img")).toBeNull();
   expect(container.querySelector('.recorded-channel-placeholder')).not.toBeNull();
-  expect(container.textContent).toBe("◯name");
+  expect(container.textContent).toBe("name");
+  expect(container.querySelector('[aria-label="기본 채널 프로필"]')).not.toBeNull();
   await act(async () => root.render(<RecordedChannel id="recording-2" privacy />));
   expect(container).toBeEmptyDOMElement(); expect(recordingProfile).not.toHaveBeenCalled();
 });

@@ -334,7 +334,7 @@ pub(super) fn observe(
     }
 }
 
-fn fetch_avatar(source: &str) -> Result<String, String> {
+pub(super) fn fetch_avatar(source: &str) -> Result<String, String> {
     let url = account_avatar_url(source)?;
     let response = reqwest::blocking::Client::builder()
         .user_agent("Atsumi/2.0").timeout(Duration::from_secs(12)).redirect(reqwest::redirect::Policy::none())

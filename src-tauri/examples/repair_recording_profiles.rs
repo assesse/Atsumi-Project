@@ -36,7 +36,7 @@ fn plain(path: &Path) -> Result<PathBuf, Box<dyn std::error::Error>> {
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.len() != 3 || args[2] != "--apply" {
+    if !(args.len() == 3 || args.len() == 4) || args[2] != "--apply" {
         return Err("Expected DATA_DIR BrowserCapture --apply".into());
     }
     let data_dir = plain(Path::new(&args[0]))?;
@@ -58,6 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if entry.id.len() != 32 || !entry.id.bytes().all(|b| b.is_ascii_hexdigit()) {
             return Err("Invalid recording ID".into());
         }
+        if args.get(3).is_some_and(|id| id != &entry.id) { continue; }
         let record = plain(Path::new(&entry.output_dir))?;
         if record != root.join(&entry.id) {
             return Err("Recording outside explicit archive".into());

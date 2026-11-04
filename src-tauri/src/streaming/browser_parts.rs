@@ -221,6 +221,15 @@ pub(crate) fn read_part_segments(
     Ok(segments)
 }
 
+pub(crate) fn needs_final_tail(r: &BrowserRecording) -> bool {
+    r.status != BrowserRecordingStatus::Recording
+        && r.ending.as_ref().is_none_or(|e| e.reason != "checking")
+        && !archive::offload::needs_finalization(r)
+        && r.progressive.as_ref().is_some_and(|p| {
+            p.segment_count > 0 && p.segment_count < r.segment_count && p.last_error.is_none()
+        })
+        && r.merge.as_ref().is_none_or(|m| m.status != BrowserMergeStatus::Complete)
+}
 impl BrowserCaptureStore {
     #[cfg(test)]
     pub(crate) fn begin_progressive(
@@ -256,9 +265,10 @@ impl BrowserCaptureStore {
         for step in 0..count {
             let index = (start + step) % count;
             let r = &state.recordings[index];
-            // A stopped recording goes directly to final export, including its
-            // unmerged tail. Do not force hundreds of tiny range jobs first.
-            if r.status != BrowserRecordingStatus::Recording
+            // Normalize the verified progressive recording's final tail before export.
+            // Never mix normalized ranges and raw fragments with different clocks.
+            let final_tail = needs_final_tail(r);
+            if (r.status != BrowserRecordingStatus::Recording && !final_tail)
                 || r.deletion_pending
                 || r.media_removed_at.is_some()
                 || state.unverified.contains(&r.id)
@@ -625,24 +635,27 @@ pub(crate) mod tests {
         assert!(store.has_active());
         assert!(store.take_part_job().unwrap().is_none());
         store.finish(&r.id, false, None).unwrap();
-        assert!(store.take_part_job().unwrap().is_none());
+        assert!(store.take_merge_job().unwrap().is_none());
+        let tail = store.take_part_job().unwrap().unwrap();
+        assert_eq!(tail.part.as_ref().unwrap().first, 3);
+        assert_eq!(tail.part.as_ref().unwrap().end, 4);
+        publish_fixture(&store, &tail);
         let final_job = store.take_merge_job().unwrap().unwrap();
         assert!(final_job.part.is_none());
         let sources = read_merge_segments(&final_job).unwrap();
         let export = export_segments(&final_job.recording, &sources)
             .unwrap()
             .unwrap();
-        assert_eq!(export.len(), 4);
+        assert_eq!(export.len(), 2);
+        assert!(export.iter().all(|s| s.file.starts_with("merged-")));
         assert_eq!(export[0].index, 0);
-        assert_eq!(export[0].file, sources[0].file);
-        assert_eq!(export[3].index, 3);
-        assert_eq!(export[3].file, "segment-000000000003.webm");
+        assert_eq!(export[1].index, 3);
         assert_eq!(sources.len(), 4);
         let (hashes, derivatives) =
             cleanup::verified_range_inputs(&final_job, &std::sync::atomic::AtomicBool::new(false))
                 .unwrap();
-        assert_eq!(hashes.len(), 3);
-        assert_eq!(derivatives.len(), 2);
+        assert_eq!(hashes.len(), 4);
+        assert_eq!(derivatives.len(), 4);
     }
     #[test]
     fn stopped_recording_without_ranges_exports_raw_sources_immediately() {

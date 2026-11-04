@@ -33,7 +33,7 @@ export function createXApi(runtime:"tauri"|"browser-mock"):XApi {
     action:(postId,action,generation,expected)=>invoke("x_post_action",{postId,action,generation,expected,text:""}),
   };
 }
-export type XPreviewTab = {id:string;path:string;title:string;state:string};
+export type XPreviewTab = {id:string;path:string;title:string;state:string;firstLine?:string;avatarData?:string|null};
 export type XSurfaceSnapshot = {
   generation:number; feed:string; state:string; preview:boolean; previewState:string; error:string|null;
   previews:XPreviewTab[];activePreviewId:string|null;

@@ -54,3 +54,13 @@ it("disables native tab mutations while a prior tab operation is pending",async(
   for(const button of host.querySelectorAll<HTMLButtonElement>("button")){expect(button).toBeDisabled();button.click();}
   expect(select).not.toHaveBeenCalled();expect(close).not.toHaveBeenCalled();
 });
+
+it("shows the observed portrait, name and first line without replacing the tab or stealing focus",async()=>{
+ const first={...tabs[0]!,title:"작성자 이름",firstLine:"게시물의 첫 줄",avatarData:"data:image/jpeg;base64,AA=="};
+ await render([first,...tabs.slice(1)]);const button=tab(0);button.focus();
+ expect(button).toHaveAttribute("title","작성자 이름\n게시물의 첫 줄");
+ expect(button.querySelector("img")).toHaveAttribute("src",first.avatarData);
+ expect(button.textContent).toContain("게시물의 첫 줄");
+ await render([{...first,firstLine:"업데이트된 첫 줄"},...tabs.slice(1)]);
+ expect(tab(0)).toBe(button);expect(document.activeElement).toBe(button);
+});

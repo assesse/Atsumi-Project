@@ -20,7 +20,7 @@ export type BrowserMerge = {
   durationSeconds?: number | null;
   lastError?: string | null;
   sourceCleanup?: {
-    status: "pending" | "complete" | "blocked";
+    status: "pending" | "complete" | "blocked" | "preserved";
     deletedSegments: number;
     proofFile: string;
     proofSha256: string;
@@ -61,6 +61,8 @@ export type BrowserRecording = {
   mediaRemovedAt?: number | null;
   storageCheckPending?: boolean;
   summaryPending?: boolean;
+  preserveSources?: boolean;
+  workProgress?: { phase: string; completed: number; total: number | null; unit: string; updatedAt: number } | null;
 };
 
 export type BrowserDeleteReport = {

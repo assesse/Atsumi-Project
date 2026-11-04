@@ -23,6 +23,12 @@ beforeEach(() => { vi.clearAllMocks(); localStorage.removeItem(expansionStorageK
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.removeItem(expansionStorageKey); });
 
 describe("recording library", () => {
+  it("shows the verified file duration instead of summing overlapping capture packets", async () => {
+    await render([{ ...merged("a"), durationSeconds: 32.4 }], "a");
+    expect(container.querySelector(".recording-library-length")).toHaveTextContent("00:00:30");
+    expect(container.querySelector(".recording-library-detail")).toHaveTextContent("00:00:30");
+    expect(container.querySelector(".recording-library-detail")).not.toHaveTextContent("00:00:32");
+  });
   it("restores each broadcast's last open or closed state after leaving the library", async () => {
     const records = [merged("a"), merged("b"), ...["c", "d"].map(id => ({ ...merged(id), channelId: "shared", broadcastKey: "id:42" }))];
     await render(records);
@@ -305,7 +311,7 @@ describe("recording library", () => {
       item("failed", { status: "failed" }),
     ]);
     expect(container.querySelector(".recording-library-state.is-recording")).toHaveTextContent("녹화 중");
-    expect(container.querySelector(".recording-library-state.is-processing")).toHaveTextContent("재생 준비 중");
+    expect(container.querySelector(".recording-library-state.is-processing")).toHaveTextContent("병합·검증 중");
     expect(container.querySelector(".recording-library-state.is-success")).toHaveTextContent("정상");
     expect(container.querySelector(".recording-library-state.is-warning")).toHaveTextContent("중단됨");
     expect(container.querySelector(".recording-library-state.is-error")).toHaveTextContent("저장 오류");
@@ -504,4 +510,33 @@ describe("recording library", () => {
     expect(recordingChatNote(item("off", { captureChat: false, chatCount: 12 })).text).toBe("이 기록은 채팅 저장을 사용하지 않았습니다.");
     expect(recordingChatNote(item("bad", { captureChat: true, chatStatus: "storage_failed", chatCount: 42 }))).toEqual({ warning: true, text: "채팅 저장 실패 · 일부 기록 누락 가능 · 42개 기록" });
   });
+});
+
+describe("recording card context menu",()=>{
+ const context=async(target:Element)=>act(async()=>{target.dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true,clientX:40,clientY:40}));});
+ const menuButton=(label:string)=>[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b=>b.textContent===label)!;
+ it.each([".recording-broadcast-group",".recording-broadcast-heading strong",".recording-library-card-wrap",".recording-library-card time"])("opens the same single-file actions from %s",async selector=>{
+   await render([merged("a")]); await context(container.querySelector(selector)!);
+   expect(menuButton("재생")).not.toBeDisabled();expect(menuButton("삭제")).not.toBeDisabled();
+   await act(async()=>menuButton("재생").click());
+   expect(callbacks.onReplay).toHaveBeenCalledExactlyOnceWith("a");
+   expect(callbacks.onDelete).not.toHaveBeenCalled();
+ });
+ it("allows a collapsed single file to request deletion, cancel preserves it",async()=>{
+   await render([merged("a")]);
+   await act(async()=>container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+   await context(container.querySelector('.recording-broadcast-group')!);
+   await act(async()=>menuButton("삭제").click());
+   expect(container.querySelector("dialog")).toHaveAttribute("open");
+   await act(async()=>button("취소").click());
+   expect(callbacks.onDelete).not.toHaveBeenCalled();
+ });
+ it("nested file right-click never targets siblings and processing is protected",async()=>{
+   const a={...merged("a"),channelId:"shared",broadcastKey:"id:1"},b={...merged("b"),channelId:"shared",broadcastKey:"id:1",workProgress:{phase:"verifying",completed:1,total:10,unit:"seconds",updatedAt:1}};
+   await render([a,b]);await act(async()=>container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+   await context(container.querySelector('[data-recording-id="b"]')!);
+   expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(3);
+   expect(menuButton("삭제")).toBeDisabled();
+   expect(container.querySelector('[role="progressbar"]')).toHaveAttribute("aria-valuenow","10");
+ });
 });

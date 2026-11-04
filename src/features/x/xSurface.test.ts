@@ -1656,3 +1656,35 @@ it('caps diagnostic-only quote probes and scope counts without suppressing nativ
   expect(shape).toMatchObject({reason:'missingScope',role:'quoteMarker',hasTweetArticle:true,nested:true,userNames:32,ownUserNames:32,anchors:128,times:32,timeLinks:0,mediaLinks:0,uniqueMedia:false,authorMatch:false});
   expect(a.location.assign).not.toHaveBeenCalled();
 });
+
+it.each(['/publisher','/source/status/654321'])('opens immersive source/publisher %s in preview without changing the feed route',path=>{
+ const a=sourceRouteAdapter(videoSourceFixture);
+ a.location.pathname='/creator/status/123456/mediaviewer';a.location.href='https://x.com'+a.location.pathname;
+ const primary=a.doc.querySelector('[data-testid="primaryColumn"]')!;
+ primary.innerHTML='<div role="dialog"><div data-testid="videoPlayer"><video></video></div><a id="immersive-source" href="'+path+'">Source</a><button data-testid="like">Like</button></div>';
+ const before=a.location.href,event=clickTarget(a,a.doc.querySelector('#immersive-source')!);
+ expect(event.preventDefault).toHaveBeenCalledOnce();expect(bridgeEntries(a).at(-1)).toEqual(['videoSourcePreview',path]);
+ expect(a.location.href).toBe(before);expect(a.sourcePush).not.toHaveBeenCalled();
+});
+
+it.each(['fading','hidden','inert','display','visibility','social','owner'])('keeps native immersive routing correct with %s controls',mode=>{
+ const a=sourceRouteAdapter(videoSourceFixture);
+ a.location.pathname='/creator/status/123456/mediaViewer';a.location.href='https://x.com'+a.location.pathname+'?currentTweet=654321';
+ const primary=a.doc.querySelector('[data-testid="primaryColumn"]')!;
+ primary.innerHTML='<div role="dialog"><video></video><div id="fading"><a href="/publisher" id="publisher"><img id="avatar"><button id="follow">Follow</button></a></div></div>';
+ const fade=a.doc.querySelector('#fading') as HTMLElement;
+ fade.style.opacity='0';fade.setAttribute('aria-hidden','true');
+ if(mode==='hidden')fade.hidden=true;if(mode==='inert')fade.setAttribute('inert','');
+ if(mode==='display')fade.style.display='none';if(mode==='visibility')fade.style.visibility='hidden';
+ if(mode==='owner')a.doc.querySelector('[data-testid="AppTabBar_Profile_Link"]')!.setAttribute('href','/other');
+ const e=clickTarget(a,a.doc.querySelector(mode==='social'?'#follow':'#avatar')!);
+ if(mode==='fading'){expect(e.preventDefault).toHaveBeenCalledOnce();expect(bridgeEntries(a).at(-1)).toEqual(['videoSourcePreview','/publisher']);}
+ else expect(bridgeEntries(a).filter(([k])=>k==='videoSourcePreview')).toHaveLength(0);
+});
+
+it('does not treat the filter callback index as permission to include a faded native dialog',()=>{
+ const a=adapter();a.flush();a.win.__atsumiXSurface!.visibility(true);a.flush();
+ a.location.pathname='/creator/status/123456/mediaViewer';a.location.href='https://x.com'+a.location.pathname;
+ a.doc.body.innerHTML='<div role="dialog"><video src="https://video.twimg.com/ext_tw_video/123456/pu/vid/test.mp4"></video></div><div role="dialog" style="opacity:0" aria-hidden="true"></div>';
+ a.update();expect(a.status()).toMatchObject({state:'ready',proof:{video:true}});
+});

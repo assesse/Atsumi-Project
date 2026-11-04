@@ -24,10 +24,13 @@ pub(crate) mod parts;
 pub use parts::ProgressiveSummary;
 #[path = "browser_archive.rs"]
 pub(crate) mod archive;
+pub use archive::ArchiveStatus;
 #[path = "browser_ssd.rs"]
 pub(crate) mod ssd;
 #[path = "browser_startup_index.rs"]
 mod startup_index;
+#[path = "browser_work_progress.rs"]
+pub mod work_progress;
 
 const MAX_CHUNK: usize = 1024 * 1024;
 const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
@@ -135,6 +138,10 @@ pub struct BrowserRecording {
     pub storage_check_pending: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub summary_pending: bool,
+    #[serde(default, skip_deserializing, skip_serializing_if = "Option::is_none")]
+    pub work_progress: Option<work_progress::WorkProgress>,
+    #[serde(default)]
+    pub preserve_sources: bool,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -254,6 +261,8 @@ impl CatalogEntry {
             media_removed_at: self.media_removed_at,
             storage_check_pending: false,
             summary_pending: false,
+            work_progress: None,
+        preserve_sources: false,
         }
     }
 }
@@ -321,6 +330,24 @@ pub(crate) struct BrowserReplaySource {
 impl BrowserCaptureStore {
     pub fn new(data_dir: &Path) -> Result<Self, StreamError> {
         Self::load(data_dir, false)
+    }
+
+    /// Offline maintenance keeps the full authoritative catalog for safe archive
+    /// publication, but schedules work for exactly one explicitly selected record.
+    pub fn new_maintenance(data_dir: &Path, id: &str) -> Result<Self, StreamError> {
+        validate_id(id)?;
+        let store=Self::new(data_dir)?;
+        {
+            let mut state=store.lock()?;
+            if !state.recordings.iter().any(|r|r.id==id && r.status!=BrowserRecordingStatus::Recording && !r.deletion_pending && r.media_removed_at.is_none()) {
+                return Err(invalid());
+            }
+            state.recordings.retain(|r|r.id==id);
+            state.unverified.retain(|r|r==id);
+            state.indexed.retain(|r|r==id);
+            state.recovery_pending.retain(|r|r==id);
+        }
+        Ok(store)
     }
 
     /// Production startup exposes the SSD catalog immediately. Archive recovery
@@ -696,7 +723,9 @@ impl BrowserCaptureStore {
     }
 
     pub fn snapshot(&self) -> Result<Vec<BrowserRecording>, StreamError> {
-        Ok(self.lock()?.recordings.iter().rev().cloned().collect())
+        let mut records: Vec<_> = self.lock()?.recordings.iter().rev().cloned().collect();
+        for record in &mut records { record.work_progress = work_progress::snapshot(&record.id); }
+        Ok(records)
     }
 
     pub(crate) fn set_broadcast_key(&self, id: &str, key: &str) -> Result<(), StreamError> {
@@ -840,6 +869,8 @@ impl BrowserCaptureStore {
                     && r.segment_count > 0
                     && !state.active.contains_key(&r.id)
                     && !archive::offload::needs_finalization(r)
+                    && !parts::needs_final_tail(r)
+                    && r.ending.as_ref().is_none_or(|e| e.reason != "checking")
                     && r.merge
                         .as_ref()
                         .is_none_or(|m| m.status == BrowserMergeStatus::Queued)
@@ -887,6 +918,27 @@ impl BrowserCaptureStore {
             return Ok(Some(job));
         }
         Ok(None)
+    }
+
+    /// Explicit recovery policy: preserve all surviving sources and derivatives.
+    /// This does not mark missing or unverified media as successfully recovered.
+    pub fn preserve_recording_sources(&self, id: &str) -> Result<(), StreamError> {
+        validate_id(id)?;
+        self.ensure_recovered(id)?;
+        let mut state = self.lock()?;
+        if state.active.contains_key(id) || state.merge_job.as_ref().is_some_and(|(active,_)| active == id) {
+            return Err(inactive());
+        }
+        let recording = state.recordings.iter_mut().find(|r|r.id==id && !r.deletion_pending).ok_or_else(invalid)?;
+        if recording.status == BrowserRecordingStatus::Recording { return Err(inactive()); }
+        recording.preserve_sources = true;
+        if let Some(cleanup) = recording.merge.as_mut().and_then(|m|m.source_cleanup.as_mut()) {
+            if cleanup.status != BrowserSourceCleanupStatus::Complete {
+                cleanup.status = BrowserSourceCleanupStatus::Preserved;
+                cleanup.last_error = None;
+            }
+        }
+        save_metadata(recording)
     }
 
     /// Retry failed merges or unfinished cleanup, never rebuild a successful merge.
@@ -1153,11 +1205,16 @@ impl BrowserCaptureStore {
             return Err(storage());
         }
         open_regular(&root.join(&output.timeline_file), 128 * 1024 * 1024)?;
-        let source_cleanup = output
+        let mut source_cleanup = output
             .cleanup
             .map(|proof| cleanup::pending_proof(&root, &job.token, proof))
             .transpose()?;
         let recording = &mut state.recordings[index];
+        if recording.preserve_sources {
+            if let Some(cleanup) = source_cleanup.as_mut() {
+                cleanup.status = BrowserSourceCleanupStatus::Preserved;
+            }
+        }
         recording.merge = Some(BrowserMerge {
             status: BrowserMergeStatus::Complete,
             segment_count: recording.segment_count,
@@ -1717,6 +1774,7 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
             progressive.offloaded_segment_count = 0;
         }
         recording.archive = metadata.archive.clone().filter(|a| a.valid(&recording.id));
+        recording.preserve_sources = metadata.preserve_sources;
         if !valid_merge(
             recording.merge.as_ref(),
             metadata.segment_count,
@@ -1796,6 +1854,9 @@ fn recover_into(entry: &CatalogEntry, recording: &mut BrowserRecording) -> Resul
     });
     // Avoid reading or hashing historical media. Only bounded recent file metadata
     // and their first 16 bytes are checked; the durable journal contains all totals.
+    if !cleaned_sources {
+        archive::offload::recover_rolling_receipts(recording)?;
+    }
     let resolver = (!cleaned_sources)
         .then(|| archive::offload::Resolver::new(recording))
         .transpose()?;

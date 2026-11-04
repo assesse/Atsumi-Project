@@ -120,6 +120,28 @@ fn index(record: &BrowserRecording) -> Result<Index, StreamError> {
     Ok(index)
 }
 
+/// Reattach only a legacy transfer carrying valid immutable range receipts.
+/// No folder adoption, no success claim, no source removal. Full hashes and
+/// media decode are still required by archive/final publication.
+pub(crate) fn recover_rolling_receipts(record: &mut BrowserRecording) -> Result<bool, StreamError> {
+    let Some(a) = record.archive.as_ref() else { return Ok(false) };
+    if a.rolling || record.output_dir != a.source_dir { return Ok(false); }
+    let local = owned_root(&record.output_dir, &record.id)?;
+    if !local.join(INDEX).try_exists().map_err(|_| storage())? { return Ok(false); }
+    let mut candidate = record.clone();
+    candidate.archive.as_mut().unwrap().rolling = true;
+    let receipt = index(&candidate)?;
+    if receipt.ranges.is_empty() { return Ok(false); }
+    let remote = saved_root(&candidate)?;
+    for file in receipt.ranges.iter().flat_map(|r|r.files.iter()) {
+        if open_regular(&remote.join(relative(&file.name)?), file.bytes)?.metadata().map_err(|_|storage())?.len() != file.bytes {
+            return Err(invalid());
+        }
+    }
+    record.archive.as_mut().unwrap().rolling = true;
+    Ok(true)
+}
+
 pub(crate) struct Resolver {
     local: PathBuf,
     remote: Option<PathBuf>,
@@ -241,6 +263,7 @@ pub(super) fn retained_files(
     // It is native metadata, not user media: normalize it to the validated C
     // index rather than treating a harmless receipt phase difference as collision.
     write_json(&root, INDEX, &index)?;
+    work_progress::phase("archive_verification", Some(index.ranges.iter().flat_map(|r| &r.files).map(|f|f.bytes).sum()), "bytes");
     let mut files = Vec::new();
     for range in index.ranges {
         for file in range.files {
@@ -401,6 +424,7 @@ impl BrowserCaptureStore {
             .map(|step| &state.recordings[(start + step) % count])
             .find(|r| {
                 !r.deletion_pending
+                    && r.ending.as_ref().is_none_or(|e| e.reason != "checking")
                     && r.media_removed_at.is_none()
                     && !state.unverified.contains(&r.id)
                     && state
@@ -427,6 +451,13 @@ impl BrowserCaptureStore {
         else {
             return Ok(None);
         };
+        let mut record = record;
+        if record.status != BrowserRecordingStatus::Recording {
+            let a=record.archive.as_mut().ok_or_else(invalid)?;
+            a.status=if record.output_dir==a.source_dir { ArchiveStatus::Copying } else { ArchiveStatus::CleanupPending };
+            a.last_error=None;
+            *state.recordings.iter_mut().find(|r|r.id==record.id).ok_or_else(invalid)?=record.clone();
+        }
         state.last_offload_recording = Some(record.id.clone());
         let token = uuid::Uuid::new_v4().simple().to_string();
         let job = BrowserMergeJob {
@@ -631,6 +662,9 @@ mod tests {
         assert!(f.store.take_merge_job().unwrap().is_none());
         let archived = consolidate(&f.store, &r.id);
         assert_ne!(archived.output_dir, r.output_dir);
+        assert!(f.store.take_merge_job().unwrap().is_none());
+        let tail=f.store.take_part_job().unwrap().unwrap();
+        parts::tests::publish_fixture(&f.store,&tail);
         let final_job = f.store.take_merge_job().unwrap().unwrap();
         let segments = read_merge_segments(&final_job).unwrap();
         assert_eq!(
@@ -638,14 +672,14 @@ mod tests {
                 .unwrap()
                 .unwrap()
                 .len(),
-            4
+            2
         );
         assert_eq!(
             cleanup::verified_range_inputs(&final_job, &AtomicBool::new(false))
                 .unwrap()
                 .0
                 .len(),
-            3
+            4
         );
         for s in segments {
             assert_eq!(
@@ -802,6 +836,9 @@ mod tests {
         drop(busy);
         f.store.retry_loaded_merges(Some(&r.id)).unwrap();
         consolidate(&f.store, &r.id);
+        assert!(f.store.take_merge_job().unwrap().is_none());
+        let tail=f.store.take_part_job().unwrap().unwrap();
+        parts::tests::publish_fixture(&f.store,&tail);
         assert!(f.store.take_merge_job().unwrap().is_some());
     }
 
@@ -853,5 +890,32 @@ mod tests {
         let archive = alias.archive.as_mut().unwrap();
         archive.destination_root = archive.destination_root.strip_prefix(r"\\?\").unwrap_or(&archive.destination_root).to_owned();
         assert_eq!(saved_root(&alias).unwrap(), target);
+    }
+
+    #[test]
+    fn legacy_false_flag_reconnects_only_verified_owned_receipts_without_deleting_sources() {
+        let f=fixture();
+        let (target, receipt)=copy_range(&f.record);
+        write_json(&target,INDEX,&receipt).unwrap();
+        write_json(Path::new(&f.record.output_dir),INDEX,&receipt).unwrap();
+        let mut old=f.record.clone();old.archive.as_mut().unwrap().rolling=false;
+        assert!(recover_rolling_receipts(&mut old).unwrap());
+        assert!(old.archive.as_ref().unwrap().rolling);
+        for file in &receipt.ranges[0].files {
+            assert!(Path::new(&old.output_dir).join(&file.name).exists());
+            assert_eq!(Resolver::new(&old).unwrap().resolve(&file.name).unwrap(),target.join(&file.name));
+        }
+        let mut broken=f.record.clone();broken.archive.as_mut().unwrap().rolling=false;
+        fs::write(target.join(&receipt.ranges[0].files[0].name),b"changed").unwrap();
+        assert!(recover_rolling_receipts(&mut broken).is_err());
+        assert!(!broken.archive.as_ref().unwrap().rolling);
+    }
+    #[test]
+    fn final_archive_waits_for_broadcast_end_confirmation() {
+        let f=fixture();
+        f.store.finish(&f.record.id,false,None).unwrap();
+        {let mut s=f.store.lock().unwrap();s.recordings[0].ending=Some(RecordingEnd{reason:"checking".into(),trigger:"fixture".into(),stopped_at:now_ms(),confirmed_at:None});}
+        assert!(f.store.take_offload_job().unwrap().is_none());
+        assert!(f.store.take_merge_job().unwrap().is_none());
     }
 }

@@ -14,10 +14,10 @@ export function RecordedChannel({ id, name, image, privacy = false }: { id: stri
   if (privacy) return null;
   const candidate = profile.image || image;
   const archivedImage = typeof candidate === "string" && candidate.length <= 1_500_000 && /^data:image\/(?:png|jpeg|gif|webp);base64,[a-zA-Z0-9+/]+={0,2}$/.test(candidate) ? candidate : null;
-  return <div className="recorded-channel"><button type="button" title="녹화 당시 채널 · 클릭하면 채널 페이지 열기" onClick={event => {
+  return <div className="recorded-channel"><button type="button" title={profile.currentImage ? "현재 채널 프로필 · 채널 페이지 열기" : "녹화 당시 채널 · 클릭하면 채널 페이지 열기"} onClick={event => {
     event.stopPropagation(); void openRecordingChannel(id).catch(() => setError("채널 페이지를 열지 못했습니다."));
   }} aria-label={`${profile.name || name || "녹화 채널"} 채널 페이지 열기`}>
-    {archivedImage ? <img src={archivedImage} alt="녹화 당시 채널 프로필" /> : <span className="recorded-channel-placeholder" aria-hidden>◯</span>}
+    {archivedImage ? <img src={archivedImage} alt={profile.currentImage ? "현재 채널 프로필" : "녹화 당시 채널 프로필"} /> : <span className="recorded-channel-placeholder" role="img" aria-label="기본 채널 프로필" />}
     <span>{profile.name || name || "녹화 채널"}</span>
   </button>{error ? <small role="alert">{error}</small> : null}</div>;
 }

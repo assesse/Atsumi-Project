@@ -86,8 +86,38 @@ fn repair_permitted_media(source: &str) -> Option<String> {
 
 // Public source fixture, not proof that its optional route is registered.
 const VIDEO_ENTRY: &str = "if(!e||!t||!r)return e;let i=e.indexOf(\"?\"),n=-1===i?\"\":e.slice(i);return`/${t}/status/${r}/mediaviewer${n}`";
+// Use X's own desktop controls with its original immersive entry callback.
+// The two verified call sites differ only in their UI stack; media/session,
+// permissions, prerolls, source variants and playback coordination are intact.
+fn repair_inline_controls(source: &str) -> Option<String> {
+    const START: &str = "_renderInlinePlayer=()=>{";
+    const END: &str = ";_playerState=";
+    if source.len() > MAX_SCRIPT || source.matches(START).count() != 1 { return None; }
+    let start = source.find(START)?;
+    let length = source[start..].find(END)?;
+    if length > 8192 { return None; }
+    let method = &source[start..start + length];
+    // Read the import alias and argument from the existing desktop fallback.
+    let marker = ":this.props.uiStack||(0,";
+    if method.matches(marker).count() != 1 { return None; }
+    let tail = method.split_once(marker)?.1;
+    let module = identifier(tail)?;
+    let tail = tail.strip_prefix(module)?.strip_prefix(".Ij)(")?;
+    let props = identifier(tail)?;
+    if !tail.strip_prefix(props)?.starts_with(",this.props.onClickBackground)")
+        || !method.starts_with("_renderInlinePlayer=()=>{let{immersiveViewerUrl:")
+        || !method.contains("onPlayerState:this._onPlayerState") { return None; }
+    let minimal = format!("(0,{module}.kE)({props},this._handleEnterImmersiveViewer)");
+    if method.matches(&minimal).count() != 2 { return None; }
+    let desktop = format!("(0,{module}.Ij)({props},this._handleEnterImmersiveViewer)");
+    let mut result = source.to_owned();
+    result.replace_range(start..start + length, &method.replace(&minimal, &desktop));
+    Some(result)
+}
+
 fn repair_source(source: &str) -> Option<String> {
     let fixed = repair_permitted_media(source)?;
+    let fixed = repair_inline_controls(&fixed).unwrap_or(fixed);
     if source.matches(VIDEO_ENTRY).count() != 1
         || !source.contains("tweetMediaItemImmersiveViewerEntryPoint")
         || !source.contains("_handleEnterImmersiveViewer")
@@ -150,6 +180,18 @@ pub(super) fn install(_: &tauri::Webview, _: super::XSession, _: std::sync::Arc<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    const INLINE: &str = "_renderInlinePlayer=()=>{let{immersiveViewerUrl:e}=this.props,i={onPlayerState:this._onPlayerState};if(highlight)return render({uiStack:e?(0,M.kE)(s,this._handleEnterImmersiveViewer):n});let c=e?(0,M.kE)(s,this._handleEnterImmersiveViewer):this.props.uiStack||(0,M.Ij)(s,this.props.onClickBackground);return render({uiStack:c})};_playerState=null;";
+    #[test]
+    fn original_desktop_controls_preserve_immersive_callback_and_media_properties() {
+        let fixed=repair_inline_controls(INLINE).unwrap();
+        assert_eq!(fixed, INLINE.replace("(0,M.kE)(s,this._handleEnterImmersiveViewer)","(0,M.Ij)(s,this._handleEnterImmersiveViewer)"));
+        assert!(repair_inline_controls(&INLINE.replace("M.","renamed.")).unwrap().contains("renamed.Ij"));
+        assert!(repair_inline_controls(&INLINE.replace(".Ij)",".changed)")).is_none());
+        assert!(repair_inline_controls(&INLINE.replacen(".kE)",".changed)",1)).is_none());
+        assert!(repair_inline_controls(&format!("{INLINE}{INLINE}")).is_none());
+    }
 
     // Reduced public source shape, not an account or media response fixture.
     const SOURCE: &str = r#"class V{_renderBlurredMediaTombstone=()=>{let{children:e,displaySensitiveMedia:t,iconOnly:r,mediaVisibilityResults:i}=this.props,{showContent:c}=this.state,d=c||t,p=i?.blurred_image_interstitial?.interstitial_action&&this.context.featureSwitches.isTrue("rweb_age_assurance_flow_enabled"),h=!t||!!p;return jsx(P,{value:{playbackPriority:c?a.c.NORMAL:a.c.INELIGIBLE},children:e})};_renderAgeVerificationModal=()=>{}}"#;

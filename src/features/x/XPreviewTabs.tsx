@@ -36,10 +36,11 @@ export function XPreviewTabs({tabs,activeId,disabled,panelId,onSelect,onClose}:{
       {tabs.map((tab,index)=><div className={"x-preview-tab"+(tab.id===activeId?" is-active":"")} role="presentation" key={tab.id}>
         <button type="button" role="tab" id={`${panelId}-tab-${index}`} aria-controls={panelId}
           aria-selected={tab.id===activeId} aria-busy={tab.state==="loading"}
-          tabIndex={tab.id===activeId||activeId===null&&index===0?0:-1} title={tab.title} disabled={disabled}
+          tabIndex={tab.id===activeId||activeId===null&&index===0?0:-1} title={[tab.title,tab.firstLine].filter(Boolean).join("\n")} disabled={disabled}
           onFocus={event=>{focused.current={id:tab.id,node:event.currentTarget};}}
           onKeyDown={event=>navigate(event,tab.id)} onClick={()=>onSelect(tab.id)}>
-          <span>{tab.title}</span>
+          <span className="x-preview-tab-avatar" aria-hidden="true">{tab.avatarData?.startsWith("data:image/")?<img src={tab.avatarData} alt="" onError={e=>{e.currentTarget.hidden=true;}}/>:<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-8 9a8 8 0 0 1 16 0Z"/></svg>}</span>
+          <span className="x-preview-tab-copy"><span className="x-preview-tab-name">{tab.title}</span><span className="x-preview-tab-line">{tab.firstLine || (tab.state==="loading"?"불러오는 중…":"")}</span></span>
         </button>
         <button className="x-icon-button x-preview-tab-close" type="button" aria-label={`${tab.title} 닫기`} title="닫기"
           disabled={disabled} onFocus={event=>{focused.current={id:tab.id,node:event.currentTarget};}}

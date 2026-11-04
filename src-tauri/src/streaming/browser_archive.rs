@@ -106,6 +106,7 @@ impl BrowserCaptureStore {
         }
         let Some(index) = state.recordings.iter().position(|r| {
             r.status != BrowserRecordingStatus::Recording
+                && r.ending.as_ref().is_none_or(|e| e.reason != "checking")
                 && !r.deletion_pending
                 && r.media_removed_at.is_none()
                 && !state.active.contains_key(&r.id)
@@ -124,7 +125,8 @@ impl BrowserCaptureStore {
                     m.status == BrowserMergeStatus::Complete
                         && m.source_cleanup
                             .as_ref()
-                            .is_some_and(|c| c.status == BrowserSourceCleanupStatus::Complete)
+                            .is_some_and(|c| c.status == BrowserSourceCleanupStatus::Complete
+                                || (r.preserve_sources && c.status == BrowserSourceCleanupStatus::Preserved))
                 })
         }) else {
             return Ok(None);
@@ -417,6 +419,7 @@ fn digest(file: &mut File, cancel: &AtomicBool) -> Result<String, StreamError> {
             return Err(inactive());
         }
         sha.update(&buffer[..count]);
+        work_progress::advance_for(&["archiving","archive_verification"], count as u64);
     }
     Ok(format!("{:x}", sha.finalize()))
 }
@@ -484,6 +487,7 @@ fn copy_file(
         }
         hash.update(&buffer[..count]);
         written = written.saturating_add(count as u64);
+        work_progress::advance_for(&["archiving"], count as u64);
     }
     if written != bytes {
         return Err(storage());
@@ -626,6 +630,7 @@ fn copy_recording(
     // Rolling captures retain verified originals on the destination. Include
     // them in the final receipt even though their SSD copies are already gone.
     let mut files = offload::retained_files(recording, cancel)?;
+    work_progress::phase("archiving", Some(entries.iter().map(|(_,size,_)|size.saturating_mul(2)).sum()), "bytes");
     for (name, size, _) in &entries {
         check(cancel)?;
         let input = nested(&source, name, false)?;
@@ -690,6 +695,7 @@ fn cleanup_source(recording: &BrowserRecording, cancel: &AtomicBool) -> Result<(
     }
     let _source_dirs = cleanup::pin_directories(&source)?;
     let _target_dirs = cleanup::pin_directories(&target)?;
+    work_progress::phase("archive_verification", Some(receipt.files.iter().map(|f| f.bytes.saturating_mul(2)).sum()), "bytes");
     for copied in receipt.files {
         check(cancel)?;
         if !cleanup::valid_hash(&copied.sha256)
@@ -713,7 +719,18 @@ fn cleanup_source(recording: &BrowserRecording, cancel: &AtomicBool) -> Result<(
                 "보관 파일 검증에 실패해 SSD 원본을 정리하지 않았습니다.",
             ));
         }
-        unlink_verified(&input, Some((&copied, cancel)))?;
+        if recording.preserve_sources {
+            // Explicit repair keeps both original locations. Still verify each
+            // source against the receipt before declaring the transfer complete.
+            let mut original = cleanup::verification_guard(&input)?;
+            if original.metadata().map_err(|_| storage())?.len() != copied.bytes
+                || digest(&mut original, cancel)? != copied.sha256
+            {
+                return Err(failed("SSD 원본이 변경되어 보관 검증을 완료하지 못했습니다."));
+            }
+        } else {
+            unlink_verified(&input, Some((&copied, cancel)))?;
+        }
     }
     // Keep the tiny source metadata + transfer receipt for recovery/diagnosis.
     // Empty asset directories are harmless; no recursive directory deletion.
@@ -926,6 +943,26 @@ mod tests {
             f.store.merged_file(&f.id).unwrap()
         );
         assert!(reopened.take_archive_job().unwrap().is_none());
+    }
+
+    #[test]
+    fn preserve_source_repair_verifies_archive_without_removing_originals() {
+        let f = fixture();
+        f.store.preserve_recording_sources(&f.id).unwrap();
+        // A preserved completed export is just as ready for verified archive
+        // publication as an export whose original cleanup already finished.
+        f.store.lock().unwrap().recordings[0].merge.as_mut().unwrap().source_cleanup.as_mut().unwrap().status = BrowserSourceCleanupStatus::Preserved;
+        let job = f.store.take_archive_job().unwrap().unwrap();
+        run(&f.store, &job, &AtomicBool::new(false));
+        let r = record(&f);
+        assert_eq!(r.archive.as_ref().unwrap().status, ArchiveStatus::Complete);
+        assert!(r.preserve_sources);
+        for name in [&f.media, "chat.jsonl", "viewer-metrics.jsonl", "channel-profile.json", "chat-assets/badge.png"] {
+            assert_eq!(fs::read(f.source.join(name)).unwrap(), fs::read(Path::new(&r.output_dir).join(name)).unwrap());
+        }
+        let reopened = BrowserCaptureStore::new(&f.app).unwrap();
+        assert!(reopened.take_archive_job().unwrap().is_none());
+        assert!(record(&Fixture { store: reopened, ..f }).preserve_sources);
     }
 
     #[test]

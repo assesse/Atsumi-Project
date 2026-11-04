@@ -167,7 +167,9 @@ pub fn repair_channel_image(
     if channel_profile::read(root, channel).1.is_some() {
         return Ok(false);
     }
-    let id = channel_profile::saved_image_id(root, channel)?.ok_or_else(unavailable)?;
+    let saved_id = channel_profile::saved_image_id(root, channel)?;
+    let fallback = saved_id.is_none();
+    let id = saved_id.or_else(||current_url.and_then(asset_id)).ok_or_else(unavailable)?;
     let data = if let Ok(asset) = read_cached(data_dir, &id) {
         format!(
             "data:{};base64,{}",
@@ -182,6 +184,7 @@ pub fn repair_channel_image(
     };
     mirror_recording(root, &id, &data, &mut HashMap::new())?;
     read_recording(root, &id)?;
+    if fallback { channel_profile::save_current_fallback(root,channel,&id)?; }
     Ok(true)
 }
 fn unavailable() -> StreamError {
@@ -364,8 +367,8 @@ impl ReplayAssetCache {
                             let saved_id = if root.join("channel-profile.json").exists() {
                                 if channel_profile::read(&root, &channel).1.is_some() { continue; }
                                 match channel_profile::saved_image_id(&root, &channel) {
-                                    Ok(Some(id)) => Some(id),
-                                    _ => continue,
+                                    Ok(id) => id,
+                                    Err(_) => continue,
                                 }
                             } else { None };
                             let mut fetched = profile(&channel);
@@ -395,6 +398,9 @@ impl ReplayAssetCache {
                                     if !same_image { continue; }
                                 }
                                 id = Some(saved_id);
+                            } else if root.join("channel-profile.json").exists() {
+                                let Some(id) = id.as_deref() else { continue };
+                                if channel_profile::save_current_fallback(&root,&channel,id).is_err() {continue;}
                             } else if channel_profile::save(&root, &channel, &name, id.as_deref()).is_err() { continue; }
                             let (Some(id), Some(url)) = (id, image) else {
                                 continue;
@@ -1168,5 +1174,21 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert!(try_fence(&root).is_some());
         assert!(try_fence(Path::new("relative-root")).is_none());
+    }
+
+    #[test]
+    fn missing_captured_avatar_uses_separate_current_fallback_without_rewriting_history() {
+        let dir=tempfile::tempdir().unwrap();
+        let root=fs::canonicalize(dir.path()).unwrap();
+        let channel="a".repeat(32);
+        channel_profile::save(&root,&channel,"original name",None).unwrap();
+        let before=fs::read(root.join("channel-profile.json")).unwrap();
+        let id="b".repeat(64);
+        mirror_recording(&root,&id,&data(),&mut HashMap::new()).unwrap();
+        channel_profile::save_current_fallback(&root,&channel,&id).unwrap();
+        assert_eq!(channel_profile::read(&root,&channel),(Some("original name".into()),Some(data())));
+        assert!(channel_profile::uses_current_fallback(&root,&channel));
+        assert_eq!(fs::read(root.join("channel-profile.json")).unwrap(),before);
+        assert!(!channel_profile::uses_current_fallback(&root,&"c".repeat(32)));
     }
 }

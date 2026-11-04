@@ -5,3 +5,5 @@
 .recorded-channel small { display: block; color: #aaa5b0; font-size: var(--font-size-min); margin-top: 2px; }
 .recorded-channel > button:hover, .streaming-workspace .recorded-channel > button:hover, .recording-replay .recorded-channel > button:hover { color: #a0ead9; background: transparent; }
 .recorded-channel > button:focus-visible { outline: 2px solid #a0ead9; outline-offset: 3px; border-radius: 6px; }
+
+.recorded-channel-placeholder {background: #34313a url("/original-player/assets/default_profile_dark.png") center / cover no-repeat;}

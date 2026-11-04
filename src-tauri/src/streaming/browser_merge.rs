@@ -16,7 +16,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Condvar, Mutex,
     },
     thread::{self, JoinHandle},
@@ -307,6 +307,7 @@ fn worker(shared: Arc<Shared>) {
             .ok()
             .and_then(|store| next_job(&store, &mut job_cursor).ok())
             .flatten();
+        let _progress = work.as_ref().map(|(_, job)| browser_store::work_progress::Scope::enter(&job.recording.id, "preparing"));
         if let Some((JobKind::Archive, job)) = work {
             let store = shared.store.lock().ok().map(|s| s.clone());
             if let Some(store) = store {
@@ -490,7 +491,7 @@ fn verify_full_decode(
         "-progress",
         "pipe:1",
         "-stats_period",
-        "60",
+        "1",
         "-f",
         "null",
         "-",
@@ -628,6 +629,10 @@ fn run_tool(
         .map_err(|_| failure("병합 도구를 실행하지 못했습니다."))?;
     let stdout = child.stdout.take().unwrap();
     let stderr = child.stderr.take().unwrap();
+    let started = Instant::now();
+    let last_advance = Arc::new(AtomicU64::new(0));
+    let reader_advance = last_advance.clone();
+    let progress_entry = browser_store::work_progress::current();
     let read_out = thread::spawn(move || -> Result<ToolOutput, ()> {
         let mut reader = BufReader::new(stdout);
         if packets {
@@ -648,37 +653,45 @@ fn run_tool(
                 }
             }
             Ok(ToolOutput::Packets(stats))
+        } else if reports_progress {
+            // Bounded tail, unlimited draining: long jobs must not overflow the
+            // small JSON response bound used by ffprobe.
+            let mut bytes = Vec::new();
+            let mut last_micros = 0;
+            loop {
+                let mut line = Vec::new();
+                let n = (&mut reader).take(4097).read_until(b'\n', &mut line).map_err(|_| ())?;
+                if n == 0 { break; }
+                if n > 4096 { return Err(()); }
+                let text = std::str::from_utf8(&line).map_err(|_| ())?;
+                if let Some(micros) = text.trim().strip_prefix("out_time_us=")
+                    .and_then(|v| v.parse::<u64>().ok()) {
+                    if micros > last_micros {
+                        last_micros = micros;
+                        reader_advance.store(started.elapsed().as_secs(), Ordering::Relaxed);
+                        browser_store::work_progress::tool_progress(&progress_entry, micros);
+                    }
+                }
+                bytes.extend_from_slice(&line);
+                if bytes.len() > MAX_INFO {
+                    let trim = bytes.len() - MAX_INFO / 2;
+                    let end = bytes[trim..].iter().position(|b| *b == b'\n')
+                        .map_or(trim, |n| trim + n + 1);
+                    bytes.drain(..end);
+                }
+            }
+            Ok(ToolOutput::Bytes(bytes))
         } else {
             let mut bytes = Vec::new();
-            let mut reported_seconds = 0;
             let mut buffer = [0; 8192];
             let mut oversized = false;
             loop {
                 let n = reader.read(&mut buffer).map_err(|_| ())?;
-                if n == 0 {
-                    break;
-                }
-                if bytes.len() + n <= MAX_INFO {
-                    bytes.extend_from_slice(&buffer[..n]);
-                    if reports_progress {
-                        let seconds = decoded_progress_seconds(&bytes) as u64;
-                        if seconds >= reported_seconds + 60 {
-                            reported_seconds = seconds;
-                            tracing::info!(
-                                decoded_seconds = seconds,
-                                "browser recording full decode progress"
-                            );
-                        }
-                    }
-                } else {
-                    oversized = true;
-                }
+                if n == 0 { break; }
+                if bytes.len() + n <= MAX_INFO { bytes.extend_from_slice(&buffer[..n]); }
+                else { oversized = true; }
             }
-            if oversized {
-                Err(())
-            } else {
-                Ok(ToolOutput::Bytes(bytes))
-            }
+            if oversized { Err(()) } else { Ok(ToolOutput::Bytes(bytes)) }
         }
     });
     let read_err = thread::spawn(move || {
@@ -697,14 +710,20 @@ fn run_tool(
         }
         diagnostic
     });
-    let started = Instant::now();
     let mut exit_code = None;
     let outcome = loop {
         let guard = check_cancel(cancel).and_then(|()| {
-            if started.elapsed() > timeout {
+            let elapsed = started.elapsed();
+            let idle = elapsed.as_secs().saturating_sub(last_advance.load(Ordering::Relaxed));
+            let hard_limit = if reports_progress { timeout.max(Duration::from_secs(48 * 3600)) } else { timeout };
+            if elapsed > hard_limit || (reports_progress && idle > 300) {
                 return Err(StreamError::new(
                     "BROWSER_MERGE_TIMEOUT",
-                    "병합 도구의 처리 시간이 초과되었습니다. 원본 조각은 보존됩니다.",
+                    if reports_progress && idle > 300 {
+                        "미디어 처리가 5분 동안 진행되지 않았습니다. 원본 조각은 보존됩니다."
+                    } else {
+                        "병합 도구의 안전 제한 시간이 초과되었습니다. 원본 조각은 보존됩니다."
+                    },
                     true,
                 ));
             }
@@ -1095,6 +1114,7 @@ fn merge_recording(
     } else {
         Vec::new()
     };
+    browser_store::work_progress::phase("source_verification", None, "bytes");
     let (range_hashes, _) = browser_store::cleanup::verified_range_inputs(job, cancel)?;
     let mut offset = 0.0;
     for (index, segment) in segments.iter().enumerate() {
@@ -1178,6 +1198,7 @@ fn merge_recording(
     drop(timeline);
     // Fail incompatible metadata BEFORE reading many GB of media for hashes.
     tracing::info!(recording_id = %job.recording.id, sources = sources.len(), phase = "source_verification", "browser merge progress");
+    browser_store::work_progress::phase("source_verification", Some(sources.iter().map(|s| s.bytes).sum()), "bytes");
     for (index, source) in sources.iter().enumerate() {
         check_cancel(cancel)?;
         let hash =
@@ -1195,6 +1216,7 @@ fn merge_recording(
     browser_store::validate_merge_generation(job)?;
     check_cancel(cancel)?;
     tracing::info!(recording_id = %job.recording.id, phase = "mux", "browser merge progress");
+    browser_store::work_progress::phase("merging", Some(offset.ceil() as u64), "seconds");
     // Reserve a unique, native-generated derivative first. A killed child
     // leaves a clearly named .partial; finalized/source names are never reused.
     let output = new_file(&partial)?;
@@ -1245,6 +1267,7 @@ fn merge_recording(
         cmd.args(["-f", "webm"]);
     }
     // This one exclusive, just-created empty derivative is the only overwrite.
+    cmd.args(["-progress", "pipe:1", "-stats_period", "1"]);
     cmd.arg("-y").arg(&partial);
     let timeout = Duration::from_secs(
         (max_output / (1024 * 1024))
@@ -1287,7 +1310,9 @@ fn merge_recording(
         .map_err(|_| failure("병합 영상을 디스크에 확정하지 못했습니다."))?;
     let verification_guard = browser_store::cleanup::verification_guard(&partial)?;
     tracing::info!(recording_id = %job.recording.id, phase = "full_decode", duration_seconds = offset, "browser merge progress");
+    browser_store::work_progress::phase("verifying", Some(offset.ceil() as u64), "seconds");
     verify_full_decode(tools, &partial, offset, cancel)?;
+    browser_store::work_progress::phase("final_verification", None, "bytes");
     tracing::info!(recording_id = %job.recording.id, phase = "proof", "browser merge progress");
     let cleanup = Some(browser_store::cleanup::write_proof(
         job,
@@ -1296,6 +1321,7 @@ fn merge_recording(
         &timeline_partial,
         cancel,
     )?);
+    browser_store::work_progress::phase("finalizing", None, "files");
     drop(verification_guard);
     check_cancel(cancel)?;
     browser_store::validate_merge_generation(job)?;
@@ -2154,6 +2180,16 @@ mod tests {
     #[test]
     #[ignore = "explicit verified tools and ATSUMI_ARCHIVE_TEST_ROOT; synthetic cross-volume rolling capture only"]
     fn synthetic_ffmpeg_rolling_ssd_offload_tail_export_and_cleanup() {
+        rolling_archive_e2e(false);
+    }
+
+    #[test]
+    #[ignore = "explicit verified tools and synthetic cross-volume source-preserving repair"]
+    fn synthetic_ffmpeg_repair_retains_ssd_and_hdd_originals() {
+        rolling_archive_e2e(true);
+    }
+
+    fn rolling_archive_e2e(preserve: bool) {
         let tools = e2e_tools();
         let parent = PathBuf::from(
             std::env::var_os("ATSUMI_ARCHIVE_TEST_ROOT")
@@ -2221,6 +2257,7 @@ mod tests {
         let chat = b"{\"fixture\":\"original chat retained\"}\n";
         fs::write(Path::new(&record.output_dir).join("chat.jsonl"), chat).unwrap();
         store.finish(&record.id, false, None).unwrap();
+        if preserve { store.preserve_recording_sources(&record.id).unwrap(); }
         let offload = store.take_offload_job().unwrap().unwrap();
         browser_store::archive::offload::run(&store, &offload, &AtomicBool::new(false));
         let ready = store.snapshot().unwrap().remove(0);
@@ -2231,6 +2268,10 @@ mod tests {
             ready.archive
         );
         assert!(Path::new(&ready.output_dir).starts_with(fs::canonicalize(archive.path()).unwrap()));
+        assert_eq!(Path::new(&record.output_dir).join("segment-000000000001.mp4").exists(), preserve);
+        let tail = store.take_part_job().unwrap().unwrap();
+        let output = merge_recording(&tail, Some(&tools), &AtomicBool::new(false)).unwrap();
+        store.finish_part_job(&tail, Ok(output)).unwrap();
         let job = store.take_merge_job().unwrap().unwrap();
         let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
         let media = Path::new(&ready.output_dir).join(&output.file);
@@ -2239,20 +2280,26 @@ mod tests {
             fs::read_to_string(Path::new(&ready.output_dir).join(&output.timeline_file)).unwrap();
         assert_eq!(timeline.lines().count(), segments.len());
         store.complete_merge(&job, output).unwrap();
-        let cleanup = store.take_cleanup_job().unwrap().unwrap();
-        let outcome =
-            browser_store::cleanup::remove_verified_sources(&cleanup, &AtomicBool::new(false));
-        assert!(outcome.complete);
-        assert_eq!(outcome.deleted, 2);
-        store.finish_cleanup(&cleanup, outcome).unwrap();
+        if preserve {
+            assert!(store.take_cleanup_job().unwrap().is_none());
+            for (i, original) in segments.iter().enumerate() {
+                assert_eq!(fs::read(Path::new(&ready.output_dir).join(format!("segment-{i:012}.mp4"))).unwrap(), original.bytes);
+            }
+        } else {
+            let cleanup = store.take_cleanup_job().unwrap().unwrap();
+            let outcome = browser_store::cleanup::remove_verified_sources(&cleanup, &AtomicBool::new(false));
+            assert!(outcome.complete);
+            assert_eq!(outcome.deleted, 2);
+            store.finish_cleanup(&cleanup, outcome).unwrap();
+        }
         assert_eq!(
             fs::read(Path::new(&ready.output_dir).join("chat.jsonl")).unwrap(),
             chat
         );
         for i in 0..2 {
-            assert!(!Path::new(&ready.output_dir)
+            assert_eq!(Path::new(&ready.output_dir)
                 .join(format!("segment-{i:012}.mp4"))
-                .exists());
+                .exists(), preserve);
         }
         for _ in 0..2 {
             let reopened = BrowserCaptureStore::new(dir.path()).unwrap();
@@ -2324,10 +2371,16 @@ mod tests {
             .unwrap()
             .finish(&recording.id, false, None)
             .unwrap();
+        // The final short range must be normalized too; mixing raw tail clocks
+        // with normalized ranges previously forced a full raw fallback.
+        assert!(store.lock().unwrap().take_merge_job().unwrap().is_none());
+        let tail = store.lock().unwrap().take_part_job().unwrap().unwrap();
+        let output = merge_recording(&tail, Some(&tools), &AtomicBool::new(false)).unwrap();
+        store.lock().unwrap().finish_part_job(&tail, Ok(output)).unwrap();
         assert!(store.lock().unwrap().take_part_job().unwrap().is_none());
         let job = store.lock().unwrap().take_merge_job().unwrap().unwrap();
-        assert!(
-            job.recording.progressive.as_ref().unwrap().segment_count < job.recording.segment_count
+        assert_eq!(
+            job.recording.progressive.as_ref().unwrap().segment_count, job.recording.segment_count
         );
         let output = merge_recording(&job, Some(&tools), &AtomicBool::new(false)).unwrap();
         let timeline = fs::read_to_string(root.join(&output.timeline_file)).unwrap();

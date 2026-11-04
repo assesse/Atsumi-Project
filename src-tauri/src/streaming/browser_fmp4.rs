@@ -947,15 +947,16 @@ impl EncodedMuxer {
                 if finishing {
                     // A/V packet boundaries need not end at the same instant.
                     // At the final cut ONLY, retain complete received packets
-                    // when the audio tail is less than one packet/frame short
-                    // (and under 50 ms). Never synthesize audio or discard video.
+                    // with independently quantized A/V ends (one audio packet
+                    // plus one video frame, still strictly below 50 ms). Never
+                    // synthesize audio or discard any complete video packet.
                     let gap = self
                         .audio
                         .back()
                         .map(|s| end as f64 / vs as f64 - s.end() as f64 / aus as f64);
                     let cadence = self.audio.back().zip(self.video.back()).map(|(a, v)| {
-                        (a.duration as f64 / aus as f64)
-                            .max(v.duration as f64 / vs as f64)
+                        ((a.duration as f64 / aus as f64)
+                            + (v.duration as f64 / vs as f64))
                             .min(0.05)
                     });
                     let aligned_tail = boundary.is_none()
@@ -1532,5 +1533,27 @@ mod tests {
             m.push(index, &f).unwrap();
         }
         assert_eq!(m.finish().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn final_cut_accepts_independent_aac_and_thirty_fps_boundaries_but_not_missing_packets() {
+        for (audio_packets, accepted) in [(3,true),(2,false)] {
+            let mut m=mux();
+            for index in 0..3 {
+                m.video.push_back(Sample{dts:index*3000,duration:3000,flags:0x02000000,cts:0,data:vec![0,0,0,2,0x65,1]});
+            }
+            for index in 0..audio_packets {
+                m.audio.push_back(Sample{dts:index*1024,duration:1024,flags:0x02000000,cts:0,data:vec![0x21,1]});
+            }
+            // 100 ms of complete video ends 36 ms after three received AAC
+            // packets. Two packets would leave 57.3 ms and must remain rejected.
+            let result=m.finish();
+            assert_eq!(result.is_ok(),accepted);
+            if let Ok(parts)=result {
+                assert_eq!(parts.len(),1);
+                assert!((parts[0].duration_seconds-0.1).abs()<0.00001);
+                assert!(parts[0].bytes.windows(2).any(|v|v==[0x21,1]));
+            }
+        }
     }
 }

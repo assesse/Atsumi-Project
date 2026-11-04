@@ -6,6 +6,7 @@ use super::*;
 pub struct RecordingProfile {
     name: Option<String>,
     image: Option<String>,
+    current_image: bool,
 }
 
 fn recording(app: &AppHandle, id: &str) -> Result<BrowserRecording, StreamError> {
@@ -34,7 +35,8 @@ pub async fn chzzk_recording_profile(
             Path::new(&r.output_dir),
             &r.channel_id,
         );
-        Ok(RecordingProfile { name, image })
+        let current_image = super::super::replay_assets::channel_profile::uses_current_fallback(Path::new(&r.output_dir),&r.channel_id);
+        Ok(RecordingProfile { name, image, current_image })
     })
     .await
     .unwrap_or_else(|_| Err(unavailable()))

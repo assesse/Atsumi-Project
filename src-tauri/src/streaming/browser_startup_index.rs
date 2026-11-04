@@ -30,7 +30,8 @@ pub(super) fn settled(r: &BrowserRecording) -> bool {
                 m.status == BrowserMergeStatus::Complete
                     && m.source_cleanup
                         .as_ref()
-                        .is_none_or(|c| c.status == BrowserSourceCleanupStatus::Complete)
+                        .is_none_or(|c| c.status == BrowserSourceCleanupStatus::Complete
+                            || (r.preserve_sources && c.status == BrowserSourceCleanupStatus::Preserved))
             })
         }
 }
@@ -244,6 +245,10 @@ mod tests {
             .as_mut()
             .unwrap()
             .status = BrowserSourceCleanupStatus::Complete;
+        assert!(settled(&r));
+        r.merge.as_mut().unwrap().source_cleanup.as_mut().unwrap().status = BrowserSourceCleanupStatus::Preserved;
+        assert!(!settled(&r));
+        r.preserve_sources = true;
         assert!(settled(&r));
     }
 

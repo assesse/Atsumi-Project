@@ -80,9 +80,17 @@
   };
   const videoSourceRoot = target => {
     if (!target?.isConnected || target.ownerDocument !== document
-      || target.closest('button,[role="button"],[role="slider"],input,textarea,select,[contenteditable="true"],video,audio,[hidden],[inert],[role="dialog"],[aria-modal="true"]')) return null;
+      || target.closest('button,[role="slider"],input,textarea,select,[contenteditable="true"],video,audio,[hidden],[inert]')) return null;
+    // Native immersive captions/author rows live outside article/videoComponent.
+    // An actual same-origin post/profile href is authoritative in this layer.
+    // Native controls fade with opacity/aria-hidden before a trusted click is
+    // dispatched. Redirect that exact click; keep inert/display guards intact.
+    const viewer=(mediaViewerPath(location.href) || /\/video\/[1-4]$/.test(postPath(location.href)||'')) && target.closest('[role="dialog"],[data-testid="modalContainer"],[data-testid="primaryColumn"]');
+    const link=target.closest('a[href]'),destination=link && navigationPath(link.getAttribute('href'));
+    if(viewer && viewer.querySelector('video') && link && destination && !/\/(?:photo|video)\//.test(destination) && recoveryPresented(link,true)) return link;
+    if(target.closest('[role="button"]'))return null;
     const component=target.closest('[data-testid="videoComponent"]'),article=target.closest('article[data-testid="tweet"]');
-    if (!component || !article || component.closest('article')!==article
+    if (!component || (!article && !viewer) || article && component.closest('article')!==article
       || !component.closest('[data-testid="videoPlayer"]') || !recoveryPresented(component)) return null;
     const anchor=target.closest('a[href]'),path=anchor && navigationPath(anchor.getAttribute('href'));
     if (anchor && component.contains(anchor) && path && !/\/(?:photo|video)\//.test(path)
@@ -145,7 +153,7 @@
   const recoveryScroll = article => {
     const scrolls = [], page = document.scrollingElement;
     if (page) scrolls.push({node:page,top:page.scrollTop,left:page.scrollLeft});
-    for (let node=article.parentElement,depth=0;node && depth<64;node=node.parentElement,depth++) {
+    for (let node=article?.parentElement,depth=0;node && depth<64;node=node.parentElement,depth++) {
       if (node === page) continue;
       const css = getComputedStyle(node);
       if ((/^(auto|scroll|overlay)$/.test(css.overflowY) && node.scrollHeight > node.clientHeight)
@@ -157,16 +165,17 @@
     }
     return scrolls.filter(value=>Number.isFinite(value.top) && Number.isFinite(value.left));
   };
-  const recoveryPresented = element => {
+  const recoveryPresented = (element, nativeFadingControl=false) => {
     for (let node=element,depth=0;node && depth<64;node=node.parentElement,depth++) {
       const css=getComputedStyle(node);
-      if (node.hidden || node.hasAttribute('inert') || node.getAttribute('aria-hidden')==='true'
-        || css.display==='none' || css.visibility==='hidden' || css.visibility==='collapse' || css.opacity==='0') return false;
+      if (node.hidden || node.hasAttribute('inert') || css.display==='none' || css.visibility==='hidden' || css.visibility==='collapse'
+        || nativeFadingControl!==true && (node.getAttribute('aria-hidden')==='true' || css.opacity==='0')) return false;
       if (depth===63 && node.parentElement) return false;
     }
     return true;
   };
   const recoveryContent = recovery => {
+    if(recovery.viewer) return !!mediaViewerPath(location.href) && nativeVideoReady();
     // Recreated source nodes are acceptable only when the original outer post
     // is observed again as its own article, not as the destination's quote.
     const roots = [...document.querySelectorAll('[data-testid="primaryColumn"]')];
@@ -188,7 +197,7 @@
     // serialize, persist or send it through the native message bridge.
     const recovery = {href:location.href,state,epoch:visibilityEpoch,history:historyRevision,
       input:inputRevision,until:performance.now()+1000,article:intent.article,
-      post:articlePath(intent.article),scrolls:recoveryScroll(intent.article)};
+      post:articlePath(intent.article),viewer:!!mediaViewerPath(location.href),scrolls:recoveryScroll(intent.article || intent.root)};
     routeRecovery = recovery;
     setTimeout(()=>{
       if (!recoveryCurrent(recovery)) { if(routeRecovery===recovery)cancelRouteRecovery(); return; }
@@ -482,6 +491,16 @@
     dismissMenus,
     archivePhotoOwner,
     videoLayerReady:nativeVideoReady,
+    videoSourceTarget:videoSourceRoot,
+    videoInput(event, video) {
+      if(!event?.isTrusted || !visible || !readyPublished || document.hidden || !routeOwnerCurrent()
+        || !(video instanceof HTMLMediaElement) || video.tagName!=='VIDEO' || !video.isConnected
+        || !nativeVideoResource(video.currentSrc || video.src) || !scrollMediaPresented(video) || window.__atsumiXAds?.blocked(video)) return false;
+      initialVideoGaps.set(video,{source:video.currentSrc || video.src,done:true,manual:true});
+      mediaIntent=video;mediaIntentUntil=performance.now()+1500;
+      signal('focus');signal('play','manual');return true;
+    },
+    videoInteractionReady:()=>visible && readyPublished && !document.hidden && routeOwnerCurrent(),
   });
   const recoverInitialVideoGap = video => {
     if (!visible || document.hidden || !automaticPlayback || !routeOwnerCurrent()) return;
@@ -568,7 +587,9 @@
       const anchor=target.closest('a[href]'),path=anchor && navigationPath(anchor.getAttribute('href'));
       if (path) {
         event.preventDefault();event.stopImmediatePropagation();if(background)signal('focus');
-        signal(background?'previewBackground':'videoSourcePreview',path);
+        const open=()=>{if(visible && !document.hidden && routeOwnerCurrent())signal(background?'previewBackground':'videoSourcePreview',path);};
+        if(document.fullscreenElement && document.exitFullscreen)Promise.resolve(document.exitFullscreen()).then(open).catch(()=>{});
+        else open();
       } else armVideoSourceIntent(target,sourceRoot,background);
       return;
     }
@@ -1030,6 +1051,8 @@
       status=JSON.stringify(statusValue);
     }
     if(status!==lastStatus){lastStatus=status;signal('status',status);}
+    window.__atsumiXPresentation?.update(visible && state==='ready' && owner===config.owner);
+    window.__atsumiXVideo?.update(visible && state==='ready' && owner===config.owner);
   }
   const observer=new MutationObserver(schedule);
   const observe=()=>{if(document.documentElement)observer.observe(document.documentElement,{childList:true,subtree:true});schedule();};

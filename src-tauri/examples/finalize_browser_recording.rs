@@ -4,7 +4,7 @@
 //! cargo run --example finalize_browser_recording -- DATA_DIR ID TOOLS_DIR --apply
 use atsumi_lib::streaming::{
     browser_merge::{BrowserMergeWorker, MediaTools},
-    browser_store::{BrowserCaptureStore, BrowserMergeStatus, BrowserSourceCleanupStatus},
+    browser_store::{ArchiveStatus, BrowserCaptureStore, BrowserMergeStatus, BrowserRecording, BrowserSourceCleanupStatus},
 };
 use serde_json::{json, Value};
 use std::{
@@ -91,6 +91,15 @@ fn app_closed() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn maintenance_complete(record: &BrowserRecording) -> bool {
+    record.work_progress.is_none()
+        && record.archive.as_ref().is_none_or(|a| a.status == ArchiveStatus::Complete)
+        && record.merge.as_ref().is_some_and(|m| {
+            m.status == BrowserMergeStatus::Complete
+                && m.source_cleanup.as_ref().is_some_and(|c| matches!(c.status, BrowserSourceCleanupStatus::Complete | BrowserSourceCleanupStatus::Preserved))
+        })
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
@@ -98,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.len() != 4
-        || !matches!(args[3].as_str(), "--apply" | "--refresh-summary")
+        || !matches!(args[3].as_str(), "--apply" | "--refresh-summary" | "--recover-preserve")
         || args[1].len() != 32
         || !args[1]
             .bytes()
@@ -142,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let saved: Value = serde_json::from_slice(&fs::read(root.join("recording.json"))?)?;
         if saved["id"].as_str() != Some(&args[1])
             || saved["merge"]["status"] != "complete"
-            || saved["merge"]["sourceCleanup"]["status"] != "complete"
+            || !matches!(saved["merge"]["sourceCleanup"]["status"].as_str(),Some("complete"|"preserved"))
         {
             return Err("Recording is not fully finalized; cache unchanged".into());
         }
@@ -166,7 +175,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ffmpeg: tools_dir.join("ffmpeg.exe"),
         ffprobe: tools_dir.join("ffprobe.exe"),
     };
-    let store = Arc::new(Mutex::new(BrowserCaptureStore::new(staging.path())?));
+    let preserve = args[3] == "--recover-preserve";
+    if preserve {
+        // Non-overwriting forensic metadata copies; media files are not edited.
+        for path in [&catalog, &root.join("recording.json")] {
+            let mut backup=tempfile::Builder::new().prefix("before-recording-recovery-").suffix(".json").tempfile_in(path.parent().ok_or("Invalid metadata parent")?)?;
+            backup.write_all(&fs::read(path)?)?;
+            backup.as_file().sync_all()?;
+            let (_, kept)=backup.keep()?;
+            println!("{}",json!({"metadataBackup":kept}));
+        }
+    }
+    let store = Arc::new(Mutex::new(if preserve {
+        BrowserCaptureStore::new_maintenance(&data,&args[1])?
+    } else { BrowserCaptureStore::new(staging.path())? }));
+    if preserve { store.lock().unwrap().preserve_recording_sources(&args[1])?; }
     if store.lock().unwrap().snapshot()?.len() != 1 {
         return Err("Unexpected maintenance scope".into());
     }
@@ -178,18 +201,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let record = store.lock().unwrap().snapshot()?.remove(0);
         let merge = record.merge.as_ref();
         let state = serde_json::to_string(
-            &json!({"id":record.id,"merge":merge,"segmentCount":record.segment_count}),
+            &json!({"id":record.id,"merge":merge,"segmentCount":record.segment_count,"workProgress":record.work_progress,"archive":record.archive,"progressive":record.progressive}),
         )?;
         if state != last {
             println!("{state}");
             last = state;
         }
-        if merge.is_some_and(|m| {
-            m.status == BrowserMergeStatus::Complete
-                && m.source_cleanup
-                    .as_ref()
-                    .is_some_and(|c| c.status == BrowserSourceCleanupStatus::Complete)
-        }) {
+        if maintenance_complete(&record) {
             break Ok(());
         }
         if merge.is_some_and(|m| {
@@ -203,6 +221,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }) {
             break Err("Merge or cleanup failed/blocked; remaining sources preserved");
         }
+        if record.work_progress.is_none() && record.archive.as_ref().is_some_and(|a| a.last_error.is_some()) {
+            break Err("Archive verification failed; both source locations preserved");
+        }
         if start.elapsed() > Duration::from_secs(14400) {
             break Err("Maintenance deadline; sources preserved");
         }
@@ -211,7 +232,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     worker.shutdown_and_wait();
     store.lock().unwrap().shutdown()?;
     // Check the authoritative metadata, not merely the staging cache.
-    let saved: Value = serde_json::from_slice(&fs::read(root.join("recording.json"))?)?;
+    let final_root=PathBuf::from(store.lock().unwrap().snapshot()?.remove(0).output_dir);
+    let saved: Value = serde_json::from_slice(&fs::read(final_root.join("recording.json"))?)?;
     println!(
         "{}",
         json!({"savedMerge":saved["merge"],"elapsedSeconds":start.elapsed().as_secs()})
@@ -234,6 +256,23 @@ mod tests {
             json!({"version":1,"extension":"preserved","recordings":[other]})
         );
         assert!(!remove_cached_summary(&mut index, "target").unwrap());
+    }
+
+    #[test]
+    fn merged_video_is_not_success_while_archive_is_unfinished() {
+        let mut record: BrowserRecording = serde_json::from_value(json!({
+            "id":"fixture", "channelId":"channel", "title":"fixture", "startedAt":1, "updatedAt":1,
+            "status":"stopped", "mimeType":"video/mp4", "outputDir":"fixture", "segmentCount":1,
+            "bytesWritten":1, "durationSeconds":1.0, "segments":[], "preserveSources":true,
+            "merge":{"status":"complete", "segmentCount":1, "updatedAt":1,
+                "sourceCleanup":{"status":"preserved", "deletedSegments":0,"proofFile":"proof","proofSha256":"hash"}},
+            "archive":{"status":"pending", "sourceDir":"source", "destinationRoot":"target", "token":"token", "retryAt":0}
+        })).unwrap();
+        assert!(!maintenance_complete(&record));
+        record.archive.as_mut().unwrap().status = ArchiveStatus::Complete;
+        assert!(maintenance_complete(&record));
+        record.merge.as_mut().unwrap().source_cleanup.as_mut().unwrap().status = BrowserSourceCleanupStatus::Blocked;
+        assert!(!maintenance_complete(&record));
     }
 
     #[test]

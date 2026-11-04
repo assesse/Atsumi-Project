@@ -17,6 +17,7 @@ pub enum BrowserSourceCleanupStatus {
     Pending,
     Complete,
     Blocked,
+    Preserved,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -149,6 +150,7 @@ fn hash_file(file: &mut File, cancel: &AtomicBool) -> Result<String, StreamError
             return Err(inactive());
         }
         digest.update(&buffer[..count]);
+        work_progress::advance_for(&["source_verification", "final_verification"], count as u64);
     }
     Ok(format!("{:x}", digest.finalize()))
 }
@@ -308,7 +310,15 @@ pub(crate) fn write_proof(
         });
     }
     let (_, derivatives) = verified_range_inputs(job, cancel)?;
-    let (artifacts, artifact_manifest_sha256) = artifacts::snapshot(job, &derivatives, cancel)?;
+    // Explicit repair never removes older failed outputs. They do not feed the
+    // new movie, so do not reread huge orphan outputs solely to authorize
+    // deletion that this policy prohibits. Raw and progressive inputs, journal,
+    // final movie and timeline remain fully authenticated.
+    let (artifacts, artifact_manifest_sha256) = if job.recording.preserve_sources {
+        (Vec::new(), None)
+    } else {
+        artifacts::snapshot(job, &derivatives, cancel)?
+    };
     let journal_sha256 = if let Some(plan) = &job.part {
         validate_merge_generation(job)?;
         plan.prefix_sha256.clone()
@@ -1246,5 +1256,37 @@ mod tests {
             .into_owned();
         assert!(!remove_verified_sources(&forged, &AtomicBool::new(false)).complete);
         assert!(source(root, 0).exists() && source(root, 1).exists());
+    }
+
+    #[test]
+    fn explicit_recovery_preserves_sources_after_verified_publication_and_reopen() {
+        let (dir,store,r)=fixture();
+        store.preserve_recording_sources(&r.id).unwrap();
+        let failed = store.take_merge_job().unwrap().unwrap();
+        artifacts::register(&failed).unwrap();
+        let stale = Path::new(&r.output_dir).join(format!("merged-{}.webm.partial", failed.token));
+        fs::write(&stale, b"old failed output must survive").unwrap();
+        store.fail_merge(&failed, BrowserMergeStatus::Failed, "synthetic previous failure").unwrap();
+        store.retry_merges(Some(&r.id)).unwrap();
+        // Locked obsolete output must not block independent valid source repair.
+        // Normal deletion still requires its complete proof.
+        use std::os::windows::fs::OpenOptionsExt;
+        let locked = OpenOptions::new().read(true).share_mode(0).open(&stale).unwrap();
+        let job=publish(&store);
+        drop(locked);
+        assert_eq!(fs::read(&stale).unwrap(), b"old failed output must survive");
+        let proof: Proof = serde_json::from_slice(&fs::read(Path::new(&r.output_dir)
+            .join(format!("merged-{}.cleanup.json", job.token))).unwrap()).unwrap();
+        assert_eq!(proof.segments.len(), 2);
+        assert_eq!(proof.media_sha256, format!("{:x}", Sha256::digest(WEBM)));
+        assert!(proof.artifacts.is_empty() && proof.artifact_manifest_sha256.is_none());
+        let result=store.snapshot().unwrap().remove(0);
+        assert_eq!(result.merge.unwrap().source_cleanup.unwrap().status,BrowserSourceCleanupStatus::Preserved);
+        assert!(store.take_cleanup_job().unwrap().is_none());
+        for index in 0..2 { assert_eq!(fs::read(Path::new(&job.recording.output_dir).join(segment_name(index,"webm"))).unwrap(),WEBM); }
+        drop(store);
+        let reopened=BrowserCaptureStore::new(dir.path()).unwrap();
+        assert!(reopened.snapshot().unwrap()[0].preserve_sources);
+        assert!(reopened.take_cleanup_job().unwrap().is_none());
     }
 }

@@ -1,0 +1,47 @@
+{
+  "id": "chzzk-recording-recovery-20261103",
+  "status": "implemented; remaining recovery queued in background; interactive monitoring ended by user",
+  "request": "실행 중 녹화·후처리 무중단, 원본 보존 복구·검증, 실제 처리 상태, 유우키 네오 프로필, 카드 전체 우클릭 개별 재생·삭제",
+  "audit": ".runtime/recording-recovery-20261103/preedit.json",
+  "invariants": [
+    "Existing process finished its own timeout; normal app shutdown only after all active work idle",
+    "Never fabricate missing broadcast intervals or clear capture interruption history",
+    "Original media retained at all existing locations during explicit repair; historical channel identity immutable",
+    "No external account reactions; no actual recording deletion for QA; other X work preserved"
+  ],
+  "changes": [
+    "Normalize the fully received short final progressive range before final export",
+    "Progress-based tool watchdog, bounded progress output, and ephemeral byte/time phase telemetry",
+    "Reconnect legacy rolling range receipts only after owner, generation, names, sizes and proofs validate",
+    "Explicit single-record maintenance uses normal full SHA/codec/A-V/decode/publication pipeline with preserveSources",
+    "Recognize preserved sources as terminal while keeping archive completion independent",
+    "Show historical interruption separately from verified playable saved interval",
+    "Missing historical avatar can use an explicitly marked current-image sidecar; missing upstream photo uses bundled official default",
+    "Whole-card and nested tile context menus retain existing individual delete confirmation",
+    "Completed file duration shown instead of overlapping capture-packet sum; source/chat clocks unchanged",
+    "Preserve-only recovery does not hash obsolete failed derivatives for prohibited cleanup; raw/range/final hashes remain required"
+  ],
+  "verified": {
+    "frontend": 78,
+    "nativeStreaming": 447,
+    "realFfmpegSynthetic": "8 relevant cases passed; preserve-only SSD/HDD case repeated after proof-scope change",
+    "maintenanceTests": 3,
+    "typing": "app and node TypeScript passed",
+    "build": "frontend and debug application passed",
+    "ui": ".runtime/recording-recovery-20261103/ui-verification.json",
+    "preserveProof": 16,
+    "realCompleted": [
+      "6e609be68fd74fdcbfbc0026aca6bbb6"
+    ]
+  },
+  "remaining": [
+    "Two long recordings continue sequentially; final proof/preservation checks and normal app launch are queued automatically",
+    "Actual app playback/context-menu acceptance not performed; user ended monitoring"
+  ],
+  "limitations": [
+    "Current Neo public channel image URL is empty; no invented replacement portrait",
+    "No future live-broadcast outage or new simultaneous capture claimed from local synthetic tests"
+  ],
+  "backgroundCompletion": ".runtime/recording-recovery-20261103/background-completion.json",
+  "userSteering": "2026-11-04: 전부 모니터링하지말고, 시켜놓고 종결해."
+}

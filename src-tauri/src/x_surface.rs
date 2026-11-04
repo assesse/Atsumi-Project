@@ -26,6 +26,8 @@ mod actions;
 pub mod search;
 #[path = "x_surface_source_compat.rs"]
 mod source_compat;
+#[path = "x_surface_presentation.rs"]
+mod presentation;
 
 const ERROR: &str = "X 화면을 열지 못했습니다. 새로고침하거나 로그인 상태를 확인해 주세요.";
 const LOGIN: &str = "X 로그인이 필요합니다. 계정 메뉴에서 로그인해 주세요.";
@@ -54,6 +56,7 @@ pub(super) struct Surfaces {
 struct PreviewTab {
     pane: Arc<Pane>,
     path: String,
+    presentation: Option<presentation::Presentation>,
 }
 struct RouteIntent {
     source: Url,
@@ -80,6 +83,8 @@ struct PreviewSnapshot {
     id: String,
     path: String,
     title: String,
+    first_line: String,
+    avatar_data: Option<String>,
     state: String,
 }
 struct Pane {
@@ -541,10 +546,7 @@ fn external_link_url(value: &str) -> Option<Url> {
     Some(url)
 }
 fn preview_title(path: &str) -> String {
-    let handle = path.split('/').nth(1).unwrap_or_default();
-    if handle == "i" { "게시물".into() }
-    else if post_path(path) { format!("@{handle} · #{}", path.split('/').nth(3).unwrap_or_default()) }
-    else { format!("@{handle}") }
+    if post_path(path) { "게시물".into() } else { "프로필".into() }
 }
 fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
     if !allowed(url)
@@ -559,10 +561,12 @@ fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
         return None;
     }
     let (kind, value) = (pairs[0].1.to_string(), pairs[1].1.to_string());
-    if !matches!(kind.as_str(), "status" | "preview" | "previewBackground" | "videoSourcePreview" | "close" | "external" | "externalLink" | "play" | "focus" | "wheel" | "key" | "archive" | "archiveCancel" | "archiveStatus" | "archiveChoose" | "search" | "routeIntent")
-        && !(cfg!(debug_assertions) && matches!(kind.as_str(), "routeProbe" | "photoProbe")) {
+    if !matches!(kind.as_str(), "status" | "previewPresentation" | "preview" | "previewBackground" | "videoSourcePreview" | "close" | "external" | "externalLink" | "play" | "focus" | "wheel" | "key" | "archive" | "archiveCancel" | "archiveStatus" | "archiveChoose" | "search" | "routeIntent")
+        && !(cfg!(debug_assertions) && matches!(kind.as_str(), "routeProbe" | "photoProbe" | "presentationProbe" | "videoProbe")) {
         return None;
     }
+    if kind == "videoProbe" && !matches!(value.as_str(), "key-unready"|"key-not-viewer"|"key-no-video"|"key-denied"|"key-accepted"|"key-control"|"key-control-full"|"key-control-back"|"key-control-link"|"key-control-other"|"click-no-root"|"click-control"|"click-no-video"|"click-accepted"|"click-denied") { return None; }
+    if kind == "presentationProbe" && !matches!(value.as_str(), "limit"|"ambiguous"|"unmatched"|"empty"|"author"|"profile"|"name"|"envelope"|"send") { return None; }
     if kind == "routeProbe" && serde_json::from_str::<RoutingProbe>(&value).is_err() {
         return None;
     }
@@ -702,7 +706,9 @@ fn snapshot(session: &XSession) -> SurfaceSnapshot {
         preview_state,
         previews: data.preview_tabs.iter().map(|tab| PreviewSnapshot {
             id: tab.pane.label.clone(), path: tab.path.clone(),
-            title: preview_title(&tab.path), state: pane_state(&tab.pane),
+            title: tab.presentation.as_ref().map(|p|p.name.clone()).unwrap_or_else(||preview_title(&tab.path)),
+            first_line: tab.presentation.as_ref().map(|p|p.first_line.clone()).unwrap_or_default(),
+            avatar_data: tab.presentation.as_ref().and_then(|p|p.avatar_data.clone()), state: pane_state(&tab.pane),
         }).collect(),
         active_preview_id: data.preview.as_ref().map(|pane| pane.label.clone()),
         error: error.or_else(|| data.preview_error.clone()),
@@ -1338,6 +1344,10 @@ fn handle_signal(session: &XSession, app: &AppHandle, pane: &Arc<Pane>, kind: &s
                 }
             }
         }
+        #[cfg(debug_assertions)]
+        "videoProbe" => super::debug_shape("official-surface", "video-input", &serde_json::json!({"phase":value})),
+        "presentationProbe" => super::debug_shape("official-surface", "presentation", &serde_json::json!({"phase":value})),
+        "previewPresentation" => presentation::observe(session, app, pane, value),
         "archiveChoose" => actions::choose(session, app, pane, value),
         #[cfg(debug_assertions)]
         "routeProbe" if pane.feed != "preview" => {
@@ -1445,7 +1455,9 @@ async fn create(
         include_str!("x_surface_actions.js").replace("__ATSUMI_X_ACTIONS__", &config),
         include_str!("x_surface_input.js").replace("__ATSUMI_X_INPUT__", &config),
         include_str!("x_surface.js").replace("__ATSUMI_X_SURFACE__", &config),
-    ].join("\n");
+        include_str!("x_surface_presentation.js").replace("__ATSUMI_X_PRESENTATION__", &config),
+        include_str!("x_surface_video.js").replace("__ATSUMI_X_VIDEO__", &config),
+    ].join("\n;\n");
     let target: Url = format!("https://x.com{path}").parse().map_err(|_| ERROR)?;
     let host = session.clone();
     let owned = app.clone();
@@ -1665,6 +1677,7 @@ fn observe_preview_path(data: &mut Surfaces, pane: &Pane, path: &str, current: &
     if pane.feed != "preview" || !allowed(current) || current.path() != path || !navigation_path(path) { return; }
     if let Some(tab) = data.preview_tabs.iter_mut().find(|tab| tab.pane.label == pane.label
         && tab.pane.revision == pane.revision && tab.pane.profile == pane.profile) {
+        if tab.path != path { tab.presentation = None; }
         tab.path = path.into();
     }
 }
@@ -1679,7 +1692,7 @@ fn register_preview_mode(data: &mut Surfaces, pane: Arc<Pane>, path: &str, inten
     if !preview_has_capacity(data) || data.preview_tabs.iter().any(|tab| tab.pane.label == pane.label) {
         return Err(PREVIEW_FULL.into());
     }
-    data.preview_tabs.push(PreviewTab { pane: pane.clone(), path: path.into() });
+    data.preview_tabs.push(PreviewTab { pane: pane.clone(), path: path.into(), presentation: None });
     // A newer explicit selection/close wins without silently discarding
     // the requested page whose creation was already in flight.
     if !background && data.preview_intent == intent {
@@ -2277,7 +2290,7 @@ mod tests {
             data.active = "foryou".into();
             data.feeds.insert("foryou".into(), feed.clone());
             data.preview = Some(preview.clone());
-            data.preview_tabs.push(PreviewTab { pane: preview.clone(), path: "/alice/status/123456".into() });
+            data.preview_tabs.push(PreviewTab { pane: preview.clone(), path: "/alice/status/123456".into(), presentation: None });
             data.viewport = Some(NativeViewport {
                 sequence: 1, visible: true, muted: false, occlusions: vec![],
                 player: Some(Rect {x: 0., y: 0., width: 600., height: 900.}),
@@ -2401,7 +2414,7 @@ mod tests {
         let snapshot = snapshot(&session);
         assert_eq!(snapshot.previews.len(), 3);
         assert_eq!(snapshot.active_preview_id.as_deref(), Some(first.label.as_str()));
-        assert_eq!(snapshot.previews[1].title, "@bob · #654321");
+        assert_eq!(snapshot.previews[1].title, "게시물");
     }
     #[test]
     fn close_inactive_active_and_last_tabs_select_adjacent_without_replacing_documents() {
