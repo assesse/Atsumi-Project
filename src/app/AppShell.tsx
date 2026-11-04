@@ -57,13 +57,14 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   const startup = useStartup(api.runtime, settingsStore.hasSnapshot);
   const updater = useAppUpdater(api.runtime, updateGuard);
   const [tutorialSource, setTutorialSource] = useState<ContentSource | null>(() => isTutorialDismissed(state.source) ? null : state.source);
-  const tutorialOpen = tutorialSource !== null;
+  const tutorialOpen = tutorialSource !== null && startup.phase !== "failed";
   const [feedbackSource, setFeedbackSource] = useState<ContentSource | null>(null);
   useEffect(() => {
     const open = () => { setTutorialSource(null); setFeedbackSource(current => current ?? state.source); };
     window.addEventListener(OPEN_FEEDBACK, open);
     return () => window.removeEventListener(OPEN_FEEDBACK, open);
   }, [state.source]);
+  useEffect(() => { if (startup.phase === "failed") setTutorialSource(null); }, [startup.phase]);
   const shownTutorials = useRef(new Set<ContentSource>());
   // Remember first display, not completion: skipping or closing the app must not replay it.
   useEffect(() => {
@@ -92,6 +93,13 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
   }, []);
   useEffect(() => () => window.clearTimeout(toastTimer.current), []);
   useRecordingNotifications(api.runtime, showToast);
+
+  const checkRecoveryUpdate = useCallback(async () => {
+    const result = await updater.checkForUpdates("manual");
+    if (result.status === "failed") showToast(result.message);
+    else if (result.status === "current") showToast("현재 최신 버전입니다.");
+    else if (result.status === "unavailable") showToast("개발 실행에서는 자동 업데이트를 사용할 수 없습니다.");
+  }, [updater.checkForUpdates, showToast]);
 
   const exit = useAppExit(api, showToast);
   // A native close request takes priority; the tour must never trap the exit dialog.
@@ -158,6 +166,9 @@ export function AppShell({ api, children, updateGuard }: { api: AppShellApi; chi
           : startup.statusError ? startup.statusError
           : startup.phase === "cancelling" ? "시작을 취소하고 작업을 안전하게 정리하는 중입니다."
           : "저장된 설정·작업 준비 중 · 다른 화면을 이용할 수 있습니다."}</span>
+        {startup.phase === "failed" ? <button type="button" disabled={["checking", "downloading", "installing"].includes(updater.state.phase)} onClick={() => void checkRecoveryUpdate()}>
+          {updater.state.phase === "checking" ? "업데이트 확인 중" : "업데이트 확인"}
+        </button> : null}
         {startup.phase !== "cancelling" ? <button type="button" onClick={() => void startup.cancel()}>시작 취소 및 종료</button> : null}
       </aside> : null}
       <UpdateDialog

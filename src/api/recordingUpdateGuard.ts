@@ -1,19 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ApiResult } from "./contracts";
 import type { UpdateInstallGuard } from "../update/useAppUpdater";
 
-/** The backend reservation closes the start-vs-install race, not only a UI check. */
+/** Works without AppState; the native reservation still excludes all active work. */
 export function createRecordingUpdateGuard(runtime: "tauri" | "browser-mock"): UpdateInstallGuard {
   return {
     async acquire() {
       if (runtime !== "tauri") return;
-      let result: ApiResult<void>;
-      try { result = await invoke<ApiResult<void>>("streaming_update_reserve"); }
-      catch { throw new Error("녹화 상태를 확인하지 못해 업데이트 설치를 보류했습니다."); }
-      if (!result.ok) throw new Error(result.error.message);
+      try { await invoke("app_update_reserve"); }
+      catch (error) {
+        throw new Error(typeof error === "string" ? error
+          : error instanceof Error ? error.message : "작업 상태를 확인하지 못해 업데이트 설치를 보류했습니다.");
+      }
     },
     async release() {
-      if (runtime === "tauri") await invoke("streaming_update_release");
+      if (runtime === "tauri") await invoke("app_update_release");
     },
   };
 }

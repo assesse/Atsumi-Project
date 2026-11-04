@@ -1608,5 +1608,11 @@
         "Privacy/minimize/tray/tab switching follow existing rules"
       ]
     }
-  ]
+  ],
+  "startupIndependentUpdateRecovery20261104": {
+    "contract": "docs/requirements/startup-independent-update-20261104.json",
+    "audit": ".runtime/startup-update-20261104/preedit.json",
+    "request": "Update independently of data initialization failure; verify and publish; leave current installed app untouched",
+    "preservation": "Schema protection, active-work reservation, data and media retained"
+  }
 }

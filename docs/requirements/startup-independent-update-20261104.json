@@ -1,0 +1,32 @@
+{
+  "id": "startup-independent-update-20261104",
+  "state": "automated-verification-passed; isolated-desktop-and-signed-release-pending",
+  "original": "데이터 초기화에 실패해도 업데이트는 독립적으로 되도록 수정하고 검증해서 배포해줘. 지금 내 PC 설치본은 그 기능을 직접 테스트할거니까 업데이트하지 말고.",
+  "audit": ".runtime/startup-update-20261104/preedit.json",
+  "requirements": [
+    "Update discovery independent of SQLite/settings/startup success",
+    "Signed installer/portable update after terminal failure without AppState",
+    "Refuse installation during initialization/cancellation or active/unknown work",
+    "Preserve schema protection and data/media",
+    "Manual retry in startup failure; no tutorial obstruction",
+    "No host v2.3.3 replacement/restart; isolated verification then publish"
+  ],
+  "acceptance": [
+    "Native IPC failure without AppState, reserve/release/retry, non-main denial, startup/active-work exclusion",
+    "Frontend failure UI and failed download release",
+    "Actual isolated desktop failure update check/download/signature path",
+    "Signed release and public updater verified; installed hash unchanged"
+  ],
+  "limits": [
+    "Already installed older versions retain old updater code until separately upgraded"
+  ],
+  "verification": {
+    "frontend": 179,
+    "nativePassed": 2464,
+    "nativeIgnored": 94,
+    "typing": "passed",
+    "frontendBuild": "passed",
+    "actualDesktop": "pending isolated release app",
+    "hostInstalledVersion": "2.3.3 unchanged"
+  }
+}

@@ -25,6 +25,7 @@ pub(crate) mod platform_window_fullscreen;
 mod platform_window_fullscreen_commands;
 #[path = "portable_update.rs"]
 mod portable;
+mod app_update;
 pub mod soop;
 pub mod pinterest_browser;
 pub mod pinterest_session;
@@ -946,21 +947,18 @@ fn initialize_backend(
         repository.clone(),
         Arc::clone(&artifact_store),
     ));
-    match excluded_artifacts.reconcile_pending() {
+    let reconciled_preview_ids = match excluded_artifacts.reconcile_pending() {
         Ok(report) => {
             for issue in &report.issues {
                 tracing::warn!(issue, "startup excluded folder move was deferred");
             }
-            for id in report.gallery_ids {
-                if let Ok(id) = domain::GalleryId::new(id) {
-                    gallery_previews.enqueue(id);
-                }
-            }
+            report.gallery_ids
         }
         Err(error) => {
-            tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred")
+            tracing::warn!(error = %error, "startup excluded folder reconciliation was deferred");
+            Vec::new()
         }
-    }
+    };
     let thumbnail_config = ThumbnailCoordinatorConfig {
         max_concurrency: settings.concurrent_image_requests as usize,
         request_start_interval: Duration::from_millis(settings.request_start_interval_ms),
@@ -1209,6 +1207,13 @@ fn initialize_backend(
         return Ok(());
     }
     startup::mark("workers_resumed");
+    // Deferred until commit so failed initialization cannot leave preview writes
+    // running while the database-independent recovery updater installs.
+    for id in reconciled_preview_ids {
+        if let Ok(id) = domain::GalleryId::new(id) {
+            startup_previews.enqueue(id);
+        }
+    }
     app.state::<AppState>().soop_auto_recorder().start(app.clone());
     app.state::<AppState>().youtube_auto_recorder().start(app.clone());
     app.state::<AppState>()
@@ -1276,6 +1281,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
         .manage(soop::original::SoopOriginalHost::default())
         .manage(youtube::original::YouTubeOriginalHost::default())
         .manage(Arc::new(startup::Startup::default()))
+        .manage(app_update::UpdateGate::default())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol("x-archive", |context, request, responder| {
@@ -1900,6 +1906,8 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             interface::commands::app_minimize_to_tray,
             interface::commands::app_active_work_snapshot,
             interface::commands::app_quit,
+            app_update::app_update_reserve,
+            app_update::app_update_release,
             portable::app_update_mode,
             portable::app_update_portable,
         ]))

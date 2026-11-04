@@ -261,7 +261,7 @@ pub async fn app_update_portable(
     progress: Channel<Progress>,
 ) -> Result<()> {
     require_main(&webview)?;
-    if !app.state::<crate::interface::AppState>().update_reserved() {
+    if !crate::app_update::is_reserved(&app)? {
         return Err("업데이트 작업 잠금이 필요합니다.".into());
     }
     let exe = std::env::current_exe().map_err(io)?;
@@ -348,10 +348,7 @@ pub async fn app_update_portable(
     .await
     .map_err(io)??;
     durable(&stage.join("apply"), b"apply")?;
-    if let Err(e) = app
-        .state::<crate::interface::AppState>()
-        .finish_portable_update(app.clone())
-    {
+    if let Err(e) = crate::app_update::finish_portable_update(&app) {
         let _ = durable(&stage.join("cancel"), b"cancel");
         return Err(e);
     }

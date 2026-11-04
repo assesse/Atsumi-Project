@@ -12,7 +12,7 @@ use std::{
 };
 use tauri::{ipc::Invoke, Manager};
 
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Phase {
     Starting,
@@ -53,6 +53,10 @@ impl Startup {
             phase: *self.phase.lock().unwrap_or_else(|e| e.into_inner()),
             elapsed_ms: elapsed_ms(),
         }
+    }
+
+    pub(crate) fn phase(&self) -> Phase {
+        self.snapshot().phase
     }
 
     pub fn ready(&self) -> bool {
@@ -130,6 +134,10 @@ pub(crate) fn gate<R: tauri::Runtime>(
                     | "app_startup_frame"
                     | "app_startup_cancel"
                     | "app_minimize_to_tray"
+                    | "app_update_mode"
+                    | "app_update_reserve"
+                    | "app_update_release"
+                    | "app_update_portable"
             )
         {
             return handler(invoke);
