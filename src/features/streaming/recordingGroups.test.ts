@@ -35,11 +35,11 @@ describe("short recording status", () => {
     expect(recordingStatus({ ...recording, storageCheckPending: true })).toBe("정상");
   });
   it("does not mistake playable partial broadcasts, unknown summaries, or invalid merge metadata for normal files", () => {
-    expect(recordingStatus({ ...merged, status: "interrupted" })).toBe("중단됨");
+    expect(recordingStatus({ ...merged, status: "interrupted" })).toBe("저장된 구간 재생 가능");
     expect(recordingStatus({ ...merged, summaryPending: true })).toBe("기록 불러오는 중");
-    expect(recordingStatus({ ...merged, status: "interrupted", storageCheckPending: true })).toBe("중단됨");
-    expect(recordingStatus({ ...merged, status: "failed", storageCheckPending: true })).toBe("저장 오류");
-    expect(recordingStatus({ ...merged, partial: { index: 2, file: "partial", bytes: 1 } })).toBe("저장 오류");
+    expect(recordingStatus({ ...merged, status: "interrupted", storageCheckPending: true })).toBe("저장된 구간 재생 가능");
+    expect(recordingStatus({ ...merged, status: "failed", storageCheckPending: true })).toBe("저장된 구간 재생 가능");
+    expect(recordingStatus({ ...merged, partial: { index: 2, file: "partial", bytes: 1 } })).toBe("저장된 구간 재생 가능");
     expect(recordingStatus({ ...merged, merge: { ...merged.merge!, segmentCount: 2 } })).toBe("확인 필요");
     expect(recordingStatus({ ...merged, mediaRemovedAt: 1 })).toBe("영상 없음");
     expect(recordingStatus({ ...merged, status: "recording", storageCheckPending: false })).toBe("녹화 중");
