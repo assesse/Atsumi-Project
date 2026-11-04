@@ -64,7 +64,7 @@ it("shows a skeleton during command and remote-document loading",async()=>{
 });
 it("renders full preview slot, close and loading skeleton without fabricated social buttons",async()=>{
   const api=mock();vi.mocked(api.surface).mockResolvedValue(surface("foryou",{preview:true,previewState:"loading"}));await render(api);
-  expect(host.querySelector('[aria-label="미리보기 불러오는 중"]')).not.toBeNull();expect(button("미리보기 닫기")).not.toBeNull();expect(host.querySelector('[aria-label="X 원본 미리보기"]')).not.toBeNull();expect(host.querySelector('[role="tab"] span')?.textContent).toBe("미리보기");
+  expect(host.querySelector('[aria-label="미리보기 불러오는 중"]')).not.toBeNull();expect(button("미리보기 닫기")).not.toBeNull();expect(host.querySelector('[aria-label="X 원본 미리보기"]')).not.toBeNull();expect(host.querySelector('[role="tab"] .x-preview-tab-name')?.textContent).toBe("미리보기");
   await click("미리보기 닫기");expect(api.closePreview).toHaveBeenCalledExactlyOnceWith(1,"first");expect(host.textContent).toContain("게시물을 선택하면");
 });
 it.each(['unavailable','error','timeout','ownerChanged','loginRequired'])('does not cover a terminal %s preview with an endless loading skeleton',async previewState=>{

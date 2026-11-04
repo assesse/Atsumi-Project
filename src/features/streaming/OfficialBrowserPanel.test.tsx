@@ -480,7 +480,7 @@ describe("OfficialBrowserPanel", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('.official-browser-recording-select')!.click());
     expect(button("재생")).toBeEnabled();
     expect(api.openMerged).not.toHaveBeenCalled();
-    expect(container.querySelector(".official-browser-files")).toHaveTextContent("중단됨");
+    expect(container.querySelector(".official-browser-files")).toHaveTextContent("저장된 구간 재생 가능");
     expect(container.querySelector(".official-browser-files")).not.toHaveTextContent("마지막 조각은 미완성입니다.");
     expect(container.querySelector(".official-browser-saved-chat-warning")).not.toBeNull();
     expect(container.querySelector(".official-browser-originals")).toBeNull();
