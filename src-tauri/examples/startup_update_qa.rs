@@ -54,7 +54,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_mut("updater")
         .ok_or("updater config missing")?;
     updater["endpoints"] = serde_json::json!([endpoint]);
-    updater["dangerousInsecureTransportProtocol"] = true;
+    updater["dangerousInsecureTransportProtocol"] = true.into();
     let download = format!("http://{address}/invalid-update.exe");
     let metadata = serde_json::json!({
         "version":"99.0.0", "notes":"격리 검증 · 서명이 잘못된 테스트 파일입니다. 실제 설치는 실행되지 않습니다.",

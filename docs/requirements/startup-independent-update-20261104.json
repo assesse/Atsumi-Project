@@ -1,6 +1,6 @@
 {
   "id": "startup-independent-update-20261104",
-  "state": "automated-verification-passed; isolated-desktop-and-signed-release-pending",
+  "state": "complete",
   "original": "데이터 초기화에 실패해도 업데이트는 독립적으로 되도록 수정하고 검증해서 배포해줘. 지금 내 PC 설치본은 그 기능을 직접 테스트할거니까 업데이트하지 말고.",
   "audit": ".runtime/startup-update-20261104/preedit.json",
   "requirements": [
@@ -9,16 +9,17 @@
     "Refuse installation during initialization/cancellation or active/unknown work",
     "Preserve schema protection and data/media",
     "Manual retry in startup failure; no tutorial obstruction",
-    "No host v2.3.3 replacement/restart; isolated verification then publish"
+    "Publish verified signed release, then update host via normal installer only when no active app work; preserve settings/media/database"
   ],
   "acceptance": [
     "Native IPC failure without AppState, reserve/release/retry, non-main denial, startup/active-work exclusion",
     "Frontend failure UI and failed download release",
     "Actual isolated desktop failure update check/download/signature path",
-    "Signed release and public updater verified; installed hash unchanged"
+    "Signed release and public updater verified; authorized host upgrade matches signed installer; data preserved"
   ],
   "limits": [
-    "Already installed older versions retain old updater code until separately upgraded"
+    "Already installed older versions retain old updater code until separately upgraded",
+    "Computer Use was stopped with physical Escape after the actual isolated error/retry screen was observed; user confirmed the test. Remaining host checks used read-only native diagnostics."
   ],
   "verification": {
     "frontend": 179,
@@ -26,7 +27,22 @@
     "nativeIgnored": 94,
     "typing": "passed",
     "frontendBuild": "passed",
-    "actualDesktop": "pending isolated release app",
-    "hostInstalledVersion": "2.3.3 unchanged"
-  }
+    "actualDesktop": "Isolated production release app: future schema failed safely; update 99.0.0 fixture offered; two invalid downloads reached fixture; error/retry screen observed and user confirmed; DB bytes and sentinel unchanged.",
+    "hostInstalledVersion": "2.4.2 via verified NSIS installer, exit 0; executable matches signed package (documented Tauri UNK->NSS bundle marker); database bytes unchanged by installer",
+    "desktopEvidence": ".runtime/startup-update-20261104/desktop-verification.json",
+    "remaining": "No required implementation or deployment work remains. Full installer replacement from the intentionally failed isolated fixture was not performed; only invalid-signature download/retry was tested there. Host was upgraded with the verified installer by explicit user instruction.",
+    "hostStartup": "backend_ready 1669ms; settings_ready 351ms; interactive_frame 1985ms; recordings_ready 3658ms; no ERROR events; native responsive",
+    "hostData": "Database schema, settings and existing job inventory preserved. Normal startup recovery continued previously pending work; no manual job mutation performed.",
+    "signedPackage": "Installer and portable Ed25519 signatures; tamper rejection; all 13 changed packaged sources and 233 portable entries verified; native production-signed archive extraction/tamper test passed.",
+    "release": {
+      "version": "2.4.2",
+      "commit": "0ff018fd6d3f53f788e82eb5f624618cb4c71c48",
+      "url": "https://github.com/assesse/Atsumi-Project/releases/tag/v2.4.2",
+      "publicFeedVerified": true
+    }
+  },
+  "latestRequest": "내 PC 릴리즈본도 업데이트해줘. 생각해보니 추후에만 적용되는 기능이라 지금은 업데이트해야겠네",
+  "superseded": [
+    "Previous requirement to leave host 2.3.3 installed was superseded by explicit host update authorization, after isolated verification."
+  ]
 }
