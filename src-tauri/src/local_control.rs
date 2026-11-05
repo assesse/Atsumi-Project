@@ -385,7 +385,7 @@ fn route(app: &tauri::AppHandle, method: &str, path: &str, body: &[u8]) -> (u16,
             .unwrap_or_default()
             .join("atsumi-next.sqlite3");
         return match crate::work_console::snapshot(&path, &query) {
-            Ok(s) => (200, json!(s)),
+            Ok(mut s) => { s.apply_postprocessing(&app.state::<crate::interface::commands::AppState>().download_postprocessing()); (200, json!(s)) },
             Err(e) => (503, json!({"error":e})),
         };
     }

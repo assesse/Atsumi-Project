@@ -108,6 +108,36 @@ mod qa {
         }
     }
 
+    struct LoadSource { ordinary: SyntheticSource, pages: Vec<Vec<u8>>, catalogue: atsumi_lib::infrastructure::FixtureSearchRepository }
+    impl LoadSource {
+        fn new() -> Result<Self> {
+            let mut pages = Vec::new();
+            for page in 0..200u32 {
+                let image = RgbaImage::from_fn(256,384,|x,y| Rgba([((x*13+y*7+page*61)%256) as u8,((x*3+y*17+page*47)%256) as u8,((x*19+y*5+page*23)%256) as u8,255]));
+                let mut bytes=Cursor::new(Vec::new());DynamicImage::ImageRgba8(image).write_to(&mut bytes,ImageFormat::Png)?;pages.push(bytes.into_inner());
+            }
+            Ok(Self{ordinary:SyntheticSource::new()?,pages,catalogue:atsumi_lib::infrastructure::FixtureSearchRepository::new()?})
+        }
+    }
+    impl DownloadSourcePort for LoadSource {
+        fn gallery_snapshot(&self,id:GalleryId,cancellation:&CancellationToken)->std::result::Result<DownloadGallerySnapshot,SourceContractError>{
+            use atsumi_lib::application::SearchRepository;
+            if matches!(id.get(),ALBUM_A|ALBUM_B){return self.ordinary.gallery_snapshot(id,cancellation);}
+            if cancellation.is_cancelled(){return Err(SourceContractError::cancelled());}
+            let detail=self.catalogue.gallery_detail_get(id).map_err(|_|SourceContractError::invalid_data("fixture","invalid catalogue"))?.ok_or_else(||SourceContractError::invalid_data("galleryId","outside isolated catalogue"))?;
+            let n=detail.summary.pages;
+            let metadata=GalleryMetadata::new(detail.summary.title,Some(detail.summary.artist),None,n).map_err(|_|SourceContractError::invalid_data("fixture","invalid metadata"))?;
+            Ok(DownloadGallerySnapshot{gallery:Gallery::new(id,1,metadata),source_revision:"isolated-load-v1".into(),pages:(1..=n).map(|p|DownloadSourcePage{source_page_number:SourcePageNumber::new(p).unwrap(),source_revision:format!("isolated-load-page:{p}")}).collect()})
+        }
+        fn download_page(&self,id:GalleryId,page:SourcePageNumber,cancellation:&CancellationToken)->std::result::Result<DownloadPagePayload,SourceContractError>{
+            if matches!(id.get(),ALBUM_A|ALBUM_B){return self.ordinary.download_page(id,page,cancellation);}
+            // Deterministic slow transport, interruptible only by its own token.
+            for _ in 0..40 { if cancellation.is_cancelled(){return Err(SourceContractError::cancelled());} thread::sleep(Duration::from_millis(25)); }
+            let bytes=self.pages.get((page.get()-1) as usize).ok_or_else(||SourceContractError::invalid_data("sourcePage","outside fixture"))?;
+            Ok(DownloadPagePayload::for_isolated_qa(page,bytes.clone(),format!("isolated-load-page:{}",page.get()),DownloadSourceImageFormat::Png,256,384))
+        }
+    }
+
     struct PreparationSupervisor(DownloadSupervisor);
     impl Drop for PreparationSupervisor {
         fn drop(&mut self) { self.0.shutdown_and_wait(); }
@@ -259,7 +289,8 @@ mod qa {
 
     pub fn run() -> Result<()> {
         let arguments: Vec<_> = std::env::args().skip(1).collect();
-        if arguments.len() > 1 { return Err("Expected one optional workspace Vite port".into()); }
+        let load_mode = arguments.get(1).map(String::as_str) == Some("--load");
+        if arguments.len() > 2 || (arguments.len() == 2 && !load_mode) { return Err("Expected optional Vite port and --load".into()); }
         let port: u16 = arguments.first().map(|value| value.parse()).transpose()?.unwrap_or(14200);
         if port < 1024 { return Err("Non-system loopback port required".into()); }
         let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().ok_or("Workspace missing")?.canonicalize()?;
@@ -321,7 +352,10 @@ mod qa {
         }
         // Normal Tauri quit may exit directly. Neither this return nor exit0 is
         // a UI pass. Root inspects preparation.json, saved state and the screen.
-        atsumi_lib::run_with_context(context)?;
+        if load_mode {
+            let search = Arc::new(atsumi_lib::infrastructure::FixtureSearchRepository::new()?);
+            atsumi_lib::run_with_isolated_hitomi_sources(context, Arc::new(LoadSource::new()?), search)?;
+        } else { atsumi_lib::run_with_context(context)?; }
         Ok(())
     }
 }

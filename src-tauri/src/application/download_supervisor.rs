@@ -67,6 +67,7 @@ struct SupervisorInner {
     page_workers: usize,
     finalizing: WorkQueue<FinalizationTask>,
     finalization_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    postprocessing: Mutex<HashMap<String, (u64, &'static str)>>,
     overlap_decisions: Mutex<()>,
     completion_handler: Mutex<Option<DownloadCompletionHandler>>,
     exclusion_handler: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
@@ -126,6 +127,7 @@ impl DownloadSupervisor {
             page_workers: gallery_worker_count,
             finalizing: WorkQueue::new(MAX_PENDING_FINALIZATIONS),
             finalization_locks: Mutex::new(HashMap::new()),
+            postprocessing: Mutex::new(HashMap::new()),
             overlap_decisions: Mutex::new(()),
             completion_handler: Mutex::new(None),
             exclusion_handler: Mutex::new(None),
@@ -676,6 +678,20 @@ impl DownloadSupervisor {
                 Err(quarantine_path_conflict().into())
             }
         }
+    }
+
+    /// Runtime progress only; durable recovery states remain unchanged.
+    pub fn postprocessing_snapshot(&self) -> HashMap<String, String> {
+        unpoison(self.inner.postprocessing.lock()).iter().map(|(id, (_, phase))| (id.clone(), (*phase).to_owned())).collect()
+    }
+
+    /// Display-only read: no decision lock, reconciliation, resume or filesystem work.
+    /// Applying a decision still takes the existing lock and revalidates all evidence.
+    pub fn overlap_review_snapshot(&self, review_id: &str) -> Result<Option<DownloadOverlapReview>, ApplicationError> {
+        if review_id.trim().is_empty() || review_id.len() > 200 {
+            return Err(crate::domain::ValidationError::new("reviewId", "must contain between 1 and 200 bytes").into());
+        }
+        Ok(self.inner.repository.overlap_review_get(review_id.trim())?)
     }
 
     pub fn overlap_review_get(
@@ -1380,6 +1396,7 @@ fn worker_loop(inner: Arc<SupervisorInner>) {
                 elapsed_ms = receiving_started.elapsed().as_millis() as u64,
                 "download pages persisted; handing off final verification"
             );
+            postprocessing_phase(&inner, &descriptor, "waiting");
             inner.finalizing.push(
                 FinalizationTask {
                     descriptor: descriptor.clone(),
@@ -1711,6 +1728,7 @@ fn finalize_download(
         "download artist finalization locks acquired"
     );
     // Check once after the artist wait, including galleries without artists.
+    postprocessing_phase(inner, descriptor, "verifying_files");
     tracing::info!(diag_stage = "verify_files");
     verify_bundle_files(inner, layout, &bundle, Some(cancellation))?;
     check_cancelled(cancellation)?;
@@ -1730,6 +1748,7 @@ fn finalize_download(
         )?,
     );
     check_cancelled(cancellation)?;
+    postprocessing_phase(inner, descriptor, "finalizing");
     let completed_at = now_unix_ms();
     bundle.artifact.state = DownloadArtifactState::Complete;
     bundle.artifact = bundle
@@ -1810,6 +1829,7 @@ fn run_overlap_review_gate(
                 )
             },
         )?;
+    postprocessing_phase(inner, descriptor, "hashing");
     let incoming_hashed = prepare_overlap_hashes(inner, incoming_bundle, &profile, cancellation)
         .map_err(|error| overlap_gate_failure(descriptor, "hash_incoming", None, None, error))?;
     let identities = inner
@@ -1890,6 +1910,7 @@ fn run_overlap_review_gate(
                 continue;
             }
         };
+        postprocessing_phase(inner, descriptor, "verifying_files");
         let verification_started = std::time::Instant::now();
         if let Err(error) = verify_bundle_files(
             inner,
@@ -1945,6 +1966,7 @@ fn run_overlap_review_gate(
         {
             continue;
         }
+        postprocessing_phase(inner, descriptor, "hashing");
         let existing_hashed =
             match prepare_overlap_hashes(inner, &existing_bundle, &profile, cancellation) {
                 Ok(hashed) => hashed,
@@ -1960,6 +1982,7 @@ fn run_overlap_review_gate(
                     continue;
                 }
             };
+        postprocessing_phase(inner, descriptor, "comparing");
         let comparison_started = std::time::Instant::now();
         let result = analyze_download_overlap_pair(
             &review_id,
@@ -3923,10 +3946,17 @@ mod tests {
             thread::sleep(Duration::from_millis(5));
         }
         let calls = source.calls().len();
+        while supervisor.postprocessing_snapshot().len() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        let waiting = supervisor.postprocessing_snapshot();
         // Shutdown must not wait for the unrelated artist lock to be released.
         supervisor.shutdown_and_wait();
         drop(guard);
         assert_eq!(calls, 2);
+        assert_eq!(waiting.len(), 2);
+        assert!(waiting.values().all(|phase| phase == "waiting"));
+        assert!(supervisor.postprocessing_snapshot().is_empty());
         for entry in entries {
             let bundle = repository
                 .pipeline_artifact_bundle(&DownloadEntryId::new(entry).unwrap())
@@ -5655,4 +5685,8 @@ mod tests {
             .is_file());
         supervisor.shutdown_and_wait();
     }
+}
+
+fn postprocessing_phase(inner: &SupervisorInner, descriptor: &DownloadJobDescriptor, phase: &'static str) {
+    unpoison(inner.postprocessing.lock()).insert(descriptor.entry_id.clone(), (descriptor.worker_attempt, phase));
 }

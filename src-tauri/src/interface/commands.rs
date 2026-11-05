@@ -515,6 +515,8 @@ fn platform_development_resource_root() -> Result<PathBuf, String> {
 }
 
 impl AppState {
+    pub fn download_postprocessing(&self) -> std::collections::HashMap<String, String> { self.downloads.postprocessing_snapshot() }
+
     // This is the single composition root for application services and ports.
     // Keeping dependencies explicit here makes production/test wiring auditable.
     #[allow(clippy::too_many_arguments)]
@@ -1447,13 +1449,13 @@ pub async fn duplicate_decision_apply(
 pub async fn download_overlap_review_get(
     state: State<'_, AppState>,
     review_id: String,
+    snapshot_only: Option<bool>,
 ) -> Result<ApiResult<DownloadOverlapReview>, ApiError> {
     let downloads = state.downloads.clone();
     Ok(
         run_application_blocking("download_overlap_review_get", move || {
-            downloads
-                .overlap_review_get(&review_id)?
-                .ok_or(ApplicationError::DownloadOverlapReviewNotFound(review_id))
+            let review = if snapshot_only.unwrap_or(false) { downloads.overlap_review_snapshot(&review_id) } else { downloads.overlap_review_get(&review_id) }?;
+            review.ok_or(ApplicationError::DownloadOverlapReviewNotFound(review_id))
         })
         .await,
     )
@@ -1877,17 +1879,12 @@ pub async fn download_queue_add(
         return Ok(ApiResult::failure(error));
     }
     let managed_work = state.managed_work();
-    match managed_work.run(|| {
-        let launch = state.service.download_queue_add(galleries, request_id)?;
-        state
-            .downloads
-            .enqueue_all(launch.jobs)
-            .map_err(ApplicationError::from)?;
+    let service = state.service.clone(); let downloads = state.downloads.clone();
+    Ok(run_application_blocking("download_queue_add", move || managed_work.run(|| {
+        let launch = service.download_queue_add(galleries, request_id)?;
+        downloads.enqueue_all(launch.jobs).map_err(ApplicationError::from)?;
         Ok(launch.entries)
-    }) {
-        Ok(entries) => Ok(ApiResult::success(entries)),
-        Err(error) => Ok(ApiResult::failure(error.into())),
-    }
+    })).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1941,7 +1938,8 @@ pub async fn download_entries_list(
     state: State<'_, AppState>,
     request: DownloadListRequest,
 ) -> Result<ApiResult<DownloadPage>, ApiError> {
-    Ok(state.service.download_entries_list(request).into())
+    let service = state.service.clone();
+    Ok(run_application_blocking("download_entries_list", move || service.download_entries_list(request)).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -2127,21 +2125,17 @@ pub async fn download_retry(
     fill_available: Option<bool>,
 ) -> Result<ApiResult<Vec<JobRef>>, ApiError> {
     let managed_work = state.managed_work();
-    match managed_work.run(|| {
+    let service = state.service.clone(); let downloads = state.downloads.clone();
+    Ok(run_application_blocking("download_retry", move || managed_work.run(|| {
         let job_refs = if fill_available.unwrap_or(false) {
-            state.service.download_retry_available(entry_ids)?
+            service.download_retry_available(entry_ids)?
         } else {
-            state.service.download_retry(entry_ids)?
+            service.download_retry(entry_ids)?
         };
-        state
-            .downloads
-            .enqueue_retries(&job_refs)
+        downloads.enqueue_retries(&job_refs)
             .map_err(ApplicationError::from)?;
         Ok(job_refs)
-    }) {
-        Ok(job_refs) => Ok(ApiResult::success(job_refs)),
-        Err(error) => Ok(ApiResult::failure(error.into())),
-    }
+    })).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -2150,10 +2144,11 @@ pub async fn download_cancel(
     state: State<'_, AppState>,
     entry_ids: Vec<String>,
 ) -> Result<ApiResult<Vec<DownloadEntry>>, ApiError> {
-    let cancellation_ids = entry_ids.clone();
-    match state.service.download_cancel(entry_ids) {
-        Ok(entries) => {
-            state.downloads.cancel_entries(&cancellation_ids);
+    let service = state.service.clone(); let downloads = state.downloads.clone();
+    Ok(run_application_blocking("download_cancel", move || {
+        let cancellation_ids = entry_ids.clone();
+        let entries = service.download_cancel(entry_ids)?;
+        downloads.cancel_entries(&cancellation_ids);
             for entry in &entries {
                 let event = DownloadChangedEvent {
                     linked_gallery_id: entry.linked_gallery_id,
@@ -2176,10 +2171,8 @@ pub async fn download_cancel(
                     );
                 }
             }
-            Ok(ApiResult::success(entries))
-        }
-        Err(error) => Ok(ApiResult::failure(error.into())),
-    }
+        Ok(entries)
+    }).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -2577,11 +2570,12 @@ pub async fn gallery_summary_get(
 pub async fn gallery_detail_get(
     state: State<'_, AppState>,
     gallery_id: i64,
+    include_related: Option<bool>,
 ) -> Result<ApiResult<GalleryDetail>, ApiError> {
     let service = state.service.clone();
     let merges = state.overlap_merges.clone();
     Ok(run_application_blocking("gallery_detail_get", move || {
-        let mut detail = service.gallery_detail_get(gallery_id)?;
+        let mut detail = if include_related.unwrap_or(true) { service.gallery_detail_get(gallery_id) } else { service.gallery_detail_main_get(gallery_id) }?;
         if let Some(merges) = merges {
             if let Some(count) = merges.composed_page_count(gallery_id)? {
                 detail.summary.pages = count;

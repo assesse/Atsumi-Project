@@ -636,3 +636,6 @@
   font-size: var(--font-size-min);
   text-align: center;
 }
+
+.download-overlap-sequence-work { display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:0;color:var(--muted);font-size:var(--font-size-min); }
+.download-overlap-sequence-work > span { display:inline-flex;align-items:center;gap:8px; }

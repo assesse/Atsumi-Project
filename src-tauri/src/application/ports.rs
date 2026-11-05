@@ -113,6 +113,10 @@ pub trait SearchRepository: Send + Sync {
         gallery_id: GalleryId,
     ) -> Result<Option<GalleryDetail>, RepositoryError>;
 
+    fn gallery_detail_main_get(&self, gallery_id: GalleryId) -> Result<Option<GalleryDetail>, RepositoryError> {
+        self.gallery_detail_get(gallery_id)
+    }
+
     fn gallery_summary_get(
         &self,
         gallery_id: GalleryId,

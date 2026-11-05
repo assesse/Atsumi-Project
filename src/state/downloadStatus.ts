@@ -23,3 +23,25 @@ export const downloadStatus: Record<DownloadState, { label: string; tone: string
 };
 
 export type BackgroundOpenOptions = { background?: boolean };
+
+export type GalleryProcessingOptions = { duplicateCount?: number; exclusionLabel?: string };
+export type GalleryProcessingState = DownloadState | "duplicate" | "linked" | "excluded";
+
+/** Local decisions take precedence over an older completed download record. */
+export function galleryProcessingStatus(download: Gallery["download"], options: GalleryProcessingOptions = {}):
+  { state: GalleryProcessingState; label: string; tone: string } | undefined {
+  if (download?.state === "quarantined") return {
+    state: "quarantined", tone: "muted",
+    label: options.exclusionLabel ? "격리됨 · " + options.exclusionLabel : "격리됨",
+  };
+  if (options.exclusionLabel) return { state: "excluded", tone: "muted", label: options.exclusionLabel };
+  if (download?.state === "review_required" && download.reviewKind === "gallery_duplicate") {
+    return { state: "duplicate", tone: "review", label: "다운로드 판본 중복" };
+  }
+  if ((options.duplicateCount ?? 0) > 0) return {
+    state: "duplicate", tone: "review", label: "중복 후보 " + options.duplicateCount + "개",
+  };
+  const target = linkedGalleryId(download);
+  if (target) return { state: "linked", tone: "muted", label: "새 번호 #" + target + "에 연결됨" };
+  return download ? { state: download.state, ...downloadStatus[download.state] } : undefined;
+}

@@ -1,34 +1,37 @@
 import type { HTMLAttributes, MouseEventHandler } from "react";
 import type { Gallery } from "../core/types";
 import { useGalleryDownload } from "../state/downloadProgress";
-import { downloadStatus, linkedGalleryId } from "../state/downloadStatus";
+import { galleryProcessingStatus, type GalleryProcessingOptions } from "../state/downloadStatus";
 import { GalleryStatusIcon } from "./GalleryStatusIcon";
 import "./GalleryProcessingBadge.css";
 
-export function processingSurfaceAttributes(download: Gallery["download"], soften = true) {
+export function processingSurfaceAttributes(download: Gallery["download"], soften = true, options: GalleryProcessingOptions = {}) {
+  const status = galleryProcessingStatus(download, options);
   return {
-    "data-processing-tone": download ? downloadStatus[download.state].tone : undefined,
-    "data-processing-muted": soften && download?.state === "completed" ? true : undefined,
+    "data-processing-tone": status?.tone,
+    "data-processing-muted": soften && status?.state === "completed" ? true : undefined,
+    "data-processing-excluded": status?.state === "excluded" || status?.state === "quarantined" ? true : undefined,
   };
 }
 
 // Related cards subscribe to the same per-ID status source as Explore.
-export function GalleryProcessingSurface({ gallery, ...props }: HTMLAttributes<HTMLElement> & { gallery: Gallery }) {
+export function GalleryProcessingSurface({ gallery, duplicateCount, exclusionLabel, ...props }:
+  HTMLAttributes<HTMLElement> & GalleryProcessingOptions & { gallery: Gallery }) {
   const download = useGalleryDownload(gallery.id, gallery.download);
-  return <article {...props} {...processingSurfaceAttributes(download)} />;
+  const options = { duplicateCount, exclusionLabel };
+  const status = galleryProcessingStatus(download, options);
+  return <article {...props} aria-label={props["aria-label"] ?? (status ? gallery.title + ", " + status.label : gallery.title)}
+    {...processingSurfaceAttributes(download, true, options)} />;
 }
 
-export function GalleryProcessingBadge({ gallery, overlay = false, duplicateCount = 0, onClick, label }: {
-  gallery: Gallery; overlay?: boolean; duplicateCount?: number;
+export function GalleryProcessingBadge({ gallery, overlay = false, duplicateCount = 0, exclusionLabel, onClick, label }: {
+  gallery: Gallery; overlay?: boolean;
   onClick?: MouseEventHandler<HTMLButtonElement>; label?: string;
-}) {
+} & GalleryProcessingOptions) {
   const download = useGalleryDownload(gallery.id, gallery.download);
-  if (!download && !duplicateCount) return null;
-  const duplicate = duplicateCount > 0 || (download?.state === "review_required" && download.reviewKind === "gallery_duplicate");
-  const target = linkedGalleryId(download);
-  const state = duplicate ? "duplicate" : target ? "linked" : download!.state;
-  const status = duplicate ? { tone: "review", label: duplicateCount ? `중복 후보 ${duplicateCount}개` : "다운로드 판본 중복" }
-    : target ? { tone: "muted", label: `새 번호 #${target}에 연결됨` } : downloadStatus[download!.state];
+  const status = galleryProcessingStatus(download, { duplicateCount, exclusionLabel });
+  if (!status) return null;
+  const state = status.state;
   const description = label ?? `${gallery.title}, ${status.label}`;
   const attributes = {
     className: `gallery-processing-badge tone-${status.tone}${overlay ? " is-overlay" : ""}`,

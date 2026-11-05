@@ -87,23 +87,26 @@ describe("completed pairs share DownloadOverlapReviewDialog", () => {
   };
   it("uses the shared heading, full A/B alignment and source coordinates", async () => {
     const f = await mount();
-    expect(f.container.textContent).toContain("DOWNLOAD OVERLAP REVIEW");
+    expect(f.container.textContent).toContain("판본 비교");
     expect(f.container.textContent).not.toContain("DUPLICATE REVIEW");
-    expect(f.container.textContent).toContain("완료 앨범 A/B 수동 대조");
-    expect(f.container.querySelector(".download-overlap-page-map")).toHaveTextContent("2쌍 일치");
-    expect(f.container.querySelector('.download-overlap-page-cell[aria-label^="기존 A 2페이지"]')).not.toBeNull();
-    expect(f.container.querySelector('.download-overlap-page-cell[aria-label^="신규 B 9페이지"]')).not.toBeNull();
-    expect(f.container.querySelector(".download-overlap-metrics")).toHaveTextContent("1 / 1");
+    expect(f.container.querySelector('[aria-label="두 판본 검토"]')).not.toBeNull();
+    expect(f.container.querySelector(".overlap-group-edition-info")).toHaveTextContent("일치 2/20");
+    expect(f.container.querySelector('.download-overlap-page-cell[aria-label^="#101 2페이지"]')).not.toBeNull();
+    expect(f.container.querySelector('.download-overlap-page-cell[aria-label^="#202 9페이지"]')).not.toBeNull();
+    expect(f.container.querySelector(".download-overlap-metrics")).toBeNull();
     await f.dispose();
   });
-  it("keeps A/B explicit choices and distinct keep/false-positive labels", async () => {
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    const f = await mount();
-    await f.click("A 제외"); await f.click("B 제외"); await f.click("오탐 판정"); await f.click("둘 다 보존");
+  it("uses edition switches for both completed artifacts and keeps false-positive distinct", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true), f = await mount();
+    const mode = async (id:number,label:string) => act(async()=>[...f.container.querySelectorAll<HTMLButtonElement>('[aria-label="#'+id+' 남길 범위"] button')].find(b=>b.textContent===label)!.click());
+    await mode(101,'제거'); await f.click('적용');
+    await mode(101,'남기기'); await mode(202,'제거'); await f.click('적용');
+    await mode(202,'남기기'); await f.click('적용'); await f.click('중복 아님');
     for (const action of ["remove_existing_continue", "remove_incoming", "false_positive_continue", "keep_both_continue"]) {
       expect(f.onDecision).toHaveBeenCalledWith({ reviewId: "duplicate:candidate-real-evidence", candidateId: "candidate-real-evidence", expectedRevision: 7, action });
     }
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("완료 앨범 B"));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('#101'));
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('#202'));
     await f.dispose(); confirm.mockRestore();
   });
   it("maps inverse containment and both unequal page numbers without swapping A/B", () => {
@@ -116,15 +119,17 @@ describe("completed pairs share DownloadOverlapReviewDialog", () => {
     expect(result.entryId).toBe("verified-candidate-entry");
   });
   it("provides shared Ctrl-selection and merge for a fully mapped donor", async () => {
-    const review = reviewFixture(); review.candidate.parent.pageCount = 2;
-    review.pagePairs = review.pagePairs.map((p, i) => ({ ...p, parentSourcePage: i + 1 }));
+    const review = reviewFixture(); review.candidate.parent.pageCount = 2; review.candidate.candidate.pageCount = 4;
+    const confirm=vi.spyOn(window,"confirm").mockReturnValue(true);
+    review.pagePairs = review.pagePairs.map((p, i) => ({ ...p, parentSourcePage: i + 1, candidateSourcePage:i+1 }));
     const f = await mount(review);
     for (const page of [2,1]) {
-      const cell = f.container.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="기존 A ${page}페이지"]`)!;
+      const cell = f.container.querySelector<HTMLElement>(`.download-overlap-page-cell[aria-label^="#101 ${page}페이지"]`)!;
       await act(async () => cell.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
     }
-    await f.click("B에 병합");
-    expect(f.onMergePages).toHaveBeenCalledWith({ reviewId: "duplicate:candidate-real-evidence", candidateId: "candidate-real-evidence", expectedRevision: 7, sourceSide: "existing", sourcePages: [1,2], selectedPages: { existing: [1,2], incoming: [] } });
+    await f.click("적용");
+    expect(f.onMergePages).toHaveBeenCalledWith({ reviewId: "duplicate:candidate-real-evidence", candidateId: "candidate-real-evidence", expectedRevision: 7, sourceSide: "existing", sourcePages: [1,2], selectedPages: { existing: [1,2], incoming: [] }, targetSelectionOnly:false,excludeSource:true });
+    confirm.mockRestore();
     await f.dispose();
   });
   it("shows previously processed decisions read-only", async () => {

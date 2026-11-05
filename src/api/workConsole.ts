@@ -5,9 +5,11 @@ import { runningDownloadStates } from "../state/downloadCancellation";
 import { clearNavigationCheckpoint, readNavigationCheckpoint, writeNavigationCheckpoint, type NavigationCheckpoint } from "../state/navigationCheckpoint";
 
 export type QueueQuery = { sequence?: number; after?: boolean; page?: number; offset?: number; includeSettled?: boolean; cancellationPreview?: boolean; observedSince?: string };
-export type QueueRow = { entryId: string; galleryId: GalleryId; title: string; artist: string; state: DownloadState; progress: number; sequence: number | null; updatedAt: string; errorCode: string | null };
+export type QueueRow = { entryId: string; galleryId: GalleryId; title: string; artist: string; state: DownloadState; progress: number; sequence: number | null; updatedAt: string; errorCode: string | null; postprocessing?: string | null };
 export type QueueBatch = { sequence: number; requestId: string; requested: number; owned: number; active: number; createdAt: string | null; label: string };
 export type QueueSnapshot = {
+  postprocessingCounts?: Record<string, number>;
+  overlapReviews?: { reviewId: string; revision: number; needsReconcile?: boolean }[];
   queriedAt: string; counts: Partial<Record<DownloadState, number>>; globalActive: number;
   totalRows: number; page: number; pageSize: number; offset?: number; items: QueueRow[]; batches: QueueBatch[];
   etaSeconds: number | null; recentCompleted: number; lastProgressAt: string | null;

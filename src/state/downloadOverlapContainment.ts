@@ -16,59 +16,51 @@ export type DownloadOverlapContainmentGroup = {
   items: DownloadOverlapContainmentItem[];
 };
 
-/** Collect only direct, verified containment edges, including reverse reviews.
- * No existing-to-existing relationship is inferred from a common neighbour. */
-export function buildDownloadOverlapContainmentGroup(
-  keeperGalleryId: GalleryId,
-  reviews: readonly DownloadOverlapReview[],
-): DownloadOverlapContainmentGroup | null {
-  const byExcludedEntry = new Map<string, DownloadOverlapContainmentItem>();
-  let keeper: DownloadOverlapGalleryRef | undefined;
-  for (const review of reviews) {
-    if (review.state !== "pending") continue;
-    for (const candidate of review.candidates) {
-      if (candidate.decision !== undefined) continue;
-      const evaluation = strictCandidateEvaluation(review, candidate);
-      if (evaluation?.decisionPath !== "complete_containment") continue;
-      const keeperIsIncoming = evaluation.winner === "incoming";
-      const kept = keeperIsIncoming ? review.incoming : candidate.existing;
-      const excluded = keeperIsIncoming ? candidate.existing : review.incoming;
-      if (kept.galleryId !== keeperGalleryId || excluded.galleryId === keeperGalleryId) continue;
-      keeper ??= kept;
-      const item: DownloadOverlapContainmentItem = {
-        key: `${review.reviewId}:${candidate.candidateId}`,
-        review, candidate, excluded, keeperIsIncoming,
-        action: keeperIsIncoming ? "remove_existing_continue" : "remove_incoming",
-      };
-      const known = byExcludedEntry.get(excluded.entryId);
-      // Prefer a removal in the keeper's own review, so its remaining candidates
-      // and revision advance together. A reverse edge is still usable on its own.
-      if (!known || (keeperIsIncoming && !known.keeperIsIncoming)) byExcludedEntry.set(excluded.entryId, item);
-    }
+// Review objects are immutable. A changed decision/revision creates a new
+// object; scrolling and queue progress reuse the already evaluated evidence.
+const edgesByReview = new WeakMap<DownloadOverlapReview, DownloadOverlapContainmentItem[]>();
+function containmentEdges(review: DownloadOverlapReview): DownloadOverlapContainmentItem[] {
+  const cached = edgesByReview.get(review);
+  if (cached) return cached;
+  const edges: DownloadOverlapContainmentItem[] = [];
+  if (review.state === "pending") for (const candidate of review.candidates) {
+    if (candidate.decision !== undefined) continue;
+    const evaluation = strictCandidateEvaluation(review, candidate);
+    if (evaluation?.decisionPath !== "complete_containment") continue;
+    const keeperIsIncoming = evaluation.winner === "incoming";
+    const kept = keeperIsIncoming ? review.incoming : candidate.existing;
+    const excluded = keeperIsIncoming ? candidate.existing : review.incoming;
+    if (kept.galleryId === excluded.galleryId) continue;
+    edges.push({ key: review.reviewId + ":" + candidate.candidateId, review, candidate,
+      excluded, keeperIsIncoming, action: keeperIsIncoming ? "remove_existing_continue" : "remove_incoming" });
   }
-  if (!keeper || !byExcludedEntry.size) return null;
-  const items = [...byExcludedEntry.values()].sort((a, b) =>
-    Number(b.keeperIsIncoming) - Number(a.keeperIsIncoming)
-    || b.excluded.pageCount - a.excluded.pageCount
-    || Number(a.excluded.galleryId) - Number(b.excluded.galleryId));
-  return { keeper, items };
+  edgesByReview.set(review, edges);
+  return edges;
+}
+
+/** One pass over direct, verified containment edges; no transitive inference. */
+export function buildDownloadOverlapContainmentGroups(reviews: readonly DownloadOverlapReview[]): DownloadOverlapContainmentGroup[] {
+  const groups = new Map<GalleryId, { keeper: DownloadOverlapGalleryRef; items: Map<string, DownloadOverlapContainmentItem> }>();
+  for (const review of reviews) for (const item of containmentEdges(review)) {
+    const keeper = item.keeperIsIncoming ? review.incoming : item.candidate.existing;
+    let group = groups.get(keeper.galleryId);
+    if (!group) { group = { keeper, items: new Map() }; groups.set(keeper.galleryId, group); }
+    const known = group.items.get(item.excluded.entryId);
+    if (!known || (item.keeperIsIncoming && !known.keeperIsIncoming)) group.items.set(item.excluded.entryId, item);
+  }
+  return [...groups.values()].map(group => ({ keeper: group.keeper, items: [...group.items.values()].sort((a,b) =>
+    Number(b.keeperIsIncoming) - Number(a.keeperIsIncoming) || b.excluded.pageCount - a.excluded.pageCount
+    || Number(a.excluded.galleryId) - Number(b.excluded.galleryId)) }));
+}
+
+export function buildDownloadOverlapContainmentGroup(keeperGalleryId: GalleryId, reviews: readonly DownloadOverlapReview[]): DownloadOverlapContainmentGroup | null {
+  return buildDownloadOverlapContainmentGroups(reviews).find(group => group.keeper.galleryId === keeperGalleryId) ?? null;
 }
 
 /** Larger compilations with more directly contained editions come first. */
 export function prioritizeDownloadOverlapReviews(reviews: readonly DownloadOverlapReview[]): DownloadOverlapReview[] {
-  const contained = new Map<GalleryId, Set<string>>();
-  for (const review of reviews) {
-    for (const candidate of review.candidates) {
-      if (review.state !== "pending" || candidate.decision !== undefined) continue;
-      const result = strictCandidateEvaluation(review, candidate);
-      if (result?.decisionPath !== "complete_containment") continue;
-      const keeper = result.winner === "incoming" ? review.incoming : candidate.existing;
-      const excluded = result.winner === "incoming" ? candidate.existing : review.incoming;
-      const ids = contained.get(keeper.galleryId) ?? new Set<string>();
-      ids.add(excluded.entryId);
-      contained.set(keeper.galleryId, ids);
-    }
-  }
+  const contained = new Map(buildDownloadOverlapContainmentGroups(reviews).map(group =>
+    [group.keeper.galleryId, new Set(group.items.map(item => item.excluded.entryId))]));
   const score = (review: DownloadOverlapReview) => Math.max(
     contained.get(review.incoming.galleryId)?.size ?? 0,
     ...review.candidates.filter((candidate) => candidate.decision === undefined)
@@ -103,4 +95,14 @@ export function refreshContainmentGroupReview(
     ? review.incoming
     : review.candidates.find((candidate) => candidate.existing.entryId === group.keeper.entryId)?.existing ?? group.keeper;
   return { keeper, items };
+}
+
+/** Yield between reviews when warming a large inventory; later renders reuse evidence. */
+export async function prepareDownloadOverlapContainment(reviews: readonly DownloadOverlapReview[], cancelled: () => boolean = () => false) {
+  let started = performance.now();
+  for (const review of reviews) {
+    if (cancelled()) return;
+    containmentEdges(review);
+    if (performance.now() - started >= 5) { await new Promise<void>(resolve => setTimeout(resolve, 0)); started = performance.now(); }
+  }
 }

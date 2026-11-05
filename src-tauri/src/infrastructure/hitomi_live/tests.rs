@@ -1993,3 +1993,16 @@ fn fallback_source_page_png() -> Vec<u8> {
         .unwrap();
     bytes.into_inner()
 }
+
+#[test]
+fn main_detail_never_waits_for_or_fetches_related_metadata() {
+    let transport = Arc::new(FakeTransport::default());
+    transport.respond(galleryinfo_script_url(7_001).unwrap(), "text/javascript", gallery_script(7_001, "Responsive main", "[7002,7003]").into_bytes());
+    let adapter = HitomiLiveAdapter::with_transport(HitomiLiveConfig::default(), transport.clone());
+    let detail = adapter.gallery_detail_main_get(GalleryId::new(7_001).unwrap()).unwrap().unwrap();
+    assert_eq!(detail.summary.title, "Responsive main");
+    assert!(!detail.page_dimensions.is_empty());
+    assert!(detail.related.is_empty());
+    assert_eq!(transport.call_count(&galleryinfo_script_url(7_002).unwrap()),0);
+    assert_eq!(transport.call_count(&galleryinfo_script_url(7_003).unwrap()),0);
+}

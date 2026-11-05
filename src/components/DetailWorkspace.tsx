@@ -67,6 +67,9 @@ type DetailWorkspaceProps = {
   minimized: boolean;
   galleries: ReadonlyMap<GalleryId, Gallery>;
   favoriteMetadata: ReadonlySet<string>;
+  duplicateExcludedGalleryIds?: ReadonlySet<GalleryId>;
+  explorationExcludedGalleryIds?: ReadonlySet<GalleryId>;
+  duplicateCandidateCounts?: ReadonlyMap<GalleryId, number>;
   previewWidth?: number;
   relatedPreviewWidth?: number;
   thumbnailClient?: ThumbnailClient;
@@ -174,6 +177,9 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
     minimized,
     galleries,
     favoriteMetadata,
+    duplicateExcludedGalleryIds,
+    explorationExcludedGalleryIds,
+    duplicateCandidateCounts,
     previewWidth = 220,
     relatedPreviewWidth = 240,
     thumbnailClient,
@@ -1077,10 +1083,19 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                         const item = galleries.get(id);
                         return item ? [item] : [];
                       })
-                      .map((item) => { const title = splitGalleryTitle(item.title, item.subtitle); return (
+                      .map((item) => {
+                        const title = splitGalleryTitle(item.title, item.subtitle);
+                        const processing = {
+                          duplicateCount: duplicateCandidateCounts?.get(item.id) ?? 0,
+                          exclusionLabel: duplicateExcludedGalleryIds?.has(item.id) ? "중복 판정으로 제외"
+                            : explorationExcludedGalleryIds?.has(item.id) ? "탐색에서 제외" : undefined,
+                        };
+                        return (
                         <GalleryProcessingSurface
                           key={item.id}
                           gallery={item}
+                          {...processing}
+                          data-gallery-id={item.id}
                           className="related-card"
                           tabIndex={0}
                           style={{
@@ -1120,7 +1135,7 @@ export function DetailWorkspace(props: DetailWorkspaceProps) {
                             alt={`${item.title} 표지`}
                           >
                             <span className="processing-preview-wash" aria-hidden="true" />
-                            <GalleryProcessingBadge gallery={item} overlay />
+                            <GalleryProcessingBadge gallery={item} {...processing} overlay />
                           </GalleryThumbnail>
                           <div className="related-copy card-content">
                             <div className="card-title" title={item.title}><strong>{title.primary}</strong>{title.secondary ? <span className="title-sub">{title.secondary}</span> : null}</div>

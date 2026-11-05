@@ -1,0 +1,45 @@
+{
+  "id": "hitomi-responsiveness-20261104",
+  "state": "implemented_and_verified",
+  "originals": [
+    {
+      "threadId": "01a089ee-56ed-7322-a750-c034423826c2",
+      "turnId": "01a1a656-5eac-79d0-8289-1c200cdfbfdb",
+      "messageId": "01a1a656-5f38-7b01-9f08-ef1de301a219"
+    }
+  ],
+  "audit": ".runtime/hitomi-responsiveness-20261104/preedit.json",
+  "invariants": [
+    "Do not interrupt/cancel/retry/drain existing downloads, hashing or recordings.",
+    "Do not weaken hash, source, duplicate or filesystem validation.",
+    "Preserve Ctrl/Shift selections, review decisions, queue and user data.",
+    "No actual album exclusion or account reactions for tests.",
+    "No commit/push/release requested for this batch."
+  ],
+  "changes": [
+    "Compare introduction history of computation optimization versus frontend review repetition and backend locks.",
+    "Coalesce revision-scoped review loading before I/O and preserve decision reconciliation.",
+    "Remove synchronous backend/UI stalls and full-library refresh after each review decision.",
+    "Represent finalization waiting versus actively processing without changing durable recovery semantics.",
+    "Regression tests including380pending reviews, slow mutation and concurrent discovery; actual isolated app load checks.",
+    "Replace quadratic queue count ownership LEFT JOIN with one scoped membership set; preserve counts and request ownership."
+  ],
+  "acceptance": [
+    "Existing download cancellation remains per-job.",
+    "Unchanged pending reviews do not rescan on progress events.",
+    "Actual changed review evidence is refreshed before any mutation.",
+    "Search/detail remain responsive with concurrent finalization and decisions.",
+    "Review apply leaves UI navigable; failure preserves selection and accurate result.",
+    "Postprocess waiting/hash/compare/verify states reflect real stages.",
+    "Actual app verification covers real backend load; no production album removal.",
+    "Full queue polling with current production history is bounded and preserves scoped/unscoped count semantics."
+  ],
+  "verification": ".runtime/hitomi-responsiveness-20261104/verification.json",
+  "verificationScope": [
+    "Concurrent-load UI checks used deterministic test source pages; these timings do not predict remote Hitomi server latency.",
+    "User profile full manual review sequence was not exercised because user input overlapped; its 382 pending reviews were inspected read-only.",
+    "No real album removal or merge was performed for QA.",
+    "No release installation or deployment was requested or performed."
+  ],
+  "finishedAt": "2026-11-04T12:45:34.513Z"
+}

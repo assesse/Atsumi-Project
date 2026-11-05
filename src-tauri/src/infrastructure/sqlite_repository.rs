@@ -63,6 +63,16 @@ use super::{
 
 pub struct SqliteRepository {
     connection: Mutex<Connection>,
+    read_path: Option<PathBuf>,
+}
+
+pub(crate) enum ReadConnection<'a> {
+    File(Connection),
+    Memory(MutexGuard<'a, Connection>),
+}
+impl std::ops::Deref for ReadConnection<'_> {
+    type Target = Connection;
+    fn deref(&self) -> &Connection { match self { Self::File(c) => c, Self::Memory(c) => c } }
 }
 
 impl SqliteRepository {
@@ -132,7 +142,28 @@ impl SqliteRepository {
         );
         Ok(Self {
             connection: Mutex::new(connection),
+            read_path: file_database.map(|database| database.path.to_path_buf()),
         })
+    }
+
+    /// A committed WAL snapshot does not queue behind background writes.
+    /// In-memory fixtures retain their single-connection semantics.
+    pub(crate) fn read_connection(&self) -> Result<ReadConnection<'_>, RepositoryError> {
+        let Some(path) = &self.read_path else { return self.connection().map(ReadConnection::Memory); };
+        let mut c = Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX).map_err(map_sqlite_error)?;
+        c.profile(Some(crate::diagnostics::database_profile));
+        c.busy_timeout(Duration::from_millis(300)).map_err(map_sqlite_error)?;
+        c.execute_batch("PRAGMA query_only=ON; BEGIN DEFERRED;").map_err(map_sqlite_error)?;
+        Ok(ReadConnection::File(c))
+    }
+
+    /// Optional display-cache enrichment must not delay interactive metadata.
+    pub(crate) fn try_cache_connection(&self) -> Result<Option<MutexGuard<'_, Connection>>, RepositoryError> {
+        match self.connection.try_lock() {
+            Ok(c) => Ok(Some(c)),
+            Err(std::sync::TryLockError::WouldBlock) => Ok(None),
+            Err(_) => Err(RepositoryError::Other("database mutex was poisoned".into())),
+        }
     }
 
     pub(crate) fn connection(&self) -> Result<MutexGuard<'_, Connection>, RepositoryError> {
@@ -269,7 +300,7 @@ fn next_pre_migration_backup_path(
 
 impl StateRepository for SqliteRepository {
     fn settings_get(&self) -> Result<SettingsSnapshot, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         read_settings(&connection)
     }
 
@@ -1493,7 +1524,7 @@ impl DownloadRepository for SqliteRepository {
         &self,
         request: &DownloadListRequest,
     ) -> Result<DownloadPage, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let state = request.state.map(|state| state.to_string());
         let query = request.query.as_deref();
         let total_items = connection
@@ -1627,7 +1658,7 @@ impl DownloadRepository for SqliteRepository {
         &self,
         request: &DownloadListRequest,
     ) -> Result<DownloadLibraryPage, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let state = request.state.map(|state| state.to_string());
         let query = request.query.as_deref();
         let total_items = connection
@@ -4536,7 +4567,7 @@ impl DownloadOverlapRepository for SqliteRepository {
         &self,
         review_id: &str,
     ) -> Result<Option<DownloadOverlapReview>, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         read_download_overlap_review(&connection, review_id)
     }
 
@@ -4544,7 +4575,7 @@ impl DownloadOverlapRepository for SqliteRepository {
         &self,
         request: &DownloadOverlapAutomationHistoryListRequest,
     ) -> Result<DownloadOverlapAutomationHistoryPage, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let (total_items, unacknowledged_items) = connection
             .query_row(
                 r#"
@@ -12903,5 +12934,30 @@ mod migration_backup_tests {
         let after = std::fs::read(&database_path).expect("re-read future database");
         assert_eq!(after, before);
         assert!(backup_files(temporary.path()).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod responsiveness_tests {
+    use super::*;
+    #[test]
+    fn interactive_reads_observe_committed_data_without_waiting_for_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = std::sync::Arc::new(SqliteRepository::open(dir.path().join("queue.sqlite3")).unwrap());
+        let expected = repository.settings_get().unwrap();
+        let mut writer = repository.connection().unwrap();
+        let transaction = writer.transaction().unwrap();
+        transaction.execute("UPDATE settings SET download_root='uncommitted-fixture'", []).unwrap();
+        let reader = repository.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        let task = std::thread::spawn(move || {
+            let value = reader.settings_get().unwrap();
+            assert!(reader.overlap_review_get("missing-fixture").unwrap().is_none());
+            assert!(reader.try_cache_connection().unwrap().is_none());
+            send.send(value).unwrap();
+        });
+        let result = receive.recv_timeout(Duration::from_secs(2));
+        transaction.rollback().unwrap(); drop(writer); task.join().unwrap();
+        assert_eq!(result.unwrap().download_root, expected.download_root);
     }
 }

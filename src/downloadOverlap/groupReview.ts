@@ -62,7 +62,7 @@ export function buildOverlapReviewGroup(
     const known = editions.get(excluded.entryId);
     if (!known || (keeperIsIncoming && !known.keeperIsIncoming)) editions.set(excluded.entryId, item);
   }
-  if (editions.size < 2) return null;
+  if (editions.size === 0) return null;
 
   const known = new Map([[keeper.entryId,{fingerprint:keeperFingerprint,count:keeper.pageCount}],
     ...[...editions.values()].filter(e=>e.keeperCompatible).map(e=>[e.excluded.entryId,{fingerprint:e.keeperIsIncoming?e.candidate.existingFingerprint:e.review.incomingFingerprint,count:e.excluded.pageCount}] as const)]);

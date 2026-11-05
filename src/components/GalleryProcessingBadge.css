@@ -38,3 +38,21 @@ button.gallery-processing-badge { cursor: pointer; }
 [data-processing-muted="true"] > :is(.cover, .related-cover) > .processing-preview-wash { background: color-mix(in srgb, var(--success) 26%, var(--surface)); opacity: .6; }
 [data-processing-muted="true"]:is(:hover, :focus-within) > :is(.cover, .related-cover) > .processing-preview-wash { opacity: 0; }
 @media (prefers-reduced-motion: reduce) { .processing-preview-wash, .gallery-card.is-compact .language-flag { transition: none; } }
+
+/* Excluded related items remain identifiable and navigable; only the cover is muted. */
+.related-card[data-processing-excluded="true"] {
+  background: color-mix(in srgb, var(--muted) 9%, var(--surface));
+  border-color: color-mix(in srgb, var(--warning) 34%, var(--line));
+}
+.related-card[data-processing-excluded="true"] > .related-cover .thumbnail-image {
+  filter: blur(3px) saturate(.28); opacity: .3;
+  transition: filter 180ms ease, opacity 180ms ease;
+}
+.related-card[data-processing-excluded="true"] > .related-cover > .processing-preview-wash {
+  background: color-mix(in srgb, var(--canvas) 54%, transparent); opacity: .7;
+}
+.related-card[data-processing-excluded="true"]:is(:hover, :focus-within) > .related-cover .thumbnail-image { filter: none; opacity: 1; }
+.related-card[data-processing-excluded="true"]:is(:hover, :focus-within) > .related-cover > .processing-preview-wash { opacity: 0; }
+@media (prefers-reduced-motion: reduce) {
+  .related-card[data-processing-excluded="true"] > .related-cover .thumbnail-image { transition: none; }
+}

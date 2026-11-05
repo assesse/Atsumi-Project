@@ -19,7 +19,16 @@ export type GroupPageRender = {
   label: string; visible: boolean; displayMatch: { matched: boolean; reordered?: boolean; counterparts?: string[]; pending?: boolean; unverified?: boolean }; selection?: GroupPageSelection; canSelect: boolean;
   onToggle: (side: Side, page: number, pair?: DownloadOverlapPagePair, range?: boolean) => void;
 };
+export type GroupReviewDraft = {
+  shown: string[]; activeKey: string | null;
+  selections: Record<string, GroupPageSelection>;
+  dispositions: Record<string, { evidence: string; modes: EditionDispositions }>;
+  excludeOverrides: Record<string, boolean>;
+  visibility: { matched: boolean; unique: boolean; gap: boolean };
+};
 type Props = {
+  initialDraft?: GroupReviewDraft;
+  onDraftChange?: (draft: GroupReviewDraft) => void;
   loadPageEvidence?: PageEvidenceLoader;
   suspended?: boolean;
   group: OverlapReviewGroup; disabled: boolean; loading: boolean;
@@ -36,15 +45,18 @@ const count = (selection?: GroupPageSelection) => selection
   ? selection.pages.incoming.length + selection.pages.existing.length : 0;
 const isDone = (item: GroupEdition) => ["excluded", "kept", "different"].includes(item.status);
 
-export function OverlapGroupReview({ group, disabled, loading, progress, renderPage, renderCover,
+export function OverlapGroupReview({ initialDraft, onDraftChange, group, disabled, loading, progress, renderPage, renderCover,
   onClearPreview, onApply, onApplyEditions, onDecision, onMerge, loadPageEvidence, suspended = false }: Props) {
-  const [shown, setShown] = useState<Set<string>>(() => new Set(group.editions.filter((item) => item.status === "uncertain").slice(0, 2).map((item) => item.key)));
-  const [activeKey, setActiveKey] = useState<string | null>(null);
-  const [selections, setSelections] = useState<Record<string, GroupPageSelection>>({});
-  const [dispositions, setDispositions] = useState<Record<string, { evidence: string; modes: EditionDispositions }>>({});
-  const [excludeOverrides, setExcludeOverrides] = useState<Record<string, boolean>>({});
+  const [shown, setShown] = useState<Set<string>>(() => new Set(initialDraft?.shown ?? (group.editions.length === 1 ? group.editions : group.editions.filter((item) => item.status === "uncertain").slice(0, 2)).map((item) => item.key)));
+  const [activeKey, setActiveKey] = useState<string | null>(initialDraft?.activeKey ?? null);
+  const [selections, setSelections] = useState<Record<string, GroupPageSelection>>(initialDraft?.selections ?? {});
+  const [dispositions, setDispositions] = useState<Record<string, { evidence: string; modes: EditionDispositions }>>(initialDraft?.dispositions ?? {});
+  const [excludeOverrides, setExcludeOverrides] = useState<Record<string, boolean>>(initialDraft?.excludeOverrides ?? {});
   const [submitted, setSubmitted] = useState<string[]>([]);
-  const [visibility, setVisibility] = useState({ matched: true, unique: true, gap: false });
+  const [visibility, setVisibility] = useState(initialDraft?.visibility ?? { matched: true, unique: true, gap: false });
+  const draftSink = useRef(onDraftChange); draftSink.current = onDraftChange;
+  useEffect(() => { draftSink.current?.({ shown:[...shown], activeKey, selections, dispositions, excludeOverrides, visibility }); },
+    [shown, activeKey, selections, dispositions, excludeOverrides, visibility]);
   const [editionProgress, setEditionProgress] = useState<EditionBatchProgress | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   disabled ||= batchBusy;
@@ -208,11 +220,11 @@ export function OverlapGroupReview({ group, disabled, loading, progress, renderP
   </article>;
 
   if(suspended)return null;
-  return <section className="overlap-group" aria-label="합본 중심 판본 검토" aria-busy={loading || disabled}>
+  return <section className="overlap-group" aria-label={group.editions.length === 1 ? "두 판본 검토" : "합본 중심 판본 검토"} aria-busy={loading || disabled}>
     <div className="overlap-group-overview" aria-label="관련 판본">
     <article className="overlap-group-keeper">
       {(group.editions.find((item) => item.keeperIsIncoming && item.keeperCompatible) ?? group.editions.find((item) => item.keeperCompatible)) && renderCover((group.editions.find((item) => item.keeperIsIncoming && item.keeperCompatible) ?? group.editions.find((item) => item.keeperCompatible))!, true)}
-      <div><span><FluentIcon glyph="\uE73E" /> {group.confirmed ? "보존 합본" : "기준 판본"}</span>
+      <div><span><FluentIcon glyph="\uE73E" /> {group.confirmed ? group.editions.length > 1 ? "보존 합본" : "포함 판본" : "기준 판본"}</span>
         <strong>{group.keeper.title}</strong><small>#{group.keeper.galleryId} · {group.keeper.pageCount}p</small></div>
       <span className="overlap-group-total">판본 {group.editions.length}</span>
     </article>
@@ -252,7 +264,7 @@ export function OverlapGroupReview({ group, disabled, loading, progress, renderP
             style={gridStyle} key={keeper ? "keeper" : edition.key} data-edition-row={keeper ? group.keeper.galleryId : edition.excluded.galleryId}>
             <div className="overlap-group-row-head">
               <button type="button" className="overlap-group-row-title" aria-label={'#'+(keeper?group.keeper.galleryId:edition.excluded.galleryId)+' 페이지 선택 활성화'} aria-pressed={keeper || active?.key===edition.key} onClick={()=>setActiveKey(edition.key)}>
-                <span className="overlap-group-row-meta"><b>#{keeper?group.keeper.galleryId:edition.excluded.galleryId}</b><span>{(keeper?group.keeper:edition.excluded).pageCount}p</span>{keeper?<span>{group.confirmed?'보존 합본':'기준 판본'}</span>:null}</span>
+                <span className="overlap-group-row-meta"><b>#{keeper?group.keeper.galleryId:edition.excluded.galleryId}</b><span>{(keeper?group.keeper:edition.excluded).pageCount}p</span>{keeper?<span>{group.confirmed ? group.editions.length > 1 ? '보존 합본' : '포함 판본' : '기준 판본'}</span>:null}</span>
                 <strong title={(keeper?group.keeper:edition.excluded).title}>{(keeper?group.keeper:edition.excluded).title}</strong>
               </button>
               <div className="overlap-edition-modes" role="group" aria-label={'#'+(keeper?group.keeper.galleryId:edition.excluded.galleryId)+' 남길 범위'} data-mode={modesFor(edition)[keeper===edition.keeperIsIncoming?'incoming':'existing']}>
@@ -284,6 +296,7 @@ export function OverlapGroupReview({ group, disabled, loading, progress, renderP
         <span>#{group.keeper.galleryId}와 비교</span>
         {editionProgress ? <span role="status">{editionProgress.completedKeys.length}/{editionProgress.total} 처리</span> : null}
         {count(activeSelection)>0?<><span>{count(activeSelection)}장 선택</span><button type="button" className="text-button" disabled={disabled} onClick={()=>setSelections(current=>{const next={...current};if(active)delete next[active.key];return next;})}>선택 해제</button></>:null}
+        {active?.canDecide ? <button type="button" className="text-button" disabled={disabled || selectionCount > 0} onClick={() => onDecision({ reviewId:active.review.reviewId, expectedRevision:active.review.revision, candidateId:active.candidate.candidateId, action:"false_positive_continue" })}>중복 아님</button> : null}
         <button type="button" className="primary-button" disabled={disabled || (Boolean(onApplyEditions) && !applyScope.length)} onClick={()=>void applyDisposition()}>{onApplyEditions ? applyScope.length+"개 적용" : "적용"}</button>
       </footer> : null}
       {editionProgress?.failure ? <div className="inline-error" role="alert">{editionProgress.failure} · 처리하지 못한 선택은 유지됩니다.</div> : null}

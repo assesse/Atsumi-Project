@@ -340,7 +340,7 @@ function GalleryCardComponent({
       ref={cardRef}
       data-gallery-id={gallery.id}
       data-tour="hitomi-album"
-      {...processingSurfaceAttributes(download, view === "explore")}
+      {...processingSurfaceAttributes(download, view === "explore", { duplicateCount: showsGlobalDuplicate ? duplicateCandidateCount : 0, exclusionLabel: explorationExcluded ? explorationExcludedLabel : undefined })}
       data-display-mode={displayMode}
       style={{ "--download-progress": `${progress}%` } as CSSProperties}
       role="listitem"
@@ -398,7 +398,8 @@ function GalleryCardComponent({
       >
         <span className="processing-preview-wash" aria-hidden="true" />
         <GalleryProcessingBadge gallery={gallery} overlay duplicateCount={showsGlobalDuplicate ? duplicateCandidateCount : 0}
-          label={statusLabel} onClick={openStatus} />
+          exclusionLabel={explorationExcluded ? explorationExcludedLabel : undefined}
+          label={isExplorationBlind ? gallery.title + ", " + explorationBlindLabel : statusLabel} onClick={openStatus} />
         {language.icon || language.fallback ? (
           <span className="language-flag">
             {language.icon ? <img src={language.icon} alt={language.label} /> : <span>{language.fallback}</span>}

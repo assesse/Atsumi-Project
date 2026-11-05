@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "status": "integrated_automated_checks_passed_interactive_qa_deferred",
+  "source": {
+    "message": "01a1a73c-e0d8-7802-b26a-f3285cab981e",
+    "audit": ".runtime/related-gallery-status-20261105/preedit.json"
+  },
+  "requirements": [
+    "Related and Explore cards use the same status information, colors and icons.",
+    "Duplicate exclusion, exploration exclusion and quarantine override misleading completed presentation; duplicate candidates are not final duplicate decisions.",
+    "Keep processing badges circular at bottom right; short hover descriptions, no extra explanatory paragraphs.",
+    "Preserve thumbnail revision/cache behavior, independent per-ID status subscriptions, navigation and background-tab modifiers.",
+    "No changes to downloads, recordings, hash/duplicate criteria, existing review edits, original files or accounts."
+  ],
+  "acceptance": [
+    "Related cards show duplicate candidates, duplicate exclusion, exploration exclusion, quarantine and all download phases.",
+    "Excluded completed albums do not display as available completed items.",
+    "Restoring an exclusion updates an open detail card without full reload.",
+    "Per-ID progress events retain thumbnail nodes and stale revisions are ignored.",
+    "Ctrl-click, double-click and Enter retain existing navigation; no new state polling."
+  ],
+  "validation": {
+    "at": "2026-11-04T16:02:18.725Z",
+    "regression": {
+      "passed": 114,
+      "failed": 0,
+      "skipped": 0
+    },
+    "typecheck": "passed",
+    "build": "passed",
+    "screenshots": [
+      "1280x720",
+      "1920x1080"
+    ],
+    "visualInspection": "Excluded covers visibly muted; round bottom-right icons and title bounds intact. Synthetic portraits only.",
+    "nativeInteractive": "deferred; no desktop input used",
+    "scope": "Related/Explore status rendering and existing navigation only. Download/duplicate algorithms, backend, source data and accounts unchanged."
+  },
+  "integration": {
+    "at": "2026-11-04T16:02:18.725Z",
+    "manifest": ".runtime/related-gallery-status-20261105/integration-manifest.json",
+    "release": false
+  }
+}

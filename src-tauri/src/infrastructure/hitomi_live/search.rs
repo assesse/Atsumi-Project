@@ -444,62 +444,11 @@ impl SearchRepository for HitomiLiveAdapter {
         Ok(Some(gallery_summary(&metadata, SearchSort::Recent, 0)?))
     }
 
-    fn gallery_detail_get(
-        &self,
-        gallery_id: GalleryId,
-    ) -> Result<Option<GalleryDetail>, RepositoryError> {
-        let id = u64::try_from(gallery_id.get())
-            .map_err(|_| SourceContractError::validation("galleryId", "must be positive"))?;
-        let metadata = match self.fetch_metadata_and_cache_summary(id, None) {
-            Ok(metadata) => metadata,
-            Err(error) if error.code == SourceErrorCode::NotFound => return Ok(None),
-            Err(error) => return Err(error.into()),
-        };
-        let summary = gallery_summary(&metadata, SearchSort::Recent, 0)?;
-        let mut related = Vec::new();
-        for related_id in metadata
-            .related_gallery_ids
-            .iter()
-            .copied()
-            .filter(|related_id| *related_id != id)
-            .take(self.config.related_gallery_limit)
-        {
-            match self.fetch_metadata(related_id) {
-                Ok(metadata) => related.push(gallery_summary(&metadata, SearchSort::Recent, 0)?),
-                Err(error) if error.code == SourceErrorCode::NotFound => {}
-                Err(error) => {
-                    // Related galleries are supplemental. A transient or
-                    // malformed related item must not withhold the main
-                    // gallery's page dimensions and leave Detail loading
-                    // forever. Keep diagnostics sanitized to IDs and code.
-                    tracing::debug!(
-                        gallery_id = id,
-                        related_gallery_id = related_id,
-                        code = ?error.code,
-                        "skipping unavailable related gallery metadata"
-                    );
-                }
-            }
-        }
-        let mut known_pages = HashSet::new();
-        let page_dimensions = metadata
-            .pages
-            .iter()
-            .filter_map(|page| {
-                (page.source_page > 0 && known_pages.insert(page.source_page)).then_some(
-                    GalleryPageDimension {
-                        source_page: page.source_page,
-                        width: page.width.filter(|value| *value > 0),
-                        height: page.height.filter(|value| *value > 0),
-                    },
-                )
-            })
-            .collect();
-        Ok(Some(GalleryDetail {
-            summary,
-            related,
-            page_dimensions,
-        }))
+    fn gallery_detail_get(&self, gallery_id: GalleryId) -> Result<Option<GalleryDetail>, RepositoryError> {
+        self.detail_with_related(gallery_id, true)
+    }
+    fn gallery_detail_main_get(&self, gallery_id: GalleryId) -> Result<Option<GalleryDetail>, RepositoryError> {
+        self.detail_with_related(gallery_id, false)
     }
 }
 
@@ -823,4 +772,65 @@ fn stable_random_rank(id: u64) -> u64 {
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
     value ^ (value >> 31)
+}
+
+impl HitomiLiveAdapter {
+    fn detail_with_related(
+        &self,
+        gallery_id: GalleryId,
+        include_related: bool,
+    ) -> Result<Option<GalleryDetail>, RepositoryError> {
+        let id = u64::try_from(gallery_id.get())
+            .map_err(|_| SourceContractError::validation("galleryId", "must be positive"))?;
+        let metadata = match self.fetch_metadata_and_cache_summary(id, None) {
+            Ok(metadata) => metadata,
+            Err(error) if error.code == SourceErrorCode::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        let summary = gallery_summary(&metadata, SearchSort::Recent, 0)?;
+        let mut related = Vec::new();
+        for related_id in metadata
+            .related_gallery_ids
+            .iter()
+            .copied()
+            .filter(|related_id| *related_id != id)
+            .take(if include_related { self.config.related_gallery_limit } else { 0 })
+        {
+            match self.fetch_metadata(related_id) {
+                Ok(metadata) => related.push(gallery_summary(&metadata, SearchSort::Recent, 0)?),
+                Err(error) if error.code == SourceErrorCode::NotFound => {}
+                Err(error) => {
+                    // Related galleries are supplemental. A transient or
+                    // malformed related item must not withhold the main
+                    // gallery's page dimensions and leave Detail loading
+                    // forever. Keep diagnostics sanitized to IDs and code.
+                    tracing::debug!(
+                        gallery_id = id,
+                        related_gallery_id = related_id,
+                        code = ?error.code,
+                        "skipping unavailable related gallery metadata"
+                    );
+                }
+            }
+        }
+        let mut known_pages = HashSet::new();
+        let page_dimensions = metadata
+            .pages
+            .iter()
+            .filter_map(|page| {
+                (page.source_page > 0 && known_pages.insert(page.source_page)).then_some(
+                    GalleryPageDimension {
+                        source_page: page.source_page,
+                        width: page.width.filter(|value| *value > 0),
+                        height: page.height.filter(|value| *value > 0),
+                    },
+                )
+            })
+            .collect();
+        Ok(Some(GalleryDetail {
+            summary,
+            related,
+            page_dimensions,
+        }))
+    }
 }

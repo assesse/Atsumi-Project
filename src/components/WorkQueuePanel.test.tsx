@@ -22,7 +22,7 @@ describe("minimal download queue",()=>{
    expect(host.querySelector('.queue-summary-legend')).toHaveTextContent("완료 5작업 중 2대기 0검토 필요 2실패·중단 1");
    expect(host.querySelector('[title="완료 5개 (취소·격리 1개 포함)"]')).toBeTruthy();
    expect(host.querySelector('.queue-summary')).toHaveClass("is-running");
-   expect(host.querySelector('.queue-progress-track .tone-active')).toHaveAttribute("title", "작업 중 2개 · 해시 2개");
+   expect(host.querySelector('.queue-progress-track .tone-active')).toHaveAttribute("title", "작업 중 2개 · 후처리 2개");
    expect(host.querySelector('.queue-progress-track .tone-active')).toHaveStyle({width:"20%"});
    expect(host.querySelector('[title="검토 필요 2개"]')).not.toHaveClass("is-running");
    expect([...host.querySelectorAll<HTMLElement>('.queue-progress-segment')].reduce((sum,node)=>sum+parseFloat(node.style.width),0)).toBe(100);
@@ -40,12 +40,12 @@ describe("minimal download queue",()=>{
    expect(segments).toHaveLength(5);
    expect(segments[1]).toHaveAttribute("aria-hidden","true");
    expect(host.querySelector('.queue-summary')).not.toHaveClass("is-running");
-   expect(segments[2]).toHaveAttribute("title","대기 4개 (재시도 1개 포함)");
+   expect(segments[2]).toHaveAttribute("title","대기 4개 · 재시도 1개");
    await render({resolving_metadata:1,downloading:1,hashing:1,verifying:1});
    [...host.querySelectorAll('.queue-progress-segment')].forEach((segment,index)=>expect(segment).toBe(segments[index]));
    expect(segments[1]).toHaveAttribute("aria-hidden","false");
    expect(segments[1]).toHaveStyle({width:"100%"});
-   expect(segments[1]).toHaveAttribute("title","작업 중 4개 · 정보 확인 1개 · 다운로드 1개 · 해시 1개 · 검증 1개");
+   expect(segments[1]).toHaveAttribute("title","작업 중 4개 · 정보 확인 1개 · 다운로드 1개 · 후처리 2개");
    expect(host.querySelector('.queue-summary')).toHaveClass("is-running");
    await render({completed:2,cancelled:1,quarantined:1});
    [...host.querySelectorAll('.queue-progress-segment')].forEach((segment,index)=>expect(segment).toBe(segments[index]));
@@ -133,4 +133,15 @@ describe("minimal download queue",()=>{
    expect(query).toHaveBeenCalledWith({offset:25});
   }finally{await act(async()=>root.unmount());}
  });
+});
+
+it('separates waiting from active postprocessing without changing durable job states',async()=>{
+ const host=document.createElement('div'),root=createRoot(host);
+ const value={...snapshot(),counts:{hashing:18},postprocessingCounts:{waiting:15,hashing:1,comparing:1,unknown:1}};
+ try{ await act(async()=>root.render(<QueueSummary snapshot={value}/>));
+ expect(host.querySelector('.queue-summary-legend')).toHaveTextContent('작업 중 2대기 16');
+ expect(host.querySelector('.tone-active')).toHaveAttribute('title','작업 중 2개 · 해시 계산 중 1개 · 중복 비교 중 1개');
+ expect(host.querySelector('.tone-waiting')?.getAttribute('title')).toContain('후처리 대기 15개');
+ expect(queueProgress(value).active).toBe(18);
+ }finally{await act(async()=>root.unmount());}
 });

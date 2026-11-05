@@ -8,6 +8,9 @@ import type { GalleryId } from "../core/types";
 import "./GalleryProcessingBadge.css";
 import "./WorkQueuePanel.css";
 
+const postprocessingLabels: Record<string,string> = { waiting: "후처리 대기", verifying_files: "파일 검증 중", hashing: "해시 계산 중", comparing: "중복 비교 중", finalizing: "완료 검증 중", unknown: "후처리 상태 확인 중" };
+export function queueRowStatus(row: QueueRow) { return row.postprocessing ? postprocessingLabels[row.postprocessing] ?? postprocessingLabels.unknown : downloadStatus[row.state].label; }
+
 export function queueProgress(snapshot: QueueSnapshot | null) {
   const counts = snapshot?.counts ?? {};
   const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
@@ -26,18 +29,21 @@ export function queueProgress(snapshot: QueueSnapshot | null) {
 export function QueueSummary({ snapshot, scoped = false, error }: { snapshot: QueueSnapshot | null; scoped?: boolean; error?: string | null }) {
   const counts = snapshot?.counts ?? {};
   const p = queueProgress(snapshot);
-  const waiting = (counts.queued ?? 0) + (counts.retry_wait ?? 0);
+  const phases = snapshot?.postprocessingCounts;
+  const waiting = (counts.queued ?? 0) + (counts.retry_wait ?? 0) + (phases?.waiting ?? 0) + (phases?.unknown ?? 0);
   const working = p.active - waiting;
   const stages = [
     ["정보 확인", counts.resolving_metadata ?? 0], ["다운로드", counts.downloading ?? 0],
-    ["해시", counts.hashing ?? 0], ["검증", counts.verifying ?? 0],
+    ... (phases ? Object.entries(phases).filter(([key]) => key !== "waiting" && key !== "unknown").map(([key,n]) => [postprocessingLabels[key] ?? key,n] as const)
+      : [["후처리", (counts.hashing ?? 0) + (counts.verifying ?? 0)] as const]),
   ] as const;
   const stageDetail = stages.filter(([, n]) => n > 0).map(([label, n]) => `${label} ${n}개`).join(" · ");
+  const waitingDetail = [counts.retry_wait ? `재시도 ${counts.retry_wait}개` : "", phases?.waiting ? `후처리 대기 ${phases.waiting}개` : "", phases?.unknown ? `상태 확인 ${phases.unknown}개` : ""].filter(Boolean).join(" · ");
   const completionDetail = p.cancelled ? ` (취소·격리 ${p.cancelled}개 포함)` : "";
   const segments = [
     ["complete", "완료", p.completed, completionDetail],
     ["active", "작업 중", working, stageDetail ? ` · ${stageDetail}` : ""],
-    ["waiting", "대기", waiting, counts.retry_wait ? ` (재시도 ${counts.retry_wait}개 포함)` : ""],
+    ["waiting", "대기", waiting, waitingDetail ? ` · ${waitingDetail}` : ""],
     ["review", "검토 필요", p.review, ""], ["error", "실패·중단", p.failed, ""],
   ] as const;
   const completionEdge = useRef<HTMLSpanElement>(null);
@@ -152,8 +158,9 @@ export function WorkQueuePanel({ snapshot, query, error, onQuery, onRefresh, onC
         <button type="button" className="queue-item-title" title={row.title} onClick={(event) => onOpen(row.galleryId, { background: event.ctrlKey || event.metaKey })}>
           <strong>{splitGalleryTitle(row.title).primary}</strong><small>{row.artist} · #{row.galleryId}</small>
         </button>
-        <span className="queue-item-status" title={downloadStatus[row.state].label + " · " + Math.floor(row.progress) + "%"}>
-          <span className={"gallery-processing-badge tone-" + downloadStatus[row.state].tone} role="img" aria-label={downloadStatus[row.state].label}><GalleryStatusIcon kind={row.state} /></span>
+        <span className="queue-item-status" title={queueRowStatus(row) + " · " + Math.floor(row.progress) + "%"}>
+          <span className={"gallery-processing-badge tone-" + downloadStatus[row.state].tone} role="img" aria-label={queueRowStatus(row)}><GalleryStatusIcon kind={row.postprocessing === "waiting" ? "queued" : row.state} /></span>
+          {row.postprocessing ? <small>{queueRowStatus(row)}</small> : null}
         </span>
       </article>)}
       {total > 0 ? <div aria-hidden="true" style={{ height: Math.max(0, total - offset - rows.length) * ROW_HEIGHT }} /> : null}

@@ -48,7 +48,7 @@ impl GallerySummaryCache for SqliteRepository {
         &self,
         gallery_id: GalleryId,
     ) -> Result<Option<GallerySummary>, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let stored: Option<(String, u32, String)> = connection
             .query_row(
                 "SELECT profile, schema_version, summary_json FROM gallery_summary_cache WHERE gallery_id = ?1",
@@ -68,12 +68,7 @@ impl GallerySummaryCache for SqliteRepository {
                 gallery_id = gallery_id.get(),
                 "ignoring invalid persisted gallery summary"
             );
-            connection
-                .execute(
-                    "DELETE FROM gallery_summary_cache WHERE gallery_id = ?1",
-                    [gallery_id.get()],
-                )
-                .map_err(db_error)?;
+            // Invalid rows are ignored; a later valid fetch replaces them.
         }
         Ok(summary)
     }
@@ -91,7 +86,11 @@ impl GallerySummaryCache for SqliteRepository {
                 "gallery summary cache payload is too large".into(),
             ));
         }
-        let mut connection = self.connection()?;
+        let Some(mut connection) = self.try_cache_connection()? else {
+            // This optional cache never supplies download integrity metadata.
+            // The caller retains the validated summary in memory.
+            return Ok(());
+        };
         let transaction = connection.transaction().map_err(db_error)?;
         transaction
             .execute(

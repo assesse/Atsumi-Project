@@ -251,6 +251,9 @@ fn guarded_work<T>(work: impl FnOnce() -> Result<T, RunError>) -> Result<T, RunE
 
 pub(super) fn finish_job(inner: &SupervisorInner, descriptor: &DownloadJobDescriptor) {
     let key = descriptor_key(descriptor);
+    { let mut phases = unpoison(inner.postprocessing.lock());
+      if phases.get(&descriptor.entry_id).is_some_and(|(attempt,_)| *attempt == descriptor.worker_attempt) { phases.remove(&descriptor.entry_id); }
+    }
     unpoison(inner.cancellations.lock()).remove(&key);
     unpoison(inner.queue.lock()).known.remove(&key);
 }

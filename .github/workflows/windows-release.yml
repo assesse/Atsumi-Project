@@ -84,7 +84,7 @@ jobs:
       - name: Verify build receipt safety regressions
         # This release was explicitly approved for immediate publication without
         # waiting for additional CI tests; packaging/signature checks still run.
-        if: github.ref_name != 'v2.3.2' && github.ref_name != 'v2.3.3'
+        if: github.ref_name != 'v2.3.2' && github.ref_name != 'v2.3.3' && github.ref_name != 'v2.4.3'
         run: ./tools/test_build_receipt.ps1
 
       - name: Build signed installer and portable packages
@@ -144,7 +144,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Draft upload failed' }
 
       - name: Publish approved immediate release
-        if: github.ref_type == 'tag' && (github.ref_name == 'v2.3.2' || github.ref_name == 'v2.3.3')
+        if: github.ref_type == 'tag' && (github.ref_name == 'v2.3.2' || github.ref_name == 'v2.3.3' || github.ref_name == 'v2.4.3')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

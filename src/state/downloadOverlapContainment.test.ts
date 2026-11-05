@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DownloadOverlapCandidate, DownloadOverlapReview } from "../api/contracts";
 import { galleryId } from "../core/types";
-import { buildDownloadOverlapContainmentGroup, prioritizeDownloadOverlapReviews, refreshContainmentGroupReview } from "./downloadOverlapContainment";
+import { buildDownloadOverlapContainmentGroup, buildDownloadOverlapContainmentGroups, prioritizeDownloadOverlapReviews, refreshContainmentGroupReview } from "./downloadOverlapContainment";
 
 const ref = (id: number, pages: number) => ({ entryId: `entry-${id}`, galleryId: galleryId(id), title: `Album ${id}`, artists: ["artist"], pageCount: pages });
 const candidate = (id: number, reversed = false): DownloadOverlapCandidate => ({
@@ -69,4 +69,16 @@ describe("submitted containment evidence refresh", () => {
     expect(group.items[0]!.review.revision).toBe(0);
     expect(refreshContainmentGroupReview(refreshed, parent)).toBe(refreshed);
   });
+});
+
+it('evaluates a 382-review inventory once, then changes only the replaced review',()=>{
+ const reviews=Array.from({length:382},(_,i)=>({...review(3003760,[candidate(10000+i)]),reviewId:'r'+i,incoming:ref(20000+i,155)}));
+ const initial=buildDownloadOverlapContainmentGroups(reviews);
+ expect(initial).toHaveLength(382);
+ // Throwing evidence reads prove cached review objects are not re-evaluated.
+ for(const item of reviews) Object.defineProperty(item.candidates[0]!,'pagePairs',{get:()=>{throw Error('unchanged evidence read again');}});
+ expect(buildDownloadOverlapContainmentGroups(reviews)).toHaveLength(382);
+ const replacement={...review(3003760,[candidate(999)]),reviewId:'r0',revision:1,incoming:ref(20000,155)};
+ const changed=buildDownloadOverlapContainmentGroups([replacement,...reviews.slice(1)]);
+ expect(changed[0]?.items[0]?.excluded.galleryId).toBe(999);
 });

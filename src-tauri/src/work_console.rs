@@ -39,6 +39,7 @@ pub struct QueueRow {
     sequence: Option<i64>,
     updated_at: String,
     error_code: Option<String>,
+    postprocessing: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -58,6 +59,10 @@ pub struct QueueBatch {
 pub struct QueueSnapshot {
     queried_at: String,
     counts: BTreeMap<String, u64>,
+    overlap_reviews: Vec<OverlapReviewVersion>,
+    postprocessing_counts: BTreeMap<String, u64>,
+    #[serde(skip)]
+    postprocessing_entries: Vec<String>,
     global_active: u64,
     total_rows: u64,
     page: u32,
@@ -70,6 +75,10 @@ pub struct QueueSnapshot {
     recent_completed: u64,
     last_progress_at: Option<String>,
 }
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OverlapReviewVersion { review_id: String, revision: u64, needs_reconcile: bool }
 
 pub fn connect(path: &Path) -> Result<Connection, String> {
     let connection = Connection::open_with_flags(
@@ -102,7 +111,11 @@ fn snapshot_connection(c: &Connection, query: &QueueQuery) -> rusqlite::Result<Q
     }
     let scope = "(?1 IS NULL OR (CASE WHEN ?2 THEN o.sequence > ?1 ELSE o.sequence = ?1 END))";
     let mut counts = BTreeMap::new();
-    let mut statement = c.prepare(&format!("{OWNER} SELECT e.state, COUNT(*) FROM download_entries e LEFT JOIN owners o ON o.entry_id=e.entry_id WHERE {scope} AND (?3 IS NULL OR e.state IN {ACTIVE} OR EXISTS (SELECT 1 FROM download_jobs j WHERE j.entry_id=e.entry_id AND julianday(COALESCE(j.finished_at,j.updated_at)) >= julianday(?3))) GROUP BY e.state"))?;
+    // Ownership is a filter, not a join: the grouped LEFT JOIN can scan every
+    // owner once per entry (including unscoped polls). IN builds the scoped set
+    // once, and the NULL fast path avoids it for the whole queue.
+    let count_scope = "(?1 IS NULL OR e.entry_id IN (SELECT o.entry_id FROM owners o WHERE CASE WHEN ?2 THEN o.sequence > ?1 ELSE o.sequence = ?1 END))";
+    let mut statement = c.prepare(&format!("{OWNER} SELECT e.state, COUNT(*) FROM download_entries e WHERE {count_scope} AND (?3 IS NULL OR e.state IN {ACTIVE} OR EXISTS (SELECT 1 FROM download_jobs j WHERE j.entry_id=e.entry_id AND julianday(COALESCE(j.finished_at,j.updated_at)) >= julianday(?3))) GROUP BY e.state"))?;
     for result in statement.query_map(
         params![query.sequence, query.after, query.observed_since],
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, u64>(1)?)),
@@ -155,6 +168,7 @@ fn snapshot_connection(c: &Connection, query: &QueueQuery) -> rusqlite::Result<Q
                     sequence: r.get(6)?,
                     updated_at: r.get(7)?,
                     error_code: r.get(8)?,
+                    postprocessing: None,
                 })
             },
         )?
@@ -195,7 +209,24 @@ fn snapshot_connection(c: &Connection, query: &QueueQuery) -> rusqlite::Result<Q
     } else {
         None
     };
+    // Thin persisted revision index: the UI reuses this existing poll instead
+    // of repeatedly loading every review and every page-pair payload.
+    let overlap_reviews = if c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='download_overlap_reviews')", [], |r| r.get::<_,bool>(0))? {
+        c.prepare("SELECT r.review_id,r.revision,
+          (NOT EXISTS (SELECT 1 FROM download_overlap_candidates c WHERE c.review_id=r.review_id AND c.decision IS NULL)
+           OR EXISTS (SELECT 1 FROM download_overlap_candidates c JOIN download_entries e ON e.entry_id=c.existing_entry_id
+             LEFT JOIN download_artifacts a ON a.entry_id=e.entry_id
+             WHERE c.review_id=r.review_id AND c.decision IS NULL AND (e.state IN ('cancelled','quarantined') OR a.state='quarantined'
+               OR EXISTS(SELECT 1 FROM duplicate_hidden_galleries h WHERE h.gallery_id=e.gallery_id AND NOT EXISTS(SELECT 1 FROM exploration_restored_galleries x WHERE x.gallery_id=h.gallery_id)))))
+         FROM download_overlap_reviews r WHERE r.state='pending' ORDER BY r.review_id")?
+            .query_map([], |r| Ok(OverlapReviewVersion { review_id:r.get(0)?, revision:r.get(1)?, needs_reconcile:r.get(2)? }))?
+            .collect::<Result<Vec<_>,_>>()?
+    } else { Vec::new() };
+    let postprocessing_entries = c.prepare(&format!("{OWNER} SELECT e.entry_id FROM download_entries e LEFT JOIN owners o ON o.entry_id=e.entry_id WHERE {scope} AND e.state IN ('hashing','verifying')"))?
+        .query_map(params![query.sequence, query.after], |r| r.get(0))?.collect::<Result<Vec<String>,_>>()?;
     Ok(QueueSnapshot {
+        postprocessing_counts: BTreeMap::new(), postprocessing_entries,
+        overlap_reviews,
         queried_at: chrono::DateTime::<chrono::Utc>::from(std::time::SystemTime::now())
             .to_rfc3339(),
         counts,
@@ -212,9 +243,25 @@ fn snapshot_connection(c: &Connection, query: &QueueQuery) -> rusqlite::Result<Q
     })
 }
 
+impl QueueSnapshot {
+    pub fn apply_postprocessing(&mut self, phases: &std::collections::HashMap<String, String>) {
+        self.postprocessing_counts.clear();
+        for id in &self.postprocessing_entries {
+            let phase = phases.get(id).map(String::as_str).unwrap_or("unknown");
+            *self.postprocessing_counts.entry(phase.to_owned()).or_default() += 1;
+        }
+        for row in &mut self.items {
+            if matches!(row.state.as_str(), "hashing" | "verifying") {
+                row.postprocessing = Some(phases.get(&row.entry_id).cloned().unwrap_or_else(|| "unknown".into()));
+            }
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn work_queue_snapshot(
     app: tauri::AppHandle,
+    state: tauri::State<'_, crate::interface::commands::AppState>,
     query: QueueQuery,
 ) -> Result<QueueSnapshot, String> {
     use tauri::Manager;
@@ -223,9 +270,9 @@ pub async fn work_queue_snapshot(
         .app_data_dir()
         .map_err(|e| e.to_string())?
         .join("atsumi-next.sqlite3");
-    tauri::async_runtime::spawn_blocking(move || snapshot(&path, &query))
-        .await
-        .map_err(|e| e.to_string())?
+    let mut result = tauri::async_runtime::spawn_blocking(move || snapshot(&path, &query)).await.map_err(|e| e.to_string())??;
+    result.apply_postprocessing(&state.download_postprocessing());
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -268,7 +315,12 @@ mod tests {
         INSERT INTO download_queue_request_entries VALUES('first','old'),('later','old'),('later','new');
         INSERT INTO download_entries VALUES('old',1,'hashing',80,'2026-01-01','2026-01-01'),('new',2,'review_required',90,'2026-01-02','2026-01-02');
         INSERT INTO download_jobs VALUES('old','hashing','2026-01-01',NULL,NULL),('new','review_required','2026-01-02',NULL,NULL);").unwrap();
-        let all = snapshot_connection(&c, &QueueQuery::default()).unwrap();
+        let mut all = snapshot_connection(&c, &QueueQuery::default()).unwrap();
+        all.apply_postprocessing(&std::collections::HashMap::from([("old".into(),"waiting".into())]));
+        assert_eq!(all.postprocessing_counts.get("waiting"),Some(&1));
+        assert_eq!(all.items[0].postprocessing.as_deref(),Some("waiting"));
+        all.apply_postprocessing(&std::collections::HashMap::new());
+        assert_eq!(all.postprocessing_counts.get("unknown"),Some(&1));
         assert_eq!(all.global_active, 1);
         assert_eq!(all.items.len(), 1);
         let session = snapshot_connection(
@@ -359,6 +411,51 @@ mod tests {
             .iter()
             .all(|row| row.state != "review_required"));
     }
+    #[test]
+    fn counts_preserve_unowned_replaced_and_observed_scope() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE download_queue_requests(request_id TEXT);
+          CREATE TABLE download_queue_request_entries(request_id TEXT,entry_id TEXT);
+          CREATE TABLE download_gallery_links(source_entry_id TEXT,target_entry_id TEXT,created_target INTEGER);
+          CREATE TABLE download_entries(entry_id TEXT,gallery_id INTEGER,state TEXT,progress REAL,created_at TEXT,updated_at TEXT);
+          CREATE TABLE download_jobs(entry_id TEXT,state TEXT,updated_at TEXT,finished_at TEXT,last_error_code TEXT);
+          CREATE TABLE galleries(gallery_id INTEGER,title TEXT,primary_artist TEXT);
+          INSERT INTO download_queue_requests VALUES('first'),('replacement'),('later');
+          INSERT INTO download_queue_request_entries VALUES('first','existing'),('replacement','old-new'),
+            ('replacement','old-reuse'),('later','new-target'),('later','existing'),('later','recent');
+          INSERT INTO download_gallery_links VALUES('old-new','new-target',1),('old-reuse','existing',0);
+          INSERT INTO download_entries VALUES
+            ('existing',1,'hashing',80,'2026-01-01','2026-01-01'),
+            ('new-target',2,'queued',0,'2026-01-01','2026-01-01'),
+            ('old-new',3,'cancelled',0,'2026-01-01','2026-01-01'),
+            ('old-reuse',4,'cancelled',0,'2026-01-01','2026-01-01'),
+            ('recent',5,'review_required',90,'2026-01-03','2026-01-03'),
+            ('unowned',6,'completed',100,'2026-01-01','2026-01-01');
+          INSERT INTO download_jobs SELECT entry_id,state,updated_at,
+            CASE WHEN state='completed' THEN updated_at ELSE NULL END,NULL FROM download_entries;").unwrap();
+        for sequence in [None, Some(1), Some(2), Some(3), Some(999)] {
+            for after in [false, true] {
+                for observed_since in [None, Some("2026-01-02T00:00:00Z".to_owned())] {
+                    let q = QueueQuery { sequence, after, observed_since, ..Default::default() };
+                    let actual = snapshot_connection(&c, &q).unwrap().counts;
+                    // Preserve the old ownership, unowned-entry and time-window semantics.
+                    let expected = c.prepare(&format!("{OWNER} SELECT e.state,COUNT(*) FROM download_entries e LEFT JOIN owners o ON o.entry_id=e.entry_id
+                      WHERE (?1 IS NULL OR CASE WHEN ?2 THEN o.sequence>?1 ELSE o.sequence=?1 END)
+                      AND (?3 IS NULL OR e.state IN {ACTIVE} OR EXISTS(SELECT 1 FROM download_jobs j WHERE j.entry_id=e.entry_id AND julianday(COALESCE(j.finished_at,j.updated_at))>=julianday(?3))) GROUP BY e.state")).unwrap()
+                      .query_map(params![q.sequence,q.after,q.observed_since], |r| Ok((r.get::<_,String>(0)?,r.get::<_,u64>(1)?))).unwrap()
+                      .collect::<Result<BTreeMap<_,_>,_>>().unwrap();
+                    assert_eq!(actual, expected);
+                }
+            }
+        }
+        let all = snapshot_connection(&c, &QueueQuery::default()).unwrap();
+        assert_eq!(all.counts.get("completed"), Some(&1)); // No request owner.
+        let replacement = snapshot_connection(&c, &QueueQuery { sequence:Some(2), ..Default::default() }).unwrap();
+        assert_eq!(replacement.counts.get("queued"), Some(&1));
+        assert_eq!(replacement.counts.get("cancelled"), Some(&1));
+        assert!(!replacement.counts.contains_key("hashing")); // Reused work stays with request 1.
+    }
+
     #[test]
     fn production_connection_cannot_write_or_create_a_database() {
         let directory = tempfile::tempdir().unwrap();

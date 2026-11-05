@@ -418,6 +418,11 @@ impl ApplicationService {
             .ok_or(ApplicationError::GalleryNotFound(gallery_id))
     }
 
+    pub fn gallery_detail_main_get(&self, gallery_id: i64) -> Result<GalleryDetail, ApplicationError> {
+        let gallery_id = GalleryId::new(gallery_id)?;
+        self.search_repository()?.gallery_detail_main_get(gallery_id)?.ok_or(ApplicationError::GalleryNotFound(gallery_id))
+    }
+
     pub fn gallery_summary_get(&self, gallery_id: i64) -> Result<GallerySummary, ApplicationError> {
         let gallery_id = GalleryId::new(gallery_id)?;
         self.search_repository()?

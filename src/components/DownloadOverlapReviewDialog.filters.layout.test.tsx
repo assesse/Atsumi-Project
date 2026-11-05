@@ -10,6 +10,7 @@ import appCss from "../styles.css?raw";
 import inkCss from "../atsumi-ink.css?raw";
 import dialogCss from "./DownloadOverlapReviewDialog.css?raw";
 import mergeCss from "./OverlapMergeControls.css?raw";
+import groupCss from "./OverlapGroupReview.css?raw";
 
 const review: DownloadOverlapReview = {
   reviewId: "filter-layout-review", entryId: "incoming", revision: 1, state: "pending",
@@ -35,29 +36,38 @@ async function filterScenes(): Promise<LayoutScene[]> {
   const root = createRoot(container);
   try {
     await act(async () => root.render(<DownloadOverlapReviewDialog open={false} review={review} previewWidth={220}
-      thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onMergePages={vi.fn()} />));
+      thumbnailClient={client} processingCount={2} failedCount={1} onFailedReview={vi.fn()}
+      automationReviewSequence={{manual:true,position:12,total:381,canPrevious:true,canNext:true}}
+      onPreviousAutomationReview={vi.fn()} onNextAutomationReview={vi.fn()}
+      onClose={vi.fn()} onRetry={vi.fn()} onDecision={vi.fn()} onMergePages={vi.fn()} />));
     container.querySelector("dialog")!.setAttribute("open", "");
     const scene = (name: string): LayoutScene => ({ name, html: container.innerHTML });
     const toggle = async (label: string) => act(async () =>
       [...container.querySelectorAll<HTMLButtonElement>(".download-overlap-page-filter")].find(b => b.textContent === label)!.click());
+    expect(container.querySelector(".download-overlap-sequence-work")!.closest(".dialog-header")).not.toBeNull();
     const scenes = [scene("all-on")];
-    const firstPage = container.querySelector<HTMLElement>('.download-overlap-page-cell[aria-label^="기존 A 1페이지"]')!;
+    const firstPage = container.querySelector<HTMLElement>('.download-overlap-page-cell[aria-label^="#1 1페이지"]')!;
     await act(async () => firstPage.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
-    await toggle("일치");
-    expect(container.querySelector(".download-overlap-hidden-selection")).toHaveTextContent("선택 1장 숨김");
+    await toggle("일치 보기");
+    expect(container.querySelector(".overlap-group-selection-count[role=status]")).toHaveTextContent("1장 선택");
     scenes.push(scene("differences-hidden-selection"));
-    await toggle("대응 없음");
-    scenes.push(scene("differences-no-gap-decoration"));
-    await toggle("한쪽에만 있음");
-    scenes.push(scene("all-off-hidden-selection"));
-    await toggle("대응 없음");
-    scenes.push(scene("gaps-only"));
+    expect(container.querySelector('.is-gap')).toBeNull();
+    await toggle('추가 보기');
+    scenes.push(scene('all-off-selection-preserved'));
+    await toggle('일치 보기');
+    scenes.push(scene('matches-only'));
+    await act(async () => root.render(<DownloadOverlapReviewDialog open={false} review={review} previewWidth={220}
+      completedPair thumbnailClient={client} onClose={vi.fn()} onRetry={vi.fn()} onRescan={vi.fn()} onDecision={vi.fn()} onMergePages={vi.fn()} />));
+    container.querySelector("dialog")!.setAttribute("open", "");
+    const rescan = [...container.querySelectorAll("button")].find(b => b.textContent === "두 앨범 다시 대조")!;
+    expect(rescan.closest(".dialog-header")).not.toBeNull();
+    scenes.push(scene("completed-pair"));
     // Include a focused view so the entire page axis is visible in captures,
     // even when album metadata above it requires scrolling in the full dialog.
     return scenes.flatMap(item => {
       const fragment = document.createElement("div");
       fragment.innerHTML = item.html;
-      const map = fragment.querySelector(".download-overlap-page-map")!;
+      const map = fragment.querySelector(".overlap-group-comparison")!;
       return [item, { name: `${item.name}-page-map`, html: `<div style="width:min(1180px,calc(100vw - 32px));margin:32px auto">${map.outerHTML}</div>` }];
     });
   } finally {
@@ -69,7 +79,7 @@ async function filterScenes(): Promise<LayoutScene[]> {
 
 describe.skipIf(!layoutBrowser)("duplicate review visibility filter layout", () => {
   it.each([[1920, 1080], [1280, 720]])("keeps controls and hidden-selection feedback reachable at %ix%i", async (width, height) => {
-    const results = await auditLayouts(await filterScenes(), appCss + inkCss + dialogCss + mergeCss,
+    const results = await auditLayouts(await filterScenes(), appCss + inkCss + dialogCss + mergeCss + groupCss,
       width, height, "overlap-page-filters");
     expect(results.flatMap(result => result.issues.map(issue => `${result.name}: ${issue}`))).toEqual([]);
   }, 60000);

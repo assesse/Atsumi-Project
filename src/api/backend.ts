@@ -154,7 +154,7 @@ export interface BackendClient {
   searchSubmit(request: SearchRequest): Promise<ApiResult<SearchSubmission>>;
   searchPageGet(queryId: string, page: number, requestId: string): Promise<ApiResult<GalleryPage>>;
   searchPageCancel(requestId: string): Promise<ApiResult<boolean>>;
-  galleryDetailGet(galleryId: GalleryDetail["id"]): Promise<ApiResult<GalleryDetail>>;
+  galleryDetailGet(galleryId: GalleryDetail["id"], includeRelated?: boolean): Promise<ApiResult<GalleryDetail>>;
   gallerySummaryGet(galleryId: GalleryId): Promise<ApiResult<GallerySummary>>;
   favoritesList(): Promise<ApiResult<FavoriteRecord[]>>;
   favoriteSet(key: FavoriteKey, enabled: boolean): Promise<ApiResult<FavoriteMutationResult>>;
@@ -173,7 +173,7 @@ export interface BackendClient {
   duplicateScanCancel(): Promise<ApiResult<DuplicateScanRun>>;
   duplicateReviewGet(candidateId: string): Promise<ApiResult<DuplicateReview>>;
   duplicateDecisionApply(request: DuplicateDecisionRequest): Promise<ApiResult<DuplicateReview>>;
-  downloadOverlapReviewGet(reviewId: string): Promise<ApiResult<DownloadOverlapReview>>;
+  downloadOverlapReviewGet(reviewId: string, snapshotOnly?: boolean): Promise<ApiResult<DownloadOverlapReview>>;
   downloadOverlapDisplayMatches(request: DownloadOverlapDisplayMatchRequest): Promise<ApiResult<DownloadOverlapDisplayMatches>>;
   downloadOverlapAutomationHistoryList(
     request: DownloadOverlapAutomationHistoryRequest,
@@ -3552,8 +3552,8 @@ class TauriBackend implements BackendClient {
     return invoke("search_page_cancel", { requestId });
   }
 
-  galleryDetailGet(galleryId: GalleryDetail["id"]): Promise<ApiResult<GalleryDetail>> {
-    return invoke("gallery_detail_get", { galleryId });
+  galleryDetailGet(galleryId: GalleryDetail["id"], includeRelated = true): Promise<ApiResult<GalleryDetail>> {
+    return invoke("gallery_detail_get", { galleryId, includeRelated });
   }
 
   gallerySummaryGet(galleryId: GalleryId): Promise<ApiResult<GallerySummary>> {
@@ -3637,8 +3637,8 @@ class TauriBackend implements BackendClient {
     return invoke("download_overlap_display_matches", { request });
   }
 
-  downloadOverlapReviewGet(reviewId: string): Promise<ApiResult<DownloadOverlapReview>> {
-    return invoke("download_overlap_review_get", { reviewId });
+  downloadOverlapReviewGet(reviewId: string, snapshotOnly = false): Promise<ApiResult<DownloadOverlapReview>> {
+    return invoke("download_overlap_review_get", { reviewId, snapshotOnly });
   }
 
   downloadOverlapAutomationHistoryList(

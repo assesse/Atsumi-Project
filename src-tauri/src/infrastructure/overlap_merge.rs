@@ -703,7 +703,7 @@ impl OverlapMergeService {
         .map_err(sql)
     }
     pub fn composed_page_count(&self, gallery_id: i64) -> Result<Option<u32>, ApplicationError> {
-        self.repository.connection()?.query_row("SELECT a.expected_page_count FROM download_artifacts a WHERE a.gallery_id=?1 AND EXISTS(SELECT 1 FROM download_pages p WHERE p.entry_id=a.entry_id AND p.source_revision LIKE 'local-composition:%') ORDER BY a.revision DESC LIMIT 1",[gallery_id],|r|r.get(0)).optional().map_err(sql)
+        self.repository.read_connection()?.query_row("SELECT a.expected_page_count FROM download_artifacts a WHERE a.gallery_id=?1 AND EXISTS(SELECT 1 FROM download_pages p WHERE p.entry_id=a.entry_id AND p.source_revision LIKE 'local-composition:%') ORDER BY a.revision DESC LIMIT 1",[gallery_id],|r|r.get(0)).optional().map_err(sql)
     }
 }
 

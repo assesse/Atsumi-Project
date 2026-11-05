@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "createdAt": "2026-11-04T15:34:12.732Z",
+  "status": "integrated_automated_checks_passed_interactive_qa_deferred",
+  "source": {
+    "thread": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turn": "01a1a701-4d53-7833-b2c4-4777a4b29e45",
+    "messages": [
+      "01a1a701-4ea6-71e2-98cf-71d3b0465c37",
+      "01a1a702-ec6b-7a42-bbe8-eac02a36c530"
+    ],
+    "audit": ".runtime/hitomi-pair-review-20261104/preedit.json"
+  },
+  "requirements": [
+    "Use the existing grouped horizontal edition UI for one pending pair, including completed-album pairs.",
+    "Keep keep/partial/remove, Ctrl/Shift selection, hidden-selection preservation, fingerprint/revision safety and native validation unchanged.",
+    "During the review-required sequence, keep the same dialog open and show the next prefetched review immediately after submitting.",
+    "Serialize mutations in the background; do not treat submitted, stale, failed or partial work as complete.",
+    "Retain each review draft and failed review; background settlement must not reopen a user-hidden dialog.",
+    "Do not interrupt native downloads, hashing, recordings or other media work. Never modify real albums for tests."
+  ],
+  "supersession": "Close-after-apply remains for standalone review only. The latest request overrides it for the review-required sequence.",
+  "changes": [
+    "One-pair grouping",
+    "Per-review evidence-bound drafts",
+    "Three-review read-ahead using existing revision cache",
+    "Serialized background review queue",
+    "Processing and retry indicators",
+    "Failure restoration after hide/reopen"
+  ],
+  "validation": {
+    "frontendRegressionTests": 104,
+    "layoutTests": 2,
+    "viewports": [
+      [
+        1920,
+        1080
+      ],
+      [
+        1280,
+        720
+      ]
+    ],
+    "typecheck": [
+      "app",
+      "node"
+    ],
+    "frontendBuild": "passed",
+    "nativeQa": "Isolated native QA app starts and renders staged frontend; closed gracefully through app-owned channel. User-owned desktop input was not taken over.",
+    "interactiveQa": "Pending actual Ctrl/Shift and continuous-apply interaction in native window. User desktop was occupied. No real album action performed.",
+    "nativeAlgorithm": "unchanged",
+    "visualInspection": "Captured 1920x1080 and 1280x720 scenes inspected; processing/retry bar and completed-pair rescan moved into header after detecting an overlap."
+  },
+  "integration": {
+    "mode": "frontend HMR only",
+    "reason": "No native files, configuration, dependencies or executable changes. Retain running main app and ffmpeg PIDs; navigation checkpoint is preserved. No open review observed before integration.",
+    "restart": false,
+    "release": false,
+    "integratedAt": "2026-11-04T15:38:55.191Z",
+    "mainPidUnchanged": 41100,
+    "mediaPidUnchanged": 39340
+  },
+  "analysisOnly": [
+    "Batch page hash DB lookups and writes",
+    "Reduce repeated full-file verification with invalidation and fresh validation before destructive commits",
+    "Shorten artist finalization lock by preparing immutable work outside it and revalidating at commit"
+  ],
+  "unchanged": [
+    "Hash accuracy and duplicate thresholds",
+    "Original files and manifests",
+    "Saved accounts and profiles",
+    "Previously implemented responsiveness work"
+  ]
+}

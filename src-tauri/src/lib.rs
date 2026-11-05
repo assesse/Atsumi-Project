@@ -900,9 +900,12 @@ fn initialize_backend(
         repository.clone(),
     )?;
     let live_source = Arc::new(live_source.with_summary_cache(repository.clone()));
+    let search_source: Arc<dyn application::SearchRepository> = live_source.clone();
+    #[cfg(debug_assertions)]
+    let search_source = ISOLATED_HITOMI_SOURCES.get().filter(|sources| sources.0 == app.config().identifier).map(|sources| sources.2.clone()).unwrap_or(search_source);
     let service = ApplicationService::new(repository.clone())
         .with_download_repository(repository.clone())
-        .with_search_repository(live_source.clone())
+        .with_search_repository(search_source)
         .with_automation_repository(repository.clone())
         .with_tag_catalog(repository.clone(), live_source.clone());
     let danbooru = Arc::new(
@@ -1110,6 +1113,8 @@ fn initialize_backend(
     let download_repository: Arc<dyn DownloadOverlapRepository> = repository.clone();
     let settings_repository: Arc<dyn StateRepository> = repository.clone();
     let download_source: Arc<dyn DownloadSourcePort> = live_source.clone();
+    #[cfg(debug_assertions)]
+    let download_source = ISOLATED_HITOMI_SOURCES.get().filter(|sources| sources.0 == app.config().identifier).map(|sources| sources.1.clone()).unwrap_or(download_source);
     let (download_event_tx, download_event_rx) = mpsc::channel::<DownloadJobProjection>();
     let download_app = app.clone();
     thread::Builder::new()
@@ -2058,4 +2063,18 @@ mod tray_menu_tests {
         pending.store(false, Ordering::Release);
         assert!(claim_tray_event_refresh(&pending));
     }
+}
+
+// This hook cannot exist in a release or select the ordinary user's profile.
+#[cfg(debug_assertions)]
+static ISOLATED_HITOMI_SOURCES: std::sync::OnceLock<(String, Arc<dyn application::DownloadSourcePort>, Arc<dyn application::SearchRepository>)> = std::sync::OnceLock::new();
+#[cfg(debug_assertions)]
+#[doc(hidden)]
+pub fn run_with_isolated_hitomi_sources(context: tauri::Context<tauri::Wry>, source: Arc<dyn application::DownloadSourcePort>, search: Arc<dyn application::SearchRepository>) -> Result<(), Box<dyn std::error::Error>> {
+    let identifier = context.config().identifier.clone();
+    let suffix = identifier.strip_prefix("local.atsumi.hitomireviewqa.").ok_or("isolated QA identity required")?;
+    uuid::Uuid::parse_str(suffix)?;
+    ISOLATED_HITOMI_SOURCES.set((identifier,source,search)).map_err(|_| "QA sources already configured")?;
+    run_with_context(context)?;
+    Ok(())
 }
