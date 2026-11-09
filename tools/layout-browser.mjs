@@ -120,7 +120,9 @@ const script = `
         const blackSurfaces=Object.fromEntries(['.x-official-workspace','.x-body','.x-native-feed','.x-native-preview','.x-preview','.x-skeleton','.x-archive-library-view'].map(selector=>[selector,document.querySelector(selector)]).filter(([,el])=>el).map(([selector,el])=>[selector,getComputedStyle(el).backgroundColor]));
         xSidebarGeometry={xSidebarFooter,account:rect(document.querySelector('[data-x-sidebar-audit] .x-account-anchor')),blackSurfaces};
       }
-      results.push({name:scene.name,width:innerWidth,height:innerHeight,issues:[...new Set(issues)],...(xSidebarGeometry?{geometry:xSidebarGeometry}:{})});
+      const probes=Object.fromEntries([...document.querySelectorAll('[data-layout-probe]')].map(el=>{const r=bounds(el),style=getComputedStyle(el);return[el.dataset.layoutProbe,{x:r.x,y:r.y,width:r.width,height:r.height,scrollWidth:el.scrollWidth,clientWidth:el.clientWidth,position:style.position,fontSize:parseFloat(style.fontSize)}];}));
+      const geometry={...(xSidebarGeometry||{}),...(Object.keys(probes).length?{probes}:{})};
+      results.push({name:scene.name,width:innerWidth,height:innerHeight,issues:[...new Set(issues)],...(Object.keys(geometry).length?{geometry}:{})});
     }
     return results;})();
   `;

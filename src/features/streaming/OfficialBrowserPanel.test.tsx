@@ -56,6 +56,11 @@ const fakeApi = () => ({
 let container: HTMLDivElement;
 let root: Root;
 const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent === text || item.getAttribute("aria-label") === text)!;
+const openBroadcast = async (title?: string) => {
+  const heading = [...container.querySelectorAll<HTMLButtonElement>('.recording-broadcast-heading')].find(button => !title || button.textContent?.includes(title));
+  expect(heading).toBeDefined();
+  if (heading!.getAttribute('aria-expanded') !== 'true') await act(async()=>heading!.click());
+};
 const help = (_label: string) => container.querySelector<HTMLButtonElement>('button[aria-label="연결 도움말"]')!;
 const render = async (api: OfficialBrowserApi, options: { active?: boolean; view?: "live" | "recordings"; privacyMode?: boolean; replayApi?: ReplayApi } = {}) => {
   await act(async () => { root.render(<OfficialBrowserPanel runtime={api.runtime} api={api} active={options.active ?? true} view={options.view ?? "live"} privacyMode={options.privacyMode} replayApi={options.replayApi} />); });
@@ -91,6 +96,7 @@ const expectNoLiveToolbar = () => {
 };
 
 beforeEach(() => {
+  localStorage.removeItem("atsumi.recording-library.expanded.v1");
   vi.clearAllMocks();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.useFakeTimers();
@@ -101,6 +107,7 @@ beforeEach(() => {
   root = createRoot(container);
 });
 afterEach(async () => {
+  localStorage.removeItem("atsumi.recording-library.expanded.v1");
   await act(async () => root.unmount());
   container.remove();
   vi.useRealTimers();
@@ -455,6 +462,7 @@ describe("OfficialBrowserPanel", () => {
     await render(api, { view: "recordings", privacyMode: true });
     expect(container.querySelector('.recording-library')).toHaveTextContent("녹화 보관함");
     expect(container.querySelector('.recording-library-detail')).toBeNull();
+    await openBroadcast();
     await act(async () => container.querySelector<HTMLButtonElement>('.official-browser-recording-select')!.click());
     expect(container).toHaveTextContent("영상 일부가 저장되지 않았을 수 있습니다.");
     expect(container).not.toHaveTextContent("최신 1개 파일");
@@ -477,6 +485,7 @@ describe("OfficialBrowserPanel", () => {
     api.snapshot.mockResolvedValue(success(ready({ recordings: [recorded] })));
     api.openFolder.mockReturnValueOnce(opening.promise);
     await render(api, { view: "recordings" });
+    await openBroadcast();
     await act(async () => container.querySelector<HTMLButtonElement>('.official-browser-recording-select')!.click());
     expect(button("재생")).toBeEnabled();
     expect(api.openMerged).not.toHaveBeenCalled();
@@ -507,6 +516,7 @@ describe("OfficialBrowserPanel", () => {
       mediaUrl: () => `http://atsumi-replay.localhost/${token}`,
     };
     await render(api, { view: "recordings", replayApi });
+    await openBroadcast(saved.title);
     await act(async () => [...container.querySelectorAll<HTMLButtonElement>(".official-browser-recording-select")].find((entry) => entry.closest('.recording-broadcast-group')?.textContent?.includes(saved.title))!.click());
     expect(button("재생")).toHaveClass("official-browser-primary");
     await act(async () => button("재생").click());
@@ -527,6 +537,7 @@ describe("OfficialBrowserPanel", () => {
     api.snapshot.mockResolvedValue(success(ready({ recordings: [recorded] })));
     api.retryMerge.mockReturnValueOnce(retry.promise);
     await render(api, { view: "recordings" });
+    await openBroadcast();
     await act(async () => container.querySelector<HTMLButtonElement>('.official-browser-recording-select')!.click());
     expect(container).toHaveTextContent("병합 도구가 없습니다.");
     await act(async () => { const retryButton = button("다시 시도"); retryButton.click(); retryButton.click(); });
@@ -550,6 +561,7 @@ describe("OfficialBrowserPanel", () => {
     api.snapshot.mockResolvedValue(success(ready({ recordings: [recorded] })));
     api.retryMerge.mockResolvedValueOnce({ ok: false, error: { code: "MERGE", message: "재시도 요청을 처리하지 못했습니다.", retryable: true } });
     await render(api, { view: "recordings" });
+    await openBroadcast();
     await act(async () => container.querySelector<HTMLButtonElement>('.official-browser-recording-select')!.click());
     await act(async () => button("다시 시도").click());
     expect(container).toHaveTextContent("재시도 요청을 처리하지 못했습니다.");
@@ -575,7 +587,11 @@ describe("OfficialBrowserPanel", () => {
       recordingFixture({ id: "legacy", title: "이전 기록", status: "stopped", startedAt: 1 }),
     ] })));
     await render(api, { view: "recordings" });
-    const records = [...container.querySelectorAll<HTMLButtonElement>(".official-browser-recording-select")];
+    const records: HTMLButtonElement[] = [];
+    for (const title of ["채팅 실패 기록", "채팅 누락 기록", "이전 기록"]) {
+      await openBroadcast(title);
+      records.push(container.querySelector<HTMLButtonElement>(".official-browser-recording-select")!);
+    }
     expect(records[0]).toHaveAttribute("aria-description", "채팅 저장 실패 · 일부 기록 누락 가능 · 42개 기록");
     expect(records[0]!.title).toContain("Ctrl로 추가/해제");
     expect(records[1]!.querySelector('[role="img"]')).toHaveAccessibleName(expect.stringContaining("채팅 일부 누락 가능"));

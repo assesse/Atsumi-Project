@@ -483,8 +483,14 @@
     feedVideoMode:config.feed!=='preview',
     sourceMediaViewerAvailable:()=>config.feed!=='preview'&&sourceViewerAvailable,
     registerSourceMediaViewer(nonce,available=true) { if(nonce===config.nonce&&config.feed!=='preview')sourceViewerAvailable=available===true; },
-    visibility(value) { const next = value === true, resumed = next && !visible; if (next !== visible) { visibilityEpoch++; cancelRouteIntent(); cancelRouteRecovery(); dismissMenus(); } else if (!next) { cancelRouteRecovery(); dismissMenus(); } visible = next; window.__atsumiXInput?.visibility(visible); window.__atsumiXActions?.visibility(visible); if (!visible) { videoTransition = null; lastWheelClaim = -Infinity; scrollMediaIntent = null; window.__atsumiXAds?.clear(); stopPhotoProbe(); mediaIntent = null; pointerRoot = null; pause(); } else { if (resumed) window.__atsumiXAds?.update(verifiedOwner === config.owner); schedule(); } },
+    visibility(value) { const next = value === true, resumed = next && !visible; if (next !== visible) { visibilityEpoch++; cancelRouteIntent(); cancelRouteRecovery(); dismissMenus(); } else if (!next) { cancelRouteRecovery(); dismissMenus(); } visible = next; if(!visible)window.__atsumiXCollection?.update(false); window.__atsumiXInput?.visibility(visible); window.__atsumiXActions?.visibility(visible); if (!visible) { videoTransition = null; lastWheelClaim = -Infinity; scrollMediaIntent = null; window.__atsumiXAds?.clear(); stopPhotoProbe(); mediaIntent = null; pointerRoot = null; pause(); } else { if (resumed) window.__atsumiXAds?.update(verifiedOwner === config.owner); schedule(); } },
     refresh() { lastStatus = ''; schedule(); },
+    collectionOpen(event,path) {
+      if(!event?.isTrusted || !visible || !readyPublished || document.hidden || !routeOwnerCurrent() || !postPath(path)
+        || !['likes','bookmarks'].includes(config.feed))return false;
+      event.preventDefault();event.stopPropagation();dismissMenus();
+      signal(event.ctrlKey||event.metaKey?'previewBackground':'preview',path);return true;
+    },
     pause,
     playback(value) { automaticPlayback = value === true; if (!automaticPlayback) pause(); },
     dismissMenu:dismissMenus,
@@ -503,7 +509,7 @@
     videoInteractionReady:()=>visible && readyPublished && !document.hidden && routeOwnerCurrent(),
   });
   const recoverInitialVideoGap = video => {
-    if (!visible || document.hidden || !automaticPlayback || !routeOwnerCurrent()) return;
+    if (!visible || document.hidden || !automaticPlayback || !routeOwnerCurrent() || window.__atsumiXCollection?.active()) return;
     let state = initialVideoGaps.get(video);
     const source = video.currentSrc || video.src;
     if (!state && nativeVideoResource(source)) {
@@ -549,7 +555,7 @@
   },true);
   document.addEventListener('play', event => {
     if (!(event.target instanceof HTMLMediaElement) || event.target.ownerDocument !== document) return;
-    if (!visible) { event.target.pause(); return; }
+    if (!visible || window.__atsumiXCollection?.active()) { event.target.pause(); return; }
     // Revalidate source ad ownership at event time, before granting audio or
     // consuming a normal player's input intent. Never modify media URLs/mute.
     if (window.__atsumiXAds?.blocked(event.target)) { scrollMediaIntent = null; event.target.pause(); return; }
@@ -1051,6 +1057,7 @@
       status=JSON.stringify(statusValue);
     }
     if(status!==lastStatus){lastStatus=status;signal('status',status);}
+    window.__atsumiXCollection?.update(visible && state==='ready' && owner===config.owner, state==='ownerChanged'||state==='loginRequired');
     window.__atsumiXPresentation?.update(visible && state==='ready' && owner===config.owner);
     window.__atsumiXVideo?.update(visible && state==='ready' && owner===config.owner);
   }

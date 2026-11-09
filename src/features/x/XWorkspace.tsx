@@ -7,6 +7,7 @@ import { XArchiveLibrary, XArchiveTools } from "./XArchivePanel";
 import type { XArchiveApi } from "./xArchiveApi";
 import { XPreviewTabs } from "./XPreviewTabs";
 import { XSplitPane } from "./XSplitPane";
+import { XCollectionControls } from "./XCollectionControls";
 import { XMediaSearchPanel } from "./XMediaSearchPanel";
 import {createXMediaSearchApi} from "./xMediaSearchApi";
 import {ArchiveSearchContext,type ArchiveSearchAction} from "./XArchiveSearchContext";
@@ -268,9 +269,12 @@ export function XOfficialWorkspace({active,runtime,privacyMode,onNotice,api:prov
       {message?<p className="x-notice" role="alert">{message}</p>:null}
       {busy&&!local?<p className="x-notice" role="status">{busy==="login"?"공식 X 창에서 로그인해 주세요. 완료되면 자동으로 돌아옵니다.":"계정 전환 중"}</p>:null}
       {local?<ArchiveSearchContext.Provider value={localSearchContext?searchArchive:null}><XArchiveLibrary runtime={runtime} api={archiveApi} active={active} privacyMode={privacyMode} accounts={account?.accounts??[]} onScopeChange={()=>setArchiveSearchScope(value=>value+1)}/></ArchiveSearchContext.Provider>:<XSplitPane>
+        <div className="x-feed-pane">
+          {feed==="likes"||feed==="bookmarks"?<XCollectionControls key={feed} api={api} feed={feed} generation={surface?.generation??null}
+            enabled={active&&!privacyMode&&!busy&&!pending&&surface?.feed===feed&&surface.state==="ready"} onError={onNotice}/>:null}
         <div className="x-native-feed" ref={left} aria-label="X 공식 타임라인" aria-busy={pending||surface?.state==="loading"}>
           {active&&!busy&&(pending||surface?.state==="loading")?<Skeleton label="피드 불러오는 중"/>:null}
-        </div>
+        </div></div>
         <aside className={"x-preview"+(surface?.previews.length?" has-selection":"")} aria-label="X 원본 미리보기">
           {surface?.previews.length?<XPreviewTabs tabs={surface.previews} activeId={surface.activePreviewId}
             panelId={previewPanelId} disabled={!active||pending||!!busy||previewBusy||surface.feed!==feed}

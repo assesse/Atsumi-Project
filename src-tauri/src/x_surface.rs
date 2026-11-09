@@ -52,7 +52,12 @@ pub(super) struct Surfaces {
     playing: Option<String>,
     manual_playing: bool,
     focused: Option<String>,
+    collection_views: HashMap<String, CollectionView>,
+    collection_order: u64,
 }
+#[derive(Clone, Copy, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CollectionView { #[default] Original, Posts, Media }
 struct PreviewTab {
     pane: Arc<Pane>,
     path: String,
@@ -768,6 +773,8 @@ pub(super) fn close_all(session: &XSession, app: &AppHandle) {
             .chain(previews.into_iter().map(|tab| tab.pane))
             .collect::<Vec<_>>();
         data.active.clear();
+        data.collection_views.clear();
+        data.collection_order = 0;
         data.viewport = None;
         data.generation += 1;
         data.preview_intent += 1;
@@ -959,6 +966,10 @@ fn paint_current(session: &XSession, app: &AppHandle) {
                 continue;
             }
             pane.visible.store(true, Ordering::Release);
+            if matches!(pane.feed.as_str(), "likes" | "bookmarks") {
+                let collection = session.surfaces.lock().unwrap_or_else(|p| p.into_inner()).collection_views.get(&pane.feed).copied().unwrap_or_default();
+                let _ = view.eval(format!("window.__atsumiXCollection?.mode({})", serde_json::to_string(&collection).unwrap()));
+            }
             let _ = view.eval("window.__atsumiXSurface?.visibility(true)");
             // Keep both documents interactive; prevent losing autoplay from
             // reclaiming playback while allowing the next explicit input.
@@ -1455,6 +1466,8 @@ async fn create(
         include_str!("x_surface_actions.js").replace("__ATSUMI_X_ACTIONS__", &config),
         include_str!("x_surface_input.js").replace("__ATSUMI_X_INPUT__", &config),
         include_str!("x_surface.js").replace("__ATSUMI_X_SURFACE__", &config),
+        include_str!("x_surface_collection.js").replace("__ATSUMI_X_COLLECTION__", &config)
+            .replace("__ATSUMI_X_COLLECTION_CSS__", &serde_json::to_string(include_str!("x_surface_collection.css")).unwrap()),
         include_str!("x_surface_presentation.js").replace("__ATSUMI_X_PRESENTATION__", &config),
         include_str!("x_surface_video.js").replace("__ATSUMI_X_VIDEO__", &config),
     ].join("\n;\n");
@@ -2009,9 +2022,44 @@ pub fn x_surface_dismiss_menus(
     Ok(())
 }
 
+#[tauri::command(rename_all = "camelCase")]
+pub fn x_surface_collection_view(window: Webview, app: AppHandle, session: State<'_, XSession>,
+    generation: u64, feed: String, mode: CollectionView, order: u64) -> Result<(), String> {
+    trusted(&window)?;
+    {
+        let mut data = session.surfaces.lock().unwrap_or_else(|p| p.into_inner());
+        set_collection_view(&mut data, generation, &feed, mode, order)?;
+    }
+    paint(&session, &app);
+    Ok(())
+}
+fn set_collection_view(data: &mut Surfaces, generation: u64, feed: &str, mode: CollectionView, order: u64) -> Result<(), String> {
+    if !matches!(feed, "likes" | "bookmarks") || data.active != feed || data.generation != generation
+        || !data.feeds.contains_key(feed) || order == 0 || order > 9_007_199_254_740_991 || order <= data.collection_order { return Err(STALE.into()); }
+    data.collection_order = order;
+    data.collection_views.insert(feed.to_string(), mode);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn collection_view_is_ordered_and_bound_to_the_exact_active_collection() {
+        let (session, feed, _) = playback_fixture();
+        let mut data = session.surfaces.lock().unwrap();
+        data.active = "likes".into(); data.generation = 12;
+        data.feeds.insert("likes".into(), feed);
+        assert!(set_collection_view(&mut data, 11, "likes", CollectionView::Posts, 1).is_err());
+        assert!(set_collection_view(&mut data, 12, "bookmarks", CollectionView::Posts, 1).is_err());
+        assert!(set_collection_view(&mut data, 12, "foryou", CollectionView::Posts, 1).is_err());
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Posts, 2).is_ok());
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Original, 1).is_err());
+        assert_eq!(serde_json::to_value(data.collection_views.get("likes")).unwrap(), "posts");
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Media, 3).is_ok());
+        assert_eq!(serde_json::to_value(data.collection_views.get("likes")).unwrap(), "media");
+        assert!(data.preview.is_some());
+    }
     #[test]
     fn routes_are_selected_account_scoped() {
         assert_eq!(route("likes", "alice").unwrap(), "/alice/likes");

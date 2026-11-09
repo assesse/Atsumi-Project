@@ -56,6 +56,7 @@ export function isXArchiveChooseRequest(value:unknown):value is XArchiveChooseRe
       &&!source.search&&!source.hash&&!source.pathname.startsWith("/__atsumi_surface__/")&&source.href===item.sourceUrl;
   }catch{return false;}
 }
+export type XCollectionView = "original" | "posts" | "media";
 export type XSurfaceApi = Pick<XApi,"account"|"select"|"status"> & {
   suspend(retainDocuments?:boolean):Promise<void>;
   surface(feed:XFeed,order:number,refresh:boolean):Promise<XSurfaceSnapshot>;
@@ -64,6 +65,7 @@ export type XSurfaceApi = Pick<XApi,"account"|"select"|"status"> & {
   selectPreview(generation:number,previewId:string):Promise<XSurfaceSnapshot>;
   closePreview(generation:number,previewId?:string):Promise<XSurfaceSnapshot>;
   dismissMenus(generation:number):Promise<void>;
+  collectionView?(generation:number,feed:"likes"|"bookmarks",mode:XCollectionView,order:number):Promise<void>;
   subscribe?(changed:()=>void):Promise<()=>void>;
   subscribeArchiveChoose?(chosen:(request:XArchiveChooseRequest)=>void):Promise<()=>void>;
 };
@@ -80,6 +82,7 @@ export function createXSurfaceApi(runtime:"tauri"|"browser-mock"):XSurfaceApi {
     selectPreview:runtime==='tauri'?(generation,previewId)=>invoke("x_surface_select_preview",{generation,previewId}):unavailable,
     closePreview:runtime==='tauri'?(generation,previewId)=>invoke("x_surface_close_preview",{generation,...(previewId===undefined?{}:{previewId})}):unavailable,
     dismissMenus:runtime==='tauri'?generation=>invoke("x_surface_dismiss_menus",{generation}):async()=>{},
+    collectionView:runtime==='tauri'?(generation,feed,mode,order)=>invoke("x_surface_collection_view",{generation,feed,mode,order}):unavailable,
     subscribe:runtime==='tauri'?changed=>listen("x:surface-changed",()=>changed()):async()=>()=>{},
     subscribeArchiveChoose:runtime==='tauri'?chosen=>listen<unknown>("x:archive-choose",event=>{if(isXArchiveChooseRequest(event.payload))chosen(event.payload);}):async()=>()=>{},
   };

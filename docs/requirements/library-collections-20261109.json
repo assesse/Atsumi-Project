@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "date": "2026-11-09",
+  "status": "implemented_automated_and_live_verified",
+  "request": {
+    "id": "01a1bef9-c7a8-7c70-8b86-1e0be6bdbc55",
+    "text": "1. 치지직 녹화목록에서, 어떤건 다른거 위로 오버레이해서 펼쳐지고 어떤건 밀어내면서 펼쳐지는데 이거 고쳐줘. 그리고 전체적으로 녹화목록 각 박스가 접었을때 기준으로, 너무 삐뚤빼뚤해.\n2. X의 북마크와 마음함보는 방법을 지금 처럼 유지하는게 1옵션, 그리고 미디어나 글을 기준으로 카드형식으로 보는게 2옵션으로 선택할 수 있게 해줘. 카드형식 UI의 구성방식은 히토미의 요약보기 방식을 참고해줘\n"
+  },
+  "evidence": ".runtime/library-collections-20261109/preedit.json",
+  "requirements": [
+    "CHZZK single-file and multi-file broadcast disclosures use the same non-reflow overlay; collapsed summaries have equal profile/title/metadata/status slots. Preserve recorded media, ongoing processing, context menu and selection.",
+    "X likes/bookmarks default to unchanged official web display. Offer persisted default/card view and post/media card basis only on those collections. Retain sessions, native right preview and account isolation.",
+    "Cards reference Hitomi compact covers with readable bottom caption. Text-only posts remain visible in post mode; media mode uses individual observed media. No likes/bookmarks/account actions sent for tests.",
+    "Use currently rendered official collection data without private API or a new authentication flow. Bounded progressive loading with loading/error/retry state, same-source observed media URLs only, no fabricated empty success.",
+    "Preserve privacy, navigation, source ordering, original list scroll on view return, main sidebar footer positions and >=14px typography."
+  ],
+  "decisions": [
+    "Latest request removes single-file in-flow expansion exception. Existing saved expansion preferences retained; opening any group foregrounds that overlay.",
+    "Card clicks open validated native preview paths; media cards target observed photo/video route. Standard mode leaves official interaction unchanged.",
+    "Nov10 actual Computer Use authorized. Correct only redundant feed-wrapper clipping with CSS HMR; preserve the existing app process, sessions, recordings and postprocessing."
+  ],
+  "acceptance": [
+    "Single/multiple expanded groups never move neighbors; titles/status lengths do not change collapsed dimensions at 1280x720/1920x1080.",
+    "View choices persist independently for likes/bookmarks; late commands fenced by generation/feed; switching doesn't reset preview/feed document.",
+    "Text/media cards, original ordering, deduplication, lazy loading/pagination/retry, account switch/privacy clearing, source URL validation and preview path behavior covered.",
+    "Typecheck, frontend tests and isolated browser layout; native compile/tests. Actual authenticated desktop acceptance separately reported if unavailable."
+  ],
+  "implementation": {
+    "verification": ".runtime/library-collections-20261110/verification.json",
+    "installedAppUpdated": false,
+    "actualAppAcceptance": "verified on the current authenticated debug app for the requested recording layout and X collection browsing flows",
+    "bgd": "host not alive; agent not reachable",
+    "priorVerification": ".runtime/library-collections-20261109/verification.json",
+    "liveChecks": [
+      "single/multiple recording overlay and equal collapsed cards",
+      "recording overlay scroll/outside dismissal/context menu",
+      "likes/bookmarks original and post/media cards",
+      "card to right preview and preview preservation",
+      "original scroll restoration and additional likes loading",
+      "1920px actual window and maximized layout"
+    ],
+    "automatedOnly": [
+      "account switching/privacy reset and generation isolation"
+    ]
+  },
+  "updatedAt": "2026-11-09T19:18:21.185Z",
+  "followup": {
+    "id": "01a1c1a9-6ac1-7592-be20-2aa05a286a4f",
+    "text": "지금 뭔가 잘 안됐는데 컴퓨터 사용해서 검토 후 끝까지 마무리 해줘.",
+    "evidence": ".runtime/library-collections-20261110/preedit.json"
+  },
+  "supersededDecisions": [
+    {
+      "decision": "Live installed release remains running during source edits; no recorder/download cancellation; main-desktop input remains deferred pending direction.",
+      "reason": "The Nov10 follow-up explicitly resumed main-desktop Computer Use. The current debug app was already running; its active postprocessing was preserved."
+    }
+  ]
+}

@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserRecording } from "../../api/officialBrowser";
 import { RecordingLibrary, recordingChatNote } from "./RecordingLibrary";
+import { groupRecordings } from "./recordingGroups";
 
 const token = "a".repeat(32);
 const expansionStorageKey = "atsumi.recording-library.expanded.v1";
@@ -10,7 +11,14 @@ const item = (id: string, patch: Partial<BrowserRecording> = {}): BrowserRecordi
 const merged = (id: string) => item(id, { merge: { status: "complete", segmentCount: 2, updatedAt: 1, file: `merged-${token}.webm`, timelineFile: `merged-${token}.timeline.jsonl`, bytes: 1500, durationSeconds: 30 } });
 let root: Root, container: HTMLDivElement;
 const callbacks = { onSelect: vi.fn(), onFolder: vi.fn(), onReplay: vi.fn(), onOpenMerged: vi.fn(), onRetryMerge: vi.fn(), onOpenSegment: vi.fn(), onDelete: vi.fn<Parameters<typeof RecordingLibrary>[0]["onDelete"]>() };
+// File-action regressions retain explicit expansion preferences from earlier sessions.
+// The new closed-by-default layout is exercised independently below.
+const seedExpandedFiles = (recordings: BrowserRecording[]) => {
+  try { if (localStorage.getItem(expansionStorageKey) === null) localStorage.setItem(expansionStorageKey,
+    JSON.stringify(Object.fromEntries(groupRecordings(recordings).filter(group => group.recordings.length === 1).map(group => [group.key, true])))); } catch {}
+};
 const render = async (recordings: BrowserRecording[], selectedId: string | null = null, privacy = false, disabled = false) => {
+  seedExpandedFiles(recordings);
   await act(async () => root.render(<RecordingLibrary recordings={recordings} selectedId={selectedId} privacy={privacy} disabled={disabled} retrying={false} openingFolder={false} {...callbacks} />));
 };
 const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>("button")].find(element => element.textContent === text)!;
@@ -23,6 +31,19 @@ beforeEach(() => { vi.clearAllMocks(); localStorage.removeItem(expansionStorageK
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.removeItem(expansionStorageKey); });
 
 describe("recording library", () => {
+  it("starts folded and gives single and multi-file groups the same exclusive overlay interaction", async () => {
+    const records = [merged("single"), ...["a", "b"].map(id => ({ ...merged(id), channelId: "shared", broadcastKey: "id:42" }))];
+    await act(async () => root.render(<RecordingLibrary recordings={records} selectedId={null} privacy={false} disabled={false} retrying={false} openingFolder={false} {...callbacks} />));
+    const headings = [...container.querySelectorAll<HTMLButtonElement>('.recording-broadcast-heading')];
+    expect(cards()).toHaveLength(0);
+    await act(async () => headings[0]!.click()); expect(cards().map(card => card.dataset.recordingId)).toEqual(["single"]);
+    await act(async () => headings[1]!.click()); expect(cards().map(card => card.dataset.recordingId)).toEqual(["a", "b"]);
+    expect(headings[0]).toHaveAttribute("aria-expanded", "false");
+    await act(async () => document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }))); expect(cards()).toHaveLength(0);
+    await act(async () => headings[0]!.click());
+    await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expect(cards()).toHaveLength(0);
+    expect(callbacks.onDelete).not.toHaveBeenCalled(); expect(callbacks.onReplay).not.toHaveBeenCalled();
+  });
   it("shows the verified file duration instead of summing overlapping capture packets", async () => {
     await render([{ ...merged("a"), durationSeconds: 32.4 }], "a");
     expect(container.querySelector(".recording-library-length")).toHaveTextContent("00:00:30");
@@ -35,10 +56,10 @@ describe("recording library", () => {
     const headings = [...container.querySelectorAll<HTMLButtonElement>('.recording-broadcast-heading')];
     await act(async () => headings[0]!.click());
     await act(async () => headings[2]!.click());
-    expect(cards().map(card => card.dataset.recordingId)).toEqual(["b", "c", "d"]);
+    expect(cards().map(card => card.dataset.recordingId)).toEqual(["c", "d"]);
     await act(async () => root.render(null));
     await render(records.map(value => ({ ...value })));
-    expect(cards().map(card => card.dataset.recordingId)).toEqual(["b", "c", "d"]);
+    expect(cards().map(card => card.dataset.recordingId)).toEqual(["c", "d"]);
     expect(container.querySelector('.recording-library-selection')).toBeNull();
     expect(container.querySelector('.recording-library-detail')).toBeNull();
     expect(callbacks.onReplay).not.toHaveBeenCalled();
@@ -64,22 +85,22 @@ describe("recording library", () => {
     expect(cards()).toHaveLength(0);
     await act(async () => root.render(null));
     await render([original, { ...merged("b"), channelId: "shared", broadcastKey: "id:42", title: "새 제목" }, merged("new")]);
-    expect(cards().map(card => card.dataset.recordingId)).toEqual(["new"]);
+    expect(cards()).toHaveLength(0);
   });
   it.each(["broken", "null", "[]", "123", JSON.stringify({ '["a"]': "false" })])("ignores malformed expansion preferences: %s", async (value: string) => {
     localStorage.setItem(expansionStorageKey, value);
     await render([merged("a")]);
-    expect(cards()).toHaveLength(1);
-    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
     expect(cards()).toHaveLength(0);
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+    expect(cards()).toHaveLength(1);
   });
   it("keeps expansion usable when browser storage is unavailable", async () => {
     vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => { throw new Error("storage unavailable"); });
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => { throw new Error("storage unavailable"); });
     await render([merged("a")]);
-    expect(cards()).toHaveLength(1);
-    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
     expect(cards()).toHaveLength(0);
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
+    expect(cards()).toHaveLength(1);
   });
   it("allows all broadcasts and the selected detail to close, keeping a reserved empty slot", async () => {
     const records = [merged("a"), merged("b")];
@@ -87,6 +108,7 @@ describe("recording library", () => {
       const [selectedId, onSelect] = useState<string | null>(null);
       return <RecordingLibrary recordings={records} selectedId={selectedId} privacy={false} disabled={false} retrying={false} openingFolder={false} {...callbacks} onSelect={onSelect} />;
     }
+    seedExpandedFiles(records);
     await act(async () => root.render(<Controlled />));
     expect(container.querySelector('.recording-library-detail')).toBeNull();
     expect(container.querySelector('.recording-library-detail-placeholder')).not.toBeNull();

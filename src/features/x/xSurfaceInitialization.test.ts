@@ -12,10 +12,11 @@ function initialization(feed:string){
   const original=compat.match(/pub\(super\) fn initialization[\s\S]*?\[([\s\S]*?)\]\s*\.join\(("(?:\\.|[^"\\])*")\)/);
   if(!parts||!original)throw new Error("Native initialization assembly changed");
   const base=[...original[1]!.matchAll(/include_str!\("([^"]+)"\)/g)].map(m=>source(m[1]!)).join(JSON.parse(original[2]!));
-  const scripts=[base,...[...parts[1]!.matchAll(/include_str!\("([^"]+)"\)/g)].map(m=>source(m[1]!))];
-  return scripts.join(JSON.parse(parts[2]!)).replace(/__ATSUMI_X_(?:SOURCE_COMPAT|ADS|ACTIONS|INPUT|SURFACE|PRESENTATION|VIDEO)__/g,config);
+  const collectionCss=import.meta.glob("../../../src-tauri/src/x_surface_collection.css",{eager:true,query:"?raw",import:"default"}) as Record<string,string>;
+  const scripts=[base,...[...parts[1]!.matchAll(/include_str!\("([^"]+\.js)"\)/g)].map(m=>source(m[1]!))];
+  return scripts.join(JSON.parse(parts[2]!)).replace(/__ATSUMI_X_(?:SOURCE_COMPAT|ADS|ACTIONS|INPUT|SURFACE|PRESENTATION|VIDEO|COLLECTION)__/g,config).replace("__ATSUMI_X_COLLECTION_CSS__",JSON.stringify(Object.values(collectionCss)[0]));
 }
-it.each(["foryou","preview"])("initializes every %s adapter in the actual native combined script",feed=>{
+it.each(["foryou","preview","likes","bookmarks"])("initializes every %s adapter in the actual native combined script",feed=>{
   const doc=new DOMParser().parseFromString("<body></body>","text/html"),timers:Function[]=[];
   const win:Record<string,unknown>={addEventListener:vi.fn(),chrome:{webview:{postMessage:vi.fn()}},getSelection:()=>({toString:()=>""})};
   win.top=win;
@@ -25,6 +26,7 @@ it.each(["foryou","preview"])("initializes every %s adapter in the actual native
   for(const name of ["__atsumiXAds","__atsumiXActions","__atsumiXInput","__atsumiXSurface","__atsumiXVideo"]){
     expect(win[name],name).toBeDefined();
   }
+  if(["likes","bookmarks"].includes(feed))expect(win.__atsumiXCollection).toBeDefined();
   if(feed==="preview")expect(win.__atsumiXPresentation).toBeDefined();
   else expect(win.__atsumiXRouteAdapter).toBeDefined();
 });

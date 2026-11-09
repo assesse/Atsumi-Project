@@ -68,18 +68,18 @@ function BroadcastGroup({ group, expanded, onToggle, privacy, card, onContextMen
   const contentId = useId();
   const root = useRef<HTMLElement>(null);
   useEffect(() => {
-    if (!expanded || group.recordings.length === 1) return;
+    if (!expanded) return;
     const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node) && !(event.target as Element)?.closest('.recording-library-selection,.recording-library-detail,.recording-library-delete-dialog,[data-card-context-menu]')) onToggle(); };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") onToggle(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !(event.target as Element)?.closest('[data-card-context-menu],dialog[open]')) onToggle(); };
     document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
-  }, [expanded, onToggle, group.recordings.length]);
+  }, [expanded, onToggle]);
   return <section ref={root} tabIndex={-1} onContextMenu={event => onContextMenu(event, group.recordings)} className={`recording-broadcast-group${group.recordings.length === 1 ? " is-single" : ""}`} aria-label={privacy ? "방송 녹화 묶음" : `${group.latest.title || group.latest.channelId} 녹화 묶음`}>
     <RecordedChannel id={group.latest.id} privacy={privacy} />
     <button type="button" className="recording-broadcast-heading" aria-expanded={expanded} aria-controls={contentId}
       title={privacy ? undefined : `방송 ${group.broadcastKey?.replace(/^id:/, "")}`} onClick={onToggle}>
       <span><strong>{privacy ? "녹화 영상" : group.latest.title || group.latest.channelId}</strong>
-        <small>파일 {group.recordings.length}개 · {bytes(group.recordings.reduce((sum, item) => sum + (hasCompletedMerge(item) ? item.merge!.bytes! : item.bytesWritten), 0))} <span className={`recording-library-state is-${cardState(group.latest).tone}`}>{cardState(group.latest).label}</span></small></span>
+        <small className="recording-broadcast-meta">파일 {group.recordings.length}개 · {bytes(group.recordings.reduce((sum, item) => sum + (hasCompletedMerge(item) ? item.merge!.bytes! : item.bytesWritten), 0))}</small><span className={`recording-library-state recording-broadcast-status is-${cardState(group.latest).tone}`} title={cardState(group.latest).label}>{cardState(group.latest).label}</span></span>
       <FluentIcon glyph="\uE70D" />
     </button>
     <div id={contentId} className="recording-broadcast-files" role="region" aria-label="묶인 녹화 파일" hidden={!expanded}>
@@ -160,7 +160,7 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
   }, [confirmIds]);
   useEffect(() => { if (privacy) setQuery(""); }, [privacy]);
   const selected = [...active, ...filtered, ...attempts, ...diagnostics].find(item => item.id === (checked.length === 1 ? checked[0] : selectedId));
-  const isExpanded = (group: RecordingGroup) => expandedGroups[group.key] ?? group.recordings.length === 1;
+  const isExpanded = (group: RecordingGroup) => expandedGroups[group.key] ?? false;
   useEffect(() => {
     if (!selectedId) return;
     const group = groups.find(value => value.recordings.some(item => item.id === selectedId));
@@ -249,7 +249,7 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
     const closing = isExpanded(group);
     // Keep explicit closed states: replacing the map resurrected other single-file groups.
     setExpandedGroups(previous => ({ ...previous,
-      ...(!closing && group.recordings.length > 1 ? Object.fromEntries(groups.filter(other => other.recordings.length > 1).map(other => [other.key, false])) : {}),
+      ...(!closing ? Object.fromEntries(Object.keys(previous).concat(groups.map(other => other.key)).map(key => [key, false])) : {}),
       [group.key]: !closing,
     }));
     if (closing && group.recordings.some(item => item.id === selectedId)) onSelect(null);

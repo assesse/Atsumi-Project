@@ -1658,6 +1658,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             x_feed::surface::x_surface_close_preview,
             x_feed::surface::x_surface_select_preview,
             x_feed::surface::x_surface_dismiss_menus,
+            x_feed::surface::x_surface_collection_view,
             x_feed::surface::search::x_media_search_status,
             x_feed::surface::search::x_media_search_confirm,
             x_feed::surface::search::x_media_search_resume,

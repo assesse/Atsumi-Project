@@ -23,3 +23,10 @@ it("distinguishes ordinary document concealment from privacy and account invalid
   await api.suspend();expect(invoke).toHaveBeenLastCalledWith("x_feed_suspend");
   vi.mocked(invoke).mockClear();await createXSurfaceApi("browser-mock").suspend(true);expect(invoke).not.toHaveBeenCalled();
 });
+
+it("binds collection presentation to the retained native generation and exact feed",async()=>{
+ await createXSurfaceApi("tauri").collectionView!(4,"likes","media",15);
+ expect(invoke).toHaveBeenLastCalledWith("x_surface_collection_view",{generation:4,feed:"likes",mode:"media",order:15});
+ vi.mocked(invoke).mockClear();await expect(createXSurfaceApi("browser-mock").collectionView!(4,"likes","posts",16)).rejects.toThrow("데스크톱");
+ expect(invoke).not.toHaveBeenCalled();
+});

@@ -17,7 +17,7 @@ function adapter(html=identity+'<main role="main"><div data-testid="primaryColum
   const win={chrome:{webview:{postMessage:message}},history:historyEnabled?{get state(){return historyState;},pushState:sourcePush,replaceState:sourceReplace}:undefined,navigator:{userActivation:{isActive:false}},top:null as unknown,
     addEventListener:vi.fn((name:string,handler:(event:Event)=>void)=>{(windowHandlers[name]??=[]).push(handler);}),
     dispatchEvent:vi.fn((event:Event)=>{for(const handler of windowHandlers[event.type]??[])handler(event);return true;}),
-    getSelection:()=>({toString:()=>''}),__atsumiXSurface:undefined as undefined|{visibility(v:boolean):void;refresh():void;pause():void;playback(v:boolean):void;archivePhotoOwner():string;dismissMenu(cancelRouting?:boolean):boolean;dismissMenus(cancelRouting?:boolean):boolean}};win.top=win;
+    getSelection:()=>({toString:()=>''}),__atsumiXSurface:undefined as undefined|{visibility(v:boolean):void;refresh():void;pause():void;collectionOpen(event:MouseEvent,path:string):boolean;playback(v:boolean):void;archivePhotoOwner():string;dismissMenu(cancelRouting?:boolean):boolean;dismissMenus(cancelRouting?:boolean):boolean}};win.top=win;
   const observations:Array<{target:Node|null;options?:MutationObserverInit;active:boolean;notify:()=>void}>=[];
   class Observer {
     entry:{target:Node|null;options?:MutationObserverInit;active:boolean;notify:()=>void};
@@ -1687,4 +1687,29 @@ it('does not treat the filter callback index as permission to include a faded na
  a.location.pathname='/creator/status/123456/mediaViewer';a.location.href='https://x.com'+a.location.pathname;
  a.doc.body.innerHTML='<div role="dialog"><video src="https://video.twimg.com/ext_tw_video/123456/pu/vid/test.mp4"></video></div><div role="dialog" style="opacity:0" aria-hidden="true"></div>';
  a.update();expect(a.status()).toMatchObject({state:'ready',proof:{video:true}});
+});
+
+it('blocks concealed source autoplay while card presentation is active, then restores normal video policy',()=>{
+ const a=visibleAdapter(),video=a.doc.querySelector('video')!,pause=vi.spyOn(video,'pause').mockImplementation(()=>{});
+ let active=true;Object.defineProperty(a.win,'__atsumiXCollection',{value:{active:()=>active}});
+ a.handlers.play![0]!({target:video,isTrusted:true});expect(pause).toHaveBeenCalledOnce();expect(a.message).not.toHaveBeenCalled();
+ active=false;a.handlers.play![0]!({target:video,isTrusted:true});expect(a.message).toHaveBeenCalledWith(expect.stringContaining('kind=play&value=auto'));
+});
+
+it('routes trusted collection card clicks into preview without navigating or allowing stale/account-mismatched actions',()=>{
+ const a=visibleAdapter(undefined,'bookmarks');Object.defineProperty(a.doc,'hidden',{value:false,configurable:true});a.location.pathname='/i/bookmarks';a.location.href='https://x.com/i/bookmarks';
+ const surface=a.win.__atsumiXSurface!;
+ const click=(patch:Record<string,unknown>={})=>({isTrusted:true,ctrlKey:false,preventDefault:vi.fn(),stopPropagation:vi.fn(),...patch}) as unknown as MouseEvent;
+ expect(surface.collectionOpen(click(),'/creator/status/123456')).toBe(true);
+ expect(a.message).toHaveBeenLastCalledWith(expect.stringContaining('kind=preview&value=%2Fcreator%2Fstatus%2F123456'));
+ expect(a.location.assign).not.toHaveBeenCalled();
+ expect(surface.collectionOpen(click({ctrlKey:true}),'/creator/status/123456/photo/1')).toBe(true);
+ expect(a.message).toHaveBeenLastCalledWith(expect.stringContaining('kind=previewBackground'));
+ a.message.mockClear();
+ expect(surface.collectionOpen(click({isTrusted:false}),'/creator/status/123456')).toBe(false);
+ expect(surface.collectionOpen(click(),'https://evil.example/creator/status/123456')).toBe(false);
+ a.doc.querySelector('[data-testid="AppTabBar_Profile_Link"]')!.setAttribute('href','/bob');
+ expect(surface.collectionOpen(click(),'/creator/status/123456')).toBe(false);expect(a.message).not.toHaveBeenCalled();
+ a.doc.querySelector('[data-testid="AppTabBar_Profile_Link"]')!.setAttribute('href','/alice');surface.visibility(false);
+ expect(surface.collectionOpen(click(),'/creator/status/123456')).toBe(false);
 });

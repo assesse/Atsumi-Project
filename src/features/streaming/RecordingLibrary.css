@@ -16,10 +16,13 @@
 .recording-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 12px; align-items: start; }
 .recording-broadcast-group { position:relative; min-width: 0; align-self: start; border: 1px solid var(--line); border-radius: 10px; background: var(--workspace); }
 .recording-broadcast-group:has(.recording-broadcast-heading[aria-expanded=true]){z-index:12}
-.recording-broadcast-group > .recorded-channel { padding: 12px 12px 0; }
-.streaming-workspace .recording-broadcast-heading { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.recording-broadcast-group > .recorded-channel { padding: 12px 14px 0; height: 48px; min-width: 0; box-sizing: border-box; }
+.recording-broadcast-group > .recorded-channel > button { width: 100%; min-width: 0; height: 36px; }
+.recording-broadcast-group > .recorded-channel > button > span:not(.recorded-channel-placeholder) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recording-broadcast-group > .recorded-channel > small { position: absolute; top: 0; left: 12px; right: 12px; z-index: 1; background: var(--workspace); }
+.streaming-workspace .recording-broadcast-heading { display: flex; align-items: center; gap: 12px; width: 100%; height: 128px; padding: 14px; border: 0; border-radius: 0; background: transparent; text-align: left; }
 .recording-broadcast-heading > span:first-child { flex: 1; min-width: 0; }
-.recording-broadcast-heading strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 15px; line-height: 1.55; overflow-wrap: anywhere; }
+.recording-broadcast-heading strong { display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 15px; line-height: 1.55; height: 46.5px; overflow-wrap: anywhere; }
 .recording-broadcast-heading small { display: block; margin-top: 6px; font-size: var(--font-size-min); color: var(--muted); }
 .recording-broadcast-heading > .fluent { flex: none; font-size: 12px; transition: transform 160ms ease; }
 .recording-broadcast-heading[aria-expanded=true] > .fluent { transform: rotate(180deg); }
@@ -27,8 +30,6 @@
 @keyframes recording-files-open{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.recording-broadcast-files{animation:none}}
 .recording-broadcast-files[hidden] { display: none; }
-.recording-broadcast-group.is-single .recording-broadcast-files { position:static;max-height:none;border:0;box-shadow:none;border-radius:0 0 10px 10px; }
-.recording-broadcast-group.is-single { z-index:auto; }
 .streaming-workspace .recording-library .recording-broadcast-files .recording-library-card { padding: 10px; gap: 8px; background: var(--surface); }
 .recording-library .recording-broadcast-files .recording-library-card > strong { min-height: 0; font-size: var(--font-size-min); color: var(--text-soft); }
 .recording-broadcast-files .recording-library-check { top: 10px; right: 10px; }
@@ -105,3 +106,6 @@
 .recording-work-detail {align-self:flex-end;color:var(--text-muted,#aaa);font-size:inherit}
 @keyframes recording-work-sweep {to{transform:translateX(230%)}}
 @media (prefers-reduced-motion:reduce) {.recording-work-track > .is-indeterminate {animation:none}}
+
+.recording-broadcast-meta { line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.recording-library .recording-broadcast-status { display: block; height: 20px; line-height: 20px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
