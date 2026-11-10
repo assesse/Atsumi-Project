@@ -30,3 +30,8 @@ it("binds collection presentation to the retained native generation and exact fe
  vi.mocked(invoke).mockClear();await expect(createXSurfaceApi("browser-mock").collectionView!(4,"likes","posts",16)).rejects.toThrow("데스크톱");
  expect(invoke).not.toHaveBeenCalled();
 });
+
+it("passes bounded card size through the existing generation guarded command",async()=>{
+ await createXSurfaceApi("tauri").collectionView!(4,"bookmarks","posts",17,300);
+ expect(invoke).toHaveBeenLastCalledWith("x_surface_collection_view",{generation:4,feed:"bookmarks",mode:"posts",order:17,width:300});
+});

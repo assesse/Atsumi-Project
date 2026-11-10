@@ -2324,7 +2324,7 @@ h2 {
 
 .gallery-grid.is-compact {
   align-items: start;
-  justify-content: start;
+  justify-content: center;
 }
 
 .gallery-card.is-compact {

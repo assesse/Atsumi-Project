@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import script from "../../../src-tauri/src/x_surface_collection.js?raw";
 import css from "../../../src-tauri/src/x_surface_collection.css?raw";
 const post=(id:string,body="본문",media:string[]=['a'])=>'<article data-testid="tweet"><div data-testid="User-Name"><a href="/artist">작가</a><a href="/artist/status/'+id+'"><time datetime="2026-11-09T01:00:00Z">오늘</time></a></div><div data-testid="tweetText">'+body+'</div>'+media.map((m,i)=>'<a href="/artist/status/'+id+'/photo/'+(i+1)+'"><div data-testid="tweetPhoto"><img src="https://pbs.twimg.com/media/'+m+'.jpg?name=small"></div></a>').join('')+'</article>';
-type Adapter={mode:(view:string)=>void;update:(ready:boolean,reset?:boolean)=>void};
+type Adapter={mode:(view:string,width?:number)=>void;update:(ready:boolean,reset?:boolean)=>void};
 function setup(html=post("123456"),feed="bookmarks"){
   const doc=new DOMParser().parseFromString('<body><main data-testid="primaryColumn">'+html+'</main></body>','text/html');
   Object.defineProperty(doc,'hidden',{value:false,configurable:true});
@@ -125,4 +125,49 @@ it("does not count a video's poster and its alternate-resolution image twice",()
  const a=setup(html);a.adapter.mode("media");a.adapter.update(true);expect(a.cards()).toHaveLength(1);
  expect(a.cards()[0]!.querySelector("img")!.getAttribute("src")).toBe("https://pbs.twimg.com/ext_tw_video_thumb/poster.jpg?name=small");
  a.click(a.cards()[0]!);expect(a.open).toHaveBeenCalledWith(expect.anything(),"/artist/status/123456/video/1");
+});
+
+it("appends newly discovered posts even when X inserts them before retained source nodes",()=>{
+ const a=setup(post("123456")+post("234567")+post("345678"));a.adapter.mode("posts");a.adapter.update(true);
+ const originals=a.cards(),root=a.doc.querySelector<HTMLElement>(".atsumi-x-collection")!;root.scrollTop=250;
+ a.doc.querySelector("main")!.innerHTML=post("234567")+post("456789")+post("123456");a.adapter.update(true);
+ a.doc.querySelector("main")!.innerHTML=post("567890")+post("456789")+post("345678");a.adapter.update(true);
+ expect(a.cards().map(n=>n.dataset.postId)).toEqual(["123456","234567","345678","456789","567890"]);
+ expect(a.cards().slice(0,3)).toEqual(originals);expect(root.scrollTop).toBe(250);
+});
+it("keeps media identities in place across late hydration and recycled media markup",()=>{
+ const a=setup(post("123456","A",["a"])+post("234567","B",["b"]));a.adapter.mode("media");a.adapter.update(true);
+ a.doc.querySelector("main")!.innerHTML=post("123456","A",["a","c"])+post("234567","B",["b"]);a.adapter.update(true);
+ const keys=()=>[...a.doc.querySelectorAll<HTMLElement>('[data-card-key]')].map(n=>n.dataset.cardKey);
+ expect(keys()).toEqual(["123456:/media/a.jpg","234567:/media/b.jpg","123456:/media/c.jpg"]);
+ a.doc.querySelector("main")!.innerHTML=post("123456","A",["c","a"]);a.adapter.update(true);
+ expect(keys()).toEqual(["123456:/media/a.jpg","234567:/media/b.jpg","123456:/media/c.jpg"]);
+ a.doc.querySelector("main")!.innerHTML=post("123456","A",[]);a.adapter.update(true);
+ expect(a.cards()).toHaveLength(3);a.click(a.cards()[2]!);expect(a.open).toHaveBeenLastCalledWith(expect.anything(),"/artist/status/123456/photo/2");
+});
+it("updates a hydrated post in place without leaving its old card behind",()=>{
+ const a=setup(post("123456","first",[])+post("234567"));a.adapter.mode("posts");a.adapter.update(true);
+ const second=a.cards()[1];
+ a.doc.querySelector("main")!.innerHTML=post("123456","full text",["a","b"])+post("234567");
+ for(let i=0;i<4;i++)a.adapter.update(true);
+ expect(a.cards()).toHaveLength(2);expect(a.cards()[0]!.textContent).toContain("full text");expect(a.cards()[1]).toBe(second);
+});
+it("hides only native scrollbar chrome while cards are visible and restores it on every conceal path",()=>{
+ const a=setup();const page=a.doc.documentElement,style=page.getAttribute('style');
+ a.adapter.mode("posts");a.adapter.update(true);
+ expect(page.hasAttribute('data-atsumi-x-collection-scroll-source')).toBe(true);expect(page.getAttribute('style')).toBe(style);
+ a.click(a.doc.querySelector('.atsumi-x-collection-more')!);vi.advanceTimersByTime(1000);expect(page.scrollTop).toBeGreaterThan(0);
+ a.adapter.update(false);expect(a.doc.querySelector('[data-atsumi-x-collection-scroll-source]')).toBeNull();
+ a.adapter.update(true);expect(page.hasAttribute('data-atsumi-x-collection-scroll-source')).toBe(true);
+ a.adapter.mode("original");expect(a.doc.querySelector('[data-atsumi-x-collection-scroll-source]')).toBeNull();
+ a.adapter.mode("media");a.loc.pathname='/home';a.adapter.update(true);expect(a.doc.querySelector('[data-atsumi-x-collection-scroll-source]')).toBeNull();
+});
+it("resizes existing cards without clearing source, card nodes or native scroll",()=>{
+ const a=setup(post("123456")+post("234567"));a.adapter.mode("posts",280);a.adapter.update(true);
+ const root=a.doc.querySelector<HTMLElement>('.atsumi-x-collection')!,first=a.cards()[0],source=a.doc.querySelector('article');
+ expect(root.style.getPropertyValue('--atsumi-x-card-width')).toBe('280px');root.scrollTop=200;a.doc.documentElement.scrollTop=900;
+ a.adapter.mode("posts",360);expect(root.style.getPropertyValue('--atsumi-x-card-width')).toBe('360px');
+ expect(a.cards()[0]).toBe(first);expect(a.doc.querySelector('article')).toBe(source);expect(a.doc.documentElement.scrollTop).toBe(900);
+ for(const width of [159,361,NaN,220.5])a.adapter.mode("posts",width);
+ expect(root.style.getPropertyValue('--atsumi-x-card-width')).toBe('360px');
 });

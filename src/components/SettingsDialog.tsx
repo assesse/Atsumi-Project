@@ -43,6 +43,9 @@ import { useSettingsAutosave } from "../hooks/useSettingsAutosave";
 import { VIDEO_PREVIEW_WIDTHS, saveVideoPreviewWidth, useVideoPreviewWidth, type VideoPreviewSource } from "../features/platforms/previewPreferences";
 import { IMAGE_PREVIEW_WIDTHS, saveImagePreviewWidth, useImagePreviewWidth, type ImagePreviewSource } from "../features/platforms/imagePreviewPreferences";
 import { savePixivSafeOnly, usePixivSafeOnly } from "../features/pixiv/displayPreferences";
+import { platformIcons } from "../app/platformIcons";
+import atsumiLogo from "../assets/atsumi.svg";
+import { XCollectionSettings } from "../features/x/XCollectionSettings";
 import "./SettingsDialog.css";
 
 type SettingsDialogProps = {
@@ -626,38 +629,15 @@ export function SettingsDialog({
           </div>
         </header>
         <nav className="settings-nav" role="tablist" aria-label="설정 분류">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "general"}
-            className={activeTab === "general" ? "is-active" : ""}
-            onClick={() => setActiveTab("general")}
-          >일반</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "hitomi"}
-            className={activeTab === "hitomi" ? "is-active" : ""}
-            onClick={() => setActiveTab("hitomi")}
-          >Hitomi</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "danbooru"}
-            className={activeTab === "danbooru" ? "is-active" : ""}
-            onClick={() => setActiveTab("danbooru")}
-          >Danbooru</button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "chzzk"}
-            className={activeTab === "chzzk" ? "is-active" : ""}
-            onClick={() => setActiveTab("chzzk")}
-          >치지직</button>
-          {(["youtube", "soop", "pinterest", "pixiv"] as const).map(source => (
-            <button key={source} type="button" role="tab" aria-selected={activeTab === source}
-              className={activeTab === source ? "is-active" : ""} onClick={() => setActiveTab(source)}>
-              {workspaces.find(workspace => workspace.id === source)!.label}
+          <button type="button" role="tab" aria-selected={activeTab === "general"}
+            className={activeTab === "general" ? "is-active" : ""} onClick={() => setActiveTab("general")}>
+            <img className="settings-tab-icon" src={atsumiLogo} alt="" aria-hidden="true" /><span>일반</span>
+          </button>
+          {workspaces.map(workspace => (
+            <button key={workspace.id} type="button" role="tab" aria-selected={activeTab === workspace.id}
+              className={activeTab === workspace.id ? "is-active" : ""} onClick={() => setActiveTab(workspace.id)}>
+              <img className="settings-tab-icon" src={platformIcons[workspace.id]} alt="" aria-hidden="true" />
+              <span>{workspace.id === "chzzk" ? "치지직" : workspace.label}</span>
             </button>
           ))}
         </nav>
@@ -668,6 +648,7 @@ export function SettingsDialog({
             {autosave.status === "error" || danbooruSaveError ? <div className="settings-save-error" role="alert"><span>변경 내용을 저장하지 못했습니다.</span><button type="button" className="text-button" onClick={() => { void autosave.flush(); if (danbooruSaveError) changeDanbooru(danbooruDraft); }}>다시 시도</button></div> : null}
           </div> : null}
           <section ref={scrollRoot} className="settings-content" data-settings-scroll-root="true">
+              {activeTab === "x" ? <XCollectionSettings /> : null}
               {activeTab === "soop" || activeTab === "youtube" ? <VideoPreviewSettings key={activeTab} source={activeTab} /> : null}
               {activeTab === "pinterest" || activeTab === "pixiv" ? <ImagePreviewSettings key={activeTab} source={activeTab} /> : null}
               {activeTab !== "danbooru" ? <>

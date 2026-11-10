@@ -5,7 +5,9 @@
   if (window !== window.top || location.protocol !== 'https:' || !['x.com','www.x.com'].includes(location.hostname)
     || !['likes','bookmarks'].includes(config.feed) || window.__atsumiXCollection) return;
   const LIMIT = 1200, BATCH = 60;
-  const records = new Map(), order = [], nodes = new Map(), scrolls = {posts:0,media:0};
+  const records = new Map(), order = [], mediaOrder = [], mediaKeys = new Set(), nodes = new Map(), scrolls = {posts:0,media:0};
+  const hiddenScrollbars = new Set();
+  let cardWidth = 220;
   let mode = 'original', allowed = false, root = null, grid = null, status = null, more = null;
   let primary = null, originalScroll = [], sourceScroll = [], loading = null, timer = 0, pageLimit = BATCH;
   let failure = '', fingerprint = '', observer = null, scheduled = 0, noMediaPages = 0, fillTimer = 0;
@@ -59,6 +61,16 @@
     return {id,path,handle,name:(nameNode?.textContent||handle).trim().slice(0,100),text,
       time:links[0].node.getAttribute('datetime')||'',media,repost:(social?.textContent||'').trim().slice(0,100)};
   }
+  const mediaKey = media => new URL(media.src).pathname;
+  function retainMedia(previous, incoming) {
+    // A recycled article may briefly omit media or render it in several passes.
+    // Retain observed identities; a resolution/DOM change is not a new card.
+    const result = [...(previous || [])], known = new Set(result.map(mediaKey));
+    for (const media of incoming) if (!known.has(mediaKey(media)) && result.length < 4) {
+      known.add(mediaKey(media)); result.push(media);
+    }
+    return result;
+  }
   function collect() {
     if (!usable()) return false;
     const host = document.querySelector('[data-testid="primaryColumn"]');
@@ -69,14 +81,19 @@
     for(let i=0;i<incoming.length;i++){
       const post=incoming[i],previous=records.get(post.id);
       if(!previous&&records.size>=LIMIT)continue;
-      if(!previous){
-        const next=incoming.slice(i+1).find(p=>order.includes(p.id));
-        const before=i>0?order.indexOf(incoming[i-1].id):-1;
-        order.splice(next?order.indexOf(next.id):before>=0?before+1:order.length,0,post.id);
+      // Once shown, a card's place is immutable until this collection resets.
+      // X recycles/reorders source nodes while paging; those are not insert intents.
+      if(!previous)order.push(post.id);
+      post.media=retainMedia(previous?.media,post.media);
+      if(previous){post.text=post.text||previous.text;post.time=post.time||previous.time;}
+      for(const media of post.media){
+        const key=post.id+':'+mediaKey(media);
+        if(!mediaKeys.has(key)){mediaKeys.add(key);mediaOrder.push({key,id:post.id,identity:mediaKey(media)});}
       }
       if(JSON.stringify(previous)!==JSON.stringify(post)){records.set(post.id,post);changed=true;}
     }
     primary.setAttribute('data-atsumi-x-collection-source','');
+    syncSourceScrollbars();
     return changed;
   }
   function elementsToScroll(){
@@ -88,12 +105,21 @@
     }
     return result;
   }
+  function syncSourceScrollbars() {
+    const current=new Set(elementsToScroll());
+    for(const node of hiddenScrollbars)if(!current.has(node)){
+      node.removeAttribute('data-atsumi-x-collection-scroll-source');hiddenScrollbars.delete(node);
+    }
+    for(const node of current){node.setAttribute('data-atsumi-x-collection-scroll-source','');hiddenScrollbars.add(node);}
+  }
   const positions = () => elementsToScroll().map(node=>({node,top:node.scrollTop,left:node.scrollLeft}));
   const restore = saved => { for(const value of saved)if(value.node.isConnected){value.node.scrollTop=value.top;value.node.scrollLeft=value.left;} };
   function stopLoading(){ if(timer)clearTimeout(timer);timer=0;loading=null; }
   function hide() {
     if(root){if(!root.hidden&&mode!=='original')scrolls[mode]=root.scrollTop;root.hidden=true;}
     primary?.removeAttribute('data-atsumi-x-collection-source');
+    for(const node of hiddenScrollbars)node.removeAttribute('data-atsumi-x-collection-scroll-source');
+    hiddenScrollbars.clear();
     observer?.disconnect();observer=null;
     if(scheduled)clearTimeout(scheduled);scheduled=0;
     if(fillTimer)clearTimeout(fillTimer);fillTimer=0;
@@ -105,6 +131,7 @@
     const style=el('style');style.textContent=__ATSUMI_X_COLLECTION_CSS__;
     document.head.append(style);
     root=el('section','atsumi-x-collection');root.setAttribute('aria-label','X 카드 목록');root.tabIndex=0;
+    root.style.setProperty('--atsumi-x-card-width',cardWidth+'px');
     grid=el('div','atsumi-x-collection-grid');grid.setAttribute('role','list');
     status=el('p','atsumi-x-collection-status');status.setAttribute('role','status');
     more=el('button','atsumi-x-collection-more','더 불러오기');more.type='button';
@@ -119,15 +146,15 @@
     window.addEventListener?.('resize',queueFill,{passive:true});
   }
   function cards() {
-    return order.flatMap(id=>{
-      const p=records.get(id);
-      return mode==='media'?p.media.map((m,index)=>({key:id+':'+index,post:p,media:m,count:p.media.length,index}))
-        :[{key:id,post:p,media:p.media[0]||null,count:p.media.length,index:0}];
+    if(mode==='media')return mediaOrder.map(entry=>{
+      const post=records.get(entry.id),index=post.media.findIndex(media=>mediaKey(media)===entry.identity);
+      return {key:entry.key,post,media:post.media[index],count:post.media.length,index};
     });
+    return order.map(id=>{const post=records.get(id);return {key:id,post,media:post.media[0]||null,count:post.media.length,index:0};});
   }
   function card(value) {
     const {post,media,count,index}=value;
-    const item=el('div','atsumi-x-collection-item');item.setAttribute('role','listitem');
+    const item=el('div','atsumi-x-collection-item');item.setAttribute('role','listitem');item.dataset.cardKey=value.key;
     const button=el('button','atsumi-x-collection-card');button.type='button';
     button.dataset.postId=post.id;
     const label=[post.name,post.text|| (media?.video?'동영상':media?'이미지':'게시물')].join(' · ');
@@ -136,8 +163,8 @@
       const image=el('img');image.src=media.src;image.alt='';image.loading='lazy';image.decoding='async';
       image.addEventListener('error',()=>{image.hidden=true;button.classList.add('has-image-error');},{once:true});
       button.append(image);
-      if(media.video)button.append(el('span','atsumi-x-collection-kind','동영상'));
-      if(count>1)button.append(el('span','atsumi-x-collection-count',mode==='media'?(index+1)+'/'+count:String(count)));
+      if(media.video){const kind=el('span','atsumi-x-collection-kind','▶');kind.setAttribute('aria-label','동영상');button.append(kind);}
+      if(count>1){const badge=el('span','atsumi-x-collection-count',mode==='media'?(index+1)+'/'+count:String(count));badge.setAttribute('aria-label',mode==='media'?(index+1)+' / '+count+' 미디어':count+'개 미디어');button.append(badge);}
     }else{
       button.classList.add('is-text');
       button.append(el('span','atsumi-x-collection-text',post.text||'게시물'));
@@ -145,9 +172,10 @@
     const caption=el('span','atsumi-x-collection-caption');
     caption.append(el('strong','',post.text.split(/\r?\n/).find(line=>line.trim())|| (media?.video?'동영상':media?'이미지':'게시물')));
     caption.append(el('span','atsumi-x-collection-author',post.name+' · @'+post.handle));
-    const date=new Date(post.time);
-    if(Number.isFinite(date.getTime()))caption.append(el('time','',date.toLocaleDateString('ko-KR')));
-    if(post.repost)caption.append(el('span','atsumi-x-collection-repost',post.repost));
+    const metadata=el('span','atsumi-x-collection-meta'),date=new Date(post.time);
+    if(Number.isFinite(date.getTime())){const time=el('time','',date.toLocaleDateString('ko-KR'));time.dateTime=post.time;metadata.append(time);}
+    if(post.repost){const repost=el('span','atsumi-x-collection-repost','↻');repost.title=post.repost;repost.setAttribute('aria-label',post.repost);metadata.append(repost);}
+    caption.append(metadata);
     button.append(caption);item.append(button);
     button.addEventListener('click',event=>{
       if(!event.isTrusted||!usable()||event.altKey||event.shiftKey)return;
@@ -165,7 +193,9 @@
       for(const value of shown){
         keep.add(value.key);const signature=JSON.stringify(value);
         let cached=nodes.get(value.key);
-        if(!cached||cached.signature!==signature){cached={signature,node:card(value)};nodes.set(value.key,cached);}
+        if(!cached||cached.signature!==signature){
+          const next={signature,node:card(value)};cached?.node.replaceWith(next.node);cached=next;nodes.set(value.key,cached);
+        }
       }
       for(const [key,value] of nodes)if(!keep.has(key)){value.node.remove();nodes.delete(key);}
       let cursor=grid.firstChild;
@@ -224,8 +254,17 @@
   }
   window.__atsumiXCollection=Object.freeze({
     active:usable,
-    mode(next){
-      if(!['original','posts','media'].includes(next)||next===mode)return;
+    mode(next,width){
+      if(!['original','posts','media'].includes(next))return;
+      if(Number.isInteger(width)&&width>=160&&width<=360&&width!==cardWidth){
+        const anchor=root&&!root.hidden?[...grid.children].find(node=>node.getBoundingClientRect().bottom>root.getBoundingClientRect().top+12):null;
+        const before=anchor?.getBoundingClientRect().top;
+        cardWidth=width;
+        root?.style.setProperty('--atsumi-x-card-width',cardWidth+'px');
+        if(anchor&&before!==undefined){root.scrollTop+=anchor.getBoundingClientRect().top-before;scrolls[mode]=root.scrollTop;}
+        queueFill();
+      }
+      if(next===mode)return;
       const previous=mode;
       if(root&&previous!=='original')scrolls[previous]=root.scrollTop;
       if(previous==='original'&&next!=='original'){primary=document.querySelector('[data-testid="primaryColumn"]');originalScroll=positions();if(sourceScroll.length)restore(sourceScroll);window.__atsumiXSurface?.pause();}
@@ -236,7 +275,7 @@
     },
     update(ready,reset=false){
       allowed=ready===true;
-      if(reset){records.clear();order.length=0;nodes.clear();fingerprint='';scrolls.posts=0;scrolls.media=0;limits.posts=BATCH;limits.media=BATCH;pageLimit=BATCH;sourceScroll=[];originalScroll=[];if(grid)grid.replaceChildren();}
+      if(reset){records.clear();order.length=0;mediaOrder.length=0;mediaKeys.clear();nodes.clear();fingerprint='';scrolls.posts=0;scrolls.media=0;limits.posts=BATCH;limits.media=BATCH;pageLimit=BATCH;sourceScroll=[];originalScroll=[];if(grid)grid.replaceChildren();}
       if(!usable()){hide();return;}
       install();const returning=root.hidden;collect();root.hidden=false;observe();render();
       if(returning)root.scrollTop=scrolls[mode]||0;

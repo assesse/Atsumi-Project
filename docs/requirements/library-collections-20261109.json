@@ -54,5 +54,28 @@
       "decision": "Live installed release remains running during source edits; no recorder/download cancellation; main-desktop input remains deferred pending direction.",
       "reason": "The Nov10 follow-up explicitly resumed main-desktop Computer Use. The current debug app was already running; its active postprocessing was preserved."
     }
-  ]
+  ],
+  "cardFollowup": {
+    "requestId": "01a1c5f6-0ab4-7070-a588-6fcc71d4ac24",
+    "text": "새 항목이 중간이나 위에 삽입되고 이미 로드된 항목이 아래로 내려감. 히토미 앨범카드처럼 디자인 개선 및 카드 크기 조절.",
+    "status": "integrated_awaiting_user_verification",
+    "evidence": ".runtime/x-collection-scroll-20261110/preedit.json",
+    "decisions": [
+      "Keep encounter order immutable; append new post/media identities after retained cards. Ignore source virtualizer reordering.",
+      "Replace hydrated card nodes in place; do not leave stale copies in the DOM.",
+      "Hide original scrollbar chrome only while cards are visible; retain source scrolling for paging.",
+      "Reserve exact cover layout height; disable card-list scroll anchoring.",
+      "Hitomi-like portrait cover and bottom title/author/date; 160–360px card size slider retained per likes/bookmarks.",
+      "Keep original presentation, sessions, native right preview, private/account guards and pending work."
+    ],
+    "superseded": [
+      "Provisional interpretation that this was only automatic bottom following. The user corrected it to inserting new cards before retained cards."
+    ],
+    "pending": [
+      "User verification of authenticated X collections: append order in posts/media, one scrollbar, size control persistence and preview retention."
+    ],
+    "activation": ".runtime/x-collection-scroll-20261110/activation.json",
+    "verification": ".runtime/x-collection-scroll-20261110/verification.json",
+    "updatedAt": "2026-11-10T15:30:53.2660708Z"
+  }
 }

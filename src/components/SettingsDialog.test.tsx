@@ -213,7 +213,7 @@ describe("SettingsDialog operational boundaries", () => {
       expect(autostart).toHaveAttribute("role", "switch");
       expect(autostart).toBeDisabled(); // A browser preview cannot register a Windows startup entry.
       expect(autostart).not.toBeChecked();
-      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru", "치지직", "YouTube", "SOOP", "Pinterest", "pixiv"]);
+      expect([...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent)).toEqual(["일반", "Hitomi", "Danbooru", "치지직", "YouTube", "SOOP", "Pinterest", "pixiv", "X"]);
       localStorage.removeItem("atsumi.soop.preview-width.v1");
       localStorage.removeItem("atsumi.youtube.preview-width.v1");
       await act(async () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(tab => tab.textContent === "SOOP")!.click());

@@ -52,12 +52,17 @@ pub(super) struct Surfaces {
     playing: Option<String>,
     manual_playing: bool,
     focused: Option<String>,
-    collection_views: HashMap<String, CollectionView>,
+    collection_views: HashMap<String, CollectionPresentation>,
     collection_order: u64,
 }
 #[derive(Clone, Copy, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CollectionView { #[default] Original, Posts, Media }
+#[derive(Clone, Copy)]
+struct CollectionPresentation { mode: CollectionView, width: u16 }
+impl Default for CollectionPresentation {
+    fn default() -> Self { Self { mode: CollectionView::Original, width: 220 } }
+}
 struct PreviewTab {
     pane: Arc<Pane>,
     path: String,
@@ -968,7 +973,7 @@ fn paint_current(session: &XSession, app: &AppHandle) {
             pane.visible.store(true, Ordering::Release);
             if matches!(pane.feed.as_str(), "likes" | "bookmarks") {
                 let collection = session.surfaces.lock().unwrap_or_else(|p| p.into_inner()).collection_views.get(&pane.feed).copied().unwrap_or_default();
-                let _ = view.eval(format!("window.__atsumiXCollection?.mode({})", serde_json::to_string(&collection).unwrap()));
+                let _ = view.eval(format!("window.__atsumiXCollection?.mode({},{})", serde_json::to_string(&collection.mode).unwrap(), collection.width));
             }
             let _ = view.eval("window.__atsumiXSurface?.visibility(true)");
             // Keep both documents interactive; prevent losing autoplay from
@@ -2024,20 +2029,22 @@ pub fn x_surface_dismiss_menus(
 
 #[tauri::command(rename_all = "camelCase")]
 pub fn x_surface_collection_view(window: Webview, app: AppHandle, session: State<'_, XSession>,
-    generation: u64, feed: String, mode: CollectionView, order: u64) -> Result<(), String> {
+    generation: u64, feed: String, mode: CollectionView, order: u64, width: Option<u16>) -> Result<(), String> {
     trusted(&window)?;
     {
         let mut data = session.surfaces.lock().unwrap_or_else(|p| p.into_inner());
-        set_collection_view(&mut data, generation, &feed, mode, order)?;
+        set_collection_view(&mut data, generation, &feed, mode, order, width)?;
     }
     paint(&session, &app);
     Ok(())
 }
-fn set_collection_view(data: &mut Surfaces, generation: u64, feed: &str, mode: CollectionView, order: u64) -> Result<(), String> {
+fn set_collection_view(data: &mut Surfaces, generation: u64, feed: &str, mode: CollectionView, order: u64, width: Option<u16>) -> Result<(), String> {
     if !matches!(feed, "likes" | "bookmarks") || data.active != feed || data.generation != generation
         || !data.feeds.contains_key(feed) || order == 0 || order > 9_007_199_254_740_991 || order <= data.collection_order { return Err(STALE.into()); }
+    let width = width.unwrap_or_else(|| data.collection_views.get(feed).copied().unwrap_or_default().width);
+    if !(160..=360).contains(&width) { return Err("카드 크기를 확인해 주세요.".into()); }
     data.collection_order = order;
-    data.collection_views.insert(feed.to_string(), mode);
+    data.collection_views.insert(feed.to_string(), CollectionPresentation { mode, width });
     Ok(())
 }
 
@@ -2050,14 +2057,21 @@ mod tests {
         let mut data = session.surfaces.lock().unwrap();
         data.active = "likes".into(); data.generation = 12;
         data.feeds.insert("likes".into(), feed);
-        assert!(set_collection_view(&mut data, 11, "likes", CollectionView::Posts, 1).is_err());
-        assert!(set_collection_view(&mut data, 12, "bookmarks", CollectionView::Posts, 1).is_err());
-        assert!(set_collection_view(&mut data, 12, "foryou", CollectionView::Posts, 1).is_err());
-        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Posts, 2).is_ok());
-        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Original, 1).is_err());
-        assert_eq!(serde_json::to_value(data.collection_views.get("likes")).unwrap(), "posts");
-        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Media, 3).is_ok());
-        assert_eq!(serde_json::to_value(data.collection_views.get("likes")).unwrap(), "media");
+        assert!(set_collection_view(&mut data, 11, "likes", CollectionView::Posts, 1, None).is_err());
+        assert!(set_collection_view(&mut data, 12, "bookmarks", CollectionView::Posts, 1, None).is_err());
+        assert!(set_collection_view(&mut data, 12, "foryou", CollectionView::Posts, 1, None).is_err());
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Posts, 2, None).is_ok());
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Original, 1, None).is_err());
+        assert_eq!(serde_json::to_value(data.collection_views.get("likes").unwrap().mode).unwrap(), "posts");
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Media, 3, None).is_ok());
+        assert_eq!(serde_json::to_value(data.collection_views.get("likes").unwrap().mode).unwrap(), "media");
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Media, 4, Some(159)).is_err());
+        assert_eq!(data.collection_order, 3);
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Media, 4, Some(360)).is_ok());
+        assert_eq!(data.collection_views.get("likes").unwrap().width, 360);
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Posts, 5, None).is_ok());
+        assert_eq!(data.collection_views.get("likes").unwrap().width, 360);
+        assert!(set_collection_view(&mut data, 12, "likes", CollectionView::Posts, 6, Some(361)).is_err());
         assert!(data.preview.is_some());
     }
     #[test]

@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "status": "implemented_verified_release_pending",
+  "requestId": "01a1c677-5619-7711-9b92-081c1ace1844",
+  "evidence": ".runtime/card-settings-20261111/preedit.json",
+  "requirements": [
+    "Settings X exposes both saved sizes; mounted collection reacts without losing view.",
+    "No size slider remains in toolbar.",
+    "All nine labelled/icon tabs fit normal/narrow viewport.",
+    "Centered grid tracks preserve size, pagination and scroll.",
+    "Portrait/landscape/square media retain aspect and fixed slot geometry."
+  ],
+  "decisions": [
+    "Independent likes/bookmarks sizes remain; move existing values into settings without reset.",
+    "Keep generation/order/feed guards, encounter order and preview/session.",
+    "Stable 1:1 media slots with contain and small inset; no stretching/cropping.",
+    "Center fixed-width grids including Hitomi compact views; preserve columns and measured rows.",
+    "Bundled platformIcons and Atsumi icon for General; keep labels."
+  ],
+  "superseded": [
+    "The toolbar size slider is replaced by settings X controls.",
+    "Portrait X card slots are replaced by square slots with original-ratio contain fitting.",
+    "Start alignment is replaced by centered fixed-width tracks."
+  ],
+  "verification": {
+    "automatedTests": 48,
+    "browserLayoutTests": 12,
+    "typecheck": "passed",
+    "frontendBuild": "passed",
+    "screenshots": ".runtime/card-settings-20261111/browser-qa",
+    "actualUi": {
+      "status": "passed",
+      "at": "2026-11-10T17:44:25.514Z",
+      "build": "2849 native debug build with embedded collection CSS",
+      "checks": [
+        "Nine settings tabs retain labels and show bundled icons.",
+        "Existing 360 px likes/bookmarks values preserved.",
+        "Mounted likes changes 360 to 220, persists through settings reopen, bookmarks remains 360.",
+        "Likes restored to original 360 after verification.",
+        "X square cards centered at 220 and 360 with media aspect preserved.",
+        "Hitomi compact download grid centered, author grouping restored."
+      ],
+      "limits": [
+        "Small viewport geometry was checked in isolated browser layout tests, not by resizing the real desktop."
+      ]
+    }
+  },
+  "restart": {
+    "authorization": "AGENTS.md Development restart authorization 2026-10-14; current request changes require native embedded CSS rebuild",
+    "normalDrain": true,
+    "oldPid": 36296,
+    "phase": "exited"
+  },
+  "release": {
+    "authorized": true,
+    "target": "2.4.5",
+    "source": "Latest user instruction: finish, release/deploy, then shut down PC."
+  }
+}

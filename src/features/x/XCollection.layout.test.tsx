@@ -17,7 +17,9 @@ function cards(){
  win.__atsumiXCollection.mode('posts');win.__atsumiXCollection.update(true);
  const root=doc.querySelector<HTMLElement>('.atsumi-x-collection')!;
  root.setAttribute('data-layout-probe','cards');
- for(const image of root.querySelectorAll('img'))image.setAttribute('src',picture);
+ for(const [index,image] of [...root.querySelectorAll('img')].entries())image.setAttribute('src',index%2?picture:picture.replace('width%3D%22400%22%20height%3D%22600%22','width%3D%22600%22%20height%3D%22400%22'));
+ root.querySelector('.atsumi-x-collection-item')?.setAttribute('data-layout-probe','firstCard');
+ root.querySelector('.atsumi-x-collection-item:nth-child(2)')?.setAttribute('data-layout-probe','secondCard');
  const result=root.outerHTML;win.__atsumiXCollection.update(false);return result;
 }
 describe.skipIf(!layoutBrowser)('X collection card layout in isolated document fixtures',()=>{
@@ -27,10 +29,15 @@ describe.skipIf(!layoutBrowser)('X collection card layout in isolated document f
   const html='<section class="x-workspace x-official-workspace"><div class="x-feed-pane" style="height:100vh">'+toolbar+'<div class="x-native-feed" style="flex:1">'+cards()+'</div></div></section>';
   localStorage.removeItem('atsumi.x.collection-view.v1.bookmarks');
   const originalToolbar=renderToStaticMarkup(<XCollectionControls api={api} feed="bookmarks" generation={1} enabled onError={()=>{}}/>);
-  const scenes=[{name:'post-cards',html},{name:'original-collection',html:html.replace(toolbar,originalToolbar).replace(/<section class="atsumi-x-collection"[\s\S]*?<\/section>/,'')}];
+  const scenes=[...[160,220,360].map(size=>({name:'post-cards-'+size,html:html.replace('--atsumi-x-card-width: 220px','--atsumi-x-card-width: '+size+'px')})),{name:'original-collection',html:html.replace(toolbar,originalToolbar).replace(/<section class="atsumi-x-collection"[\s\S]*?<\/section>/,'')}];
   const results=await auditLayouts(scenes,'html,body{margin:0;font:14px sans-serif}*{box-sizing:border-box}'+css+cardCss+'.x-native-feed>.atsumi-x-collection{position:absolute}',width,800,'x-collection');
   expect(results.flatMap(r=>r.issues.map(i=>r.name+': '+i))).toEqual([]);
   const probe=(results[0]!.geometry as {probes:Record<string,{width:number;clientWidth:number;scrollWidth:number;height:number}>}).probes.cards!;
+  const first=(results[0]!.geometry as {probes:Record<string,{x:number;width:number;height:number}>}).probes.firstCard!;
+  expect(first.width).toBeCloseTo(first.height,0);
+  const cardArea=probe.clientWidth-24;const count=Math.max(1,Math.floor((cardArea+12)/172));
+  const occupied=count*Math.min(160,cardArea)+(count-1)*12;
+  expect(first.x).toBeCloseTo(12+(cardArea-occupied)/2,0);
   expect(probe.width).toBeGreaterThan(130);expect(probe.height).toBeGreaterThan(500);expect(probe.scrollWidth).toBeLessThanOrEqual(probe.clientWidth+1);
  },60000);
 });
