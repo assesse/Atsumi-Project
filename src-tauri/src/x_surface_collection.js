@@ -10,7 +10,7 @@
   let cardWidth = 220;
   let mode = 'original', allowed = false, root = null, grid = null, status = null, more = null;
   let primary = null, originalScroll = [], sourceScroll = [], loading = null, timer = 0, pageLimit = BATCH;
-  let failure = '', fingerprint = '', observer = null, scheduled = 0, noMediaPages = 0, fillTimer = 0;
+  let failure = '', fingerprint = '', observer = null, scheduled = 0, noMediaPages = 0, fillTimer = 0, autoPaused = false;
   const limits = {posts:BATCH,media:BATCH};
   const own = (node, article) => node.closest('article[data-testid="tweet"]') === article
     && !node.closest('[data-testid="quoteTweet"],[data-testid="quotedTweet"],[role="link"]:not(a)');
@@ -135,12 +135,12 @@
     grid=el('div','atsumi-x-collection-grid');grid.setAttribute('role','list');
     status=el('p','atsumi-x-collection-status');status.setAttribute('role','status');
     more=el('button','atsumi-x-collection-more','더 불러오기');more.type='button';
-    more.addEventListener('click',event=>{if(!event.isTrusted)return;event.preventDefault();event.stopPropagation();noMediaPages=0;requestMore();});
+    more.addEventListener('click',event=>{if(!event.isTrusted)return;event.preventDefault();event.stopPropagation();noMediaPages=0;autoPaused=false;requestMore();});
     root.append(grid,status,more);
     root.addEventListener('scroll',()=>{
       if(!usable())return;
       scrolls[mode]=root.scrollTop;
-      if(root.scrollHeight-root.scrollTop-root.clientHeight<500&&!loading&&!failure)requestMore();
+      if(root.scrollHeight-root.scrollTop-root.clientHeight<500&&!loading&&!failure&&!autoPaused)requestMore();
     },{passive:true});
     document.body.append(root);
     window.addEventListener?.('resize',queueFill,{passive:true});
@@ -212,14 +212,14 @@
     queueFill();
   }
   function queueFill(){
-    if(fillTimer||!usable()||loading||failure||!root||root.clientHeight<=0
+    if(fillTimer||!usable()||loading||failure||autoPaused||!root||root.clientHeight<=0
       ||primary?.querySelector('[data-testid="emptyState"]')||records.size>=LIMIT)return;
     if(root.scrollHeight-root.scrollTop-root.clientHeight<Math.min(300,root.clientHeight/2))fillTimer=setTimeout(()=>{fillTimer=0;requestMore();},180);
   }
   function receivedPage(){
     if(!loading)return;
     const increased=cards().length>loading.visibleCount;
-    stopLoading();failure='';noMediaPages=increased?0:noMediaPages+1;
+    stopLoading();failure='';autoPaused=false;noMediaPages=increased?0:noMediaPages+1;
   }
   function observe(){
     if(observer||!primary)return;
@@ -233,7 +233,9 @@
     const changed=collect();
     if(records.size>loading.count){receivedPage();render();return;}
     if(performance.now()-loading.at>12000){
-      stopLoading();failure='추가 항목을 불러오지 못했습니다.';render();return;
+      // Silence can be the native list's end or a delayed response, not proof of failure.
+      // Keep manual loading available without polling an unchanged tail forever.
+      stopLoading();autoPaused=true;render();return;
     }
     // Advance only while the user has reached the card list's end. Incremental
     // native scrolling keeps the site's virtualizer and cursor authoritative.
@@ -246,7 +248,7 @@
     timer=setTimeout(tick,advanced?500:900);
   }
   function requestMore(){
-    if(!usable()||loading||records.size>=LIMIT)return;
+    if(!usable()||loading||autoPaused||records.size>=LIMIT)return;
     const available=cards();
     if(pageLimit<available.length){pageLimit+=BATCH;limits[mode]=pageLimit;render();return;}
     if(noMediaPages>=3){failure='미디어를 더 불러오려면 다시 시도해 주세요.';render();return;}
@@ -270,12 +272,12 @@
       if(previous==='original'&&next!=='original'){primary=document.querySelector('[data-testid="primaryColumn"]');originalScroll=positions();if(sourceScroll.length)restore(sourceScroll);window.__atsumiXSurface?.pause();}
       if(next==='original'){sourceScroll=positions();hide();restore(originalScroll);}
       if(root&&next!=='original')root.hidden=true;
-      stopLoading();mode=next;pageLimit=limits[next]||BATCH;fingerprint='';failure='';noMediaPages=0;
+      stopLoading();mode=next;pageLimit=limits[next]||BATCH;fingerprint='';failure='';noMediaPages=0;autoPaused=false;
       this.update(allowed);
     },
     update(ready,reset=false){
       allowed=ready===true;
-      if(reset){records.clear();order.length=0;mediaOrder.length=0;mediaKeys.clear();nodes.clear();fingerprint='';scrolls.posts=0;scrolls.media=0;limits.posts=BATCH;limits.media=BATCH;pageLimit=BATCH;sourceScroll=[];originalScroll=[];if(grid)grid.replaceChildren();}
+      if(reset){autoPaused=false;records.clear();order.length=0;mediaOrder.length=0;mediaKeys.clear();nodes.clear();fingerprint='';scrolls.posts=0;scrolls.media=0;limits.posts=BATCH;limits.media=BATCH;pageLimit=BATCH;sourceScroll=[];originalScroll=[];if(grid)grid.replaceChildren();}
       if(!usable()){hide();return;}
       install();const returning=root.hidden;collect();root.hidden=false;observe();render();
       if(returning)root.scrollTop=scrolls[mode]||0;

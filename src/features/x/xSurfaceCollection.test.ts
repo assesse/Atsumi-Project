@@ -83,17 +83,25 @@ it("hides cards while private/inactive and discards previous identity on account
  a.adapter.update(true);expect(a.cards().map(n=>n.dataset.postId)).toEqual(["345678"]);
  a.loc.pathname="/someone/likes";a.adapter.update(true);expect(root.hidden).toBe(true);
 });
-it("advances the official scroller once at a time, preserves items on timeout and allows retry",()=>{
+it("pauses a quiet source tail without claiming failure or completion and allows manual loading",()=>{
  const a=setup();a.adapter.mode("posts");a.adapter.update(true);
  const button=a.doc.querySelector(".atsumi-x-collection-more")!;
  a.click(button);a.click(button);vi.advanceTimersByTime(1000);
  expect(a.doc.documentElement.scrollTop).toBeGreaterThan(0);
  vi.advanceTimersByTime(13000);
- expect(a.doc.querySelector(".atsumi-x-collection-status")?.textContent).toContain("불러오지 못했습니다");
- expect(a.cards()).toHaveLength(1);expect(button.textContent).toContain("다시 시도");
+ expect(a.doc.querySelector<HTMLElement>(".atsumi-x-collection-status")?.hidden).toBe(true);
+ expect(a.cards()).toHaveLength(1);expect(button.textContent).toBe("더 불러오기");
+ const root=a.doc.querySelector<HTMLElement>(".atsumi-x-collection")!;
+ Object.defineProperty(root,"clientHeight",{value:700});Object.defineProperty(root,"scrollHeight",{value:100});
+ const tail=a.doc.documentElement.scrollTop;
+ a.adapter.update(true);root.dispatchEvent(new Event("scroll"));vi.advanceTimersByTime(120000);
+ expect(root.getAttribute("aria-busy")).toBe("false");expect(a.doc.documentElement.scrollTop).toBe(tail);
  a.click(button);a.doc.querySelector("main")!.insertAdjacentHTML("beforeend",post("234567"));
  vi.advanceTimersByTime(1000);
- expect(a.cards()).toHaveLength(2);expect(a.doc.querySelector(".atsumi-x-collection")?.getAttribute("aria-busy")).toBe("false");
+ expect(a.cards()).toHaveLength(2);
+ // The short viewport may request another page; it also settles without retry loops.
+ vi.advanceTimersByTime(15000);expect(root.getAttribute("aria-busy")).toBe("false");
+ expect(a.doc.querySelector<HTMLElement>(".atsumi-x-collection-status")?.hidden).toBe(true);
 });
 it("ignores untrusted clicks and never installs into home or preview",()=>{
  const a=setup();a.adapter.mode("posts");a.adapter.update(true);a.cards()[0]!.click();expect(a.open).not.toHaveBeenCalled();

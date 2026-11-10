@@ -15,7 +15,8 @@
     "Keep generation/order/feed guards, encounter order and preview/session.",
     "Stable 1:1 media slots with contain and small inset; no stretching/cropping.",
     "Center fixed-width grids including Hitomi compact views; preserve columns and measured rows.",
-    "Bundled platformIcons and Atsumi icon for General; keep labels."
+    "Bundled platformIcons and Atsumi icon for General; keep labels.",
+    "Pause automatic paging after a bounded no-new-item wait; retain cards and a manual load button. Do not assert failure or end-of-collection from silence."
   ],
   "superseded": [
     "The toolbar size slider is replaced by settings X controls.",
@@ -43,6 +44,16 @@
       "limits": [
         "Small viewport geometry was checked in isolated browser layout tests, not by resizing the real desktop."
       ]
+    },
+    "tailFollowup": {
+      "status": "passed",
+      "at": "2026-11-10T18:00:28.452Z",
+      "evidence": ".runtime/card-settings-20261111/tail-preedit.json",
+      "automatedTests": 28,
+      "typecheck": "passed",
+      "nativeBuild": "passed",
+      "actualUi": "Bookmark media cards reach the same 12 items as original view without a failure warning. Manual load shows busy then returns to the enabled button without changing cards.",
+      "pid": 39156
     }
   },
   "restart": {
@@ -53,7 +64,7 @@
   },
   "release": {
     "authorized": true,
-    "target": "2.4.5",
+    "target": "2.4.6",
     "source": "Latest user instruction: finish, release/deploy, then shut down PC."
   }
 }
