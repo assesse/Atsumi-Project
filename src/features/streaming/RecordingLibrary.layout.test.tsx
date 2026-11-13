@@ -2,6 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { describe, expect, it, vi } from "vitest";
 import { RecordingLibrary } from "./RecordingLibrary";
+import { recoveryRevision, saveRetryBatch } from "./recordingRecovery";
 import { groupRecordings } from "./recordingGroups";
 import type { BrowserRecording } from "../../api/officialBrowser";
 import { auditLayouts, layoutBrowser, type LayoutScene } from "../../test/offlineLayoutBrowser";
@@ -14,22 +15,25 @@ const item=(id:string,title:string,patch:Partial<BrowserRecording>={}):BrowserRe
 const records=[item("one","짧은 제목"),item("long","아주 긴 방송 제목이 여러 줄로 표시되더라도 주변 카드와 정렬을 유지하는 녹화 · 기념 방송",{status:"failed",lastError:"fixture"}),...['part1','part2','part3'].map(id=>item(id,"여러 파일이 있는 방송",{channelId:'shared',broadcastKey:'id:123'})),item('last','마지막 방송')];
 async function frames(){
   const result:LayoutScene[]=[];
-  for(const index of [-1,0,2]){
+  for(const index of [-1,0,2,3]){
     const groups=groupRecordings(records);
+    localStorage.removeItem('atsumi.recording-library.retry-batch.v1.chzzk');
+    if(index===3)saveRetryBatch({version:1,entries:records.map(r=>({id:r.id,before:recoveryRevision(r),request:'accepted'}))});
     localStorage.setItem('atsumi.recording-library.expanded.v1',JSON.stringify(index<0?{}:{[groups[index]!.key]:true}));
     const container=document.createElement('div');document.body.append(container);const root=createRoot(container);
     await act(async()=>root.render(<RecordingLibrary recordings={records} selectedId={null} privacy={false} disabled={false} retrying={false} openingFolder={false} onSelect={()=>{}} onFolder={()=>{}} onReplay={()=>{}} onRetryMerge={()=>{}} onDelete={async()=>({deletedIds:[],failures:[]})}/>));
+    if(index===3)await act(async()=>container.querySelector('.recording-broadcast-heading')!.dispatchEvent(new MouseEvent('click',{bubbles:true,ctrlKey:true})));
     for(const [i,node] of [...container.querySelectorAll('.recording-broadcast-group')].entries()){
       node.setAttribute('data-layout-probe','group-'+i);
       for(const selector of ['.recording-broadcast-heading','.recording-broadcast-files','.recording-broadcast-meta','.recording-broadcast-status'])node.querySelector(selector)?.setAttribute('data-layout-probe',selector.slice(1)+'-'+i);
     }
-    result.push({name:index<0?'collapsed':index===0?'single-overlay':'multi-overlay',html:'<main class="streaming-workspace" style="padding:20px;container-type:inline-size;height:100vh;overflow:auto">'+container.innerHTML+'</main>'});
+    result.push({name:index<0?'collapsed':index===0?'single-overlay':index===3?'batch-selected-progress':'multi-overlay',html:'<main class="streaming-workspace" style="padding:20px;container-type:inline-size;height:100vh;overflow:auto">'+container.innerHTML+'</main>'});
     await act(async()=>root.unmount());container.remove();
   }
-  localStorage.removeItem('atsumi.recording-library.expanded.v1');return result;
+  localStorage.removeItem('atsumi.recording-library.expanded.v1');localStorage.removeItem('atsumi.recording-library.retry-batch.v1.chzzk');return result;
 }
 describe.skipIf(!layoutBrowser)('recording broadcast layout in an isolated browser',()=>{
-  it.each([[1280,720],[1920,1080],[960,640]])('keeps collapsed boxes aligned and overlay expansion out of grid flow at %ix%i',async(width,height)=>{
+  it.each([[1280,720],[1920,1080],[960,640],[736,900]])('keeps collapsed boxes aligned and overlay expansion out of grid flow at %ix%i',async(width,height)=>{
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT',true);
     try{
       const scenes=await frames(),results=await auditLayouts(scenes,baseCss+'\n'+channelCss+'\n'+css,width,height,'recording-collections');

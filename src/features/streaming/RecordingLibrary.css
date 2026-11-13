@@ -109,3 +109,15 @@
 
 .recording-broadcast-meta { line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .recording-library .recording-broadcast-status { display: block; height: 20px; line-height: 20px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.recording-broadcast-group.is-checked { border-color: var(--accent, #d68ca0); box-shadow: inset 0 0 0 1px var(--accent, #d68ca0); }
+.recording-broadcast-selected { display: inline-flex; flex: none; align-items: center; gap: 4px; color: var(--accent, #d68ca0); font-size: var(--font-size-min); }
+.recording-broadcast-selected > span { font-variant-numeric: tabular-nums; }
+.recording-library-heading-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.recording-library-retry-all { min-width: 175px; }
+.recording-library-retry-progress { margin: -10px 0 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--workspace); font-size: var(--font-size-min); }
+.recording-library-retry-progress > div[role=status] { display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; }
+.recording-library-retry-progress > progress { display: block; width: 100%; height: 4px; margin-top: 8px; accent-color: var(--accent, #d68ca0); }
+.recording-library-retry-current { margin-top: 10px; min-width: 0; }
+.recording-library-retry-current > span { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+@media(max-width: 600px) { .recording-library-heading { align-items: flex-start; flex-direction: column; gap: 12px; } .recording-library-heading-actions { justify-content: flex-start; } }

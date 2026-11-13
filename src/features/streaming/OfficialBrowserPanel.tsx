@@ -509,8 +509,9 @@ export function OfficialBrowserPanel({ runtime, active, view, privacyMode = fals
     {view === "live" && snapshot.windowOpen && focusError && focusError !== dismissedFocusError && !control && !settingsOpen ? <div className="official-browser-focus-alert" role="alert" data-native-overlay="true"><span>{focusError}</span><button type="button" onClick={() => setDismissedFocusError(focusError)}>확인</button></div> : null}
 
     {view === "recordings" && (hasSnapshot || !desktop) ? <RecordingLibrary recordings={recordings} selectedId={selectedId} onSelect={setSelectedId}
-      disabled={!desktop || pending !== null} privacy={privacyMode} retrying={pending === "merge"} openingFolder={pending === "folder"}
-      onFolder={openFolder} onReplay={setReplayId} onRetryMerge={retryMerge} onDelete={deleteRecordings}
+      recoveryScope={runtime} disabled={!desktop || pending !== null && pending !== "merge"} privacy={privacyMode} retrying={pending === "merge"} openingFolder={pending === "folder"}
+      onFolder={openFolder} onReplay={setReplayId} onRetryMerge={retryMerge}
+      onRetryBatchItem={async id => (await api.retryMerge(id)).ok} onDelete={deleteRecordings}
       stopControl={hasRecording ? <button type="button" className="official-browser-stop" disabled={!desktop || pending !== null || snapshot.status === "stopping"} onClick={stop}>{pending === "stop" || snapshot.status === "stopping" ? "저장 중…" : "녹화 중지"}</button> : undefined}
     /> : null}
     {control ? <div className="official-browser-dialog-backdrop" role="alertdialog" aria-modal="true" data-native-preserve-video="true" aria-labelledby="official-browser-control-title" aria-describedby="official-browser-control-description" onKeyDown={controlKeys}>

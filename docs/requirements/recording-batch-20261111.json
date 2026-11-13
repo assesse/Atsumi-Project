@@ -1,0 +1,27 @@
+{
+  "id": "recording-batch-20261111",
+  "status": "implemented",
+  "requestId": "01a1ca22-72c7-7a41-add9-15df8e99fe41",
+  "evidence": ".runtime/recording-batch-20261111/preedit.json",
+  "requirements": [
+    "Keep exclusive overlay geometry. Ctrl/meta on group heading toggles all currently selectable group files without expanding it. Normal click expands/collapses only.",
+    "Retain file selection across collapse/other expansion. Search/filter/privacy changes still clear selection; do not silently select future appended files.",
+    "Top-right retry processes a frozen set of stopped recoverable files only, excluding active/queued/in-progress, removed, deletion-pending, unknown metadata and healthy completed media. Do not retry just because historical interruption/chat loss remains.",
+    "Serialize app-owned retry requests without blocking browsing. Count acceptance separately from actual completion; show queued/running phase and measured progress from existing snapshots, no fake totals.",
+    "Preserve originals and existing native integrity/archive guards. No repair invocation or deletion on user data merely for QA.",
+    "Current installed app and its postprocessing remain untouched during edits/build. No release/PC shutdown requested this turn.",
+    "A submitted batch survives library/tab unmount in the current application session. Persist per-platform tracking and never automatically resubmit unknown requests after app exit."
+  ],
+  "acceptance": [
+    "Ctrl select two folded groups; mixed checked state and toggling. Open/close others and retain selected files. Existing single/Shift/Ctrl+A and safe delete flow.",
+    "Retry all includes offscreen errors, excludes healthy/active/queued; revalidate status before each request; duplicate submit fenced; partial failures visible; real phase percentage and settled result without false success.",
+    "Typing/tests/build, responsive fixture and actual-app operation only through safe lifecycle; mark any unavailable native acceptance honestly."
+  ],
+  "verification": ".runtime/recording-batch-20261111/verification.json",
+  "diagnosis": ".runtime/recording-batch-20261111/diagnosis.json",
+  "limitations": [
+    "Physical Ctrl+mouse gesture covered by DOM event regression; native modified heading click exercised by Ctrl+Space",
+    "No retry-all submitted against user recordings, no user media removed; accepted/queued/running/failure/completion covered by synthetic regression cases",
+    "No full replay or integrity rehash of all 54 existing recordings this turn"
+  ]
+}

@@ -143,6 +143,111 @@
     },2400);
   }
   const can=event=>event.isTrusted&&!event.defaultPrevented&&!event.ctrlKey&&!event.altKey&&!event.metaKey&&!event.shiftKey&&api()?.videoInteractionReady?.();
+  // Native immersive X puts role=slider on its small thumb, while the
+  // painted rail is an ancestor. Inline X can instead label the entire rail.
+  // Resolve only the thumb's narrow, single-slider control; never the video,
+  // a whole toolbar, another slider, or a guessed strip of screen coordinates.
+  const seekTarget=event=>{
+    if(!immersive()||!(event.target instanceof Element))return null;
+    const video=pick(event.target),root=video&&player(video),slider=root&&scrubber(root);
+    if(!slider||!slider.isConnected||slider.getAttribute('aria-disabled')==='true'||slider.disabled
+      ||slider.closest('[hidden],[inert],[aria-hidden="true"]'))return null;
+    const thumbBox=slider.getBoundingClientRect();
+    let track=slider,box=thumbBox,thumb=false;
+    if(box.width<=40){
+      thumb=true;track=null;
+      for(let node=slider.parentElement,depth=0;node&&node!==root&&depth<5;node=node.parentElement,depth++){
+        if(node.matches('button,a,input,textarea,select')||node.querySelector('video,button,a,input:not([type="range"]),textarea,select'))break;
+        const others=[...node.querySelectorAll('[role="slider"],input[type="range"]')].filter(n=>n!==slider&&!slider.contains(n));
+        if(others.length)break;
+        const b=node.getBoundingClientRect();
+        if(b.height>48)break;
+        if(b.width>40&&b.height>0&&thumbBox.left+thumbBox.width/2>=b.left-1&&thumbBox.left+thumbBox.width/2<=b.right+1
+          &&thumbBox.top+thumbBox.height/2>=b.top-1&&thumbBox.top+thumbBox.height/2<=b.bottom+1){track=node;box=b;break;}
+      }
+      if(!track)return null;
+    }
+    // The rail can be only a few pixels tall. Its native thumb is the
+    // visible hit-height reference, including when the pointer hits the
+    // transparent player overlay immediately above/below the painted line.
+    const thumbHeight=thumb&&thumbBox.height>0&&thumbBox.height<=48;
+    const top=thumbHeight?Math.min(box.top,thumbBox.top):box.top;
+    const bottom=thumbHeight?Math.max(box.bottom,thumbBox.bottom):box.bottom;
+    if(!track.contains(event.target)&&!event.target.contains(track)&&(!thumbHeight||!root.contains(event.target)))return null;
+    const control=event.target.closest(controls+',a[href]');
+    if(control&&!control.contains(slider)&&!slider.contains(control))return null;
+    for(let node=slider;node&&node!==root;node=node.parentElement){
+      const style=getComputedStyle(node);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||style.opacity==='0')return null;
+    }
+    if(!(box.width>40&&box.height>0)||!Number.isFinite(event.clientX)||!Number.isFinite(event.clientY)
+      ||event.clientX<box.left||event.clientX>box.right||event.clientY<top||event.clientY>bottom)return null;
+    return {video,track,box,onThumb:thumb&&slider.contains(event.target)};
+  };
+  let scrubGesture=null;
+  document.addEventListener('pointerdown',event=>{
+    scrubGesture=null;
+    if(!can(event)||event.button!==0)return;
+    const hit=seekTarget(event);
+    if(hit)scrubGesture={...hit,path:location.href,x:event.clientX,y:event.clientY,at:performance.now(),dragged:false};
+  },true);
+  document.addEventListener('pointermove',event=>{
+    if(scrubGesture&&event.isTrusted&&Math.hypot(event.clientX-scrubGesture.x,event.clientY-scrubGesture.y)>5)scrubGesture.dragged=true;
+  },true);
+  document.addEventListener('pointercancel',()=>{if(scrubGesture)scrubGesture.dragged=true;},true);
+  function seekClick(event){
+    const hit=seekTarget(event),gesture=scrubGesture;scrubGesture=null;
+    if(!hit)return false;
+    if(hit.onThumb)return true; // Native handle interaction owns its full lifecycle.
+    if(gesture&&(gesture.dragged||gesture.video!==hit.video||gesture.track!==hit.track||gesture.path!==location.href||performance.now()-gesture.at>1500))return true;
+    if(!Number.isFinite(hit.video.duration)||hit.video.duration<=0)return true;
+    if(!api()?.videoInput(event,hit.video))return true;
+    const fraction=Math.max(0,Math.min(1,(event.clientX-hit.box.left)/hit.box.width));
+    hit.video.currentTime=fraction*hit.video.duration;
+    stop(event);wake(hit.video);return true;
+  }
+  // Hover is a bounded audio intent, not a new player or autoplay request.
+  // Native pane arbitration still decides which webview is allowed to sound.
+  let hover=null;
+  const inlineVideo=target=>{
+    if(immersive()||!(target instanceof Element))return null;
+    const root=target.closest('[data-testid="videoPlayer"]');
+    if(!root)return null;
+    const found=videos(root);return found.length===1?found[0]:null;
+  };
+  const hoverCurrent=()=>hover&&hover.path===location.href&&hover.source===(hover.video.currentSrc||hover.video.src)
+    &&hover.video.isConnected&&presented(hover.video)&&!immersive()&&api()?.videoInteractionReady?.();
+  function releaseHover(restore=true){
+    const previous=hover;hover=null;
+    if(restore&&previous?.claimed)previous.video.muted=previous.muted;
+  }
+  function soundHover(){
+    if(!hoverCurrent()){releaseHover();return;}
+    if(hover.claimed||hover.manual||hover.video.paused||hover.video.ended)return;
+    if(!api()?.videoInput(hover.event,hover.video))return;
+    hover.claimed=true;hover.muted=hover.video.muted;hover.video.muted=false;
+  }
+  const hoverMove=event=>{
+    if(!can(event)||event.pointerType==='touch')return;
+    const video=inlineVideo(event.target);
+    if(video===hover?.video&&hoverCurrent())return;
+    releaseHover();
+    if(video){hover={video,event,path:location.href,source:video.currentSrc||video.src,claimed:false,manual:false,muted:video.muted};soundHover();}
+  };
+  document.addEventListener('pointerover',hoverMove,{passive:true});
+  document.addEventListener('pointermove',hoverMove,{passive:true});
+  document.addEventListener('pointerout',event=>{
+    if(event.isTrusted&&hover&&inlineVideo(event.relatedTarget)!==hover.video)releaseHover();
+  },{passive:true});
+  document.addEventListener('play',event=>{if(event.isTrusted&&event.target===hover?.video)soundHover();},true);
+  document.addEventListener('pointerdown',event=>{
+    if(!can(event)||event.button!==0||!hover)return;
+    const target=event.target instanceof Element?event.target.closest('button,[role="button"],[role="slider"],input[type="range"]'):null;
+    if(target&&player(hover.video)?.contains(target)&&/^(?:mute|unmute|volume|뮤트|언뮤트|음소거(?: 해제)?|볼륨|ミュート(?:解除)?|音量)$/i.test(label(target))){
+      hover.claimed=false;hover.manual=true; // Explicit source controls now own mute.
+    }
+  },true);
+  window.addEventListener('blur',()=>releaseHover());
+  document.addEventListener('visibilitychange',()=>{if(document.hidden)releaseHover();});
   // Prevent the native background's mousedown/up route handler from running.
   // Pointer events still reach the original hover/playback coordinator.
   for(const type of ['mousedown','mouseup'])document.addEventListener(type,event=>{
@@ -151,10 +256,12 @@
       const full=fullButton(event.target instanceof Element?event.target:null);
       if(full){entryControl=full;entryFocusUntil=performance.now()+2000;return;}
     }
+    if(seekTarget(event)||scrubGesture&&scrubGesture.path===location.href&&scrubGesture.video===pick(event.target))return;
     const video=background(event.target,event);if(video)stop(event);
   },true);
   document.addEventListener('click',event=>{
     if(!can(event)||event.button!==0)return;
+    if(seekClick(event))return;
     const target=event.target instanceof Element?event.target:null;
     const full=fullButton(target),video=full?pick(full):background(target,event);
     if(!video){if(immersive())probe('click-no-video');return;}
@@ -216,7 +323,8 @@
   },true);
   document.addEventListener('mousemove',event=>{if(event.isTrusted&&api()?.videoInteractionReady?.()&&immersive())wake(pick(event.target));},{passive:true});
   window.__atsumiXVideo=Object.freeze({update(ready){
-    if(!ready){clearTimeout(timer);cancelMute();lastVideo=null;return;}
+    if(!ready){releaseHover();scrubGesture=null;clearTimeout(timer);cancelMute();lastVideo=null;return;}
+    if(hover&&!hoverCurrent())releaseHover();
     if(!immersive()) for(const root of [...document.querySelectorAll('[data-testid="videoPlayer"]')].slice(0,32)){
       const box=root.getBoundingClientRect();
       for(const button of root.querySelectorAll('button,[role="button"]')){

@@ -74,10 +74,31 @@ export function SideRail<Source extends ContentSource>({
       if (event.target instanceof Element && event.target.closest('[data-tutorial-active="true"]')) return;
       if (event.target instanceof Node && !railRef.current?.contains(event.target)) setSourceMenuOpen(false);
     };
+    const pointerMove = (event: PointerEvent) => {
+      if (event.pointerType === "touch") return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('[data-tutorial-active="true"]')) return;
+      const banner = railRef.current?.querySelector(".brand"), menu = railRef.current?.querySelector(".source-switcher");
+      if (target instanceof Node && (banner?.contains(target) || menu?.contains(target))) return;
+      // Include the small gap between banner and popup, so crossing it does not
+      // dismiss the destination before the pointer can reach a platform.
+      const a = banner?.getBoundingClientRect(), b = menu?.getBoundingClientRect();
+      if (a && b && a.width > 0 && b.width > 0 && event.clientX >= Math.min(a.left, b.left)
+        && event.clientX <= Math.max(a.right, b.right) && event.clientY >= Math.min(a.top, b.top)
+        && event.clientY <= Math.max(a.bottom, b.bottom)) return;
+      setSourceMenuOpen(false);
+    };
+    const pointerOut = (event: PointerEvent) => {
+      if (event.pointerType !== "touch" && event.relatedTarget === null) setSourceMenuOpen(false);
+    };
     window.addEventListener("pointerdown", pointerDown);
+    window.addEventListener("pointermove", pointerMove);
+    window.addEventListener("pointerout", pointerOut);
     return () => {
       window.removeEventListener("keydown", close);
       window.removeEventListener("pointerdown", pointerDown);
+      window.removeEventListener("pointermove", pointerMove);
+      window.removeEventListener("pointerout", pointerOut);
     };
   }, [sourceMenuOpen]);
   const workspace = workspaceRegistry[source];

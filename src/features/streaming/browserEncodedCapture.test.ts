@@ -219,6 +219,29 @@ describe("already-received encoded MSE capture", () => {
     for (const message of f.ofKind("encoded_append")) expect(atob(message.data as string)).toBe(String.fromCharCode(...media()));
     await f.bridge().stop(); expect(f.ofKind("encoded_finish")[0]?.interrupted).toBe(false);
   });
+  it("keeps the same original recording through muted/paused playback and a prolonged receive gap", async () => {
+    const f = fixture(); f.load(); await f.start();
+    const recordingId = f.bridge().getStatus().recordingId;
+    Object.assign(f.video, { muted: true, volume: 0, paused: true });
+    f.video.dispatch("volumechange"); f.video.dispatch("pause");
+    const videoBytes = media(27), audioBytes = media(11);
+    f.v.appendBuffer(videoBytes); f.a.appendBuffer(audioBytes); await flush();
+    expect(f.bridge().getStatus()).toMatchObject({ active: true, recordingId, detail: "encoded_recording" });
+    const packets = f.ofKind("encoded_append");
+    expect(packets).toHaveLength(2);
+    expect(atob(packets[0]!.data as string)).toBe(String.fromCharCode(...videoBytes));
+    expect(atob(packets[1]!.data as string)).toBe(String.fromCharCode(...audioBytes));
+    vi.advanceTimersByTime(5 * 60_000); await flush();
+    expect(f.bridge().getStatus()).toMatchObject({ active: true, recordingId, detail: "encoded_waiting" });
+    expect(f.ofKind("encoded_finish")).toHaveLength(0);
+    f.video.paused = false; f.video.dispatch("play");
+    f.a.appendBuffer(audioBytes); f.v.appendBuffer(videoBytes); await flush();
+    expect(f.bridge().getStatus()).toMatchObject({ active: true, recordingId, detail: "encoded_recording" });
+    expect(f.ofKind("encoded_begin")).toHaveLength(1);
+    expect(f.ofKind("encoded_append")).toHaveLength(4);
+    await f.bridge().stop();
+    expect(f.ofKind("encoded_finish")[0]).toMatchObject({ recordingId, interrupted: false, reason: "user_stop" });
+  });
   it("accepts identical init repetitions but rejects any changed init byte, not only codec changes", async () => {
     const f = fixture(); f.load(); await f.start(); f.v.appendBuffer(init()); f.v.appendBuffer(media()); await flush();
     expect(f.bridge().getStatus().active).toBe(true); expect(f.ofKind("encoded_append")).toHaveLength(1);

@@ -249,3 +249,30 @@ describe("SideRail source switcher", () => {
     }
   });
 });
+
+
+describe("platform popup pointer boundary",()=>{
+ it.each([false,true])("closes outside, retains child/bridge movement and keyboard use (collapsed=%s)",async collapsed=>{
+  const host=document.createElement('div');document.body.append(host);const root=createRoot(host);
+  const pointer=(target:Element|Window,type:string,extra:Record<string,unknown>={})=>{
+   const e=new MouseEvent(type,{bubbles:true,clientX:500,clientY:500});
+   for(const [key,value] of Object.entries(extra))Object.defineProperty(e,key,{value});
+   target.dispatchEvent(e);
+  };
+  try{
+   await act(async()=>root.render(<SideRail source="x" view="likes" collapsed={collapsed} autoFindCount={0} attentionCount={0} onNavigate={vi.fn()} onSourceChange={vi.fn()} onToggle={vi.fn()}/>));
+   const brand=host.querySelector<HTMLButtonElement>('.brand')!;
+   await act(async()=>brand.click());const menu=host.querySelector('.source-switcher')!;
+   const rect=(top:number,bottom:number)=>({x:10,y:top,left:10,right:200,top,bottom,width:190,height:bottom-top,toJSON:()=>({})});
+   vi.spyOn(brand,'getBoundingClientRect').mockReturnValue(rect(10,100));vi.spyOn(menu,'getBoundingClientRect').mockReturnValue(rect(112,500));
+   await act(async()=>pointer(menu.querySelector('strong')!,'pointermove'));expect(host.querySelector('.source-switcher')).toBe(menu);
+   await act(async()=>pointer(window,'pointermove',{clientX:80,clientY:106}));expect(host.querySelector('.source-switcher')).toBe(menu);
+   await act(async()=>pointer(window,'pointermove',{pointerType:'touch'}));expect(host.querySelector('.source-switcher')).toBe(menu);
+   await act(async()=>pointer(host.querySelector('.main-nav')!,'pointermove'));expect(host.querySelector('.source-switcher')).toBeNull();
+   await act(async()=>brand.click());await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowDown'})));
+   expect(host.querySelector('.source-switcher')).not.toBeNull();
+   await act(async()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'})));expect(host.querySelector('.source-switcher')).toBeNull();
+   await act(async()=>brand.click());await act(async()=>pointer(window,'pointerout',{relatedTarget:null}));expect(host.querySelector('.source-switcher')).toBeNull();
+  }finally{await act(async()=>root.unmount());host.remove();vi.restoreAllMocks();}
+ });
+});

@@ -12,8 +12,8 @@
 .atsumi-x-collection .atsumi-x-collection-card{position:absolute;inset:0;display:block;width:100%;height:100%;overflow:hidden;border:1px solid #2f3336;border-radius:12px;background:#101214;color:#f5fbfd;cursor:pointer;padding:0;text-align:left;font:inherit;transition:border-color .15s,box-shadow .15s}
 .atsumi-x-collection .atsumi-x-collection-card:hover{border-color:#8b98a5;box-shadow:0 0 0 1px #8b98a544}
 .atsumi-x-collection .atsumi-x-collection-card:focus-visible{outline:2px solid #1d9bf0;outline-offset:-3px}
-.atsumi-x-collection .atsumi-x-collection-card>img{width:100%;height:100%;object-fit:contain;display:block;padding:8px 8px 78px;background:#080a0c}
-.atsumi-x-collection-caption{position:absolute;inset:auto 0 0;display:grid;gap:2px;padding:16px 10px 8px;background:linear-gradient(transparent,rgba(5,12,16,.86) 42%,rgba(5,12,16,.98));font-size:14px;line-height:19px;pointer-events:none}
+.atsumi-x-collection .atsumi-x-collection-card>img{width:100%;height:100%;object-fit:contain;display:block;background:#080a0c}
+.atsumi-x-collection-caption{position:absolute;inset:auto 0 0;display:grid;gap:2px;padding:28px 10px 8px;background:linear-gradient(transparent,rgba(5,12,16,.78) 44%,rgba(5,12,16,.96));font-size:14px;line-height:19px;pointer-events:none}
 .atsumi-x-collection-caption strong{font-size:15px;line-height:20px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
 .atsumi-x-collection-caption>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .atsumi-x-collection-author{color:#d1dde4}

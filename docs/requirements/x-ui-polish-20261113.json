@@ -1,0 +1,74 @@
+{
+  "id": "x-ui-polish-20261113",
+  "status": "verified_user_accepted_release_authorized",
+  "requestId": "01a1d14e-c331-70d3-80c0-2baf8d0723c4",
+  "evidence": ".runtime/x-ui-polish-20261113/preedit.json",
+  "requirements": [
+    "Fullscreen playback track left-click seeks to the pointed time; preserve native handle drag, volume sliders, playback state and existing video/owner guards.",
+    "Banner platform menu closes when the pointer leaves the combined banner/menu region; child transitions and keyboard navigation remain usable.",
+    "Likes/bookmarks share one card size setting. Preserve independently selected original/card modes and post/media bases, source order, pagination and previews.",
+    "Media occupies the full square card surface with aspect ratio preserved, title/author/date overlay over a readable gradient. Remove reserved caption space; do not crop image content.",
+    "Preserve recordings/postprocessing and original files; normal development restart only within current explicit authorization. Release/deployment authorized after validation. No PC shutdown or account reactions."
+  ],
+  "supersedes": [
+    "card-settings-20261111 independent likes/bookmarks widths",
+    "card-settings-20261111 cover padding reserving caption area"
+  ],
+  "acceptance": [
+    "Track clicks at start/middle/end, native handle drag and sliders/input guards",
+    "Pointer leaves menu closes, crosses banner/menu gap and items stays open, Escape/keyboard work",
+    "One persisted slider updates both collections including remount; invalid legacy data safe; view modes independent",
+    "Portrait/landscape/text cards and narrow/large widths; overlay hit target and centered grid unchanged",
+    "Targeted regressions, types, frontend/native builds; actual-app verification limits explicitly reported"
+  ],
+  "followup": {
+    "request": "피드 자동재생 영상에 커서를 올리면 바로 소리가 나오게",
+    "decisions": [
+      "Only real mouse/pen hover of a visible current source video; keep native pane ownership/identity/media validation.",
+      "Temporary unmute while hovering; restore prior mute on leave/blur/hidden/route change, no play or seek synthesized.",
+      "Explicit mute/volume control takes priority until pointer exits; no volume increase or source URL change."
+    ],
+    "acceptance": [
+      "Hover/leave two videos, paused/later-autoplay, manual mute priority, hidden/owner/ad guards, no reactions or navigation"
+    ]
+  },
+  "headphones": {
+    "request": "이어폰 분리로 미디어가 일시정지될 때 치지직 녹화까지 중단되는 경로를 확인하고 실제 연결된 경우 수정",
+    "findings": [
+      "Encoded capture observes original MSE audio/video bytes; no speaker, microphone or output-device capture. Legacy MediaRecorder fallback is disabled.",
+      "pause, volumechange and output device events are not recording stop conditions. Native paused status is informational. waiting_source remains active.",
+      "Foreground viewer intentionally retains pause control; background receiver already resumes a paused player every 3 seconds.",
+      "If the official player stops receiving while paused, capture waits instead of marking completion or failure. Physical unplug has not been exercised."
+    ],
+    "decision": "No demonstrated pause-to-stop defect: preserve foreground pause behavior and original-stream validation; add a regression for paused/muted video plus continuing original audio/video and delayed resumed receipt. Do not invent a system-device callback or force audible playback.",
+    "acceptance": [
+      "No encoded_finish on pause/mute or prolonged waiting; original audio/video bytes still forwarded; reception resumes in same recording; explicit stop still works"
+    ],
+    "evidence": [
+      "src-tauri/src/streaming/browser_encoded_capture.js",
+      "src-tauri/src/streaming/browser_capture.js",
+      "src-tauri/src/streaming/browser_auto_view.js",
+      "src-tauri/src/streaming/browser_auto.rs",
+      "src-tauri/src/streaming/browser.rs"
+    ],
+    "base": {
+      "path": "src/features/streaming/browserEncodedCapture.test.ts",
+      "sha256": "412bef0872dff1b289b86f10456db0b85d9fed322943286a1a93d252e09856ec"
+    }
+  },
+  "verification": ".runtime/release-v2.4.7/seek-fix-verification.json",
+  "pending": [
+    "Physical headphone unplug during CHZZK viewing/recording not performed; no production recording code changed"
+  ],
+  "seekFollowup": {
+    "request": "재생바를 누르면 이동하지 않고 일시정지처리됨",
+    "evidence": "Actual X native immersive thumb width <=40; seek-narrow followed by click-accepted in debug log28080",
+    "change": "Resolve a bounded one-slider slim ancestor rail; preserve thumb events and playback state; rail mouse events no longer fall through to video-background toggle",
+    "release": "Current corrected executable accepted by user; continue previously requested release/deployment",
+    "userConfirmedSeek": true,
+    "heightRequest": "재생바 클릭 높이를 핸들의 세로 높이에 맞춤",
+    "heightRule": "Thumb top/bottom extend only the verified visible rail hit band. Horizontal bounds and controls unchanged.",
+    "userConfirmedHeight": true,
+    "userAcceptance": "내가 원한대로 정상이야. 통과시켜줘."
+  }
+}

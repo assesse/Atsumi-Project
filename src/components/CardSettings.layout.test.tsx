@@ -24,7 +24,7 @@ async function settingsScene():Promise<LayoutScene>{
   const tabs=[...host.querySelectorAll<HTMLButtonElement>('[role=tab]')];expect(tabs).toHaveLength(9);
   expect(tabs.every(t=>t.querySelector('img[alt=""]'))).toBe(true);
   await act(async()=>tabs.find(t=>t.textContent==='X')!.click());
-  expect(host.querySelectorAll('input[type=range]:not([hidden])').length).toBeGreaterThan(1);
+  expect(host.querySelectorAll('.x-collection-settings input[type=range]')).toHaveLength(1);
   return {name:'x-settings',html:host.innerHTML};
  }finally{await act(async()=>root.unmount());host.remove();if(desc)Object.defineProperty(HTMLDialogElement.prototype,'showModal',desc);else delete(HTMLDialogElement.prototype as {showModal?:unknown}).showModal;vi.unstubAllGlobals();}
 }

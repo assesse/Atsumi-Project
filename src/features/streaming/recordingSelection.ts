@@ -29,3 +29,11 @@ export function retainRecordingSelection(state: RecordingSelection, visibleIds: 
   const anchorId = state.anchorId !== null && allowed.has(state.anchorId) ? state.anchorId : null;
   return ids.length === state.ids.length && anchorId === state.anchorId ? state : { ids, anchorId };
 }
+
+/** A collapsed broadcast selects its current eligible files, never future arrivals. */
+export function toggleRecordingGroup(state: RecordingSelection, groupIds: string[]): RecordingSelection {
+  if (!groupIds.length) return state;
+  const ids = new Set(state.ids), remove = groupIds.every(id => ids.has(id));
+  for (const id of groupIds) { if (remove) ids.delete(id); else ids.add(id); }
+  return { ids: [...ids], anchorId: remove ? state.anchorId : groupIds[0] ?? null };
+}

@@ -7,7 +7,7 @@ export function XCollectionControls({api,feed,generation,enabled,onError}:{
   api:XSurfaceApi;feed:Collection;generation:number|null;enabled:boolean;onError:(message:string)=>void;
 }){
   const [preference,setPreference]=useState(()=>read(feed));
-  const width=useXCollectionCardWidth(feed);
+  const width=useXCollectionCardWidth();
   const report=useRef(onError);report.current=onError;
   const mode:XCollectionView=preference.cards?preference.basis:"original";
   const save=(next:Preference)=>{const current={...next,width};setPreference(current);saveXCollectionPreference(feed,current);};

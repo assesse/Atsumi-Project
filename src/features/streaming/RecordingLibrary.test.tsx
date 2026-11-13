@@ -27,7 +27,7 @@ const select = async (id: string, modifiers: MouseEventInit = { ctrlKey: true })
 const selectAll = async () => act(async () => container.querySelector('.recording-library')!.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a', ctrlKey: true })));
 const deleteSelection = () => button("선택 삭제") ?? button("녹화 삭제");
 const search = async (value: string) => { await act(async () => { const input = container.querySelector<HTMLInputElement>('input[type="search"]')!; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); }); };
-beforeEach(() => { vi.clearAllMocks(); localStorage.removeItem(expansionStorageKey); callbacks.onDelete.mockResolvedValue({ deletedIds: [], failures: [] }); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); HTMLDialogElement.prototype.showModal = function () { this.open = true; }; HTMLDialogElement.prototype.close = function () { this.open = false; }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
+beforeEach(() => { vi.clearAllMocks(); callbacks.onRetryMerge.mockReset(); localStorage.removeItem("atsumi.recording-library.retry-batch.v1.chzzk"); localStorage.removeItem(expansionStorageKey); callbacks.onDelete.mockResolvedValue({ deletedIds: [], failures: [] }); vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); HTMLDialogElement.prototype.showModal = function () { this.open = true; }; HTMLDialogElement.prototype.close = function () { this.open = false; }; container = document.createElement("div"); document.body.append(container); root = createRoot(container); });
 afterEach(async () => { await act(async () => root.unmount()); container.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.removeItem(expansionStorageKey); });
 
 describe("recording library", () => {
@@ -43,6 +43,46 @@ describe("recording library", () => {
     await act(async () => headings[0]!.click());
     await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expect(cards()).toHaveLength(0);
     expect(callbacks.onDelete).not.toHaveBeenCalled(); expect(callbacks.onReplay).not.toHaveBeenCalled();
+  });
+  it("Ctrl selects folded groups, preserves previous groups, and toggles mixed groups without opening them", async () => {
+    const records = [...["a", "b"].map(id => ({ ...merged(id), channelId: "one", broadcastKey: "id:1" })), merged("c"), item("live", { status: "recording" })];
+    localStorage.setItem(expansionStorageKey, "{}"); await render(records);
+    const headings = [...container.querySelectorAll<HTMLButtonElement>('.recording-library-grid .recording-broadcast-heading')];
+    await act(async () => headings[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    expect(cards()).toHaveLength(0); expect(container).toHaveTextContent("2개 선택");
+    await act(async () => headings[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true, metaKey: true })));
+    expect(cards()).toHaveLength(0); expect(container).toHaveTextContent("3개 선택");
+    await act(async () => headings[0]!.click()); await select("a");
+    expect(container.querySelector('.recording-library-grid .recording-broadcast-group')).toHaveAttribute("data-selection", "some");
+    await act(async () => headings[1]!.click()); expect(container).toHaveTextContent("2개 선택");
+    await act(async () => headings[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    expect(container).toHaveTextContent("3개 선택"); expect(headings[0]).toHaveAttribute("aria-expanded", "false");
+    await act(async () => headings[0]!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    expect(container).toHaveTextContent("1개 선택");
+    expect(callbacks.onDelete).not.toHaveBeenCalled(); expect(callbacks.onReplay).not.toHaveBeenCalled();
+  });
+  it("retry-all includes offscreen failures and tracks actual queue, phase and completion without blocking selection", async () => {
+    let done!: (value: boolean) => void;
+    callbacks.onRetryMerge.mockReturnValueOnce(new Promise<boolean>(resolve => { done = resolve; })).mockResolvedValueOnce(true);
+    const a = item("a", { merge: { status: "failed", segmentCount: 2, updatedAt: 1, lastError: "space" } });
+    const b = item("b");
+    const history = { ...merged("old-gap"), status: "interrupted" as const, lastError: "capture gap" };
+    localStorage.setItem(expansionStorageKey, "{}");
+    const records = [a, ...Array.from({ length: 25 }, (_, i) => merged("ok-" + i)), b, history, item("live", { status: "recording", progressive: { partCount: 1, segmentCount: 1, durationSeconds: 1, lastError: "failed writer" } }), item("queued", { merge: { status: "queued", segmentCount: 2, updatedAt: 2 } })];
+    await render(records);
+    const all = container.querySelector<HTMLButtonElement>('.recording-library-retry-all')!;
+    expect(all).toHaveTextContent("(2)"); await act(async () => { all.click(); all.click(); });
+    expect(callbacks.onRetryMerge).toHaveBeenCalledExactlyOnceWith("a");
+    expect(container.querySelector('input[type=search]')).toBeEnabled();
+    await act(async () => container.querySelector<HTMLButtonElement>('.recording-library-grid .recording-broadcast-heading')!.dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })));
+    expect(container).toHaveTextContent("1개 선택");
+    await act(async () => done(true)); expect(callbacks.onRetryMerge.mock.calls.map(call => call[0])).toEqual(["a", "b"]);
+    await render(records.map(record => record.id === "a" ? { ...record, merge: { status: "merging", segmentCount: 2, updatedAt: 3 }, workProgress: { phase: "merging", completed: 40, total: 100, unit: "seconds", updatedAt: 4 } } : record.id === "b" ? { ...record, merge: { status: "queued", segmentCount: 2, updatedAt: 3 } } : record));
+    expect(container).toHaveTextContent("완료 0/2 · 진행 1 · 대기 1"); expect(container.querySelector('.recording-library-retry-progress')).toHaveTextContent("병합 40%");
+    await render(records.map(record => record.id === "a" ? merged("a") : record.id === "b" ? { ...record, merge: { status: "failed", segmentCount: 2, updatedAt: 5, lastError: "still no space" } } : record));
+    expect(container.querySelector('.recording-library-retry-progress')).toHaveTextContent("재처리 결과완료 1/2 · 실패 1");
+    expect(container.querySelector('.recording-library-retry-progress progress')).toHaveAttribute("value", "2");
+    expect(callbacks.onDelete).not.toHaveBeenCalled();
   });
   it("shows the verified file duration instead of summing overlapping capture packets", async () => {
     await render([{ ...merged("a"), durationSeconds: 32.4 }], "a");
@@ -171,14 +211,14 @@ describe("recording library", () => {
     expect(container.querySelector("dialog ul")).not.toHaveTextContent("방송 b");
     expect(callbacks.onDelete).not.toHaveBeenCalled();
   });
-  it("drops selections and range anchors when their broadcast is collapsed", async () => {
+  it("retains selected files when their broadcast is collapsed without extending ranges through hidden files", async () => {
     const a = { ...merged("a"), channelId: "shared", broadcastKey: "id:42", startedAt: 2 };
     const b = { ...merged("b"), channelId: "shared", broadcastKey: "id:42", startedAt: 3 };
     await render([a, b, { ...merged("c"), startedAt: 1 }], "a");
     await select("a"); await select("b"); expect(container).toHaveTextContent("2개 선택");
     await act(async () => container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
-    expect(container.querySelector('.recording-library-selection')).toBeNull();
-    await select("c", { shiftKey: true }); expect(container).toHaveTextContent("1개 선택");
+    expect(container.querySelector('.recording-library-selection')).toHaveTextContent("2개 선택");
+    await select("c", { shiftKey: true }); expect(container).toHaveTextContent("2개 선택");
     expect(container.querySelector('[data-recording-id="a"]')).toBeNull();
     expect(callbacks.onDelete).not.toHaveBeenCalled();
   });
@@ -205,17 +245,17 @@ describe("recording library", () => {
     await selectAll(); expect(container).toHaveTextContent("3개 선택");
     await act(async () => { button("병합 재개").click(); button("병합 재개")?.click(); });
     expect(callbacks.onRetryMerge).toHaveBeenCalledExactlyOnceWith("retry-a");
-    expect(button("선택 삭제")).toBeDisabled(); expect(button("선택 해제")).toBeDisabled();
+    expect(button("선택 삭제")).toBeDisabled(); expect(button("선택 해제")).toBeEnabled();
     await act(async () => resolve(true));
     expect(callbacks.onRetryMerge.mock.calls.map(([id]) => id)).toEqual(["retry-a", "retry-b"]);
-    expect(container).toHaveTextContent("2개 녹화의 병합 재개를 요청했습니다.");
+    expect(container).toHaveTextContent("완료 0/2 · 상태 확인 2");
     expect(callbacks.onDelete).not.toHaveBeenCalled();
   });
   it("shows failed batch requests without reporting success and permits explicit retry", async () => {
     callbacks.onRetryMerge.mockResolvedValueOnce(false).mockRejectedValueOnce(new Error("fixture"));
     await render([item("a"), item("b")]); await selectAll();
     await act(async () => button("병합 재개").click());
-    expect(container.querySelector('[role="alert"]')).toHaveTextContent("2개 녹화는 병합 재개를 요청하지 못했습니다");
+    expect(container.querySelector('[role="alert"]')).toHaveTextContent("2개 재처리 실패");
     expect(container).not.toHaveTextContent("재개를 요청했습니다.");
     expect(button("병합 재개")).toBeEnabled();
   });
@@ -260,7 +300,7 @@ describe("recording library", () => {
     await act(async () => container.querySelector<HTMLButtonElement>(".recording-broadcast-heading")!.click());
     expect(cards()).toHaveLength(0);
     await act(async () => container.querySelector<HTMLButtonElement>(".recording-broadcast-heading")!.click()); expect(cards()).toHaveLength(2);
-    await select("old");
+    await select("old", {});
     await act(async () => deleteSelection().click());
     callbacks.onDelete.mockResolvedValueOnce({ deletedIds: ["old"], failures: [] });
     await act(async () => button("삭제").click());

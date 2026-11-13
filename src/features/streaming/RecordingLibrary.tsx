@@ -1,13 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { BrowserDeleteReport, BrowserRecording } from "../../api/officialBrowser";
-import { canRetryRecording, hasCompletedMerge, hasReplayableRanges, RecordingPlayback } from "./RecordingPlayback";
+import { hasCompletedMerge, hasReplayableRanges, RecordingPlayback } from "./RecordingPlayback";
 import "./RecordingLibrary.css";
 import { RecordedChannel } from "./RecordedChannel";
 import { emptyRecordingAttempt, recordingEndDetail, recordingStatus } from "./recordingStatus";
 import { groupRecordings, type RecordingGroup } from "./recordingGroups";
 import { CardContextMenu, useCardContextMenu, type CardMenuItem } from "../../components/CardContextMenu";
 import { FluentIcon } from "../../components/FluentIcon";
-import { emptyRecordingSelection, retainRecordingSelection, selectRecording } from "./recordingSelection";
+import { emptyRecordingSelection, retainRecordingSelection, selectRecording, toggleRecordingGroup } from "./recordingSelection";
+
+import { canRetryStoppedRecording, readRetryBatch, recoveryRevision, retryBatchSubmitting, subscribeRetryBatch, submitRetryBatch, summarizeRecovery, type RecordingRetryBatch, type RetryEntry } from "./recordingRecovery";
 
 const expansionStorageKey = "atsumi.recording-library.expanded.v1";
 function readExpandedGroups(): Record<string, boolean> {
@@ -60,8 +62,8 @@ function cardState(item: BrowserRecording): { tone: string; icon: string; label:
 }
 const canDelete = (item: BrowserRecording) => !item.workProgress && item.status !== "recording" && item.archive?.status !== "copying" && (item.deletionPending || item.merge?.status !== "merging" && item.merge?.sourceCleanup?.status !== "pending");
 
-function BroadcastGroup({ group, expanded, onToggle, privacy, card, onContextMenu }: {
-  group: RecordingGroup; expanded: boolean; onToggle(): void; privacy: boolean;
+function BroadcastGroup({ group, expanded, onToggle, onSelectGroup, selectedCount, selectableCount, privacy, card, onContextMenu }: {
+  group: RecordingGroup; expanded: boolean; onToggle(): void; onSelectGroup(): void; selectedCount: number; selectableCount: number; privacy: boolean;
   card(item: BrowserRecording, part?: number): ReactNode;
   onContextMenu(event: MouseEvent<HTMLElement>, items: BrowserRecording[]): void;
 }) {
@@ -69,18 +71,20 @@ function BroadcastGroup({ group, expanded, onToggle, privacy, card, onContextMen
   const root = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!expanded) return;
-    const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node) && !(event.target as Element)?.closest('.recording-library-selection,.recording-library-detail,.recording-library-delete-dialog,[data-card-context-menu]')) onToggle(); };
+    const outside = (event: PointerEvent) => { if ((event.ctrlKey || event.metaKey) && (event.target as Element)?.closest('.recording-broadcast-heading')) return; if (!root.current?.contains(event.target as Node) && !(event.target as Element)?.closest('.recording-library-selection,.recording-library-detail,.recording-library-delete-dialog,[data-card-context-menu]')) onToggle(); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !(event.target as Element)?.closest('[data-card-context-menu],dialog[open]')) onToggle(); };
     document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
   }, [expanded, onToggle]);
-  return <section ref={root} tabIndex={-1} onContextMenu={event => onContextMenu(event, group.recordings)} className={`recording-broadcast-group${group.recordings.length === 1 ? " is-single" : ""}`} aria-label={privacy ? "방송 녹화 묶음" : `${group.latest.title || group.latest.channelId} 녹화 묶음`}>
+  return <section ref={root} tabIndex={-1} onContextMenu={event => onContextMenu(event, group.recordings)} className={`recording-broadcast-group${group.recordings.length === 1 ? " is-single" : ""}${selectedCount ? " is-checked" : ""}`} data-selection={selectedCount ? selectedCount === selectableCount ? "all" : "some" : "none"} aria-label={privacy ? "방송 녹화 묶음" : `${group.latest.title || group.latest.channelId} 녹화 묶음`}>
     <RecordedChannel id={group.latest.id} privacy={privacy} />
     <button type="button" className="recording-broadcast-heading" aria-expanded={expanded} aria-controls={contentId}
-      title={privacy ? undefined : `방송 ${group.broadcastKey?.replace(/^id:/, "")}`} onClick={onToggle}>
+      title="클릭으로 펼치기 · Ctrl+클릭으로 묶음 선택/해제" aria-description={selectedCount ? `${selectedCount}개 파일 선택됨` : undefined}
+      onMouseDown={event => { if (event.ctrlKey || event.metaKey || event.shiftKey) event.preventDefault(); }}
+      onClick={event => { if (event.ctrlKey || event.metaKey) { event.preventDefault(); onSelectGroup(); } else onToggle(); }}>
       <span><strong>{privacy ? "녹화 영상" : group.latest.title || group.latest.channelId}</strong>
         <small className="recording-broadcast-meta">파일 {group.recordings.length}개 · {bytes(group.recordings.reduce((sum, item) => sum + (hasCompletedMerge(item) ? item.merge!.bytes! : item.bytesWritten), 0))}</small><span className={`recording-library-state recording-broadcast-status is-${cardState(group.latest).tone}`} title={cardState(group.latest).label}>{cardState(group.latest).label}</span></span>
-      <FluentIcon glyph="\uE70D" />
+      {selectedCount ? <span className="recording-broadcast-selected" aria-label={`${selectedCount}개 선택`}>{selectedCount === selectableCount ? "✓" : "−"}<span>{selectedCount}</span></span> : <FluentIcon glyph="\uE70D" />}
     </button>
     <div id={contentId} className="recording-broadcast-files" role="region" aria-label="묶인 녹화 파일" hidden={!expanded}>
       {expanded ? group.recordings.map((item, index) => card(item, index + 1)) : null}
@@ -92,12 +96,14 @@ type Props = {
   disabled: boolean; privacy: boolean; retrying: boolean; openingFolder: boolean;
   onFolder: (id: string) => void; onReplay: (id: string) => void;
   onRetryMerge: (id: string) => void | Promise<boolean | void>;
+  onRetryBatchItem?: (id: string) => void | Promise<boolean | void>;
   onDelete: (ids: string[]) => Promise<BrowserDeleteReport>;
   stopControl?: ReactNode;
+  recoveryScope?: string;
 };
 
 /** Metadata-only browsing: entering the library never opens every video for a thumbnail. */
-export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, privacy, retrying, openingFolder, onFolder, onReplay, onRetryMerge, onDelete, stopControl }: Props) {
+export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, privacy, retrying, openingFolder, onFolder, onReplay, onRetryMerge, onRetryBatchItem = onRetryMerge, onDelete, stopControl, recoveryScope = "chzzk" }: Props) {
   const menu = useCardContextMenu();
   const [menuIds, setMenuIds] = useState<string[]>([]);
   const openMenu = (event: MouseEvent<HTMLElement>, items: BrowserRecording[]) => {
@@ -119,15 +125,15 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
     try { localStorage.setItem(expansionStorageKey, JSON.stringify(expandedGroups)); } catch { /* Optional local presentation preference. */ }
   }, [expandedGroups]);
   const [showAttempts, setShowAttempts] = useState(false);
-  const [resuming, setResuming] = useState(false);
-  const [resumeNotice, setResumeNotice] = useState("");
-  const [resumeErrors, setResumeErrors] = useState<string[]>([]);
+  const [resuming, setResuming] = useState(() => retryBatchSubmitting(recoveryScope));
+  const [retryBatch, setRetryBatch] = useState<RecordingRetryBatch | null>(() => readRetryBatch(recoveryScope));
+  useEffect(() => {
+    const refresh = () => { setRetryBatch(readRetryBatch(recoveryScope)); setResuming(retryBatchSubmitting(recoveryScope)); };
+    refresh(); return subscribeRetryBatch(recoveryScope, refresh);
+  }, [recoveryScope]);
   const library = useRef<HTMLElement>(null);
-  const resumeInFlight = useRef(false);
-  const mounted = useRef(true);
   const latestRecordings = useRef(recordings);
   latestRecordings.current = recordings;
-  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteNotice, setDeleteNotice] = useState("");
@@ -170,45 +176,49 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
   const title = (item: BrowserRecording) => privacy ? "녹화 영상" : item.title || item.channelId;
   const visible = [...activeGroups, ...savedGroups.slice(0, limit)].flatMap(group => isExpanded(group) ? group.recordings : [])
     .concat(showAttempts ? attempts : [], showDiagnostics ? diagnostics.slice(0, diagnosticLimit) : []);
-  const eligible = visible.filter(canDelete).map(item => item.id);
+  const selectionScope = [...activeGroups, ...savedGroups.slice(0, limit)].flatMap(group => group.recordings)
+    .concat(showAttempts ? attempts : [], showDiagnostics ? diagnostics.slice(0, diagnosticLimit) : []);
+  const eligible = selectionScope.filter(canDelete).map(item => item.id);
+  const visibleEligible = visible.filter(canDelete).map(item => item.id);
   const eligibleKey = JSON.stringify(eligible);
   useEffect(() => {
     setSelection(previous => retainRecordingSelection(previous, eligible));
   }, [eligibleKey]);
   const selecting = checked.length >= 2;
-  const busy = disabled || deleting || resuming;
+  const busy = disabled || deleting;
   const allChecked = eligible.length > 0 && eligible.every(id => checked.includes(id));
   const clearSelection = () => setSelection(emptyRecordingSelection());
   const selectAll = () => setSelection({ ids: eligible, anchorId: eligible[0] ?? null });
-  const toggle = (id: string, shift = false) => { if (!busy) setSelection(previous => selectRecording(previous, id, eligible, { ctrl: true, shift })); };
+  const toggle = (id: string, shift = false) => { if (!busy) setSelection(previous => selectRecording(previous, id, shift ? visibleEligible : eligible, { ctrl: true, shift })); };
   const selectCard = (event: MouseEvent<HTMLButtonElement>, item: BrowserRecording) => {
     if (busy || event.detail > 1) return;
     const ctrl = event.ctrlKey || event.metaKey, shift = event.shiftKey;
     if (ctrl || shift) event.preventDefault();
     if (eligible.includes(item.id)) {
-      setSelection(previous => selectRecording(previous, item.id, eligible, { ctrl, shift }));
+      setSelection(previous => selectRecording(previous, item.id, shift ? visibleEligible : eligible, { ctrl, shift }));
       if (!shift && checked.includes(item.id) && (ctrl || checked.length === 1)) event.currentTarget.blur();
     } else if (!ctrl && !shift) clearSelection();
     if (!ctrl && !shift) onSelect(checked.length === 1 && checked[0] === item.id ? null : item.id);
   };
   const requestDelete = (ids: string[]) => {
-    if (busy || !ids.length || ids.some(id => !recordings.some(item => item.id === id && canDelete(item)))) return;
+    if (busy || resuming || !ids.length || ids.some(id => !recordings.some(item => item.id === id && canDelete(item)))) return;
     setDeleteError(""); setConfirmIds([...ids]);
   };
-  const retryIds = checked.filter(id => recordings.some(item => item.id === id && canRetryRecording(item)));
-  const resumeSelected = async () => {
-    if (busy || retrying || resumeInFlight.current || !retryIds.length) return;
-    resumeInFlight.current = true; setResuming(true); setResumeErrors([]); setResumeNotice("");
-    let accepted = 0; const failed: string[] = [];
-    try {
-      for (const id of [...retryIds]) {
-        if (!mounted.current) break;
-        const current = latestRecordings.current.find(item => item.id === id);
-        if (!current || !canRetryRecording(current)) continue;
-        try { if (await onRetryMerge(id) === false) failed.push(id); else accepted++; } catch { failed.push(id); }
-      }
-      if (mounted.current) { setResumeNotice(accepted ? `${accepted}개 녹화의 병합 재개를 요청했습니다.` : ""); setResumeErrors(failed); }
-    } finally { resumeInFlight.current = false; if (mounted.current) setResuming(false); }
+  const retryIds = checked.filter(id => recordings.some(item => item.id === id && canRetryStoppedRecording(item)));
+  const allRetryIds = recordings.filter(canRetryStoppedRecording).map(item => item.id);
+  const retrySummary = retryBatch ? summarizeRecovery(retryBatch, recordings) : null;
+  const resumeSelected = async (ids = retryIds) => {
+    if (busy || retrying || retryBatchSubmitting(recoveryScope) || !ids.length) return;
+    const entries: RetryEntry[] = [...new Set(ids)].flatMap(id => {
+      const current = latestRecordings.current.find(item => item.id === id);
+      return current && canRetryStoppedRecording(current) ? [{ id, before: recoveryRevision(current), request: "pending" as const }] : [];
+    });
+    if (!entries.length) return;
+    await submitRetryBatch(recoveryScope, entries, async id => {
+      const current = latestRecordings.current.find(item => item.id === id);
+      if (!current || !canRetryStoppedRecording(current)) return 'skipped';
+      return onRetryBatchItem(id);
+    });
   };
   const confirmDelete = async () => {
     if (!confirmIds?.length || busy || deleteInFlight.current) return;
@@ -253,19 +263,21 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       [group.key]: !closing,
     }));
     if (closing && group.recordings.some(item => item.id === selectedId)) onSelect(null);
-  }} privacy={privacy} card={card} onContextMenu={openMenu} />;
+  }} onSelectGroup={() => { if (!busy) setSelection(previous => toggleRecordingGroup(previous, group.recordings.filter(canDelete).map(item => item.id))); }}
+    selectedCount={group.recordings.filter(item => checked.includes(item.id)).length} selectableCount={group.recordings.filter(canDelete).length}
+    privacy={privacy} card={card} onContextMenu={openMenu} />;
   return <section ref={library} tabIndex={-1} className="recording-library" aria-label="녹화 보관함" onKeyDown={event => {
     if (busy || confirmIds || (event.target as HTMLElement).closest('input:not([type="checkbox"]),textarea,select,[contenteditable="true"]')) return;
     if (event.key === "Escape" && checked.length) { event.preventDefault(); event.stopPropagation(); clearSelection(); }
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a" && !event.altKey && !event.repeat) { event.preventDefault(); event.stopPropagation(); if (event.shiftKey) clearSelection(); else selectAll(); }
     if (event.key === "Delete" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && checked.length) { event.preventDefault(); event.stopPropagation(); requestDelete(checked); }
   }}>
-    <header className="recording-library-heading"><div><h2>녹화 보관함</h2><p>저장 영상 {saved.length.toLocaleString("ko-KR")}개{active.length ? ` · 녹화 중 ${active.length}개` : ""}</p></div><div className="recording-library-heading-actions">{stopControl}<button type="button" disabled={busy || !selected} title="선택한 녹화의 저장 폴더 열기" aria-busy={openingFolder} onClick={() => selected && onFolder(selected.id)}>{openingFolder ? "여는 중…" : "저장 폴더 열기"}</button></div></header>
+    <header className="recording-library-heading"><div><h2>녹화 보관함</h2><p>저장 영상 {saved.length.toLocaleString("ko-KR")}개{active.length ? ` · 녹화 중 ${active.length}개` : ""}</p></div><div className="recording-library-heading-actions">{stopControl}<div className="recording-library-retry"><button type="button" className="recording-library-retry-all" disabled={busy || retrying || resuming || !allRetryIds.length} aria-busy={resuming} onClick={() => void resumeSelected(allRetryIds)} title="중단된 파일의 이동·병합·검증을 다시 시도합니다. 녹화 중인 파일과 이미 처리된 파일은 제외합니다.">{resuming ? "재시도 요청 중…" : `문제 녹화 다시 시도${allRetryIds.length ? ` (${allRetryIds.length})` : ""}`}</button></div><button type="button" disabled={busy || !selected} title="선택한 녹화의 저장 폴더 열기" aria-busy={openingFolder} onClick={() => selected && onFolder(selected.id)}>{openingFolder ? "여는 중…" : "저장 폴더 열기"}</button></div></header>
+    {retrySummary ? <div className="recording-library-retry-progress" aria-label="녹화 재처리 진행"><div role="status"><strong>{resuming ? "재시도 요청 중" : retrySummary.settled === retrySummary.total ? "재처리 결과" : "재처리 진행"}</strong><span>완료 {retrySummary.counts.complete}/{retrySummary.total}{retrySummary.counts.running ? ` · 진행 ${retrySummary.counts.running}` : ""}{retrySummary.counts.waiting ? ` · 대기 ${retrySummary.counts.waiting}` : ""}{retrySummary.counts.checking ? ` · 상태 확인 ${retrySummary.counts.checking}` : ""}{retrySummary.counts.failed ? ` · 실패 ${retrySummary.counts.failed}` : ""}{retrySummary.counts.skipped ? ` · 제외 ${retrySummary.counts.skipped}` : ""}</span></div><progress aria-label="재처리 결과 확인" max={retrySummary.total || 1} value={retrySummary.settled} />{retrySummary.running ? <div className="recording-library-retry-current"><span>{privacy ? "녹화 영상" : retrySummary.running.title || retrySummary.running.channelId} · {recordingStatus(retrySummary.running)}</span><RecordingProgress recording={retrySummary.running} /></div> : null}</div> : null}
     {activeGroups.length ? <section className="recording-library-active" aria-label="진행 중인 녹화"><h3>지금 녹화 중</h3><div>{activeGroups.map(broadcast)}</div></section> : null}
     <div className="recording-library-toolbar"><div className="recording-library-filters" aria-label="녹화 필터">{([ ["all", "전체"], ["ready", "재생 가능"], ["attention", "확인 필요"] ] as const).map(([value, label]) => <button type="button" key={value} disabled={busy} aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}</button>)}</div><input type="search" aria-label="녹화 검색" placeholder="제목·채널 검색" value={query} disabled={privacy || busy} onChange={event => setQuery(event.target.value)} /></div>
-    {selecting || resuming ? <div className="recording-library-selection" role="toolbar" aria-label="선택한 녹화 작업"><span role="status">{checked.length}개 선택</span><button type="button" disabled={busy || !eligible.length} onClick={allChecked ? clearSelection : selectAll} title="현재 펼쳐진 목록의 작업 가능한 파일만 선택합니다.">{allChecked ? "전체 해제" : "전체 선택"}</button><button type="button" disabled={busy} onClick={clearSelection}>선택 해제</button><button type="button" disabled={busy || retrying || !retryIds.length} aria-busy={resuming} title="선택한 파일 중 중단되거나 실패한 병합·파일 정리를 다시 요청합니다." onClick={() => void resumeSelected()}>{resuming ? "요청 중…" : "병합 재개"}</button><button ref={deleteTrigger} type="button" className="recording-library-delete" disabled={busy || !checked.length} onClick={() => requestDelete(checked)}>선택 삭제</button></div> : null}
-    {resumeNotice ? <p role="status" className="recording-library-delete-notice">{resumeNotice}</p> : null}
-    {resumeErrors.length ? <p role="alert" className="recording-library-delete-errors">{resumeErrors.length}개 녹화는 병합 재개를 요청하지 못했습니다. 상태를 확인한 뒤 다시 시도해 주세요.</p> : null}
+    {selecting || resuming ? <div className="recording-library-selection" role="toolbar" aria-label="선택한 녹화 작업"><span role="status">{checked.length}개 선택</span><button type="button" disabled={busy || !eligible.length} onClick={allChecked ? clearSelection : selectAll} title="현재 표시된 묶음의 작업 가능한 파일을 선택합니다.">{allChecked ? "전체 해제" : "전체 선택"}</button><button type="button" disabled={busy} onClick={clearSelection}>선택 해제</button><button type="button" disabled={busy || retrying || resuming || !retryIds.length} aria-busy={resuming} title="선택한 파일 중 중단되거나 실패한 병합·파일 정리를 다시 요청합니다." onClick={() => void resumeSelected()}>{resuming ? "요청 중…" : "병합 재개"}</button><button ref={deleteTrigger} type="button" className="recording-library-delete" disabled={busy || resuming || !checked.length} onClick={() => requestDelete(checked)}>선택 삭제</button></div> : null}
+    {retrySummary?.counts.failed ? <p role="alert" className="recording-library-delete-errors">{retrySummary.counts.failed}개 재처리 실패 · 해당 파일의 문제 확인에서 원인을 볼 수 있습니다.</p> : null}
     {deleteNotice ? <p role="status" className="recording-library-delete-notice">{deleteNotice}</p> : null}
     {deleteFailures.length ? <div role="alert" className="recording-library-delete-errors"><strong>{deleteFailures.length}개는 삭제하지 못했습니다.</strong><ul>{deleteFailures.map(failure => <li key={failure.id}><b>{recordings.find(item => item.id === failure.id) ? title(recordings.find(item => item.id === failure.id)!) : "녹화 영상"}</b> — {failure.error.message}</li>)}</ul></div> : null}
     <div className="recording-library-layout"><div className="recording-library-browse">
@@ -280,7 +292,7 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       <RecordedChannel id={selected.id} privacy={privacy} />
       <p className="official-browser-muted" title={recordingChatNote(selected).text}>{displayDuration(selected)} · {selected.mediaRemovedAt != null ? "영상 없음" : bytes(hasCompletedMerge(selected) ? selected.merge!.bytes! : selected.bytesWritten)} <span className={`recording-library-state is-${cardState(selected).tone}`} title={recordingEndDetail(selected) || undefined}>{cardState(selected).label}</span> <ChatWarning recording={selected} /></p>
       {selected.partial && selected.mediaRemovedAt == null ? <p className="official-browser-note">영상 일부가 저장되지 않았을 수 있습니다.</p> : null}
-      {selected.deletionPending ? <p className="official-browser-note">삭제 미완료 · 선택 삭제로 다시 시도해 주세요.</p> : <RecordingPlayback key={selected.id} recording={selected} disabled={busy} privacyMode={privacy} retrying={retrying} onReplay={onReplay} onRetryMerge={onRetryMerge} />}
+      {selected.deletionPending ? <p className="official-browser-note">삭제 미완료 · 선택 삭제로 다시 시도해 주세요.</p> : <RecordingPlayback key={selected.id} recording={selected} disabled={busy} privacyMode={privacy} retrying={retrying || resuming} onReplay={onReplay} onRetryMerge={onRetryMerge} />}
       {checked.length === 1 && checked[0] === selected.id ? <div className="recording-library-single-actions"><span role="status">1개 선택</span><button ref={deleteTrigger} type="button" className="recording-library-delete" disabled={busy || !canDelete(selected)} onClick={() => requestDelete([selected.id])}>녹화 삭제</button></div> : null}
     </section> : <div className="recording-library-detail-placeholder" aria-hidden="true" />}
     </div>

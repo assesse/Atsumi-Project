@@ -14,7 +14,7 @@ function setup(full=false) {
  Object.defineProperty(window,'__atsumiXSurface',{value:api,configurable:true});
  const media={time:10,paused:false,muted:false,volume:.5};
  const video=doc.querySelector('video')!;
- Object.defineProperties(video,{currentTime:{get:()=>media.time,set:v=>media.time=v},duration:{value:60},paused:{get:()=>media.paused},ended:{value:false},muted:{get:()=>media.muted,set:v=>media.muted=v},volume:{get:()=>media.volume,set:v=>media.volume=v}});
+ Object.defineProperties(video,{currentTime:{get:()=>media.time,set:v=>media.time=v},duration:{value:60,configurable:true},paused:{get:()=>media.paused},ended:{value:false},muted:{get:()=>media.muted,set:v=>media.muted=v},volume:{get:()=>media.volume,set:v=>media.volume=v}});
  const pause=vi.fn(()=>{media.paused=true;});const play=vi.fn(()=>{media.paused=false;});
  doc.querySelector('#pause')!.addEventListener('click',pause);doc.querySelector('#play')!.addEventListener('click',play);
  for(const el of doc.querySelectorAll('*'))vi.spyOn(el,'getBoundingClientRect').mockReturnValue({x:0,y:0,top:0,left:0,right:500,bottom:400,width:500,height:400,toJSON:()=>({})});
@@ -170,4 +170,155 @@ it('uses Space for playback when native immersive back button receives initial f
  const close=vi.fn();back.addEventListener('click',close);const e=a.fire('keydown','#nativeBack',{key:' '});
  expect(e.preventDefault).toHaveBeenCalledOnce();expect(a.pause).toHaveBeenCalledOnce();expect(close).not.toHaveBeenCalled();
  expect(a.fire('keydown','#nativeBack',{key:'Enter'}).preventDefault).not.toHaveBeenCalled();
+});
+
+function trackFixture(){
+ const a=setup(true),track=a.doc.querySelector('#slider')!;
+ track.setAttribute('aria-label','Scrubber');track.innerHTML='<span id="trackFill"></span><span id="handle"></span>';
+ vi.spyOn(track,'getBoundingClientRect').mockReturnValue({x:100,y:350,left:100,top:350,right:500,bottom:370,width:400,height:20,toJSON:()=>({})});
+ return {...a,track};
+}
+it.each([[100,0],[300,30],[500,60]])('seeks a fullscreen track click at %i to %i seconds without toggling playback',(x,time)=>{
+ vi.useFakeTimers();const a=trackFixture();
+ a.fire('pointerdown','#trackFill',{clientX:x,clientY:360});
+ const click=a.fire('click','#trackFill',{clientX:x,clientY:360});
+ expect(a.media.time).toBe(time);expect(click.preventDefault).toHaveBeenCalledOnce();
+ expect(a.pause).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();expect(a.claim).toHaveBeenCalledOnce();
+});
+it('keeps native handle dragging, even when dragged away and back to the start',()=>{
+ const a=trackFixture();
+ expect(a.fire('pointerdown','#handle',{clientX:200,clientY:360}).preventDefault).not.toHaveBeenCalled();
+ a.fire('pointermove','#handle',{clientX:400,clientY:360});a.fire('pointermove','#handle',{clientX:200,clientY:360});
+ expect(a.fire('click','#handle',{clientX:200,clientY:360}).preventDefault).not.toHaveBeenCalled();
+ expect(a.media.time).toBe(10);expect(a.claim).not.toHaveBeenCalled();
+});
+it('preserves a paused player and rejects revoked or stale track gestures',()=>{
+ vi.useFakeTimers();const a=trackFixture();a.media.paused=true;
+ a.fire('click','#slider',{clientX:400,clientY:360});expect(a.media.time).toBe(45);expect(a.media.paused).toBe(true);
+ a.fire('pointerdown','#slider',{clientX:200,clientY:360});a.location.pathname='/other/status/654321/mediaviewer';
+ a.fire('click','#slider',{clientX:200,clientY:360});expect(a.media.time).toBe(45);
+ a.allowed.value=false;a.fire('click','#slider',{clientX:200,clientY:360});expect(a.media.time).toBe(45);
+});
+it.each(['volume','disabled','nonfinite','offtrack','untrusted','right-click'])('does not apply track seek to %s',kind=>{
+ const a=trackFixture();
+ if(kind==='volume')a.track.setAttribute('aria-label','Volume');
+ if(kind==='disabled')a.track.setAttribute('aria-disabled','true');
+ if(kind==='nonfinite')Object.defineProperty(a.video,'duration',{value:Infinity});
+ a.fire('click','#slider',{clientX:kind==='offtrack'?80:300,clientY:360,isTrusted:kind!=='untrusted',button:kind==='right-click'?2:0});
+ expect(a.media.time).toBe(10);expect(a.pause).not.toHaveBeenCalled();
+});
+it('temporarily unmutes a hovered autoplay video and restores its prior mute without play or pause',()=>{
+ const a=setup();a.media.muted=true;
+ a.fire('pointerover');expect(a.media.muted).toBe(false);expect(a.claim).toHaveBeenCalledOnce();
+ a.fire('pointermove');expect(a.claim).toHaveBeenCalledOnce();
+ a.fire('pointerout','#background',{relatedTarget:a.doc.querySelector('#play')});expect(a.media.muted).toBe(false);
+ a.fire('pointerout','#background',{relatedTarget:a.doc.body});expect(a.media.muted).toBe(true);
+ expect(a.pause).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();
+});
+it('waits for source autoplay on the hovered video without forcing paused playback',()=>{
+ const a=setup();a.media.muted=true;a.media.paused=true;a.fire('pointerover');
+ expect(a.media.muted).toBe(true);expect(a.claim).not.toHaveBeenCalled();
+ a.media.paused=false;a.fire('play','#v1');expect(a.media.muted).toBe(false);expect(a.claim).toHaveBeenCalledOnce();
+ expect(a.play).not.toHaveBeenCalled();
+});
+it('honors explicit mute until leaving and entering that video again',()=>{
+ const a=setup(),mute=a.doc.createElement('button');mute.id='mute';mute.setAttribute('aria-label','Mute');a.doc.querySelector('#one')!.append(mute);
+ a.media.muted=true;a.fire('pointerover');expect(a.media.muted).toBe(false);
+ a.fire('pointerdown','#mute');a.media.muted=true;
+ a.fire('pointermove','#mute');a.fire('play','#v1');expect(a.media.muted).toBe(true);
+ a.fire('pointerout','#mute',{relatedTarget:a.doc.body});a.fire('pointerover');expect(a.media.muted).toBe(false);
+});
+it.each(['blur','hidden','route','owner','viewer'])('restores temporary hover audio on %s',kind=>{
+ const a=setup();a.media.muted=true;a.fire('pointerover');expect(a.media.muted).toBe(false);
+ if(kind==='blur')a.fire('blur');
+ if(kind==='hidden'){Object.defineProperty(a.doc,'hidden',{value:true});a.fire('visibilitychange');}
+ if(kind==='route')a.location.pathname='/other/status/654321';
+ if(kind==='owner')a.allowed.value=false;
+ if(kind==='viewer')a.location.pathname='/other/status/654321/mediaviewer';
+ const adapter=(window as unknown as {__atsumiXVideo:{update(ready:boolean):void}}).__atsumiXVideo;
+ adapter.update(kind!=='owner');expect(a.media.muted).toBe(true);
+});
+it.each(['touch','untrusted','modified','owner','fullscreen'])('does not grant hover audio from %s',kind=>{
+ const a=setup(kind==='fullscreen');a.media.muted=true;if(kind==='owner')a.allowed.value=false;
+ a.fire('pointerover','#background',{pointerType:kind==='touch'?'touch':'mouse',isTrusted:kind!=='untrusted',ctrlKey:kind==='modified'});
+ expect(a.claim).not.toHaveBeenCalled();expect(a.media.muted).toBe(true);
+});
+it('returns the first video to mute before a second hover becomes audible',()=>{
+ const a=setup();a.media.muted=true;
+ const second=a.doc.querySelector('#one')!.cloneNode(true) as HTMLElement;second.id='two';a.doc.body.append(second);
+ const v=second.querySelector('video')!;vi.spyOn(v,'getBoundingClientRect').mockReturnValue(a.video.getBoundingClientRect());
+ Object.defineProperty(v,'paused',{value:false});v.muted=true;
+ a.fire('pointerover');expect(a.media.muted).toBe(false);
+ a.fire('pointerover','#two #background');expect(a.media.muted).toBe(true);expect(v.muted).toBe(false);
+ a.fire('pointerout','#two #background',{relatedTarget:a.doc.body});expect(v.muted).toBe(true);
+});
+
+it('restores a recycled video element before its next source can inherit hover sound',()=>{
+ const a=setup();Object.defineProperty(a.video,'currentSrc',{value:'blob:https://x.com/first',configurable:true});
+ a.media.muted=true;a.fire('pointerover');expect(a.media.muted).toBe(false);
+ Object.defineProperty(a.video,'currentSrc',{value:'blob:https://x.com/second',configurable:true});
+ (window as unknown as {__atsumiXVideo:{update(ready:boolean):void}}).__atsumiXVideo.update(true);
+ expect(a.media.muted).toBe(true);
+});
+
+// Real immersive X exposes only its thumb as the accessible slider. The rail
+// receives plain clicks; a full-width role=slider fixture cannot catch this.
+function thumbTrackFixture(){
+ const a=trackFixture(),rail=a.doc.createElement('div');rail.id='nativeRail';a.track.before(rail);rail.append(a.track);
+ const fill=a.doc.createElement('span');fill.id='nativeFill';rail.prepend(fill);
+ vi.spyOn(rail,'getBoundingClientRect').mockReturnValue({x:100,y:350,left:100,top:350,right:500,bottom:370,width:400,height:20,toJSON:()=>({})});
+ vi.spyOn(a.track,'getBoundingClientRect').mockReturnValue({x:194,y:354,left:194,top:354,right:206,bottom:366,width:12,height:12,toJSON:()=>({})});
+ return {...a,rail};
+}
+it.each([[110,1.5],[300,30],[490,58.5]])('seeks the actual thumb-only slider rail at %i without pausing', (x,time)=>{
+ const a=thumbTrackFixture();
+ for(const type of ['pointerdown','mousedown','mouseup'])expect(a.fire(type,'#nativeRail',{clientX:x,clientY:360}).preventDefault).not.toHaveBeenCalled();
+ const e=a.fire('click','#nativeRail',{clientX:x,clientY:360});expect(e.preventDefault).toHaveBeenCalledOnce();
+ expect(a.media.time).toBe(time);expect(a.media.paused).toBe(false);expect(a.play).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
+});
+it('uses the thumb rail geometry when clicking its painted sibling and preserves pause',()=>{
+ const a=thumbTrackFixture();a.media.paused=true;a.fire('click','#nativeFill',{clientX:400,clientY:360});
+ expect(a.media.time).toBe(45);expect(a.media.paused).toBe(true);expect(a.pause).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();
+});
+it('leaves the thumb click and complete drag lifecycle to the native player',()=>{
+ const a=thumbTrackFixture();
+ for(const type of ['pointerdown','mousedown','mouseup','click'])expect(a.fire(type,'#handle',{clientX:200,clientY:360}).preventDefault).not.toHaveBeenCalled();
+ a.fire('pointerdown','#handle',{clientX:200,clientY:360});a.fire('pointermove','#handle',{clientX:400,clientY:360});
+ expect(a.fire('mouseup','#nativeFill',{clientX:400,clientY:360}).preventDefault).not.toHaveBeenCalled();
+ expect(a.fire('click','#nativeFill',{clientX:400,clientY:360}).preventDefault).not.toHaveBeenCalled();
+ expect(a.media.time).toBe(10);expect(a.claim).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
+});
+it.each(['wide-toolbar','second-slider','hidden','disabled','volume'])('never guesses a seek rail from %s',kind=>{
+ const a=thumbTrackFixture();
+ if(kind==='wide-toolbar')vi.spyOn(a.rail,'getBoundingClientRect').mockReturnValue({x:0,y:0,left:0,top:0,right:500,bottom:400,width:500,height:400,toJSON:()=>({})});
+ if(kind==='second-slider'){const n=a.doc.createElement('div');n.setAttribute('role','slider');a.rail.append(n);}
+ if(kind==='hidden')a.rail.hidden=true;
+ if(kind==='disabled')a.track.setAttribute('aria-disabled','true');
+ if(kind==='volume')a.track.setAttribute('aria-label','Volume');
+ a.fire('click','#nativeRail',{clientX:300,clientY:360});expect(a.media.time).toBe(10);
+});
+
+function thinThumbTrackFixture(){
+ const a=thumbTrackFixture();
+ vi.spyOn(a.rail,'getBoundingClientRect').mockReturnValue({x:100,y:358,left:100,top:358,right:500,bottom:362,width:400,height:4,toJSON:()=>({})});
+ return a;
+}
+it.each([354,356,360,364,366])('accepts the native thumb-height band at y=%i above/below a thin rail',y=>{
+ const a=thinThumbTrackFixture();a.media.paused=true;
+ for(const type of ['pointerdown','mousedown','mouseup'])expect(a.fire(type,'#background',{clientX:300,clientY:y}).preventDefault).not.toHaveBeenCalled();
+ expect(a.fire('click','#background',{clientX:300,clientY:y}).preventDefault).toHaveBeenCalledOnce();
+ expect(a.media.time).toBe(30);expect(a.media.paused).toBe(true);expect(a.pause).not.toHaveBeenCalled();expect(a.play).not.toHaveBeenCalled();
+});
+it.each([[300,353],[300,367],[99,360],[501,360]])('does not extend seeking outside the thumb-height rail bounds (%i,%i)',(x,y)=>{
+ const a=thinThumbTrackFixture();a.fire('click','#background',{clientX:x,clientY:y});expect(a.media.time).toBe(10);
+});
+it.each(['button','link','volume','menu','archive','foreign-player','hidden'])('keeps %s outside the expanded seek interaction',kind=>{
+ const a=thinThumbTrackFixture();const target=a.doc.createElement(kind==='button'?'button':kind==='link'?'a':'div');target.id='overlap';
+ if(kind==='link')target.setAttribute('href','/source/status/123456');
+ if(kind==='volume'){target.setAttribute('role','slider');target.setAttribute('aria-label','Volume');}
+ if(kind==='menu')target.setAttribute('role','menu');
+ if(kind==='archive')target.setAttribute('data-atsumi-x-action','archive');
+ (kind==='foreign-player'?a.doc.body:a.doc.querySelector('#one')!).append(target);
+ if(kind==='hidden')a.rail.hidden=true;
+ a.fire('click','#overlap',{clientX:300,clientY:355});expect(a.media.time).toBe(10);
 });
