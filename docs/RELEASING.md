@@ -13,6 +13,8 @@ Atsumi는 유료 Windows 코드 서명(Authenticode) 인증서 없이 배포한�
 
 ## 버전 배포 절차
 
+Windows 릴리즈 CI는 Rust/Cargo **1.99.1**을 고정해 사용한다. Cargo 1.100부터 내부 빌드 폴더 구조가 변경되어, 현재 성공 빌드 기록의 실행 파일·하드링크 검증 경로와 호환되지 않는다. 도구 버전을 올릴 때는 새 산출물 경로와 파일 동일성 검사를 함께 검증한다. 앱 소스·서명·빌드 전후 입력 해시 검증은 그대로 유지한다.
+
 1. `package.json`, `src-tauri/Cargo.toml`, `src-tauri/tauri.conf.json`의 버전을 같은 값으로 올린다.
 2. `tools/verify.ps1 -SkipInstall`로 현재 소스를 검증한다.
 3. 검토가 끝난 commit에 정확히 `v<버전>` 태그를 push하거나 GitHub Actions의 `Windows Release`를 수동 실행한다.

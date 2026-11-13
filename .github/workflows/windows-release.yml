@@ -28,6 +28,9 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_TERM_COLOR: always
       RUST_BACKTRACE: "1"
+      # The receipt verifier supports the validated pre-1.100 Cargo layout.
+      # Upgrade deliberately with matching owned-output identity regressions.
+      RUSTUP_TOOLCHAIN: "1.99.1"
 
     steps:
       - name: Preserve source line endings before checkout
@@ -69,11 +72,11 @@ jobs:
             throw "Tag $env:GITHUB_REF_NAME must match v$packageVersion"
           }
 
-      - name: Install Rust stable toolchain
+      - name: Install pinned release Rust toolchain
         run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustc +stable --version
-          cargo +stable --version
+          rustup toolchain install "$env:RUSTUP_TOOLCHAIN" --profile minimal --no-self-update
+          rustc --version
+          cargo --version
 
       - name: Prepare pinned recording merge tools
         run: ./tools/prepare_media_tools.ps1
