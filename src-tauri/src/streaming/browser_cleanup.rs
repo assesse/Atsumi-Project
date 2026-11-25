@@ -829,7 +829,11 @@ mod tests {
             fs::write(root.join(name), b"retain").unwrap();
         }
         let job = publish(&store);
-        let mut replay = store.replay_source(&recording.id).unwrap();
+        let replay = store.replay_source(&recording.id).unwrap();
+        assert!(store.take_cleanup_job().unwrap().is_none());
+        assert!(source(root, 0).is_file());
+        let mut playback_file = replay.media.try_clone().unwrap();
+        drop(replay);
         let result = clean(&store);
         assert!(result.complete);
         assert_eq!(result.deleted, 2);
@@ -854,9 +858,9 @@ mod tests {
             assert!(root.join(name).is_file());
         }
         let mut media = Vec::new();
-        replay.media.read_to_end(&mut media).unwrap();
+        playback_file.read_to_end(&mut media).unwrap();
         assert_eq!(media, WEBM);
-        drop(replay);
+        drop(playback_file);
         let reopened = BrowserCaptureStore::new(dir.path()).unwrap();
         let record = reopened.snapshot().unwrap().remove(0);
         assert_eq!(record.status, BrowserRecordingStatus::Stopped);
