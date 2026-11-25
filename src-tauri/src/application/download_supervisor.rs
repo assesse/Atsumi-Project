@@ -5356,6 +5356,26 @@ mod tests {
     }
 
     #[test]
+    fn restart_resumes_requested_jobs_before_the_first_file_but_not_cancelled_or_hidden_jobs() {
+        let dir = tempdir().unwrap();
+        let (repository, service) = configured_repository(dir.path());
+        let queued = service.download_queue_add(vec![101, 102, 103], "never-started".into()).unwrap();
+        let id = |i: usize| queued.entries[i].entry_id.to_string();
+        service.download_cancel(vec![id(1)]).unwrap();
+        assert_eq!(service.download_recover_interrupted().unwrap(), 2);
+        let connection = rusqlite::Connection::open(dir.path().join("state.sqlite3")).unwrap();
+        connection.execute("INSERT INTO duplicate_hidden_galleries(gallery_id,decision_id,created_at) VALUES(103,'hidden','now')", []).unwrap();
+        let (worker, _events) = launch(&repository, Arc::new(FakeDownloadSource::new(1, None)));
+        assert_eq!(worker.resume_interrupted().unwrap(), 1);
+        wait_for_state(&service, &id(0), JobState::Completed, 100.0);
+        assert_eq!(worker.resume_interrupted().unwrap(), 0);
+        let state = |index| connection.query_row("SELECT state FROM download_entries WHERE entry_id=?1", [id(index)], |r| r.get::<_, String>(0)).unwrap();
+        assert_eq!(state(1), "cancelled");
+        assert_eq!(state(2), "interrupted");
+        worker.shutdown_and_wait();
+    }
+
+    #[test]
     fn ambiguous_resume_file_is_preserved_and_reported_as_a_listable_failure() {
         let temp = tempdir().unwrap();
         let root = temp.path().to_path_buf();

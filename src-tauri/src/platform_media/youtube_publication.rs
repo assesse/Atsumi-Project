@@ -437,7 +437,7 @@ mod tests {
             created_at: 1, received_bytes: 2, total_bytes: None, error: None, library: None, download_root: root.join("media"),
         };
         let cancel = Arc::new(AtomicBool::new(false));
-        let state = State { jobs: [(job.job_id.clone(), job.clone())].into(), cancel: [(job.job_id.clone(), cancel.clone())].into(), queue: VecDeque::new(), shutting_down: false, persistence_errors: HashMap::new(), persistence_overflow: false };
+        let state = State { idle_merge: None, jobs: [(job.job_id.clone(), job.clone())].into(), cancel: [(job.job_id.clone(), cancel.clone())].into(), queue: VecDeque::new(), shutting_down: false, persistence_errors: HashMap::new(), persistence_overflow: false };
         (state, job, cancel)
     }
     fn deadline() -> Instant { Instant::now() + Duration::from_secs(30) }

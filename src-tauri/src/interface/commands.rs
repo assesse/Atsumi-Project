@@ -729,6 +729,43 @@ impl AppState {
         operation()
     }
 
+    pub(crate) fn recording_maintenance_busy(
+        &self,
+        app: &AppHandle,
+        probe: crate::streaming::browser_merge::MaintenanceProbe,
+    ) -> bool {
+        use crate::streaming::browser_merge::MaintenanceProbe;
+        let platform = self.existing_platform_media();
+        let owned = platform.as_ref().and_then(|service| service.idle_merge_id());
+        let paused = {
+            // A transient status read may defer admission. It must not discard
+            // an hours-long remux which is already running.
+            let Ok(control) = self.managed_work.inner.control.try_lock() else {
+                return self.is_quitting() || !matches!(probe, MaintenanceProbe::Running);
+            };
+            self.is_quitting() || control.updating
+        };
+        // A count on the reader is enough for maintenance; the exit dialog needs
+        // exact identities for its work-set confirmation.
+        let busy = paused || self.service.download_active_count().map_or(true, |count| count != 0)
+            || self.work_snapshot_with_download_ids(Vec::new(), owned.as_deref())
+                .map_or(true, |work| work.has_active_work());
+        if busy {
+            if let (Some(service), Some(id)) = (&platform, &owned) { service.yield_idle_merge(id); }
+            return true;
+        }
+        if owned.is_some() { return true; }
+        if !matches!(probe, MaintenanceProbe::Admission { check_platform: true }) { return false; }
+        let platform = platform.or_else(|| {
+            if self.data_dir.join("platform-media/jobs").is_dir() { self.platform_media(app).ok() } else { None }
+        });
+        let Some(service) = platform else { return false };
+        let Some((id, revision)) = service.idle_merge_candidate() else { return false };
+        let Ok(control) = self.managed_work.inner.control.try_lock() else { return true };
+        if self.is_quitting() || control.updating { return true; }
+        service.retry_inner(&id, revision, true).is_ok()
+    }
+
     pub(crate) fn active_work_snapshot(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
         let _control = self.managed_work.inner.control.lock().map_err(|_| {
             crate::application::RepositoryError::Other(
@@ -812,12 +849,16 @@ impl AppState {
     }
 
     fn active_work_snapshot_locked(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
-        let mut active_download_ids: Vec<String> = self
-            .service
-            .download_active_entry_ids()?
-            .into_iter()
-            .map(|id| id.as_str().to_owned())
-            .collect();
+        let ids = self.service.download_active_entry_ids()?.into_iter()
+            .map(|id| id.as_str().to_owned()).collect();
+        self.work_snapshot_with_download_ids(ids, None)
+    }
+
+    fn work_snapshot_with_download_ids(
+        &self,
+        mut active_download_ids: Vec<String>,
+        idle_platform_id: Option<&str>,
+    ) -> Result<AppActiveWorkSnapshot, ApplicationError> {
         active_download_ids.extend(
             crate::pinterest::active_download_ids()
                 .into_iter()
@@ -834,7 +875,8 @@ impl AppState {
                 .map(|id| format!("x-archive:{id}")),
         );
         if let Some(service) = self.existing_platform_media() {
-            active_download_ids.extend(service.active_ids());
+            let skip = idle_platform_id.map(|id| format!("platform-media:{id}"));
+            active_download_ids.extend(service.active_ids().into_iter().filter(|id| Some(id) != skip.as_ref()));
         }
         if self.managed_work.platform_initializing() {
             active_download_ids.push("platform-media:initializing".into());

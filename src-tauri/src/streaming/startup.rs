@@ -107,8 +107,11 @@ impl DeferredBrowser {
             // Also releases shutdown waiters if publication/controller setup panics.
             let _finished = InitializationFinished(owner.inner.clone());
             crate::startup::mark("recordings_begin");
+            let priority_app = app.clone();
+            let priority = Arc::new(move |probe| priority_app.try_state::<crate::interface::commands::AppState>()
+                .is_none_or(|state| state.recording_maintenance_busy(&priority_app, probe)));
             let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
-                OfficialBrowser::new_with_media_tools(data_dir.clone(), Some(tools))));
+                OfficialBrowser::new_with_priority(data_dir.clone(), Some(tools), priority)));
             let mut slot = owner.inner.0.lock().unwrap_or_else(|e| e.into_inner());
             match built {
                 Ok(Ok(browser)) if !slot.closed => {

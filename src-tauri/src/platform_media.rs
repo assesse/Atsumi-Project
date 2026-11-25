@@ -153,6 +153,7 @@ pub struct Playback {
 struct State {
     jobs: HashMap<String, MediaJob>,
     queue: VecDeque<String>,
+    idle_merge: Option<(String, bool)>, // job ID and cooperative yield request
     cancel: HashMap<String, Arc<AtomicBool>>,
     shutting_down: bool,
     persistence_errors: HashMap<String, String>,
@@ -219,6 +220,7 @@ impl PlatformMediaService {
                 state: Mutex::new(State {
                     jobs,
                     queue: VecDeque::new(),
+                    idle_merge: None,
                     cancel: HashMap::new(),
                     shutting_down: false,
                     persistence_errors: HashMap::new(),
@@ -365,6 +367,38 @@ impl PlatformMediaService {
         ids.dedup();
         ids
     }
+    pub(crate) fn idle_merge_id(&self) -> Option<String> {
+        self.inner.state.lock().ok()?.idle_merge.as_ref().map(|(id, _)| id.clone())
+    }
+
+    pub(crate) fn yield_idle_merge(&self, id: &str) {
+        let Ok(mut state) = self.inner.state.lock() else { return };
+        if let Some((owner, yielded)) = &mut state.idle_merge {
+            if owner == id {
+                *yielded = true;
+                if let Some(cancel) = state.cancel.get(id) { cancel.store(true, Ordering::Release); }
+            }
+        }
+    }
+
+    pub(crate) fn idle_merge_candidate(&self) -> Option<(String, u64)> {
+        let mut candidates: Vec<_> = {
+            let state = self.inner.state.lock().ok()?;
+            if state.shutting_down || !state.cancel.is_empty() { return None; }
+            state.jobs.values().filter(|job| job.reference.kind == "live"
+                && job.state == "interrupted" && !encoded::raw_youtube_integrity_failed(job))
+                .cloned().collect()
+        };
+        candidates.sort_by(|a, b| (a.created_at, &a.job_id).cmp(&(b.created_at, &b.job_id)));
+        candidates.into_iter().find_map(|job| {
+            let folder = storage::job_dir(&job.download_root, &job.reference.provider, &job.job_id).ok()?;
+            let proof = ["segments.jsonl", encoded::PROOF].iter().any(|name|
+                storage::regular(&folder.join(name)).is_ok_and(|m| m.len() > 0))
+                || (job.reference.provider == "youtube" && youtube_spool::has_raw_proof(&folder).unwrap_or(false));
+            proof.then_some((job.job_id, job.revision))
+        })
+    }
+
     pub fn cancel(&self, job_id: &str, revision: u64) -> Result<MediaJob, String> {
         let mut state = self.inner.state.lock().map_err(|_| "영상 작업 상태 오류")?;
         let job = state.jobs.get(job_id).ok_or("작업을 찾을 수 없습니다.")?;
@@ -374,10 +408,14 @@ impl PlatformMediaService {
         if !job.active() {
             return Ok(job.clone());
         }
+        let queued = job.state == "queued";
+        if state.idle_merge.as_ref().is_some_and(|(id, _)| id == job_id) {
+            state.idle_merge = None; // Explicit cancellation must survive restart.
+        }
         if let Some(cancel) = state.cancel.get(job_id) {
             cancel.store(true, Ordering::Release);
         }
-        if job.state == "queued" && state.queue.iter().any(|id| id == job_id) {
+        if queued && state.queue.iter().any(|id| id == job_id) {
             let job = state.jobs.get_mut(job_id).unwrap();
             job.state = "cancelled".into();
             job.revision += 1;
@@ -395,6 +433,9 @@ impl PlatformMediaService {
         Ok(state.jobs[job_id].clone())
     }
     pub fn retry(&self, job_id: &str, revision: u64) -> Result<MediaJob, String> {
+        self.retry_inner(job_id, revision, false)
+    }
+    pub(crate) fn retry_inner(&self, job_id: &str, revision: u64, idle: bool) -> Result<MediaJob, String> {
         let old = {
             let state = self.inner.state.lock().map_err(|_| "영상 작업 상태 오류")?;
             let job = state.jobs.get(job_id).ok_or("작업을 찾을 수 없습니다.")?;
@@ -402,6 +443,9 @@ impl PlatformMediaService {
                 || !matches!(job.state.as_str(), "failed" | "interrupted" | "cancelled")
             {
                 return Err("다시 시도할 수 있는 작업이 아닙니다.".into());
+            }
+            if idle && (job.state != "interrupted" || job.reference.kind != "live") {
+                return Err("자동 병합 대상이 아닙니다.".into());
             }
             job.clone()
         };
@@ -424,11 +468,15 @@ impl PlatformMediaService {
             if state.jobs.values().filter(|j| j.active()).count() >= queries::ACTIVE_JOB_LIMIT {
                 return Err("대기 작업이 많습니다.".into());
             }
+            if idle && !state.cancel.is_empty() {
+                return Err("다른 작업이 진행 중입니다.".into());
+            }
             let mut resumed = old;
             resumed.state = "queued".into();
             resumed.error = None;
             resumed.revision += 1;
             storage::save_job(&self.inner.journal, &resumed)?;
+            if idle { state.idle_merge = Some((job_id.to_owned(), false)); }
             state.persistence_errors.remove(job_id);
             state
                 .cancel

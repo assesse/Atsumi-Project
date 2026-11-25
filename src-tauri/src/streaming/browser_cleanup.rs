@@ -385,6 +385,7 @@ impl BrowserCaptureStore {
                 && !r.deletion_pending
                 && r.media_removed_at.is_none()
                 && !state.active.contains_key(&r.id)
+                && state.replay_leases.get(&r.id).is_none_or(|lease| Arc::strong_count(lease) == 1)
                 && r.merge.as_ref().is_some_and(|m| {
                     m.status == BrowserMergeStatus::Complete
                         && m.source_cleanup

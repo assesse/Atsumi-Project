@@ -1857,7 +1857,7 @@ impl DownloadRepository for SqliteRepository {
     }
 
     fn download_active_count(&self) -> Result<u64, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let count = connection
             .query_row(
                 r#"
@@ -1910,147 +1910,7 @@ impl DownloadRepository for SqliteRepository {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(map_sqlite_error)?;
-        let mut job_refs = Vec::with_capacity(entry_ids.len());
-
-        for entry_id in entry_ids {
-            let Some(target) = read_download_target(&transaction, entry_id)? else {
-                return Ok(DownloadMutationOutcome::EntryNotFound(entry_id.clone()));
-            };
-
-            if target.linked_gallery_id.is_some() {
-                return Ok(DownloadMutationOutcome::InvalidState {
-                    entry_id: entry_id.clone(), state: target.state,
-                });
-            }
-
-            let duplicate_hidden = transaction
-                .query_row(
-                    r#"
-                        SELECT EXISTS (
-                            SELECT 1
-                            FROM duplicate_hidden_galleries hidden
-                            WHERE hidden.gallery_id = ?1
-                              AND NOT EXISTS (
-                                  SELECT 1
-                                  FROM exploration_restored_galleries restored
-                                  WHERE restored.gallery_id = hidden.gallery_id
-                              )
-                        )
-                    "#,
-                    [target.gallery_id],
-                    |row| row.get::<_, bool>(0),
-                )
-                .map_err(map_sqlite_error)?;
-            if duplicate_hidden {
-                return Ok(DownloadMutationOutcome::InvalidState {
-                    entry_id: entry_id.clone(),
-                    state: target.state,
-                });
-            }
-
-            if target.state.is_active() {
-                job_refs.push(JobRef {
-                    job_id: target.job_id,
-                    reused: true,
-                    worker_attempt: stored_u64(target.attempt, "download attempt")?,
-                });
-                continue;
-            }
-            if !target.state.is_retryable() || !target.state.allows_transition_to(JobState::Queued)
-            {
-                return Ok(DownloadMutationOutcome::InvalidState {
-                    entry_id: entry_id.clone(),
-                    state: target.state,
-                });
-            }
-
-            if let Some(active_job_id) =
-                active_job_for_gallery(&transaction, target.gallery_id, target.entry_id.as_str())?
-            {
-                job_refs.push(JobRef {
-                    job_id: active_job_id,
-                    reused: true,
-                    worker_attempt: stored_u64(target.attempt, "download attempt")?,
-                });
-                continue;
-            }
-
-            let job_revision = next_stored_revision(target.job_revision, "job revision")?;
-            let entry_revision = next_stored_revision(target.entry_revision, "download revision")?;
-            let attempt = next_stored_revision(target.attempt, "download attempt")?;
-            let changed_jobs = transaction
-                .execute(
-                    r#"
-                        UPDATE download_jobs
-                        SET revision = ?1,
-                            state = 'queued',
-                            attempt = ?2,
-                            completed_units = 0,
-                            total_units = 1,
-                            last_error_code = NULL,
-                            last_error_message = NULL,
-                            last_error_retryable = NULL,
-                            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                            started_at = NULL,
-                            finished_at = NULL
-                        WHERE job_id = ?3 AND revision = ?4 AND state = ?5
-                    "#,
-                    params![
-                        to_sql_integer(job_revision, "job revision")?,
-                        to_sql_integer(attempt, "download attempt")?,
-                        target.job_id,
-                        target.job_revision,
-                        target.state.to_string(),
-                    ],
-                )
-                .map_err(map_sqlite_error)?;
-            let changed_entries = transaction
-                .execute(
-                    r#"
-                        UPDATE download_entries
-                        SET revision = ?1,
-                            state = 'queued',
-                            progress = 0,
-                            review_kind = NULL,
-                            review_id = NULL,
-                            updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                        WHERE entry_id = ?2 AND revision = ?3 AND state = ?4
-                    "#,
-                    params![
-                        to_sql_integer(entry_revision, "download revision")?,
-                        target.entry_id.as_str(),
-                        target.entry_revision,
-                        target.state.to_string(),
-                    ],
-                )
-                .map_err(map_sqlite_error)?;
-            if changed_jobs != 1 || changed_entries != 1 {
-                return Err(RepositoryError::Other(format!(
-                    "download entry {:?} changed concurrently while retrying",
-                    target.entry_id.as_str()
-                )));
-            }
-            transaction
-                .execute(
-                    r#"
-                        INSERT INTO download_attempts (
-                            job_id, attempt, started_at
-                        ) VALUES (
-                            ?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-                        )
-                    "#,
-                    params![target.job_id, to_sql_integer(attempt, "download attempt")?],
-                )
-                .map_err(map_sqlite_error)?;
-            job_refs.push(JobRef {
-                job_id: target.job_id,
-                reused: false,
-                worker_attempt: attempt,
-            });
-        }
-
-        transaction.commit().map_err(map_sqlite_error)?;
-        Ok(DownloadMutationOutcome::Applied(job_refs))
+        retry_downloads_in_transaction(transaction, entry_ids)
     }
 
     fn download_cancel(
@@ -3525,79 +3385,45 @@ impl DownloadPipelineRepository for SqliteRepository {
     }
 
     fn pipeline_resume_interrupted(&self) -> Result<Vec<DownloadJobDescriptor>, RepositoryError> {
-        let entry_ids = {
-            let connection = self.connection()?;
-            let mut statement = connection
-                .prepare(
-                    r#"
-                        SELECT d.entry_id
-                        FROM download_entries d
-                        LEFT JOIN download_artifacts a ON a.entry_id = d.entry_id
-                        WHERE d.state = 'interrupted'
-                          AND (a.entry_id IS NOT NULL OR EXISTS (
-                              SELECT 1 FROM download_gallery_links l
-                              WHERE l.target_entry_id=d.entry_id AND l.created_target=1
-                          ))
-                        ORDER BY d.created_at ASC, d.entry_id ASC
-                    "#,
-                )
+        let outcome = {
+            let mut connection = self.connection()?;
+            let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(map_sqlite_error)?;
-            let rows = statement
-                .query_map([], |row| row.get::<_, String>(0))
-                .map_err(map_sqlite_error)?;
-            let mut entry_ids = Vec::new();
-            for row in rows {
-                entry_ids.push(
-                    DownloadEntryId::new(row.map_err(map_sqlite_error)?)
-                        .map_err(domain_corruption)?,
-                );
-            }
-            entry_ids
+            let entry_ids = {
+                // Requests exist before metadata and the first file do. Both builds also
+                // leave these entries interrupted when the previous process exits.
+                let mut statement = transaction.prepare(r#"
+                    SELECT d.entry_id FROM download_entries d
+                    JOIN download_jobs j ON j.entry_id=d.entry_id AND j.gallery_id=d.gallery_id
+                    WHERE d.state='interrupted' AND j.state='interrupted' AND j.linked_gallery_id IS NULL
+                    AND NOT EXISTS (
+                        SELECT 1 FROM duplicate_hidden_galleries h WHERE h.gallery_id=d.gallery_id
+                        AND NOT EXISTS (SELECT 1 FROM exploration_restored_galleries r WHERE r.gallery_id=h.gallery_id)
+                    )
+                    AND (EXISTS (SELECT 1 FROM download_artifacts a WHERE a.entry_id=d.entry_id)
+                        OR EXISTS (SELECT 1 FROM download_gallery_links l WHERE l.target_entry_id=d.entry_id AND l.created_target=1)
+                        OR (j.last_error_code='JOB_INTERRUPTED'
+                            AND EXISTS (SELECT 1 FROM download_queue_request_entries r
+                                WHERE r.entry_id=d.entry_id AND r.gallery_id=d.gallery_id)
+                            AND NOT EXISTS (SELECT 1 FROM download_entries newer
+                                WHERE newer.gallery_id=d.gallery_id AND newer.rowid>d.rowid)))
+                    ORDER BY d.created_at, d.entry_id
+                "#).map_err(map_sqlite_error)?;
+                let rows = statement.query_map([], |row| row.get::<_, String>(0)).map_err(map_sqlite_error)?;
+                let mut ids = Vec::new();
+                for row in rows {
+                    ids.push(DownloadEntryId::new(row.map_err(map_sqlite_error)?).map_err(domain_corruption)?);
+                }
+                ids
+            };
+            retry_downloads_in_transaction(transaction, &entry_ids)?
         };
-        if entry_ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let job_refs = match <Self as DownloadRepository>::download_retry(self, &entry_ids)? {
-            DownloadMutationOutcome::Applied(job_refs) => job_refs,
-            DownloadMutationOutcome::EntryNotFound(entry_id) => {
-                return Err(RepositoryError::Corrupt(format!(
-                    "interrupted download entry {entry_id} disappeared during resume"
-                )))
+        match outcome {
+            DownloadMutationOutcome::Applied(jobs) => self.pipeline_descriptors_for_jobs(&jobs),
+            DownloadMutationOutcome::EntryNotFound(id) | DownloadMutationOutcome::InvalidState { entry_id: id, .. } => {
+                Err(RepositoryError::Corrupt(format!("inconsistent interrupted download {id} during recovery")))
             }
-            DownloadMutationOutcome::InvalidState { entry_id, state } => {
-                return Err(RepositoryError::Other(format!(
-                    "interrupted download entry {entry_id} changed to {state} during resume"
-                )))
-            }
-        };
-        let connection = self.connection()?;
-        let mut descriptors = Vec::new();
-        for job_ref in job_refs.into_iter().filter(|job_ref| !job_ref.reused) {
-            let descriptor = connection
-                .query_row(
-                    r#"
-                        SELECT job_id, entry_id, gallery_id, attempt
-                        FROM download_jobs WHERE job_id = ?1
-                    "#,
-                    [&job_ref.job_id],
-                    |row| {
-                        Ok((
-                            row.get::<_, String>(0)?,
-                            row.get::<_, String>(1)?,
-                            row.get::<_, i64>(2)?,
-                            row.get::<_, i64>(3)?,
-                        ))
-                    },
-                )
-                .map_err(map_sqlite_error)?;
-            descriptors.push(DownloadJobDescriptor {
-                job_id: descriptor.0,
-                entry_id: descriptor.1,
-                gallery_id: GalleryId::new(descriptor.2).map_err(domain_corruption)?,
-                worker_attempt: stored_u64(descriptor.3, "download attempt")?,
-            });
         }
-        Ok(descriptors)
     }
 
     fn pipeline_descriptors_for_jobs(
@@ -7219,6 +7045,153 @@ fn read_download_target(
         error_code,
         error_message,
     }))
+}
+
+fn retry_downloads_in_transaction(
+    transaction: Transaction<'_>,
+    entry_ids: &[DownloadEntryId],
+) -> Result<DownloadMutationOutcome<Vec<JobRef>>, RepositoryError> {
+    let mut job_refs = Vec::with_capacity(entry_ids.len());
+
+    for entry_id in entry_ids {
+        let Some(target) = read_download_target(&transaction, entry_id)? else {
+            return Ok(DownloadMutationOutcome::EntryNotFound(entry_id.clone()));
+        };
+
+        if target.linked_gallery_id.is_some() {
+            return Ok(DownloadMutationOutcome::InvalidState {
+                entry_id: entry_id.clone(), state: target.state,
+            });
+        }
+
+        let duplicate_hidden = transaction
+            .query_row(
+                r#"
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM duplicate_hidden_galleries hidden
+                        WHERE hidden.gallery_id = ?1
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM exploration_restored_galleries restored
+                              WHERE restored.gallery_id = hidden.gallery_id
+                          )
+                    )
+                "#,
+                [target.gallery_id],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(map_sqlite_error)?;
+        if duplicate_hidden {
+            return Ok(DownloadMutationOutcome::InvalidState {
+                entry_id: entry_id.clone(),
+                state: target.state,
+            });
+        }
+
+        if target.state.is_active() {
+            job_refs.push(JobRef {
+                job_id: target.job_id,
+                reused: true,
+                worker_attempt: stored_u64(target.attempt, "download attempt")?,
+            });
+            continue;
+        }
+        if !target.state.is_retryable() || !target.state.allows_transition_to(JobState::Queued)
+        {
+            return Ok(DownloadMutationOutcome::InvalidState {
+                entry_id: entry_id.clone(),
+                state: target.state,
+            });
+        }
+
+        if let Some(active_job_id) =
+            active_job_for_gallery(&transaction, target.gallery_id, target.entry_id.as_str())?
+        {
+            job_refs.push(JobRef {
+                job_id: active_job_id,
+                reused: true,
+                worker_attempt: stored_u64(target.attempt, "download attempt")?,
+            });
+            continue;
+        }
+
+        let job_revision = next_stored_revision(target.job_revision, "job revision")?;
+        let entry_revision = next_stored_revision(target.entry_revision, "download revision")?;
+        let attempt = next_stored_revision(target.attempt, "download attempt")?;
+        let changed_jobs = transaction
+            .execute(
+                r#"
+                    UPDATE download_jobs
+                    SET revision = ?1,
+                        state = 'queued',
+                        attempt = ?2,
+                        completed_units = 0,
+                        total_units = 1,
+                        last_error_code = NULL,
+                        last_error_message = NULL,
+                        last_error_retryable = NULL,
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                        started_at = NULL,
+                        finished_at = NULL
+                    WHERE job_id = ?3 AND revision = ?4 AND state = ?5
+                "#,
+                params![
+                    to_sql_integer(job_revision, "job revision")?,
+                    to_sql_integer(attempt, "download attempt")?,
+                    target.job_id,
+                    target.job_revision,
+                    target.state.to_string(),
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+        let changed_entries = transaction
+            .execute(
+                r#"
+                    UPDATE download_entries
+                    SET revision = ?1,
+                        state = 'queued',
+                        progress = 0,
+                        review_kind = NULL,
+                        review_id = NULL,
+                        updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    WHERE entry_id = ?2 AND revision = ?3 AND state = ?4
+                "#,
+                params![
+                    to_sql_integer(entry_revision, "download revision")?,
+                    target.entry_id.as_str(),
+                    target.entry_revision,
+                    target.state.to_string(),
+                ],
+            )
+            .map_err(map_sqlite_error)?;
+        if changed_jobs != 1 || changed_entries != 1 {
+            return Err(RepositoryError::Other(format!(
+                "download entry {:?} changed concurrently while retrying",
+                target.entry_id.as_str()
+            )));
+        }
+        transaction
+            .execute(
+                r#"
+                    INSERT INTO download_attempts (
+                        job_id, attempt, started_at
+                    ) VALUES (
+                        ?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    )
+                "#,
+                params![target.job_id, to_sql_integer(attempt, "download attempt")?],
+            )
+            .map_err(map_sqlite_error)?;
+        job_refs.push(JobRef {
+            job_id: target.job_id,
+            reused: false,
+            worker_attempt: attempt,
+        });
+    }
+
+    transaction.commit().map_err(map_sqlite_error)?;
+    Ok(DownloadMutationOutcome::Applied(job_refs))
 }
 
 fn active_job_for_gallery(

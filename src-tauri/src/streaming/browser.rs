@@ -1018,10 +1018,18 @@ impl OfficialBrowser {
         data_dir: PathBuf,
         tools: Option<super::browser_merge::MediaTools>,
     ) -> Result<Self, StreamError> {
+        Self::new_with_priority(data_dir, tools, Arc::new(|_| false))
+    }
+
+    pub(crate) fn new_with_priority(
+        data_dir: PathBuf,
+        tools: Option<super::browser_merge::MediaTools>,
+        priority_work: super::browser_merge::PriorityWork,
+    ) -> Result<Self, StreamError> {
         let store = Arc::new(Mutex::new(BrowserCaptureStore::new_deferred(&data_dir)?));
         let replay_assets = super::replay_assets::ReplayAssetCache::new(&data_dir, tools.is_some())
             .unwrap_or_else(|_| super::replay_assets::ReplayAssetCache::disabled());
-        let merges = super::browser_merge::BrowserMergeWorker::start(store.clone(), tools)?;
+        let merges = super::browser_merge::BrowserMergeWorker::start_with_priority(store.clone(), tools, priority_work)?;
         // Preserve the old choice file, but never reconnect the grid on a new
         // PC or silently replace the direct-playback identity with Edge/Chrome.
         let view = ViewState::default();

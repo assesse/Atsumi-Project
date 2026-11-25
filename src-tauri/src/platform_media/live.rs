@@ -2162,7 +2162,9 @@ mod tests {
         let service = PlatformMediaService::new(root.join("data"), tools.clone(), None).unwrap();
         let interrupted = service.jobs(Some("youtube")).pop().unwrap();
         assert_eq!(interrupted.state, "interrupted");
-        service.retry(&job.job_id, interrupted.revision).unwrap();
+        let (id, revision) = service.idle_merge_candidate().expect("local recording should resume on idle");
+        assert_eq!((&id, revision), (&job.job_id, interrupted.revision));
+        service.retry_inner(&id, revision, true).unwrap();
         let await_completed = |service: &PlatformMediaService| {
             let started = Instant::now();
             loop {

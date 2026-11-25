@@ -268,7 +268,7 @@ impl BrowserCaptureStore {
             // Normalize the verified progressive recording's final tail before export.
             // Never mix normalized ranges and raw fragments with different clocks.
             let final_tail = needs_final_tail(r);
-            if (r.status != BrowserRecordingStatus::Recording && !final_tail)
+            if (r.status != BrowserRecordingStatus::Recording && (!final_tail || !state.active.is_empty()))
                 || r.deletion_pending
                 || r.media_removed_at.is_some()
                 || state.unverified.contains(&r.id)

@@ -55,10 +55,19 @@ pub struct MediaTools {
     pub ffprobe: PathBuf,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum MaintenanceProbe {
+    Running,
+    Admission { check_platform: bool },
+}
+pub(crate) type PriorityWork = Arc<dyn Fn(MaintenanceProbe) -> bool + Send + Sync>;
+const PRIORITY_POLL: Duration = Duration::from_secs(2);
+
 struct WorkerState {
     wake: bool,
 }
 struct Shared {
+    priority_work: PriorityWork,
     store: Arc<Mutex<BrowserCaptureStore>>,
     tools: Option<MediaTools>,
     cancel: AtomicBool,
@@ -75,8 +84,16 @@ impl BrowserMergeWorker {
         store: Arc<Mutex<BrowserCaptureStore>>,
         tools: Option<MediaTools>,
     ) -> Result<Self, StreamError> {
-        Self::start_with_mode(store, tools, false)
+        Self::start_with_priority(store, tools, Arc::new(|_| false))
     }
+    pub(crate) fn start_with_priority(
+        store: Arc<Mutex<BrowserCaptureStore>>,
+        tools: Option<MediaTools>,
+        priority_work: PriorityWork,
+    ) -> Result<Self, StreamError> {
+        Self::start_with_mode(store, tools, false, priority_work)
+    }
+
     /// For the explicit offline maintenance CLI, after it checks the app is
     /// closed. One stopped recording only; keeps every validation/cleanup gate.
     pub fn start_offline_maintenance(
@@ -94,14 +111,16 @@ impl BrowserMergeWorker {
                 "오프라인 복구는 종료된 녹화 한 개만 처리할 수 있습니다.",
             ));
         }
-        Self::start_with_mode(store, tools, true)
+        Self::start_with_mode(store, tools, true, Arc::new(|_| false))
     }
     fn start_with_mode(
         store: Arc<Mutex<BrowserCaptureStore>>,
         tools: Option<MediaTools>,
         offline: bool,
+        priority_work: PriorityWork,
     ) -> Result<Self, StreamError> {
         let shared = Arc::new(Shared {
+            priority_work,
             store,
             tools,
             cancel: AtomicBool::new(false),
@@ -174,6 +193,7 @@ enum JobKind {
 fn next_job(
     store: &BrowserCaptureStore,
     cursor: &mut usize,
+    priority_busy: bool,
 ) -> Result<Option<(JobKind, BrowserMergeJob)>, StreamError> {
     const KINDS: [JobKind; 5] = [
         JobKind::Final,
@@ -183,6 +203,9 @@ fn next_job(
         JobKind::Offload,
     ];
     let live = store.has_active();
+    if priority_busy && !live {
+        return Ok(None);
+    }
     for step in 0..KINDS.len() {
         let index = (*cursor + step) % KINDS.len();
         if live
@@ -230,12 +253,18 @@ impl BackgroundGuard {
         let handle = thread::Builder::new()
             .name("browser-merge-preempt".into())
             .spawn(move || {
+                let mut next_probe = Instant::now();
                 while !finished.load(Ordering::Acquire) {
                     if shared.cancel.load(Ordering::Acquire) {
                         token.store(true, Ordering::Release);
                         break;
                     }
-                    if store.has_active() {
+                    let now = Instant::now();
+                    let priority_busy = now >= next_probe && {
+                        next_probe = now + PRIORITY_POLL;
+                        (shared.priority_work)(MaintenanceProbe::Running)
+                    };
+                    if store.has_active() || priority_busy {
                         flag.store(true, Ordering::Release);
                         token.store(true, Ordering::Release);
                         break;
@@ -277,16 +306,35 @@ fn worker(shared: Arc<Shared>) {
     }
     let history_ready_at = Instant::now() + HISTORY_RECOVERY_GRACE;
     let mut job_cursor = 0;
-    // Do not hydrate the whole display-only history through the manual retry API.
-    if let Ok(store) = shared.store.lock() {
-        let _ = store.retry_loaded_merges(None);
-    }
+    let mut initial_retry = true;
+    let mut next_platform_check = history_ready_at;
+    let mut next_blocked_retry = history_ready_at + Duration::from_secs(600);
     loop {
         if shared.cancel.load(Ordering::Acquire) {
             break;
         }
+        // Query other services outside either recording-store lock.
+        let capture_busy = shared.store.lock().map_or(true, |store| store.has_active());
+        let now = Instant::now();
+        let check_platform = !capture_busy && now >= next_platform_check;
+        if check_platform {
+            next_platform_check = now + Duration::from_secs(30);
+        }
+        let priority_busy = (shared.priority_work)(MaintenanceProbe::Admission { check_platform });
+        let idle = !priority_busy && !capture_busy;
         let mut recovered_history = false;
-        if Instant::now() >= history_ready_at {
+        if idle && (initial_retry || now >= next_blocked_retry) {
+            if let Some(store) = shared.store.lock().ok().map(|store| store.clone()) {
+                if initial_retry {
+                    let _ = store.retry_loaded_merges(None);
+                    initial_retry = false;
+                } else {
+                    let _ = store.retry_blocked_maintenance();
+                }
+                next_blocked_retry = now + Duration::from_secs(600);
+            }
+        }
+        if idle && now >= history_ready_at {
             let store = shared.store.lock().ok().map(|store| store.clone());
             if let Some(store) = store {
                 match store.recover_next_pending() {
@@ -305,7 +353,7 @@ fn worker(shared: Arc<Shared>) {
             .store
             .lock()
             .ok()
-            .and_then(|store| next_job(&store, &mut job_cursor).ok())
+            .and_then(|store| next_job(&store, &mut job_cursor, priority_busy).ok())
             .flatten();
         let _progress = work.as_ref().map(|(_, job)| browser_store::work_progress::Scope::enter(&job.recording.id, "preparing"));
         if let Some((JobKind::Archive, job)) = work {
@@ -339,7 +387,11 @@ fn worker(shared: Arc<Shared>) {
             continue;
         }
         if let Some((JobKind::Part, job)) = work {
-            let result = merge_recording(&job, shared.tools.as_ref(), &shared.cancel);
+            let Some(store) = shared.store.lock().ok().map(|s| s.clone()) else { continue };
+            let guard = (job.recording.status != browser_store::BrowserRecordingStatus::Recording)
+                .then(|| BackgroundGuard::new(&shared, store));
+            let cancel = guard.as_ref().map_or(&shared.cancel, |g| g.cancel.as_ref());
+            let result = merge_recording(&job, shared.tools.as_ref(), cancel);
             if let Ok(store) = shared.store.lock() {
                 let _ = store.finish_part_job(&job, result);
             }
@@ -402,6 +454,8 @@ fn worker(shared: Arc<Shared>) {
         let until_history = history_ready_at.saturating_duration_since(Instant::now());
         let wait = if !until_history.is_zero() {
             until_history.min(Duration::from_secs(30))
+        } else if priority_busy {
+            PRIORITY_POLL
         } else if recovered_history {
             Duration::from_secs(1)
         } else {
@@ -1407,13 +1461,14 @@ mod tests {
         // The newest contract prioritizes bounded live SSD evacuation over a
         // potentially hours-long final decode. Final export resumes when idle.
         let mut cursor = 2;
-        let (kind, part) = next_job(&store, &mut cursor).unwrap().unwrap();
+        let (kind, part) = next_job(&store, &mut cursor, true).unwrap().unwrap();
         assert_eq!(kind, JobKind::Part);
         assert_eq!(part.recording.id, live.id);
         browser_store::parts::tests::publish_fixture(&store, &part);
-        assert!(next_job(&store, &mut cursor).unwrap().is_none());
+        assert!(next_job(&store, &mut cursor, false).unwrap().is_none());
         store.finish(&live.id, false, None).unwrap();
-        let (kind, final_job) = next_job(&store, &mut cursor).unwrap().unwrap();
+        assert!(next_job(&store, &mut cursor, true).unwrap().is_none());
+        let (kind, final_job) = next_job(&store, &mut cursor, false).unwrap().unwrap();
         assert_eq!(kind, JobKind::Final);
         assert!([live.id, stopped.id].contains(&final_job.recording.id));
         assert!(final_job.part.is_none());
@@ -1422,7 +1477,10 @@ mod tests {
     fn background_job_token_is_preempted_without_stopping_capture_or_global_worker() {
         let dir = tempfile::tempdir().unwrap();
         let store = BrowserCaptureStore::new(dir.path()).unwrap();
+        let busy = Arc::new(AtomicBool::new(false));
+        let observed = busy.clone();
         let shared = Arc::new(Shared {
+            priority_work: Arc::new(move |_| observed.load(Ordering::Acquire)),
             store: Arc::new(Mutex::new(store.clone())),
             tools: None,
             cancel: AtomicBool::new(false),
@@ -1443,6 +1501,16 @@ mod tests {
         assert!(store.has_active());
         store.finish(&record.id, false, None).unwrap();
         drop(guard);
+        busy.store(true, Ordering::Release);
+        let for_download = BackgroundGuard::new(&shared, store.clone());
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while !for_download.cancel.load(Ordering::Acquire) && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(for_download.preempted.load(Ordering::Acquire));
+        assert!(!shared.cancel.load(Ordering::Acquire));
+        drop(for_download);
+        busy.store(false, Ordering::Release);
         let shutdown = BackgroundGuard::new(&shared, store);
         shared.cancel.store(true, Ordering::Release);
         let deadline = Instant::now() + Duration::from_secs(3);
@@ -1969,6 +2037,9 @@ mod tests {
             journal
         );
         let replay = store.replay_source(&recording.id).unwrap();
+        assert!(replay.media.metadata().unwrap().len() > 0);
+        assert!(store.take_cleanup_job().unwrap().is_none());
+        drop(replay);
         let cleanup_job = store.take_cleanup_job().unwrap().unwrap();
         let result =
             browser_store::cleanup::remove_verified_sources(&cleanup_job, &AtomicBool::new(false));
@@ -1980,7 +2051,7 @@ mod tests {
                 .join(format!("segment-{index:012}.mp4"))
                 .exists());
         }
-        assert!(replay.media.metadata().unwrap().len() > 0);
+        assert!(store.replay_source(&recording.id).unwrap().media.metadata().unwrap().len() > 0);
         let reopened = BrowserCaptureStore::new(dir.path())
             .unwrap()
             .snapshot()

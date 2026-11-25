@@ -66,6 +66,9 @@ impl Drop for JobOwnership {
             .is_some_and(|token| Arc::ptr_eq(token, &self.cancel))
         {
             state.cancel.remove(&self.id);
+            if state.idle_merge.as_ref().is_some_and(|(id, _)| id == &self.id) {
+                state.idle_merge = None;
+            }
         }
         self.service.inner.ready.notify_all();
     }
@@ -90,7 +93,8 @@ impl PlatformMediaService {
         if !job.active() {
             return;
         }
-        job.state = if state.shutting_down {
+        let yielded = state.idle_merge.as_ref().is_some_and(|(owner, yielded)| owner == id && *yielded);
+        job.state = if state.shutting_down || yielded {
             "interrupted"
         } else if cancel.load(Ordering::Acquire) {
             "cancelled"
@@ -102,6 +106,8 @@ impl PlatformMediaService {
         if !encoded::raw_youtube_integrity_failed(&job) {
             job.error = Some(if state.shutting_down {
                 "앱 종료로 중단됐습니다. 원본은 보존했습니다.".into()
+            } else if yielded {
+                "다른 작업이 끝나면 녹화 병합을 이어갑니다.".into()
             } else if error == "cancelled" {
                 "취소됐습니다. 원본은 보존했습니다.".into()
             } else {
@@ -167,6 +173,26 @@ mod tests {
             state.cancel.insert(job.job_id.clone(), cancel.clone());
         }
         (service, job, cancel)
+    }
+    #[test]
+    fn background_yield_can_resume_but_explicit_cancel_stays_cancelled() {
+        for explicit in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let (service, job, token) = fixture(dir.path());
+            let owner = JobOwnership::new(service.clone(), job.job_id.clone(), token.clone());
+            service.inner.state.lock().unwrap().idle_merge = Some((job.job_id.clone(), false));
+            service.yield_idle_merge(&job.job_id);
+            assert!(token.load(Ordering::Acquire));
+            if explicit {
+                service.cancel(&job.job_id, job.revision).unwrap();
+            }
+            service.terminal_error(&job.job_id, &token, "cancelled");
+            drop(owner);
+            assert!(service.idle_merge_id().is_none());
+            assert_eq!(service.jobs(None)[0].state, if explicit { "cancelled" } else { "interrupted" });
+            assert!(service.idle_merge_candidate().is_none(), "VOD must never be automatically retried");
+            service.shutdown();
+        }
     }
     #[test]
     fn failed_terminal_journal_does_not_strand_dead_work_or_destroy_last_record() {

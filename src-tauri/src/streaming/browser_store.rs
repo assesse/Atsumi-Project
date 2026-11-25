@@ -955,6 +955,25 @@ impl BrowserCaptureStore {
         self.retry_loaded_merges(id)
     }
 
+    /// Transiently blocked exports and verified-source cleanup can become ready again
+    /// when a disk returns or a playback lease ends. Do not retry failed validation.
+    pub(crate) fn retry_blocked_maintenance(&self) -> Result<(), StreamError> {
+        let ids = {
+            let state = self.lock()?;
+            state.recordings.iter().filter(|r| {
+                !state.unverified.contains(&r.id) && !r.deletion_pending && r.media_removed_at.is_none()
+                    && r.status != BrowserRecordingStatus::Recording && r.segment_count > 0
+                    && r.merge.as_ref().is_some_and(|m| m.status == BrowserMergeStatus::Blocked
+                        || (m.status == BrowserMergeStatus::Complete && m.source_cleanup.as_ref()
+                            .is_some_and(|c| c.status == BrowserSourceCleanupStatus::Blocked)))
+            }).map(|r| r.id.clone()).collect::<Vec<_>>()
+        };
+        for id in ids {
+            self.retry_loaded_merges(Some(&id))?;
+        }
+        Ok(())
+    }
+
     /// Startup must not eagerly revalidate every archived display-only snapshot.
     pub(crate) fn retry_loaded_merges(&self, id: Option<&str>) -> Result<usize, StreamError> {
         let mut state = self.lock()?;
