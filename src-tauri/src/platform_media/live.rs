@@ -2066,10 +2066,9 @@ mod tests {
             .parent()
             .unwrap()
             .to_path_buf();
-        let root = repo
-            .join(".runtime/platform-media-recovery-tests")
-            .join(uuid::Uuid::new_v4().to_string());
-        fs::create_dir_all(&root).unwrap();
+        // Keep synthetic job paths short enough for Windows media tools even in a nested checkout.
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path();
         let bin = repo
             .join(".runtime/media-tools/ffmpeg-n9.0.1-29-gad500d59cb-win64-lgpl-shared-9.0/bin");
         // Nonexistent network-tool paths prove a recovery does not invoke extraction.
