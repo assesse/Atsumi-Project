@@ -106,8 +106,8 @@ describe('source-owned X viewer actions', () => {
     try {
       const second = post + '/mediaViewer?mediaIndex=2';
       const media = a.list([{id:'123456',url:href},{id:'123456',url:second},{id:'654321'},{id:'876543',type:'photo'}]);
-      const first = a.mountTile(media[0]), copy = a.mountTile(media[0]), next = a.mountTile(media[1]);
-      const missing = a.mountTile(media[2]);
+      const first = a.mountTile(media[0]!), copy = a.mountTile(media[0]!), next = a.mountTile(media[1]!);
+      const missing = a.mountTile(media[2]!);
       expect(a.api.diagnosis(missing.root, '/alice/status/654321')).toBe('entry-no-url');
       expect(a.api.diagnosis(missing.root, '/alice/status/876543')).toBe('entry-not-observed');
       first.unmount();
@@ -200,20 +200,20 @@ describe('source-owned X viewer actions', () => {
       {tweetId:'654321', type:'video', authorScreenName:'alice', promotedContent:{id:'ad'}, mediaPermalink:undefined, getMediaSessionMetadata:()=>undefined},
       {tweetId:'777777', type:'animated_gif', authorScreenName:'alice', mediaPermalink:undefined, getMediaSessionMetadata:()=>undefined},
     ]).props.media as Record<string, any>[];
-    expect(items[0].immersiveViewerUrl).toBe('/alice/status/123456/mediaviewer?mediaIndex=1');
-    expect(items[1].immersiveViewerUrl).toBeUndefined();
-    expect(items[2].immersiveViewerUrl).toBeUndefined();
+    expect(items[0]!.immersiveViewerUrl).toBe('/alice/status/123456/mediaviewer?mediaIndex=1');
+    expect(items[1]!.immersiveViewerUrl).toBeUndefined();
+    expect(items[2]!.immersiveViewerUrl).toBeUndefined();
 
     const single = address.list([
       {tweetId:'123456', type:'video', authorScreenName:'alice', mediaPermalink:undefined, getMediaSessionMetadata:()=>undefined},
     ]).props.media as Record<string, any>[];
-    expect(single[0].immersiveViewerUrl).toBe('/alice/status/123456/mediaviewer');
+    expect(single[0]!.immersiveViewerUrl).toBe('/alice/status/123456/mediaviewer');
 
     const root = document.createElement('div'), host = document.createElement('div'), button = document.createElement('button');
     root.dataset.testid = 'videoPlayer'; root.append(button); host.append(root); document.body.append(host);
     try {
       const navigate = vi.fn((url: string) => { location.href = new URL(url, location).href; });
-      const rendered = new controls.Player({...single[0]}, {push:navigate, location})._renderInlinePlayer();
+      const rendered = new controls.Player({...single[0]!}, {push:navigate, location})._renderInlinePlayer();
       expect(rendered.props.children.props.uiStack.kind).toBe('desktop');
       host.setAttribute('data-atsumi-viewer-owner', '');
       rendered.props.ref(host);
@@ -229,12 +229,12 @@ describe('source-owned X viewer actions', () => {
     const onProfile = address.list([
       {tweetId:'123456', type:'video', authorScreenName:'alice', mediaPermalink:undefined, getMediaSessionMetadata:()=>undefined},
     ]).props.media as Record<string, any>[];
-    expect(onProfile[0].immersiveViewerUrl).toBe('/alice/status/123456/mediaviewer?mode=profile');
+    expect(onProfile[0]!.immersiveViewerUrl).toBe('/alice/status/123456/mediaviewer?mode=profile');
 
     available = false;
     const disabled = address.list([
       {tweetId:'123456', type:'video', authorScreenName:'alice', mediaPermalink:undefined, getMediaSessionMetadata:()=>undefined},
     ]).props.media as Record<string, any>[];
-    expect(disabled[0].immersiveViewerUrl).toBeUndefined();
+    expect(disabled[0]!.immersiveViewerUrl).toBeUndefined();
   });
 });
