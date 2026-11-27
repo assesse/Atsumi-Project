@@ -497,6 +497,7 @@
     dismissMenus,
     archivePhotoOwner,
     videoLayerReady:nativeVideoReady,
+    videoPostPath:videoTransitionPost,
     videoSourceTarget:videoSourceRoot,
     videoInput(event, video) {
       if(!event?.isTrusted || !visible || !readyPublished || document.hidden || !routeOwnerCurrent()

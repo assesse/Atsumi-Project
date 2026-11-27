@@ -160,6 +160,7 @@ fn public_asset(value: &str) -> bool {
 mod delivery;
 pub(super) fn initialization(config: &str) -> String {
     [
+        include_str!("x_surface_video_entry.js"),
         include_str!("x_surface_route_adapter.js"),
         include_str!("x_surface_source_delivery.js"),
     ]

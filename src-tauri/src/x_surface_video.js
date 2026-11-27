@@ -9,13 +9,14 @@
   const immersive=()=>viewer()||!!document.fullscreenElement;
   const controls='button,[role="button"],[role="slider"],input,textarea,select,[contenteditable="true"],[role="menu"],[role="listbox"],[data-atsumi-x-action]';
   let lastVideo=null, timer=0;
-  const presented=node=>{
+  const visibleNode=(node,minWidth,minHeight)=>{
     if(!node?.isConnected||node.ownerDocument!==document||node.closest('[hidden],[aria-hidden="true"],[inert]')||window.__atsumiXAds?.blocked(node))return false;
     for(let n=node,depth=0;n&&depth<64;n=n.parentElement,depth++){
       const s=getComputedStyle(n);if(s.display==='none'||s.visibility==='hidden'||s.visibility==='collapse'||s.opacity==='0')return false;
     }
-    const b=node.getBoundingClientRect();return b.width>40&&b.height>30&&b.bottom>0&&b.right>0&&b.top<innerHeight&&b.left<innerWidth;
+    const b=node.getBoundingClientRect();return b.width>minWidth&&b.height>minHeight&&b.bottom>0&&b.right>0&&b.top<innerHeight&&b.left<innerWidth;
   };
+  const presented=node=>visibleNode(node,40,30);
   const scrubber=root=>root.querySelector('[data-testid="scrubber"]')||[...root.querySelectorAll('[role="slider"],input[type="range"]')].find(n=>/^(?:scrubber|seek|seek bar|스크러버|탐색|シークバー)$/i.test(label(n)));
   const focusVideo=video=>{if(!video.hasAttribute('tabindex'))video.setAttribute('tabindex','-1');video.focus({preventScroll:true});};
   let entryFocusUntil=0, entryControl=null;
@@ -49,10 +50,79 @@
   };
   const label=node=>(node.getAttribute('aria-label')||node.getAttribute('title')||'').trim();
   const fullButton=target=>{
-    const button=target?.closest('button,[role="button"]');if(!button||!player(button))return null;
+    const button=target?.closest('button,[role="button"],a[href]');if(!button||!player(button))return null;
     return /^(?:full\s?screen|enter full\s?screen|전체\s?화면(?:으로 보기)?|フルスクリーン|全画面表示)$/i.test(label(button))?button:null;
   };
-  const ownControl=target=>!!target?.closest(controls+',a[href],[data-testid="scrubber"]');
+  function publishedViewerLink(root) {
+    const post = api()?.videoPostPath?.(root);
+    if (!post || root.querySelectorAll('video').length > 1) return null;
+    const boundary = 'article[data-testid="tweet"],[data-testid="quoteTweet"],[data-testid="quotedTweet"]';
+    const article = root.closest(boundary);
+    const onlyPlayer = article && [...article.querySelectorAll('[data-testid="videoPlayer"]')].filter(node => node.closest(boundary) === article);
+    const scope = onlyPlayer?.length === 1 && onlyPlayer[0] === root ? article : root;
+    const links = scope.querySelectorAll('a[href*="/mediaviewer" i]');
+    if (links.length > 32) return null;
+    const origin = new URL(location.href).origin;
+    let match = null;
+    for (const link of links) {
+      const owner = player(link);
+      if (owner !== root && (owner || scope === root || link.closest(boundary) !== article) ||
+        link.hasAttribute('download') || link.target && link.target !== '_self'
+        || link.closest('[aria-disabled="true"],[disabled]') || !visibleNode(link, 0, 0)) continue;
+      let url;
+      try { url = new URL(link.getAttribute('href'), location.href); } catch { continue; }
+      const path = url.pathname.match(/^(\/[a-z0-9_]{1,15}\/status\/([1-9]\d{4,24}))\/mediaviewer\/?$/i);
+      if (!path || url.origin !== origin || url.username || url.password || url.hash
+        || path[1].toLowerCase() !== post.toLowerCase() || url.searchParams.getAll('currentTweet').some(id => id !== path[2])) continue;
+      if (match && match.href !== link.href) return null;
+      match = link;
+    }
+    return match;
+  }
+
+  function enterViewer(event, full) {
+    if (immersive() || !visibleNode(full, 0, 0)) return;
+    entryControl = full;
+    entryFocusUntil = performance.now() + 2000;
+    // Let a real viewer anchor receive the physical gesture, including its router state.
+    const anchor = full.closest('a[href]');
+    if (anchor && /\/mediaviewer\/?(?:[?#]|$)/i.test(anchor.getAttribute('href'))) return;
+    const root = player(full);
+    const bridge = window.__atsumiXVideoEntry, postPath = api()?.videoPostPath?.(root);
+    if (config.diagnostics === true) probe(bridge?.diagnosis?.(root, postPath) || 'entry-no-bridge');
+    const offered = bridge?.open(event, root, full, postPath);
+    if (offered != null) {
+      if (offered) stop(event);
+      return;
+    }
+    if (anchor) return;
+    const link = publishedViewerLink(root);
+    if (link) {
+      link.click();
+      stop(event);
+      return;
+    }
+    if (!api()?.sourceMediaViewerAvailable?.()) return;
+    const video = pick(full);
+    if (!video) return;
+    const box = video.getBoundingClientRect();
+    const x = (Math.max(0, box.left) + Math.min(innerWidth, box.right)) / 2;
+    const y = (Math.max(0, box.top) + Math.min(innerHeight, box.bottom)) / 2;
+    const hit = document.elementFromPoint(x, y);
+    if (!hit || player(hit) !== root || hit.closest('a[href]') || api()?.videoSourceTarget?.(hit)
+      || window.__atsumiXAds?.blocked(hit)) return;
+    const control = hit.closest(controls + ',[data-testid="scrubber"]');
+    if (control && !control.contains(video) || !api().videoInput(event, video)) return;
+
+    // The original X background entry synchronously pushes its viewer route.
+    // Leave the trusted fullscreen action intact when X no longer handles it.
+    const href = location.href;
+    for (const type of ['mousedown', 'mouseup', 'click']) {
+      if (!hit.isConnected || player(hit) !== root || location.href !== href || immersive()) break;
+      hit.dispatchEvent(new MouseEvent(type, {bubbles:true, cancelable:true, button:0, clientX:x, clientY:y}));
+    }
+    if (immersive()) stop(event);
+  }
   const background=(target,event)=>{
     if(!target||api()?.videoSourceTarget?.(target))return null;
     if(!player(target)){if(immersive())probe('click-no-root');return null;}
@@ -263,25 +333,10 @@
     if(!can(event)||event.button!==0)return;
     if(seekClick(event))return;
     const target=event.target instanceof Element?event.target:null;
-    const full=fullButton(target),video=full?pick(full):background(target,event);
+    const full=fullButton(target);
+    if(full){enterViewer(event,full);return;}
+    const video=background(target,event);
     if(!video){if(immersive())probe('click-no-video');return;}
-    if(full){
-      // Move the original background entry point to the explicit fullscreen
-      // action, retaining X's own route/context and related-video controller.
-      if(!immersive()&&api()?.sourceMediaViewerAvailable?.()){
-        stop(event);if(!api().videoInput(event,video))return;
-        entryFocusUntil=performance.now()+2000;entryControl=full;
-        const root=player(video),box=video.getBoundingClientRect();
-        const hit=document.elementFromPoint(Math.max(1,Math.min(innerWidth-1,box.left+box.width/2)),Math.max(1,Math.min(innerHeight-1,box.top+box.height/2)));
-        if(!hit||!root.contains(hit)||ownControl(hit)&&!hit.closest(controls)?.contains(video)&&hit!==root){full.click();return;}
-        const path=location.pathname,options={bubbles:true,cancelable:true,button:0,clientX:box.left+box.width/2,clientY:box.top+box.height/2};
-        hit.dispatchEvent(new MouseEvent('mousedown',options));
-        hit.dispatchEvent(new MouseEvent('mouseup',options));
-        if(location.pathname===path)hit.dispatchEvent(new MouseEvent('click',options));
-        return;
-      }
-      return; // Original browser fullscreen remains available if source drifts.
-    }
     stop(event);
     if(api()?.videoInput(event,video)){probe('click-accepted');focusVideo(video);toggle(video);wake(video);}else probe('click-denied');
   },true);

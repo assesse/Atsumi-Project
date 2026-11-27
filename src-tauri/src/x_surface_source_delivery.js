@@ -31,8 +31,14 @@
   }
   function forward(fn, receiver, args) {
     depth++;
-    try { return Reflect.apply(fn, receiver, args); }
-    finally { depth--; }
+    try {
+      const bridge = window.__atsumiXVideoEntry;
+      const original = args[0];
+      const packet = bridge?.prepare(original) ?? original;
+      const result = Reflect.apply(fn, receiver, packet === original ? args : [packet]);
+      if (packet !== original) bridge.registered(packet);
+      return result;
+    } finally { depth--; }
   }
   function cleanup() {
     if (closed) return;
@@ -50,12 +56,19 @@
   function release() {
     cleanup();
   }
-  function finish(kind) { states.get(kind).closed=true;if([...states.values()].every(state=>state.closed))cleanup(); }
+  function finished() {
+    return [...states.values()].every(state => state.closed) && !window.__atsumiXVideoEntry?.waiting();
+  }
+  function finish(kind) { states.get(kind).closed=true; if (finished()) cleanup(); }
   function wrap(fn) {
     return function (...args) {
       if (closed || depth || args.length !== 1) return Reflect.apply(fn, this, args);
       const kind=target(args[0]),state=states.get(kind);
-      if(!state)return Reflect.apply(fn,this,args);
+      if (!state) {
+        const result = forward(fn, this, args);
+        if (finished()) cleanup();
+        return result;
+      }
       if(state.closed)return state.delivered?queue.length:Reflect.apply(fn,this,args);
       if (delivery) {
         if(delivery!==kind)throw new Error('Unexpected public source packet');
@@ -74,8 +87,9 @@
       }
       // Never hold a completed network script: webpack's onload would reject
       // its still-unregistered chunk before a later compilation could arrive.
+      const result = forward(fn, this, args);
       finish(kind);
-      return Reflect.apply(fn, this, args);
+      return result;
     };
   }
   function getQueue() { return queue; }

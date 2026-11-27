@@ -575,7 +575,9 @@ fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
         && !(cfg!(debug_assertions) && matches!(kind.as_str(), "routeProbe" | "photoProbe" | "presentationProbe" | "videoProbe")) {
         return None;
     }
-    if kind == "videoProbe" && !matches!(value.as_str(), "key-unready"|"key-not-viewer"|"key-no-video"|"key-denied"|"key-accepted"|"key-control"|"key-control-full"|"key-control-back"|"key-control-link"|"key-control-other"|"click-no-root"|"click-control"|"click-no-video"|"click-accepted"|"click-denied") { return None; }
+    if kind == "videoProbe" && !matches!(value.as_str(), "key-unready"|"key-not-viewer"|"key-no-video"|"key-denied"|"key-accepted"|"key-control"|"key-control-full"|"key-control-back"|"key-control-link"|"key-control-other"|"click-no-root"|"click-control"|"click-no-video"|"click-accepted"|"click-denied"
+        |"entry-wait-address"|"entry-wait-both"|"entry-wait-player"|"entry-no-post"|"entry-not-observed"|"entry-no-url"
+        |"entry-unrecognized-url"|"entry-mixed"|"entry-no-host"|"entry-bound"|"entry-no-handler"|"entry-no-bridge") { return None; }
     if kind == "presentationProbe" && !matches!(value.as_str(), "limit"|"ambiguous"|"unmatched"|"empty"|"author"|"profile"|"name"|"envelope"|"send") { return None; }
     if kind == "routeProbe" && serde_json::from_str::<RoutingProbe>(&value).is_err() {
         return None;

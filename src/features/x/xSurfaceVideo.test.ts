@@ -10,7 +10,7 @@ function setup(full=false) {
  const location={hostname:'x.com',protocol:'https:',pathname:full?'/author/status/123456/mediaviewer':'/home'};
  Object.defineProperty(location,'href',{get:()=>location.protocol+'//'+location.hostname+location.pathname});
  const allowed={value:true};const claim=vi.fn(()=>allowed.value);
- const api={videoInteractionReady:()=>allowed.value,videoInput:claim,sourceMediaViewerAvailable:()=>true,videoSourceTarget:(n:Element)=>n.closest('a')};
+ const api={videoInteractionReady:()=>allowed.value,videoInput:claim,sourceMediaViewerAvailable:()=>true,videoPostPath:()=>'/author/status/123456',videoSourceTarget:(n:Element)=>n.closest('a')};
  Object.defineProperty(window,'__atsumiXSurface',{value:api,configurable:true});
  const media={time:10,paused:false,muted:false,volume:.5};
  const video=doc.querySelector('video')!;
@@ -18,13 +18,14 @@ function setup(full=false) {
  const pause=vi.fn(()=>{media.paused=true;});const play=vi.fn(()=>{media.paused=false;});
  doc.querySelector('#pause')!.addEventListener('click',pause);doc.querySelector('#play')!.addEventListener('click',play);
  for(const el of doc.querySelectorAll('*'))vi.spyOn(el,'getBoundingClientRect').mockReturnValue({x:0,y:0,top:0,left:0,right:500,bottom:400,width:500,height:400,toJSON:()=>({})});
- Object.defineProperty(doc,'elementFromPoint',{value:()=>doc.querySelector('#background')});
+ const hit=vi.fn<()=>Element|null>(()=>doc.querySelector('#background'));
+ Object.defineProperty(doc,'elementFromPoint',{value:hit});
  new Function('window','document','location','getComputedStyle','innerWidth','innerHeight',script.replace('__ATSUMI_X_VIDEO__','{}'))(window,doc,location,(el:HTMLElement)=>({display:el.hidden?'none':'block',visibility:'visible',opacity:'1'}),900,700);
  const fire=(type:string,selector='#background',extra:Record<string,unknown>={})=>{
    const event={type,isTrusted:true,defaultPrevented:false,button:0,target:doc.querySelector(selector),preventDefault:vi.fn(),stopImmediatePropagation:vi.fn(),...extra};
    handlers[type]?.forEach(handler=>handler(event));return event;
  };
- return {doc,video,media,api,claim,location,fire,pause,play,allowed};
+ return {doc,video,media,api,claim,hit,location,fire,pause,play,allowed};
 }
 afterEach(()=>{vi.restoreAllMocks();vi.useRealTimers();delete (window as unknown as Record<string,unknown>).__atsumiXSurface;delete (window as unknown as Record<string,unknown>).__atsumiXVideo;});
 it('toggles inline playback without running the native background route',()=>{
@@ -43,6 +44,72 @@ it('uses the original route entry only when fullscreen is explicitly selected',(
  const a=setup();a.doc.querySelector('#background')!.addEventListener('mouseup',()=>{a.location.pathname='/author/status/123456/mediaviewer';});
  const e=a.fire('click','#full');expect(e.preventDefault).toHaveBeenCalledOnce();expect(a.location.pathname).toContain('/mediaviewer');expect(a.claim).toHaveBeenCalledOnce();
 });
+function viewerLink(a:ReturnType<typeof setup>,href:string) {
+ const link=a.doc.createElement('a');
+ link.href=href;
+ link.textContent='Watch';
+ a.doc.querySelector('#one')!.append(link);
+ vi.spyOn(link,'getBoundingClientRect').mockReturnValue(a.video.getBoundingClientRect());
+ const activate=vi.fn((event:Event)=>{event.preventDefault();});
+ link.addEventListener('click',activate);
+ return {link,activate};
+}
+
+it('hands an explicitly published link for this video to X even before playback is ready',()=>{
+ const a=setup();a.api.sourceMediaViewerAvailable=()=>false;a.claim.mockReturnValue(false);
+ const {activate}=viewerLink(a,'/author/status/123456/mediaViewer?currentTweet=123456');
+ expect(a.fire('click','#full').preventDefault).toHaveBeenCalledOnce();
+ expect(activate).toHaveBeenCalledOnce();
+ expect(a.pause).not.toHaveBeenCalled();
+});
+
+it('preserves the trusted fullscreen control when its legacy background does nothing or cannot be used',()=>{
+ for(const reason of ['no-handler','no-playback-source','covered']){
+   const a=setup(),full=a.doc.querySelector<HTMLElement>('#full')!;
+   const redispatch=vi.spyOn(full,'click');
+   if(reason==='no-playback-source')a.claim.mockReturnValue(false);
+   if(reason==='covered')a.hit.mockReturnValue(a.doc.querySelector('#source'));
+   const event=a.fire('click','#full');
+   expect(event.preventDefault,reason).not.toHaveBeenCalled();
+   expect(redispatch,reason).not.toHaveBeenCalled();
+ }
+});
+
+it.each(['/other/status/654321/mediaViewer','https://example.org/author/status/123456/mediaViewer',
+ '/author/status/123456/mediaViewer?currentTweet=654321','/author/status/123456/video/1'])('leaves unrelated or ambiguous media destinations alone (%s)',href=>{
+ const a=setup();a.api.sourceMediaViewerAvailable=()=>false;
+ const {activate}=viewerLink(a,href);
+ expect(a.fire('click','#full').preventDefault).not.toHaveBeenCalled();
+ expect(activate).not.toHaveBeenCalled();
+});
+
+it('does not borrow a viewer link from a nested player or a hidden control',()=>{
+ const a=setup();a.api.sourceMediaViewerAvailable=()=>false;
+ const first=viewerLink(a,'/author/status/123456/mediaViewer');
+ const other=a.doc.createElement('div');other.dataset.testid='videoPlayer';
+ a.doc.querySelector('#one')!.append(other);other.append(first.link);
+ const second=viewerLink(a,'/author/status/123456/mediaViewer');second.link.hidden=true;
+ expect(a.fire('click','#full').preventDefault).not.toHaveBeenCalled();
+ expect(first.activate).not.toHaveBeenCalled();expect(second.activate).not.toHaveBeenCalled();
+});
+
+it('lets an actual fullscreen anchor receive the physical click once',()=>{
+ const a=setup();
+ const {link,activate}=viewerLink(a,'/author/status/123456/mediaViewer');
+ link.setAttribute('aria-label','Fullscreen');link.id='nativeFull';
+ a.doc.querySelector('#background')!.addEventListener('mouseup',()=>{throw new Error('replayed background');});
+ expect(a.fire('click','#nativeFull').preventDefault).not.toHaveBeenCalled();
+ expect(activate).not.toHaveBeenCalled(); // The capture handler did not replay it.
+});
+
+it('stops replaying pointer phases as soon as X has entered its own viewer',()=>{
+ const a=setup(),bg=a.doc.querySelector('#background')!,released=vi.fn(),clicked=vi.fn();
+ bg.addEventListener('mousedown',()=>{a.location.pathname='/author/status/123456/mediaViewer';});
+ bg.addEventListener('mouseup',released);bg.addEventListener('click',clicked);
+ expect(a.fire('click','#full').preventDefault).toHaveBeenCalledOnce();
+ expect(released).not.toHaveBeenCalled();expect(clicked).not.toHaveBeenCalled();
+});
+
 it('seeks and clamps only the fullscreen video, and supports pause, mute and volume',()=>{
  vi.useFakeTimers();const a=setup(true);
  a.fire('keydown','body',{key:'a'});expect(a.media.time).toBe(5);
@@ -321,4 +388,32 @@ it.each(['button','link','volume','menu','archive','foreign-player','hidden'])('
  (kind==='foreign-player'?a.doc.body:a.doc.querySelector('#one')!).append(target);
  if(kind==='hidden')a.rail.hidden=true;
  a.fire('click','#overlap',{clientX:300,clientY:355});expect(a.media.time).toBe(10);
+});
+
+it('uses the committed viewer action before replaying a legacy background click',()=>{
+ const a=setup();const open=vi.fn(()=>{a.location.pathname='/author/status/123456/mediaviewer';return true;});
+ Object.defineProperty(window,'__atsumiXVideoEntry',{configurable:true,value:{open}});
+ try {
+   expect(a.fire('click','#full').preventDefault).toHaveBeenCalledOnce();
+   expect(open).toHaveBeenCalledOnce();expect(a.hit).not.toHaveBeenCalled();expect(a.pause).not.toHaveBeenCalled();
+ } finally {delete (window as unknown as Record<string,unknown>).__atsumiXVideoEntry;}
+});
+
+it('keeps the native button usable when the original handler does not navigate',()=>{
+ const a=setup();const open=vi.fn(()=>false);
+ Object.defineProperty(window,'__atsumiXVideoEntry',{configurable:true,value:{open}});
+ try {
+   expect(a.fire('click','#full').preventDefault).not.toHaveBeenCalled();
+   expect(open).toHaveBeenCalledOnce();expect(a.hit).not.toHaveBeenCalled();
+ } finally {delete (window as unknown as Record<string,unknown>).__atsumiXVideoEntry;}
+});
+
+it('uses a published sibling link only for an unambiguous player in its own post',()=>{
+ const a=setup();a.api.sourceMediaViewerAvailable=()=>false;
+ const root=a.doc.querySelector('#one')!,article=a.doc.createElement('article');
+ article.dataset.testid='tweet';root.before(article);article.append(root);
+ const {link,activate}=viewerLink(a,'/author/status/123456/mediaViewer');article.append(link);
+ expect(a.fire('click','#full').preventDefault).toHaveBeenCalledOnce();
+ const second=a.doc.createElement('div');second.dataset.testid='videoPlayer';article.append(second);
+ expect(a.fire('click','#full').preventDefault).not.toHaveBeenCalled();expect(activate).toHaveBeenCalledOnce();
 });
