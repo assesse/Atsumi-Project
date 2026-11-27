@@ -1876,7 +1876,7 @@ impl DownloadRepository for SqliteRepository {
     }
 
     fn download_active_entry_ids(&self) -> Result<Vec<DownloadEntryId>, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let mut statement = connection
             .prepare(
                 r#"

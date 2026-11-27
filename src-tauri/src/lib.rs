@@ -1549,7 +1549,8 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             tray.set_menu(Some(tray_menu))?;
             tray.on_menu_event(|app, event| {
                 if event.id() == TRAY_QUIT_ID {
-                    request_tray_quit(app);
+                    let app = app.clone();
+                    tauri::async_runtime::spawn_blocking(move || request_tray_quit(&app));
                 } else if event.id() == TRAY_RELOAD_ID {
                     if let Some(diagnostics) = app.try_state::<Arc<ui_diagnostics::UiDiagnostics>>() {
                         diagnostics.record("manual_tray_reload",serde_json::json!({"epoch":diagnostics.epoch()}));

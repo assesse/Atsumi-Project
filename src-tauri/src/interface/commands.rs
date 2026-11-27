@@ -767,12 +767,14 @@ impl AppState {
     }
 
     pub(crate) fn active_work_snapshot(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
-        let _control = self.managed_work.inner.control.lock().map_err(|_| {
-            crate::application::RepositoryError::Other(
+        // A displayed snapshot is advisory. Quit and update take the gate and
+        // recheck the exact identities before committing their reservation.
+        if self.managed_work.inner.control.is_poisoned() {
+            return Err(crate::application::RepositoryError::Other(
                 "managed work gate mutex was poisoned".into(),
-            )
-        })?;
-        self.active_work_snapshot_locked()
+            ).into());
+        }
+        self.collect_active_work()
     }
 
     pub(crate) fn reserve_update(&self) -> Result<(), crate::streaming::model::StreamError> {
@@ -789,7 +791,7 @@ impl AppState {
             return Err(fail());
         }
         if self
-            .active_work_snapshot_locked()
+            .collect_active_work()
             .map_err(|_| fail())?
             .has_active_work()
         {
@@ -833,7 +835,7 @@ impl AppState {
         if !control.updating
             || self.is_quitting()
             || self
-                .active_work_snapshot_locked()
+                .collect_active_work()
                 .map_err(|_| "작업 상태 확인 실패")?
                 .has_active_work()
         {
@@ -848,7 +850,7 @@ impl AppState {
         Ok(())
     }
 
-    fn active_work_snapshot_locked(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
+    fn collect_active_work(&self) -> Result<AppActiveWorkSnapshot, ApplicationError> {
         let ids = self.service.download_active_entry_ids()?.into_iter()
             .map(|id| id.as_str().to_owned()).collect();
         self.work_snapshot_with_download_ids(ids, None)
@@ -960,7 +962,7 @@ impl AppState {
                 let snapshot = if gate_status_unknown {
                     None
                 } else {
-                    match self.active_work_snapshot_locked() {
+                    match self.collect_active_work() {
                         Ok(snapshot) => Some(snapshot),
                         Err(error) if request.force_when_status_unknown => {
                             let api = ApiError::from(error);
@@ -2518,30 +2520,43 @@ pub async fn app_minimize_to_tray(window: Window) -> Result<ApiResult<()>, ApiEr
     }
 }
 
-#[tauri::command]
-pub fn app_active_work_snapshot(
-    state: State<'_, AppState>,
-) -> Result<ApiResult<AppActiveWorkSnapshot>, ApiError> {
-    Ok(match state.active_work_snapshot() {
-        Ok(snapshot) => ApiResult::success(snapshot),
+async fn run_exit_work<T: Send + 'static>(
+    app: AppHandle,
+    operation: impl FnOnce(&AppState) -> Result<T, ApiError> + Send + 'static,
+) -> ApiResult<T> {
+    match tauri::async_runtime::spawn_blocking(move || {
+        let state = app.try_state::<AppState>()
+            .ok_or_else(|| active_work_status_error("app_state_unavailable"))?;
+        operation(&state)
+    }).await {
+        Ok(Ok(value)) => ApiResult::success(value),
+        Ok(Err(error)) => ApiResult::failure(error),
         Err(error) => {
+            tracing::warn!(%error, "could not complete exit work inspection");
+            ApiResult::failure(active_work_status_error("work_inspection_unavailable"))
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn app_active_work_snapshot(
+    app: AppHandle,
+) -> Result<ApiResult<AppActiveWorkSnapshot>, ApiError> {
+    Ok(run_exit_work(app, |state| {
+        state.active_work_snapshot().map_err(|error| {
             let source = ApiError::from(error);
             tracing::warn!(error_code = %source.code, "could not inspect active work");
-            ApiResult::failure(active_work_status_error(&source.code))
-        }
-    })
+            active_work_status_error(&source.code)
+        })
+    }).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
 pub async fn app_quit(
     app: AppHandle,
-    state: State<'_, AppState>,
     request: AppQuitRequest,
 ) -> Result<ApiResult<AppQuitResult>, ApiError> {
-    Ok(match state.request_graceful_quit(app, request) {
-        Ok(result) => ApiResult::success(result),
-        Err(error) => ApiResult::failure(error),
-    })
+    Ok(run_exit_work(app.clone(), move |state| state.request_graceful_quit(app, request)).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]

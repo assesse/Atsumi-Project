@@ -1440,6 +1440,30 @@ fn download_state_transitions_are_centralized_and_do_not_fake_cancellation() {
 }
 
 #[test]
+fn exit_review_reads_committed_work_while_writer_is_busy() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let profile = tempfile::tempdir().unwrap();
+    let repository = Arc::new(SqliteRepository::open(profile.path().join("exit.sqlite3")).unwrap());
+    let service = ApplicationService::new(repository.clone()).with_download_repository(repository.clone());
+    service.download_queue_add(vec![42], "exit-review-busy".into()).unwrap();
+    let queued = service.download_active_entry_ids().unwrap();
+    assert_eq!(queued.len(), 1);
+
+    let mut writer = repository.connection().unwrap();
+    let transaction = writer.transaction().unwrap();
+    transaction.execute("UPDATE download_entries SET state = 'cancelled'", []).unwrap();
+    let (send, receive) = mpsc::channel();
+    let reader = thread::spawn(move || send.send(service.download_active_entry_ids()).unwrap());
+    let observed = receive.recv_timeout(Duration::from_secs(3));
+    transaction.rollback().unwrap();
+    drop(writer);
+    reader.join().unwrap();
+    assert_eq!(observed.expect("exit review waited for the writer").unwrap(), queued);
+}
+
+#[test]
 fn queued_fixture_job_stops_honestly_without_creating_artifacts() {
     let repository = Arc::new(SqliteRepository::open_in_memory().expect("create repository"));
     let service =
