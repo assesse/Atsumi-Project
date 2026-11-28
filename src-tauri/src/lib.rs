@@ -1,7 +1,9 @@
 pub mod application;
 mod autostart;
 mod browser_identity;
+pub mod general_browser;
 mod community;
+pub mod cloud_recording;
 mod context_menu_policy;
 mod scrollbar_theme;
 mod diagnostics;
@@ -39,6 +41,7 @@ mod storage_io_budget;
 pub mod streaming;
 pub mod thumbnail;
 mod ui_diagnostics;
+mod desktop_notifications;
 mod ui_download_events;
 mod work_console;
 
@@ -1117,15 +1120,17 @@ fn initialize_backend(
     let download_source = ISOLATED_HITOMI_SOURCES.get().filter(|sources| sources.0 == app.config().identifier).map(|sources| sources.1.clone()).unwrap_or(download_source);
     let (download_event_tx, download_event_rx) = mpsc::channel::<DownloadJobProjection>();
     let download_app = app.clone();
+    let notification_repository = repository.clone();
     thread::Builder::new()
         .name("atsumi-download-events".into())
         .spawn(move || {
-            while let Ok(projection) = download_event_rx.recv() {
-                download_app
-                    .state::<Arc<ui_download_events::DownloadEvents>>()
-                    .publish(projection);
-                schedule_tray_work_status_refresh(&download_app);
-            }
+            use crate::application::DownloadRepository;
+            desktop_notifications::forward_downloads(download_event_rx,
+                || notification_repository.download_active_count().ok(),
+                |projection| {
+                    download_app.state::<Arc<ui_download_events::DownloadEvents>>().publish(projection);
+                    schedule_tray_work_status_refresh(&download_app);
+                });
         })?;
     let downloads = DownloadSupervisor::new(
         download_repository,
@@ -1224,6 +1229,18 @@ fn initialize_backend(
     app.state::<AppState>()
         .deferred_browser()
         .start(app.clone(), data_dir, media_tools);
+    // Restore only the saved cloud service. Its supervisor does no source work
+    // unless an explicit selected-channel/recording rule and account match.
+    let cloud_start_app = app.clone();
+    if let Err(error) = thread::Builder::new().name("atsumi-cloud-initialize".into()).spawn(move || {
+        let state = cloud_start_app.state::<AppState>();
+        if state.is_quitting() || !state.cloud_recording_data_dir().join("cloud-recording/state.bin").is_file() { return; }
+        if state.cloud_recording(&cloud_start_app).is_err() {
+            tracing::warn!("saved cloud recording state could not initialize; originals remain local");
+        }
+    }) {
+        tracing::warn!(error = %error, "cloud recording initializer could not start");
+    }
     // Maintenance has no role in rendering the first frame. It is cancellable
     // through normal application shutdown and never runs on the UI event loop.
     let maintenance_app = app.clone();
@@ -1522,6 +1539,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
         })
         .setup(|app| {
             startup::mark("native_setup");
+            desktop_notifications::install(&app.config().identifier);
             ui_diagnostics::install(app.handle())?;
             if let Err(error) = local_control::install(app.handle()) {
                 tracing::warn!(%error, "local rescue channel unavailable");
@@ -1591,6 +1609,46 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             Ok(())
         })
         .invoke_handler(startup::gate(tauri::generate_handler![
+            cloud_recording::commands::cloud_recording_snapshot,
+            cloud_recording::commands::cloud_live_snapshot,
+            cloud_recording::commands::cloud_live_sources,
+            cloud_recording::commands::cloud_live_authorize,
+            cloud_recording::commands::cloud_live_disconnect,
+            cloud_recording::commands::cloud_live_select,
+            cloud_recording::commands::cloud_live_start,
+            cloud_recording::commands::cloud_live_stop,
+            cloud_recording::commands::cloud_live_verify_archive,
+            cloud_recording::commands::live_replay::cloud_live_replay_open,
+            cloud_recording::commands::live_replay::cloud_live_replay_cancel_open,
+            cloud_recording::commands::live_replay::cloud_live_replay_snapshot,
+            cloud_recording::commands::live_replay::cloud_live_replay_clock,
+            cloud_recording::commands::live_replay::cloud_live_replay_viewport,
+            cloud_recording::commands::live_replay::cloud_live_replay_control,
+            cloud_recording::commands::live_replay::cloud_live_replay_fullscreen,
+            cloud_recording::commands::live_replay::cloud_live_replay_controls,
+            cloud_recording::commands::live_replay::cloud_live_replay_measure,
+            cloud_recording::commands::live_replay::cloud_live_replay_page,
+            cloud_recording::commands::live_replay::cloud_live_replay_asset,
+            cloud_recording::commands::live_replay::cloud_live_replay_close,
+            cloud_recording::commands::cloud_recording_describe,
+            cloud_recording::commands::cloud_recording_get_plan,
+            cloud_recording::commands::cloud_recording_replay_describe,
+            cloud_recording::commands::cloud_recording_replay_open,
+            cloud_recording::commands::cloud_recording_replay_close,
+            cloud_recording::commands::cloud_recording_replay_page,
+            cloud_recording::commands::cloud_recording_replay_asset,
+            cloud_recording::commands::cloud_recording_replay_profile,
+            cloud_recording::commands::cloud_recording_enqueue_recording,
+            cloud_recording::commands::cloud_recording_import_oauth_client,
+            cloud_recording::commands::cloud_recording_authorize,
+            cloud_recording::commands::cloud_recording_disconnect,
+            cloud_recording::commands::cloud_recording_enqueue,
+            cloud_recording::commands::cloud_recording_pause,
+            cloud_recording::commands::cloud_recording_resume,
+            cloud_recording::commands::cloud_recording_automatic_set,
+            youtube::original_commands::youtube_original_vod_clock,
+            youtube::original_commands::youtube_original_vod_control,
+            general_browser::general_browser_open,
             youtube::youtube_metadata,
             youtube::search::youtube_search,
             youtube::search::youtube_thumbnail,
@@ -1750,6 +1808,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             pixiv::pixiv_download_cancel,
             pixiv::pixiv_open,
             work_console::work_queue_snapshot,
+            work_console::work_queue_selection_range,
             interface::commands::download_popularity_snapshot,
             local_control::work_checkpoint_get,
             local_control::work_checkpoint_save,
@@ -1857,6 +1916,7 @@ pub fn run_with_context(context: tauri::Context<tauri::Wry>) -> tauri::Result<()
             interface::commands::tag_catalog_refresh,
             interface::commands::tag_suggestions_search,
             interface::commands::auto_find_snapshot,
+            interface::commands::auto_find_candidate_changes,
             interface::commands::auto_find_refresh,
             interface::commands::auto_find_cancel,
             interface::commands::auto_find_exclude,

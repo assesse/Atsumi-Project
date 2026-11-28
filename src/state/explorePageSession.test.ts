@@ -28,6 +28,45 @@ const flush = async () => {
 };
 
 describe("ExplorePageSession", () => {
+  it("discards an older visibility request, refills in order, and warms only the adjacent covers", async () => {
+    let release!: (value: ApiResult<GalleryPage>) => void;
+    const warm = vi.fn();
+    const fetch = vi.fn(async (_query: string, n: number, _request: string, ids?: readonly number[]): Promise<ApiResult<GalleryPage>> => {
+      if (ids?.includes(9)) return new Promise(resolve => { release = resolve; });
+      return { ok: true, data: page(n, 4) };
+    });
+    const session = new ExplorePageSession({ fetchPage: fetch, warmPage: warm, prefetchSecondNext: true });
+    session.start("fixed-order", page(1, 4));
+    const stale = session.openWithVisibility("fixed-order", 1, [galleryId(9)]);
+    await flush();
+    const current = session.openWithVisibility("fixed-order", 1, [galleryId(8)]);
+    expect((await current).status).toBe("ready");
+    release({ok:true, data:page(1, 1)});
+    expect((await stale).status).toBe("stale");
+    await vi.waitFor(() => expect(session.cachedPageNumbers()).toEqual([1, 2, 3]));
+    expect(warm.mock.calls.map(([result]) => result.page)).not.toContain(3);
+    expect(fetch.mock.calls.filter(call => call[3]?.includes(8)).map(call => call[1])).toEqual([1, 2, 3]);
+    expect(session.matchesVisibility([galleryId(8)])).toBe(true);
+  });
+
+  it("keeps nearby reading positions across library refills and clears them for a new filter or search", async () => {
+    const fetchPage = async (_queryId: string, n: number): Promise<ApiResult<GalleryPage>> => ({ ok: true, data: page(n) });
+    const session = new ExplorePageSession({ fetchPage });
+    session.start("query", page(1));
+    session.recordScroll(1, 375);
+    await session.open(2);
+    session.recordScroll(2, 510);
+
+    const refill = session.openWithVisibility("query", 2, [galleryId(70)], true);
+    session.recordScroll(2, 780); // The user scrolls before the new projection arrives.
+    expect(await refill).toMatchObject({ status: "ready", scrollTop: 780 });
+    expect(await session.open(1)).toMatchObject({ status: "ready", scrollTop: 375 });
+
+    expect(await session.openWithVisibility("query", 1, [])).toMatchObject({ status: "ready", scrollTop: 0 });
+    session.recordScroll(1, 110);
+    expect(await session.openWithVisibility("different query", 1, [], true)).toMatchObject({ status: "ready", scrollTop: 0 });
+  });
+
   it("loads page 3 once, then prefetches page 4 before page 2", async () => {
     const calls: number[] = [];
     const fetchPage = vi.fn(async (_queryId: string, pageNumber: number): Promise<ApiResult<GalleryPage>> => {

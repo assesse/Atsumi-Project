@@ -1,0 +1,46 @@
+{
+  "id": "browser-basics-20261116",
+  "requestId": "01a1e0c5-cc46-78c1-b9ee-ce5d01c6e55f",
+  "status": "complete",
+  "request": "Merge native titlebar with slimmer tab header; icon-only Atsumi branding; browser history, persistent sign-in and password saving plus ordinary browser basics.",
+  "audit": {
+    "reuse": ".runtime/browser-country-20261116/preedit.json; .runtime/browser-ui-onboarding-20261115/preedit.json",
+    "inventory": {
+      "codex": 28,
+      "codexArchived": 3,
+      "chatgpt": 74,
+      "chatgptArchived": 0,
+      "allPages": true
+    },
+    "otherAtsumiRevisionsUnchanged": true,
+    "currentPageOverlap": "01a1dfc6-10ab-7200-81d9-a288fde763a3",
+    "specsUnchanged": 476,
+    "newSpecsFullyRead": [
+      "docs/requirements/browser-country-20261116.json"
+    ],
+    "inaccessible": "Carry forward previously recorded unavailable/deleted sources; no claim to read them."
+  },
+  "decisions": [
+    "Separate browser only: no changes to main app, recording/download queues, global routes/DNS/proxy, country credentials or other chats changes.",
+    "Remove OS decorations; 38px tab header with icon-only brand, blank-area drag/double-click maximize and fixed window buttons; retain resize and accessible names.",
+    "Local bounded indexed history and bookmarks on a dedicated background worker; search/pagination, open, remove and explicit clear confirmation. No remote synchronization.",
+    "Keep same dedicated WebView2 web-profile. Enable built-in password save prompts and form autofill; no DOM credential capture, app-owned password vault, or copying other browser logins. Site cookie expiry/sign-out remain authoritative.",
+    "Remember open and active tabs, recent closed tabs; support Ctrl+H/Ctrl+D/Ctrl+Shift+T. Maintain existing shortcuts, VPN fail-closed routing and download locks.",
+    "Preserve minimum 14px content text, existing Ink palette and concise labeled controls. Native pages hidden behind browser-owned panels.",
+    "Verify synthetic local data and native browser only; no real password reading, account changes, actual user history deletion, publishing or release.",
+    "Existing same-profile WebView2 History contains 74 visits. Import its bounded public-URL history once on the library worker through SQLite READ_ONLY/query_only; preserve the original database and never inspect Login Data or cookie values."
+  ],
+  "acceptance": [
+    "History ordering/search/pagination/deletion and migration corruption tests; no UI-thread DB work",
+    "Header/window buttons/shortcuts/settings/country regression tests; responsive rendered layouts",
+    "Native slim titlebar drag/maximize/restore, history/bookmarks/reopen and persisted session across restart",
+    "Engine password save/autofill flags and isolated fake credential/session fixture; report unsupported or unverified prompts honestly",
+    "Frontend type/build, native tests/build; original profiles preserved"
+  ],
+  "sources": [
+    "https://learn.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2settings4",
+    "https://v2.tauri.app/learn/window-customization/"
+  ],
+  "verification": ".runtime/browser-basics-20261116/verification.json",
+  "completedAt": "2026-11-16T05:34:15.0637582+09:00"
+}

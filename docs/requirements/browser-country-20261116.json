@@ -1,0 +1,57 @@
+{
+  "id": "browser-country-20261116",
+  "requestId": "01a1dfc6-11d0-7d93-836d-5a036d7cb068",
+  "request": "Allow choosing countries inside Atsumi without downloading a config for every switch; research regional accessibility of Arca Live, FANZA and comparable sites.",
+  "audit": {
+    "reuse": ".runtime/browser-ui-onboarding-20261115/preedit.json",
+    "inventory": {
+      "codex": 28,
+      "codexArchived": 3,
+      "chatgpt": 74,
+      "chatgptArchived": 0,
+      "allInventoryPages": true
+    },
+    "otherChatRevisionsUnchanged": true,
+    "currentPageOverlap": "01a1df90-d93e-75e0-889b-440075ab62cf",
+    "specsVerified": 476,
+    "changedSpecsRead": [
+      "docs/requirements/browser-ui-onboarding-20261115.json"
+    ],
+    "inaccessible": "Carry forward previous explicitly inaccessible/deleted source limitations."
+  },
+  "decisions": [
+    "Provider manual WireGuard keys can be reused, but current official server catalogue requires VPN-authenticated scope; anonymous calls explicitly refused. Do not extract Chrome cookies or bypass account access; do not use unverified third-party public keys.",
+    "Implement encrypted saved-country profile collection. One initial config import per desired server/country, then selection inside app reconnects immediately if VPN enabled; off selection stays off. Keep original vpn.dpapi and migrate on first collection write.",
+    "Only metadata (id/name/country hint) reaches frontend, never keys/config. Actual exit country/IP remains authoritative; filename country is only a label.",
+    "Country selection, config imports and switches serialize and reject browser downloads; transitions fail closed and preserve main app recordings/downloads/global network.",
+    "Existing profile is retained; import adds countries without overwriting others or disconnecting an active profile.",
+    "Use consistent 40px controls/readable dark UI; guide explains initial per-country setup and no repeat download thereafter.",
+    "No account credential generation without action-time confirmation. No app account setting changes, purchases, likes/bookmarks, release, commit or PC shutdown."
+  ],
+  "acceptance": [
+    "Native encrypted collection migration/roundtrip/duplicate/corrupt/selection tests",
+    "UI country switching on/off, import and download lock tests",
+    "Responsive layout/typecheck/build",
+    "Actual Japan and another approved country connection; preserve original key and compare system network settings",
+    "Country recommendations distinguish official region policy from unverified VPN success"
+  ],
+  "status": "implemented_verified_with_connection_limitation",
+  "sources": [
+    "https://protonvpn.com/support/wireguard-configurations",
+    "https://protonvpn.com/support/change-server-free-plan",
+    "https://github.com/qdm12/gluetun-wiki/blob/main/setup/providers/protonvpn.md",
+    "https://github.com/ProtonVPN/win-app/blob/52b9967ae9b196117adce7a52774dc148672b72c/src/Api/ProtonVPN.Api/ApiClient.cs",
+    "https://support.fanza.jp/accounts/article/45605",
+    "https://help.tver.jp/hc/ja/articles/5106803908633",
+    "https://help.abema.tv/hc/ja/articles/360013447232",
+    "https://www.pixiv.help/hc/en-us/articles/26578893289881"
+  ],
+  "verification": ".runtime/browser-country-20261116/verification.json",
+  "completedAt": "2026-11-16T00:51:08.0216303+09:00",
+  "limitations": [
+    "Japan succeeded earlier but final reconnect attempts failed. Exact cause unresolved; do not report stable Japanese availability or infer a provider cause",
+    "Arca official notice lookup was blocked by tool site-safety policy; no workaround attempted and no guaranteed country recommendation made",
+    "FANZA/TVer/ABEMA/pixiv guidance based on official published regional rules; no account, purchase, or full playback tests",
+    "New countries require an initial trusted provider config; existing registered countries can be switched without downloading again"
+  ]
+}

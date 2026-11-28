@@ -12,6 +12,7 @@ afterEach(async () => { await act(async () => root.unmount()); container.remove(
 const render = async (active = true, privacyMode = false) => { await act(async () => root.render(<PlatformMediaLibrary provider="youtube" active={active} privacyMode={privacyMode} api={api} />)); };
 const click = async (target: Element, props: MouseEventInit = {}) => { await act(async () => target.dispatchEvent(new MouseEvent('click', { bubbles: true, ...props }))); };
 const button = (text: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(v => v.textContent === text || v.getAttribute('aria-label') === text)!;
+const replayChatSurface = () => { const host = container.querySelector('.platform-replay-chat')!; return host.shadowRoot?.querySelector('.soop-original-chat-root') ?? host; };
 it('shows a labelled current channel picture for missing historical proof only on active visible cards', async () => {
   api.profile=vi.fn().mockResolvedValue(null); api.currentProfile=vi.fn().mockResolvedValue('data:image/png;base64,AQ==');
   await render(false); expect(api.profile).not.toHaveBeenCalled(); await render(true,true); expect(api.currentProfile).not.toHaveBeenCalled();
@@ -371,6 +372,28 @@ it('closes replay settings before the player and respects a foreign modal Escape
   expect(api.close).toHaveBeenCalledExactlyOnceWith('token-a');
 });
 const savedChatPage = (): MediaReplayChatPage => ({ items: [{ id: 'vod-message', timeMs: 50, kind: 'chat', author: '저장 작성자', text: '보관된 다시보기 채팅', amount: null, badges: [], color: null }], state: 'ready', timelineQuality: 'native-offset', nextAtMs: null, cursor: null, previousCursor: null, total: 1, malformedLines: 0, unsupportedItems: 0, reordered: 0, duplicates: 0, partialFile: false });
+it.each(['soop', 'youtube'] as const)('flushes actual local %s pause, EOF and same-second seek positions into saved chat', async provider => {
+  const saved: MediaLibraryItem = { ...item('a'), duration: 42.102, reference: { ...item('a').reference, provider, kind: 'live' } };
+  api.library = vi.fn().mockResolvedValue({ items: [saved] });
+  api.open = vi.fn().mockResolvedValue({ token: 'precise-clock', url: 'http://platform-media.localhost/precise-clock/media.mp4', item: saved });
+  const rows = [
+    { ...savedChatPage().items[0]!, id: 'pause-message', timeMs: 15750, text: '정지 장면의 채팅' },
+    { ...savedChatPage().items[0]!, id: 'last-message', timeMs: 42101, text: '마지막 장면의 채팅' },
+  ];
+  api.replayChat = vi.fn().mockImplementation(async (_id, ms) => ({ ...savedChatPage(), items: rows.filter(row => row.timeMs <= ms), total: 2 }));
+  await act(async () => root.render(<PlatformMediaLibrary provider={provider} active privacyMode={false} api={api} />));
+  await act(async () => container.querySelector('article')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+  const video = container.querySelector('video')!;
+  const chat = () => { const host = container.querySelector('.platform-replay-chat')!; return provider === 'soop' ? host.shadowRoot! : host; };
+  const observe = async (seconds: number, event: string) => { await act(async () => { video.currentTime = seconds; video.dispatchEvent(new Event(event, { bubbles: true })); }); };
+  await observe(0, 'play'); await observe(15.1, 'timeupdate'); await observe(15.8, 'pause');
+  expect(api.replayChat).toHaveBeenLastCalledWith('a', 15800, undefined, 120); expect(chat().textContent).toContain(rows[0]!.text); expect(chat().textContent).not.toContain(rows[1]!.text);
+  await observe(42.01, 'play'); await observe(42.01, 'timeupdate'); await observe(42.102, 'ended');
+  expect(api.replayChat).toHaveBeenLastCalledWith('a', 42102, undefined, 120); expect(chat().textContent).toContain(rows[1]!.text);
+  await observe(15.6, 'play'); await observe(15.6, 'seeked');
+  expect(api.replayChat).toHaveBeenLastCalledWith('a', 15600, undefined, 120); expect(chat().textContent).not.toContain(rows[0]!.text);
+  await observe(15.8, 'seeked'); expect(api.replayChat).toHaveBeenLastCalledWith('a', 15800, undefined, 120); expect(chat().textContent).toContain(rows[0]!.text);
+});
 it.each(['soop', 'youtube'] as const)('opens archived video chat from the authoritative playback item for %s', async provider => {
   for (const state of ['complete', 'partial', 'unknown'] as const) {
     const saved: MediaLibraryItem = { ...item('a'), reference: { provider, kind: 'video', externalId: provider === 'soop' ? '209244227' : 'jNQXAC9IVRw' }, chatArchive: { state, reasons: state === 'partial' ? ['archive_limit'] : state === 'unknown' ? ['status_unknown'] : [], originalsRetained: state !== 'complete', assetsIncomplete: false } };
@@ -382,13 +405,17 @@ it.each(['soop', 'youtube'] as const)('opens archived video chat from the author
     await act(async () => container.querySelector('article')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
     expect(container.querySelector('.platform-media-player')).toHaveClass('has-chat');
     expect(container.querySelectorAll('.platform-replay-chat')).toHaveLength(1);
-    expect(container.querySelector('.platform-replay-chat')).toHaveTextContent('보관된 다시보기 채팅');
+    expect(replayChatSurface()).toHaveTextContent('보관된 다시보기 채팅');
     expect(api.replayChat).toHaveBeenCalledExactlyOnceWith('a', 0, undefined, 120);
-    expect(container.querySelectorAll('button[aria-label="재생 닫기"]')).toHaveLength(1);
-    expect(container.querySelector('.platform-replay-chat button[aria-label="재생 닫기"]')).not.toBeNull();
+    expect(replayChatSurface().querySelectorAll('[aria-label="재생 닫기"]')).toHaveLength(1);
+    expect(container.querySelector('.platform-media-player-stage [aria-label="재생 닫기"]')).toBeNull();
+    if (provider === 'soop') {
+      expect(replayChatSurface()).toHaveTextContent('녹화된 채팅');
+      expect(replayChatSurface().querySelector('button[aria-label="보내기 · 녹화 재생에서는 사용할 수 없음"]')).toBeDisabled();
+    }
     if (state === 'complete') expect(container.querySelector('.platform-media-player .platform-media-chat-warning')).toBeNull();
     else expect(container.querySelector('.platform-media-player .platform-media-chat-warning')).toHaveTextContent(state === 'partial' ? '채팅 일부 누락' : '채팅 상태 확인 필요');
-    await click(button('재생 닫기'));
+    await click(replayChatSurface().querySelector('[aria-label="재생 닫기"]')!);
     expect(api.close).toHaveBeenCalledWith('vod');
   }
 });
@@ -402,10 +429,11 @@ it.each(['soop', 'youtube'] as const)('uses the current unverified playback summ
   expect(container.querySelector('article .platform-media-chat-warning')).toBeNull();
   await act(async () => container.querySelector('article')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
   expect(container.querySelector('.platform-media-player header .platform-media-chat-warning')).toHaveAttribute('aria-label', '채팅 상태 확인 필요 · 원본 보존');
-  expect(container.querySelector('.platform-replay-chat')).toHaveTextContent('보관된 다시보기 채팅');
+  expect(replayChatSurface()).toHaveTextContent('보관된 다시보기 채팅');
   expect(api.replayChat).toHaveBeenCalledExactlyOnceWith('a', 0, undefined, 120);
-  expect(container.querySelectorAll('button[aria-label="재생 닫기"]')).toHaveLength(1);
-  await click(button('재생 닫기')); expect(api.close).toHaveBeenCalledWith('current');
+  expect(replayChatSurface().querySelectorAll('[aria-label="재생 닫기"]')).toHaveLength(1);
+  expect(container.querySelector('.platform-media-player-stage [aria-label="재생 닫기"]')).toBeNull();
+  await click(replayChatSurface().querySelector('[aria-label="재생 닫기"]')!); expect(api.close).toHaveBeenCalledWith('current');
 });
 it.each(['soop', 'youtube'] as const)('keeps ordinary %s videos without chat proof full width and does not read chat', async provider => {
   for (const chatArchive of [undefined, null]) {
@@ -458,9 +486,9 @@ it('keeps SOOP VOD chat seekable with end replay, inactive playback and privacy 
   video.currentTime = 5; await act(async () => video.dispatchEvent(new Event('timeupdate')));
   expect(container.querySelector('video')).toBe(video); expect(api.replayChat).toHaveBeenCalledTimes(calls); expect(api.close).not.toHaveBeenCalled();
   await renderSoop(true, true);
-  expect(container.querySelector('.platform-replay-chat')).not.toHaveTextContent('보관된 다시보기 채팅');
+  expect(replayChatSurface()).not.toHaveTextContent('보관된 다시보기 채팅');
   expect(api.replayChat).toHaveBeenCalledTimes(calls); expect(video.muted).toBe(true);
-  await renderSoop(); await click(button('재생 닫기'));
+  await renderSoop(); await click(replayChatSurface().querySelector('[aria-label="재생 닫기"]')!);
   expect(api.close).toHaveBeenCalledWith('vod'); expect(container.querySelector('video')).toBeNull();
 });
 it.each([false, true])('forwards local replay emoji reads and masks ready or late assets in privacy (pending: %s)', async pending => {

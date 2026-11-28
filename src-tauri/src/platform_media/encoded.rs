@@ -56,6 +56,9 @@ pub(super) struct OfficialReceiver {
     screenshot_serial: Mutex<()>,
 }
 impl OfficialReceiver {
+    pub(super) fn chat_for_asset_drain(&self) -> Arc<live_chat::SharedChat> {
+        self.chat.clone()
+    }
     pub(super) fn is_active(&self) -> bool {
         self.leases.load(Ordering::Acquire) > 0 || !self.chat.is_done()
     }
@@ -70,6 +73,9 @@ impl OfficialReceiver {
         self.chat.stop();
     }
 }
+
+#[cfg(test)]
+mod archive_asset_drain_tests;
 /// The host must retain this lease until its native receiver actually closes.
 /// Recording holds another lease until finalization has relinquished ownership.
 pub struct OfficialReceiverLease {
@@ -571,6 +577,32 @@ impl OfficialReceiverLease {
     pub fn receiver_id(&self) -> &str {
         &self.receiver.id
     }
+    pub(crate) fn observe_soop_display(&self,epoch:u64,fields:serde_json::Value)->bool {
+        if self.is_closed()||self.receiver.reference.provider!="soop"{return false;}
+        let Some(observation)=super::soop_display::parse(fields,&self.receiver.reference.external_id,&self.receiver.broadcast_id) else{return false;};
+        self.receiver.chat.observe_display(&self.receiver.id,epoch,observation)
+    }
+    pub(crate) fn reset_soop_display(&self,epoch:u64) {
+        if self.receiver.reference.provider=="soop"{self.receiver.chat.reset_display(&self.receiver.id,epoch);}
+    }
+    pub(crate) fn flush_soop_display(&self) {
+        if self.receiver.reference.provider=="soop"{self.receiver.chat.flush_display();}
+    }
+    /// Only the source-bound native relay manager may attach this independent
+    /// lightweight sink. It never reserves a MediaJob or starts another receiver.
+    pub(crate) fn attach_relay_chat(&self, run_id: &str, source_id: &str, document_epoch: u64)
+        -> Result<super::relay_chat::RelayChatLease, String> {
+        if self.is_closed() || self.receiver.reference.provider != "soop" {
+            return Err(ERROR.into());
+        }
+        let binding = super::relay_chat::Binding {
+            receiver_id:self.receiver.id.clone(), run_id:run_id.into(), source_id:source_id.into(),
+            document_epoch, channel_id:self.receiver.reference.external_id.clone(),
+            broadcast_id:self.receiver.broadcast_id.clone(),
+        };
+        super::relay_chat::RelayChatLease::attach(self.receiver.chat.clone(),Some(self.clone()),
+            binding,&self.receiver.download_root)
+    }
     pub fn begin_encoded(
         &self,
         source_id: String,
@@ -634,6 +666,7 @@ impl OfficialReceiverLease {
         if state.jobs.values().filter(|job| job.active()).count() >= queries::ACTIVE_JOB_LIMIT {
             return Err("진행 중인 작업이 많습니다.".into());
         }
+        let started_at_ms = now_millis();
         let job = MediaJob {
             broadcast_id: Some(self.receiver.broadcast_id.clone()),
             job_id: uuid::Uuid::new_v4().to_string(),
@@ -643,7 +676,8 @@ impl OfficialReceiverLease {
             state: "recording".into(),
             title: clean(Some(&title), 500),
             channel_name: clean(Some(&channel_name), 200),
-            created_at: now(),
+            created_at: started_at_ms / 1000,
+            started_at_ms: Some(started_at_ms),
             received_bytes: 0,
             total_bytes: None,
             error: None,

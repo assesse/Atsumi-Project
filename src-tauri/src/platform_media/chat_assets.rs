@@ -1,4 +1,4 @@
-//! YouTube public emoji assets. No account cookies, caller URLs, redirects or replay network.
+//! Capture-owned public chat images. No account cookies, caller URLs, redirects or replay network.
 //! A session owns one bounded receiver worker; each recording owns an immutable local manifest.
 use super::{replay_chat::ChatPart, storage};
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -21,7 +21,50 @@ const BODY: usize = 1024 * 1024;
 const ITEMS: usize = 2048;
 const TOTAL: usize = 128 * 1024 * 1024;
 const RAM: usize = 8 * 1024 * 1024;
+// Same bounded target budget as relay chat: 64 queued + one active 5s fetch.
+const ARCHIVE_DRAIN: Duration = Duration::from_secs(330);
 const ERROR: &str = "이모티콘 이미지를 읽지 못했습니다. 문자로 표시합니다.";
+#[cfg(test)]
+#[path = "chat_assets_custom_tests.rs"]
+mod custom_tests;
+#[cfg(test)]
+#[path="chat_assets_ogq_tests.rs"]
+mod ogq_tests;
+#[cfg(test)]
+#[path="chat_assets_subscription_tests.rs"]
+mod subscription_tests;
+#[cfg(test)]
+#[path = "chat_assets_archive_drain_tests.rs"]
+mod archive_drain_tests;
+#[cfg(test)]
+#[path = "chat_assets_standard_gift_tests.rs"]
+mod standard_gift_tests;
+use crate::soop::chat::gifts::{assets::Request as SoopGiftRequest, SoopGiftKind, SoopGiftMetadata};
+use crate::soop::chat::ogq::{Request as SoopOgqRequest, Metadata as SoopOgqMetadata};
+use crate::soop::chat::subscriptions::{Request as SoopSubscriptionRequest, Metadata as SoopSubscriptionMetadata};
+#[derive(Clone)]
+enum AssetSource {
+    YoutubeEmoji(String),
+    SoopGift(SoopGiftRequest),
+    SoopMission(crate::soop::chat::missions::Request),
+    SoopOgq(SoopOgqRequest),
+    SoopSubscription(SoopSubscriptionRequest),
+    SoopPersonalcon(crate::soop::chat::personalcon::Request),
+    SoopAvatar(crate::soop::chat::portrait::Request),
+}
+impl AssetSource {
+    fn url(&self)->&str { match self { Self::YoutubeEmoji(url)=>url, Self::SoopGift(request)=>request.url(), Self::SoopMission(request)=>request.url(), Self::SoopOgq(request)=>request.url(), Self::SoopSubscription(request)=>request.url(),Self::SoopPersonalcon(request)=>request.url(),Self::SoopAvatar(request)=>request.url() } }
+    fn id(&self)->String { match self { Self::YoutubeEmoji(url)=>asset_id(url), Self::SoopGift(request)=>request.id().into(), Self::SoopMission(request)=>request.id().into(),Self::SoopOgq(request)=>request.id().into(), Self::SoopSubscription(request)=>request.id().into(),Self::SoopPersonalcon(request)=>request.id().into(),Self::SoopAvatar(request)=>request.id().into() } }
+    fn valid(&self)->bool { match self {
+        Self::YoutubeEmoji(url)=>sanitize_url(url).as_deref()==Some(url.as_str()),
+        Self::SoopGift(request)=>request.valid(),
+        Self::SoopMission(request)=>request.valid(),
+        Self::SoopOgq(request)=>crate::soop::chat::ogq::canonical_url(request.url())==Some(request.url()),
+        Self::SoopSubscription(request)=>crate::soop::chat::subscriptions::canonical_url(request.url())==Some(request.url()),
+        Self::SoopPersonalcon(request)=>crate::soop::chat::personalcon::canonical_url(request.url())==Some(request.url()),
+        Self::SoopAvatar(request)=>crate::soop::chat::portrait::canonical_url(request.url())==Some(request.url()),
+    } }
+}
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatAssetRead {
@@ -148,9 +191,12 @@ fn blob(bytes: Vec<u8>, declared: Option<&str>) -> Result<Blob, String> {
     Ok(Blob { bytes, mime })
 }
 fn fetch(source: &str) -> Result<Blob, String> {
-    let source = sanitize_url(source).ok_or(ERROR)?;
+    fetch_source(&AssetSource::YoutubeEmoji(source.into()))
+}
+fn fetch_source(source: &AssetSource) -> Result<Blob, String> {
+    if !source.valid() { return Err(ERROR.into()); }
     let deadline = Instant::now() + Duration::from_secs(5);
-    let url = Url::parse(&source).map_err(|_| ERROR)?;
+    let url = Url::parse(source.url()).map_err(|_| ERROR)?;
     let host = url.host_str().ok_or(ERROR)?;
     let addresses = addresses(host)?;
     let timeout = deadline
@@ -207,8 +253,12 @@ struct ArchiveState {
     manifest: File,
     expected: HashSet<String>,
     stored: HashSet<String>,
+    settled: HashSet<String>,
     bytes: usize,
     failed: bool,
+    protected: bool,
+    admitted: HashSet<String>,
+    drain_deadline: Option<Instant>,
 }
 pub(super) struct ArchiveAssets {
     directory: PathBuf,
@@ -230,8 +280,12 @@ impl ArchiveAssets {
                 manifest,
                 expected: HashSet::new(),
                 stored: HashSet::new(),
+                settled: HashSet::new(),
                 bytes: 0,
                 failed: false,
+                protected: false,
+                admitted: HashSet::new(),
+                drain_deadline: None,
             }),
         }))
     }
@@ -244,6 +298,53 @@ impl ArchiveAssets {
                 s.failed = true;
             }
         }
+    }
+    fn missing(&self) {
+        let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
+        if !state.closed {state.failed=true;}
+    }
+    fn missing_id(&self, id: &str) {
+        let mut state=self.state.lock().unwrap_or_else(|p|p.into_inner());
+        if !state.closed && state.expected.contains(id) && state.settled.insert(id.into()) {
+            state.failed=true;
+        }
+    }
+    fn admitted(&self, id: &str) {
+        let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if s.protected && !s.closed && s.expected.contains(id) {
+            s.admitted.insert(id.to_owned());
+        }
+    }
+    fn stopped_observation(&self, id: &str) -> bool {
+        let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if !s.protected {
+            // Preserve the existing YouTube/unprotected stop warning contract.
+            if !s.closed {
+                if s.expected.len() < ITEMS { s.expected.insert(id.into()); } else { s.failed = true; }
+                if s.expected.contains(id) && s.settled.insert(id.into()) { s.failed = true; }
+            }
+            return true;
+        }
+        if s.closed || (s.expected.contains(id) && s.settled.contains(id)) { return false; }
+        // A duplicate in-flight receive must not settle an accepted image early.
+        if s.protected && s.admitted.contains(id) && !s.settled.contains(id)
+            && s.drain_deadline.is_none_or(|end| Instant::now() < end) { return false; }
+        if s.expected.len() < ITEMS || s.expected.contains(id) {
+            s.expected.insert(id.into());
+            s.settled.insert(id.into());
+        }
+        s.failed = true;
+        true
+    }
+    fn begin_drain(&self, now: Instant, budget: Duration) -> Instant {
+        let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        *s.drain_deadline.get_or_insert(now + budget)
+    }
+    fn retain_on_stop(&self, id: &str, now: Instant) -> bool {
+        let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
+        if !s.protected || s.closed || !s.admitted.contains(id) { return false; }
+        let end = *s.drain_deadline.get_or_insert(now + ARCHIVE_DRAIN);
+        now < end && !s.settled.contains(id)
     }
     fn store(&self, id: &str, asset: &Blob) -> Result<(), String> {
         let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -279,12 +380,19 @@ impl ArchiveAssets {
         if result.is_err() {
             s.failed = true;
         }
+        s.settled.insert(id.into());
         result
     }
     /// The same lock covers the final write and close: a delayed worker can never
     /// append after detach. Missing assets remain text; video finalization proceeds.
     pub(super) fn close(&self) -> bool {
         self.close_with_sync(File::sync_all)
+    }
+    /// A relay may wait on its own target without stopping the shared fetcher
+    /// or waiting for another recording's assets. Caller supplies the deadline.
+    pub(super) fn pending(&self) -> bool {
+        let state=self.state.lock().unwrap_or_else(|p|p.into_inner());
+        !state.closed && !state.expected.is_subset(&state.settled)
     }
     fn close_with_sync(&self, sync: impl FnOnce(&File) -> std::io::Result<()>) -> bool {
         let mut s = self.state.lock().unwrap_or_else(|p| p.into_inner());
@@ -308,6 +416,42 @@ impl ArchiveAssets {
             s.failed = true;
         }
         incomplete || s.failed
+    }
+}
+
+/// SOOP-only ownership, acquired at attach before receiver EOF can stop assets.
+/// The guard outlives asset settlement until the caller persists its chat proof.
+pub(super) struct ArchiveAssetDrain {
+    target: Arc<ArchiveAssets>,
+    core: Arc<Core>,
+    settled: bool,
+}
+impl ArchiveAssetDrain {
+    pub(super) fn begin_drain(&self) {
+        self.target.begin_drain(Instant::now(), ARCHIVE_DRAIN);
+    }
+    pub(super) fn settle_cancellable(&mut self, cancel: &AtomicBool) -> bool {
+        self.settle_with_budget(cancel, ARCHIVE_DRAIN)
+    }
+    fn settle_with_budget(&mut self, cancel: &AtomicBool, budget: Duration) -> bool {
+        let end = self.target.begin_drain(Instant::now(), budget);
+        while self.target.pending() && !cancel.load(Ordering::Acquire) && Instant::now() < end {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.abort()
+    }
+    pub(super) fn abort(&mut self) -> bool {
+        if self.target.pending() { self.target.missing(); }
+        let incomplete = self.target.close();
+        self.settled = true;
+        incomplete
+    }
+}
+impl Drop for ArchiveAssetDrain {
+    fn drop(&mut self) {
+        if !self.settled { self.abort(); }
+        self.core.archive_owners.fetch_sub(1, Ordering::AcqRel);
+        self.core.wake.notify_all();
     }
 }
 fn pin_parents(path: &Path) -> Result<Vec<File>, String> {
@@ -448,7 +592,7 @@ pub(super) fn replay_asset(directory: &Path, id: &str) -> Result<Option<String>,
 }
 
 struct Entry {
-    url: String,
+    source: AssetSource,
     image: Option<Arc<Blob>>,
     attempted: bool,
     queued: bool,
@@ -468,14 +612,21 @@ struct Core {
     wake: Condvar,
     done: AtomicBool,
     failed: AtomicBool,
+    archive_owners: AtomicUsize,
 }
-type Fetcher = Arc<dyn Fn(&str) -> Result<Blob, String> + Send + Sync>;
+type Fetcher = Arc<dyn Fn(&AssetSource) -> Result<Blob, String> + Send + Sync>;
 pub(super) struct SessionAssets {
     core: Arc<Core>,
     started: AtomicBool,
     fetcher: Fetcher,
 }
 impl SessionAssets {
+    #[cfg(test)]
+    pub(super) fn with_test_fetcher(fetcher: impl Fn(&str)->Result<Vec<u8>,String> + Send + Sync + 'static)->Self {
+        let mut session=Self::new();
+        session.fetcher=Arc::new(move |source|blob(fetcher(source.url())?,None));
+        session
+    }
     pub(super) fn new() -> Self {
         Self {
             core: Arc::new(Core {
@@ -483,40 +634,132 @@ impl SessionAssets {
                 wake: Condvar::new(),
                 done: AtomicBool::new(true),
                 failed: AtomicBool::new(false),
+                archive_owners: AtomicUsize::new(0),
             }),
             started: AtomicBool::new(false),
-            fetcher: Arc::new(fetch),
+            fetcher: Arc::new(fetch_source),
         }
     }
+    pub(super) fn protect_archive(&self, target: Arc<ArchiveAssets>) -> ArchiveAssetDrain {
+        target.state.lock().unwrap_or_else(|p| p.into_inner()).protected = true;
+        self.core.archive_owners.fetch_add(1, Ordering::AcqRel);
+        ArchiveAssetDrain { target, core: self.core.clone(), settled: false }
+    }
+    pub(super) fn protected_archive_drains_pending(&self) -> bool {
+        self.core.archive_owners.load(Ordering::Acquire) != 0
+    }
     pub(super) fn observe(&self, parts: &[ChatPart], archive: Option<&Arc<ArchiveAssets>>) {
+        let sources=parts.iter().filter_map(|part| {
+            let ChatPart::Emoji {asset_id:id, source_url:Some(url),..}=part else {return None;};
+            if sanitize_url(url).as_deref()!=Some(url.as_str()) || asset_id(url)!=*id {return None;}
+            Some(AssetSource::YoutubeEmoji(url.clone()))
+        });
+        self.observe_sources(sources,archive);
+    }
+    pub(super) fn observe_mission(&self, meta:&crate::soop::chat::missions::Metadata, request:Option<&crate::soop::chat::missions::Request>, archive:Option<&Arc<ArchiveAssets>>) {
+        if !meta.has_image() {return;}
+        let source=request.filter(|r|r.matches(meta)&&meta.image_asset_id.as_deref()==Some(r.id())).cloned().map(AssetSource::SoopMission)
+            .or_else(|| {
+                let id=meta.image_asset_id.as_deref().filter(|id|valid_id(id))?;
+                let state=self.core.state.lock().unwrap_or_else(|p|p.into_inner());
+                state.entries.get(id).filter(|entry|matches!(&entry.source,AssetSource::SoopMission(r) if r.matches(meta))).map(|entry|entry.source.clone())
+            });
+        if let Some(source)=source {self.observe_sources([source],archive);} else {
+            self.core.failed.store(true,Ordering::Release);
+            if let Some(target)=archive {target.missing();if let Some(id)=meta.image_asset_id.as_deref().filter(|id|valid_id(id)){target.expect(id);target.missing_id(id);}}
+        }
+    }
+    pub(super) fn observe_gift(&self, gift:&SoopGiftMetadata, request:Option<&SoopGiftRequest>, archive:Option<&Arc<ArchiveAssets>>) {
+        // Old standard/video rows have no captured identity. Never backfill them
+        // from a current URL or convert the local fallback into capture evidence.
+        if (gift.is_default || gift.kind==SoopGiftKind::VideoBalloon) && gift.image_asset_id.is_none() && request.is_none() {return;}
+        let source=request.filter(|request|request.matches(gift) && gift.image_asset_id.as_deref()==Some(request.id())).cloned().map(AssetSource::SoopGift)
+            .or_else(|| {
+                let id=gift.image_asset_id.as_deref().filter(|id|valid_id(id))?;
+                let state=self.core.state.lock().unwrap_or_else(|p|p.into_inner());
+                state.entries.get(id).filter(|entry|matches!(&entry.source,AssetSource::SoopGift(request) if request.matches(gift))).map(|entry|entry.source.clone())
+            });
+        if let Some(source)=source {self.observe_sources([source],archive);} else {
+            self.core.failed.store(true,Ordering::Release);
+            if let Some(archive)=archive {archive.missing();if let Some(id)=gift.image_asset_id.as_deref().filter(|id|valid_id(id)){archive.expect(id);archive.missing_id(id);}}
+        }
+    }
+    pub(super) fn observe_ogq(&self, emote:&SoopOgqMetadata, requests:&[SoopOgqRequest], archive:Option<&Arc<ArchiveAssets>>) {
+        let ids=emote.ids().into_iter().collect::<HashSet<_>>();
+        let mut missing=ids.len()!=emote.expected_count();
+        let mut sources=Vec::new();
+        for id in ids {
+            if let Some(target)=archive {target.expect(id);}
+            let source=requests.iter().find(|request|request.id()==id).cloned().map(AssetSource::SoopOgq)
+                .or_else(|| {
+                    let state=self.core.state.lock().unwrap_or_else(|p|p.into_inner());
+                    state.entries.get(id).filter(|entry|matches!(&entry.source,AssetSource::SoopOgq(_))).map(|entry|entry.source.clone())
+                });
+            if let Some(source)=source {sources.push(source);} else {missing=true;if let Some(target)=archive{target.missing_id(id);}}
+        }
+        if missing {self.core.failed.store(true,Ordering::Release);if let Some(target)=archive {target.missing();}}
+        self.observe_sources(sources,archive);
+    }
+    pub(super) fn observe_subscription(&self, meta:&SoopSubscriptionMetadata, requests:&[SoopSubscriptionRequest], archive:Option<&Arc<ArchiveAssets>>) {
+        let ids=meta.ids().into_iter().collect::<HashSet<_>>();
+        // Primary and fallback may intentionally refer to the same gudok_1 image.
+        let mut missing=meta.image_asset_id.is_none() || meta.fallback_asset_id.is_none();
+        let mut sources=Vec::new();
+        for id in ids {
+            if let Some(target)=archive {target.expect(id);}
+            let source=requests.iter().find(|request|request.id()==id).cloned().map(AssetSource::SoopSubscription)
+                .or_else(|| {
+                    let state=self.core.state.lock().unwrap_or_else(|p|p.into_inner());
+                    state.entries.get(id).filter(|entry|matches!(&entry.source,AssetSource::SoopSubscription(_))).map(|entry|entry.source.clone())
+                });
+            if let Some(source)=source {sources.push(source);} else {missing=true;if let Some(target)=archive{target.missing_id(id);}}
+        }
+        if missing {self.core.failed.store(true,Ordering::Release);if let Some(target)=archive {target.missing();}}
+        self.observe_sources(sources,archive);
+    }
+    pub(super) fn observe_personalcon(&self, meta:&crate::soop::chat::personalcon::Metadata, request:Option<&crate::soop::chat::personalcon::Request>,archive:Option<&Arc<ArchiveAssets>>) {
+        let id=&meta.image_asset_id;
+        if let Some(target)=archive{target.expect(id);}
+        let source=request.filter(|r|r.matches(meta)).cloned().map(AssetSource::SoopPersonalcon).or_else(||{
+            let state=self.core.state.lock().unwrap_or_else(|p|p.into_inner());
+            state.entries.get(id).filter(|e|matches!(&e.source,AssetSource::SoopPersonalcon(_))).map(|e|e.source.clone())
+        });
+        if let Some(source)=source{self.observe_sources([source],archive);}else{self.core.failed.store(true,Ordering::Release);if let Some(target)=archive{target.missing_id(id);}}
+    }
+    pub(super) fn observe_avatar(&self,meta:&crate::soop::chat::portrait::Metadata,request:Option<&crate::soop::chat::portrait::Request>,archive:Option<&Arc<ArchiveAssets>>){
+        let id=&meta.image_asset_id;if let Some(target)=archive{target.expect(id);}
+        let source=request.filter(|r|r.matches(meta)).cloned().map(AssetSource::SoopAvatar).or_else(||{let state=self.core.state.lock().unwrap_or_else(|p|p.into_inner());state.entries.get(id).filter(|e|matches!(&e.source,AssetSource::SoopAvatar(_))).map(|e|e.source.clone())});
+        if let Some(source)=source{self.observe_sources([source],archive);}else{self.core.failed.store(true,Ordering::Release);if let Some(target)=archive{target.missing_id(id);}}
+    }
+    fn observe_sources(&self, sources:impl IntoIterator<Item=AssetSource>, archive:Option<&Arc<ArchiveAssets>>) {
         let mut s = self.core.state.lock().unwrap_or_else(|p| p.into_inner());
+        let mut sources=sources.into_iter();
         if s.stopped {
+            // A frame already read by the receiver may be archived after stop.
+            // Preserve that event and honest asset coverage without new work.
+            for source in sources {
+                if archive.is_none_or(|archive| archive.stopped_observation(&source.id())) {
+                    self.core.failed.store(true,Ordering::Release);
+                }
+            }
             return;
         }
-        for part in parts {
-            let ChatPart::Emoji {
-                asset_id: id,
-                source_url: Some(url),
-                ..
-            } = part
-            else {
-                continue;
-            };
-            if sanitize_url(url).as_deref() != Some(url.as_str()) || asset_id(url) != *id {
-                continue;
-            }
+        for source in sources {
+            if !source.valid() {continue;}
+            let id=source.id();
             if let Some(target) = archive {
-                target.expect(id);
+                target.expect(&id);
             }
-            if !s.entries.contains_key(id) {
+            if !s.entries.contains_key(&id) {
                 if s.entries.len() >= ITEMS {
                     self.core.failed.store(true, Ordering::Release);
+                    if let Some(target)=archive {target.missing_id(&id);}
                     continue;
                 }
                 s.entries.insert(
                     id.clone(),
                     Entry {
-                        url: url.clone(),
+                        source,
                         image: None,
                         attempted: false,
                         queued: false,
@@ -525,16 +768,18 @@ impl SessionAssets {
                 );
             }
             let queue_room = s.queue.len() < 64;
-            let entry = s.entries.get_mut(id).unwrap();
+            let entry = s.entries.get_mut(&id).unwrap();
             entry.targets.retain(|t| t.strong_count() > 0);
             if let Some(target) = archive {
-                if !entry
+                let already_registered = entry
                     .targets
                     .iter()
-                    .any(|t| t.ptr_eq(&Arc::downgrade(target)))
-                    && entry.targets.len() < 8
-                {
+                    .any(|t| t.ptr_eq(&Arc::downgrade(target)));
+                if !already_registered && entry.targets.len() < 8 {
                     entry.targets.push(Arc::downgrade(target));
+                } else if !already_registered {
+                    target.missing_id(&id);
+                    self.core.failed.store(true,Ordering::Release);
                 }
             }
             if !entry.queued
@@ -545,6 +790,17 @@ impl SessionAssets {
                     s.queue.push_back(id.clone());
                 } else {
                     self.core.failed.store(true, Ordering::Release);
+                    if let Some(target)=archive {target.missing_id(&id);}
+                }
+            } else if !entry.queued && entry.attempted && entry.image.is_none() {
+                // Failed or evicted immutable capture bytes cannot be silently
+                // replaced by a later fetch of the same mutable URL.
+                if let Some(target)=archive {target.missing_id(&id);}
+            }
+            if let Some(target) = archive {
+                if s.entries.get(&id).is_some_and(|entry| entry.queued
+                    && entry.targets.iter().any(|t| t.ptr_eq(&Arc::downgrade(target)))) {
+                    target.admitted(&id);
                 }
             }
         }
@@ -558,6 +814,7 @@ impl SessionAssets {
                 .is_err()
             {
                 s.stopped = true;
+                settle_failed_targets(&s);
                 self.core.failed.store(true, Ordering::Release);
                 self.core.done.store(true, Ordering::Release);
             }
@@ -603,7 +860,10 @@ impl SessionAssets {
     pub(super) fn stop(&self) {
         let mut s = self.core.state.lock().unwrap_or_else(|p| p.into_inner());
         s.stopped = true;
-        s.queue.clear();
+        let now = Instant::now();
+        for (id, entry) in &mut s.entries { retain_stopped_targets(id, entry, now); }
+        let queue = std::mem::take(&mut s.queue);
+        s.queue = queue.into_iter().filter(|id| s.entries.get(id).is_some_and(|e| !e.targets.is_empty())).collect();
         self.core.wake.notify_all();
     }
     pub(super) fn is_done(&self) -> bool {
@@ -611,6 +871,18 @@ impl SessionAssets {
     }
     pub(super) fn incomplete(&self) -> bool {
         self.core.failed.load(Ordering::Acquire)
+    }
+}
+fn retain_stopped_targets(id: &str, entry: &mut Entry, now: Instant) {
+    entry.targets.retain(|weak| {
+        let Some(target) = weak.upgrade() else { return false; };
+        if target.retain_on_stop(id, now) { true } else { target.missing_id(id); false }
+    });
+    if entry.targets.is_empty() { entry.queued = false; }
+}
+fn settle_failed_targets(state:&CacheState) {
+    for (id,entry) in &state.entries {
+        for target in entry.targets.iter().filter_map(Weak::upgrade) {target.missing_id(id);}
     }
 }
 impl Drop for SessionAssets {
@@ -624,38 +896,48 @@ fn worker(core: Arc<Core>, fetcher: Fetcher) {
         fn drop(&mut self) {
             if std::thread::panicking() {
                 self.0.failed.store(true, Ordering::Release);
+                let mut state=self.0.state.lock().unwrap_or_else(|p|p.into_inner());
+                state.stopped=true;
+                settle_failed_targets(&state);
             }
             self.0.done.store(true, Ordering::Release);
         }
     }
     let _done = Done(core.clone());
     loop {
-        let (id, url, cached, attempted) = {
+        let (id, source, cached, attempted) = {
             let mut s = core.state.lock().unwrap_or_else(|p| p.into_inner());
             while s.queue.is_empty() && !s.stopped {
                 s = core.wake.wait(s).unwrap_or_else(|p| p.into_inner());
             }
-            if s.stopped {
+            if s.queue.is_empty() {
                 return;
             }
             let id = s.queue.pop_front().unwrap();
+            if s.stopped {
+                let entry = s.entries.get_mut(&id).unwrap();
+                retain_stopped_targets(&id, entry, Instant::now());
+                if entry.targets.is_empty() { continue; }
+            }
             let entry = s.entries.get(&id).unwrap();
             (
                 id.clone(),
-                entry.url.clone(),
+                entry.source.clone(),
                 entry.image.clone(),
                 entry.attempted,
             )
         };
         let fetched = cached.or_else(|| {
             (!attempted)
-                .then(|| fetcher(&url).ok().map(Arc::new))
+                .then(|| fetcher(&source).ok().map(Arc::new))
                 .flatten()
         });
         let (image, targets) = {
             let mut s = core.state.lock().unwrap_or_else(|p| p.into_inner());
             if s.stopped {
-                return;
+                let entry = s.entries.get_mut(&id).unwrap();
+                retain_stopped_targets(&id, entry, Instant::now());
+                if entry.targets.is_empty() { continue; }
             }
             let fresh = !attempted;
             let image = fetched.filter(|b| !fresh || s.downloaded + b.bytes.len() <= TOTAL);
@@ -681,8 +963,13 @@ fn worker(core: Arc<Core>, fetcher: Fetcher) {
             }
             (image, targets)
         };
+        // Targets stay unsettled while bytes are transferred out of the queue
+        // and actually written. A failed sibling never settles these early.
+        struct SettleTargets {id:String,targets:Vec<Weak<ArchiveAssets>>}
+        impl Drop for SettleTargets {fn drop(&mut self){for target in self.targets.iter().filter_map(Weak::upgrade){target.missing_id(&self.id);}}}
+        let targets=SettleTargets{id:id.clone(),targets};
         if let Some(image) = image {
-            for target in targets.into_iter().filter_map(|t| t.upgrade()) {
+            for target in targets.targets.iter().filter_map(|t| t.upgrade()) {
                 if target.store(&id, &image).is_err() {
                     core.failed.store(true, Ordering::Release);
                 }
@@ -1010,3 +1297,83 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path="chat_assets_personalcon_tests.rs"]
+mod personalcon_tests;
+
+#[cfg(test)]
+mod settlement_tests {
+    use super::*;
+    fn png() -> Blob {
+        let mut bytes=std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(2,2).write_to(&mut bytes,image::ImageFormat::Png).unwrap();
+        blob(bytes.into_inner(),None).unwrap()
+    }
+    fn until(done:impl Fn()->bool) {
+        let end=Instant::now()+Duration::from_secs(3);
+        while !done(){assert!(Instant::now()<end);std::thread::sleep(Duration::from_millis(2));}
+    }
+    fn source(n:usize)->AssetSource {AssetSource::YoutubeEmoji(format!("https://yt3.ggpht.com/settle{n}"))}
+    #[test]
+    fn one_failed_id_does_not_settle_a_different_pending_image() {
+        let root=tempfile::tempdir().unwrap();let target=ArchiveAssets::new(root.path()).unwrap();
+        let a=source(0).id();let b=source(1).id();target.expect(&a);target.expect(&b);
+        target.missing_id(&a);assert!(target.pending());
+        target.store(&b,&png()).unwrap();assert!(!target.pending());assert!(target.close());
+        assert_eq!(target.state.lock().unwrap().stored.len(),1);
+    }
+    #[test]
+    fn worker_failed_then_pending_target_drains_without_stopping_shared_receiver() {
+        let release=Arc::new(AtomicBool::new(false));let gate=release.clone();
+        let mut session=SessionAssets::new();session.fetcher=Arc::new(move|source|{
+            if source.id()==self::source(0).id(){return Err("fixture".into());}
+            while !gate.load(Ordering::Acquire){std::thread::sleep(Duration::from_millis(2));}
+            Ok(png())
+        });
+        let root=tempfile::tempdir().unwrap();let target=ArchiveAssets::new(root.path()).unwrap();
+        session.observe_sources([source(0),source(1)],Some(&target));
+        until(||target.state.lock().unwrap().settled.contains(&source(0).id()));
+        assert!(target.pending());release.store(true,Ordering::Release);until(||!target.pending());
+        assert_eq!(target.state.lock().unwrap().stored.len(),1);assert!(target.close());
+        assert!(!session.core.state.lock().unwrap().stopped);session.stop();until(||session.is_done());
+    }
+    #[test]
+    fn prior_failed_fetch_settles_new_target_without_retry_or_long_wait() {
+        let calls=Arc::new(AtomicUsize::new(0));let count=calls.clone();
+        let mut session=SessionAssets::new();session.fetcher=Arc::new(move|_|{count.fetch_add(1,Ordering::AcqRel);Err("fixture".into())});
+        session.observe_sources([source(0)],None);
+        until(||session.core.state.lock().unwrap().entries.get(&source(0).id()).is_some_and(|e|e.attempted));
+        let root=tempfile::tempdir().unwrap();let target=ArchiveAssets::new(root.path()).unwrap();
+        session.observe_sources([source(0)],Some(&target));assert!(!target.pending());assert!(target.close());
+        assert_eq!(calls.load(Ordering::Acquire),1);session.stop();until(||session.is_done());
+    }
+    #[test]
+    fn stop_settles_queued_targets_as_failed_without_claiming_stored() {
+        let release=Arc::new(AtomicBool::new(false));let gate=release.clone();
+        let mut session=SessionAssets::new();session.fetcher=Arc::new(move|_|{while !gate.load(Ordering::Acquire){std::thread::sleep(Duration::from_millis(2));}Ok(png())});
+        let root=tempfile::tempdir().unwrap();let target=ArchiveAssets::new(root.path()).unwrap();
+        session.observe_sources([source(0),source(1)],Some(&target));assert!(target.pending());
+        session.stop();assert!(!target.pending());assert!(target.close());release.store(true,Ordering::Release);until(||session.is_done());
+        assert_eq!(target.state.lock().unwrap().stored.len(),0);
+    }
+    #[test]
+    fn queue_and_target_caps_settle_only_rejected_ids() {
+        let session=SessionAssets::new();session.started.store(true,Ordering::Release);
+        let root=tempfile::tempdir().unwrap();let target=ArchiveAssets::new(root.path()).unwrap();
+        session.observe_sources((0..65).map(source),Some(&target));
+        assert!(target.state.lock().unwrap().settled.contains(&source(64).id()));
+        assert!(target.pending());session.stop();assert!(!target.pending());assert!(target.close());
+
+        let session=SessionAssets::new();session.started.store(true,Ordering::Release);
+        let roots=(0..9).map(|_|tempfile::tempdir().unwrap()).collect::<Vec<_>>();
+        let targets=roots.iter().map(|r|ArchiveAssets::new(r.path()).unwrap()).collect::<Vec<_>>();
+        for target in &targets{session.observe_sources([source(0)],Some(target));}
+        assert!(!targets[8].pending());assert!(targets[0].pending());assert!(targets[8].close());
+        session.stop();for target in targets.iter().take(8){assert!(!target.pending());assert!(target.close());}
+    }
+}
+
+#[cfg(test)]
+#[path="chat_assets_mission_tests.rs"]
+mod mission_tests;

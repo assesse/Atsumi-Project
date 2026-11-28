@@ -48,7 +48,7 @@ function ChannelChoices({ runtime, inputs, multiple, privacy, disabled, onInputs
         const profile = privacy ? undefined : profiles[row.channelId];
         const name = privacy ? `채널 ${index + 1}` : profile?.channelName || row.channelName || row.channelId;
         const status = row.scheduled?.status;
-        const badge = ({ recording: "녹화 중", starting: "녹화 준비", stopping: "마무리 중", ending: "방송 종료 확인 중", queued: "자리 대기", retry: "연결 재시도 대기", skipped: "이번 방송 건너뜀", attention: "녹화 확인 필요" } as Record<string, string>)[status ?? ""]
+        const badge = ({ recording: "녹화 중", starting: "녹화 준비", reconnecting: "방송 화면 재연결 중", stopping: "마무리 중", ending: "방송 종료 확인 중", queued: "자리 대기", retry: "연결 재시도 대기", skipped: "이번 방송 건너뜀", attention: "녹화 확인 필요" } as Record<string, string>)[status ?? ""]
           ?? (row.scheduled?.enabled ? "녹화 예약 됨" : "예약 꺼짐");
         const live = profileErrors.has(row.channelId) ? "unknown" : profile?.liveStatus ?? "unknown";
         return <div className={`live-channel-row${row.favorite ? " is-favorite" : ""}`} key={row.channelId}>
@@ -66,6 +66,6 @@ function ChannelChoices({ runtime, inputs, multiple, privacy, disabled, onInputs
     </div>
     <RecordingLoadStatus error={pollError} hasSnapshot={hasSnapshot} subject="저장한 채널" />
     {error || selectionError ? <small role="alert">{error || selectionError}</small> : null}
-    {managementOpen ? <AutoRecordingManagerDialog runtime={runtime} privacy={privacy} api={managementApi} onChange={acceptManagedSnapshot} onClose={() => setManagementOpen(false)} /> : null}
+    {managementOpen ? <AutoRecordingManagerDialog runtime={runtime} privacy={privacy} api={managementApi} archiveChannels={channels.map(row => ({ id: row.channelId, name: profiles[row.channelId]?.channelName || row.channelName || row.channelId }))} onChange={acceptManagedSnapshot} onClose={() => setManagementOpen(false)} /> : null}
   </section>;
 }

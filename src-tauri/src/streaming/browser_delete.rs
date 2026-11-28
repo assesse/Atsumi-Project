@@ -55,6 +55,7 @@ impl BrowserCaptureStore {
         if state.closing
             || state.active.contains_key(id)
             || state.deleting.contains_key(id)
+            || state.replay_leases.get(id).is_some_and(|lease| Arc::strong_count(lease) > 1)
             || record.status == BrowserRecordingStatus::Recording
             || state
                 .merge_job
@@ -383,6 +384,22 @@ mod tests {
             "BROWSER_DELETE_BUSY"
         );
         assert!(!store.snapshot().unwrap()[0].deletion_pending);
+    }
+    #[test]
+    fn held_upload_or_replay_lease_blocks_delete_before_tombstone() {
+        let (_temp, store, rec) = fixture();
+        store.finish(&rec.id, false, None).unwrap();
+        let chat = Path::new(&rec.output_dir).join("chat.jsonl");
+        fs::write(&chat, b"preserve chat during upload").unwrap();
+        let held = {
+            let mut state = store.lock().unwrap();
+            state.replay_leases.entry(rec.id.clone()).or_insert_with(|| Arc::new(())).clone()
+        };
+        assert_eq!(store.prepare_delete(&rec.id).unwrap_err().code, "BROWSER_DELETE_BUSY");
+        assert!(!store.snapshot().unwrap()[0].deletion_pending);
+        assert_eq!(fs::read(&chat).unwrap(), b"preserve chat during upload");
+        drop(held);
+        assert!(store.prepare_delete(&rec.id).is_ok());
     }
     #[test]
     fn deletion_removes_only_selected_owned_folder_and_persists_catalog() {

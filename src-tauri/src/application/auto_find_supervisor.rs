@@ -44,7 +44,15 @@ struct ActiveRun {
     worker: Option<JoinHandle<()>>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoFindRefreshMode {
+    Incremental,
+    Full,
+}
+
 pub(crate) struct PreparedAutoFindRefresh {
+    mode: Option<AutoFindRefreshMode>,
     favorites: Vec<FavoriteRecord>,
     total_favorites: u32,
     history_mode: AutoFindHistoryMode,
@@ -82,11 +90,11 @@ impl AutoFindSupervisor {
         if let Some(active_run) = self.active_run_snapshot()? {
             return Ok(active_run);
         }
-        let prepared = self.prepare_refresh()?;
+        let prepared = self.prepare_refresh(None)?;
         self.commit_refresh(prepared)
     }
 
-    pub(crate) fn prepare_refresh(&self) -> Result<PreparedAutoFindRefresh, ApplicationError> {
+    pub(crate) fn prepare_refresh(&self, mode: Option<AutoFindRefreshMode>) -> Result<PreparedAutoFindRefresh, ApplicationError> {
         let favorites = self
             .inner
             .repository
@@ -100,19 +108,33 @@ impl AutoFindSupervisor {
             })
             .collect::<Vec<_>>();
         let total_favorites = u32::try_from(favorites.len()).unwrap_or(u32::MAX);
-        let history_mode = self.inner.settings.settings_get()?.auto_find_history_mode;
+        let history_mode = if mode == Some(AutoFindRefreshMode::Full) { AutoFindHistoryMode::IncludeAllHistory }
+            else { self.inner.settings.settings_get()?.auto_find_history_mode };
         let artists = favorites
             .iter()
             .map(|favorite| favorite.key())
             .collect::<Vec<_>>();
-        let cutoff_evidence = self.inner.repository.auto_find_owned_cutoffs(&artists)?;
-        let incremental_checkpoints = self.inner.repository.auto_find_incremental_checkpoints(
-            &artists,
-            history_mode,
-            AUTO_FIND_INCREMENTAL_POLICY_VERSION,
-            AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS,
-        )?;
+        let incremental_checkpoints = match mode {
+            Some(AutoFindRefreshMode::Full) => Vec::new(),
+            Some(AutoFindRefreshMode::Incremental) => self.inner.repository.auto_find_checkpoints(
+                &artists, None, AUTO_FIND_INCREMENTAL_POLICY_VERSION, None,
+            )?,
+            None => self.inner.repository.auto_find_incremental_checkpoints(
+                &artists, history_mode, AUTO_FIND_INCREMENTAL_POLICY_VERSION, AUTO_FIND_FULL_RESCAN_MAX_AGE_DAYS,
+            )?,
+        };
+        let cutoff_evidence = match mode {
+            Some(AutoFindRefreshMode::Full) => Vec::new(),
+            Some(AutoFindRefreshMode::Incremental) => {
+                let reviewed = incremental_checkpoints.iter().filter(|c| c.high_water_gallery_id.is_some())
+                    .map(|c| (c.namespace, c.artist.as_str())).collect::<HashSet<_>>();
+                let first_scan = artists.into_iter().filter(|k| !reviewed.contains(&(k.namespace, k.value.as_str()))).collect::<Vec<_>>();
+                self.inner.repository.auto_find_owned_cutoffs(&first_scan)?
+            }
+            None => self.inner.repository.auto_find_owned_cutoffs(&artists)?,
+        };
         Ok(PreparedAutoFindRefresh {
+            mode,
             favorites,
             total_favorites,
             history_mode,
@@ -131,16 +153,16 @@ impl AutoFindSupervisor {
             return Ok(active_run);
         }
         let PreparedAutoFindRefresh {
+            mode,
             favorites,
             total_favorites,
             history_mode,
             cutoff_evidence,
             incremental_checkpoints,
         } = prepared;
-        let run = self.inner.repository.auto_find_start(
-            total_favorites,
-            history_mode,
-            &cutoff_evidence,
+        let run = self.inner.repository.auto_find_start_with_pending(
+            total_favorites, history_mode, &cutoff_evidence,
+            mode == Some(AutoFindRefreshMode::Incremental),
         )?;
         if run.state != AutoFindRunState::Running {
             return Ok(run);
@@ -170,6 +192,7 @@ impl AutoFindSupervisor {
                 run_refresh(
                     inner,
                     worker_run_id,
+                    mode,
                     favorites,
                     history_mode,
                     cutoff_evidence,
@@ -260,8 +283,7 @@ impl AutoFindSupervisor {
         let Some(run_id) = run_id else {
             return Ok(None);
         };
-        let snapshot = self.inner.repository.auto_find_snapshot()?;
-        Ok(snapshot.run.filter(|run| run.run_id == run_id))
+        Ok(self.inner.repository.auto_find_run_get(&run_id)?)
     }
 
     fn reap_finished_worker(&self) {
@@ -291,6 +313,7 @@ impl AutoFindSupervisor {
 fn run_refresh(
     inner: Arc<AutoFindSupervisorInner>,
     run_id: String,
+    mode: Option<AutoFindRefreshMode>,
     favorites: Vec<crate::domain::FavoriteRecord>,
     history_mode: AutoFindHistoryMode,
     cutoff_evidence: Vec<AutoFindCutoffEvidence>,
@@ -334,16 +357,15 @@ fn run_refresh(
                 .flatten();
             let checkpoint = checkpoints.get(&target_key);
             let incremental = checkpoint.is_some_and(|checkpoint| {
-                checkpoint.history_mode == history_mode
-                    && checkpoint.policy_version == AUTO_FIND_INCREMENTAL_POLICY_VERSION
-                    && checkpoint.high_water_gallery_id.is_some()
-                    && checkpoint.incremental_runs_since_full
-                        < AUTO_FIND_FULL_RESCAN_AFTER_INCREMENTAL_RUNS
+                checkpoint.high_water_gallery_id.is_some() && (mode == Some(AutoFindRefreshMode::Incremental)
+                    || (checkpoint.history_mode == history_mode
+                        && checkpoint.policy_version == AUTO_FIND_INCREMENTAL_POLICY_VERSION
+                        && checkpoint.incremental_runs_since_full < AUTO_FIND_FULL_RESCAN_AFTER_INCREMENTAL_RUNS))
             });
             let incremental_floor = incremental
                 .then(|| checkpoint.and_then(|checkpoint| checkpoint.high_water_gallery_id))
                 .flatten()
-                .and_then(incremental_lookback_floor);
+                .and_then(|id| if mode.is_some() { Some(id) } else { incremental_lookback_floor(id) });
             let request_floor = [history_floor, incremental_floor]
                 .into_iter()
                 .flatten()
@@ -356,7 +378,7 @@ fn run_refresh(
                 retain_after_gallery_id: history_floor,
                 newer_than_gallery_id: request_floor,
                 history_expansion_ceiling: checkpoint
-                    .filter(|_| incremental)
+                    .filter(|_| incremental && mode.is_none())
                     .and_then(|checkpoint| checkpoint.history_floor_gallery_id)
                     .filter(|old| history_floor.is_none_or(|new| new < *old)),
                 candidate_limit: AUTO_FIND_CANDIDATE_LIMIT,
@@ -364,9 +386,10 @@ fn run_refresh(
             let source = inner
                 .source
                 .auto_find_artist_plan(&request, &cancellation)?;
-            let eligible_ids = inner
-                .repository
-                .auto_find_eligible_ids(&source.matching_ids)?;
+            let append_only = incremental && mode == Some(AutoFindRefreshMode::Incremental);
+            let eligible_ids = inner.repository.auto_find_eligible_ids(
+                if append_only { &source.candidate_ids } else { &source.matching_ids },
+            )?;
             for &id in &eligible_ids {
                 if resolved_ids.contains(&id) {
                     inner
@@ -375,7 +398,8 @@ fn run_refresh(
                 }
             }
             let eligible_set = eligible_ids.iter().copied().collect::<HashSet<_>>();
-            let cached_candidates = if incremental {
+            let carry_from_cache = incremental && !append_only;
+            let cached_candidates = if carry_from_cache {
                 inner
                     .repository
                     .auto_find_cached_candidates(&eligible_ids)?
@@ -397,7 +421,7 @@ fn run_refresh(
                     },
                 )?;
             }
-            if incremental {
+            if carry_from_cache {
                 // The newest run is the visible Auto Find projection. Carry
                 // forward only cached IDs which the current source still
                 // associates with this favorite. This both preserves the
@@ -474,15 +498,17 @@ fn run_refresh(
                 } else {
                     source.latest_available_gallery_id
                 };
+                // Continue the actual successful baseline, including one created by an older app.
+                let inherited = checkpoint.filter(|_| incremental && mode == Some(AutoFindRefreshMode::Incremental));
                 inner.repository.auto_find_checkpoint_stage(
                     &run_id,
                     &AutoFindCheckpointStage {
                         namespace: favorite.namespace,
                         artist: favorite.value.clone(),
-                        history_mode,
+                        history_mode: inherited.map_or(history_mode, |c| c.history_mode),
                         policy_version: AUTO_FIND_INCREMENTAL_POLICY_VERSION,
                         high_water_gallery_id,
-                        history_floor_gallery_id: history_floor,
+                        history_floor_gallery_id: inherited.map_or(history_floor, |c| c.history_floor_gallery_id),
                         performed_full_scan: !incremental,
                     },
                 )?;
@@ -1196,6 +1222,44 @@ mod tests {
         drop(repository);
         let reopened = SqliteRepository::open(path).unwrap();
         assert_eq!(reopened.auto_find_snapshot().unwrap().candidates.len(), 2);
+    }
+
+    #[test]
+    fn manual_modes_follow_the_last_successful_target_and_full_recovers_older_additions() {
+        use super::AutoFindRefreshMode::{Full, Incremental};
+        let repo = Arc::new(SqliteRepository::open_in_memory().unwrap());
+        enable_artist(&repo, "serein");
+        let run = |mode, ids: &[i64]| {
+            let source = Arc::new(DeterministicSearchRepository::immediate(ids.iter().map(|id| gallery(*id, "serein")).collect()));
+            let supervisor = AutoFindSupervisor::new(repo.clone(), repo.clone(), source.clone(), mpsc::channel().0);
+            let before = repo.auto_find_snapshot().unwrap().candidates;
+            let started = supervisor.commit_refresh(supervisor.prepare_refresh(mode).unwrap()).unwrap();
+            if mode == Some(Incremental) { assert_eq!(started.candidates_found as usize, before.len()); }
+            let snapshot = wait_for_terminal(&repo);
+            if mode == Some(Incremental) {
+                for old in before {
+                    let kept = snapshot.candidates.iter().find(|c| c.gallery.id == old.gallery.id).unwrap();
+                    assert_eq!(kept.discovered_at, old.discovered_at);
+                }
+            }
+            supervisor.shutdown_and_wait();
+            assert_eq!(snapshot.run.unwrap().state, AutoFindRunState::Completed);
+            let floor = source.auto_find_requests.lock().unwrap()[0].newer_than_gallery_id.map(GalleryId::get);
+            let found = snapshot.candidates.into_iter().map(|c| c.gallery.id.get()).collect::<BTreeSet<_>>();
+            (floor, source.summary_calls.load(Ordering::SeqCst), found)
+        };
+        seed_owned_gallery(&repo, 80, Some("serein"), None);
+        assert_eq!(run(None, &[50,100,200]).0, Some(80));
+        assert_eq!(run(Some(Incremental), &[100,150,200,250]), (Some(200), 1, BTreeSet::from([100,200,250])));
+        assert_eq!(run(Some(Incremental), &[100,150,200,250]).0, Some(250));
+        // A later full scan cancelled before its first target cannot erase a completed baseline.
+        let cancelled = repo.auto_find_start(1, AutoFindHistoryMode::IncludeAllHistory, &[]).unwrap();
+        repo.auto_find_finish(&cancelled.run_id, AutoFindRunState::Cancelled, None, None).unwrap();
+        let resumed = repo.auto_find_start_with_pending(1, AutoFindHistoryMode::IncludeAllHistory, &[], true).unwrap();
+        assert_eq!(resumed.candidates_found, 3);
+        repo.auto_find_finish(&resumed.run_id, AutoFindRunState::Cancelled, None, None).unwrap();
+        assert_eq!(run(Some(Full), &[50,100,150,200,250]), (None, 5, BTreeSet::from([50,100,150,200,250])));
+        assert_eq!(run(Some(Incremental), &[50,100,150,200,250,270]), (Some(250), 1, BTreeSet::from([50,100,150,200,250,270])));
     }
 
     #[test]

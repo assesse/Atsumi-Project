@@ -29,7 +29,7 @@ fn valid_summary(summary: &GallerySummary, gallery_id: GalleryId) -> bool {
     summary.id == gallery_id && !summary.title.trim().is_empty() && summary.pages > 0
 }
 
-pub(super) fn decode_persisted_summary(
+pub(crate) fn decode_persisted_summary(
     gallery_id: GalleryId,
     profile: &str,
     version: u32,

@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::domain::{
-    download_root_for_display, plan_artifact_relative_directory, AutoFindExclusionResult,
+    download_root_for_display, plan_artifact_relative_directory, AutoFindCandidateChanges, AutoFindExclusionResult,
     AutoFindSnapshot, DownloadEntry, DownloadEntryId, DownloadJobDescriptor, DownloadJobProjection,
     DownloadLibraryPage, DownloadListRequest, DownloadPage, ExplorationDataResetRequest,
     ExplorationDataResetResult, ExplorationExclusion, ExplorationExclusionRestoreResult,
@@ -312,6 +312,12 @@ impl ApplicationService {
         &self,
         request: SearchRequest,
     ) -> Result<SearchSubmission, ApplicationError> {
+        self.search_submit_visible(request, Vec::new())
+    }
+
+    pub fn search_submit_visible(&self, request: SearchRequest, mut omitted_ids: Vec<u64>) -> Result<SearchSubmission, ApplicationError> {
+        omitted_ids.sort_unstable();
+        omitted_ids.dedup();
         let history_request = request.normalized()?;
         let settings = self.repository.settings_get()?;
         let request = history_request
@@ -329,7 +335,7 @@ impl ApplicationService {
         );
         let submission = self
             .search_repository()?
-            .search_submit(&request)
+            .search_submit_visible(&request, &omitted_ids)
             .map_err(ApplicationError::from)?;
         if !history_request.text.is_empty()
             || !history_request.include_tags.is_empty()
@@ -381,6 +387,7 @@ impl ApplicationService {
         &self,
         query_id: String,
         page: u32,
+        mut omitted_ids: Vec<u64>,
         cancellation: &crate::thumbnail::CancellationToken,
     ) -> Result<GalleryPage, ApplicationError> {
         let query_id = query_id.trim();
@@ -394,9 +401,11 @@ impl ApplicationService {
             return Err(ValidationError::new("page", "must be one-based").into());
         }
 
+        omitted_ids.sort_unstable();
+        omitted_ids.dedup();
         let result = self
             .search_repository()?
-            .search_page_get_cancellable(query_id, page, cancellation)?
+            .search_page_get_cancellable(query_id, page, &omitted_ids, cancellation)?
             .ok_or_else(|| ApplicationError::QueryNotFound(query_id.to_owned()))?;
         let is_out_of_range = if result.total_pages == 0 {
             page != 1
@@ -504,6 +513,13 @@ impl ApplicationService {
                 Err(error.into())
             }
         }
+    }
+
+    pub fn auto_find_candidate_changes(&self, run_id: &str, after: i64) -> Result<AutoFindCandidateChanges, ApplicationError> {
+        if run_id.is_empty() || run_id.len() > 200 || after < 0 {
+            return Err(ValidationError::new("cursor", "invalid Auto Find run or cursor").into());
+        }
+        Ok(self.automation_repository()?.auto_find_candidate_changes(run_id, after)?)
     }
 
     pub fn auto_find_snapshot(&self) -> Result<AutoFindSnapshot, ApplicationError> {

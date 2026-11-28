@@ -457,9 +457,9 @@ describe("SettingsDialog operational boundaries", () => {
       expect(adaptiveMaximum).toBeDisabled();
       expect(container.querySelector('[aria-label="동시 이미지 요청"]')).toHaveValue(5);
       expect(container.textContent).toContain("확실한 포함·거의 동일 판본만 자동 추천하거나 격리합니다.");
-      expect(container.textContent).toContain("후보를 찾기 시작할 기록 범위를 선택합니다.");
+      expect(container.textContent).toContain("처음 탐색하는 작가·그룹의 시작점을 정합니다.");
       expect(container.textContent).not.toContain("일반 판본은 포함률 95% 이상");
-      expect(container.textContent).not.toContain("변경한 기준은 다음 Auto Find 실행부터 적용됩니다.");
+      expect(container.textContent).not.toContain("‘새 작품만 추가’의 첫 탐색과 자동 재탐색에 적용됩니다.");
 
       const overlapHelp = container.querySelector<HTMLButtonElement>(
         '[aria-label="다운로드 판본 자동 판정 자세한 설명"]',

@@ -223,7 +223,7 @@ pub(super) fn publish_actual_fixture(
         request_id: identity.request_id.clone(), reference: MediaRef {
             provider: "youtube".into(), kind: "live".into(), external_id: identity.video_id.clone(),
         }, revision: 7, state: "finalizing".into(), title: "Actual isolated capture".into(),
-        channel_name: "Fixture".into(), created_at: now(), received_bytes: 0,
+        channel_name: "Fixture".into(), created_at: now(), started_at_ms: None, received_bytes: 0,
         total_bytes: None, error: None, library: None, download_root: root.to_owned(),
     };
     {
@@ -318,7 +318,7 @@ pub(super) fn recover_actual_fixture(
         broadcast_id: Some(identity.video_id.clone()), job_id: identity.job_id.clone(), request_id: identity.request_id.clone(),
         reference: MediaRef { provider: "youtube".into(), kind: "live".into(), external_id: identity.video_id.clone() },
         revision: 7, state: "finalizing".into(), title: "Isolated crash fixture".into(), channel_name: "Fixture".into(),
-        created_at: now(), received_bytes: 0, total_bytes: None, error: None, library: None, download_root: root.to_owned(),
+        created_at: now(), started_at_ms: None, received_bytes: 0, total_bytes: None, error: None, library: None, download_root: root.to_owned(),
     };
     let owner = serde_json::to_value(super::live::RecordingOwner::Manual).unwrap();
     create(&directory.join("recording-owner.json"), &serde_json::to_vec(&owner).unwrap());
@@ -434,7 +434,7 @@ mod tests {
             broadcast_id: Some("abcdefghijk".into()), job_id: uuid::Uuid::new_v4().to_string(),
             request_id: uuid::Uuid::new_v4().to_string(), reference: MediaRef { provider: "youtube".into(), kind: "live".into(), external_id: "abcdefghijk".into() },
             revision: 7, state: "finalizing".into(), title: "fixture".into(), channel_name: "fixture".into(),
-            created_at: 1, received_bytes: 2, total_bytes: None, error: None, library: None, download_root: root.join("media"),
+            created_at: 1, started_at_ms: None, received_bytes: 2, total_bytes: None, error: None, library: None, download_root: root.join("media"),
         };
         let cancel = Arc::new(AtomicBool::new(false));
         let state = State { idle_merge: None, jobs: [(job.job_id.clone(), job.clone())].into(), cancel: [(job.job_id.clone(), cancel.clone())].into(), queue: VecDeque::new(), shutting_down: false, persistence_errors: HashMap::new(), persistence_overflow: false };

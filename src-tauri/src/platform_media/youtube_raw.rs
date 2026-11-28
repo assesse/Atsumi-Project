@@ -222,6 +222,7 @@ mod tests {
             title: "Fixture".into(),
             channel_name: "Fixture".into(),
             created_at: now(),
+            started_at_ms: None,
             received_bytes: 1,
             total_bytes: None,
             error: None,

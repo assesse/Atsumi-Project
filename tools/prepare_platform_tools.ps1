@@ -1,5 +1,6 @@
-param([switch]$VerifyOnly, [switch]$ReturnManifest)
+﻿param([switch]$VerifyOnly, [switch]$ReturnManifest)
 $ErrorActionPreference = 'Stop'
+& (Join-Path $PSScriptRoot 'prepare_browser_tools.ps1') -VerifyOnly:$VerifyOnly | Out-Null
 . (Join-Path $PSScriptRoot 'package_manifest.ps1')
 
 # Requirements R002/R003/R015, DOC-049/DOC-055/DOC-080: managed local tools,

@@ -26,8 +26,7 @@ button.gallery-processing-badge { cursor: pointer; }
 .gallery-card.is-compact:has(> .card-select-toggle) .language-flag { transform: translateX(32px); }
 .gallery-grid.is-selection-context .gallery-card.is-compact.has-compact-favorites .cover > .compact-favorite-count-badge { right: 8px; }
 
-/* Shared by Explore and related galleries. Soften usable completed work only;
-   pending review / failures stay legible. Exclusion and privacy masks are separate. */
+/* Both grids use the same cover tints and reveal the artwork on hover or focus. */
 :is(.gallery-card, .related-card)[data-processing-tone="complete"] { background: color-mix(in srgb, var(--success) 12%, var(--surface)); border-color: color-mix(in srgb, var(--success) 52%, var(--line)); }
 :is(.gallery-card, .related-card)[data-processing-tone="waiting"],
 :is(.gallery-card, .related-card)[data-processing-tone="active"] { border-color: color-mix(in srgb, var(--source-teal) 48%, var(--line)); }
@@ -35,8 +34,9 @@ button.gallery-processing-badge { cursor: pointer; }
 :is(.gallery-card, .related-card)[data-processing-tone="review"] { background: color-mix(in srgb, var(--warning) 9%, var(--surface)); border-color: color-mix(in srgb, var(--warning) 48%, var(--line)); }
 :is(.gallery-card, .related-card)[data-processing-tone="error"] { border-color: color-mix(in srgb, var(--danger) 65%, var(--line)); }
 .processing-preview-wash { position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity 140ms ease; }
-[data-processing-muted="true"] > :is(.cover, .related-cover) > .processing-preview-wash { background: color-mix(in srgb, var(--success) 26%, var(--surface)); opacity: .6; }
-[data-processing-muted="true"]:is(:hover, :focus-within) > :is(.cover, .related-cover) > .processing-preview-wash { opacity: 0; }
+[data-processing-muted="true"] > :is(.cover, .related-cover) > .processing-preview-wash { background: color-mix(in srgb, var(--success) 32%, var(--surface)); opacity: .67; }
+[data-processing-muted="true"][data-processing-tone="review"] > :is(.cover, .related-cover) > .processing-preview-wash { background: var(--warning); opacity: .24; }
+:is(.gallery-card, .related-card)[data-processing-muted="true"]:is(:hover, :focus-within) > :is(.cover, .related-cover) > .processing-preview-wash { opacity: 0; }
 @media (prefers-reduced-motion: reduce) { .processing-preview-wash, .gallery-card.is-compact .language-flag { transition: none; } }
 
 /* Excluded related items remain identifiable and navigable; only the cover is muted. */
@@ -49,7 +49,7 @@ button.gallery-processing-badge { cursor: pointer; }
   transition: filter 180ms ease, opacity 180ms ease;
 }
 .related-card[data-processing-excluded="true"] > .related-cover > .processing-preview-wash {
-  background: color-mix(in srgb, var(--canvas) 54%, transparent); opacity: .7;
+  background: color-mix(in srgb, var(--canvas) 62%, transparent); opacity: .76;
 }
 .related-card[data-processing-excluded="true"]:is(:hover, :focus-within) > .related-cover .thumbnail-image { filter: none; opacity: 1; }
 .related-card[data-processing-excluded="true"]:is(:hover, :focus-within) > .related-cover > .processing-preview-wash { opacity: 0; }

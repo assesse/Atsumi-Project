@@ -111,11 +111,11 @@ impl FixtureSearchRepository {
         Ok(format!("fixture-{first:016x}{second:016x}"))
     }
 
-    fn page_for(&self, request: &SearchRequest, page: u32) -> GalleryPage {
+    fn page_for(&self, request: &SearchRequest, page: u32, omitted_ids: &[u64]) -> GalleryPage {
         let mut matches: Vec<&FixtureGallery> = self
             .galleries
             .values()
-            .filter(|gallery| gallery_matches(gallery, request))
+            .filter(|gallery| omitted_ids.binary_search(&(gallery.id as u64)).is_err() && gallery_matches(gallery, request))
             .collect();
         sort_galleries(&mut matches, request.sort);
 
@@ -147,7 +147,7 @@ impl SearchRepository for FixtureSearchRepository {
         self.queries()?.insert(query_id.clone(), request.clone());
         Ok(SearchSubmission {
             query_id,
-            first_page: self.page_for(request, 1),
+            first_page: self.page_for(request, 1, &[]),
         })
     }
 
@@ -157,7 +157,25 @@ impl SearchRepository for FixtureSearchRepository {
         page: u32,
     ) -> Result<Option<GalleryPage>, RepositoryError> {
         let request = self.queries()?.get(query_id).cloned();
-        Ok(request.map(|request| self.page_for(&request, page)))
+        Ok(request.map(|request| self.page_for(&request, page, &[])))
+    }
+
+    fn search_page_get_cancellable(
+        &self,
+        query_id: &str,
+        page: u32,
+        omitted_ids: &[u64],
+        cancellation: &crate::thumbnail::CancellationToken,
+    ) -> Result<Option<GalleryPage>, RepositoryError> {
+        if cancellation.is_cancelled() {
+            return Err(crate::source::SourceContractError::cancelled().into());
+        }
+        let request = self.queries()?.get(query_id).cloned();
+        let result = request.map(|request| self.page_for(&request, page, omitted_ids));
+        if cancellation.is_cancelled() {
+            return Err(crate::source::SourceContractError::cancelled().into());
+        }
+        Ok(result)
     }
 
     fn gallery_detail_get(

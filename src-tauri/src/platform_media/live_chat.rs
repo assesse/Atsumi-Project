@@ -1,10 +1,10 @@
 //! One receive-only chat connection per live session. Recording adds a durable
 //! sink, not another connection; detaching a sink synchronizes before returning.
 use super::{
-    chat_assets::{ArchiveAssets, SessionAssets},
+    chat_assets::{ArchiveAssetDrain, ArchiveAssets, SessionAssets},
     chat_parts::{self, ClosedParts, Stream, Writer},
     chat_status::{self, ChatArchiveSummary, Marker, Reason},
-    replay_chat::{normalize_public_line, ChatPart, NormalizedChatEvent},
+    replay_chat::{normalize_public_line, ChatPart, CoverageWarning, NormalizedChatEvent, SOOP_RICH_WARNING},
     storage, youtube_chat, MediaRef, PlatformMediaService,
 };
 use serde::Serialize;
@@ -23,6 +23,18 @@ const RING_BYTES: usize = 1024 * 1024;
 #[cfg(test)]
 const OLD_FILE_LIMIT: u64 = 128 * 1024 * 1024;
 const LINE_LIMIT: usize = 512 * 1024;
+#[cfg(test)]
+#[path="relay_chat_tests.rs"]
+mod relay_tests;
+#[cfg(test)]
+#[path="live_chat_display_tests.rs"]
+mod display_tests;
+#[cfg(test)]
+#[path = "live_chat_archive_drain_tests.rs"]
+mod archive_drain_tests;
+#[cfg(test)]
+#[path = "live_chat_standard_gift_tests.rs"]
+mod standard_gift_tests;
 pub use super::chat_assets::ChatAssetRead;
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -54,6 +66,7 @@ struct Archive {
     error: Option<String>,
     failure_reason: Option<Reason>,
     assets: Option<Arc<ArchiveAssets>>,
+    asset_drain: Option<ArchiveAssetDrain>,
     // Only losses preceding this attachment count. Evicting the shared recent
     // cache later does not lose rows already written to this archive.
     recent_loss: Option<RecentLoss>,
@@ -145,6 +158,7 @@ pub(super) struct ChatDetachOutcome {
     marker: Marker,
     reason: Option<Reason>,
     assets_incomplete: bool,
+    asset_drain: Option<ArchiveAssetDrain>,
     parts: ClosedParts,
 }
 impl ChatDetachOutcome {
@@ -158,7 +172,7 @@ impl ChatDetachOutcome {
         self.persist_cancellable(directory, provider, job_id, &AtomicBool::new(false))
     }
     pub(super) fn persist_cancellable(
-        self,
+        mut self,
         directory: &Path,
         provider: &str,
         job_id: &str,
@@ -168,14 +182,21 @@ impl ChatDetachOutcome {
             return Err(chat_status::ERROR.into());
         }
         chat_status::identity(&self.marker, provider, job_id)?;
-        chat_status::finish_multipart(
+        if let Some(owner) = &mut self.asset_drain {
+            self.assets_incomplete |= owner.settle_cancellable(cancel);
+        }
+        let result = chat_status::finish_multipart(
             directory,
             &self.marker,
             self.parts,
             self.reason,
             self.assets_incomplete,
             cancel,
-        )
+        );
+        // Normal app shutdown must not set global cancellation between target
+        // close and the durable chat proof. Release this owner only afterward.
+        drop(self.asset_drain);
+        result
     }
 }
 
@@ -220,8 +241,10 @@ struct State {
     ids: HashSet<String>,
     order: VecDeque<String>,
     archive: Option<Archive>,
+    relay: Option<super::relay_chat::Sink>,
     archive_error: Option<String>,
     receiver_failure: Option<String>,
+    capture_warning: Option<CoverageWarning>,
     status: String,
     require_verified_connection: bool,
     verified_connection: bool,
@@ -234,12 +257,14 @@ struct State {
 }
 pub(super) struct SharedChat {
     state: Mutex<State>,
+    display: Mutex<super::soop_display::Capture>,
     stop: Arc<AtomicBool>,
     started: AtomicBool,
     done: AtomicBool,
     preserve_source: AtomicBool,
     assets: SessionAssets,
     asset_warning: AtomicBool,
+    relay_pending: AtomicBool,
 }
 struct ReceiverDone(Arc<SharedChat>);
 impl Drop for ReceiverDone {
@@ -254,8 +279,60 @@ impl Drop for ReceiverDone {
     }
 }
 impl SharedChat {
+    #[cfg(test)]
+    pub(super) fn with_test_assets(assets: SessionAssets) -> Arc<Self> {
+        let mut chat = Self::new();
+        Arc::get_mut(&mut chat).unwrap().assets = assets;
+        chat
+    }
+    #[cfg(test)]
+    pub(super) fn ingest_test_personalcon(&self, line: &[u8], request: crate::soop::chat::personalcon::Request) -> Result<(), String> {
+        self.ingest_with_appearance("soop", line, None, Vec::new(), Vec::new(), Some(request))
+    }
+    #[cfg(test)]
+    pub(super) fn test_stop_requested(&self) -> bool {
+        self.stop.load(Ordering::Acquire)
+    }
+    pub(super) fn pending_soop_archive_assets(&self) -> bool {
+        self.assets.protected_archive_drains_pending()
+    }
+    /// Called only after the normal app work gate and source hosts stop. A
+    /// caller-held archive without a finalizer must not hold that drain open.
+    pub(super) fn prepare_soop_archive_asset_shutdown(&self) {
+        self.stop();
+        let attached = {
+            let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
+            state.archive.as_mut().and_then(|archive| archive.asset_drain.take())
+        };
+        // Drop may sync files: never do it under the shared chat state lock.
+        drop(attached);
+    }
+    /// The page callback only changes this bounded memory ledger. Durable writes
+    /// occur on the existing background chat/official writer or sink close path.
+    pub(super) fn observe_display(&self,receiver:&str,epoch:u64,observation:super::soop_display::Observation)->bool {
+        if self.stop.load(Ordering::Acquire){return false;}
+        self.display.lock().unwrap_or_else(|p|p.into_inner()).observe(receiver,epoch,observation,Instant::now(),super::soop_display::wall())
+    }
+    pub(super) fn reset_display(&self,receiver:&str,epoch:u64) {
+        self.display.lock().unwrap_or_else(|p|p.into_inner()).reset(receiver,epoch,Instant::now(),super::soop_display::wall());
+    }
+    pub(super) fn flush_display(&self) {
+        if let Ok(mut state)=self.state.lock(){self.flush_display_locked(&mut state);}
+    }
+    fn flush_display_locked(&self,state:&mut State) {
+        let controls=self.display.lock().unwrap_or_else(|p|p.into_inner()).take_pending();
+        for (received,control) in controls {
+            let Ok(bytes)=serde_json::to_vec(&control) else {continue;};
+            if let Some(archive)=state.archive.as_mut(){archive.write(&bytes,false);}
+            if let Some(relay)=&state.relay{relay.display(&bytes,received);}
+        }
+        if let Some(error)=state.archive.as_ref().and_then(|a|a.error.clone()) {
+            self.preserve_source.store(true,Ordering::Release);state.archive_error=Some(error.clone());state.status=error;
+        }
+    }
     pub(super) fn new() -> Arc<Self> {
         Arc::new(Self {
+            display: Mutex::new(Default::default()),
             state: Mutex::new(State {
                 ring: VecDeque::new(),
                 ring_bytes: 0,
@@ -263,8 +340,10 @@ impl SharedChat {
                 ids: HashSet::new(),
                 order: VecDeque::new(),
                 archive: None,
+                relay: None,
                 archive_error: None,
                 receiver_failure: None,
+                capture_warning: None,
                 status: "채팅 연결 준비 중".into(),
                 require_verified_connection: false,
                 verified_connection: false,
@@ -281,6 +360,7 @@ impl SharedChat {
             preserve_source: AtomicBool::new(false),
             assets: SessionAssets::new(),
             asset_warning: AtomicBool::new(false),
+            relay_pending: AtomicBool::new(false),
         })
     }
     pub(super) fn start(
@@ -361,10 +441,43 @@ impl SharedChat {
     }
     pub(super) fn stop(&self) {
         self.stop.store(true, Ordering::Release);
+        if let Ok(mut state) = self.state.lock() {
+            self.flush_display_locked(&mut state);
+            if let Some(relay) = &state.relay { relay.finish(true); }
+        }
         self.assets.stop();
     }
     pub(super) fn is_done(&self) -> bool {
         self.done.load(Ordering::Acquire) && self.assets.is_done()
+            && !self.relay_pending.load(Ordering::Acquire)
+    }
+    pub(super) fn attach_relay_sink(&self, sink: super::relay_chat::Sink) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|_| "채팅 상태 오류")?;
+        if self.stop.load(Ordering::Acquire) || state.relay.is_some() {
+            return Err("릴레이 채팅 수신이 이미 사용 중이거나 종료됐습니다.".into());
+        }
+        self.flush_display_locked(&mut state);
+        if let Some(initial)=self.display.lock().unwrap_or_else(|p|p.into_inner()).initial() {
+            if let Ok(bytes)=serde_json::to_vec(&initial) {sink.display(&bytes,Instant::now());}
+        }
+        if state.receiver_failure.is_some() { sink.partial(Reason::Interrupted); }
+        else if state.capture_warning.is_some() || (state.require_verified_connection && !state.verified_connection) {
+            sink.partial(Reason::StatusUnknown);
+        }
+        state.relay = Some(sink);
+        self.relay_pending.store(true,Ordering::Release);
+        Ok(())
+    }
+    pub(super) fn finish_relay_sink(&self, id: &str, interrupted: bool) {
+        let mut state = self.state.lock().unwrap_or_else(|p|p.into_inner());
+        self.flush_display_locked(&mut state);
+        if let Some(sink) = state.relay.as_ref().filter(|r|r.id()==id) { sink.finish(interrupted); }
+    }
+    pub(super) fn release_relay_sink(&self, id: &str) {
+        let mut state = self.state.lock().unwrap_or_else(|p|p.into_inner());
+        if state.relay.as_ref().is_some_and(|r|r.id()==id && r.joined()) {
+            state.relay.take();self.relay_pending.store(false,Ordering::Release);
+        }
     }
     #[cfg(test)]
     pub(super) fn producer_started_for_test(&self) -> bool {
@@ -379,6 +492,7 @@ impl SharedChat {
         self.preserve_source.store(true, Ordering::Release);
         if let Ok(mut state) = self.state.lock() {
             let failure = state.receiver_failure.get_or_insert(message).clone();
+            if let Some(relay) = &state.relay { relay.partial(Reason::Interrupted); }
             // Share the attachment lock: a failed receiver can neither leave its
             // current archive complete nor make the next empty archive complete.
             if let Some(archive) = state.archive.as_mut() {
@@ -421,6 +535,9 @@ impl SharedChat {
             && state.receiver_failure.is_none() && state.archive_error.is_none()
             && state.preparation_started.is_some_and(|at| at.elapsed() >= Duration::from_secs(15)) {
             "채팅 연결을 확인하지 못했습니다.".into()
+        } else if state.capture_warning.is_some() && state.verified_connection
+            && state.receiver_failure.is_none() && state.archive_error.is_none() {
+            SOOP_RICH_WARNING.into()
         } else { state.status.clone() }
     }
     /// Nonblocking preparation for the already-running receiver. A failed or
@@ -459,16 +576,20 @@ impl SharedChat {
         if state.archive.is_some() {
             return Err("이 방송의 녹화 채팅을 마무리하는 중입니다.".into());
         }
+        self.flush_display_locked(&mut state);
         let marker = chat_status::begin_multipart(directory, provider, job_id)?;
         let writer = Writer::create(directory, &marker)?;
         let assets = ArchiveAssets::new(directory).ok();
+        let asset_drain = (marker.provider == "soop")
+            .then(|| assets.as_ref().map(|target| self.assets.protect_archive(target.clone())))
+            .flatten();
         if assets.is_none() {
             self.asset_warning.store(true, Ordering::Release);
         }
         let receiver_failure = state.receiver_failure.clone();
         let initial_reason = if receiver_failure.is_some() {
             Some(Reason::Interrupted)
-        } else if state.require_verified_connection && !state.verified_connection {
+        } else if state.capture_warning.is_some() || (state.require_verified_connection && !state.verified_connection) {
             // Preserve later rows, but never assert coverage of the interval
             // before a bound connection actually completed its handshake.
             Some(Reason::StatusUnknown)
@@ -476,6 +597,7 @@ impl SharedChat {
             None
         };
         let recent_loss = (provider == "youtube").then_some(state.recent_loss);
+        let capture_warning = state.capture_warning;
         state.archive = Some(Archive {
             marker,
             writer,
@@ -484,9 +606,15 @@ impl SharedChat {
             error: receiver_failure.clone(),
             failure_reason: initial_reason,
             assets,
+            asset_drain,
             recent_loss,
-            coverage_warning: None,
+            coverage_warning: capture_warning.map(|_| SOOP_RICH_WARNING),
         });
+        if provider=="soop" {
+            if let Some(initial)=self.display.lock().unwrap_or_else(|p|p.into_inner()).initial() {
+                if let Ok(bytes)=serde_json::to_vec(&initial) {if let Some(archive)=state.archive.as_mut(){archive.write(&bytes,false);}}
+            }
+        }
         // The receiver starts when the public live identity is bound, before
         // recording. Retain a bounded overlap rather than dropping the initial
         // response while the video writer is being attached. Original server
@@ -498,6 +626,7 @@ impl SharedChat {
                     if !row.raw {
                         if let Ok(event) = serde_json::from_slice::<NormalizedChatEvent>(&row.bytes) {
                             self.assets.observe(&event.parts, archive.assets.as_ref());
+                            if let Some(gift)=&event.soop_gift {self.assets.observe_gift(gift,None,archive.assets.as_ref());}
                         }
                     }
                     archive.write(&row.bytes, row.raw);
@@ -533,11 +662,20 @@ impl SharedChat {
     }
     pub(super) fn detach_archive(&self) -> Result<Option<ChatDetachOutcome>, String> {
         let mut state = self.state.lock().map_err(|_| "채팅 상태 오류")?;
+        self.flush_display_locked(&mut state);
         if let Some(mut archive) = state.archive.take() {
             // A failed/no-progress recording may never publish a media origin.
             // Do not silently certify an unresolved lost prefix in that case.
             archive.resolve_recent_loss(None);
-            let assets_incomplete = archive.assets.as_ref().is_none_or(|a| a.close());
+            let assets_incomplete = if let Some(owner) = &archive.asset_drain {
+                owner.begin_drain();
+                // Keep the source during the pending finalizer even if a later
+                // asset store/proof sync fails after this detach has returned.
+                self.preserve_source.store(true, Ordering::Release);
+                false
+            } else {
+                archive.assets.as_ref().is_none_or(|a| a.close())
+            };
             if assets_incomplete {
                 self.asset_warning.store(true, Ordering::Release);
                 self.preserve_source.store(true, Ordering::Release);
@@ -556,6 +694,7 @@ impl SharedChat {
                 marker: archive.marker,
                 reason,
                 assets_incomplete,
+                asset_drain: archive.asset_drain,
                 parts,
             }));
         }
@@ -583,7 +722,7 @@ impl SharedChat {
         }
         Ok(Some(RawChatDetachOutcome {
             closed: ChatDetachOutcome { directory: archive.directory, marker: archive.marker,
-                reason, assets_incomplete, parts },
+                reason, assets_incomplete, asset_drain: None, parts },
             recent_loss: archive.recent_loss,
         }))
     }
@@ -614,7 +753,7 @@ impl SharedChat {
             items,
             cursor,
             status: if self.asset_warning.load(Ordering::Acquire) || self.assets.incomplete() {
-                format!("{status} · 일부 이모티콘은 문자로 표시")
+                format!("{status} · 일부 채팅 이미지 표시 제한")
             } else {
                 status
             },
@@ -623,6 +762,24 @@ impl SharedChat {
         })
     }
     fn ingest(&self, provider: &str, line: &[u8]) -> Result<(), String> {
+        self.ingest_with_gift(provider,line,None)
+    }
+    fn ingest_with_gift(&self, provider: &str, line: &[u8], request: Option<crate::soop::chat::gifts::assets::Request>) -> Result<(), String> {
+        self.ingest_with_assets(provider,line,request,Vec::new())
+    }
+    fn ingest_with_assets(&self, provider: &str, line: &[u8], request: Option<crate::soop::chat::gifts::assets::Request>, emoticon_requests:Vec<crate::soop::chat::ogq::Request>) -> Result<(), String> {
+        self.ingest_with_public_assets(provider,line,request,emoticon_requests,Vec::new())
+    }
+    fn ingest_with_public_assets(&self, provider: &str, line: &[u8], request: Option<crate::soop::chat::gifts::assets::Request>, emoticon_requests:Vec<crate::soop::chat::ogq::Request>, subscription_requests:Vec<crate::soop::chat::subscriptions::Request>) -> Result<(), String> {
+        self.ingest_with_appearance(provider,line,request,emoticon_requests,subscription_requests,None)
+    }
+    fn ingest_with_appearance(&self, provider:&str,line:&[u8],request:Option<crate::soop::chat::gifts::assets::Request>,emoticon_requests:Vec<crate::soop::chat::ogq::Request>,subscription_requests:Vec<crate::soop::chat::subscriptions::Request>,personalcon_request:Option<crate::soop::chat::personalcon::Request>)->Result<(),String>{
+        self.ingest_with_portrait(provider,line,request,emoticon_requests,subscription_requests,personalcon_request,None)
+    }
+    fn ingest_with_portrait(&self,provider:&str,line:&[u8],request:Option<crate::soop::chat::gifts::assets::Request>,emoticon_requests:Vec<crate::soop::chat::ogq::Request>,subscription_requests:Vec<crate::soop::chat::subscriptions::Request>,personalcon_request:Option<crate::soop::chat::personalcon::Request>,avatar_request:Option<crate::soop::chat::portrait::Request>)->Result<(),String>{
+        self.ingest_received(provider,line,request,emoticon_requests,subscription_requests,personalcon_request,avatar_request,None,Instant::now())
+    }
+    fn ingest_received(&self,provider:&str,line:&[u8],request:Option<crate::soop::chat::gifts::assets::Request>,emoticon_requests:Vec<crate::soop::chat::ogq::Request>,subscription_requests:Vec<crate::soop::chat::subscriptions::Request>,personalcon_request:Option<crate::soop::chat::personalcon::Request>,avatar_request:Option<crate::soop::chat::portrait::Request>,mission_request:Option<crate::soop::chat::missions::Request>,received:Instant)->Result<(),String>{
         if line.len() > LINE_LIMIT {
             return Err("채팅 행이 한도를 넘었습니다.".into());
         }
@@ -642,6 +799,9 @@ impl SharedChat {
         // Attach/detach cannot split the raw source and its normalized rows into
         // different recordings. Unknown public fields stay in this private file.
         let mut state = self.state.lock().map_err(|_| "채팅 상태 오류")?;
+        self.flush_display_locked(&mut state);
+        let creation=(provider=="soop").then(||self.display.lock().unwrap_or_else(|p|p.into_inner()).creation(received));
+        let relay_receipt = (provider=="soop").then(||state.relay.as_ref().and_then(|r|r.raw(line,received))).flatten();
         if provider == "youtube" && state.verify_from_first_event {
             remember(&mut state, line.to_vec(), true, raw_coverage);
         }
@@ -654,11 +814,41 @@ impl SharedChat {
         }
         match parsed {
             Ok(events) => {
-                for event in events {
-                    self.push_locked(&mut state, event)?;
+                let single_soop = provider == "soop" && events.len() == 1;
+                for mut event in events {
+                    if single_soop {
+                        if let (Some(meta),Some(request))=(event.soop_mission.as_mut(),mission_request.as_ref()) {
+                            if request.apply(meta) {event.mission_asset=Some(request.clone());}
+                        }
+                        if event.kind=="membership" {
+                            if let Some(meta)=event.soop_subscription.as_mut() {
+                                for request in subscription_requests.iter().take(2) {
+                                    if request.apply(meta) {event.subscription_assets.push(request.clone());}
+                                }
+                            }
+                        }
+                        if event.kind == "chat" {
+                            if let (Some(meta),Some(request))=(event.soop.as_ref().and_then(|m|m.avatar.as_ref()),avatar_request.as_ref()){if request.matches(meta){event.avatar_asset=Some(request.clone());}}
+                            if let (Some(meta),Some(request))=(event.soop.as_ref().and_then(|m|m.personalcon.as_ref()),personalcon_request.as_ref()){
+                                if request.matches(meta){event.personalcon_asset=Some(request.clone());}
+                            }
+                            if let Some(meta)=event.soop_emoticon.as_mut() {
+                                for request in emoticon_requests.iter().take(4) {
+                                    if request.apply(meta) {event.emoticon_assets.push(request.clone());}
+                                }
+                            }
+                        }
+                        if let (Some(gift),Some(request)) = (event.soop_gift.as_mut(),request.as_ref()) {
+                            if event.kind == "donation" && request.apply(gift) {
+                                event.gift_asset = Some(request.clone());
+                            }
+                        }
+                    }
+                    self.push_locked(&mut state, event, relay_receipt, creation.clone())?;
                 }
             }
             Err(error) => {
+                if let Some(relay) = &state.relay { relay.partial(Reason::StatusUnknown); }
                 self.preserve_source.store(true, Ordering::Release);
                 state.status = error.clone();
                 return Err(error);
@@ -671,16 +861,28 @@ impl SharedChat {
     }
     fn push(&self, event: NormalizedChatEvent) -> Result<(), String> {
         let mut state = self.state.lock().map_err(|_| "채팅 상태 오류")?;
-        self.push_locked(&mut state, event)
+        self.push_locked(&mut state, event, None, None)
     }
-    fn push_locked(&self, state: &mut State, event: NormalizedChatEvent) -> Result<(), String> {
+    fn push_locked(&self, state: &mut State, event: NormalizedChatEvent, relay_receipt:Option<super::relay_chat::Receipt>, creation:Option<super::soop_display::Creation>) -> Result<(), String> {
+        let rich_warning = event.kind == "gap"
+            && event.coverage_warning == Some(CoverageWarning::UnsupportedSoopRichEvent);
+        if rich_warning {
+            if let Some(relay) = &state.relay { relay.partial(Reason::StatusUnknown); }
+            state.capture_warning = event.coverage_warning;
+            self.preserve_source.store(true, Ordering::Release);
+            if let Some(archive) = state.archive.as_mut() {
+                archive.failure_reason.get_or_insert(Reason::StatusUnknown);
+                archive.coverage_warning = Some(SOOP_RICH_WARNING);
+            }
+        }
         if state.require_verified_connection {
             if state.verify_from_first_event && !matches!(event.kind.as_str(), "gap" | "ended") {
                 state.verified_connection = true;
             }
             match event.kind.as_str() {
                 "connected" => state.verified_connection = true,
-                "gap" => {
+                "gap" if !rich_warning => {
+                    if let Some(relay) = &state.relay { relay.partial(Reason::Interrupted); }
                     state.verified_connection = false;
                     if let Some(archive) = state.archive.as_mut() {
                         archive.failure_reason.get_or_insert(Reason::Interrupted);
@@ -690,7 +892,11 @@ impl SharedChat {
                 _ => (),
             }
         }
-        let bytes = serde_json::to_vec(&event).map_err(|_| "채팅을 변환하지 못했습니다.")?;
+        let bytes = if let Some(creation)=creation.filter(|_|event.kind=="chat") {
+            let mut stored=serde_json::to_value(&event).map_err(|_| "채팅을 변환하지 못했습니다.")?;
+            stored["soopDisplay"]=serde_json::to_value(creation).map_err(|_|"채팅을 변환하지 못했습니다.")?;
+            serde_json::to_vec(&stored)
+        } else {serde_json::to_vec(&event)}.map_err(|_| "채팅을 변환하지 못했습니다.")?;
         if bytes.len() > 64 * 1024 {
             return Err("채팅 메시지가 표시 한도를 넘었습니다.".into());
         }
@@ -705,10 +911,10 @@ impl SharedChat {
                 }
             }
         }
-        self.assets.observe(
-            &event.parts,
-            state.archive.as_ref().and_then(|a| a.assets.as_ref()),
-        );
+        self.observe_event_assets(&event,state.archive.as_ref().and_then(|a|a.assets.as_ref()));
+        if let (Some(relay),Some(receipt)) = (&state.relay,relay_receipt) {
+            if relay.event(&bytes,receipt) { self.observe_event_assets(&event,Some(relay.assets())); }
+        }
         if state.verify_from_first_event { remember(state, bytes.clone(), false, RecentLoss::event(&event)); }
         if let Some(archive) = state.archive.as_mut() {
             archive.write(&bytes, false);
@@ -745,6 +951,15 @@ impl SharedChat {
         }
         Ok(())
     }
+    fn observe_event_assets(&self,event:&NormalizedChatEvent,target:Option<&Arc<ArchiveAssets>>) {
+        self.assets.observe(&event.parts,target);
+        if let Some(gift)=&event.soop_gift {self.assets.observe_gift(gift,event.gift_asset.as_ref(),target);}
+        if let Some(meta)=&event.soop_mission {self.assets.observe_mission(meta,event.mission_asset.as_ref(),target);}
+        if let Some(emote)=&event.soop_emoticon {self.assets.observe_ogq(emote,&event.emoticon_assets,target);}
+        if let Some(meta)=event.soop.as_ref().and_then(|m|m.avatar.as_ref()) {self.assets.observe_avatar(meta,event.avatar_asset.as_ref(),target);}
+        if let Some(meta)=event.soop.as_ref().and_then(|m|m.personalcon.as_ref()) {self.assets.observe_personalcon(meta,event.personalcon_asset.as_ref(),target);}
+        if let Some(meta)=&event.soop_subscription {self.assets.observe_subscription(meta,&event.subscription_assets,target);}
+    }
     pub(super) fn asset(&self, id: &str) -> Result<ChatAssetRead, String> {
         self.assets.reply(id)
     }
@@ -755,7 +970,7 @@ impl SharedChat {
             |event| {
                 let bytes =
                     serde_json::to_vec(&event).map_err(|_| "채팅 메시지를 읽지 못했습니다.")?;
-                self.ingest("soop", &bytes)
+                self.ingest_received("soop", &bytes, event.gift_asset,event.emoticon_assets,event.subscription_assets,event.personalcon_asset,event.avatar_asset,event.mission_asset,event.received_monotonic)
             },
             self.stop.clone(),
         )
@@ -1488,7 +1703,156 @@ mod tests {
             amount: None,
             badges: Vec::new(),
             color: None,
+            soop: None,
+            soop_gift: None,
+            soop_mission: None,
+            soop_emoticon: None,
+            soop_subscription: None,
+            coverage_warning: None,
+            gift_asset: None,
+            mission_asset: None,
+            emoticon_assets: Vec::new(),
+            subscription_assets: Vec::new(),
+            personalcon_asset: None,
+            avatar_asset: None,
         }
+    }
+    #[test]
+    fn custom_gift_survives_native_bridge_without_serializing_request_and_deduplicates_image() {
+        use crate::soop::chat::gifts::assets::Request;
+        let mut png=std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(3,3).write_to(&mut png,image::ImageFormat::Png).unwrap();
+        let image=png.into_inner();let expected=image.clone();
+        let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));let count=calls.clone();
+        let mut chat=SharedChat::new();
+        Arc::get_mut(&mut chat).unwrap().assets=SessionAssets::with_test_fetcher(move|url|{
+            assert_eq!(url,"https://res.sooplive.com/new_player/items/m_balloon_50.png?v=123");
+            count.fetch_add(1,Ordering::AcqRel);Ok(image.clone())
+        });
+        let request=Request::from_fields(18,&["fixture","private-sender","Public","50","0","","","50","0","0","","","ko_KR","123"],"fixture").unwrap();
+        let root=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();
+        chat.attach_recording_archive(root.path(),"soop",&id).unwrap();
+        let raw=serde_json::to_vec(&serde_json::json!({"kind":"donation","receivedAtMs":1700000001000u64,"messageId":"one-event","nickname":"Public","text":"",
+            "extra":{"service":18,"fileName":"50","senderLanguage":"ko_KR","urlModify":"123","soopGift":{"kind":"balloon","count":50,"relay":false,"isDefault":false}}})).unwrap();
+        for _ in 0..2 {chat.ingest_with_gift("soop",&raw,Some(request.clone())).unwrap();}
+        let deadline=Instant::now()+Duration::from_secs(3);
+        while chat.asset(request.id()).unwrap().state!="ready" {assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));}
+        // Worker state can become ready just before its immutable archive write.
+        while !root.path().join("chat-assets").join(request.id()).exists() {assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));}
+        let summary=chat.detach_archive().unwrap().unwrap().persist(root.path(),"soop",&id).unwrap();
+        assert!(!summary.assets_incomplete);
+        chat.stop();assert_eq!(calls.load(Ordering::Acquire),1);
+        let events=fs::read_to_string(root.path().join("chat.events.jsonl")).unwrap();
+        assert_eq!(events.lines().count(),1);
+        assert!(!events.contains("https://") && !events.contains("giftAsset"));
+        let event:NormalizedChatEvent=serde_json::from_str(events.lines().next().unwrap()).unwrap();
+        assert!(event.gift_asset.is_none());
+        assert_eq!(event.soop_gift.as_ref().unwrap().count,50);
+        assert_eq!(event.soop_gift.as_ref().unwrap().image_asset_id.as_deref(),Some(request.id()));
+        let stored=super::super::chat_assets::replay_asset(root.path(),request.id()).unwrap().unwrap();
+        use base64::Engine;
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(stored.split_once(',').unwrap().1).unwrap(),expected);
+        let raw_saved=fs::read_to_string(root.path().join("chat.source.jsonl")).unwrap();
+        assert!(!raw_saved.contains("https://") && !raw_saved.contains("private-sender"));
+    }
+    #[test]
+    fn in_flight_gift_after_stop_preserves_count_and_marks_unscheduled_image_incomplete() {
+        use crate::soop::chat::gifts::assets::Request;
+        let mut chat=SharedChat::new();
+        Arc::get_mut(&mut chat).unwrap().assets=SessionAssets::with_test_fetcher(|_|panic!("stopped receiver cannot fetch"));
+        let request=Request::from_fields(18,&["fixture","private","Public","50","0","","","50","0","0"],"fixture").unwrap();
+        let root=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();
+        chat.attach_recording_archive(root.path(),"soop",&id).unwrap();chat.stop();
+        let raw=serde_json::to_vec(&serde_json::json!({"kind":"donation","receivedAtMs":1700000001000u64,"messageId":"in-flight","nickname":"Public","text":"",
+            "extra":{"service":18,"fileName":"50","soopGift":{"kind":"balloon","count":50,"relay":false,"isDefault":false}}})).unwrap();
+        chat.ingest_with_gift("soop",&raw,Some(request)).unwrap();
+        let summary=chat.detach_archive().unwrap().unwrap().persist(root.path(),"soop",&id).unwrap();
+        assert!(summary.assets_incomplete);
+        let lines=fs::read_to_string(root.path().join("chat.events.jsonl")).unwrap();
+        assert_eq!(lines.lines().count(),1);
+        let row:NormalizedChatEvent=serde_json::from_str(lines.lines().next().unwrap()).unwrap();
+        assert_eq!(row.soop_gift.unwrap().count,50);
+        assert!(fs::read(root.path().join("chat-assets/manifest.jsonl")).unwrap().is_empty());
+    }
+    #[test]
+    fn ogq_four_assets_cross_native_bridge_and_stopped_receive_is_incomplete() {
+        for stopped in [false,true] {
+            let fields=["room-private","","gem_fixture","0","unused-version","sender-private","Public","32|262144","255","0","0","jpg","7","E12E2E","","9","7","1"];
+            let parsed=crate::soop::chat::ogq::parse(&fields).unwrap().unwrap();let requests=parsed.requests;
+            let mut png=std::io::Cursor::new(Vec::new());image::DynamicImage::new_rgb8(3,3).write_to(&mut png,image::ImageFormat::Png).unwrap();let image=png.into_inner();
+            let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));let observed=calls.clone();let mut chat=SharedChat::new();
+            Arc::get_mut(&mut chat).unwrap().assets=SessionAssets::with_test_fetcher(move|url|{
+                assert!(!stopped);assert!(crate::soop::chat::ogq::canonical_url(url).is_some());observed.fetch_add(1,Ordering::AcqRel);Ok(image.clone())
+            });
+            let root=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();chat.attach_recording_archive(root.path(),"soop",&id).unwrap();if stopped{chat.stop();}
+            let raw=serde_json::to_vec(&serde_json::json!({"kind":"chat","receivedAtMs":1700000001000u64,"messageId":"ogq-event","nickname":parsed.nickname,"text":parsed.text,"flags":parsed.flags,
+                "extra":{"service":109,"soopEmoticon":parsed.metadata,"subscriptionMonth":"7","accSubscriptionMonth":"9","color":"255","nicknameColorKey":"E12E2E"}})).unwrap();
+            for _ in 0..2{chat.ingest_with_assets("soop",&raw,None,requests.clone()).unwrap();}
+            if !stopped {
+                let deadline=Instant::now()+Duration::from_secs(3);
+                while requests.iter().any(|r|!root.path().join("chat-assets").join(r.id()).exists()) {assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));}
+            }
+            let summary=chat.detach_archive().unwrap().unwrap().persist(root.path(),"soop",&id).unwrap();assert_eq!(summary.assets_incomplete,stopped);chat.stop();
+            assert_eq!(calls.load(Ordering::Acquire),if stopped{0}else{4});
+            let encoded=fs::read_to_string(root.path().join("chat.events.jsonl")).unwrap();assert_eq!(encoded.lines().count(),1);
+            let row:NormalizedChatEvent=serde_json::from_str(encoded.lines().next().unwrap()).unwrap();assert!(row.text.is_empty()&&row.amount.is_none()&&row.emoticon_assets.is_empty());
+            assert_eq!(row.soop_emoticon.as_ref().unwrap().ids().len(),4);let role=row.soop.as_ref().unwrap();assert_eq!(role.badge,"fan");assert_eq!(role.nickname_color_key.as_deref(),Some("E12E2E"));
+            for saved in [&encoded,&fs::read_to_string(root.path().join("chat.source.jsonl")).unwrap()] {
+                for secret in ["https://","room-private","sender-private","unused-version","emoticonAssets"] {assert!(!saved.contains(secret));}
+            }
+            let manifest=fs::read(root.path().join("chat-assets/manifest.jsonl")).unwrap();assert_eq!(manifest.is_empty(),stopped);
+            if !stopped {for request in &requests{assert!(super::super::chat_assets::replay_asset(root.path(),request.id()).unwrap().is_some());}}
+        }
+    }
+    #[test]
+    fn subscription_assets_cross_native_bridge_and_stop_preserves_membership() {
+        for stopped in [false,true] {
+            let fields=["private-room","private-receiver","private-sender","Public","103","","","2","","ko_KR","123"];
+            let parsed=crate::soop::chat::subscriptions::parse(91,&fields,None).unwrap();let requests=parsed.requests;
+            let mut png=std::io::Cursor::new(Vec::new());image::DynamicImage::new_rgb8(3,3).write_to(&mut png,image::ImageFormat::Png).unwrap();let image=png.into_inner();
+            let calls=Arc::new(std::sync::atomic::AtomicUsize::new(0));let observed=calls.clone();let mut chat=SharedChat::new();
+            Arc::get_mut(&mut chat).unwrap().assets=SessionAssets::with_test_fetcher(move|url|{
+                assert!(!stopped);assert!(crate::soop::chat::subscriptions::canonical_url(url).is_some());observed.fetch_add(1,Ordering::AcqRel);Ok(image.clone())
+            });
+            let root=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();chat.attach_recording_archive(root.path(),"soop",&id).unwrap();if stopped{chat.stop();}
+            let raw=serde_json::to_vec(&serde_json::json!({"kind":"membership","receivedAtMs":1700000001000u64,"messageId":"subscription-event","nickname":parsed.nickname,"text":"",
+                "extra":{"service":91,"soopSubscription":parsed.metadata}})).unwrap();
+            for _ in 0..2 {chat.ingest_with_public_assets("soop",&raw,None,Vec::new(),requests.clone()).unwrap();}
+            if !stopped {let deadline=Instant::now()+Duration::from_secs(3);while requests.iter().any(|r|!root.path().join("chat-assets").join(r.id()).exists()) {assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));}}
+            let summary=chat.detach_archive().unwrap().unwrap().persist(root.path(),"soop",&id).unwrap();assert_eq!(summary.assets_incomplete,stopped);chat.stop();
+            assert_eq!(calls.load(Ordering::Acquire),if stopped{0}else{2});
+            let encoded=fs::read_to_string(root.path().join("chat.events.jsonl")).unwrap();assert_eq!(encoded.lines().count(),1);
+            let row:NormalizedChatEvent=serde_json::from_str(encoded.lines().next().unwrap()).unwrap();
+            assert!(row.text.is_empty() && row.amount.is_none() && row.subscription_assets.is_empty());
+            let meta=row.soop_subscription.unwrap();assert_eq!(meta.product_months,Some(3));assert_eq!(meta.ids().len(),2);
+            for saved in [&encoded,&fs::read_to_string(root.path().join("chat.source.jsonl")).unwrap()] {
+                for secret in ["https://","private-room","private-sender","private-receiver","subscriptionAssets"] {assert!(!saved.contains(secret));}
+            }
+        }
+    }
+    #[test]
+    fn personalcon_native_bridge_keeps_event_image_local_and_body_unchanged() {
+        let request=crate::soop::chat::personalcon::Context::from_channel(&serde_json::json!({"PCON_OBJECT":null})).select("32|262144","17","0").0.unwrap();
+        let mut png=std::io::Cursor::new(Vec::new());image::DynamicImage::new_rgb8(3,3).write_to(&mut png,image::ImageFormat::Png).unwrap();let image=png.into_inner();
+        let mut chat=SharedChat::new();Arc::get_mut(&mut chat).unwrap().assets=SessionAssets::with_test_fetcher(move|url|{assert!(crate::soop::chat::personalcon::canonical_url(url).is_some());Ok(image.clone())});
+        let root=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();chat.attach_recording_archive(root.path(),"soop",&id).unwrap();
+        let raw=serde_json::to_vec(&serde_json::json!({"kind":"chat","receivedAtMs":1700000001000u64,"messageId":"personalcon-event","nickname":"Public","text":"Saved text","flags":"32|262144","extra":{"service":5,"color":"#aabbcc","accSubscriptionMonth":"17","personalcon":request.metadata()}})).unwrap();
+        chat.ingest_with_appearance("soop",&raw,None,Vec::new(),Vec::new(),Some(request.clone())).unwrap();
+        let deadline=Instant::now()+Duration::from_secs(3);while !root.path().join("chat-assets").join(request.id()).exists(){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));}
+        let summary=chat.detach_archive().unwrap().unwrap().persist(root.path(),"soop",&id).unwrap();assert!(!summary.assets_incomplete);chat.stop();
+        let bytes=fs::read_to_string(root.path().join("chat.events.jsonl")).unwrap();assert!(!bytes.contains("https://"));
+        let row:NormalizedChatEvent=serde_json::from_str(bytes.lines().next().unwrap()).unwrap();assert_eq!(row.text,"Saved text");assert_eq!(row.color.as_deref(),Some("#aabbcc"));assert_eq!(row.soop.as_ref().unwrap().message_color.as_deref(),Some("#aabbcc"));assert!(row.personalcon_asset.is_none());assert_eq!(row.soop.unwrap().personalcon.as_ref(),Some(request.metadata()));
+    }
+    #[test]
+    fn broadcaster_avatar_crosses_native_bridge_as_local_metadata_only() {
+        let context=crate::soop::chat::personalcon::Context::from_channel(&serde_json::json!({}));let request=context.portrait("fixture","fixture(1)","4|0","0").unwrap();
+        let mut png=std::io::Cursor::new(Vec::new());image::DynamicImage::new_rgb8(3,3).write_to(&mut png,image::ImageFormat::Png).unwrap();let image=png.into_inner();
+        let mut chat=SharedChat::new();Arc::get_mut(&mut chat).unwrap().assets=SessionAssets::with_test_fetcher(move|url|{assert!(crate::soop::chat::portrait::canonical_url(url).is_some());Ok(image.clone())});
+        let root=tempfile::tempdir().unwrap();let id=uuid::Uuid::new_v4().to_string();chat.attach_recording_archive(root.path(),"soop",&id).unwrap();
+        let raw=serde_json::to_vec(&serde_json::json!({"kind":"chat","receivedAtMs":1700000001000u64,"messageId":"avatar-event","nickname":"Public","text":"Saved text","flags":"4|0","extra":{"service":5,"avatar":request.metadata()}})).unwrap();
+        chat.ingest_with_portrait("soop",&raw,None,Vec::new(),Vec::new(),None,Some(request.clone())).unwrap();let deadline=Instant::now()+Duration::from_secs(3);while !root.path().join("chat-assets").join(request.id()).exists(){assert!(Instant::now()<deadline);std::thread::sleep(Duration::from_millis(2));}
+        let summary=chat.detach_archive().unwrap().unwrap().persist(root.path(),"soop",&id).unwrap();assert!(!summary.assets_incomplete);chat.stop();
+        let bytes=fs::read_to_string(root.path().join("chat.events.jsonl")).unwrap();assert!(!bytes.contains("https://"));let row:NormalizedChatEvent=serde_json::from_str(bytes.lines().next().unwrap()).unwrap();assert_eq!(row.soop.unwrap().avatar.as_ref(),Some(request.metadata()));assert!(row.avatar_asset.is_none());assert_eq!(row.text,"Saved text");
     }
     #[test]
     fn terminal_failure_before_attach_keeps_empty_archive_partial() {
@@ -1701,6 +2065,33 @@ mod tests {
         assert!(fs::read(root.path().join("chat.events.jsonl"))
             .unwrap()
             .is_empty());
+    }
+    #[test]
+    fn soop_rich_coverage_warning_preserves_connection_and_marks_current_and_later_archives_partial() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let chat = SharedChat::new();
+        {
+            let mut state = chat.state.lock().unwrap();
+            state.require_verified_connection = true;
+            state.verified_connection = true;
+        }
+        let first_id = uuid::Uuid::new_v4().to_string();
+        chat.attach_recording_archive(first.path(), "soop", &first_id).unwrap();
+        chat.ingest("soop", br#"{"kind":"gap","text":"partial public rich coverage","extra":{"service":108,"coverageWarning":"unsupportedSoopRichEvent"}}"#).unwrap();
+        chat.push(event(2)).unwrap();
+        assert!(chat.state.lock().unwrap().verified_connection);
+        assert_eq!(chat.status(), SOOP_RICH_WARNING);
+        assert!(!chat.is_preparing());
+        let first_summary = chat.detach_archive().unwrap().unwrap().persist(first.path(), "soop", &first_id).unwrap();
+        assert!(first_summary.reasons.contains(&Reason::StatusUnknown));
+        let second_id = uuid::Uuid::new_v4().to_string();
+        chat.attach_recording_archive(second.path(), "soop", &second_id).unwrap();
+        chat.push(event(3)).unwrap();
+        let second_summary = chat.detach_archive().unwrap().unwrap().persist(second.path(), "soop", &second_id).unwrap();
+        assert!(second_summary.reasons.contains(&Reason::StatusUnknown));
+        assert!(chat.state.lock().unwrap().verified_connection);
+        assert!(chat.preserve_source.load(Ordering::Acquire));
     }
     #[test]
     fn archive_budget_failure_remains_sticky_while_live_ring_continues() {
@@ -1955,3 +2346,7 @@ mod tests {
         assert!(root.path().join("chat.events.jsonl").exists());
     }
 }
+
+#[cfg(test)]
+#[path="live_chat_mission_tests.rs"]
+mod mission_tests;

@@ -1,6 +1,6 @@
 [package]
 name = "atsumi"
-version = "2.4.12"
+version = "2.4.13"
 description = "Atsumi desktop backend"
 authors = ["Atsumi contributors"]
 edition = "2021"
@@ -37,6 +37,7 @@ tauri = { version = "2", features = ["tray-icon", "unstable"] }
 tauri-plugin-process = "2.3"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2.10"
+tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["time", "sync"] }
 tracing = "0.1"
@@ -46,6 +47,9 @@ unicode-normalization = "0.1"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "4", default-features = false, features = ["deflate-flate2"] }
 windows = { version = "0.61.3", features = [
+    "Data_Xml_Dom",
+    "UI_Notifications",
+    "Win32_System_WinRT",
     "Win32_Foundation",
     "Win32_Graphics_Gdi",
     "Win32_UI_HiDpi",
@@ -54,6 +58,7 @@ windows = { version = "0.61.3", features = [
     "Win32_System_Com",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_IO",
+    "Win32_System_Pipes",
     "Win32_System_Ioctl",
     "Win32_System_JobObjects",
     "Win32_System_LibraryLoader",
@@ -67,10 +72,10 @@ windows = { version = "0.61.3", features = [
 ] }
 
 [dev-dependencies]
-tempfile = "3"
 tauri = { version = "=2.11.5", features = ["test"] }
 
 [target.'cfg(windows)'.dependencies]
+winreg = "0.55"
 webview2-com = "=0.38.2"
 
 # Remote official-site windows must not reach Tauri's shared IPC channel queue.

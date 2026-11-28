@@ -22,6 +22,7 @@
   const hooks = [];
   let installed = false;
   let active = null;
+  let relayActive = null;
   let recovering = null;
   let lastDetail = "encoded_unavailable";
   let appendCount = 0;
@@ -32,7 +33,7 @@
   let maxAckMs = 0;
 
   const safeNotify = (current, detail) => {
-    lastDetail = detail;
+    if (!current?.relay) lastDetail = detail;
     try { current?.options.onStatus?.(detail); } catch { /* UI callbacks never affect playback. */ }
   };
   const supportedMime = (type) => {
@@ -107,17 +108,20 @@
   };
   const canChangePlaybackRate = (video) => Boolean(active && active.video === video && active.nativeApproved && active.accepting && !active.transportFailed && !active.stopping &&
     active.recordingId && candidate(video) === active.source);
-  const getReplayClock = (video) => {
-    if (!canChangePlaybackRate(video) || video.seeking) return null;
-    const videoBuffer = active.source.buffers.find(state => /avc[13]\./i.test(state.mimeType));
+  const getSourceClock = (video) => {
+    const owner = [active, relayActive].find(c => c?.video === video && c.nativeApproved && c.accepting && !c.transportFailed && candidate(video) === c.source);
+    if (!owner || video.seeking) return null;
+    const videoBuffer = owner.source.buffers.find(state => /avc[13]\./i.test(state.mimeType));
     if (!videoBuffer || !configurationOK(videoBuffer)) return null;
-    const sourceTimeSeconds = video.currentTime - videoBuffer.buffer.timestampOffset;
+    const currentTime = video.currentTime, timestampOffset = videoBuffer.buffer.timestampOffset;
+    const sourceTimeSeconds = currentTime - timestampOffset;
     if (!Number.isFinite(sourceTimeSeconds) || sourceTimeSeconds < 0 || sourceTimeSeconds > 1e9) return null;
     // MSE adds timestampOffset to coded PTS. Undo that display-only offset;
     // never modify the recorded samples. Native muxing subtracts DTS and keeps
     // CTS: output PTS = source PTS - origin (not PTS == DTS).
-    return { clock: "mse_presentation_v1", sourceId: active.source.sourceId, sourceTimeSeconds };
+    return { clock: "mse_presentation_v1", sourceId: owner.source.sourceId, sourceTimeSeconds, currentTime, timestampOffset, trackIndex: videoBuffer.trackIndex };
   };
+  const getReplayClock = (video) => { const sample = getSourceClock(video); return sample ? { clock: sample.clock, sourceId: sample.sourceId, sourceTimeSeconds: sample.sourceTimeSeconds } : null; };
   const bytesOf = (value) => {
     try {
       if (ArrayBuffer.isView(value)) {
@@ -134,7 +138,7 @@
   };
   const failure = (current, reason) => {
     if (!current) return;
-    if (!current.interrupted) lastStop = { reason, readyState:current.video.readyState, paused:Boolean(current.video.paused),
+    if (!current.relay && !current.interrupted) lastStop = { reason, readyState:current.video.readyState, paused:Boolean(current.video.paused),
       ended:Boolean(current.video.ended), sourceAttached:sourceForVideo(current.video) === current.source, sourceClosed:current.source.blocked };
     current.interrupted = true;
     if (!current.reason || current.reason === "user_stop") current.reason = reason;
@@ -146,6 +150,7 @@
     state.blocked = true;
     state.reason = reason;
     if (active?.source === state.source) failure(active, reason);
+    if (relayActive?.source === state.source) failure(relayActive, reason);
   };
   const makeSource = (mediaSource) => {
     let source = sources.get(mediaSource);
@@ -157,21 +162,24 @@
       source.blocked = true; observed.delete(source);
       for (const [url, bound] of urls) if (bound === source) urls.delete(url);
       if (active?.source === source) failure(active, "source_changed");
+      if (relayActive?.source === source) failure(relayActive, "source_changed");
     });
     return source;
   };
   const makeBuffer = (source, buffer, mimeType) => {
     if (source.buffers.length >= 2 || !supportedMime(mimeType)) { source.blocked = true; source.reason = "codec_unsupported"; return; }
     const state = { source, buffer, trackIndex: source.buffers.length, mimeType, blocked: false, header: new Uint8Array(8), headerBytes: 0,
-      kind: null, remaining: 0, initParts: [], initSize: 0, ftyp: null, init: null, awaitingInit: false, forwarding: false };
+      kind: null, remaining: 0, initParts: [], initSize: 0, ftyp: null, init: null, awaitingInit: false, forwarding: false, relayForwarding: false };
     source.buffers.push(state); buffers.set(buffer, state);
     buffer.addEventListener("error", () => block(state, "source_buffer_error"));
     if (active?.source === source) failure(active, "track_changed");
+    if (relayActive?.source === source) failure(relayActive, "track_changed");
   };
   // Native receipts deduplicate the immediately previous, byte-identical
   // chunk. Keep its indexes/payload unchanged and do not advance the serial
   // queue before ACK. Never retry a parser, ownership or disk error.
   const appendWithRetry = async (current, fields) => {
+    if (current.relay) return current.options.request("encoded_append", fields);
     const retryStartedAt = Date.now();
     for (let attempt = 0; ; attempt++) {
       const requestedAt = Date.now();
@@ -187,7 +195,7 @@
   };
   const enqueue = (current, state, parts, byteLength) => {
     if (!current.accepting || byteLength === 0) return;
-    if (byteLength > MAX_APPEND || current.queuedBytes + byteLength > MAX_QUEUE) { failure(current, "queue_overflow"); return; }
+    if (byteLength > MAX_APPEND || current.queuedBytes + byteLength > (current.relay ? 32 * 1024 * 1024 : MAX_QUEUE)) { failure(current, "queue_overflow"); return; }
     current.queuedBytes += byteLength;
     let bytes;
     try { bytes = new Uint8Array(byteLength); let at = 0; for (const part of parts) { bytes.set(part, at); at += part.byteLength; } }
@@ -218,7 +226,8 @@
     const bytes = bytesOf(value);
     if (!bytes || bytes.byteLength > MAX_APPEND) { block(state, "append_unsupported"); return; }
     const current = active?.source === state.source && active.accepting ? active : null;
-    const parts = []; let forwarded = 0; let at = 0;
+    const relay = relayActive?.source === state.source && relayActive.accepting ? relayActive : null;
+    const parts = [], relayParts = []; let forwarded = 0, relayForwarded = 0; let at = 0;
     while (at < bytes.length) {
       if (state.remaining === 0) {
         const count = Math.min(8 - state.headerBytes, bytes.length - at);
@@ -234,8 +243,9 @@
           state.initParts = [state.header.slice()]; state.initSize = 8;
         } else {
           if (state.awaitingInit) { block(state, "init_unsupported"); return; }
-          if (kind === "moof") state.forwarding = Boolean(current);
+          if (kind === "moof") { state.forwarding = Boolean(current); state.relayForwarding = Boolean(relay); }
           if (current && state.forwarding) { parts.push(state.header.slice()); forwarded += 8; }
+          if (relay && state.relayForwarding) { relayParts.push(state.header.slice()); relayForwarded += 8; }
         }
         if (state.remaining === 0) {
           if (kind === "ftyp" || kind === "moov") { block(state, "init_unsupported"); return; }
@@ -246,7 +256,10 @@
       const part = bytes.subarray(at, at + count);
       if (state.kind === "ftyp" || state.kind === "moov") {
         state.initParts.push(part.slice()); state.initSize += count;
-      } else if (current && state.forwarding) { parts.push(part); forwarded += count; }
+      } else {
+        if (current && state.forwarding) { parts.push(part); forwarded += count; }
+        if (relay && state.relayForwarding) { relayParts.push(part); relayForwarded += count; }
+      }
       at += count; state.remaining -= count;
       if (state.remaining === 0 && (state.kind === "ftyp" || state.kind === "moov")) {
         const complete = new Uint8Array(state.initSize); let offset = 0;
@@ -259,12 +272,14 @@
             failure(current, "init_changed");
             state.forwarding = false;
           }
+          if (relay && state.init && (state.init.length !== next.length || state.init.some((value, index) => value !== next[index]))) { failure(relay, "init_changed"); state.relayForwarding = false; }
           state.init = next;
           state.awaitingInit = false;
         }
       }
     }
     if (current && forwarded) enqueue(current, state, parts, forwarded);
+    if (relay && relayForwarded) enqueue(relay, state, relayParts, relayForwarded);
   };
   const hook = (target, name, create) => {
     const descriptor = Object.getOwnPropertyDescriptor(target, name);
@@ -298,8 +313,9 @@
         if (!supportedMime(mimeType)) block(state, "codec_unsupported");
         else {
           if (active?.source === state.source) failure(active, "codec_changed");
+          if (relayActive?.source === state.source) failure(relayActive, "codec_changed");
           state.mimeType = mimeType; state.init = null; state.ftyp = null; state.awaitingInit = true;
-          state.initParts = []; state.initSize = 0; state.headerBytes = 0; state.remaining = 0; state.forwarding = false;
+          state.initParts = []; state.initSize = 0; state.headerBytes = 0; state.remaining = 0; state.forwarding = false; state.relayForwarding = false;
         }
       }
       return result;
@@ -308,6 +324,7 @@
       const result = Reflect.apply(original, this, arguments); const state = buffers.get(buffer);
       if (state) {
         if (active?.source === state.source) failure(active, "track_changed");
+        if (relayActive?.source === state.source) failure(relayActive, "track_changed");
         state.blocked = true; buffers.delete(buffer);
         state.source.buffers = state.source.buffers.filter(item => item !== state);
         state.source.buffers.forEach((item, index) => { item.trackIndex = index; });
@@ -329,8 +346,9 @@
   const cleanUp = (current) => {
     clearInterval(current.timer);
     for (const remove of current.listeners) remove();
-    for (const state of current.source.buffers) state.forwarding = false;
+    for (const state of current.source.buffers) state[current.relay ? "relayForwarding" : "forwarding"] = false;
     if (active === current) active = null;
+    if (relayActive === current) relayActive = null;
   };
   const continueRecording = (current, command) => {
     if (!command || !UUID.test(command.requestId ?? "") || command.channelId !== current.channelId || current.cancelContinuation) return false;
@@ -363,7 +381,7 @@
           reason: current.transportFailed && ["track_changed", "codec_changed", "init_changed"].includes(current.reason) ? "native_rejected" : current.reason ?? "user_stop" });
         if (!response || response.stopped !== true) throw new Error("native_rejected");
         cleanUp(current);
-        if (current.transportFailed || !continueRecording(current, response.continuation)) {
+        if (current.relay || current.transportFailed || !continueRecording(current, response.continuation)) {
           // An ended video is provisional until native checks the broadcast.
           // Do not turn that pending classification into a persistent IPC error.
           const ending = current.transportFailed ? null : response.endingReason;
@@ -376,17 +394,17 @@
     })();
     return current.finishPromise;
   };
-  const start = (command, options) => {
-    if (active || recovering) return Promise.reject(new Error("recording_active"));
+  const start = (command, options, relay = false) => {
+    if (relay ? relayActive : active || recovering) return Promise.reject(new Error("recording_active"));
     const video = command?.video ?? selectedVideo(); const source = candidate(video);
     if (!source || command?.channelId !== channel() || command.rightsAcknowledged !== true || !UUID.test(command.requestId ?? "") || typeof options?.request !== "function") {
       return Promise.reject(new Error("encoded_unavailable"));
     }
-    const current = { source, video, channelId: channel(), options, recordingId: null, captureChat: false, nativeApproved: false,
+    const current = { source, video, relay, requestId: command.requestId, channelId: channel(), options, recordingId: null, captureChat: false, nativeApproved: false,
       accepting: true, starting: true, stopping: false, interrupted: false, transportFailed: false, reason: null,
       appendIndexes: source.buffers.map(() => 0), queuedBytes: 0, queue: Promise.resolve(), begin: null, finishPromise: null, listeners: [], timer: null };
-    active = current;
-    for (const state of source.buffers) state.forwarding = false;
+    if (relay) relayActive = current; else active = current;
+    for (const state of source.buffers) state[relay ? "relayForwarding" : "forwarding"] = false;
     const listen = (name, reason) => { const callback = () => failure(current, reason); video.addEventListener(name, callback); current.listeners.push(() => video.removeEventListener(name, callback)); };
     // emptied can describe resetting just the decoder. The periodic identity
     // check still stops an actually replaced URL/MediaSource.
@@ -414,10 +432,24 @@
       });
     return current.begin;
   };
-  window.addEventListener("pagehide", () => { if (recovering) { clearInterval(recovering.timer); recovering = null; } if (active) { active.cancelContinuation = true; failure(active, "page_hidden"); } });
+  window.addEventListener("pagehide", () => { if (relayActive) failure(relayActive, "page_hidden"); if (recovering) { clearInterval(recovering.timer); recovering = null; } if (active) { active.cancelContinuation = true; failure(active, "page_hidden"); } });
   Object.defineProperty(window, "__atsumiEncodedCapture", { value: Object.freeze({
     canStart: (video) => Boolean(candidate(video)), supports: (video) => Boolean(candidate(video)), getDiagnostics: diagnostics,
     canChangePlaybackRate, getReplayClock, getStatus: status, start,
+    startRelay: (command, options) => start(command, options, true),
+    getRelayClock(runId) {
+      if (!relayActive || relayActive.recordingId !== runId) return null;
+      const video = relayActive.video, sample = getSourceClock(video);
+      if (!sample) return null;
+      // These are observed presentation state, not a transported PTS or a
+      // YouTube archive origin. Do not change the ordinary replay-clock shape.
+      return { ...sample, paused: video.paused, seeking: video.seeking,
+        readyState: video.readyState, ended: video.ended, playbackRate: video.playbackRate };
+    },
+    stopRelay(runId, interrupted = false) {
+      if (!relayActive || relayActive.requestId !== runId) return Promise.resolve();
+      relayActive.interrupted ||= interrupted; relayActive.reason ||= "user_stop"; return finish(relayActive);
+    },
     stop(reason = "user_stop", interrupted = false) {
       if (recovering) { clearInterval(recovering.timer); recovering = null; }
       if (!active) return Promise.resolve({ stopped: true, interrupted: false });

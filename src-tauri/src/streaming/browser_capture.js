@@ -486,6 +486,86 @@
       }
     }
   };
+  // Separate relay lanes: media/chat/control never borrow recording ACK slots.
+  const relayPending = new Map();
+  let relaySession = null;
+  const relayRequest = (current, packet, lane = "media") => new Promise((resolve, reject) => {
+    if (relayPending.has(lane)) { reject(new Error("relay_busy")); return; }
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { relayPending.delete(lane); reject(new Error("relay_timeout")); }, 3000);
+    relayPending.set(lane, { id, run: current.runId, resolve, reject, timer });
+    try { window.chrome.webview.postMessage(MESSAGE_PREFIX + JSON.stringify({ atsumiBrowserCapture: 1, id,
+      kind: "relay", runId: current.runId, epoch: current.epoch, sourceId: current.sourceId, packet })); }
+    catch { clearTimeout(timer); relayPending.delete(lane); reject(new Error("relay_post")); }
+  });
+  window.addEventListener("atsumi-browser-reply", event => {
+    const value = event.detail;
+    for (const [lane, entry] of relayPending) if (entry.id === value?.id) {
+      clearTimeout(entry.timer); relayPending.delete(lane);
+      if (value.ok === true) entry.resolve(value.data); else entry.reject(new Error("relay_rejected"));
+      break;
+    }
+  });
+  const finishRelay = async (current, interrupted) => {
+    if (current.finishing) return current.finishing;
+    current.finishing = (async () => {
+      if (!interrupted) await window.__atsumiPageChat?.stop(current.runId);
+      else void window.__atsumiPageChat?.stop(current.runId);
+      const result = await relayRequest(current, { type: "finish", interrupted }, "control");
+      if (result?.stopRequested !== true) throw new Error("relay_rejected");
+      return { stopped: true, interrupted }; // Internal capture adapter contract, not a joined receipt.
+    })().finally(() => { if (relaySession === current) relaySession = null; });
+    return current.finishing;
+  };
+  const startRelay = command => {
+    if (relaySession || !UUID.test(command.runId ?? "") || command.channelId !== channel() ||
+      !Number.isSafeInteger(command.epoch) || command.epoch <= 0) return;
+    const current = { runId: command.runId, epoch: command.epoch, sourceId: null, finishing: null };
+    relaySession = current;
+    void window.__atsumiEncodedCapture?.startRelay({ requestId: current.runId, channelId: channel(), rightsAcknowledged: true }, {
+      request: async (kind, fields) => {
+        if (kind === "encoded_begin") {
+          current.sourceId = fields.sourceId;
+          const response = await relayRequest(current, { type: "begin", tracks: fields.tracks });
+          if (response?.runId !== current.runId || response.nativeApproved !== true || response.mode !== "relay") throw new Error("relay_rejected");
+          return { id: current.runId, mode: "encoded", nativeApproved: true, captureChat: true };
+        }
+        if (kind === "encoded_append") {
+          const { recordingId, ...append } = fields;
+          return relayRequest(current, { type: "append", ...append });
+        }
+        if (kind === "encoded_finish") return finishRelay(current, fields.interrupted);
+        throw new Error("relay_kind");
+      },
+      onStarted: (_response, video) => {
+        const started = window.__atsumiPageChat?.startRelay({ recordingId: current.runId, channelId: channel(), getVideo: () => video,
+          sendBatch: (events, batchId) => relayRequest(current, { type: "chat", events, batchId }, "chat"),
+          onStatus: detail => {
+            if (!["receiving", "observing", "stopped"].includes(detail)) {
+              try { post("relay", { runId: current.runId, epoch: current.epoch, sourceId: current.sourceId, packet: { type: "chat_gap" } }); } catch { /* Independent text qualification. */ }
+            }
+          } }) === true;
+        if (!started) void window.__atsumiEncodedCapture.stopRelay(current.runId, true).catch(() => { void finishRelay(current, true).catch(() => undefined); });
+      },
+      beforeFinish: () => window.__atsumiPageChat?.stop(current.runId),
+    }).catch(() => { void finishRelay(current, true).catch(() => undefined); });
+  };
+  window.addEventListener("atsumi-browser-relay-command", event => {
+    const command = event.detail;
+    if (command?.kind === "start") { startRelay(command); return; }
+    const current = relaySession;
+    if (!current || command?.runId !== current.runId || command.epoch !== current.epoch) return;
+    if (command.kind === "clock" && UUID.test(command.nonce ?? "")) {
+      const sample = window.__atsumiEncodedCapture?.getRelayClock(current.runId) ?? null;
+      try { post("relay", { runId: current.runId, epoch: current.epoch, sourceId: current.sourceId,
+        packet: { type: "clock", nonce: command.nonce, sample: sample ? { ...sample, performanceNowMs: performance.now() } : null } }); } catch { /* Unknown is preserved. */ }
+    } else if (command.kind === "stop") {
+      void window.__atsumiEncodedCapture?.stopRelay(current.runId, command.interrupted === true).catch(() => {
+        void finishRelay(current, true).catch(() => undefined);
+      });
+    }
+  });
+  window.addEventListener("pagehide", () => { if (relaySession) void finishRelay(relaySession, true).catch(() => undefined); });
   window.addEventListener("atsumi-browser-command", (event) => {
     const command = event.detail;
     if (!command || typeof command !== "object") return;

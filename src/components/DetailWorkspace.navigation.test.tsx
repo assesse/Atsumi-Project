@@ -79,7 +79,7 @@ describe("Hitomi detail navigation continuity",()=>{
     expect(hero).toHaveAccessibleName(`표지 ${representative?4:1}페이지 확대`);
     await act(async()=>hero.click());
     expect(f.container.querySelector(".page-preview-dialog")).toHaveAttribute("open");
-    expect(f.container.querySelector(".page-preview-navigation")).toHaveTextContent(`${representative?4:1} / 10`);
+    expect(f.container.querySelector(".page-preview-navigation")).toHaveTextContent(`${representative?4:1}/10`);
   });
   it("keeps all already-resolved related cards, including the third and beyond the old five-card cap",async()=>{
     const f=await fixture(); const items=Array.from({length:7},(_,i):Gallery=>({...f.other,id:galleryId(90000+i),thumbnailWidth:800,thumbnailHeight:i===2?2200:1200}));

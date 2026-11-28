@@ -22,6 +22,11 @@ it("passes locally loaded exclusion and duplicate decisions into related cards w
   vi.spyOn(backend, "searchSubmit").mockResolvedValue({ ok: true, data: { queryId: "related-status-fixture", firstPage: { page: 1, totalPages: 1, items: summaries } } });
   vi.spyOn(backend, "downloadEntriesList").mockImplementation(async req => ({ ok: true, data: { page: req.page, totalItems: 0, entries: [] } }));
   vi.spyOn(backend, "galleryDetailGet").mockResolvedValue({ ok: true, data: { ...summaries[0]!, related: summaries.slice(1), pageDimensions: [] } });
+  const fallback = { ...summaries[0]!, id: mockGalleries[4]!.id, title: "다음 탐색 결과" };
+  const pages = vi.spyOn(backend, "searchPageGet").mockImplementation(async (_query, page, _request, omitted) => {
+    const items = [...summaries, fallback].filter(item => !omitted?.includes(item.id));
+    return { ok: true, data: { page, totalPages: Math.ceil(items.length / 4), items: items.slice((page - 1) * 4, page * 4) } };
+  });
   const exclusions = vi.spyOn(backend, "explorationExclusionsList").mockResolvedValue({ ok: true, data: [
     { galleryId: ids[1]!, title: summaries[1]!.title, artist: "fixture", reasons: [{ kind: "duplicate_hidden", detail: "fixture", excludedAt: "" }] },
     { galleryId: ids[2]!, title: summaries[2]!.title, artist: "fixture", reasons: [{ kind: "manual", detail: "fixture", excludedAt: "" }] },
@@ -50,6 +55,29 @@ it("passes locally loaded exclusion and duplicate decisions into related cards w
     expect(related(1)).toHaveAccessibleName(summaries[1]!.title + ", 중복 판정으로 제외");
     expect(related(2)).toHaveAccessibleName(summaries[2]!.title + ", 탐색에서 제외");
     expect(related(3)?.querySelector(".gallery-processing-badge")).toHaveAttribute("data-processing-state", "duplicate");
+    expect(related(3)).toHaveAttribute("data-processing-muted", "true");
+    const toggle = (scope: string, label: string) => {
+      const group = container.querySelector('[aria-label="' + scope + '"]')!;
+      const input = [...group.querySelectorAll('label')].find(l => l.textContent === label)?.querySelector("input");
+      expect(input).toBeDefined();
+      input!.click();
+    };
+    await act(async () => toggle("관련 갤러리 표시", "제외됨"));
+    await flush();
+    expect(related(1)).toBeNull();
+    expect(related(2)).toBeNull();
+    expect(related(3)).not.toBeNull();
+    expect(container.querySelector('.gallery-card[data-gallery-id="' + fallback.id + '"]')).not.toBeNull();
+    expect(pages.mock.calls.some(call => call[3]?.includes(ids[1]!) && call[3]?.includes(ids[2]!))).toBe(true);
+    await act(async () => toggle("탐색 결과 표시", "중복 후보"));
+    await flush();
+    expect(related(3)).toBeNull();
+    expect(container.querySelector('.related-section .context-summary')).toHaveTextContent("0개 결과");
+    await act(async () => toggle("탐색 결과 표시", "제외됨"));
+    await flush();
+    expect(related(1)).not.toBeNull();
+    expect(related(3)).toBeNull();
+    expect(backend.searchSubmit).toHaveBeenCalledTimes(1);
     expect([exclusions.mock.calls.length, snapshot.mock.calls.length]).toEqual(before);
   } finally { await act(async () => root.unmount()); client.dispose(); container.remove(); }
 }, 20000);

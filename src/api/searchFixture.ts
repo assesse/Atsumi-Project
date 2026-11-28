@@ -150,16 +150,23 @@ export function runSearchFixture(input: SearchRequest): SearchFixtureResult {
   return { request, items: galleries.map(toSummary) };
 }
 
-export function searchFixturePage(result: SearchFixtureResult, page: number): GalleryPage {
-  const totalPages = result.items.length === 0
+export function searchFixturePage(result: SearchFixtureResult, page: number, omittedIds?: readonly GallerySummary["id"][]): GalleryPage {
+  const hidden = omittedIds?.length ? new Set(omittedIds) : null;
+  const items = hidden ? result.items.filter(item => !hidden.has(item.id)) : result.items;
+  const totalPages = items.length === 0
     ? 0
-    : Math.ceil(result.items.length / result.request.pageSize);
+    : Math.ceil(items.length / result.request.pageSize);
   const offset = Math.max(0, page - 1) * result.request.pageSize;
   return {
     page,
     totalPages,
-    items: result.items.slice(offset, offset + result.request.pageSize),
+    items: items.slice(offset, offset + result.request.pageSize),
   };
+}
+
+export function gallerySummaryFixture(id: GallerySummary["id"]): GallerySummary | undefined {
+  const gallery = fixture.find(item => item.id === id);
+  return gallery && toSummary(gallery);
 }
 
 export function galleryDetailFixture(galleryIdValue: GallerySummary["id"]): GalleryDetail | undefined {

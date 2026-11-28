@@ -13,6 +13,9 @@ pub(super) struct LiveRegistry {
     requests: HashMap<String, String>,
 }
 impl LiveRegistry {
+    fn retain_owned_sessions(&mut self) {
+        self.sessions.retain(|_, session| session.is_owned());
+    }
     pub(super) fn legacy_conflict(&self, reference: &MediaRef) -> bool {
         self.sessions.values().any(|s| {
             super::encoded::same_reference(&s.reference, reference)
@@ -51,6 +54,11 @@ struct LiveSession {
     finished: AtomicBool,
     status: Mutex<Status>,
     chat: Arc<live_chat::SharedChat>,
+}
+impl LiveSession {
+    fn is_owned(&self) -> bool {
+        !self.finished.load(Ordering::Acquire) || self.chat.pending_soop_archive_assets()
+    }
 }
 struct Status {
     phase: String,
@@ -369,9 +377,7 @@ impl PlatformMediaService {
         let session = if let Some(session) = existing {
             session
         } else {
-            registry
-                .sessions
-                .retain(|_, session| !session.finished.load(Ordering::Acquire));
+            registry.retain_owned_sessions();
             if registry.sessions.len() + registry.official_count() >= MAX_LIVE {
                 return Err("라이브는 동시에 네 개까지 재생할 수 있습니다.".into());
             }
@@ -554,6 +560,7 @@ impl PlatformMediaService {
         status: &Status,
         owner: RecordingOwner,
     ) -> Result<Recorder, String> {
+        let started_at_ms = now_millis();
         let job = MediaJob {
             broadcast_id: status.broadcast_key.clone(),
             job_id: uuid::Uuid::new_v4().to_string(),
@@ -568,7 +575,8 @@ impl PlatformMediaService {
             .into(),
             title: status.title.clone(),
             channel_name: status.channel.clone(),
-            created_at: now(),
+            created_at: started_at_ms / 1000,
+            started_at_ms: Some(started_at_ms),
             received_bytes: 0,
             total_bytes: None,
             error: None,
@@ -718,9 +726,7 @@ impl PlatformMediaService {
         reference.canonical_url()?;
         let mut registry = self.inner.live.lock().map_err(|_| "라이브 상태 오류")?;
         registry.reject_official(&reference)?;
-        registry
-            .sessions
-            .retain(|_, session| !session.finished.load(Ordering::Acquire));
+        registry.retain_owned_sessions();
         let existing = registry
             .sessions
             .values()
@@ -837,7 +843,7 @@ impl PlatformMediaService {
         registry
             .sessions
             .values()
-            .filter(|s| !s.finished.load(Ordering::Acquire))
+            .filter(|s| s.is_owned())
             .map(|s| format!("platform-live:{}", s.id))
             .chain(
                 registry
@@ -856,6 +862,26 @@ impl PlatformMediaService {
             for receiver in registry.official.values() {
                 receiver.close();
             }
+        }
+    }
+    /// Normal AppState exit only, after its work gate and source hosts stop.
+    /// Generic shutdown deliberately remains nonblocking for caller-held media.
+    pub(crate) fn drain_soop_archive_assets_before_shutdown(&self) {
+        let chats = {
+            let registry = self.inner.live.lock().unwrap_or_else(|p| p.into_inner());
+            registry.sessions.values()
+                .filter(|session| session.reference.provider == "soop")
+                .map(|session| session.chat.clone())
+                .chain(registry.official.values()
+                    .filter(|receiver| receiver.reference.provider == "soop")
+                    .map(|receiver| receiver.chat_for_asset_drain()))
+                .collect::<Vec<_>>()
+        };
+        for chat in &chats { chat.prepare_soop_archive_asset_shutdown(); }
+        // Each detached owner uses one 330s settle deadline. It remains counted
+        // through actual file sync/chat proof; this is not a worker-join receipt.
+        while chats.iter().any(|chat| chat.pending_soop_archive_assets()) {
+            std::thread::sleep(Duration::from_millis(50));
         }
     }
     fn capture_live(&self, session: Arc<LiveSession>) {
@@ -1429,13 +1455,15 @@ impl PlatformMediaService {
             self.update(&record.job.job_id, |job| job.state = "finalizing".into())?;
         }
         let already_published = record.directory.join("media.mp4").exists();
+        let mut expected_duration: f64 = record.segments.iter().map(|(_, duration)| duration).sum();
         let output_name = if already_published { "media.mp4".to_string() } else {
           super::encoded::soop_finalize::merge(soop_encoded, || {
-            if soop_encoded {
-                super::encoded::soop_finalize::preflight(
+            let clock_plan = if soop_encoded {
+                Some(super::encoded::soop_finalize::concat::prepare(
                     self, &record.job, &record.directory, &record.cancel, &record.segments, RESERVE,
-                )?;
-            }
+                )?)
+            } else { None };
+            if let Some(plan) = &clock_plan { expected_duration = plan.expected_seconds; }
             let attempt = uuid::Uuid::new_v4();
             let list_name = format!("merge-{attempt}.txt");
             let output_name = format!("merge-{attempt}.mp4");
@@ -1446,7 +1474,7 @@ impl PlatformMediaService {
                 .create_new(true)
                 .open(list_path)
                 .map_err(|_| "병합 목록을 만들지 못했습니다.")?;
-            for (name, _) in &record.segments {
+            for (index, (name, _)) in record.segments.iter().enumerate() {
                 if !(if encoded {
                     super::encoded::segment_sequence(name).is_some()
                 } else {
@@ -1459,13 +1487,16 @@ impl PlatformMediaService {
                     return Err("녹화 조각 크기가 올바르지 않습니다.".into());
                 }
                 writeln!(list, "file '{name}'").map_err(|_| "병합 목록을 기록하지 못했습니다.")?;
+                if let Some(plan) = &clock_plan {
+                    let micros = plan.durations_us[index];
+                    writeln!(list, "duration {}.{:06}", micros / 1_000_000, micros % 1_000_000)
+                        .map_err(|_| "병합 목록을 기록하지 못했습니다.")?;
+                }
             }
             list.sync_all()
                 .map_err(|_| "병합 목록을 보관하지 못했습니다.")?;
             drop(list);
-            let merge = process::run(
-                &self.inner.tools.ffmpeg,
-                &[
+            let mut args = vec![
                     "-hide_banner",
                     "-nostdin",
                     "-v",
@@ -1477,6 +1508,9 @@ impl PlatformMediaService {
                     "concat",
                     "-safe",
                     "1",
+                ];
+            if clock_plan.is_some() { args.extend(["-auto_convert", "0"]); }
+            args.extend([
                     "-i",
                     &list_name,
                     "-map",
@@ -1488,8 +1522,10 @@ impl PlatformMediaService {
                     "-movflags",
                     "+faststart",
                     &output_name,
-                ]
-                .map(String::from),
+                ]);
+            let merge = process::run(
+                &self.inner.tools.ffmpeg,
+                &args.into_iter().map(String::from).collect::<Vec<_>>(),
                 &record.directory,
                 &record.cancel,
                 Duration::from_secs(24 * 3600),
@@ -1505,7 +1541,7 @@ impl PlatformMediaService {
             &publication_job,
             &record.cancel,
             &record.directory,
-            Some(record.segments.iter().map(|(_, duration)| duration).sum()),
+            Some(expected_duration),
             &output_name,
         )?;
         // Video validation does not authorize deleting chat or unknown files.
@@ -1598,6 +1634,47 @@ impl PlatformMediaService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn finished_soop_session_remains_owned_until_detached_chat_proof_returns() {
+        for provider in ["soop", "youtube"] {
+            let root = tempfile::tempdir().unwrap();
+            let service = PlatformMediaService::new(root.path().join("data"), PlatformMediaTools {
+                yt_dlp: root.path().join("never.exe"), deno: root.path().join("never.exe"),
+                ffmpeg: root.path().join("never.exe"), ffprobe: root.path().join("never.exe"),
+            }, None).unwrap();
+            let directory = root.path().join("chat");
+            fs::create_dir(&directory).unwrap();
+            let id = uuid::Uuid::new_v4().to_string();
+            let chat = live_chat::SharedChat::new();
+            chat.attach_recording_archive(&directory, provider, &id).unwrap();
+            let outcome = chat.detach_archive().unwrap().unwrap();
+            let session = Arc::new(LiveSession {
+                id: uuid::Uuid::new_v4().to_string(),
+                reference: MediaRef { provider: provider.into(), kind: "live".into(), external_id: "fixture".into() },
+                directory: root.path().join("source"), download_root: root.path().join("media"),
+                stop: Arc::new(AtomicBool::new(true)), finished: AtomicBool::new(true), chat,
+                status: Mutex::new(Status { phase: "ended".into(), error: None, title: "Fixture".into(), channel: "Fixture".into(),
+                    last_sequence: None, received: 0, recording: None, broadcast_key: None, profile: None }),
+            });
+            {
+                let mut registry = service.inner.live.lock().unwrap();
+                registry.sessions.insert(session.id.clone(), session.clone());
+                registry.retain_owned_sessions();
+                assert_eq!(registry.sessions.contains_key(&session.id), provider == "soop");
+            }
+            assert_eq!(service.live_active_ids().contains(&format!("platform-live:{}", session.id)), provider == "soop");
+            // No images are pending: the retained ownership specifically covers
+            // the not-yet-persisted final multipart chat proof.
+            outcome.persist(&directory, provider, &id).unwrap();
+            {
+                let mut registry = service.inner.live.lock().unwrap();
+                registry.retain_owned_sessions();
+                assert!(!registry.sessions.contains_key(&session.id));
+            }
+            assert!(service.live_active_ids().is_empty());
+            service.shutdown();
+        }
+    }
     #[test]
     fn broadcast_identity_is_durable_before_first_copy_and_manual_record_inherits_it() {
         for fail_journal in [true, false] {
@@ -1716,7 +1793,7 @@ mod tests {
                 request_id: uuid::Uuid::new_v4().to_string(),
                 reference: MediaRef { provider: "soop".into(), kind: "live".into(), external_id: "fixture".into() },
                 revision: 1, state: "recording".into(), title: "fixture".into(), channel_name: "fixture".into(),
-                created_at: 1, received_bytes: 0, total_bytes: None, error: None, library: None,
+                created_at: 1, started_at_ms: None, received_bytes: 0, total_bytes: None, error: None, library: None,
                 download_root: root.path().join("media"),
             },
             directory: PathBuf::new(), next_sequence: 0, segments: Vec::new(),
@@ -2092,6 +2169,7 @@ mod tests {
             title: "Synthetic recovery fixture".into(),
             channel_name: "Test".into(),
             created_at: now(),
+            started_at_ms: None,
             received_bytes: 0,
             total_bytes: None,
             error: None,

@@ -3,6 +3,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AutoRecordingPanel } from "./AutoRecordingPanel";
 import type { AutoRecordingSnapshot, AutoRecordingApi } from "../../api/autoRecording";
+vi.mock('../../api/cloudRecording', async importOriginal => {
+  const original = await importOriginal<typeof import('../../api/cloudRecording')>();
+  return { ...original, cloudRecordingApi: { ...original.cloudRecordingApi, snapshot: vi.fn().mockResolvedValue({ account: { configured: false, connected: false, authorizing: false }, jobs: [], automatic: { revision: 0, rules: [] } }) } };
+});
 
 const ID = "a".repeat(32);
 const data = (status = "waiting"): AutoRecordingSnapshot => ({ captureChat: true, error: null, channels: [{ channelId: ID, channelName: "등록한 채널", enabled: true, checkedAt: 1000, status, recordingId: status === "recording" ? "recording-1" : null, message: null }] });
@@ -83,6 +87,19 @@ describe("automatic recording registration", () => {
     expect(event.defaultPrevented).toBe(true);
     expect(input.value).toBe(ID);
     expect(api.add).not.toHaveBeenCalled();
+  });
+  it("distinguishes reconnecting and repeated failure from offline waiting, without auto actions", async () => {
+    const api = fake(); api.snapshot.mockResolvedValue(ok(data("reconnecting")));
+    await act(async () => root.render(<AutoRecordingPanel runtime="tauri" api={api} />));
+    expect(container).toHaveTextContent("방송 화면 재연결 중");
+    expect(container).toHaveTextContent("아직 저장이 시작되지 않았습니다");
+    expect(container).not.toHaveTextContent("녹화 예약 됨");
+    expect(button("시도 중지")).toBeEnabled();
+    api.snapshot.mockResolvedValue(ok(data("attention")));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(container).toHaveTextContent("반복 실패 · 확인 필요");
+    expect(button("시도 중지")).toBeEnabled();
+    expect(api.update).not.toHaveBeenCalled();
   });
   it("distinguishes preparation from saved recording and lets the user cancel it", async () => {
     const api = fake();

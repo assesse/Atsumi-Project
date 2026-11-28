@@ -24,7 +24,7 @@ pub use artifact_path::{
     MAX_FOLDER_COMPONENT_UTF16, MAX_MANAGED_ABSOLUTE_PATH_UTF16,
 };
 pub use auto_find::{
-    AutoFindCandidate, AutoFindCandidateRecord, AutoFindCutoffEvidence, AutoFindExclusionResult,
+    AutoFindCandidate, AutoFindCandidateChanges, AutoFindCandidateRecord, AutoFindCutoffEvidence, AutoFindExclusionResult,
     AutoFindRun, AutoFindRunState, AutoFindSnapshot, AutoFindTruncation, ExplorationExclusion,
     ExplorationExclusionContext, ExplorationExclusionKind, ExplorationExclusionReason,
     ExplorationExclusionRestoreResult, ExplorationRetainedGallery, FavoriteKey,

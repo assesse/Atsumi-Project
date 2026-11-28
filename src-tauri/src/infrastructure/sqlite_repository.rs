@@ -27,7 +27,7 @@ use crate::{
     },
     domain::{
         ArtifactBundle, ArtifactManifest, ArtifactRelativePath, ArtifactSha256,
-        ArtifactStorageFormat, AutoFindCandidate, AutoFindCandidateRecord, AutoFindCutoffEvidence,
+        ArtifactStorageFormat, AutoFindCandidate, AutoFindCandidateChanges, AutoFindCandidateRecord, AutoFindCutoffEvidence,
         AutoFindExclusionResult, AutoFindHistoryMode, AutoFindRun, AutoFindRunState,
         AutoFindSnapshot, AutoFindTruncation, DownloadArtifact, DownloadArtifactState,
         DownloadChangedEvent, DownloadEntry, DownloadEntryId, DownloadJobDescriptor,
@@ -720,41 +720,42 @@ impl AutomationRepository for SqliteRepository {
         &self,
         targets: &[FavoriteKey],
     ) -> Result<Vec<AutoFindCutoffEvidence>, RepositoryError> {
-        let connection = self.connection()?;
-        targets
-            .iter()
-            .map(|target| read_auto_find_owned_cutoff(&connection, target))
-            .collect()
+        if targets.is_empty() {
+            return Ok(Vec::new());
+        }
+        let connection = self.read_connection()?;
+        read_auto_find_owned_cutoffs(&connection, targets)
     }
 
-    fn auto_find_incremental_checkpoints(
+    fn auto_find_checkpoints(
         &self,
         targets: &[FavoriteKey],
-        history_mode: AutoFindHistoryMode,
+        history_mode: Option<AutoFindHistoryMode>,
         policy_version: u32,
-        full_rescan_max_age_days: u32,
+        full_rescan_max_age_days: Option<u32>,
     ) -> Result<Vec<AutoFindIncrementalCheckpoint>, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let mut checkpoints = Vec::new();
-        let full_rescan_modifier = format!("-{full_rescan_max_age_days} days");
+        let full_rescan_modifier = full_rescan_max_age_days.map(|days| format!("-{days} days"));
         for target in targets {
             let stored = connection
                 .query_row(
                     r#"
                         SELECT high_water_gallery_id, history_floor_gallery_id,
-                               incremental_runs_since_full
+                               incremental_runs_since_full, history_mode
                         FROM auto_find_artist_checkpoints
                         WHERE favorite_namespace = ?5
                           AND artist = ?1
-                          AND history_mode = ?2
+                          AND (?2 IS NULL OR history_mode = ?2)
                           AND policy_version = ?3
-                          AND last_full_scan_at >= strftime(
+                          AND (?4 IS NULL OR last_full_scan_at >= strftime(
                               '%Y-%m-%dT%H:%M:%fZ', 'now', ?4
-                          )
+                          ))
+                        ORDER BY updated_at DESC, high_water_gallery_id DESC, history_mode LIMIT 1
                     "#,
                     params![
                         target.value,
-                        history_mode.as_str(),
+                        history_mode.map(|mode| mode.as_str()),
                         i64::from(policy_version),
                         full_rescan_modifier,
                         target.namespace.as_str(),
@@ -764,18 +765,19 @@ impl AutomationRepository for SqliteRepository {
                             row.get::<_, Option<i64>>(0)?,
                             row.get::<_, Option<i64>>(1)?,
                             row.get::<_, i64>(2)?,
+                            row.get::<_, String>(3)?,
                         ))
                     },
                 )
                 .optional()
                 .map_err(map_sqlite_error)?;
-            let Some((high_water, history_floor, incremental_runs_since_full)) = stored else {
+            let Some((high_water, history_floor, incremental_runs_since_full, stored_mode)) = stored else {
                 continue;
             };
             checkpoints.push(AutoFindIncrementalCheckpoint {
                 namespace: target.namespace,
                 artist: target.value.clone(),
-                history_mode,
+                history_mode: AutoFindHistoryMode::from_database(&stored_mode).ok_or_else(|| RepositoryError::Corrupt("invalid checkpoint history mode".into()))?,
                 policy_version,
                 high_water_gallery_id: high_water
                     .map(GalleryId::new)
@@ -804,7 +806,7 @@ impl AutomationRepository for SqliteRepository {
         let requested_ids =
             serde_json::to_string(&gallery_ids.iter().map(|id| id.get()).collect::<Vec<_>>())
                 .map_err(|error| RepositoryError::Other(error.to_string()))?;
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let mut statement = connection
             .prepare(
                 r#"
@@ -877,10 +879,10 @@ impl AutomationRepository for SqliteRepository {
         }
         let ids = serde_json::to_string(&gallery_ids.iter().map(|id| id.get()).collect::<Vec<_>>())
             .map_err(|error| RepositoryError::Other(error.to_string()))?;
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let mut statement = connection.prepare(r#"
             SELECT DISTINCT CAST(value AS INTEGER) AS gallery_id FROM json_each(?1) requested
-            WHERE NOT EXISTS (SELECT 1 FROM download_entries WHERE gallery_id = requested.value)
+            WHERE requested.value NOT IN (SELECT gallery_id FROM download_entries WHERE gallery_id IS NOT NULL)
               AND NOT EXISTS (SELECT 1 FROM auto_find_exclusions WHERE gallery_id = requested.value)
               AND NOT EXISTS (
                 SELECT 1 FROM duplicate_hidden_galleries hidden WHERE hidden.gallery_id = requested.value
@@ -905,11 +907,12 @@ impl AutomationRepository for SqliteRepository {
         record_auto_find_match(&connection, run_id, gallery_id, target)
     }
 
-    fn auto_find_start(
+    fn auto_find_start_with_pending(
         &self,
         total_favorites: u32,
         history_mode: AutoFindHistoryMode,
         cutoff_evidence: &[AutoFindCutoffEvidence],
+        retain_pending: bool,
     ) -> Result<AutoFindRun, RepositoryError> {
         let mut connection = self.connection()?;
         let transaction = connection
@@ -936,6 +939,9 @@ impl AutomationRepository for SqliteRepository {
                 params![run_id, i64::from(total_favorites), history_mode.as_str()],
             )
             .map_err(map_sqlite_error)?;
+        if retain_pending && total_favorites > 0 {
+            carry_pending_auto_find(&transaction, &run_id).map_err(map_sqlite_error)?;
+        }
         for cutoff in cutoff_evidence {
             transaction.execute(
                 "INSERT INTO auto_find_run_cutoffs (run_id, artist, oldest_owned_gallery_id, qualified_owned_count, cutoff_source, policy_version, favorite_namespace, latest_owned_gallery_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -1201,8 +1207,41 @@ impl AutomationRepository for SqliteRepository {
         auto_find_run_is_running(&connection, run_id)
     }
 
+    fn auto_find_run_get(&self, run_id: &str) -> Result<Option<AutoFindRun>, RepositoryError> {
+        let connection = self.read_connection()?;
+        read_auto_find_run(&connection, run_id)
+    }
+
+    fn auto_find_candidate_changes(&self, run_id: &str, after: i64) -> Result<AutoFindCandidateChanges, RepositoryError> {
+        let connection = self.read_connection()?;
+        // Each newly discovered gallery or additional favorite match has a
+        // committed row. A snapshot and its cursor share the same WAL view.
+        const BATCH: usize = 200;
+        let mut statement = connection.prepare(
+            "SELECT rowid, gallery_id FROM auto_find_candidate_matches NOT INDEXED
+             WHERE rowid > ?1 AND run_id = ?2 ORDER BY rowid LIMIT ?3"
+        ).map_err(map_sqlite_error)?;
+        let records = statement.query_map(params![after, run_id, (BATCH + 1) as i64], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+        }).map_err(map_sqlite_error)?.collect::<Result<Vec<_>, _>>().map_err(map_sqlite_error)?;
+        let more = records.len() > BATCH;
+        let mut match_cursor = after;
+        let mut ids = Vec::new();
+        for (cursor, id) in records.into_iter().take(BATCH) {
+            match_cursor = cursor;
+            ids.push(id);
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        let candidates = if ids.is_empty() { Vec::new() } else {
+            read_auto_find_candidates(&connection, run_id, Some(&ids))?
+        };
+        let truncations = read_auto_find_truncations(&connection, run_id)?;
+        Ok(AutoFindCandidateChanges { match_cursor, more, changed_ids: ids, candidates, truncations })
+    }
+
     fn auto_find_snapshot(&self) -> Result<AutoFindSnapshot, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         read_auto_find_snapshot(&connection)
     }
 
@@ -2399,7 +2438,7 @@ impl ArtifactRepository for SqliteRepository {
         &self,
         entry_id: &DownloadEntryId,
     ) -> Result<Option<ArtifactBundle>, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let stored = connection
             .query_row(
                 r#"
@@ -3606,7 +3645,7 @@ impl DownloadPipelineRepository for SqliteRepository {
         &self,
         entry_id: &DownloadEntryId,
     ) -> Result<PathBuf, RepositoryError> {
-        let connection = self.connection()?;
+        let connection = self.read_connection()?;
         let stored: String = connection
             .query_row(
                 "SELECT root_snapshot FROM download_artifacts WHERE entry_id = ?1",
@@ -9010,6 +9049,43 @@ fn read_exploration_exclusions(
 #[path = "exclusion_context_tests.rs"]
 mod exclusion_context_tests;
 
+/// Publish the previously visible queue in the same transaction as its new run.
+fn carry_pending_auto_find(c: &Connection, run: &str) -> rusqlite::Result<()> {
+    // Later interrupted runs may contain discoveries from already completed targets.
+    let baseline: i64 = c.query_row("SELECT coalesce(max(rowid),0) FROM auto_find_runs WHERE state='completed'", [], |r| r.get(0))?;
+    // Start at the recent run rowids and index into their candidates. SQLite can otherwise
+    // scan all historical candidates first. Build the non-null owned ID set once per copy.
+    // Retain the original matched favorite when possible. Another still-favorited
+    // participant can own the display row if the original favorite was removed.
+    let count = c.execute("INSERT OR IGNORE INTO auto_find_candidates (
+        run_id,gallery_id,title,artist,group_name,pages,language,tags_json,series_json,characters_json,
+        published_rank,popularity,thumbnail_key,thumbnail_width,thumbnail_height,
+        favorite_namespace,favorite_value,discovered_at,artists_json)
+      SELECT ?1,old.gallery_id,old.title,old.artist,old.group_name,old.pages,old.language,old.tags_json,
+        old.series_json,old.characters_json,old.published_rank,old.popularity,old.thumbnail_key,
+        old.thumbnail_width,old.thumbnail_height,chosen.namespace,chosen.value,old.discovered_at,old.artists_json
+      FROM auto_find_runs previous CROSS JOIN auto_find_candidates old ON old.run_id=previous.run_id
+      JOIN auto_find_candidate_matches chosen ON chosen.rowid=COALESCE(
+        (SELECT m.rowid FROM auto_find_candidate_matches m JOIN favorites f ON f.namespace=m.namespace AND f.value=m.value
+         WHERE m.run_id=old.run_id AND m.gallery_id=old.gallery_id AND m.namespace=old.favorite_namespace AND m.value=old.favorite_value),
+        (SELECT m.rowid FROM auto_find_candidate_matches m JOIN favorites f ON f.namespace=m.namespace AND f.value=m.value
+         WHERE m.run_id=old.run_id AND m.gallery_id=old.gallery_id ORDER BY m.rowid LIMIT 1))
+      WHERE previous.rowid>=?2 AND previous.run_id<>?1
+        AND old.gallery_id NOT IN (SELECT gallery_id FROM download_entries)
+        AND NOT EXISTS(SELECT 1 FROM auto_find_exclusions x WHERE x.gallery_id=old.gallery_id)
+        AND NOT EXISTS(SELECT 1 FROM duplicate_hidden_galleries h WHERE h.gallery_id=old.gallery_id AND
+          NOT EXISTS(SELECT 1 FROM exploration_restored_galleries r WHERE r.gallery_id=h.gallery_id))
+      ORDER BY previous.rowid DESC, old.rowid", params![run, baseline])?;
+    c.execute("INSERT OR IGNORE INTO auto_find_candidate_matches(run_id,gallery_id,namespace,value)
+        SELECT ?1,m.gallery_id,m.namespace,m.value FROM auto_find_runs previous
+        CROSS JOIN auto_find_candidate_matches m ON m.run_id=previous.run_id
+        JOIN auto_find_candidates c ON c.run_id=?1 AND c.gallery_id=m.gallery_id
+        JOIN favorites f ON f.namespace=m.namespace AND f.value=m.value
+        WHERE previous.rowid>=?2 AND previous.run_id<>?1 ORDER BY previous.rowid DESC,m.rowid", params![run, baseline])?;
+    c.execute("UPDATE auto_find_runs SET candidates_found=?2 WHERE run_id=?1", params![run,count])?;
+    Ok(())
+}
+
 fn record_auto_find_match(
     connection: &Connection,
     run_id: &str,
@@ -9057,14 +9133,38 @@ fn read_auto_find_snapshot(connection: &Connection) -> Result<AutoFindSnapshot, 
     let Some(run) = run else {
         return Ok(AutoFindSnapshot {
             run: None,
+            match_cursor: 0,
             candidates: Vec::new(),
             cutoff_evidence: Vec::new(),
             truncations: Vec::new(),
         });
     };
-    let mut statement = connection
-        .prepare(
-            r#"
+    let candidates = read_auto_find_candidates(connection, &run.run_id, None)?;
+    let match_cursor = connection.query_row(
+        "SELECT COALESCE(MAX(rowid), 0) FROM auto_find_candidate_matches", [], |row| row.get(0)
+    ).map_err(map_sqlite_error)?;
+    let cutoff_evidence = read_auto_find_cutoff_evidence(connection, &run.run_id)?;
+    let truncations = read_auto_find_truncations(connection, &run.run_id)?;
+    Ok(AutoFindSnapshot {
+        run: Some(run),
+        match_cursor,
+        candidates,
+        cutoff_evidence,
+        truncations,
+    })
+}
+
+fn read_auto_find_candidates(
+    connection: &Connection,
+    run_id: &str,
+    ids: Option<&[i64]>,
+) -> Result<Vec<AutoFindCandidate>, RepositoryError> {
+    let mut bindings = vec![run_id.to_owned()];
+    let id_filter = if let Some(ids) = ids {
+        bindings.push(serde_json::to_string(ids).map_err(|error| RepositoryError::Other(error.to_string()))?);
+        "AND gallery_id IN (SELECT value FROM json_each(?2))"
+    } else { "" };
+    let candidate_sql = format!(r#"
                 SELECT run_id, gallery_id, title, artist, group_name, pages,
                        language, tags_json, series_json, characters_json,
                        published_rank, popularity,
@@ -9088,21 +9188,21 @@ fn read_auto_find_snapshot(connection: &Connection) -> Result<AutoFindSnapshot, 
                             WHERE restored.gallery_id = candidate.gallery_id
                         )
                   )
+                {id_filter}
                 ORDER BY published_rank DESC, gallery_id DESC
-            "#,
-        )
+            "#);
+    let mut statement = connection.prepare(&candidate_sql)
         .map_err(map_sqlite_error)?;
     let rows = statement
-        .query_map([run.run_id.as_str()], stored_auto_find_candidate)
+        .query_map(rusqlite::params_from_iter(bindings.iter()), stored_auto_find_candidate)
         .map_err(map_sqlite_error)?;
     let mut candidates = rows
         .map(|row| row.map_err(map_sqlite_error)?.try_into_domain())
         .collect::<Result<Vec<_>, _>>()?;
-    let mut match_statement = connection.prepare(
-        "SELECT gallery_id, namespace, value FROM auto_find_candidate_matches WHERE run_id = ?1 ORDER BY namespace, value"
-    ).map_err(map_sqlite_error)?;
+    let match_sql = format!("SELECT gallery_id, namespace, value FROM auto_find_candidate_matches WHERE run_id = ?1 {id_filter} ORDER BY namespace, value");
+    let mut match_statement = connection.prepare(&match_sql).map_err(map_sqlite_error)?;
     let matches = match_statement
-        .query_map([run.run_id.as_str()], |row| {
+        .query_map(rusqlite::params_from_iter(bindings.iter()), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -9125,39 +9225,34 @@ fn read_auto_find_snapshot(connection: &Connection) -> Result<AutoFindSnapshot, 
             .remove(&candidate.gallery.id.get())
             .unwrap_or_else(|| vec![candidate.matched_favorite.clone()]);
     }
-    let cutoff_evidence = read_auto_find_cutoff_evidence(connection, &run.run_id)?;
-    let truncations = read_auto_find_truncations(connection, &run.run_id)?;
     let settings = read_settings(connection)?;
     candidates.retain(|candidate| {
         candidate
             .gallery
             .matches_search_tags(&settings.search_include_tags, &settings.search_exclude_tags)
     });
-    Ok(AutoFindSnapshot {
-        run: Some(run),
-        candidates,
-        cutoff_evidence,
-        truncations,
-    })
+    Ok(candidates)
 }
 
-fn read_auto_find_owned_cutoff(
+fn read_auto_find_owned_cutoffs(
     connection: &Connection,
-    target: &FavoriteKey,
-) -> Result<AutoFindCutoffEvidence, RepositoryError> {
-    let (latest, count): (Option<i64>, i64) = connection
-        .query_row(
-            r#"
-            WITH owned AS (
-                SELECT gallery_id FROM owned_gallery_artists WHERE ?2 = 'artist' AND artist = ?1
-                UNION
-                SELECT gallery_id FROM galleries WHERE ?2 = 'group' AND primary_group = ?1 COLLATE NOCASE
-            )
-            SELECT MAX(owned.gallery_id), COUNT(DISTINCT owned.gallery_id)
-            FROM owned
-            JOIN download_entries entry ON entry.gallery_id = owned.gallery_id
-            JOIN download_artifacts artifact
-              ON artifact.entry_id = entry.entry_id AND artifact.gallery_id = entry.gallery_id
+    targets: &[FavoriteKey],
+) -> Result<Vec<AutoFindCutoffEvidence>, RepositoryError> {
+    let requested = serde_json::to_string(targets)
+        .map_err(|error| RepositoryError::Other(error.to_string()))?;
+    // Materialize ownership once. The ordinal also preserves repeated or
+    // same-named artist/group requests independently, in caller order.
+    let mut statement = connection.prepare(r#"
+        WITH targets AS MATERIALIZED (
+            SELECT CAST(key AS INTEGER) AS ordinal,
+                   json_extract(value, '$.namespace') AS namespace,
+                   json_extract(value, '$.value') AS name
+            FROM json_each(?1)
+        ), verified AS MATERIALIZED (
+            SELECT DISTINCT entry.gallery_id
+            FROM download_artifacts artifact
+            JOIN download_entries entry
+              ON entry.entry_id = artifact.entry_id AND entry.gallery_id = artifact.gallery_id
             WHERE entry.state IN ('completed', 'quarantined')
               AND artifact.state IN ('complete', 'quarantined')
               AND artifact.manifest_relative_path IS NOT NULL
@@ -9184,23 +9279,34 @@ fn read_auto_find_owned_cutoff(
                          OR page.storage_format IS NULL OR page.source_revision IS NULL
                          OR page.verified_at IS NULL)
               )
-        "#,
-            params![target.value, target.namespace.as_str()],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+        ), by_name(namespace, name, latest, count) AS MATERIALIZED (
+            SELECT 'artist', a.artist, MAX(v.gallery_id), COUNT(*)
+            FROM verified v JOIN owned_gallery_artists a ON a.gallery_id = v.gallery_id
+            GROUP BY a.artist
+            UNION ALL
+            SELECT 'group', g.primary_group, MAX(v.gallery_id), COUNT(*)
+            FROM verified v JOIN galleries g ON g.gallery_id = v.gallery_id
+            WHERE g.primary_group IS NOT NULL GROUP BY g.primary_group COLLATE NOCASE
         )
-        .map_err(map_sqlite_error)?;
-    Ok(AutoFindCutoffEvidence {
-        namespace: target.namespace,
-        artist: target.value.clone(),
-        oldest_owned_gallery_id: None,
-        latest_owned_gallery_id: latest
-            .map(GalleryId::new)
-            .transpose()
-            .map_err(domain_corruption)?,
-        qualified_owned_count: stored_u32(count, "Auto Find qualified ownership count")?,
-        source: "verified_owned_artifact".into(),
-        policy_version: 2,
-    })
+        SELECT b.latest, COALESCE(b.count, 0)
+        FROM targets t LEFT JOIN by_name b ON b.namespace = t.namespace AND b.name = t.name COLLATE NOCASE
+        ORDER BY t.ordinal
+    "#).map_err(map_sqlite_error)?;
+    let rows = statement.query_map([requested], |row| {
+        Ok((row.get::<_, Option<i64>>(0)?, row.get::<_, i64>(1)?))
+    }).map_err(map_sqlite_error)?;
+    targets.iter().zip(rows).map(|(target, row)| {
+        let (latest, count) = row.map_err(map_sqlite_error)?;
+        Ok(AutoFindCutoffEvidence {
+            namespace: target.namespace,
+            artist: target.value.clone(),
+            oldest_owned_gallery_id: None,
+            latest_owned_gallery_id: latest.map(GalleryId::new).transpose().map_err(domain_corruption)?,
+            qualified_owned_count: stored_u32(count, "Auto Find qualified ownership count")?,
+            source: "verified_owned_artifact".into(),
+            policy_version: 2,
+        })
+    }).collect()
 }
 
 fn read_owned_gallery_artists(
@@ -9797,6 +9903,57 @@ mod auto_find_repository_tests {
                 value: ARTIST.into(),
             },
         }
+    }
+
+    #[test]
+    fn auto_find_file_reads_remain_available_while_main_connection_is_busy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repository = SqliteRepository::open(tmp.path().join("db.sqlite")).unwrap();
+        let run = repository.auto_find_start(1, HISTORY_MODE, &[]).unwrap();
+        let candidate = cached_candidate(&run.run_id, 7701, "One");
+        repository.auto_find_candidate_add(&candidate).unwrap();
+        let writer = repository.connection().unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let keys = [candidate.matched_favorite.clone()];
+                let cutoffs = repository.auto_find_owned_cutoffs(&keys).unwrap();
+                let latest = repository.auto_find_run_get(&run.run_id).unwrap().unwrap();
+                let snapshot = repository.auto_find_snapshot().unwrap();
+                let changes = repository.auto_find_candidate_changes(&run.run_id, 0).unwrap();
+                send.send((cutoffs, latest, snapshot, changes)).unwrap();
+            });
+            let result = receive.recv_timeout(std::time::Duration::from_secs(3));
+            drop(writer);
+            let (cutoffs, latest, snapshot, changes) = result.expect("file-backed reads waited for the shared writer");
+            assert_eq!(cutoffs[0].qualified_owned_count, 0);
+            assert_eq!(latest.state, AutoFindRunState::Running);
+            assert_eq!(changes.candidates, snapshot.candidates);
+            assert_eq!(changes.match_cursor, snapshot.match_cursor);
+        });
+    }
+
+    #[test]
+    fn auto_find_changes_include_later_matches_and_advance_past_hidden_candidates() {
+        let repository = SqliteRepository::open_in_memory().unwrap();
+        let run = repository.auto_find_start(2, HISTORY_MODE, &[]).unwrap();
+        let first = cached_candidate(&run.run_id, 7701, "One");
+        repository.auto_find_candidate_add(&first).unwrap();
+        let cursor = repository.auto_find_snapshot().unwrap().match_cursor;
+        let group = FavoriteKey { namespace: FavoriteNamespace::Group, value: "group".into() };
+        repository.auto_find_match_add(&run.run_id, first.gallery.id, &group).unwrap();
+        let second = cached_candidate(&run.run_id, 7702, "Two");
+        repository.auto_find_candidate_add(&second).unwrap();
+        repository.auto_find_exclude(&[second.gallery.id], "manual").unwrap();
+        let changes = repository.auto_find_candidate_changes(&run.run_id, cursor).unwrap();
+        assert_eq!(changes.changed_ids, vec![7701, 7702]);
+        assert_eq!(changes.candidates.len(), 1);
+        assert!(changes.candidates[0].matched_favorites.contains(&group));
+        assert!(!changes.more);
+        assert!(changes.match_cursor > cursor);
+        let empty = repository.auto_find_candidate_changes(&run.run_id, changes.match_cursor).unwrap();
+        assert!(empty.changed_ids.is_empty());
+        assert_eq!(empty.match_cursor, changes.match_cursor);
     }
 
     #[test]

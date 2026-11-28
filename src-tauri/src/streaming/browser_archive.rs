@@ -250,6 +250,7 @@ impl BrowserCaptureStore {
                 .iter()
                 .position(|r| r.id == next.id)
                 .ok_or_else(invalid)?;
+            if saved.is_ok() { next.notify_if_published(); }
             state.recordings[index] = next;
             state.merge_job = None;
         }

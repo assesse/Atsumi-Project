@@ -11,6 +11,9 @@ const OWNER: &str = "WITH work_entries AS (
     FROM download_queue_request_entries x LEFT JOIN download_gallery_links l ON l.source_entry_id=x.entry_id
 ), owners AS (SELECT x.entry_id, MIN(r.rowid) AS sequence FROM work_entries x JOIN download_queue_requests r ON r.request_id=x.request_id GROUP BY x.entry_id)";
 
+const SCOPE: &str = "(?1 IS NULL OR (CASE WHEN ?2 THEN o.sequence > ?1 ELSE o.sequence = ?1 END))";
+const QUEUE_ORDER: &str = "o.sequence DESC,e.created_at DESC,e.entry_id";
+
 #[derive(Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct QueueQuery {
@@ -109,7 +112,7 @@ fn snapshot_connection(c: &Connection, query: &QueueQuery) -> rusqlite::Result<Q
             "observedSince must be RFC3339".into(),
         ));
     }
-    let scope = "(?1 IS NULL OR (CASE WHEN ?2 THEN o.sequence > ?1 ELSE o.sequence = ?1 END))";
+    let scope = SCOPE;
     let mut counts = BTreeMap::new();
     // Ownership is a filter, not a join: the grouped LEFT JOIN can scan every
     // owner once per entry (including unscoped polls). IN builds the scoped set
@@ -149,20 +152,42 @@ fn snapshot_connection(c: &Connection, query: &QueueQuery) -> rusqlite::Result<Q
             .unwrap_or((page - 1) * page_size)
             .min(10_000_000)
     };
-    let mut statement = c.prepare(&format!("{OWNER}
-      SELECT e.entry_id,e.gallery_id,COALESCE(g.title,'#' || e.gallery_id),COALESCE(g.primary_artist,''),e.state,e.progress,o.sequence,e.updated_at,
-        (SELECT j.last_error_code FROM download_jobs j WHERE j.entry_id=e.entry_id ORDER BY j.rowid DESC LIMIT 1)
-      FROM download_entries e LEFT JOIN owners o ON o.entry_id=e.entry_id LEFT JOIN galleries g ON g.gallery_id=e.gallery_id
-      WHERE {where_rows} ORDER BY CASE WHEN e.state IN {ACTIVE} THEN 0 ELSE 1 END, o.sequence DESC,e.created_at DESC,e.entry_id LIMIT {page_size} OFFSET ?4"))?;
+    let mut statement = c.prepare(&format!("{OWNER}, visible AS MATERIALIZED (
+        SELECT e.entry_id,e.gallery_id,e.state,e.progress,e.updated_at,e.created_at,o.sequence,
+               CASE WHEN e.state IN {ACTIVE} THEN 0 ELSE 1 END AS settled
+        FROM download_entries e LEFT JOIN owners o ON o.entry_id=e.entry_id
+        WHERE {where_rows} ORDER BY settled,{QUEUE_ORDER} LIMIT {page_size} OFFSET ?4
+      )
+      SELECT v.entry_id,v.gallery_id,NULLIF(NULLIF(trim(g.title),''),'#' || v.gallery_id),g.primary_artist,v.state,v.progress,v.sequence,v.updated_at,
+        (SELECT j.last_error_code FROM download_jobs j WHERE j.entry_id=v.entry_id ORDER BY j.rowid DESC LIMIT 1),
+        s.profile,s.schema_version,s.summary_json,a.title,a.artist
+      FROM visible v LEFT JOIN galleries g ON g.gallery_id=v.gallery_id
+      LEFT JOIN gallery_summary_cache s ON s.gallery_id=v.gallery_id AND (NULLIF(trim(g.title),'') IS NULL OR trim(g.title)='#' || v.gallery_id)
+      LEFT JOIN auto_find_candidates a ON a.rowid=(
+        SELECT c.rowid FROM auto_find_candidates c WHERE c.gallery_id=v.gallery_id
+        AND (NULLIF(trim(g.title),'') IS NULL OR trim(g.title)='#' || v.gallery_id) ORDER BY c.rowid DESC LIMIT 1
+      )
+      ORDER BY v.settled,v.sequence DESC,v.created_at DESC,v.entry_id"))?;
     let items = statement
         .query_map(
             params![query.sequence, query.after, include_settled, offset],
             |r| {
+                let gallery_id = r.get(1)?;
+                let cached = match (crate::domain::GalleryId::new(gallery_id), r.get::<_, Option<String>>(9)?,
+                    r.get::<_, Option<u32>>(10)?, r.get::<_, Option<String>>(11)?) {
+                    (Ok(id), Some(profile), Some(version), Some(json)) =>
+                        crate::infrastructure::decode_persisted_summary(id, &profile, version, &json),
+                    _ => None,
+                };
+                let title = r.get::<_, Option<String>>(2)?.or_else(|| cached.as_ref().map(|g| g.title.clone()))
+                    .or(r.get(12)?).unwrap_or_default();
+                let artist = r.get::<_, Option<String>>(3)?.filter(|a| !a.trim().is_empty())
+                    .or_else(|| cached.map(|g| g.artist)).or(r.get(13)?).unwrap_or_default();
                 Ok(QueueRow {
                     entry_id: r.get(0)?,
-                    gallery_id: r.get(1)?,
-                    title: r.get(2)?,
-                    artist: r.get(3)?,
+                    gallery_id,
+                    title,
+                    artist,
                     state: r.get(4)?,
                     progress: r.get(5)?,
                     sequence: r.get(6)?,
@@ -258,6 +283,24 @@ impl QueueSnapshot {
     }
 }
 
+fn selection_range(c: &Connection, query: &QueueQuery, anchor: &str, target: &str) -> rusqlite::Result<Vec<String>> {
+    let mut statement = c.prepare(&format!("{OWNER}, ranked AS (
+        SELECT e.entry_id, ROW_NUMBER() OVER (ORDER BY {QUEUE_ORDER}) AS pos
+        FROM download_entries e LEFT JOIN owners o ON o.entry_id=e.entry_id WHERE {SCOPE} AND e.state IN {ACTIVE}
+    ), endpoints AS (SELECT (SELECT pos FROM ranked WHERE entry_id=?3) AS a, (SELECT pos FROM ranked WHERE entry_id=?4) AS b)
+    SELECT entry_id FROM ranked,endpoints WHERE pos BETWEEN min(a,b) AND max(a,b) ORDER BY pos"))?;
+    let ids = statement.query_map(params![query.sequence, query.after, anchor, target], |r| r.get(0))?;
+    ids.collect()
+}
+
+#[tauri::command]
+pub async fn work_queue_selection_range(app: tauri::AppHandle, query: QueueQuery, anchor: String, target: String) -> Result<Vec<String>, String> {
+    use tauri::Manager;
+    let path = app.path().app_data_dir().map_err(|e| e.to_string())?.join("atsumi-next.sqlite3");
+    tauri::async_runtime::spawn_blocking(move || selection_range(&connect(&path)?, &query, &anchor, &target).map_err(|e| e.to_string()))
+        .await.map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub async fn work_queue_snapshot(
     app: tauri::AppHandle,
@@ -311,6 +354,8 @@ mod tests {
         CREATE TABLE download_entries(entry_id TEXT,gallery_id INTEGER,state TEXT,progress REAL,created_at TEXT,updated_at TEXT);
         CREATE TABLE download_jobs(entry_id TEXT,state TEXT,updated_at TEXT,finished_at TEXT,last_error_code TEXT);
         CREATE TABLE galleries(gallery_id INTEGER,title TEXT,primary_artist TEXT);
+          CREATE TABLE gallery_summary_cache(gallery_id INTEGER PRIMARY KEY,profile TEXT,schema_version INTEGER,summary_json TEXT);
+          CREATE TABLE auto_find_candidates(gallery_id INTEGER,title TEXT,artist TEXT);
         INSERT INTO download_queue_requests VALUES('first'),('later');
         INSERT INTO download_queue_request_entries VALUES('first','old'),('later','old'),('later','new');
         INSERT INTO download_entries VALUES('old',1,'hashing',80,'2026-01-01','2026-01-01'),('new',2,'review_required',90,'2026-01-02','2026-01-02');
@@ -323,6 +368,16 @@ mod tests {
         assert_eq!(all.postprocessing_counts.get("unknown"),Some(&1));
         assert_eq!(all.global_active, 1);
         assert_eq!(all.items.len(), 1);
+        assert_eq!(all.items[0].title, "");
+        c.execute("INSERT INTO auto_find_candidates VALUES(1,'Favorite title','Artist')", []).unwrap();
+        c.execute("INSERT INTO gallery_summary_cache VALUES(1,'hitomi-gallery-summary-v1',1,'broken')", []).unwrap();
+        assert_eq!(snapshot_connection(&c, &QueueQuery::default()).unwrap().items[0].title, "Favorite title");
+        let summary = serde_json::json!({"id":1,"title":"Cached title","artist":"Artist","series":[],"characters":[],
+            "pages":3,"language":"korean","tags":[],"publishedRank":0,"popularity":0,"thumbnailWidth":200,"thumbnailHeight":300});
+        c.execute("UPDATE gallery_summary_cache SET summary_json=?1",[summary.to_string()]).unwrap();
+        assert_eq!(snapshot_connection(&c, &QueueQuery::default()).unwrap().items[0].title, "Cached title");
+        c.execute("INSERT INTO galleries VALUES(1,'Official title','Artist')", []).unwrap();
+        assert_eq!(snapshot_connection(&c, &QueueQuery::default()).unwrap().items[0].title, "Official title");
         let session = snapshot_connection(
             &c,
             &QueueQuery {
@@ -374,6 +429,11 @@ mod tests {
             )
             .unwrap();
         }
+        let range = selection_range(&c, &QueueQuery::default(), "extra-10", "old").unwrap();
+        assert_eq!(range.len(), 111);
+        assert_eq!(range, selection_range(&c, &QueueQuery::default(), "old", "extra-10").unwrap());
+        assert!(selection_range(&c, &QueueQuery { sequence: Some(2), ..Default::default() }, "old", "extra-10").unwrap().is_empty());
+        assert!(selection_range(&c, &QueueQuery::default(), "new", "old").unwrap().is_empty());
         let second = snapshot_connection(
             &c,
             &QueueQuery {
@@ -420,6 +480,8 @@ mod tests {
           CREATE TABLE download_entries(entry_id TEXT,gallery_id INTEGER,state TEXT,progress REAL,created_at TEXT,updated_at TEXT);
           CREATE TABLE download_jobs(entry_id TEXT,state TEXT,updated_at TEXT,finished_at TEXT,last_error_code TEXT);
           CREATE TABLE galleries(gallery_id INTEGER,title TEXT,primary_artist TEXT);
+          CREATE TABLE gallery_summary_cache(gallery_id INTEGER PRIMARY KEY,profile TEXT,schema_version INTEGER,summary_json TEXT);
+          CREATE TABLE auto_find_candidates(gallery_id INTEGER,title TEXT,artist TEXT);
           INSERT INTO download_queue_requests VALUES('first'),('replacement'),('later');
           INSERT INTO download_queue_request_entries VALUES('first','existing'),('replacement','old-new'),
             ('replacement','old-reuse'),('later','new-target'),('later','existing'),('later','recent');

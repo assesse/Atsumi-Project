@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { BackendClient } from "../api/backend";
 import type { DetailOriginalPrepared } from "../api/contracts";
 import type { Gallery } from "../core/types";
-import { sourcePageThumbnailKey, type ThumbnailClient } from "../thumbnail";
+import {
+  artifactPageThumbnailKey,
+  galleryCoverThumbnailKey,
+  sourcePageThumbnailKey,
+  useThumbnailClient,
+  type ThumbnailClient,
+  type ThumbnailSnapshot,
+} from "../thumbnail";
 import { GalleryThumbnail } from "./GalleryThumbnail";
 import { useOriginalPagePool } from "./OriginalPageWindow";
 
@@ -28,10 +35,12 @@ type OriginalState =
   | { kind: "failed"; reason: string };
 
 const newRequestId = (): string => crypto.randomUUID();
+const hasPreview = (snapshot: ThumbnailSnapshot): boolean => snapshot.status === "loading"
+  || (snapshot.status === "resolved" && snapshot.asset.kind !== "missing");
 
 /**
- * Original-first: prefer verified local pages, otherwise the source original.
- * The window pool bounds neighbouring prefetches; thumbnails are failure-only.
+ * Keep the matching preview visible until the full original is decoded.
+ * Originals still prefer verified local pages and use the bounded window pool.
  */
 export function ProgressivePagePreview({
   gallery,
@@ -42,9 +51,23 @@ export function ProgressivePagePreview({
   onDimensionResolved,
 }: ProgressivePagePreviewProps) {
   const completedEntryId = gallery.download?.state === "completed" ? gallery.download.entryId : undefined;
+  const thumbnailClient = useThumbnailClient(client);
+  const fallbackKey = useMemo(() => {
+    if (completedEntryId) return artifactPageThumbnailKey(completedEntryId, page, gallery.coverIndex + page - 1);
+    const source = { id: gallery.id, thumbnailKey: gallery.thumbnailKey, coverIndex: gallery.coverIndex };
+    const pageKey = sourcePageThumbnailKey(source, page);
+    // A card's cover is the first source page, never a placeholder for other pages.
+    if (page === 1 && !hasPreview(thumbnailClient.getSnapshot(pageKey))) {
+      const coverKey = galleryCoverThumbnailKey(source);
+      if (hasPreview(thumbnailClient.getSnapshot(coverKey))) return coverKey;
+    }
+    return pageKey;
+  }, [completedEntryId, gallery.coverIndex, gallery.id, gallery.thumbnailKey, page, thumbnailClient]);
   const pool = useOriginalPagePool();
   const [original, setOriginal] = useState<OriginalState>({ kind: "thumbnail" });
   const generation = useRef(0);
+  const originalImage = useRef<HTMLImageElement>(null);
+  const decodingImage = useRef<HTMLImageElement | null>(null);
 
   useEffect(() => {
     if (pool) {
@@ -119,6 +142,35 @@ export function ProgressivePagePreview({
     && original.media.sourcePage === page
     ? original.media
     : undefined;
+  const displayed = !!media && original.kind === "displayed";
+  const failDisplay = useCallback((image: HTMLImageElement, requestId: string) => {
+    if (originalImage.current !== image) return;
+    setOriginal(current => (current.kind === "prepared" || current.kind === "displayed") && current.requestId === requestId
+      ? { kind: "failed", reason: "display-error" }
+      : current);
+    void backend.detailOriginalDispose(requestId).catch(() => undefined);
+  }, [backend]);
+  const displayOriginal = useCallback((image: HTMLImageElement, requestId: string) => {
+    if (originalImage.current !== image || decodingImage.current === image) return;
+    decodingImage.current = image;
+    const show = () => {
+      if (originalImage.current !== image) return;
+      setOriginal(current => current.kind === "prepared" && current.requestId === requestId
+        ? { ...current, kind: "displayed" }
+        : current);
+    };
+    if (typeof image.decode !== "function") {
+      show();
+      return;
+    }
+    void Promise.resolve().then(() => image.decode()).then(show, () => failDisplay(image, requestId));
+  }, [failDisplay]);
+
+  useEffect(() => {
+    const image = originalImage.current;
+    if (media && image?.complete && image.naturalWidth > 0) displayOriginal(image, media.requestId);
+  }, [displayOriginal, media]);
+
   const expectedWidth = expectedDimension?.width;
   const expectedHeight = expectedDimension?.height;
   const hasExpectedDimension = typeof expectedWidth === "number"
@@ -137,7 +189,8 @@ export function ProgressivePagePreview({
     kind?: "image" | "sprite" | "missing";
   }) => {
     if (
-      snapshot.status !== "resolved"
+      media !== undefined
+      || snapshot.status !== "resolved"
       || (snapshot.kind !== undefined && snapshot.kind !== "image")
       || typeof snapshot.width !== "number"
       || !Number.isFinite(snapshot.width)
@@ -152,7 +205,7 @@ export function ProgressivePagePreview({
       width: snapshot.width,
       height: snapshot.height,
     });
-  }, [gallery.id, onDimensionResolved, page]);
+  }, [gallery.id, media, onDimensionResolved, page]);
 
   useEffect(() => {
     if (!media || !Number.isFinite(media.width) || media.width <= 0 || !Number.isFinite(media.height) || media.height <= 0) return;
@@ -173,35 +226,34 @@ export function ProgressivePagePreview({
       style={{ aspectRatio } as CSSProperties}
       title={original.kind === "failed" ? "원본을 불러오지 못해 미리보기를 표시 중" : undefined}
     >
-      {original.kind === "failed" ? <GalleryThumbnail
+      <GalleryThumbnail
         className="page-preview-fallback"
-        thumbnailKey={sourcePageThumbnailKey(gallery, page)}
+        thumbnailKey={fallbackKey}
         consumer="detail"
         priority="critical"
-        client={client}
+        client={thumbnailClient}
+        aria-hidden={displayed || undefined}
+        style={{ position: "absolute", inset: 0 }}
         sizing="container"
         expectedAspectRatio={hasExpectedDimension
           ? { width: expectedWidth, height: expectedHeight }
           : undefined}
         onTerminalSnapshot={handleThumbnailTerminal}
         alt={`${gallery.title} ${page}페이지 확대 미리보기`}
-      /> : original.kind !== "displayed" ? <span className="page-preview-original-loading" role="status" aria-label="원본 불러오는 중"><span className="spinner" aria-hidden="true" /></span> : null}
+      />
       {media ? (
         <img
+          key={media.requestId}
+          ref={originalImage}
+          aria-hidden={!displayed || undefined}
+          style={{ backgroundColor: "var(--thumbnail-frame)" }}
           className={`page-preview-original${original.kind === "displayed" ? " is-ready" : ""}`}
           src={media.mediaUrl}
           width={media.width}
           height={media.height}
           alt={`${gallery.title} ${page}페이지 원본`}
-          onLoad={() => setOriginal((current) => current.kind === "prepared" && current.requestId === media.requestId
-            ? { kind: "displayed", requestId: current.requestId, entryId: current.entryId, media: current.media }
-            : current)}
-          onError={() => {
-            setOriginal((current) => (current.kind === "prepared" || current.kind === "displayed") && current.requestId === media.requestId
-              ? { kind: "failed", reason: "display-error" }
-              : current);
-            void backend.detailOriginalDispose(media.requestId);
-          }}
+          onLoad={event => displayOriginal(event.currentTarget, media.requestId)}
+          onError={event => failDisplay(event.currentTarget, media.requestId)}
         />
       ) : null}
     </div>

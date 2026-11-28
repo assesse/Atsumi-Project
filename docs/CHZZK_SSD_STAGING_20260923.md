@@ -6,7 +6,7 @@
 - Applies to new recordings only; existing recordings and active paths are not migrated by toggling.
 - Confirm local fixed SSD volumes with Windows seek-penalty queries; unknown, removable and network drives are excluded. Choose the confirmed SSD with most free space, requiring 20 GiB at start. If the configured destination is already SSD, record there directly without redundant transfer.
 - Work inside a per-user Atsumi directory on that SSD. Destination remains the configured download folder, captured when the recording starts. Turning the option off does not abandon pending transfers.
-- Reserve 10 GiB plus the estimated final merge space of all unmerged staged recordings. If insufficient, fail visibly and preserve finalized media; never silently switch back to HDD or delete older recordings.
+- Reserve 10 GiB, an incoming segment, and the final merge space of legacy recordings that merge on the SSD. Rolling recordings reserve their verified resident originals, with room for at least one shared part buffer on the SSD. Cold history cannot enter the part worker until its receipts and sources have been checked. Their final merge runs on the archive drive after verified transfer. If insufficient, fail visibly and preserve finalized media; never silently switch back to HDD or delete older recordings.
 
 ## Storage lifecycle
 

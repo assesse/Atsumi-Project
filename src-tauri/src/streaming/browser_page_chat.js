@@ -19,7 +19,9 @@
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const sockets = new Set();
   const socketChannels = new WeakMap();
-  let active = null;
+  let active = null, relayActive = null, sharedSalt = null;
+  let decodeQueue = Promise.resolve(), clockState = null;
+  const consumers = () => [active, relayActive].filter(Boolean);
   let generation = 0;
   let installed = false;
   let observerOverflow = false;
@@ -69,7 +71,9 @@
       return "sha256:" + Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
     } catch { current.salt = null; return undefined; }
   };
-  const observeClock = (current) => {
+  const observeClock = (consumer) => {
+    const current = clockState ??= { getVideo: null, sourceGeneration: 1, clockVideo: null, sourceIdentity: "", clockListeners: [] };
+    current.getVideo = consumer.getVideo;
     try {
       const receivedAtMs = Date.now(), observedMonotonicMs = performance.now();
       if (!Number.isSafeInteger(receivedAtMs) || receivedAtMs < 0 || !Number.isFinite(observedMonotonicMs) || observedMonotonicMs < 0) return undefined;
@@ -227,7 +231,7 @@
         for (let attempt = 0; ; attempt++) {
           try { await current.sendBatch(events, batchId); break; }
           catch (error) {
-            if (attempt >= 32 || Date.now() - retryStartedAt >= 60_000 ||
+            if (current.relay || attempt >= 32 || Date.now() - retryStartedAt >= 60_000 ||
                 !["BRIDGE_BUSY", "BROWSER_ACK_TIMEOUT"].includes(error?.code)) throw error;
             await new Promise(resolve => setTimeout(resolve, Math.min(100 * 2 ** Math.min(attempt, 5), 2000)));
           }
@@ -243,55 +247,45 @@
     });
   };
   const receive = (socket, event) => {
-    const current = active;
-    if (!current?.accepting || current.channelId !== channel() || socketChannels.get(socket) !== current.channelId) return;
-    // Capture synchronously at socket delivery, before Blob decode, JS queue,
-    // digest, batching or IPC can change the observed frame/time.
-    const replayClock = observeClock(current);
-    const data = event.data;
-    const length = typeof data === "string" ? encoder.encode(data).byteLength :
-      data instanceof ArrayBuffer ? data.byteLength : data instanceof Blob ? data.size : -1;
-    if (length < 0) { current.gap = true; notify(current, "unsupported_frame"); return; }
-    if (length > MAX_FRAME || current.rawBytes + current.queuedBytes + length > MAX_QUEUE) {
-      fail(current, length > MAX_FRAME ? "frame_too_large" : "queue_overflow", 1);
-      return;
-    }
-    current.rawBytes += length;
-    current.decodeQueue = current.decodeQueue.then(async () => {
+    let targets = consumers().filter(c => c.accepting && c.channelId === channel() && socketChannels.get(socket) === c.channelId);
+    if (!targets.length) return;
+    // Observe and normalize the public event ONCE. Both independent sinks receive
+    // that same projection, timestamp and pseudonym; neither opens a socket.
+    const replayClock = observeClock(targets[0]), data = event.data;
+    const length = typeof data === "string" ? encoder.encode(data).byteLength : data instanceof ArrayBuffer ? data.byteLength : data instanceof Blob ? data.size : -1;
+    targets = targets.filter(c => {
+      if (length < 0) { c.gap = true; notify(c, "unsupported_frame"); return false; }
+      if (length > MAX_FRAME || c.rawBytes + c.queuedBytes + length > MAX_QUEUE) { fail(c, length > MAX_FRAME ? "frame_too_large" : "queue_overflow", 1); return false; }
+      c.rawBytes += length; return true;
+    });
+    if (!targets.length) return;
+    const work = decodeQueue.then(async () => {
       try {
-        if (current.failed) return;
         let deadline;
         const raw = typeof data === "string" ? data : data instanceof Blob ? await Promise.race([data.text(), new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("decode_timeout")), 2000); })]).finally(() => clearTimeout(deadline)) : decoder.decode(data);
-        if (encoder.encode(raw).byteLength > MAX_FRAME) { fail(current, "frame_too_large", 1); return; }
-        let document;
-        try { document = JSON.parse(raw); } catch { current.gap = true; notify(current, "invalid_frame"); return; }
-        // Receive-only public chat/donation events. Authentication, heartbeat,
-        // history and raw payment/ranking extras are never exported.
+        if (encoder.encode(raw).byteLength > MAX_FRAME) throw new Error("frame_limit");
+        const document = JSON.parse(raw);
         if (![93101, 93102].includes(document?.cmd)) return;
-        const body = document.bdy;
-        const messages = Array.isArray(body) ? body : body?.messageList;
-        if (!Array.isArray(messages)) { current.gap = true; notify(current, "invalid_frame"); return; }
+        const messages = Array.isArray(document.bdy) ? document.bdy : document.bdy?.messageList;
+        if (!Array.isArray(messages)) throw new Error("frame_shape");
         for (const message of messages) {
-          const normalized = normalize(message);
-          if (!normalized) continue;
+          const normalized = normalize(message); if (!normalized) continue;
           if (replayClock) normalized.event.replayClock = replayClock;
-          const key = await senderKey(current, message);
-          if (current.failed) break;
-          if (key) normalized.event.senderKey = key;
+          const owner = targets.find(c => !c.failed); if (!owner) break;
+          const key = await senderKey(owner, message); if (key) normalized.event.senderKey = key;
           const size = bytes(normalized.event);
-          if (size > MAX_EVENT || current.queuedBytes + current.rawBytes + size > MAX_QUEUE) {
-            fail(current, size > MAX_EVENT ? "message_too_large" : "queue_overflow", 1);
-            break;
+          for (const c of targets) {
+            if (c.failed) continue;
+            if (size > MAX_EVENT || c.queuedBytes + c.rawBytes + size > MAX_QUEUE) { fail(c, size > MAX_EVENT ? "message_too_large" : "queue_overflow", 1); continue; }
+            if (normalized.truncated) { c.gap = true; notify(c, "message_truncated"); }
+            c.queue.push({ event: normalized.event, bytes: size }); c.queuedBytes += size;
           }
-          if (normalized.truncated) { current.gap = true; notify(current, "message_truncated"); }
-          current.queue.push({ event: normalized.event, bytes: size });
-          current.queuedBytes += size;
         }
-        if (!current.failed && !current.gap && current.detail !== "receiving") notify(current, "receiving");
-        if (current.queue.length >= MAX_BATCH_EVENTS) pump(current);
-      } catch { current.gap = true; current.dropped++; notify(current, "decode_failed"); }
-      finally { current.rawBytes -= length; }
+        for (const c of targets) { if (!c.failed && !c.gap && c.detail !== "receiving") notify(c, "receiving"); if (c.queue.length >= MAX_BATCH_EVENTS) pump(c); }
+      } catch { for (const c of targets) { c.gap = true; c.dropped++; notify(c, "decode_failed"); } }
+      finally { for (const c of targets) c.rawBytes -= length; }
     });
+    decodeQueue = work; for (const c of targets) c.decodeQueue = work;
   };
   const stopViewers = (current) => {
     clearInterval(current.viewerTimer);
@@ -303,7 +297,7 @@
       viewerCount, replayClock };
     // Timestamp on response/timeout, not request start. This preserves receipt
     // order with chat while the optional HTTP request is in flight.
-    current.decodeQueue = current.decodeQueue.then(() => {
+    decodeQueue = current.decodeQueue = decodeQueue.then(() => {
       if (current.failed) return;
       const size = bytes(event);
       if (current.queuedBytes + current.rawBytes + size > MAX_QUEUE) return;
@@ -400,7 +394,7 @@
                 url.port || url.username || url.password || url.pathname !== "/chat") return socket;
             if (sockets.size >= 8) {
               observerOverflow = true;
-              if (active) { active.gap = true; notify(active, "observer_overflow"); }
+              for (const c of consumers()) { c.gap = true; notify(c, "observer_overflow"); }
               return socket;
             }
             sockets.add(socket);
@@ -408,9 +402,7 @@
             socket.addEventListener("message", (event) => receive(socket, event));
             socket.addEventListener("close", () => {
               sockets.delete(socket);
-              if (active?.accepting && socketChannels.get(socket) === active.channelId) {
-                active.gap = true; notify(active, "connection_gap");
-              }
+              for (const c of consumers()) if (c.accepting && socketChannels.get(socket) === c.channelId) { c.gap = true; notify(c, "connection_gap"); }
             });
           } catch { /* Leave the page's constructor and socket behavior untouched. */ }
           return socket;
@@ -422,24 +414,25 @@
   } catch { /* Unsupported environments retain the native page unchanged. */ }
 
   Object.defineProperty(window, "__atsumiPageChat", { value: Object.freeze({
-    start(options) {
-      if (active || !options || options.channelId !== channel() ||
+    startRelay(options) { return window.__atsumiPageChat.start(options, true); },
+    start(options, relay = false) {
+      if ((relay ? relayActive : active) || !options || options.channelId !== channel() ||
           !/^(?:[a-f0-9]{32}|[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12})$/i.test(options.recordingId ?? "") ||
           typeof options.sendBatch !== "function" || typeof options.onStatus !== "function") return false;
       if (!installed) { options.onStatus("observer_unavailable", 0); return false; }
-      let salt = null;
-      try { if (crypto?.subtle && typeof crypto.getRandomValues === "function") salt = crypto.getRandomValues(new Uint8Array(32)); } catch { /* Stable-user metadata remains unknown. */ }
-      const current = { generation: ++generation, channelId: options.channelId, recordingId: options.recordingId,
+      let salt = sharedSalt;
+      try { if (!salt && crypto?.subtle && typeof crypto.getRandomValues === "function") sharedSalt = salt = crypto.getRandomValues(new Uint8Array(32)); } catch { /* Stable-user metadata remains unknown. */ }
+      const current = { relay, generation: ++generation, channelId: options.channelId, recordingId: options.recordingId,
         salt, getVideo: typeof options.getVideo === "function" ? options.getVideo : null,
         sourceGeneration: 1, clockVideo: null, sourceIdentity: "", clockListeners: [],
-        viewerFetch: typeof window.fetch === "function" && typeof AbortController === "function" ? window.fetch.bind(window) : null,
+        viewerFetch: !relay && typeof window.fetch === "function" && typeof AbortController === "function" ? window.fetch.bind(window) : null,
         viewerRequest: null, viewerBroadcast: null, viewerTimer: null,
         sendBatch: options.sendBatch, onStatus: options.onStatus, accepting: true, failed: false,
         batchId: 0, lastSavedAt: Date.now(), lastPulseAt: Date.now(), lastViewerAt: Date.now(),
         gap: observerOverflow, dropped: 0, detail: "waiting_socket", queue: [], queuedBytes: 0,
         noticeKey: null,
         rawBytes: 0, decodeQueue: Promise.resolve(), inFlight: null, stopping: null, timer: null };
-      active = current;
+      if (relay) relayActive = current; else active = current;
       current.timer = setInterval(() => pump(current), 250);
       if (current.viewerFetch) current.viewerTimer = setInterval(() => sampleViewers(current), VIEWER_INTERVAL);
       sampleViewers(current);
@@ -448,8 +441,8 @@
       return true;
     },
     pulse() {
-      const current = active;
-      if (!current?.accepting) return;
+      for (const current of consumers()) {
+      if (!current.accepting) continue;
       pump(current);
       // Also driven by received video/status events, so presentation/background
       // timer throttling cannot silently stop the statistics pump.
@@ -460,11 +453,12 @@
         if (now - current.lastSavedAt > 45000 && current.queuedBytes > 0) { current.gap = true; notify(current, "partial", true); }
         else notify(current, current.detail, true);
       }
+      }
     },
-    summary() { return active ? { recordingId: active.recordingId, detail: active.failed || active.gap ? "partial" : "stopped" } : null; },
+    summary(recordingId) { const c = recordingId ? consumers().find(c => c.recordingId === recordingId) : active; return c ? { recordingId: c.recordingId, detail: c.failed || c.gap ? "partial" : "stopped" } : null; },
     stop(recordingId) {
-      const current = active;
-      if (!current || current.recordingId !== recordingId) return Promise.resolve();
+      const current = consumers().find(c => c.recordingId === recordingId);
+      if (!current) return Promise.resolve();
       if (current.stopping) return current.stopping;
       current.accepting = false;
       clearInterval(current.timer);
@@ -476,9 +470,10 @@
           if (current.inFlight) await current.inFlight;
         }
         if (!current.failed) notify(current, current.gap ? "partial" : "stopped");
-        for (const remove of current.clockListeners) remove();
-        current.salt?.fill(0); current.salt = null;
-        if (active === current && generation === current.generation) active = null;
+        current.salt = null;
+        if (active === current) active = null;
+        if (relayActive === current) relayActive = null;
+        if (!active && !relayActive) { sharedSalt?.fill(0); sharedSalt = null; for (const remove of clockState?.clockListeners ?? []) remove(); clockState = null; }
       })();
       return current.stopping;
     },

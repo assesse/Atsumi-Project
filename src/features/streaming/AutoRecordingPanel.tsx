@@ -3,17 +3,22 @@ import { createAutoRecordingApi, type AutoRecordingApi, type AutoRecordingSnapsh
 import type { ApiError, ApiResult } from "../../api/contracts";
 import { RecordingLoadStatus } from "./RecordingLoadStatus";
 import { normalizeChannelDraft, normalizeMultiviewChannel } from "../../api/multiview";
+import { CloudAutomaticAccount, CloudAutomaticChoice, useCloudAutomatic } from '../cloudRecording/CloudAutoUploadControls';
+import { CloudLiveControls } from '../cloudRecording/CloudLiveControls';
 import "./AutoRecordingPanel.css";
 
 const statuses: Record<string, string> = {
   waiting: "녹화 예약 됨", disabled: "예약 꺼짐", starting: "녹화 준비", recording: "녹화 중",
+  reconnecting: "방송 화면 재연결 중",
   stopping: "마무리 중", queued: "자리 대기", retry: "연결 확인 · 재시도 대기", skipped: "이번 방송 건너뜀",
   ending: "방송 종료 확인 중", attention: "반복 실패 · 확인 필요",
 };
-export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi, embedded = false, onChange }: {
+export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi, embedded = false, onChange, archiveChannels = [] }: {
   runtime: "tauri" | "browser-mock"; privacy?: boolean; api?: AutoRecordingApi;
   embedded?: boolean; onChange?: (snapshot: AutoRecordingSnapshot) => void;
+  archiveChannels?: { id: string; name: string }[];
 }) {
+  const automatic = useCloudAutomatic('chzzk:channel-manager', runtime === 'tauri', privacy);
   const api = useMemo(() => suppliedApi ?? createAutoRecordingApi(runtime), [runtime, suppliedApi]);
   const [snapshot, setSnapshot] = useState<AutoRecordingSnapshot>({ channels: [], captureChat: true, error: null });
   const [input, setInput] = useState("");
@@ -55,6 +60,11 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi,
     finally { busy.current = false; if (mounted.current) setPending(false); }
   };
   const disabled = pending || runtime !== "tauri";
+  const cloudChannels = [...archiveChannels];
+  for (const rule of automatic.snapshot?.automatic?.rules ?? []) {
+    const target = rule.target;
+    if (rule.enabled && target.kind === 'channel' && target.provider === 'chzzk' && !cloudChannels.some(channel => channel.id === target.channelId)) cloudChannels.push({ id: target.channelId, name: target.channelId });
+  }
   return <section className="auto-record-panel" aria-label="자동 녹화">
     <header><div><h2>자동 녹화</h2><p>방송이 시작되면 녹화합니다.</p></div>
       <span className="auto-record-help" tabIndex={0} aria-label="자동 녹화 도움말" title="앱 실행 중(트레이 포함) 약 30초마다 확인합니다. 등록 시 이미 방송 중이면 녹화를 시작합니다. 최대 4개 동시 녹화, 초과 채널은 대기합니다. 직접 중지한 회차는 다시 녹화하지 않습니다. 그리드·브라우저 확장 없이 직접 재생하며, 제공되는 화질을 녹화합니다. 로그인·권한 확인이 필요한 방송은 라이브에서 먼저 확인하세요.">?</span></header>
@@ -67,15 +77,18 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi,
       <button type="submit" disabled={disabled || !input.trim() || snapshot.channels.length >= 32}>등록</button>
     </form>
     <RecordingLoadStatus error={pollError} hasSnapshot={hasSnapshot} subject="자동 녹화 목록" />
+    <CloudAutomaticAccount model={automatic} privacy={privacy} />
+    <CloudLiveControls provider="chzzk" channels={cloudChannels} active={runtime === 'tauri'} privacy={privacy} />
     {error || snapshot.error ? <p className="auto-record-error" role="alert">{error || snapshot.error}</p> : null}
     <div className="auto-record-channels">
       {snapshot.channels.map((channel, index) => {
-        const active = ["recording", "starting", "stopping"].includes(channel.status);
+        const active = ["recording", "starting", "reconnecting", "stopping"].includes(channel.status);
         const name = privacy ? `채널 ${index + 1}` : channel.channelName || channel.channelId;
         return <article key={channel.channelId} className={`auto-record-channel is-${channel.status}`} aria-label={name}>
           <div className="auto-record-identity"><strong>{name}</strong>
             <span className="auto-record-status" title={channel.checkedAt ? `최근 확인 ${new Date(channel.checkedAt).toLocaleTimeString("ko-KR")}` : "방송 상태 확인 중"}>{statuses[channel.status] ?? "확인 중"}</span>
-            {channel.status === "starting" ? <span className="auto-record-not-started">아직 저장이 시작되지 않았습니다</span> : null}
+            <CloudAutomaticChoice model={automatic} target={{ kind: 'channel', provider: 'chzzk', channelId: channel.channelId }} name={name} privacy={privacy} />
+            {["starting", "reconnecting"].includes(channel.status) ? <span className="auto-record-not-started">아직 저장이 시작되지 않았습니다</span> : null}
             {channel.message ? <span className="auto-record-problem" title={channel.message}>ⓘ <span>{channel.message}</span></span> : null}
             {channel.lastFailure ? <div className="auto-record-last-failure" aria-label="최근 저장 미시작 기록">
               <strong>최근 저장 미시작 · {new Date(channel.lastFailure.occurredAt).toLocaleString("ko-KR")}</strong>
@@ -83,12 +96,16 @@ export function AutoRecordingPanel({ runtime, privacy = false, api: suppliedApi,
             </div> : null}
           </div>
           <div className="auto-record-actions">
-            {active || channel.status === "retry" ? <button type="button" className="auto-record-stop" disabled={disabled || channel.status === "stopping"} onClick={() => void mutate(() => api.update(channel.channelId, { action: "stop" }))}>{channel.status === "starting" || channel.status === "retry" ? "시도 중지" : "녹화 중지"}</button> : null}
+            {active || ["retry", "attention"].includes(channel.status) ? <button type="button" className="auto-record-stop" disabled={disabled || channel.status === "stopping"} onClick={() => void mutate(() => api.update(channel.channelId, { action: "stop" }))}>{["starting", "reconnecting", "retry", "attention"].includes(channel.status) ? "시도 중지" : "녹화 중지"}</button> : null}
             <button type="button" aria-label={`${name} 자동 녹화 ${channel.enabled ? "끄기" : "켜기"}`} aria-pressed={channel.enabled} disabled={disabled} title="끄면 자동으로 시작한 녹화도 마무리합니다. 다시 켜면 현재 방송부터 확인합니다." onClick={() => void mutate(() => api.update(channel.channelId, { action: "enabled", enabled: !channel.enabled }))}>{channel.enabled ? "켜짐" : "꺼짐"}</button>
             <button type="button" aria-label={`${name} 등록 해제`} disabled={disabled} title="자동 녹화 등록을 해제하고 진행 중인 자동 녹화는 마무리합니다. 저장된 녹화본은 남습니다." onClick={() => void mutate(() => api.update(channel.channelId, { action: "remove" }))}>해제</button>
           </div>
         </article>;
       })}
+      {cloudChannels.filter(channel => !snapshot.channels.some(row => row.channelId === channel.id)).map((channel, index) => <article className="auto-record-channel" key={`archive-${channel.id}`}>
+        <div className="auto-record-identity"><strong>{privacy ? `즐겨찾기 채널 ${index + 1}` : channel.name}</strong><span className="auto-record-status">예약 꺼짐</span>
+          <CloudAutomaticChoice model={automatic} target={{ kind: 'channel', provider: 'chzzk', channelId: channel.id }} name={channel.name} privacy={privacy} /></div>
+      </article>)}
       {hasSnapshot && !snapshot.channels.length ? <div className="auto-record-empty">자동으로 녹화할 채널을 등록해 주세요.</div> : null}
     </div>
   </section>;

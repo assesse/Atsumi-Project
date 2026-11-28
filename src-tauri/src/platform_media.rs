@@ -4,6 +4,9 @@ mod capture_outcome;
 mod chat_assets;
 mod chat_parts;
 mod chat_status;
+mod soop_display;
+mod cloud_automatic;
+mod cloud_replay;
 pub mod encoded;
 pub mod groups;
 mod lifecycle;
@@ -14,6 +17,7 @@ mod profile;
 pub mod protocol;
 mod queries;
 pub mod replay_chat;
+pub(crate) mod relay_chat;
 pub mod screenshots;
 mod soop_vod_chat;
 mod soop_vod;
@@ -123,6 +127,8 @@ pub struct MediaJob {
     pub title: String,
     pub channel_name: String,
     pub created_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_ms: Option<u64>,
     pub received_bytes: u64,
     pub total_bytes: Option<u64>,
     pub error: Option<String>,
@@ -167,6 +173,8 @@ struct Inner {
     journal: PathBuf,
     tools: PlatformMediaTools,
     pub(crate) playback: Mutex<HashMap<String, protocol::Session>>,
+    cloud_chat: Mutex<HashMap<String, Arc<cloud_replay::Session>>>,
+    upload_leases: Arc<Mutex<HashMap<String, usize>>>,
     pub(crate) development_url: Option<reqwest::Url>,
     live: Mutex<live::LiveRegistry>,
     network: Mutex<usize>,
@@ -179,11 +187,39 @@ struct Inner {
 pub struct PlatformMediaService {
     inner: Arc<Inner>,
 }
+
+/// Held by native upload workers. The registry fences app-owned removal on all
+/// platforms; the Windows file handle additionally denies write/delete sharing.
+pub(crate) struct UploadLease {
+    registry: Arc<Mutex<HashMap<String, usize>>>,
+    id: String,
+}
+impl Drop for UploadLease {
+    fn drop(&mut self) {
+        let mut leases = self.registry.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(count) = leases.get_mut(&self.id) {
+            *count = count.saturating_sub(1);
+            if *count == 0 { leases.remove(&self.id); }
+        }
+    }
+}
+pub(crate) struct UploadSource {
+    pub file: fs::File,
+    pub item: LibraryItem,
+    pub lease: UploadLease,
+}
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(u64::MAX as u128) as u64
 }
 fn clean(value: Option<&str>, limit: usize) -> String {
     value
@@ -232,6 +268,8 @@ impl PlatformMediaService {
                 journal,
                 tools,
                 playback: Mutex::new(HashMap::new()),
+                cloud_chat: Mutex::new(HashMap::new()),
+                upload_leases: Arc::new(Mutex::new(HashMap::new())),
                 development_url,
                 live: Mutex::new(live::LiveRegistry::default()),
                 network: Mutex::new(0),
@@ -317,6 +355,7 @@ impl PlatformMediaService {
                 title: String::new(),
                 channel_name: String::new(),
                 created_at: now(),
+                started_at_ms: None,
                 received_bytes: 0,
                 total_bytes: None,
                 error: None,
@@ -632,6 +671,44 @@ impl PlatformMediaService {
             item,
         })
     }
+    pub(crate) fn cloud_media_tools(&self) -> crate::streaming::browser_merge::MediaTools {
+        crate::streaming::browser_merge::MediaTools { ffmpeg: self.inner.tools.ffmpeg.clone(), ffprobe: self.inner.tools.ffprobe.clone() }
+    }
+    pub(crate) fn upload_source(&self, provider: &str, library_id: &str) -> Result<UploadSource, String> {
+        if !matches!(provider, "youtube" | "soop") || uuid::Uuid::parse_str(library_id).is_err() {
+            return Err("녹화 항목이 올바르지 않습니다.".into());
+        }
+        // The catalog lock and lease registration share deletion's lock order.
+        // Slow file inspection happens only after the deletion fence is held.
+        let (job, item, lease) = {
+            let state = self.inner.state.lock().map_err(|_| "영상 작업 상태 오류")?;
+            if state.shutting_down { return Err("앱을 종료하는 중입니다.".into()); }
+            let job = state.jobs.get(library_id)
+                .filter(|job| job.state == "completed" && job.reference.provider == provider && !state.cancel.contains_key(library_id))
+                .ok_or("완료된 녹화 영상을 찾을 수 없습니다.")?.clone();
+            let item = job.library.clone().filter(|item| item.library_id == library_id && item.reference == job.reference)
+                .ok_or("영상 검증 정보가 없습니다.")?;
+            let mut leases = self.inner.upload_leases.lock().map_err(|_| "영상 보호 상태 오류")?;
+            if leases.values().sum::<usize>() >= 16 { return Err("처리 중인 영상이 많습니다. 잠시 후 다시 시도해 주세요.".into()); }
+            *leases.entry(library_id.into()).or_default() += 1;
+            (job, item, UploadLease { registry: self.inner.upload_leases.clone(), id: library_id.into() })
+        };
+        let path = storage::owned_file(&job, &item)?;
+        let mut options = fs::OpenOptions::new(); options.read(true);
+        #[cfg(windows)] {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(1).custom_flags(0x00200000);
+        }
+        let file = options.open(&path).map_err(|_| "변경 중이거나 사용 중인 영상입니다.")?;
+        let meta = file.metadata().map_err(|_| "영상 파일을 확인하지 못했습니다.")?;
+        let modified = meta.modified().ok().and_then(|value| value.duration_since(UNIX_EPOCH).ok()).map_or(0, |value| value.as_millis() as u64);
+        if !meta.is_file() || meta.len() != item.bytes || (item.modified_millis != 0 && item.modified_millis != modified) {
+            return Err("녹화 파일이 변경됐습니다. 다시 검증해야 합니다.".into());
+        }
+        // Recheck ownership against the pinned handle; no path escapes renderer IPC.
+        storage::regular(&path)?;
+        Ok(UploadSource { file, item, lease })
+    }
     pub fn close(&self, token: &str) {
         let released = self.inner.playback.lock().ok().and_then(|mut playback| {
             let session = playback.remove(token)?;
@@ -647,7 +724,7 @@ impl PlatformMediaService {
                 })
             });
             if let Some(directory) = directory {
-                replay_chat::release_directory(&directory);
+                self.release_chat_if_unused(&id, &directory);
             }
         }
     }
@@ -785,6 +862,14 @@ impl PlatformMediaService {
             .jobs
             .get(library_id)
             .ok_or("영상을 찾을 수 없습니다.")?;
+        if self.inner.cloud_chat.lock().map_err(|_| "재생 상태 오류")?
+            .values().any(|session| session.library_id == library_id) {
+            return Err("재생 창을 닫은 뒤 삭제해 주세요.".into());
+        }
+        if self.inner.upload_leases.lock().map_err(|_| "영상 보호 상태 오류")?
+            .get(library_id).is_some_and(|count| *count > 0) {
+            return Err("업로드가 끝나거나 일시정지된 뒤 삭제해 주세요.".into());
+        }
         if state.cancel.contains_key(library_id)
             || job.active()
             || job
@@ -840,6 +925,7 @@ impl PlatformMediaService {
             let _owner = lifecycle::JobOwnership::new(self.clone(), id.clone(), cancel.clone());
             self.terminal_error(&id, &cancel, "앱 종료로 대기 작업이 중단됐습니다.");
         }
+        self.shutdown_cloud_chat();
         if let Ok(mut playback) = self.inner.playback.lock() {
             playback.clear();
         }
@@ -1077,7 +1163,12 @@ impl PlatformMediaService {
         next.revision = revision;
         storage::save_job(&self.inner.journal, &next)?;
         state.persistence_errors.remove(&expected.job_id);
+        let recording = (next.reference.kind == "live").then(|| {
+            next.library.as_ref().and_then(|item| item.capture_outcome.as_ref()).is_some_and(|o| !o.is_complete())
+        });
         state.jobs.insert(expected.job_id.clone(), next);
+        drop(state);
+        if let Some(partial) = recording { crate::desktop_notifications::recording_saved(partial); }
         Ok(())
     }
     fn verify_publish_from(
@@ -1330,7 +1421,7 @@ mod completion_fence_tests {
                 request_id: uuid::Uuid::new_v4().to_string(),
                 reference: MediaRef { provider: "soop".into(), kind: "live".into(), external_id: "fixture".into() },
                 revision: 7, state: "finalizing".into(), title: "current title".into(),
-                channel_name: "fixture channel".into(), created_at: 1,
+                channel_name: "fixture channel".into(), created_at: 1, started_at_ms: None,
                 received_bytes: 2048, total_bytes: Some(2048), error: Some("previous warning".into()),
                 library: None, download_root: root.path().join("media"),
             };
@@ -1368,6 +1459,57 @@ mod completion_fence_tests {
             title: job.title.clone(), channel_name: job.channel_name.clone(), bytes: 2048,
             duration: 3.0, sha256: "a".repeat(64), completed_at: 2, modified_millis: 3,
         }
+    }
+
+    #[test]
+    fn upload_source_requires_completed_owned_item_and_protects_delete() {
+        let fixture = Fixture::new();
+        assert!(fixture.service.upload_source("soop", &fixture.job.job_id).is_err());
+        let directory = storage::job_dir(&fixture.job.download_root, "soop", &fixture.job.job_id).unwrap();
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("media.mp4");
+        fs::write(&path, vec![7u8; 2048]).unwrap();
+        {
+            let mut state = fixture.service.inner.state.lock().unwrap();
+            state.cancel.remove(&fixture.job.job_id);
+            let job = state.jobs.get_mut(&fixture.job.job_id).unwrap();
+            let mut saved = item(job, job.revision);
+            saved.modified_millis = 0;
+            job.library = Some(saved);
+            job.state = "completed".into();
+        }
+        assert!(fixture.service.upload_source("youtube", &fixture.job.job_id).is_err());
+        let held = fixture.service.upload_source("soop", &fixture.job.job_id).unwrap();
+        assert_eq!(held.file.metadata().unwrap().len(), 2048);
+        let before = fixture.state_bytes();
+        assert!(fixture.service.delete(&fixture.job.job_id, fixture.job.revision).is_err());
+        assert_eq!(fixture.state_bytes(), before);
+        #[cfg(windows)] {
+            assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+            assert!(fs::remove_file(&path).is_err());
+        }
+        drop(held);
+        assert!(!fixture.service.inner.upload_leases.lock().unwrap().contains_key(&fixture.job.job_id));
+        fixture.service.delete(&fixture.job.job_id, fixture.job.revision).unwrap();
+        assert!(!path.exists());
+        fixture.assert_sources();
+    }
+
+    #[test]
+    fn rejected_upload_source_releases_lease_and_never_rewrites_item() {
+        let fixture = Fixture::new();
+        {
+            let mut state = fixture.service.inner.state.lock().unwrap();
+            state.cancel.remove(&fixture.job.job_id);
+            let job = state.jobs.get_mut(&fixture.job.job_id).unwrap();
+            job.library = Some(item(job, job.revision));
+            job.state = "completed".into();
+        }
+        let before = fixture.state_bytes();
+        assert!(fixture.service.upload_source("soop", &fixture.job.job_id).is_err());
+        assert_eq!(fixture.state_bytes(), before);
+        assert!(fixture.service.inner.upload_leases.lock().unwrap().is_empty());
+        fixture.assert_sources();
     }
 
     #[test]
@@ -1549,6 +1691,7 @@ mod tests {
             title: String::new(),
             channel_name: String::new(),
             created_at: 0,
+            started_at_ms: None,
             received_bytes: 0,
             total_bytes: None,
             error: None,

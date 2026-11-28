@@ -97,6 +97,7 @@
 .platform-media-library-detail h2{margin:8px 18px 8px 0;font-size:17px;line-height:1.6;overflow-wrap:anywhere}
 .platform-media-library-detail p{margin:0 0 18px;font-size:var(--font-size-min);color:var(--muted)}
 .platform-media-library-detail>.platform-media-detail-play{display:block;width:100%;padding:11px 12px;margin-bottom:8px;border-color:var(--primary);background:var(--primary-soft);font-size:14px}
+.platform-media-library-detail>.recording-library-cloud{display:block;width:100%;margin:0 0 8px}
 .platform-media-empty{padding:42px 18px;border:1px dashed var(--line);border-radius:12px;font-size:15px;color:var(--text-soft)}
 .platform-media-spinner{display:inline-block;width:17px;height:17px;box-sizing:border-box;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:platform-media-spin .8s linear infinite}
 @keyframes platform-media-spin{to{transform:rotate(360deg)}}

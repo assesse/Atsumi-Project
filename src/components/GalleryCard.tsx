@@ -52,6 +52,7 @@ type GalleryCardProps = {
   onKeyboardFocus?: (id: GalleryId) => void;
   onSelect: (id: GalleryId, modifiers: { ctrlKey: boolean; shiftKey: boolean }) => void;
   onOpenDetail: (id: GalleryId, options?: BackgroundOpenOptions) => void;
+  onOpenPreview?: (id: GalleryId) => void;
   onOpenArtifact: (id: GalleryId) => void;
   onOpenDownloadFolder?: (entryId: string) => void;
   onOpenReview: (id: GalleryId) => void;
@@ -110,6 +111,7 @@ function GalleryCardComponent({
   onKeyboardFocus,
   onSelect,
   onOpenDetail,
+  onOpenPreview,
   onOpenArtifact,
   onOpenDownloadFolder,
   onOpenReview,
@@ -369,7 +371,8 @@ function GalleryCardComponent({
         if (isCardControl(event.target)) return;
         if (event.ctrlKey || event.metaKey || event.shiftKey) return;
         event.currentTarget.focus();
-        onOpenDetail(gallery.id);
+        if (view === "downloads" && download?.state === "completed" && gallery.pages > 0 && onOpenPreview) onOpenPreview(gallery.id);
+        else onOpenDetail(gallery.id);
       }}
       onContextMenu={(event) => {
         if (!isExplorationBlind && isCardControl(event.target)) return;

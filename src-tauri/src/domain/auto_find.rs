@@ -210,7 +210,18 @@ pub struct AutoFindCandidate {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AutoFindCandidateChanges {
+    pub match_cursor: i64,
+    pub more: bool,
+    pub changed_ids: Vec<i64>,
+    pub candidates: Vec<AutoFindCandidate>,
+    pub truncations: Vec<AutoFindTruncation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AutoFindSnapshot {
+    pub match_cursor: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub run: Option<AutoFindRun>,
     pub candidates: Vec<AutoFindCandidate>,

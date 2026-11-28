@@ -18,6 +18,12 @@ fn bound() -> StreamError {
 }
 type Result<T> = std::result::Result<T, StreamError>;
 
+#[path = "browser_fmp4_relay.rs"]
+pub(crate) mod relay;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParseMode { Archive, Samples }
+
 #[derive(Clone, Debug)]
 pub struct EncodedTrackInput {
     pub track_index: u32,
@@ -57,6 +63,12 @@ struct Input {
     moof: Option<Vec<u8>>,
     init: Vec<u8>,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AacContainerRounding {
+    original_dts: u64,
+    original_duration: u32,
+    timescale: u32,
+}
 #[derive(Clone)]
 struct Sample {
     dts: u64,
@@ -64,6 +76,9 @@ struct Sample {
     flags: u32,
     cts: i32,
     data: Vec<u8>,
+    // Only the existing accepted first-sample container-boundary correction
+    // creates this provenance. It is private, not a persisted/user authority.
+    aac_rounding: Option<AacContainerRounding>,
 }
 impl Sample {
     fn end(&self) -> u64 {
@@ -82,6 +97,274 @@ pub struct EncodedMuxer {
     started: bool,
     sequence: u32,
     failed: bool,
+}
+
+/// Numeric observation only. Source ticks are retained exactly; this does not
+/// decide whether a pending tail is complete, recoverable, or discarded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingTrackStats {
+    pub timescale: u32,
+    pub samples: u64,
+    pub bytes: u64,
+    pub first_dts: Option<u64>,
+    pub last_end: Option<u64>,
+    pub last_duration: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingStats {
+    pub video: PendingTrackStats,
+    pub audio: PendingTrackStats,
+    pub next_video_cut_dts: Option<u64>,
+    pub input_pending_bytes: u64,
+    pub input_moof_bytes: u64,
+    pub input_moof_count: u64,
+    pub started: bool,
+    pub failed: bool,
+}
+
+// Complete, already validated samples only. This is a retention snapshot, not
+// an EncodedSegment or permission to relax the ordinary finish predicate.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RetainedSample {
+    pub dts: u64,
+    pub duration: u32,
+    pub flags: u32,
+    pub cts: i32,
+    pub data: Vec<u8>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct RetainedTrack {
+    pub timescale: u32,
+    pub samples: Vec<RetainedSample>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PendingSnapshot {
+    pub init: Vec<u8>,
+    pub video: RetainedTrack,
+    pub audio: RetainedTrack,
+}
+pub(crate) struct CompleteOverlap {
+    pub segment: EncodedSegment,
+    // Exact source ticks remain in the retained snapshot. These counts select
+    // contiguous prefixes only; no sample or presentation time is rewritten.
+    pub video_samples: usize,
+    pub audio_samples: usize,
+}
+impl PendingSnapshot {
+    /// SOOP's caller must durably retain the entire snapshot before committing
+    /// this explicitly incomplete prefix. Ordinary finish/cadence is unchanged.
+    pub(crate) fn complete_overlap(&self) -> Result<Option<CompleteOverlap>> {
+        let mut count = 0usize;
+        let mut bytes = 0usize;
+        for track in [&self.video, &self.audio] {
+            if track.timescale == 0 { return Err(bound()); }
+            let mut previous = None;
+            for sample in &track.samples {
+                let end = sample.dts.checked_add(u64::from(sample.duration)).ok_or_else(bound)?;
+                if sample.duration == 0 || sample.data.is_empty()
+                    || previous.is_some_and(|end| end != sample.dts) { return Err(bound()); }
+                previous = Some(end);
+                count = count.checked_add(1).ok_or_else(bound)?;
+                bytes = bytes.checked_add(sample.data.len()).ok_or_else(bound)?;
+            }
+        }
+        if count > MAX_SAMPLES || bytes > MAX_PENDING || self.init.is_empty()
+            || self.init.len() > 2 * MAX_INIT + 1024 { return Err(bound()); }
+        // Decode order alone is insufficient for reordered presentation.
+        if self.video.samples.iter().chain(&self.audio.samples).any(|s| s.cts != 0) {
+            return Ok(None);
+        }
+        let (Some(video), Some(audio), Some(audio_last)) =
+            (self.video.samples.first(), self.audio.samples.first(), self.audio.samples.last()) else { return Ok(None); };
+        if video.flags & 0x0001_0000 != 0 || (video.flags >> 24) & 3 != 2
+            || before(audio.dts, self.audio.timescale, video.dts, self.video.timescale)
+            || audio.dts as f64 / self.audio.timescale as f64 - video.dts as f64 / self.video.timescale as f64 > 0.1
+        { return Ok(None); }
+        let audio_end = audio_last.dts + u64::from(audio_last.duration);
+        let video_samples = self.video.samples.iter().take_while(|s|
+            !before(audio_end, self.audio.timescale, s.dts + u64::from(s.duration), self.video.timescale)).count();
+        if video_samples == 0 { return Ok(None); }
+        let last = &self.video.samples[video_samples - 1];
+        let video_end = last.dts + u64::from(last.duration);
+        let audio_samples = self.audio.samples.iter().take_while(|s|
+            before(s.dts, self.audio.timescale, video_end, self.video.timescale)).count();
+        if audio_samples == 0 { return Ok(None); }
+        let last_audio = &self.audio.samples[audio_samples - 1];
+        if before(last_audio.dts + u64::from(last_audio.duration), self.audio.timescale, video_end, self.video.timescale) {
+            return Ok(None);
+        }
+        let selected = Self { init: self.init.clone(),
+            video: RetainedTrack { timescale: self.video.timescale, samples: self.video.samples[..video_samples].to_vec() },
+            audio: RetainedTrack { timescale: self.audio.timescale, samples: self.audio.samples[..audio_samples].to_vec() } };
+        let segment = selected.partial_mp4()?;
+        if segment.bytes.len() > MAX_PENDING { return Err(bound()); }
+        Ok(Some(CompleteOverlap { segment, video_samples, audio_samples }))
+    }
+    /// A separate, explicitly incomplete derivative. No samples are discarded
+    /// or extended to make track endpoints agree, and normal finish is unchanged.
+    pub(crate) fn partial_mp4(&self) -> Result<EncodedSegment> {
+        let copy = |track: &RetainedTrack| track.samples.iter().map(|s| Sample {
+            dts: s.dts, duration: s.duration, flags: s.flags, cts: s.cts, data: s.data.clone(),
+            aac_rounding: None,
+        }).collect::<Vec<_>>();
+        let video = copy(&self.video);
+        let audio = copy(&self.audio);
+        let first = video.first().ok_or_else(bound)?;
+        if self.video.timescale == 0 || self.audio.timescale == 0 || !first.key()
+            || audio.is_empty() || before(audio[0].dts, self.audio.timescale, first.dts, self.video.timescale)
+        { return Err(bad("독립 재생 가능한 보존 구간이 아닙니다.")); }
+        let start = first.dts as f64 / self.video.timescale as f64;
+        let end = (video.last().unwrap().end() as f64 / self.video.timescale as f64)
+            .max(audio.last().unwrap().end() as f64 / self.audio.timescale as f64);
+        if !start.is_finite() || !end.is_finite() || end <= start || end - start > 120.0 {
+            return Err(bound());
+        }
+        let audio_base = u64::try_from(u128::from(first.dts) * u128::from(self.audio.timescale)
+            / u128::from(self.video.timescale)).map_err(|_| bound())?;
+        let mut bytes = self.init.clone();
+        bytes.extend(make_fragment(1, &video, first.dts, 1)?);
+        bytes.extend(make_fragment(2, &audio, audio_base, 2)?);
+        // Payload plus bounded trun metadata; never an unbounded stream dump.
+        if bytes.len() > MAX_PENDING + 2 * MAX_INIT + MAX_SAMPLES * 24 + 2048 { return Err(bound()); }
+        Ok(EncodedSegment { bytes, duration_seconds: end - start, source_start_seconds: start, source_end_seconds: end })
+    }
+}
+
+impl EncodedMuxer {
+    /// Capture before mutating finish: flush can consume an earlier cut before
+    /// rejecting a later tail. This snapshot must not be rebuilt after failure.
+    pub(crate) fn pending_snapshot(&self) -> Result<PendingSnapshot> {
+        let count = self.video.len().checked_add(self.audio.len()).ok_or_else(bound)?;
+        let bytes = self.video.iter().chain(&self.audio).try_fold(0usize, |sum, s|
+            sum.checked_add(s.data.len()).ok_or_else(bound))?;
+        if self.failed || self.init.len() > 2 * MAX_INIT + 1024 || count > MAX_SAMPLES || bytes > MAX_PENDING {
+            return Err(bound());
+        }
+        let track = |kind, samples: &VecDeque<Sample>| -> Result<RetainedTrack> {
+            let timescale = self.tracks.iter().find(|t| t.kind == kind).map(|t| t.scale)
+                .filter(|s| *s > 0).ok_or_else(bound)?;
+            Ok(RetainedTrack { timescale, samples: samples.iter().map(|s| RetainedSample {
+                dts: s.dts, duration: s.duration, flags: s.flags, cts: s.cts, data: s.data.clone(),
+            }).collect() })
+        };
+        Ok(PendingSnapshot { init: self.init.clone(), video: track(Kind::Video, &self.video)?, audio: track(Kind::Audio, &self.audio)? })
+    }
+    pub(crate) fn pending_stats(&self) -> PendingStats {
+        let track = |kind, samples: &VecDeque<Sample>| PendingTrackStats {
+            timescale: self.tracks.iter().find(|t| t.kind == kind).map_or(0, |t| t.scale),
+            samples: samples.len() as u64,
+            bytes: samples.iter().map(|s| s.data.len() as u64).sum(),
+            first_dts: samples.front().map(|s| s.dts),
+            last_end: samples.back().map(Sample::end),
+            last_duration: samples.back().map(|s| s.duration),
+        };
+        let video = track(Kind::Video, &self.video);
+        let next_video_cut_dts = self.video.front().and_then(|first| {
+            self.video.iter().skip(1).find(|sample| {
+                sample.key() && video.timescale > 0
+                    && sample.dts.saturating_sub(first.dts) as f64 / video.timescale as f64 >= TARGET_SECONDS
+            }).map(|sample| sample.dts)
+        });
+        PendingStats {
+            video, audio: track(Kind::Audio, &self.audio), next_video_cut_dts,
+            input_pending_bytes: self.inputs.iter().map(|input| input.pending.len() as u64).sum(),
+            input_moof_bytes: self.inputs.iter().filter_map(|input| input.moof.as_ref())
+                .map(|moof| moof.len() as u64).sum(),
+            input_moof_count: self.inputs.iter().filter(|input| input.moof.is_some()).count() as u64,
+            started: self.started, failed: self.failed,
+        }
+    }
+}
+
+#[cfg(test)]
+mod retention_tests {
+    use super::*;
+    fn mux() -> EncodedMuxer {
+        let mut muxer=EncodedMuxer::new(fixtures::inputs()).unwrap();
+        muxer.push(0,&fixtures::fragment(0,0,4,true)).unwrap();
+        muxer.push(1,&fixtures::fragment(1,0,2,true)).unwrap();
+        muxer
+    }
+    #[test]
+    fn snapshot_retains_exact_payload_and_clocks_without_relaxing_finish() {
+        let mut muxer=mux();
+        muxer.video[1].cts=-1500;
+        let before=muxer.pending_stats();
+        let snapshot=muxer.pending_snapshot().unwrap();
+        assert_eq!(before,muxer.pending_stats());
+        assert_eq!(snapshot.video.samples[1].cts,-1500);
+        for (original,copy) in muxer.video.iter().zip(&snapshot.video.samples) {
+            assert_eq!(original.data,copy.data);assert_eq!(original.dts,copy.dts);
+            assert_eq!(original.duration,copy.duration);assert_eq!(original.flags,copy.flags);
+        }
+        assert!(muxer.finish().is_err());
+        assert!(muxer.pending_snapshot().is_err());
+        let partial=snapshot.partial_mp4().unwrap();
+        assert_eq!(partial.duration_seconds,2.0);
+        let mut roundtrip=EncodedMuxer::new(vec![EncodedTrackInput {track_index:0,
+            mime_type:"video/mp4; codecs=\"avc1.640028,mp4a.40.2\"".into(),init:snapshot.init.clone()}]).unwrap();
+        roundtrip.push(0,&partial.bytes[snapshot.init.len()..]).unwrap();
+        assert_eq!(roundtrip.pending_snapshot().unwrap(),snapshot);
+        assert!(roundtrip.finish().is_err());
+    }
+    #[test]
+    fn pre_finish_snapshot_survives_an_earlier_consumed_cut_and_later_error() {
+        let mut muxer=mux();
+        let v=muxer.video[0].clone();let a=muxer.audio[0].clone();
+        muxer.video=(0..60).map(|n| {let mut s=v.clone();s.dts=n*u64::from(s.duration);s}).collect();
+        muxer.audio=(0..52).map(|n| {let mut s=a.clone();s.dts=n*u64::from(s.duration);s}).collect();
+        let snapshot=muxer.pending_snapshot().unwrap();
+        assert!(muxer.finish().is_err());
+        assert!(muxer.video.len()<snapshot.video.samples.len());
+        assert_eq!(snapshot.video.samples.len(),60);assert_eq!(snapshot.audio.samples.len(),52);
+        assert_eq!(snapshot.video.samples.last().unwrap().dts,59*u64::from(v.duration));
+    }
+    #[test]
+    fn invalid_partial_presentation_does_not_invalidate_lossless_snapshot() {
+        let mut muxer=mux();muxer.video[0].cts=-1;
+        let snapshot=muxer.pending_snapshot().unwrap();
+        assert_eq!(snapshot.video.samples[0].cts,-1);
+        assert!(snapshot.partial_mp4().is_err());
+        assert_eq!(snapshot.video.samples.len(),4);
+    }
+    #[test]
+    fn complete_overlap_keeps_exact_prefix_samples_and_ordinary_finish_strict() {
+        let mut original=mux(); let snapshot=original.pending_snapshot().unwrap(); let saved=snapshot.clone();
+        assert!(original.finish().is_err());
+        let overlap=snapshot.complete_overlap().unwrap().unwrap();
+        assert_eq!((overlap.video_samples,overlap.audio_samples),(2,2));
+        assert_eq!(snapshot,saved);
+        let mut replay=EncodedMuxer::new(vec![EncodedTrackInput {track_index:0,
+            mime_type:"video/mp4; codecs=\"avc1.640028,mp4a.40.2\"".into(),init:snapshot.init.clone()}]).unwrap();
+        assert!(replay.push(0,&overlap.segment.bytes[snapshot.init.len()..]).unwrap().is_empty());
+        let copied=replay.pending_snapshot().unwrap();
+        assert_eq!(copied.video.samples,snapshot.video.samples[..2]);
+        assert_eq!(copied.audio,snapshot.audio);
+        assert_eq!(replay.finish().unwrap().len(),1);
+    }
+    #[test]
+    fn complete_overlap_does_not_guess_reordered_or_discontinuous_samples() {
+        let original=mux().pending_snapshot().unwrap();
+        for kind in 0..6 {
+            let mut snapshot=original.clone();
+            match kind {
+                0=>snapshot.video.samples[0].cts=1,
+                1=>snapshot.audio.samples[0].cts=-1,
+                2=>snapshot.video.samples[0].flags=0x0101_0000,
+                3=>snapshot.audio.samples.clear(),
+                4=>{ for s in &mut snapshot.audio.samples {s.dts+=48_000;} },
+                _=>{snapshot.audio.samples.truncate(1);snapshot.audio.samples[0].duration=1;},
+            }
+            assert!(snapshot.complete_overlap().unwrap().is_none());
+        }
+        for kind in 0..4 {
+            let mut snapshot=original.clone();
+            match kind {0=>snapshot.video.samples[1].dts+=1,1=>snapshot.audio.timescale=0,
+                2=>snapshot.video.samples[0].duration=0,_=>snapshot.audio.samples[0].dts=u64::MAX}
+            assert!(snapshot.complete_overlap().is_err());
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -575,13 +858,13 @@ impl EncodedMuxer {
         if self.failed {
             return Err(bad("이미 중단된 압축 녹화입니다."));
         }
-        let result = self.push_inner(track_index, bytes);
+        let result = self.push_inner(track_index, bytes, ParseMode::Archive);
         if result.is_err() {
             self.failed = true;
         }
         result
     }
-    fn push_inner(&mut self, track_index: u32, bytes: &[u8]) -> Result<Vec<EncodedSegment>> {
+    fn push_inner(&mut self, track_index: u32, bytes: &[u8], mode: ParseMode) -> Result<Vec<EncodedSegment>> {
         if bytes.is_empty() || bytes.len() > MAX_BOX {
             return Err(bound());
         }
@@ -622,7 +905,9 @@ impl EncodedMuxer {
                         .take()
                         .ok_or_else(|| bad("moof가 없는 mdat입니다."))?;
                     self.accept_fragment(track_index, &moof, &atom)?;
-                    segments.extend(self.flush(false)?);
+                    if mode == ParseMode::Archive {
+                        segments.extend(self.flush(false)?);
+                    }
                 }
                 b"styp" | b"sidx" | b"emsg" | b"prft" | b"free" => {
                     if self.inputs[index].moof.is_some() {
@@ -815,6 +1100,7 @@ impl EncodedMuxer {
                     flags: f,
                     cts,
                     data,
+                    aac_rounding: None,
                 });
                 dts = dts.checked_add(u64::from(d)).ok_or_else(bound)?;
             }
@@ -862,6 +1148,12 @@ impl EncodedMuxer {
                     // timestamps and every encoded byte. Never accumulate a
                     // clock shift or accept an actual missing/duplicate frame.
                     let first = samples.first_mut().ok_or_else(bound)?;
+                    if track.kind == Kind::Audio {
+                        first.aac_rounding = Some(AacContainerRounding {
+                            original_dts: first.dts, original_duration: first.duration,
+                            timescale: track.scale,
+                        });
+                    }
                     let duration = i64::from(first.duration) + start as i64 - last as i64;
                     first.duration = u32::try_from(duration)
                         .ok()
@@ -1229,6 +1521,7 @@ pub(crate) mod fixtures {
                     0x01010000
                 },
                 cts: 0,
+                aac_rounding: None,
                 data: if video {
                     vec![
                         0,
@@ -1290,6 +1583,60 @@ mod tests {
         EncodedMuxer::new(fixtures::inputs()).unwrap()
     }
     #[test]
+    fn pending_observation_preserves_sample_clocks_payload_and_finish_result() {
+        let mut observed = mux();
+        let mut baseline = mux();
+        for track in [0, 1] {
+            let bytes = fixtures::fragment(track, 0, 4, true);
+            observed.push(track, &bytes).unwrap();
+            baseline.push(track, &bytes).unwrap();
+        }
+        let before = observed.pending_stats();
+        assert_eq!(observed.pending_stats(), before);
+        assert_eq!((before.video.samples, before.audio.samples), (4, 4));
+        assert_eq!((before.video.timescale, before.audio.timescale), (90_000, 48_000));
+        assert_eq!((before.video.first_dts, before.video.last_end), (Some(0), Some(180_000)));
+        assert_eq!((before.audio.first_dts, before.audio.last_end), (Some(0), Some(96_000)));
+        assert_eq!((before.video.bytes, before.audio.bytes), (24, 8));
+        let output = observed.finish().unwrap();
+        let expected = baseline.finish().unwrap();
+        assert_eq!(output.len(), expected.len());
+        for (actual, expected) in output.iter().zip(expected) {
+            assert_eq!(actual.bytes, expected.bytes);
+            assert_eq!(actual.duration_seconds, expected.duration_seconds);
+        }
+        let after = observed.pending_stats();
+        assert_eq!((after.video.samples, after.audio.samples), (0, 0));
+        assert!(after.failed);
+    }
+    #[test]
+    fn pending_observation_distinguishes_partial_fragment_from_audio_end_gap() {
+        let mut partial = mux();
+        for track in [0, 1] {
+            partial.push(track, &fixtures::fragment(track, 0, 4, true)).unwrap();
+        }
+        partial.push(0, &[0, 0, 0]).unwrap();
+        let before = partial.pending_stats();
+        assert_eq!(before.input_pending_bytes, 3);
+        assert!(partial.finish().is_err());
+        assert_eq!(partial.pending_stats(), before);
+        assert_eq!(partial.finish_discontinuity().unwrap().len(), 1);
+        assert_eq!(partial.pending_stats().input_pending_bytes, 0);
+
+        let mut audio_gap = mux();
+        audio_gap.push(0, &fixtures::fragment(0, 0, 4, true)).unwrap();
+        audio_gap.push(1, &fixtures::fragment(1, 0, 2, true)).unwrap();
+        let before = audio_gap.pending_stats();
+        assert_eq!(before.input_pending_bytes, 0);
+        assert_eq!(before.video.last_end, Some(180_000));
+        assert_eq!(before.audio.last_end, Some(48_000));
+        assert!(audio_gap.finish().is_err());
+        let after = audio_gap.pending_stats();
+        assert_eq!(after.video, before.video);
+        assert_eq!(after.audio, before.audio);
+        assert!(after.failed);
+    }
+    #[test]
     fn tolerates_bounded_boundary_rounding_without_changing_payload_or_source_end() {
         for delta in [-1i64, 1] {
             let mut m = mux();
@@ -1332,6 +1679,7 @@ mod tests {
             duration: 100,
             flags: 0x02000000,
             cts: 0,
+            aac_rounding: None,
             data: vec![0, 0, 0, 2, 0x65, 1],
         };
         for start in [0, 96, 200, 299, 400] {
@@ -1540,10 +1888,10 @@ mod tests {
         for (audio_packets, accepted) in [(3,true),(2,false)] {
             let mut m=mux();
             for index in 0..3 {
-                m.video.push_back(Sample{dts:index*3000,duration:3000,flags:0x02000000,cts:0,data:vec![0,0,0,2,0x65,1]});
+                m.video.push_back(Sample{dts:index*3000,duration:3000,flags:0x02000000,cts:0,data:vec![0,0,0,2,0x65,1],aac_rounding:None});
             }
             for index in 0..audio_packets {
-                m.audio.push_back(Sample{dts:index*1024,duration:1024,flags:0x02000000,cts:0,data:vec![0x21,1]});
+                m.audio.push_back(Sample{dts:index*1024,duration:1024,flags:0x02000000,cts:0,data:vec![0x21,1],aac_rounding:None});
             }
             // 100 ms of complete video ends 36 ms after three received AAC
             // packets. Two packets would leave 57.3 ms and must remain rejected.

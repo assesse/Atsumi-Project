@@ -342,6 +342,7 @@ pub(super) struct ReplaySource {
     pub attachment_id: String,
     pub complete: bool,
     pub events: Vec<ReplayPart>,
+    pub source: Vec<ReplayPart>,
     pub total_event_bytes: u64,
     directory: PathBuf,
     parents: Arc<Vec<File>>,
@@ -550,16 +551,24 @@ pub(super) fn replay_source(
         attachment_id: marker.attachment_id,
         complete,
         events: catalog.events,
+        source: catalog.source,
         total_event_bytes,
         directory: directory.into(),
         parents,
     }))
 }
 pub(super) fn open_replay_part(source: &ReplaySource, index: usize) -> Result<OwnedPart, String> {
-    let part = source.events.get(index).ok_or(ERROR)?;
+    open_replay_stream_part(source, Stream::Events, index)
+}
+/// The same ownership and sealed-part checks apply to optional display metadata.
+pub(super) fn open_replay_source_part(source: &ReplaySource, index: usize) -> Result<OwnedPart, String> {
+    open_replay_stream_part(source, Stream::Source, index)
+}
+fn open_replay_stream_part(source: &ReplaySource, stream: Stream, index: usize) -> Result<OwnedPart, String> {
+    let part = match stream { Stream::Events => &source.events, Stream::Source => &source.source }.get(index).ok_or(ERROR)?;
     let path = source
         .directory
-        .join(part_name(Stream::Events, part.sequence)?);
+        .join(part_name(stream, part.sequence)?);
     storage::safe_path(&path)?;
     let mut options = OpenOptions::new();
     options.read(true);

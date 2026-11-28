@@ -31,15 +31,27 @@ describe('platform replay chat', () => {
     const api = { page: vi.fn().mockResolvedValue(sample({ items: [{ ...row, color: '#55AAFF' }], partialFile: true })) };
     await render(api, { provider, onClose: vi.fn() });
     expect(host.querySelector('aside')).toHaveAttribute('data-provider', provider);
-    expect(host.querySelectorAll('.platform-replay-chat-header button svg')).toHaveLength(2);
-    expect(host.querySelectorAll('img,iframe,video,script,a')).toHaveLength(0);
-    expect(host.querySelector('.platform-replay-chat-author')).toHaveStyle({ color: '#55AAFF' });
-    expect(host.querySelector('.platform-replay-chat-text')).toHaveTextContent(row.text);
-    expect(host.textContent).toContain('일부 기록만 표시'); expect(host.textContent).not.toMatch(/로그인|전송|시청자/);
+    const scope = () => provider === 'soop' ? host.querySelector('aside')!.shadowRoot!.querySelector('.soop-original-chat-root')! : host;
+    if (provider === 'soop') {
+      expect(scope().querySelectorAll('.chat_title [role="button"]')).toHaveLength(2);
+      expect(scope().querySelector('[aria-label="채팅 표시 설정"]')).toHaveAttribute('role', 'button');
+      expect(scope().querySelector('[aria-label="재생 닫기"]')).toHaveAttribute('role', 'button');
+    } else expect(host.querySelectorAll('.platform-replay-chat-header button svg')).toHaveLength(2);
+    expect(scope().querySelectorAll(provider === 'soop' ? 'img,iframe,video,script,a[href]' : 'img,iframe,video,script,a')).toHaveLength(0);
+    if (provider === 'soop') expect((scope().querySelector('.author') as HTMLElement).style.color).toBe('');
+    else expect(scope().querySelector('.platform-replay-chat-author')).toHaveStyle({ color: '#55AAFF' });
+    expect(scope().querySelector('.platform-replay-chat-text')).toHaveTextContent(row.text);
+    expect(scope().textContent).toContain('일부 기록만 표시'); expect(scope().textContent).not.toMatch(/로그인|전송|시청자/);
     expect(api.page).toHaveBeenCalledExactlyOnceWith('fixture', 2000, null, 120);
     await render(api, { provider, privacyMode: true, onClose: vi.fn() });
-    expect(host.querySelector('[aria-label="채팅 표시 설정"]')).toBeDisabled();
-    expect(host.querySelector('[aria-label="재생 닫기"]')).not.toBeDisabled(); expect(host.textContent).not.toContain(row.author);
+    if (provider === 'soop') {
+      expect(scope().querySelector('[aria-label="채팅 표시 설정"]')).toHaveAttribute('aria-disabled', 'true');
+      expect(scope().querySelector('[aria-label="재생 닫기"]')).not.toHaveAttribute('aria-disabled', 'true');
+    } else {
+      expect(host.querySelector('[aria-label="채팅 표시 설정"]')).toBeDisabled();
+      expect(host.querySelector('[aria-label="재생 닫기"]')).not.toBeDisabled();
+    }
+    expect(scope().textContent).not.toContain(row.author);
   });
   it.each([
     { partialFile: true, malformedLines: 0 },
@@ -73,6 +85,36 @@ describe('platform replay chat', () => {
     const api = { page: vi.fn().mockImplementation(async (_id, ms) => sample({ items: ms < 1000 ? [] : [row] })) };
     await render(api, { currentTime: 600 }); expect(host.textContent).toContain(row.text);
     await render(api, { currentTime: 0 }); expect(api.page).toHaveBeenLastCalledWith('fixture', 0, null, 120); expect(host.textContent).not.toContain(row.text);
+  });
+  it.each([
+    { currentTime: 15.8, prior: 15.1, paused: true, ended: false, visibleAt: 15750, futureAt: 15850 },
+    { currentTime: 42.102, prior: 42.01, paused: true, ended: true, visibleAt: 42101, futureAt: 42103 },
+  ])('flushes the exact paused/end position $currentTime without showing future messages or polling again', async position => {
+    const visible = { ...row, id: 'visible', text: '현재 장면의 채팅', timeMs: position.visibleAt };
+    const future = { ...row, id: 'future', text: '아직 재생하지 않은 채팅', timeMs: position.futureAt };
+    const api = { page: vi.fn().mockImplementation(async (_id, ms) => sample({ items: [visible, future].filter(item => item.timeMs <= ms), total: 2 })) };
+    await render(api, { currentTime: position.prior }); expect(host.textContent).not.toContain(visible.text);
+    await render(api, position);
+    expect(api.page).toHaveBeenLastCalledWith('fixture', Math.floor(position.currentTime * 1000), null, 120);
+    expect(host.textContent).toContain(visible.text); expect(host.textContent).not.toContain(future.text);
+    const calls = api.page.mock.calls.length;
+    await render(api, position); await render(api, position); expect(api.page).toHaveBeenCalledTimes(calls);
+  });
+  it('keeps normal playback reads to one per second while sending the actual observed milliseconds', async () => {
+    const api = { page: vi.fn().mockResolvedValue(sample()) };
+    await render(api, { currentTime: 2.125 }); expect(api.page).toHaveBeenCalledExactlyOnceWith('fixture', 2125, null, 120);
+    await render(api, { currentTime: 2.5 }); await render(api, { currentTime: 2.875 }); expect(api.page).toHaveBeenCalledTimes(1);
+    await render(api, { currentTime: 3.125 }); expect(api.page).toHaveBeenCalledTimes(2); expect(api.page).toHaveBeenLastCalledWith('fixture', 3125, null, 120);
+  });
+  it('flushes same-second observed seeks and discards an older pending boundary response', async () => {
+    let finish!: (value: ReplayChatPage) => void;
+    const api = { page: vi.fn().mockResolvedValueOnce(sample({ items: [] })).mockImplementationOnce(() => new Promise<ReplayChatPage>(resolve => { finish = resolve; }))
+      .mockImplementation(async (_id, ms) => sample({ items: ms >= 15750 ? [row] : [] })) };
+    await render(api, { currentTime: 15.1, seekVersion: 1 });
+    await render(api, { currentTime: 15.8, seekVersion: 2 }); expect(api.page).toHaveBeenLastCalledWith('fixture', 15800, null, 120);
+    await render(api, { currentTime: 15.6, seekVersion: 3 }); expect(api.page).toHaveBeenCalledTimes(2);
+    await act(async () => finish(sample()));
+    expect(api.page).toHaveBeenLastCalledWith('fixture', 15600, null, 120); expect(host.textContent).not.toContain(row.text);
   });
   it.each(['missing', 'empty'] as const)('does not repeatedly read a completed %s archive as video time advances', async state => {
     const api = { page: vi.fn().mockResolvedValue(sample({ state, items: [], total: 0, timelineQuality: 'missing-anchor' })) };

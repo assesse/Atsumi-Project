@@ -182,8 +182,7 @@ pub(super) struct Session {
     mime_type: String,
     duration: f64,
     chat_status: String,
-    media: Mutex<File>,
-    media_stamp: FileStamp,
+    source: ReplaySource,
     media_parts: Vec<parts::PartMedia>,
     recording_active: bool,
     _temporary_files: parts::TemporaryFiles,
@@ -193,6 +192,9 @@ pub(super) struct Session {
     viewer_stamp: Option<FileStamp>,
     timeline: File,
     timeline_stamp: FileStamp,
+    timeline_start: f64,
+    first_segment: u64,
+    source_warnings: Vec<String>,
     fingerprint: String,
     index_path: PathBuf,
     cancel: AtomicBool,
@@ -200,6 +202,19 @@ pub(super) struct Session {
     offset: Mutex<f64>,
     index: Mutex<IndexStatus>,
     opened: Instant,
+}
+/// A cloud chat capability has no media handle and cannot become a video token.
+enum ReplaySource {
+    LocalMedia { file: Mutex<File>, stamp: FileStamp },
+    RemoteChat(super::browser_store::chat_source::ChatSourceGuard),
+}
+impl ReplaySource {
+    fn valid(&self) -> bool {
+        match self {
+            Self::LocalMedia { file, stamp } => file.lock().is_ok_and(|f| stamp.matches(&f)),
+            Self::RemoteChat(guard) => guard.valid(),
+        }
+    }
 }
 impl Session {
     fn descriptor(&self) -> Result<ReplaySession, StreamError> {
@@ -222,7 +237,7 @@ impl Session {
             }
             .into(),
             manual_offset_seconds: *self.offset.lock().map_err(|_| storage())?,
-            warnings: status.warnings,
+            warnings: self.warnings(status.warnings),
             parts: self
                 .media_parts
                 .iter()
@@ -234,9 +249,7 @@ impl Session {
     fn valid(&self) -> Result<(), StreamError> {
         if self.cancel.load(Ordering::Acquire)
             || self.opened.elapsed() >= SESSION_LIFETIME
-            || !self
-                .media_stamp
-                .matches(&*self.media.lock().map_err(|_| storage())?)
+            || !self.source.valid()
             || !self.timeline_stamp.matches(&self.timeline)
             || self
                 .chat
@@ -263,6 +276,13 @@ impl Session {
         }
         Ok(())
     }
+    fn warnings(&self, mut warnings: Vec<String>) -> Vec<String> {
+        warnings.extend(self.source_warnings.iter().cloned());
+        warnings
+    }
+    fn contains_time(&self, seconds: f64) -> bool {
+        seconds.is_finite() && seconds >= self.timeline_start && seconds < self.duration
+    }
     fn check_generation(&self, generation: u64) -> Result<(), StreamError> {
         self.valid()?;
         if self.generation.load(Ordering::Acquire) != generation {
@@ -284,7 +304,7 @@ impl Session {
                 "receive_time_approximate"
             }
             .into(),
-            warnings: state.warnings,
+            warnings: self.warnings(state.warnings),
         })
     }
 }
@@ -362,6 +382,22 @@ impl ReplayService {
             .lock()
             .map_err(|_| storage())?
             .replay_source(recording_id)?;
+        let root = self.cache_root()?;
+        let session = self.make_session(source, &root)?;
+        self.register_session(session)
+    }
+    pub(crate) fn open_cloud_chat(&self, authorization: &crate::cloud_recording::replay::CloudReplayAuthorization) -> Result<ReplaySession, StreamError> {
+        let _lifecycle = self.inner.lifecycle.lock().map_err(|_| storage())?;
+        if self.inner.closing.load(Ordering::Acquire) { return Err(stale()); }
+        // Clone the store before proof hashing; the capture host lock is not held
+        // while reading immutable sidecars. No recovery/merge path is invoked.
+        let store = self.inner.store.lock().map_err(|_| storage())?.clone();
+        let source = store.cloud_chat_source(authorization, &self.inner.closing)?;
+        let root = self.cache_root()?;
+        let session = self.make_chat_session(source, &root)?;
+        self.register_session(session)
+    }
+    fn register_session(&self, session: Session) -> Result<ReplaySession, StreamError> {
         let mut sessions = self.inner.sessions.lock().map_err(|_| storage())?;
         if self.inner.closing.load(Ordering::Acquire) {
             return Err(stale());
@@ -395,8 +431,7 @@ impl ReplayService {
                 "채팅 인덱스 작업을 마무리하고 있습니다. 잠시 후 다시 열어 주세요.",
             ));
         }
-        let root = self.cache_root()?;
-        let session = Arc::new(self.make_session(source, &root)?);
+        let session = Arc::new(session);
         let index_lock = {
             let mut locks = self.inner.index_locks.lock().map_err(|_| storage())?;
             locks.retain(|_, lock| lock.strong_count() > 0);
@@ -591,8 +626,7 @@ impl ReplayService {
                 .to_owned(),
             duration,
             chat_status,
-            media: Mutex::new(media),
-            media_stamp,
+            source: ReplaySource::LocalMedia { file: Mutex::new(media), stamp: media_stamp },
             media_parts,
             recording_active: recording.status
                 == super::browser_store::BrowserRecordingStatus::Recording,
@@ -603,6 +637,9 @@ impl ReplayService {
             viewer_stamp,
             timeline,
             timeline_stamp,
+            timeline_start: 0.0,
+            first_segment: 0,
+            source_warnings: vec![],
             fingerprint,
             index_path,
             cancel: AtomicBool::new(false),
@@ -610,6 +647,34 @@ impl ReplayService {
             offset: Mutex::new(offset),
             index: Mutex::new(IndexStatus::default()),
             opened: Instant::now(),
+        })
+    }
+    fn make_chat_session(&self, source: super::browser_store::chat_source::BrowserChatReplaySource, root: &Path) -> Result<Session, StreamError> {
+        let super::browser_store::chat_source::BrowserChatReplaySource { guard, recording, chat, viewers, timeline: bytes, start, end, first_segment, cohort, warnings } = source;
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let mut temporary_files = parts::TemporaryFiles::default();
+        let timeline = parts::snapshot_bytes(root, &token, "cloud-timeline", &bytes, &mut temporary_files.0)?;
+        let timeline_stamp = FileStamp::read(&timeline)?;
+        let chat_stamp = chat.as_ref().map(FileStamp::read).transpose()?;
+        let viewer_stamp = viewers.as_ref().map(FileStamp::read).transpose()?;
+        let fingerprint = format!("{:x}", Sha256::digest(format!("remote-v1|{}|{}|{}|{:x}", recording.id, cohort, guard.fingerprint(), Sha256::digest(&bytes)).as_bytes()));
+        // Shared immutable indexes outlive individual token leases. Per-token
+        // temporary timelines alone are removed when their last worker exits.
+        let index_path = root.join(format!("index-v2-{}-{fingerprint}.sqlite", recording.id));
+        let offset = self.read_offset(root, &recording.id)?;
+        let chat_status = if recording.capture_chat == Some(false) { "disabled".into() }
+            else if chat.is_none() { "unknown".into() }
+            else { recording.chat_status.clone().unwrap_or_else(|| "unknown".into()) };
+        let (channel_name, channel_profile_image) = super::replay_assets::channel_profile::read(Path::new(&recording.output_dir), &recording.channel_id);
+        Ok(Session {
+            _storage_lease: None, token, recording_root: PathBuf::from(&recording.output_dir), recording_id: recording.id,
+            title: recording.title, recorded_at: recording.started_at, channel_name, channel_profile_image,
+            mime_type: "application/x-atsumi-remote-chat".into(), duration: end, chat_status,
+            source: ReplaySource::RemoteChat(guard), media_parts: vec![], recording_active: false,
+            _temporary_files: temporary_files, chat, chat_stamp, viewers, viewer_stamp,
+            timeline, timeline_stamp, timeline_start: start, first_segment, source_warnings: warnings,
+            fingerprint, index_path, cancel: AtomicBool::new(false), generation: AtomicU64::new(0),
+            offset: Mutex::new(offset), index: Mutex::new(IndexStatus::default()), opened: Instant::now(),
         })
     }
     fn session(&self, token: &str) -> Result<Arc<Session>, StreamError> {
@@ -1034,3 +1099,15 @@ pub async fn replay_set_offset(
 #[cfg(test)]
 #[path = "replay_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "replay_remote_tests.rs"]
+mod remote_tests;
+
+#[cfg(all(test, windows))]
+#[path = "replay_readonly_actual.rs"]
+mod readonly_actual;
+
+#[cfg(all(test, windows))]
+#[path = "replay_remote_actual.rs"]
+mod remote_actual;

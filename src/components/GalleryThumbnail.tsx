@@ -30,6 +30,7 @@ type GalleryThumbnailProps = Omit<HTMLAttributes<HTMLElement>, "children"> & {
   /** Use a span when this media is nested in a button. */
   as?: "div" | "span";
   sizing?: "container" | "intrinsic";
+  fit?: "contain" | "cover";
   /** Reserve this ratio before the coordinator returns intrinsic image dimensions. */
   expectedAspectRatio?: { readonly width: number; readonly height: number };
   /** Optionally crop unusually tall intrinsic media from the bottom. */
@@ -140,7 +141,8 @@ const intrinsicDimensions = (
   return { width: 1, height: 1 };
 };
 
-function SpriteImage({ asset, alt, loading, onError }: {
+function SpriteImage({ asset, alt, loading, onError, fit }: {
+  fit: "contain" | "cover";
   asset: ThumbnailSpriteAsset;
   alt: string;
   loading: "eager" | "lazy";
@@ -163,6 +165,8 @@ function SpriteImage({ asset, alt, loading, onError }: {
         maxWidth: "100%",
         maxHeight: "100%",
         aspectRatio: `${cellWidth} / ${cellHeight}`,
+        ...(fit === "cover" && { inset: "auto", top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+          width: `max(100cqw, calc(100cqh * ${cellWidth / cellHeight}))`, maxWidth: "none", maxHeight: "none" }),
         overflow: "hidden",
         fontStyle: "normal",
       }}
@@ -191,7 +195,8 @@ function SpriteImage({ asset, alt, loading, onError }: {
   );
 }
 
-function ThumbnailVisual({ asset, alt, loading, onError, cropTallBottom }: {
+function ThumbnailVisual({ asset, alt, loading, onError, cropTallBottom, fit }: {
+  fit: "contain" | "cover";
   asset: ThumbnailAsset;
   alt: string;
   loading: "eager" | "lazy";
@@ -211,14 +216,14 @@ function ThumbnailVisual({ asset, alt, loading, onError, cropTallBottom }: {
         onError={onError}
         style={{
           ...fullBleedStyle,
-          objectFit: cropTallBottom ? "cover" : "contain",
+          objectFit: cropTallBottom ? "cover" : fit,
           objectPosition: cropTallBottom ? "center top" : "center",
         }}
       />
     );
   }
   if (asset.kind === "sprite") {
-    return <SpriteImage asset={asset} alt={alt} loading={loading} onError={onError} />;
+    return <SpriteImage fit={fit} asset={asset} alt={alt} loading={loading} onError={onError} />;
   }
   return (
     <i
@@ -239,6 +244,7 @@ export function GalleryThumbnail({
   alt,
   as = "div",
   sizing = "container",
+  fit = "contain",
   expectedAspectRatio,
   maxHeightToWidthRatio,
   onTerminalSnapshot,
@@ -379,6 +385,7 @@ export function GalleryThumbnail({
         overflow: "hidden",
         backgroundColor: "var(--thumbnail-frame)",
         backgroundImage: "none",
+        ...(fit === "cover" && sizing === "container" && { containerType: "size" }),
         ...intrinsicStyle,
         ...style,
       }}
@@ -391,6 +398,7 @@ export function GalleryThumbnail({
           alt={alt}
           loading={loading}
           onError={reportDisplayFailure}
+          fit={fit}
           cropTallBottom={cropTallBottom}
         />
       ) : snapshot.status === "error" ? (

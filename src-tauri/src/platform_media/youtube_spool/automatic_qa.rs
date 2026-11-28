@@ -263,7 +263,7 @@ mod tests {
         let bytes=b"not a media certificate";std::fs::write(directory.join("media.mp4"),bytes).unwrap();
         let job=MediaJob {job_id:id.job_id.clone(),request_id:id.request_id.clone(),reference:reference.clone(),
             broadcast_id:Some(id.video_id.clone()),revision:2,state:"completed".into(),title:String::new(),channel_name:String::new(),
-            created_at:0,received_bytes:0,total_bytes:None,error:None,download_root:root.path().to_owned(),
+            created_at:0,started_at_ms:None,received_bytes:0,total_bytes:None,error:None,download_root:root.path().to_owned(),
             library:Some(LibraryItem {library_id:id.job_id.clone(),revision:2,reference,broadcast_id:Some(id.video_id.clone()),
                 title:String::new(),channel_name:String::new(),bytes:bytes.len() as u64,duration:0.2,sha256:schema::hash(bytes),
                 completed_at:0,modified_millis:0,chat_archive:Some(chat),capture_outcome:Some(capture)})};

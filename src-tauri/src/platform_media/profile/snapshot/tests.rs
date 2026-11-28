@@ -16,7 +16,7 @@ impl Fixture {
         let job = MediaJob {
             broadcast_id: None, job_id: uuid::Uuid::new_v4().to_string(), request_id: uuid::Uuid::new_v4().to_string(),
             reference: MediaRef { provider: "youtube".into(), kind: "video".into(), external_id: "jNQXAC9IVRw".into() },
-            revision: 1, state: "resolving".into(), title: String::new(), channel_name: String::new(), created_at: 1,
+            revision: 1, state: "resolving".into(), title: String::new(), channel_name: String::new(), created_at: 1, started_at_ms: None,
             received_bytes: 0, total_bytes: None, error: None, library: None, download_root: self.root.path().join("media"),
         };
         let cancel = Arc::new(AtomicBool::new(false));

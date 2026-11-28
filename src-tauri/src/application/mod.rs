@@ -17,7 +17,7 @@ mod ports;
 mod processing_pool;
 mod service;
 
-pub use auto_find_supervisor::AutoFindSupervisor;
+pub use auto_find_supervisor::{AutoFindRefreshMode, AutoFindSupervisor};
 pub(crate) use detail_original::canonical_request_id;
 pub use detail_original::{
     DetailOriginalError, DetailOriginalPrepareRequest, DetailOriginalPrepared,

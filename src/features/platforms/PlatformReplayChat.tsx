@@ -1,31 +1,63 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { platformMediaApi, type MediaChatAsset, type MediaProvider, type MediaReplayChatItem, type MediaReplayChatPage } from './platformMedia';
 import { PlatformChatParts, useChatAssets } from './PlatformChatParts';
 import { ReplayIcon } from './PlatformReplayPlayer';
+import { OriginalSoopChatSurface } from '../soop/OriginalSoopChatSurface';
+import { OriginalSoopReplayChatView } from '../soop/OriginalSoopReplayChatView';
+import { useVisibleReplayRows } from '../soop/useVisibleReplayRows';
+import { resolveSoopDisplay, resolveSoopRowDisplay, soopDisplayLabel, soopPaletteStyle, type SoopDisplayOverrides } from '../soop/soopDisplay';
 import './PlatformReplayChat.css';
 
 export type ReplayChatItem = MediaReplayChatItem;
 export type ReplayChatPage = MediaReplayChatPage;
 export interface ReplayChatApi { page(libraryId: string, positionMs: number, cursor: string | null, limit: number): Promise<ReplayChatPage>; asset?(libraryId: string, assetId: string): Promise<MediaChatAsset> }
 const nativeApi: ReplayChatApi = { page: (libraryId, positionMs, cursor, limit) => platformMediaApi.replayChat!(libraryId, positionMs, cursor ?? undefined, limit), asset: platformMediaApi.replayChatAsset };
-export interface PlatformReplayChatProps { provider?: MediaProvider; libraryId: string; currentTime: number; active: boolean; privacyMode: boolean; onClose?: () => void; api?: ReplayChatApi }
+export interface PlatformReplayChatProps { provider?: MediaProvider; libraryId: string; currentTime: number; paused?: boolean; ended?: boolean; seekVersion?: number; active: boolean; privacyMode: boolean; onClose?: () => void; api?: ReplayChatApi }
 const time = (ms: number) => { const seconds = Math.max(0, Math.floor(ms / 1000)); const minutes = Math.floor(seconds / 60); return `${minutes}:${String(seconds % 60).padStart(2, '0')}`; };
 
 /** Video position is a prop, never a second media clock or network receiver. */
-export function PlatformReplayChat({ provider, libraryId, currentTime, active, privacyMode, onClose, api = nativeApi }: PlatformReplayChatProps) {
+export function PlatformReplayChat({ provider, libraryId, currentTime, paused = false, ended = false, seekVersion = 0, active, privacyMode, onClose, api = nativeApi }: PlatformReplayChatProps) {
   const [page, setPage] = useState<ReplayChatPage | null>(null), [error, setError] = useState(false), [loading, setLoading] = useState(false);
-  const images = useChatAssets(libraryId, page?.items ?? [], active && !privacyMode, api.asset);
+  const pageOwner = useRef<string | null>(null);
   const [following, setFollowing] = useState(true), [cursor, setCursor] = useState<string | null>(null), [retry, setRetry] = useState(0);
   const [settings, setSettings] = useState(false), [showTimes, setShowTimes] = useState(false), [profile, setProfile] = useState<ReplayChatItem | null>(null);
+  const displayScope = `${provider ?? ''}:${libraryId}`;
+  const [displayOverrides, setDisplayOverrides] = useState<{ scope: string; values: SoopDisplayOverrides }>({ scope: displayScope, values: {} });
+  const overrides = displayOverrides.scope === displayScope ? displayOverrides.values : {};
+  const savedDisplay = provider === 'soop' && pageOwner.current === libraryId ? page?.soopDisplay : undefined;
+  const display = resolveSoopDisplay(savedDisplay, overrides);
+  const changeDisplay = (values: SoopDisplayOverrides) => setDisplayOverrides(previous => ({ scope: displayScope,
+    values: { ...(previous.scope === displayScope ? previous.values : {}), ...values } }));
+  useEffect(() => setDisplayOverrides({ scope: displayScope, values: {} }), [displayScope]);
   const root = useRef<HTMLElement>(null), scroll = useRef<HTMLDivElement>(null), generation = useRef(0), previousTime = useRef(currentTime);
+  const [soopScroll, setSoopScroll] = useState<HTMLDivElement | null>(null);
+  const soopScrollRef = useCallback((node: HTMLDivElement | null) => { scroll.current = node; setSoopScroll(node); }, []);
+  const visibleRows = useVisibleReplayRows(libraryId, page?.items.map(row => row.id) ?? [], provider === 'soop' && active && !privacyMode, soopScroll);
+  // Source changes render once before the reset effect. Never ask the new
+  // archive for artwork that belongs to the previous page during that frame.
+  const assetRows = provider === 'soop' ? pageOwner.current !== libraryId ? [] : visibleRows !== null
+    ? page?.items.filter(row => visibleRows.has(row.id)) ?? [] : page?.items ?? [] : page?.items ?? [];
+  const images = useChatAssets(libraryId, assetRows, active && !privacyMode, api.asset, false, provider === 'soop', {
+    small: display.smallOgq, animate: display.animateEmoticons, rowSmall: row => resolveSoopRowDisplay(row.soopDisplay, overrides).smallOgq });
   const inFlight = useRef(false), wanted = useRef<{ token: number; id: string; position: number; cursor: string | null; api: ReplayChatApi; retry: number } | null>(null);
   const failed = useRef<{ id: string; api: ReplayChatApi; retry: number } | null>(null);
-  const second = Math.max(0, Math.floor(Number.isFinite(currentTime) ? currentTime : 0));
-  const preparingSecond = useRef(second), latestSecond = useRef(second);
-  latestSecond.current = second;
+  const positionMs = Math.max(0, Math.floor((Number.isFinite(currentTime) ? currentTime : 0) * 1000));
+  const second = Math.floor(positionMs / 1000);
+  const preparingSecond = useRef(second), latestPositionMs = useRef(positionMs);
+  latestPositionMs.current = positionMs;
   // Preparation advances on its own bounded timer, not every video tick. Each
   // actual request still uses the newest video position after a seek or pause.
-  const querySecond = page?.state === 'indexing' ? preparingSecond.current : page && page.state !== 'ready' ? 0 : second;
+  // Ordinary playback still reads at most once per media second. A settled
+  // pause/end or an observed seek must include its precise final milliseconds.
+  // Chat can have an unmapped legacy row while observed appearance has a
+  // verified recording origin. Keep that independent appearance clock alive.
+  const hasClock = page?.state === 'ready' || (provider === 'soop' && (page?.state === 'empty' || page?.state === 'unmapped') && page.soopDisplay?.timingQuality === 'receive-time-approximate');
+  const querySecond = page?.state === 'indexing' ? preparingSecond.current : page && !hasClock ? 0 : paused || ended ? positionMs : second;
+  const boundary = useRef(`${Number(paused)}:${Number(ended)}:${seekVersion}`);
+  // Index preparation owns its timer; missing/unmapped pages do not start new
+  // reads merely because a video pauses or the first response changes state.
+  if (!page || hasClock) boundary.current = `${Number(paused)}:${Number(ended)}:${seekVersion}`;
+  const clockBoundary = boundary.current;
   useEffect(() => () => { generation.current++; wanted.current = null; }, []);
   useEffect(() => { generation.current++; failed.current = null; setPage(null); setCursor(null); setFollowing(true); setProfile(null); setSettings(false); setError(false); }, [libraryId]);
   useEffect(() => {
@@ -37,7 +69,7 @@ export function PlatformReplayChat({ provider, libraryId, currentTime, active, p
     if (!following && cursor === null) { generation.current++; wanted.current = null; return; }
     if (failed.current?.id === libraryId && failed.current.api === api && failed.current.retry === retry) return;
     const token = ++generation.current;
-    wanted.current = { token, id: libraryId, position: (page?.state === 'indexing' ? latestSecond.current : querySecond) * 1000, cursor, api, retry };
+    wanted.current = { token, id: libraryId, position: page && !hasClock && page.state !== 'indexing' ? 0 : latestPositionMs.current, cursor, api, retry };
     const drain = async () => {
       if (inFlight.current || !wanted.current) return;
       const request = wanted.current; inFlight.current = true; setLoading(true); setError(false);
@@ -45,6 +77,7 @@ export function PlatformReplayChat({ provider, libraryId, currentTime, active, p
         const value = await request.api.page(request.id, request.position, request.cursor, 120);
         if (request.token === generation.current) {
           if (value.state === 'indexing') preparingSecond.current = querySecond;
+          pageOwner.current = request.id;
           setPage(value);
         }
       }
@@ -56,7 +89,7 @@ export function PlatformReplayChat({ provider, libraryId, currentTime, active, p
       }
     };
     void drain();
-  }, [active, privacyMode, libraryId, api, following, cursor, retry, querySecond]);
+  }, [active, privacyMode, libraryId, api, following, cursor, retry, querySecond, clockBoundary]);
   useEffect(() => {
     if (!active || privacyMode || error || loading || (!following && cursor === null) || page?.state !== 'indexing') return;
     const timer = window.setTimeout(() => setRetry(value => value + 1), 100);
@@ -74,6 +107,16 @@ export function PlatformReplayChat({ provider, libraryId, currentTime, active, p
   const prepared = page?.preparation;
   const preparationPercent = prepared && Number.isFinite(prepared.scannedBytes) && Number.isFinite(prepared.totalBytes) && prepared.totalBytes > 0
     ? Math.max(0, Math.min(99, Math.floor(prepared.scannedBytes / prepared.totalBytes * 100))) : null;
+  if (provider === 'soop') return <OriginalSoopChatSurface hostRef={root} active={active} theme={display.theme}><OriginalSoopReplayChatView
+    page={page} images={images} privacyMode={privacyMode} loading={loading} error={error}
+    settings={settings} setSettings={setSettings} profile={profile} setProfile={setProfile} showTimes={showTimes} setShowTimes={setShowTimes}
+    fontLevel={display.fontLevel} setFontLevel={value => changeDisplay({ fontLevel: value })} showEmoji={display.showEmoticons} setShowEmoji={value => changeDisplay({ showEmoticons: value })}
+    smallEmoji={display.smallOgq} setSmallEmoji={value => changeDisplay({ smallOgq: value })} animateEmoji={display.animateEmoticons} setAnimateEmoji={value => changeDisplay({ animateEmoticons: value })}
+    theme={display.theme} randomNicknameColor={display.randomNicknameColor} paletteStyle={soopPaletteStyle(savedDisplay, overrides)} rowDisplay={row => resolveSoopRowDisplay(row.soopDisplay, overrides)} presentationLabel={soopDisplayLabel(savedDisplay, overrides, pageOwner.current === libraryId && page?.soopDisplayIncomplete === true)}
+    following={following} preparationPercent={preparationPercent} scrollRef={soopScrollRef}
+    onScroll={event => { if (page?.state !== 'ready') return; const node=event.currentTarget; setFollowing(node.scrollHeight-node.clientHeight-node.scrollTop<48); }}
+    onFollow={() => { setCursor(null); setFollowing(true); }} onNavigate={navigate} onRetry={() => setRetry(value=>value+1)} onClose={onClose}
+  /></OriginalSoopChatSurface>;
   return <aside ref={root} className="platform-replay-chat" data-provider={provider} aria-label="녹화 채팅" hidden={!active}>
     <div className="platform-replay-chat-header"><strong>채팅</strong><div>
       <button type="button" aria-label="채팅 표시 설정" title="채팅 표시 설정" aria-expanded={settings} disabled={privacyMode} onClick={() => { setSettings(value => !value); setProfile(null); }}><ReplayIcon name="more" provider={provider} /></button>

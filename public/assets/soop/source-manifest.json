@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "assets": [
+    {
+      "path": "signature-default.svg",
+      "source": "https://res.sooplive.com/images/chatting/signature-default.svg",
+      "bytes": 1272,
+      "sha256": "acae858038976c881d48d417867305c1d6b4c7cda41ff9827c5e221178489cec",
+      "width": 24,
+      "height": 24,
+      "viewBox": "0 0 24 24",
+      "modified": false,
+      "reference": "Official LIVE LiveView getPersonalcon() subscriber image error fallback; inspected 2026-11-17 KST",
+      "purpose": "Generic subscriber personalcon fallback only when saved metadata confirms subscription; not a reconstructed historical channel custom icon",
+      "runtimeNetwork": false,
+      "containsScripts": false,
+      "containsExternalDependencies": false
+    },
+    {
+      "path": "ogq_default_dark.svg",
+      "source": "https://res.sooplive.com/images/chat/ogq_default_dark.svg",
+      "bytes": 2750,
+      "sha256": "6917bdc3e193d412cf271ae52c764ea647967abfe7252990db00c9b225ee4351",
+      "width": 60,
+      "height": 60,
+      "viewBox": "0 0 60 60",
+      "modified": false,
+      "reference": "Official LIVE OGQ/Gem image error fallback; public response and XML allowlist inspected 2026-11-17 KST",
+      "purpose": "Missing captured OGQ/Gem image placeholder only; not historical emote reconstruction",
+      "runtimeNetwork": false,
+      "containsScripts": false,
+      "containsExternalDependencies": false
+    },
+    {
+      "path": "thumb_nightbot.svg",
+      "source": "https://res.sooplive.com/images/svg/thumb_nightbot.svg",
+      "bytes": 3435491,
+      "sha256": "c042ba7594b21d0344ff6095730cf7e061fc844a9cdc6b8ea547ff8583eb3da8",
+      "width": 20,
+      "height": 20,
+      "viewBox": "0 0 20 20",
+      "modified": false,
+      "reference": "Pinned official LIVE personalcon renderer / getUserPofileImage; full XML inspection 2026-11-17 KST",
+      "purpose": "Official fixed Nightbot thumb from explicit saved Nightbot flag, not a user profile",
+      "runtimeNetwork": false,
+      "containsScripts": false,
+      "containsExternalDependencies": false,
+      "embeddedRaster": {
+        "format": "png",
+        "bytes": 2576171,
+        "width": 800,
+        "height": 800,
+        "sha256": "73c36fb023d2be9467f84a063c3d2e4d6870ddd169a1f99f25a292378fc5fd9b",
+        "retainedOriginalGeometry": "20x20 rounded background plus18x18 image at0.75,1; do not replace whole SVG with embedded bitmap"
+      }
+    },
+    {
+      "path": "thumb_profile.svg",
+      "source": "https://res.sooplive.com/images/svg/thumb_profile.svg",
+      "bytes": 1486,
+      "sha256": "93507e09a7e1c73bef860825cd2ccf2a19b84fb6e1c924609f52ef027a9befde",
+      "width": 216,
+      "height": 216,
+      "viewBox": "0 0 216 216",
+      "modified": false,
+      "reference": "Pinned official LIVE personalcon renderer / getUserPofileImage; full XML inspection 2026-11-17 KST",
+      "purpose": "Qualified generic broadcaster fallback when saved captured avatar is missing; not historical profile reconstruction",
+      "runtimeNetwork": false,
+      "containsScripts": false,
+      "containsExternalDependencies": false
+    }
+  ]
+}

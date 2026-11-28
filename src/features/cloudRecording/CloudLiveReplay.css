@@ -1,0 +1,9 @@
+.cloud-live-replay-tools{display:flex;flex-wrap:wrap;gap:7px;align-items:center;flex:none;padding:9px 10px;border-bottom:1px solid var(--line);font-size:12px}
+.cloud-live-replay-tools>span{flex:1;color:var(--muted)}
+.cloud-live-replay-tools nav{display:flex;width:100%;gap:5px}
+.cloud-live-replay-tools p{margin:0;flex-basis:100%;color:var(--warning)}
+.cloud-live-replay-tools button,.cloud-live-replay-pages button{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:var(--surface-soft);color:var(--text);cursor:pointer}
+.cloud-live-replay-tools button:disabled,.cloud-live-replay-pages button:disabled{opacity:.45;cursor:default}
+.cloud-live-replay-tools button[aria-pressed=true]{background:var(--primary-soft);border-color:var(--primary)}
+.cloud-live-replay-pages{display:flex;justify-content:space-between;gap:8px;padding:7px;font-size:12px}
+.cloud-live-replay .cloud-recording-chat>.recording-replay-chat,.cloud-live-replay .cloud-recording-chat>.platform-replay-chat{flex:1;min-height:0;height:auto}

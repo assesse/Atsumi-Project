@@ -141,6 +141,7 @@ mod tests {
             title: id.clone(),
             channel_name: "fixture".into(),
             created_at: time,
+            started_at_ms: None,
             received_bytes: 1,
             total_bytes: Some(1),
             error: None,

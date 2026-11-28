@@ -26,9 +26,11 @@ if ($WebView2RuntimeDirectory) {
 # Build admission never downloads, repairs or substitutes resource inputs.
 $media = & (Join-Path $PSScriptRoot 'prepare_media_tools.ps1') -VerifyOnly -ReturnManifest
 $platform = & (Join-Path $PSScriptRoot 'prepare_platform_tools.ps1') -VerifyOnly -ReturnManifest
+$browser = & (Join-Path $PSScriptRoot 'prepare_browser_tools.ps1') -VerifyOnly -ReturnManifest
 $approved = @{}
 $approved[(Get-AtsumiPackageDirectoryPath $media.package)] = $media
 $approved[(Get-AtsumiPackageDirectoryPath $platform.package)] = $platform
+$approved[(Get-AtsumiPackageDirectoryPath $browser.package)] = $browser
 $resources = $configuration.bundle.resources.PSObject.Properties
 $expectedFiles = [Collections.Generic.List[object]]::new()
 $expectedDirectories = [Collections.Generic.List[string]]::new()
@@ -51,6 +53,7 @@ foreach ($resource in $resources) {
 # Read-only revalidation immediately before copy: no missing input is fetched now.
 $null = & (Join-Path $PSScriptRoot 'prepare_media_tools.ps1') -VerifyOnly -ReturnManifest
 $null = & (Join-Path $PSScriptRoot 'prepare_platform_tools.ps1') -VerifyOnly -ReturnManifest
+$null = & (Join-Path $PSScriptRoot 'prepare_browser_tools.ps1') -VerifyOnly -ReturnManifest
 $null = Assert-AtsumiBuildReceipt $projectRoot $BuildReceipt
 Assert-AtsumiPackagePath $payload -AllowMissing
 New-AtsumiSafeDirectory $payload -MustCreate

@@ -1,0 +1,95 @@
+{
+  "id": "hitomi-download-preview-navigation-20261122",
+  "status": "implemented_pending_native_verification",
+  "source": {
+    "threadId": "01a089ee-56ed-7322-a750-c034423826c2",
+    "turnId": "01a1ffb1-8045-7863-9c5c-57bc1611cc22",
+    "messageId": "01a1ffb1-828e-76a1-a682-8841a26adc34",
+    "snapshot": ".runtime/hitomi-preview-navigation-20261122/messages-delta.json",
+    "line": 52632
+  },
+  "audit": {
+    "inventory": ".runtime/hitomi-preview-navigation-20261122/inventory.json",
+    "coverage": ".runtime/hitomi-preview-navigation-20261122/source-coverage.json",
+    "specCoverage": ".runtime/hitomi-preview-navigation-20261122/spec-coverage.json",
+    "specCount": 493,
+    "limitations": "Historical missing handoff and unavailable attachment pixels remain explicitly recorded in the reused audit; current request is fully available."
+  },
+  "requirements": [
+    "Hitomi page position remains visible when transient controls hide, including two-page view.",
+    "Downloads double-click opens a completed local album directly in page preview. Other views, multi-selection Enter and context-menu detail remain unchanged.",
+    "Q/E navigate readable completed albums in the current filtered/sorted library order, within a folder then into adjacent folders, including collapsed folders. Do not wrap from the entire last album to the first.",
+    "Folder preview shows [albumIndex/albumCount] beside pageIndex/pageCount; positions update across folders. Flat view shows page position without an artist count.",
+    "Direct reading does not append detail tabs, load every album, or fetch related metadata. Closing returns to the existing list/folder and preserves existing detail tabs.",
+    "Snapshot the reading order on open so background completion or popularity changes cannot move the current album. Skip albums that are no longer readable. Folder totals count readable albums in that snapshot.",
+    "Preserve existing page shortcuts, reading direction, two-page mode, modifier/text-editor/modal exclusions, resize, bookmarks and original local-file preview. No file, queue or recording mutations."
+  ],
+  "supersedes": [
+    "Auto-hide applies to transient controls, not the current page/album counter.",
+    "Completed downloads double-click opens reading directly instead of adding a detail tab."
+  ],
+  "acceptance": [
+    "Card and full-feature tests distinguish double-click from Enter/context-menu detail.",
+    "Folder order tests cover collapsed/empty folders, first/last boundaries, flat pagination and no-longer-readable items.",
+    "Preview tests cover Q/E, stale page bounds on album change, input/modifier/modal exclusions, persistent counters, closure and preserved detail tabs.",
+    "Run affected regression tests, TypeScript and frontend build.",
+    "Inspect rendered layout at compact and wide sizes; actual installed-app paths remain unverified until safely operated."
+  ],
+  "delivery": "No commit, push, release or destructive data operation requested. Preserve concurrent cloud/recording work.",
+  "verification": {
+    "automatedTests": {
+      "files": 8,
+      "passed": 100,
+      "failed": 0
+    },
+    "layout": {
+      "passed": 3,
+      "viewports": [
+        [
+          480,
+          760
+        ],
+        [
+          1280,
+          720
+        ],
+        [
+          1920,
+          1080
+        ]
+      ],
+      "states": [
+        "counter-only",
+        "controls-visible"
+      ],
+      "screenshotsInspected": true
+    },
+    "typecheck": "passed",
+    "frontendBuild": "passed",
+    "broaderRegression": {
+      "passed": 179,
+      "failed": 4,
+      "baselineReproduced": 4,
+      "failures": [
+        "containment batch thumbnail revision",
+        "ineligible review lookup sequence",
+        "old keep-both review action",
+        "old overlap review heading"
+      ]
+    },
+    "native": {
+      "status": "pending",
+      "bgd": {
+        "hostAlive": false,
+        "agentReachable": false
+      },
+      "gracefulExit": {
+        "pid": 27092,
+        "status": 409,
+        "reason": "active_work_confirmation_required"
+      },
+      "runningAppUnchanged": true
+    },
+    "noUserAlbumOrRecordingMutation": true
+  }
+}

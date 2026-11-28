@@ -1,6 +1,25 @@
 //! Read-only bounded replay of the job-owned chat archive. No account, network,
 //! remote image or arbitrary path IPC. A receipt clock is explicitly approximate.
 use super::{chat_assets, chat_parts, storage};
+#[path = "replay_chat_soop.rs"]
+mod soop_metadata;
+pub use soop_metadata::SoopChatMetadata;
+pub use crate::soop::chat::gifts::SoopGiftMetadata;
+pub use crate::soop::chat::missions::Metadata as SoopMissionMetadata;
+#[cfg(test)]
+#[path="replay_chat_mission_tests.rs"]
+mod mission_tests;
+pub use crate::soop::chat::ogq::Metadata as SoopEmoticonMetadata;
+pub use crate::soop::chat::subscriptions::Metadata as SoopSubscriptionMetadata;
+#[cfg(test)]
+#[path="replay_chat_ogq_tests.rs"]
+mod ogq_tests;
+#[cfg(test)]
+#[path="replay_chat_subscription_tests.rs"]
+mod subscription_tests;
+#[cfg(test)]
+#[path="replay_chat_display_tests.rs"]
+mod display_tests;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +63,9 @@ pub enum ChatPart {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReplayChatItem {
+    /// Existing normalized source UUID digest; native relay joins only, never IPC.
+    #[serde(skip)]
+    pub(crate) relay_message_id_sha256: Option<String>,
     pub id: String,
     pub time_ms: Option<u64>,
     pub kind: String,
@@ -54,7 +76,25 @@ pub struct ReplayChatItem {
     pub amount: Option<String>,
     pub badges: Vec<String>,
     pub color: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soop: Option<SoopChatMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soop_gift: Option<SoopGiftMetadata>,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub soop_mission: Option<SoopMissionMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soop_emoticon: Option<SoopEmoticonMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soop_subscription: Option<SoopSubscriptionMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soop_display: Option<super::soop_display::Creation>,
 }
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) enum CoverageWarning {
+    UnsupportedSoopRichEvent,
+}
+pub(super) const SOOP_RICH_WARNING: &str = crate::soop::chat::gifts::COVERAGE_WARNING;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct NormalizedChatEvent {
@@ -70,6 +110,30 @@ pub(super) struct NormalizedChatEvent {
     pub amount: Option<String>,
     pub badges: Vec<String>,
     pub color: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soop: Option<SoopChatMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soop_gift: Option<SoopGiftMetadata>,
+    #[serde(default, skip_serializing_if="Option::is_none")]
+    pub soop_mission: Option<SoopMissionMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soop_emoticon: Option<SoopEmoticonMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soop_subscription: Option<SoopSubscriptionMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_warning: Option<CoverageWarning>,
+    #[serde(skip)]
+    pub gift_asset: Option<crate::soop::chat::gifts::assets::Request>,
+    #[serde(skip)]
+    pub mission_asset: Option<crate::soop::chat::missions::Request>,
+    #[serde(skip)]
+    pub emoticon_assets: Vec<crate::soop::chat::ogq::Request>,
+    #[serde(skip)]
+    pub subscription_assets: Vec<crate::soop::chat::subscriptions::Request>,
+    #[serde(skip)]
+    pub personalcon_asset: Option<crate::soop::chat::personalcon::Request>,
+    #[serde(skip)]
+    pub avatar_asset: Option<crate::soop::chat::portrait::Request>,
 }
 /// Normalize only public display fields. No cookie, endpoint, account ID or
 /// raw server message ID crosses this contract; source IDs are one-way digests.
@@ -103,6 +167,18 @@ pub(super) fn normalize_public_line(
             amount: row.item.amount,
             badges: row.item.badges,
             color: row.item.color,
+            soop: row.item.soop,
+            soop_gift: row.item.soop_gift,
+            soop_mission: row.item.soop_mission,
+            soop_emoticon: row.item.soop_emoticon,
+            soop_subscription: row.item.soop_subscription,
+            coverage_warning: row.coverage_warning,
+            gift_asset: None,
+            mission_asset: None,
+            emoticon_assets: Vec::new(),
+            subscription_assets: Vec::new(),
+            personalcon_asset: None,
+            avatar_asset: None,
         })
         .collect())
 }
@@ -121,8 +197,14 @@ pub struct ReplayChatPage {
     pub reordered: usize,
     pub duplicates: usize,
     pub partial_file: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub display_metadata_unavailable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preparation: Option<ReplayPreparation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub soop_display: Option<super::soop_display::Page>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub soop_display_incomplete: bool,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -150,6 +232,9 @@ struct Entry {
     origin: Option<i64>,
     job_id: String,
     parts: Option<chat_parts::ReplaySource>,
+    soop_source: Option<soop_metadata::Source>,
+    soop_unavailable: bool,
+    raw_metadata_blocked: bool,
     cancelled: AtomicBool,
     index: Mutex<Option<Index>>,
 }
@@ -157,6 +242,7 @@ struct Index {
     database: Connection,
     progress: Progress,
     parts: PartProgress,
+    soop: soop_metadata::Progress,
     // Both SQLite and retained read handles must close before their slot can be
     // reused. This includes evicted entries still held by an in-flight call.
     _permit: DatabasePermit,
@@ -184,6 +270,9 @@ struct Progress {
     unsupported: usize,
     reordered: usize,
     duplicates: usize,
+    display_total: usize,
+    display_invalid: bool,
+    display: Vec<(u64, Option<u64>, super::soop_display::Control)>,
 }
 impl Progress {
     fn quality(&self) -> &'static str {
@@ -252,6 +341,25 @@ impl IndexCache {
         ticket: &ReadTicket,
         job_id: &str,
         parts: Option<chat_parts::ReplaySource>,
+        soop_source: Option<soop_metadata::Source>,
+        soop_unavailable: bool,
+    ) -> Result<Arc<Entry>, String> {
+        self.entry_with_policy(path, signature, provider, origin, anchor_stamp, ticket, job_id,
+            parts, soop_source, soop_unavailable, false)
+    }
+    fn entry_with_policy(
+        &self,
+        path: PathBuf,
+        signature: Stamp,
+        provider: &str,
+        origin: Option<i64>,
+        anchor_stamp: Option<Stamp>,
+        ticket: &ReadTicket,
+        job_id: &str,
+        parts: Option<chat_parts::ReplaySource>,
+        soop_source: Option<soop_metadata::Source>,
+        soop_unavailable: bool,
+        raw_metadata_blocked: bool,
     ) -> Result<Arc<Entry>, String> {
         let mut registry = self.registry.lock().unwrap_or_else(|p| p.into_inner());
         if ticket.cancelled.load(Ordering::Acquire) {
@@ -266,6 +374,9 @@ impl IndexCache {
                 && entry.job_id == job_id
                 && entry.parts.as_ref().map(|source| &source.generation)
                     == parts.as_ref().map(|source| &source.generation)
+                && soop_metadata::same_source(entry.soop_source.as_ref(), soop_source.as_ref())
+                && entry.soop_unavailable == soop_unavailable
+                && entry.raw_metadata_blocked == raw_metadata_blocked
                 && !entry.cancelled.load(Ordering::Acquire)
         }) {
             return Ok(entry.clone());
@@ -273,7 +384,16 @@ impl IndexCache {
         let mut retired = Vec::new();
         let mut retained = VecDeque::new();
         while let Some(entry) = cache.pop_front() {
-            if entry.path == path || entry.cancelled.load(Ordering::Acquire) {
+            // Same primary generation may have a pinned source reader and a
+            // capability that declined optional raw metadata. Keep their two
+            // bounded indices instead of restarting each other's preparation.
+            // A real primary/anchor/job generation change still retires both.
+            let changed_primary = entry.provider != provider || entry.stamp != signature
+                || entry.anchor_stamp != anchor_stamp || entry.job_id != job_id
+                || entry.parts.as_ref().map(|source| &source.generation)
+                    != parts.as_ref().map(|source| &source.generation);
+            if (entry.path == path && (entry.raw_metadata_blocked == raw_metadata_blocked || changed_primary))
+                || entry.cancelled.load(Ordering::Acquire) {
                 entry.cancelled.store(true, Ordering::Release);
                 retired.push(entry);
             } else {
@@ -294,6 +414,9 @@ impl IndexCache {
             origin,
             job_id: job_id.into(),
             parts,
+            soop_source,
+            soop_unavailable,
+            raw_metadata_blocked,
             cancelled: AtomicBool::new(false),
             index: Mutex::new(None),
         });
@@ -363,11 +486,14 @@ struct Parsed {
     wall_ms: Option<i64>,
     offset_ms: Option<i64>,
     source_id: Option<String>,
+    coverage_warning: Option<CoverageWarning>,
 }
 #[derive(Default)]
 struct ParsedLine {
     items: Vec<Parsed>,
     unsupported: usize,
+    display: Option<super::soop_display::Control>,
+    display_invalid: bool,
 }
 fn number(value: &Value) -> Option<i64> {
     value.as_i64().or_else(|| value.as_str()?.parse().ok())
@@ -497,6 +623,7 @@ fn stored_parts(value: &Value) -> Vec<ChatPart> {
 }
 fn blank(kind: &str) -> ReplayChatItem {
     ReplayChatItem {
+        relay_message_id_sha256: None,
         id: String::new(),
         time_ms: None,
         kind: kind.into(),
@@ -506,12 +633,21 @@ fn blank(kind: &str) -> ReplayChatItem {
         amount: None,
         badges: Vec::new(),
         color: None,
+        soop: None,
+        soop_gift: None,
+        soop_mission: None,
+        soop_emoticon: None,
+        soop_subscription: None,
+        soop_display: None,
     }
 }
 fn parse_soop(value: &Value) -> ParsedLine {
     let mut result = ParsedLine::default();
     let kind = match value["kind"].as_str() {
         Some("chat") => "chat",
+        Some("donation") => "donation",
+        Some("system") => "system",
+        Some("membership") => "membership",
         Some("gap") => "gap",
         Some("connected") => "connected",
         Some("ended") => "ended",
@@ -524,13 +660,61 @@ fn parse_soop(value: &Value) -> ParsedLine {
     item.text = clean(value["text"].as_str().unwrap_or(""), MAX_TEXT);
     if kind == "chat" {
         item.author = clean(value["nickname"].as_str().unwrap_or(""), 160);
+        // Preserve legacy packet color as body metadata, never nickname styling.
         item.color = literal_color(&value["extra"]["color"]);
+        item.soop = soop_metadata::from_raw(value);
+        if !value["extra"]["avatar"].is_null() && item.soop.as_ref().and_then(|m|m.avatar.as_ref()).is_none(){result.unsupported+=1;}
+        if !value["extra"]["personalcon"].is_null() && item.soop.as_ref().and_then(|m|m.personalcon.as_ref()).is_none(){result.unsupported+=1;}
+        if value["extra"]["service"] == 109 {
+            item.soop_emoticon = crate::soop::chat::ogq::from_stored(&value["extra"]["soopEmoticon"]);
+            if item.soop_emoticon.is_none() || crate::soop::chat::ogq::invalid_stored(&value["extra"]["soopEmoticon"]) { result.unsupported += 1; }
+        }
         if let Some(months) =
             number(&value["extra"]["subscriptionMonth"]).filter(|n| (1..=1200).contains(n))
         {
             item.badges.push(format!("구독 {months}개월"));
         }
     }
+    if kind == "system" || (kind == "donation" && value["extra"]["service"] == 121) {
+        let source=&value["extra"]["soopMission"];
+        let meta=crate::soop::chat::missions::from_stored(source);
+        if value["extra"]["service"] != 121 || !meta.as_ref().is_some_and(|m|m.row_kind()==kind) {
+            result.unsupported=1;return result;
+        }
+        let meta=meta.unwrap();
+        result.unsupported+=usize::from(crate::soop::chat::missions::invalid_stored(source));
+        item.text=meta.text();
+        if kind=="donation" {item.author=clean(value["nickname"].as_str().unwrap_or(""),160);}
+        item.soop_mission=Some(meta);
+    }
+    if kind == "donation" && item.soop_mission.is_none() {
+        item.soop_gift = crate::soop::chat::gifts::from_raw(value);
+        if item.soop_gift.is_none() {
+            result.unsupported = 1;
+            return result;
+        }
+        item.author = clean(value["nickname"].as_str().unwrap_or(""), 160);
+        // These public gift packets have no message body or currency amount.
+        item.text.clear();
+    }
+    if kind == "membership" {
+        let service=value["extra"]["service"].as_u64();
+        if !matches!(service,Some(91|93)) {result.unsupported=1;return result;}
+        let source=&value["extra"]["soopSubscription"];
+        item.soop_subscription=crate::soop::chat::subscriptions::from_stored(source);
+        let consistent=item.soop_subscription.as_ref().is_some_and(|meta|matches!((service,meta.event),
+            (Some(91),crate::soop::chat::subscriptions::Event::New)|(Some(93),crate::soop::chat::subscriptions::Event::Renewal)));
+        if !consistent {result.unsupported=1;return result;}
+        result.unsupported+=usize::from(crate::soop::chat::subscriptions::invalid_stored(source));
+        item.author=clean(value["nickname"].as_str().unwrap_or(""),160);
+        item.text.clear();
+    }
+    let coverage_warning = (kind == "gap"
+        && value["extra"]["coverageWarning"] == "unsupportedSoopRichEvent"
+        && value["extra"]["service"].as_u64().and_then(|service| u16::try_from(service).ok())
+            .is_some_and(|service| service==5 || crate::soop::chat::gifts::is_public_rich(service)))
+        .then_some(CoverageWarning::UnsupportedSoopRichEvent);
+    if coverage_warning.is_some() { result.unsupported = 1; }
     let source_id = value["messageId"]
         .as_str()
         .filter(|s| !s.is_empty() && s.len() <= 128)
@@ -540,8 +724,19 @@ fn parse_soop(value: &Value) -> ParsedLine {
         wall_ms: number(&value["receivedAtMs"]),
         offset_ms: None,
         source_id,
+        coverage_warning,
     });
     result
+}
+#[cfg(test)]
+#[test]
+fn legacy_soop_body_color_survives_normalized_only_without_inventing_author_or_role() {
+    let mut v=serde_json::json!({"format":"atsumi-chat-v1","kind":"chat","author":"Public","text":"Saved","color":"#aabbcc","soop":{"flag1":32,"flag2":0},"receivedAtMs":1700000001000u64});
+    let parsed=parse_line(&serde_json::to_vec(&v).unwrap(),"soop").unwrap();let item=&parsed.items[0].item;
+    assert_eq!(item.soop.as_ref().unwrap().message_color.as_deref(),Some("#aabbcc"));assert_eq!(item.soop.as_ref().unwrap().flag1,32);
+    v["soop"]=serde_json::Value::Null;let parsed=parse_line(&serde_json::to_vec(&v).unwrap(),"soop").unwrap();assert!(parsed.items[0].item.soop.is_none());assert_eq!(parsed.items[0].item.color.as_deref(),Some("#aabbcc"));
+    v["soop"]=serde_json::json!({"flag1":32,"flag2":0,"messageType":"staff"});let parsed=parse_line(&serde_json::to_vec(&v).unwrap(),"soop").unwrap();assert!(parsed.items[0].item.soop.as_ref().unwrap().message_color.is_none());
+    v["soop"]=serde_json::json!({"flag1":32,"flag2":0});v["color"]=serde_json::json!("url(https://evil)");let parsed=parse_line(&serde_json::to_vec(&v).unwrap(),"soop").unwrap();assert!(parsed.items[0].item.color.is_none()&&parsed.items[0].item.soop.as_ref().unwrap().message_color.is_none());
 }
 fn parse_youtube(value: &Value) -> ParsedLine {
     let mut result = ParsedLine::default();
@@ -615,21 +810,28 @@ fn parse_youtube(value: &Value) -> ParsedLine {
             wall_ms: number(&renderer["timestampUsec"]).map(|v| v / 1000),
             offset_ms: offset,
             source_id,
+            coverage_warning: None,
         });
     }
     result
 }
 fn parse_line(bytes: &[u8], provider: &str) -> Result<ParsedLine, ()> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| ())?;
+    if provider=="soop"&&value["format"]==super::soop_display::FORMAT {
+        let display=super::soop_display::Control::parse(&value);
+        let invalid=display.is_none();
+        return Ok(ParsedLine{display,display_invalid:invalid,..Default::default()});
+    }
     if value["format"] == "atsumi-chat-v1" {
         let kind = value["kind"].as_str().ok_or(())?;
         if !matches!(
             kind,
             "chat" | "donation" | "membership" | "gap" | "connected" | "ended"
-        ) {
+        ) && !(provider=="soop" && kind=="system" && !value["soopMission"].is_null()) {
             return Ok(ParsedLine {
                 items: Vec::new(),
                 unsupported: 1,
+                ..Default::default()
             });
         }
         let mut item = blank(kind);
@@ -638,6 +840,53 @@ fn parse_line(bytes: &[u8], provider: &str) -> Result<ParsedLine, ()> {
         item.parts = stored_parts(&value["parts"]);
         item.amount = value["amount"].as_str().map(|s| clean(s, 80));
         item.color = literal_color(&value["color"]);
+        if provider == "soop" {
+            item.relay_message_id_sha256=value["messageId"].as_str()
+                .filter(|s|s.len()==64&&s.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b))).map(str::to_owned);
+            item.soop = soop_metadata::from_stored(&value["soop"]);
+            if let Some(meta)=item.soop.as_mut().filter(|meta|meta.message_type.is_none()) {
+                if meta.message_color.is_none(){meta.message_color=item.color.clone();}
+            }
+        }
+        if provider == "soop" && kind == "chat" {
+            item.soop_emoticon = crate::soop::chat::ogq::from_stored(&value["soopEmoticon"]);
+            item.soop_display=super::soop_display::Creation::from_stored(&value["soopDisplay"]);
+        }
+        let invalid_soop_display=provider=="soop"&&kind=="chat"&&value.get("soopDisplay").is_some_and(|v|!v.is_null())&&item.soop_display.is_none();
+        let invalid_soop_emoticon = provider == "soop" && kind == "chat"
+            && value.get("soopEmoticon").is_some_and(|v|!v.is_null())
+            && crate::soop::chat::ogq::invalid_stored(&value["soopEmoticon"]);
+        let mission_source=&value["soopMission"];
+        let has_mission=provider=="soop"&&!mission_source.is_null();
+        if has_mission {
+            let mission=crate::soop::chat::missions::from_stored(mission_source);
+            if mission.as_ref().is_some_and(|m|m.row_kind()!=kind) {
+                return Ok(ParsedLine {items:Vec::new(),unsupported:1,..Default::default()});
+            }
+            item.soop_mission=mission;
+            if let Some(meta)=item.soop_mission.as_ref() {
+                item.text=meta.text();item.amount=None;item.parts.clear();item.color=None;
+                if kind!="donation" {item.author.clear();}
+            }
+        }
+        let invalid_soop_mission=has_mission && (item.soop_mission.is_none()||crate::soop::chat::missions::invalid_stored(mission_source));
+        if provider == "soop" && kind == "donation" && !has_mission {
+            item.soop_gift = crate::soop::chat::gifts::from_stored(&value["soopGift"]);
+        }
+        let invalid_soop_gift = provider == "soop" && kind == "donation"
+            && value.get("soopGift").is_some_and(|value| !value.is_null())
+            && item.soop_gift.is_none();
+        if provider=="soop" && kind=="membership" {
+            item.soop_subscription=crate::soop::chat::subscriptions::from_stored(&value["soopSubscription"]);
+            if item.soop_subscription.is_some() {item.amount=None;item.text.clear();}
+        }
+        let invalid_soop_avatar=provider=="soop" && kind=="chat" && !value["soop"]["avatar"].is_null() && item.soop.as_ref().and_then(|m|m.avatar.as_ref()).is_none();
+        let invalid_soop_personalcon=provider=="soop" && kind=="chat" && !value["soop"]["personalcon"].is_null() && item.soop.as_ref().and_then(|m|m.personalcon.as_ref()).is_none();
+        let invalid_soop_subscription=provider=="soop" && kind=="membership"
+            && crate::soop::chat::subscriptions::invalid_stored(&value["soopSubscription"]);
+        let coverage_warning = (provider == "soop" && kind == "gap"
+            && value["coverageWarning"] == "unsupportedSoopRichEvent")
+            .then_some(CoverageWarning::UnsupportedSoopRichEvent);
         item.badges = value["badges"]
             .as_array()
             .into_iter()
@@ -660,8 +909,10 @@ fn parse_line(bytes: &[u8], provider: &str) -> Result<ParsedLine, ()> {
                     .as_str()
                     .filter(|s| s.len() <= 128)
                     .map(str::to_owned),
+                coverage_warning,
             }],
-            unsupported: 0,
+            unsupported: usize::from(coverage_warning.is_some()) + usize::from(invalid_soop_gift) + usize::from(invalid_soop_emoticon) + usize::from(invalid_soop_subscription) + usize::from(invalid_soop_personalcon) + usize::from(invalid_soop_avatar)+usize::from(invalid_soop_display)+usize::from(invalid_soop_mission),
+            ..Default::default()
         });
     }
     Ok(if provider == "soop" {
@@ -876,6 +1127,17 @@ fn insert_line(
         Err(()) => progress.malformed += 1,
         Ok(parsed) => {
             progress.unsupported += parsed.unsupported;
+            progress.display_invalid |= parsed.display_invalid;
+            if let Some(display)=parsed.display {
+                let at=entry.origin.and_then(|origin|i64::try_from(display.received_at_ms).ok()?.checked_sub(origin)).map(|at|at.max(0));
+                if at.is_some_and(|at|at>7*24*3600*1000) {progress.display_invalid=true;}
+                else if !progress.display_invalid {
+                    if progress.display.len()==4096 {progress.display_invalid=true;progress.display.clear();}
+                    else {progress.display.push((progress.offset,at.map(|v|v as u64),display));}
+                    progress.display_total+=1;
+                    if at.is_some(){progress.any_wall=true;}
+                }
+            }
             *units += parsed.items.len();
             for (row, parsed) in parsed.items.into_iter().enumerate() {
                 check_cancelled(entry)?;
@@ -1113,14 +1375,17 @@ fn empty(state: &str) -> ReplayChatPage {
         reordered: 0,
         duplicates: 0,
         partial_file: false,
+        display_metadata_unavailable: false,
         preparation: None,
+        soop_display: None,
+        soop_display_incomplete: false,
     }
 }
 fn preparing(entry: &Entry, offset: u64) -> ReplayChatPage {
     let mut page = empty("indexing");
     page.preparation = Some(ReplayPreparation {
         scanned_bytes: offset,
-        total_bytes: entry.stamp.length,
+        total_bytes: entry.stamp.length.saturating_add(entry.soop_source.as_ref().map_or(0, |source| source.bytes)),
     });
     page.partial_file = partial(entry);
     page
@@ -1155,6 +1420,30 @@ pub(super) fn read_page_for_job(
         SLICE,
     )
 }
+/// A remote sidecar capability may decline an unpinnable optional source for
+/// its entire lifetime. Preserve metadata already stored in normalized events;
+/// only the separate raw display-enrichment source is excluded.
+pub(super) fn read_page_for_job_without_raw_metadata(
+    directory: &Path,
+    provider: &str,
+    job_id: &str,
+    position_ms: u64,
+    cursor: Option<&str>,
+    limit: usize,
+) -> Result<ReplayChatPage, String> {
+    read_page_for_job_using_policy(CACHE.get_or_init(Default::default), directory,
+        provider, job_id, position_ms, cursor, limit, SLICE, false)
+}
+/// A native joined relay owns the same multipart/history format, but has no
+/// completed media job or proven YouTube clock. Manual chronology only; never
+/// infer remote time zero from a local receipt timestamp or an added anchor file.
+pub(crate) fn read_relay_page(directory: &Path, sidecar_id: &str, cursor: Option<&str>, limit: usize) -> Result<ReplayChatPage, String> {
+    read_page_for_job_using_clock_policy(CACHE.get_or_init(Default::default), directory, "soop", sidecar_id,
+        0, Some(cursor.unwrap_or("0")), limit, SLICE, true, false)
+}
+pub(crate) fn read_relay_asset(directory: &Path, id: &str) -> Result<Option<String>, String> {
+    chat_assets::replay_asset(directory, id)
+}
 fn read_page_using(
     cache: &IndexCache,
     directory: &Path,
@@ -1185,6 +1474,33 @@ fn read_page_for_job_using(
     limit: usize,
     budget: SliceBudget,
 ) -> Result<ReplayChatPage, String> {
+    read_page_for_job_using_policy(cache, directory, provider, job_id, position_ms, cursor, limit, budget, true)
+}
+fn read_page_for_job_using_policy(
+    cache: &IndexCache,
+    directory: &Path,
+    provider: &str,
+    job_id: &str,
+    position_ms: u64,
+    cursor: Option<&str>,
+    limit: usize,
+    budget: SliceBudget,
+    allow_raw_metadata: bool,
+) -> Result<ReplayChatPage, String> {
+    read_page_for_job_using_clock_policy(cache, directory, provider, job_id, position_ms, cursor, limit, budget, allow_raw_metadata, true)
+}
+fn read_page_for_job_using_clock_policy(
+    cache: &IndexCache,
+    directory: &Path,
+    provider: &str,
+    job_id: &str,
+    position_ms: u64,
+    cursor: Option<&str>,
+    limit: usize,
+    budget: SliceBudget,
+    allow_raw_metadata: bool,
+    allow_anchor: bool,
+) -> Result<ReplayChatPage, String> {
     // Reject malformed cursors before opening or preparing any derived index.
     let manual = cursor
         .map(|s| {
@@ -1201,7 +1517,7 @@ fn read_page_for_job_using(
         // Only the verified service supplies a job ID. The legacy wrapper passes
         // an empty ID, which a present V2 marker must reject rather than guess.
         if let Some(parts) = chat_parts::replay_source(directory, provider, job_id)? {
-            let (origin, anchor_stamp) = anchor(directory, provider, job_id)?;
+            let (origin, anchor_stamp) = if allow_anchor { anchor(directory, provider, job_id)? } else { (None, None) };
             let signature = Stamp {
                 length: parts.total_event_bytes,
                 modified: 0,
@@ -1221,7 +1537,7 @@ fn read_page_for_job_using(
         };
         let file = open(&path, MAX_FILE)?;
         let signature = stamp(&file)?;
-        let (origin, anchor_stamp) = anchor(directory, provider, job_id)?;
+        let (origin, anchor_stamp) = if allow_anchor { anchor(directory, provider, job_id)? } else { (None, None) };
         Ok::<_, String>(Some((
             path,
             Some(file),
@@ -1242,7 +1558,18 @@ fn read_page_for_job_using(
             return Err(error);
         }
     };
-    let entry = cache.entry(
+    // An optional raw sidecar may improve display fidelity, but must never make
+    // an intact normalized event archive unplayable. Primary raw chat keeps its
+    // existing strict read/parse path and needs no separate metadata source.
+    let (soop_source, soop_unavailable) = if provider == "soop" && !allow_raw_metadata {
+        (None, true)
+    } else if path.file_name().is_some_and(|name| name == "chat.events.jsonl") {
+        match soop_metadata::source(directory, provider, parts.as_ref()) {
+            Ok(source) => (source, false),
+            Err(_) => (None, true),
+        }
+    } else { (None, false) };
+    let entry = cache.entry_with_policy(
         path,
         signature,
         provider,
@@ -1251,6 +1578,9 @@ fn read_page_for_job_using(
         &ticket,
         job_id,
         parts,
+        soop_source,
+        soop_unavailable,
+        !allow_raw_metadata,
     )?;
     let result = read_entry(
         cache,
@@ -1296,6 +1626,7 @@ fn read_entry(
             _permit: permit,
             progress: Progress::default(),
             parts: PartProgress::default(),
+            soop: soop_metadata::Progress::default(),
         });
     }
     let index = state.as_mut().ok_or(CANCELLED)?;
@@ -1308,11 +1639,18 @@ fn read_entry(
         check_cancelled(entry)?;
         return Ok(preparing(entry, index.progress.offset));
     }
+    if soop_metadata::advance(entry, index, budget).is_err() {
+        check_cancelled(entry)?;
+        index.soop.disable();
+    }
+    if !index.soop.ready {
+        return Ok(preparing(entry, index.progress.offset.saturating_add(index.soop.scanned)));
+    }
     let progress = index.progress.clone();
     let unmapped = progress.quality() == "missing-anchor";
     let manual_page = unmapped || manual.is_some();
     let start = manual.unwrap_or(0).min(progress.total);
-    let (locations, next_at_ms) = {
+    let (locations, mut next_at_ms) = {
         let db = &index.database;
         let sql = if manual_page {
             "SELECT off,item,at FROM rows WHERE seq>=?1 ORDER BY seq LIMIT ?2"
@@ -1356,7 +1694,20 @@ fn read_entry(
         };
         (values, next)
     };
+    // Optional appearance history cannot consume/corrupt the primary SQLite
+    // budget. Its separate bounded index is ordered by receipt time + file off.
+    let soop_display=if entry.provider=="soop"&&!progress.display_invalid {
+        if entry.origin.is_some() {
+            let next=progress.display.iter().filter_map(|(_,at,_)|*at).filter(|at|*at>position_ms).min();
+            next_at_ms=match(next_at_ms,next){(Some(a),Some(b))=>Some(a.min(b)),(a,None)=>a,(None,b)=>b};
+            progress.display.iter().filter(|(_,at,_)|at.is_some_and(|at|at<=position_ms)).max_by_key(|(off,at,_)|(*at,*off)).map(|(_,at,c)|c.clone().page(*at))
+        } else {
+            let last_visible=locations.iter().map(|l|l.offset).max().unwrap_or(u64::MAX);
+            progress.display.iter().filter(|(off,_,_)|*off<=last_visible).max_by_key(|(off,_,_)|*off).map(|(_,_,c)|c.clone().page(None))
+        }
+    } else {None};
     let mut items = Vec::new();
+    let mut enriched = Vec::new();
     let mut output_bytes = 2048usize;
     for loc in &locations {
         check_cancelled(entry)?;
@@ -1395,6 +1746,12 @@ fn read_entry(
         };
         if let Ok(parsed) = parse_line(&bytes, &entry.provider) {
             if let Some(mut row) = parsed.items.into_iter().nth(loc.row as usize) {
+                if entry.provider == "soop" && entry.soop_source.is_some() && !entry.soop_unavailable && !index.soop.failed && row.item.soop.is_none() {
+                    if soop_metadata::enrich(&index.database, &mut row).is_err() {
+                        check_cancelled(entry)?;
+                        index.soop.disable();
+                    } else if row.item.soop.is_some() { enriched.push(items.len()); }
+                }
                 row.item.id = format!("{}:{}", loc.offset, loc.row);
                 row.item.time_ms = loc.at;
                 output_bytes += serde_json::to_vec(&row.item)
@@ -1408,18 +1765,27 @@ fn read_entry(
             }
         }
     }
-    if !manual_page {
-        items.reverse();
-    }
     let next = start + items.len();
     if entry.parts.is_some() {
         validate_parts(entry)?;
     } else {
         validate_source(entry, file.as_deref().ok_or(CHANGED)?)?;
     }
+    if !index.soop.failed {
+        if let Some(source) = &entry.soop_source {
+            if source.verify(&index.soop).is_err() {
+                check_cancelled(entry)?;
+                index.soop.disable();
+            }
+        }
+    }
+    if index.soop.failed {
+        for ordinal in enriched { if let Some(item) = items.get_mut(ordinal) { item.soop = None; } }
+    }
+    if !manual_page { items.reverse(); }
     Ok(ReplayChatPage {
         items,
-        state: if progress.total == 0 {
+        state: if progress.total == 0 && progress.display_total==0 {
             "empty"
         } else if unmapped {
             "unmapped"
@@ -1438,13 +1804,87 @@ fn read_entry(
         reordered: progress.reordered,
         duplicates: progress.duplicates,
         partial_file: partial(entry),
+        display_metadata_unavailable: entry.soop_unavailable || index.soop.failed,
         preparation: None,
+        soop_display,
+        soop_display_incomplete: progress.display_invalid,
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn soop_gift_normalizes_public_fields_and_roundtrips_without_money_inference() {
+        for (service, kind, relay) in [(18, "balloon", false), (33, "balloon", true), (105, "videoBalloon", true)] {
+            let raw = serde_json::json!({"kind":"donation","receivedAtMs":1700000001000u64,"messageId":"fixture-public-event",
+                "nickname":"Public viewer <b>","text":"must not invent a gift body","extra":{"service":service,
+                "fileName":"custom_not_exported","soopGift":{"kind":kind,"count":100,"relay":relay,"fanOrder":7,"topFan":true,"isDefault":false}}});
+            let normalized = normalize_public_line("soop", &serde_json::to_vec(&raw).unwrap()).unwrap();
+            assert_eq!(normalized.len(), 1);
+            assert_eq!(normalized[0].source_timestamp_ms, Some(1700000001000));
+            assert_eq!(normalized[0].author, "Public viewer <b>");
+            assert!(normalized[0].text.is_empty() && normalized[0].amount.is_none());
+            assert_eq!(normalized[0].soop_gift.as_ref().unwrap().count, 100);
+            let stored = serde_json::to_vec(&normalized[0]).unwrap();
+            let text = String::from_utf8(stored.clone()).unwrap();
+            assert!(!text.contains("custom_not_exported") && !text.contains("fixture-public-event"));
+            let replay = parse_line(&stored, "soop").unwrap();
+            assert_eq!(replay.items[0].item.soop_gift, normalized[0].soop_gift);
+            assert_eq!(replay.items[0].wall_ms, Some(1700000001000));
+            assert!(parse_line(&stored, "youtube").unwrap().items[0].item.soop_gift.is_none());
+        }
+    }
+    #[test]
+    fn gift_asset_ids_roundtrip_but_source_requests_cannot_be_deserialized() {
+        let base=serde_json::json!({"format":"atsumi-chat-v1","kind":"donation","receivedAtMs":1700000001000u64,"author":"fixture","text":"","badges":[],
+            "soopGift":{"kind":"balloon","count":50,"relay":false,"isDefault":false,"imageAssetId":"a".repeat(64)},
+            "giftAsset":{"url":"https://127.0.0.1/private","id":"a".repeat(64)}});
+        let event:NormalizedChatEvent=serde_json::from_value(base.clone()).unwrap();
+        assert!(event.gift_asset.is_none());
+        assert_eq!(event.soop_gift.as_ref().unwrap().image_asset_id.as_deref(),Some("a".repeat(64).as_str()));
+        let encoded=serde_json::to_vec(&event).unwrap();
+        assert!(!String::from_utf8_lossy(&encoded).contains("127.0.0.1"));
+        let parsed=parse_line(&encoded,"soop").unwrap();assert_eq!(parsed.items[0].item.soop_gift,event.soop_gift);
+        for invalid in [serde_json::json!("../asset"),serde_json::json!("https://evil.test/a"),serde_json::json!(12)] {
+            let mut bad=base.clone();bad["soopGift"]["imageAssetId"]=invalid;
+            let parsed=parse_line(&serde_json::to_vec(&bad).unwrap(),"soop").unwrap();
+            let gift=parsed.items[0].item.soop_gift.as_ref().unwrap();assert_eq!(gift.count,50);assert!(gift.image_asset_id.is_none());
+        }
+    }
+    #[test]
+    fn unsupported_soop_warning_is_closed_and_never_a_private_service() {
+        let services = [18, 20, 34, 45, 70, 71, 86, 87, 91, 92, 93, 102, 103, 107, 108, 109, 118, 120, 121, 125, 142, 143];
+        for (service, expected) in services.into_iter().map(|service| (service, true))
+            .chain([4, 9, 16, 26, 37, 38, 130, 144].into_iter().map(|service| (service, false))) {
+            let raw = serde_json::json!({"kind":"gap","receivedAtMs":1700000001000u64,"text":SOOP_RICH_WARNING,
+                "extra":{"service":service,"coverageWarning":"unsupportedSoopRichEvent"}});
+            let normalized = normalize_public_line("soop", &serde_json::to_vec(&raw).unwrap()).unwrap();
+            assert_eq!(normalized[0].coverage_warning.is_some(), expected);
+            let stored = serde_json::to_vec(&normalized[0]).unwrap();
+            assert_eq!(parse_line(&stored, "soop").unwrap().unsupported, usize::from(expected));
+            assert_eq!(parse_line(&stored, "youtube").unwrap().unsupported, 0);
+        }
+        let raw = serde_json::json!({"kind":"donation","extra":{"service":9,"soopGift":{"kind":"balloon","count":10,"relay":false,"isDefault":true}}});
+        assert!(normalize_public_line("soop", &serde_json::to_vec(&raw).unwrap()).unwrap().is_empty());
+        let mut invalid = serde_json::to_value(normalize_public_line("soop", br#"{"kind":"chat","nickname":"fixture","text":"public"}"#).unwrap().remove(0)).unwrap();
+        invalid["coverageWarning"] = serde_json::json!("unknown");
+        assert!(serde_json::from_value::<NormalizedChatEvent>(invalid).is_err());
+    }
+    #[test]
+    fn invalid_stored_soop_gift_is_partial_but_keeps_legacy_donation_text() {
+        let legacy = serde_json::json!({"format":"atsumi-chat-v1","kind":"donation","author":"fixture","text":"legacy public donation"});
+        assert_eq!(parse_line(&serde_json::to_vec(&legacy).unwrap(), "soop").unwrap().unsupported, 0);
+        for gift in [serde_json::json!({"kind":"balloon","count":0,"relay":false,"isDefault":true}),
+            serde_json::json!({"kind":"unknown","count":10,"relay":false,"isDefault":true})] {
+            let mut row = legacy.clone(); row["soopGift"] = gift;
+            let parsed = parse_line(&serde_json::to_vec(&row).unwrap(), "soop").unwrap();
+            assert_eq!(parsed.unsupported, 1);
+            assert_eq!(parsed.items[0].item.text, "legacy public donation");
+            assert!(parsed.items[0].item.soop_gift.is_none());
+            assert_eq!(parse_line(&serde_json::to_vec(&row).unwrap(), "youtube").unwrap().unsupported, 0);
+        }
+    }
     #[test]
     fn normalized_soop_vod_offsets_are_explicit_without_changing_live_or_youtube() {
         let row=br#"{"format":"atsumi-chat-v1","kind":"chat","videoOffsetMs":12500,"receivedAtMs":0,"author":"Fixture","text":"fixture"}"#;
@@ -1808,6 +2248,49 @@ mod tests {
             units: 257,
             time: PREPARE_TIME,
         }
+    }
+    #[test]
+    fn raw_metadata_policies_prepare_independently_with_the_same_two_database_cap() {
+        let directory = tempfile::tempdir().unwrap();
+        anchor_file(directory.path());
+        let rows: Vec<_> = (0..6).map(|n| serde_json::json!({
+            "format":"atsumi-chat-v1","kind":"chat","author":"fixture","text":"public fixture",
+            "receivedAtMs":1_700_000_001_000u64+n*1000,"messageId":format!("fixture-{n}"),
+            "soop":{"flag1":32,"flag2":0}
+        })).collect();
+        write(directory.path(), "chat.events.jsonl", &rows);
+        let cache = IndexCache::default();
+        let mut previous = [0u64; 2];
+        let mut ready = [false; 2];
+        for _ in 0..8 {
+            for (slot, allow) in [false, true].into_iter().enumerate() {
+                let page = read_page_for_job_using_policy(&cache, directory.path(), "soop", "", 10000,
+                    None, 120, one_line_budget(), allow).unwrap();
+                if page.state == "indexing" {
+                    let offset = page.preparation.unwrap().scanned_bytes;
+                    assert!(offset > previous[slot], "sibling policy restarted preparation");
+                    previous[slot] = offset;
+                } else {
+                    assert_eq!(page.items.len(), 6);
+                    assert!(page.items.iter().all(|row| row.soop.as_ref().is_some_and(|metadata| metadata.badge == "fan")));
+                    assert_eq!(page.display_metadata_unavailable, !allow);
+                    ready[slot] = true;
+                }
+            }
+        }
+        assert!(ready.into_iter().all(|value| value));
+        assert_eq!(cache.databases.load(Ordering::Acquire), 2);
+        let held: Vec<_> = cache.registry.lock().unwrap().entries.iter().cloned().collect();
+        assert_eq!(held.len(), 2);
+        // A changed primary generation must still revoke both policies.
+        let mut replacement = rows; replacement.push(serde_json::json!({"kind":"chat","receivedAtMs":1_700_000_009_000u64,"text":"new"}));
+        write(directory.path(), "chat.events.jsonl", &replacement);
+        read_page_for_job_using_policy(&cache, directory.path(), "soop", "", 10000, None, 120, one_line_budget(), true).unwrap();
+        assert!(held.iter().all(|entry| entry.cancelled.load(Ordering::Acquire)));
+        assert_eq!(cache.registry.lock().unwrap().entries.len(), 1);
+        assert_eq!(cache.databases.load(Ordering::Acquire), 2);
+        drop(held);
+        assert_eq!(cache.databases.load(Ordering::Acquire), 0);
     }
     fn cached_entry(cache: &IndexCache, directory: &Path) -> Arc<Entry> {
         cache
@@ -2395,6 +2878,8 @@ mod tests {
                 ticket,
                 "",
                 None,
+                None,
+                false,
             );
             if cancelled {
                 assert!(matches!(entry, Err(error) if error == CANCELLED));
@@ -2549,5 +3034,29 @@ mod tests {
             page.malformed_lines,
             page.unsupported_items
         );
+    }
+}
+
+#[cfg(test)]
+mod relay_event_identity_tests {
+    use super::*;
+    #[test]
+    fn normalized_uuid_digest_is_native_only_and_never_changes_visible_row() {
+        let hash="ab".repeat(32);
+        let bytes=serde_json::to_vec(&serde_json::json!({"format":"atsumi-chat-v1","kind":"chat","author":"public",
+            "text":"saved","messageId":hash,"receivedAtMs":1000})).unwrap();
+        let row=parse_line(&bytes,"soop").unwrap().items.remove(0).item;
+        assert_eq!(row.relay_message_id_sha256.as_deref(),Some(hash.as_str()));
+        let value=serde_json::to_value(&row).unwrap();assert!(value.get("relayMessageIdSha256").is_none());
+        assert_eq!(value["author"],"public");assert_eq!(value["text"],"saved");
+        let youtube=parse_line(&bytes,"youtube").unwrap().items.remove(0).item;
+        assert!(youtube.relay_message_id_sha256.is_none());
+    }
+    #[test]
+    fn malformed_or_raw_source_identifiers_do_not_become_normalized_digest() {
+        for id in ["", "33333333-3333-4333-8333-333333333333", &"AB".repeat(32)] {
+            let bytes=serde_json::to_vec(&serde_json::json!({"format":"atsumi-chat-v1","kind":"chat","author":"public","text":"saved","messageId":id})).unwrap();
+            assert!(parse_line(&bytes,"soop").unwrap().items.remove(0).item.relay_message_id_sha256.is_none());
+        }
     }
 }

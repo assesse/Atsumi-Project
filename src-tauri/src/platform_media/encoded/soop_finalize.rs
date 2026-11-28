@@ -1,8 +1,14 @@
 //! SOOP-only bounded salvage/retry. A stop marker is reporting evidence, not
 //! permission to skip media verification or delete original data.
 use super::*;
+#[path = "soop_tail.rs"]
+mod tail;
+#[path = "soop_concat.rs"]
+pub(in crate::platform_media) mod concat;
 
 const STOP: &str = "encoded-stop.json";
+const DIAGNOSTIC: &str = "encoded-stop-diagnostic.json";
+const MAX_DIAGNOSTIC_BYTES: usize = 8192;
 const MERGE_ERROR: &str = "라이브 병합에 실패했습니다. 원본 조각을 보존했습니다.";
 
 #[derive(Serialize, Deserialize)]
@@ -12,6 +18,79 @@ struct StopProof {
     job_id: String,
     owner_sha256: String,
     manifest_sha256: String,
+}
+
+// This separate, write-once record is never read by outcome/preflight. It
+// explains a finish attempt but cannot authorize salvage or change its result.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum StopReason {
+    CallerInterrupted,
+    PartialAppend,
+    IncompleteFragment,
+    IncompleteAudioTail,
+    OtherMuxerError,
+    CommitFailure,
+    StopProofFailure,
+    OwnershipChanged,
+}
+
+fn track_stats(stats: &fmp4::PendingTrackStats) -> serde_json::Value {
+    serde_json::json!({
+        "timescale":stats.timescale, "samples":stats.samples, "bytes":stats.bytes,
+        "firstDts":stats.first_dts, "lastEnd":stats.last_end,
+        "lastDuration":stats.last_duration,
+    })
+}
+
+fn pending_stats(stats: &fmp4::PendingStats) -> serde_json::Value {
+    serde_json::json!({
+        "video":track_stats(&stats.video), "audio":track_stats(&stats.audio),
+        "nextVideoCutDts":stats.next_video_cut_dts,
+        "inputPendingBytes":stats.input_pending_bytes, "inputMoofBytes":stats.input_moof_bytes,
+        "inputMoofCount":stats.input_moof_count, "started":stats.started, "failed":stats.failed,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StopDiagnostic {
+    version: u32,
+    binding: StopProof,
+    reasons: Vec<StopReason>,
+    finish_succeeded: bool,
+    committed_segments_before: u64,
+    committed_segments_after: u64,
+    partial_append_bytes: u64,
+    before: serde_json::Value,
+    after: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tail_retention: Option<tail::Report>,
+}
+
+fn write_diagnostic(path: &Path, diagnostic: &StopDiagnostic) -> Result<(), String> {
+    let bytes = serde_json::to_vec(diagnostic).map_err(|_| ERROR)?;
+    if bytes.len() > MAX_DIAGNOSTIC_BYTES { return Err(ERROR.into()); }
+    storage::safe_path(path)?;
+    let mut file = fs::OpenOptions::new().create_new(true).write(true).open(path).map_err(|_| ERROR)?;
+    std::io::Write::write_all(&mut file, &bytes).map_err(|_| ERROR)?;
+    file.sync_all().map_err(|_| ERROR.into())
+}
+
+fn diagnostic(
+    writer: &Writer, before: &fmp4::PendingStats, reasons: Vec<StopReason>,
+    committed_before: u64, partial_append_bytes: u64, finish_succeeded: bool,
+    tail_retention: Option<tail::Report>,
+) -> Result<(), String> {
+    owner(&writer.lease.service, &writer.job, &writer.cancel)?;
+    let proof = binding(&writer.job, &writer.directory, &writer.cancel)?;
+    write_diagnostic(&writer.directory.join(DIAGNOSTIC), &StopDiagnostic {
+        version: 1, binding: proof, reasons, finish_succeeded,
+        committed_segments_before: committed_before,
+        committed_segments_after: writer.segments.len() as u64,
+        partial_append_bytes, before: pending_stats(before), after: pending_stats(&writer.muxer.pending_stats()),
+        tail_retention,
+    })
 }
 
 fn eligible(job: &MediaJob) -> bool {
@@ -69,9 +148,14 @@ pub(in crate::platform_media) fn outcome(
     job: &MediaJob, directory: &Path, cancel: &AtomicBool,
 ) -> Result<Option<super::super::capture_outcome::CaptureOutcome>, String> {
     if !eligible(job) { return Ok(None); }
+    let retained = tail::validate_overlap(job, directory, cancel)?;
     let path = directory.join(STOP);
     match fs::symlink_metadata(&path) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // Interrupted admission may have stopped after the segment append
+            // or proof reservation. A restart must never call it complete.
+            return if retained.is_some() { Err(ERROR.into()) } else { Ok(None) };
+        }
         Err(_) => return Err(ERROR.into()),
         Ok(_) => (),
     }
@@ -87,13 +171,21 @@ pub(in crate::platform_media) fn outcome(
         || proof.owner_sha256 != expected.owner_sha256
         || proof.manifest_sha256 != expected.manifest_sha256
     { return Err(ERROR.into()); }
+    if let Some((units, bytes)) = retained.filter(|(units, _)| *units != [0;2]) {
+        return serde_json::from_value(serde_json::json!({"state":"interrupted",
+            "reasons":["source_interrupted","audio_coverage_tail"],"excludedUnits":units,"excludedBytes":bytes}))
+            .map(Some).map_err(|_| ERROR.into());
+    }
     Ok(Some(super::super::capture_outcome::CaptureOutcome::soop_interrupted()))
 }
 
 fn mark(writer: &Writer) -> Result<(), String> {
     owner(&writer.lease.service, &writer.job, &writer.cancel)?;
     if writer.segments.is_empty()
-        || recovery_segments_cancellable(&writer.job, &writer.directory, &writer.cancel)? != writer.segments
+        || !same_segments(
+            &recovery_segments_cancellable(&writer.job, &writer.directory, &writer.cancel)?,
+            &writer.segments,
+        )
     { return Err(ERROR.into()); }
     let proof = binding(&writer.job, &writer.directory, &writer.cancel)?;
     write_new_json(&writer.directory.join(STOP), &proof)?;
@@ -113,23 +205,84 @@ fn incomplete_audio(code: &str, message: &str) -> bool {
 pub(super) fn finish(writer: &mut Writer, interrupted: bool) -> Result<(), String> {
     owner(&writer.lease.service, &writer.job, &writer.cancel)?;
     if writer.poisoned { return Err(ERROR.into()); }
-    let mut interrupted = interrupted || writer.partial.is_some();
-    let mut tail = if interrupted { writer.muxer.finish_discontinuity() } else { writer.muxer.finish() };
-    if !interrupted && tail.as_ref().is_err_and(|error| incomplete_box(&error.code, &error.message)) {
-        interrupted = true;
-        tail = writer.muxer.finish_discontinuity();
-    }
-    match tail {
-        Ok(parts) => writer.commit(parts)?, // A write/hash/commit failure is never salvageable here.
-        Err(error) if incomplete_audio(&error.code, &error.message) && !writer.segments.is_empty() => {
-            // The unfinished A/V tail was not committed. Only preceding,
-            // independently valid durable segments are eligible for verification.
+    let before = writer.muxer.pending_stats();
+    // A later flush error can follow an already consumed earlier cut. Preserve
+    // the complete pre-finish samples; never reset the muxer's failed flag.
+    let pending = writer.muxer.pending_snapshot();
+    let mut tail_retention = None;
+    let committed_before = writer.segments.len() as u64;
+    let partial_append_bytes = writer.partial.as_ref().map_or(0, |partial| partial.bytes.len() as u64);
+    let mut reasons = Vec::new();
+    if interrupted { reasons.push(StopReason::CallerInterrupted); }
+    if writer.partial.is_some() { reasons.push(StopReason::PartialAppend); }
+    let result = (|| {
+        let mut interrupted = interrupted || writer.partial.is_some();
+        let mut tail = if interrupted { writer.muxer.finish_discontinuity() } else { writer.muxer.finish() };
+        if !interrupted && tail.as_ref().is_err_and(|error| incomplete_box(&error.code, &error.message)) {
+            reasons.push(StopReason::IncompleteFragment);
             interrupted = true;
+            tail = writer.muxer.finish_discontinuity();
         }
-        Err(error) => return Err(error.message),
+        match tail {
+            Ok(parts) => {
+                if let Err(error) = writer.commit(parts) {
+                    reasons.push(StopReason::CommitFailure);
+                    return Err(error); // Never salvage a write/hash/commit failure.
+                }
+            }
+            Err(error) if incomplete_audio(&error.code, &error.message) => {
+                reasons.push(StopReason::IncompleteAudioTail);
+                if let Ok(snapshot) = pending.as_ref() {
+                    match tail::preserve(writer, snapshot) {
+                        Ok(report) => {
+                            tail_retention = Some(report);
+                            // The original lossless bundle is durable FIRST.
+                            // Any later admission error stays an error, including
+                            // after a partial append or an empty reserved proof.
+                            tail::commit_overlap(writer, snapshot)?;
+                        }
+                        Err(_) => tail_retention = Some(tail::Report::unavailable()),
+                    }
+                } else { tail_retention = Some(tail::Report::unavailable()); }
+                if writer.segments.is_empty() { return Err(error.message); }
+                // The common prefix is playable, but excluded samples remain
+                // retained and the capture is still explicitly interrupted.
+                interrupted = true;
+            }
+            Err(error) => {
+                reasons.push(StopReason::OtherMuxerError);
+                return Err(error.message);
+            }
+        }
+        if interrupted {
+            if let Err(error) = mark(writer) {
+                reasons.push(StopReason::StopProofFailure);
+                return Err(error);
+            }
+        }
+        owner(&writer.lease.service, &writer.job, &writer.cancel).map_err(|error| {
+            reasons.push(StopReason::OwnershipChanged);
+            error
+        })
+    })();
+    if diagnostic(writer, &before, reasons, committed_before, partial_append_bytes, result.is_ok(), tail_retention).is_err() {
+        // Diagnostics cannot turn a valid finish into a failure or hide a core
+        // failure. Do not log caller errors, source identifiers, or media bytes.
+        eprintln!("SOOP_STOP_DIAGNOSTIC_UNAVAILABLE");
     }
-    if interrupted { mark(writer)?; }
-    owner(&writer.lease.service, &writer.job, &writer.cancel)
+    result
+}
+
+fn same_segments(saved: &[(String, f64)], current: &[(String, f64)]) -> bool {
+    saved.len() == current.len() && saved.iter().zip(current).all(|((name, duration), (other, expected))| {
+        // serde_json's default parser can move a serialized f64 by one ULP.
+        // Keep exact segment identity and reject any larger duration change;
+        // file hashes, owner proofs and decoded-media checks remain separate.
+        name == other
+            && duration.is_finite() && *duration > 0.0 && *duration <= 120.0
+            && expected.is_finite() && *expected > 0.0 && *expected <= 120.0
+            && duration.to_bits().abs_diff(expected.to_bits()) <= 1
+    })
 }
 
 pub(in crate::platform_media) fn preflight(
@@ -138,7 +291,7 @@ pub(in crate::platform_media) fn preflight(
 ) -> Result<(), String> {
     owner(service, job, cancel)?;
     if directory != storage::job_dir(&job.download_root, "soop", &job.job_id)?
-        || recovery_segments_cancellable(job, directory, cancel)? != segments
+        || !same_segments(&recovery_segments_cancellable(job, directory, cancel)?, segments)
     { return Err(ERROR.into()); }
     outcome(job, directory, cancel)?;
     if fs2::available_space(directory).map_err(|_| "남은 저장 공간을 확인하지 못했습니다.")? < reserve {
@@ -175,6 +328,313 @@ pub(in crate::platform_media) fn merge<T>(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    fn with_diagnostic_writer(test: impl FnOnce(&mut Writer)) {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("no-network-or-media-tool.exe");
+        let service = PlatformMediaService::new(root.path().join("data"), PlatformMediaTools {
+            yt_dlp: missing.clone(), deno: missing.clone(), ffmpeg: missing.clone(), ffprobe: missing,
+        }, None).unwrap();
+        service.inner.synthetic_live_receiver.store(true, Ordering::Release);
+        let lease = service.reserve_official_receiver(
+            MediaRef { provider: "soop".into(), kind: "live".into(), external_id: "fixture".into() },
+            "123".into(), uuid::Uuid::new_v4().to_string(), root.path().join("media"),
+        ).unwrap();
+        let mut archive = lease.begin_encoded(
+            uuid::Uuid::new_v4().to_string(), 1, uuid::Uuid::new_v4().to_string(),
+            fmp4::fixtures::inputs(), "fixture".into(), "fixture".into(), live::RecordingOwner::Manual,
+        ).unwrap();
+        let job_id = archive.writer.as_ref().unwrap().job.job_id.clone();
+        test(archive.writer.as_mut().unwrap());
+        // Normal archive destruction drains the synthetic owner; no real media
+        // tools, provider session, user's profile or recording is involved.
+        drop(archive);
+        let deadline = std::time::Instant::now();
+        loop {
+            let state = service.inner.state.lock().unwrap();
+            if !state.cancel.contains_key(&job_id) { break; }
+            drop(state);
+            assert!(deadline.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        drop(lease);
+        service.shutdown();
+    }
+
+    fn feed(writer: &mut Writer, track: u32, start: u64, count: u32) {
+        let parts = writer.muxer.push(track, &fmp4::fixtures::fragment(track, start, count, true)).unwrap();
+        writer.commit(parts).unwrap();
+    }
+
+    fn read_diagnostic(writer: &Writer) -> serde_json::Value {
+        let bytes = fs::read(writer.directory.join(DIAGNOSTIC)).unwrap();
+        assert!(bytes.len() <= MAX_DIAGNOSTIC_BYTES);
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let expected = serde_json::to_value(binding(&writer.job, &writer.directory, &writer.cancel).unwrap()).unwrap();
+        assert_eq!(value["binding"], expected);
+        assert_eq!(value["version"], 1);
+        assert!(value.get("message").is_none());
+        value
+    }
+
+    #[test]
+    fn stop_diagnostic_records_actual_pending_audio_gap_without_changing_prefix() {
+        with_diagnostic_writer(|writer| {
+            feed(writer, 0, 0, 24);
+            feed(writer, 1, 0, 24);
+            feed(writer, 0, 12 * u64::from(fmp4::fixtures::VIDEO_SCALE), 4);
+            let previous = writer.segments.clone();
+            assert_eq!(previous.len(), 1);
+            finish(writer, false).unwrap();
+            assert_eq!(writer.segments, previous);
+            let diagnostic = read_diagnostic(writer);
+            assert_eq!(diagnostic["reasons"], serde_json::json!(["incomplete_audio_tail"]));
+            assert_eq!(diagnostic["finishSucceeded"], true);
+            assert_eq!(diagnostic["committedSegmentsBefore"], 1);
+            assert_eq!(diagnostic["committedSegmentsAfter"], 1);
+            assert_eq!(diagnostic["before"]["video"]["samples"], 4);
+            assert_eq!(diagnostic["before"]["video"]["firstDts"], 1_080_000);
+            assert_eq!(diagnostic["before"]["video"]["lastEnd"], 1_260_000);
+            assert_eq!(diagnostic["before"]["audio"]["samples"], 0);
+            assert_eq!(diagnostic["before"]["video"], diagnostic["after"]["video"]);
+            assert_eq!(diagnostic["tailRetention"]["state"], "retained");
+            assert_eq!(diagnostic["tailRetention"]["sampleCount"], 4);
+            assert_eq!(diagnostic["tailRetention"]["partialMp4"], "unavailable");
+            assert!(writer.directory.join(tail::BUNDLE).is_file());
+            // The old proof remains the sole interrupted-outcome authority.
+            assert!(outcome(&writer.job, &writer.directory, &writer.cancel).unwrap().is_some());
+            let old = fs::read(writer.directory.join(STOP)).unwrap();
+            assert_eq!(serde_json::from_slice::<StopProof>(&old).unwrap().version, 1);
+            fs::write(writer.directory.join(DIAGNOSTIC), b"not a proof").unwrap();
+            assert!(outcome(&writer.job, &writer.directory, &writer.cancel).unwrap().is_some());
+        });
+    }
+
+    #[test]
+    fn stop_diagnostic_distinguishes_normal_partial_fragment_and_partial_append() {
+        for mode in 0..4 {
+            with_diagnostic_writer(|writer| {
+                feed(writer, 0, 0, 4);
+                feed(writer, 1, 0, 4);
+                if mode == 1 { writer.muxer.push(0, &[0, 0, 0]).unwrap(); }
+                if mode == 2 {
+                    writer.partial = Some(PartialAppend { track: 0, index: 1, next_chunk: 1, bytes: vec![0; 3] });
+                }
+                finish(writer, mode == 3).unwrap();
+                let diagnostic = read_diagnostic(writer);
+                let expected = match mode {
+                    0 => serde_json::json!([]),
+                    1 => serde_json::json!(["incomplete_fragment"]),
+                    2 => serde_json::json!(["partial_append"]),
+                    _ => serde_json::json!(["caller_interrupted"]),
+                };
+                assert_eq!(diagnostic["reasons"], expected);
+                assert_eq!(diagnostic["finishSucceeded"], true);
+                assert_eq!(diagnostic["committedSegmentsAfter"], 1);
+                assert_eq!(diagnostic["before"]["inputPendingBytes"], if mode == 1 { 3 } else { 0 });
+                assert_eq!(diagnostic["after"]["inputPendingBytes"], 0);
+                assert_eq!(diagnostic["partialAppendBytes"], if mode == 2 { 3 } else { 0 });
+                assert!(diagnostic.get("tailRetention").is_none());
+                assert!(!writer.directory.join(tail::BUNDLE).exists());
+                assert_eq!(outcome(&writer.job, &writer.directory, &writer.cancel).unwrap().is_some(), mode != 0);
+            });
+        }
+    }
+
+    #[test]
+    fn stop_diagnostic_failure_never_overwrites_or_changes_success_or_core_error() {
+        for fail_core in [false, true] {
+            with_diagnostic_writer(|writer| {
+                feed(writer, 0, 0, 24);
+                feed(writer, 1, 0, 24);
+                feed(writer, 0, 12 * u64::from(fmp4::fixtures::VIDEO_SCALE), 4);
+                let path = writer.directory.join(DIAGNOSTIC);
+                fs::write(&path, b"existing diagnostic stays").unwrap();
+                if fail_core { fs::write(writer.directory.join(STOP), b"existing proof stays").unwrap(); }
+                let result = finish(writer, false);
+                assert_eq!(result.is_ok(), !fail_core);
+                assert_eq!(fs::read(&path).unwrap(), b"existing diagnostic stays");
+                assert_eq!(writer.segments.len(), 1);
+                if fail_core { assert_eq!(fs::read(writer.directory.join(STOP)).unwrap(), b"existing proof stays"); }
+                else { assert!(outcome(&writer.job, &writer.directory, &writer.cancel).unwrap().is_some()); }
+            });
+        }
+    }
+
+    #[test]
+    fn audio_tail_retention_commits_only_complete_overlap_and_keeps_historical_binding() {
+        with_diagnostic_writer(|writer| {
+            feed(writer,0,0,24);feed(writer,1,0,24);
+            feed(writer,0,12*u64::from(fmp4::fixtures::VIDEO_SCALE),4);
+            feed(writer,1,12*u64::from(fmp4::fixtures::AUDIO_SCALE),2);
+            let previous=writer.segments.clone();let manifest=fs::read(writer.directory.join(MANIFEST)).unwrap();
+            finish(writer,false).unwrap();
+            assert_eq!(&writer.segments[..previous.len()],&previous);
+            assert_eq!(writer.segments.len(),previous.len()+1);
+            assert!(fs::read(writer.directory.join(MANIFEST)).unwrap().starts_with(&manifest));
+            let retained:serde_json::Value=serde_json::from_slice(&fs::read(writer.directory.join(tail::MANIFEST)).unwrap()).unwrap();
+            assert_eq!(retained["state"],"retained");assert_eq!(retained["video"]["samples"],4);assert_eq!(retained["audio"]["samples"],2);
+            assert_eq!(retained["partialMp4"]["state"],"unverified");assert_eq!(retained["publicationAuthorized"],false);
+            assert_eq!(retained["bundle"]["sha256"],storage::hash(&writer.directory.join(tail::BUNDLE),&writer.cancel).unwrap());
+            assert_eq!(retained["binding"]["manifest_sha256"],format!("{:x}",Sha256::digest(&manifest)));
+            let result=serde_json::to_value(outcome(&writer.job,&writer.directory,&writer.cancel).unwrap().unwrap()).unwrap();
+            assert_eq!(result["state"],"interrupted");assert_eq!(result["excludedUnits"],serde_json::json!([2,0]));
+            let proof:serde_json::Value=serde_json::from_slice(&fs::read(writer.directory.join("encoded-tail-overlap.json")).unwrap()).unwrap();
+            assert_eq!(proof["publicationAuthorized"],false);
+            assert_eq!(proof["video"]["samples"],2);assert_eq!(proof["audio"]["samples"],2);
+            assert_eq!(proof["video"]["excludedSamples"],2);
+        });
+    }
+    #[test]
+    fn first_rejected_tail_is_retained_without_inventing_prefix_or_stop_proof() {
+        with_diagnostic_writer(|writer| {
+            feed(writer,0,0,4);feed(writer,1,0,2);
+            // Unsupported presentation reordering is retained, never guessed.
+            let mut snapshot=writer.muxer.pending_snapshot().unwrap();snapshot.video.samples[0].cts=1;
+            tail::preserve(writer,&snapshot).unwrap();
+            assert!(!tail::commit_overlap(writer,&snapshot).unwrap());
+            assert!(writer.segments.is_empty());assert!(!writer.directory.join(STOP).exists());
+            assert!(!writer.directory.join(MANIFEST).exists());
+            assert!(outcome(&writer.job,&writer.directory,&writer.cancel).is_err());
+            let retained:serde_json::Value=serde_json::from_slice(&fs::read(writer.directory.join(tail::MANIFEST)).unwrap()).unwrap();
+            assert_eq!(retained["state"],"retained");assert!(retained["binding"]["manifest_sha256"].is_null());
+        });
+    }
+    #[test]
+    fn retention_collision_does_not_overwrite_or_change_prefix_result() {
+        with_diagnostic_writer(|writer| {
+            feed(writer,0,0,24);feed(writer,1,0,24);
+            feed(writer,0,12*u64::from(fmp4::fixtures::VIDEO_SCALE),4);
+            fs::write(writer.directory.join(tail::BUNDLE),b"existing").unwrap();
+            finish(writer,false).unwrap();
+            assert_eq!(fs::read(writer.directory.join(tail::BUNDLE)).unwrap(),b"existing");
+            assert_eq!(read_diagnostic(writer)["tailRetention"]["state"],"unavailable");
+            // An orphan retained artifact cannot be treated as a complete
+            // capture on restart even when the old prefix is valid.
+            assert!(outcome(&writer.job,&writer.directory,&writer.cancel).is_err());
+        });
+    }
+    #[test]
+    fn first_complete_overlap_uses_normal_anchor_and_remains_interrupted() {
+        with_diagnostic_writer(|writer| {
+            feed(writer,0,0,4);feed(writer,1,0,2);
+            finish(writer,false).unwrap();assert_eq!(writer.segments.len(),1);
+            assert!(writer.directory.join("chat-timeline.json").is_file());
+            let retained:serde_json::Value=serde_json::from_slice(&fs::read(writer.directory.join(tail::MANIFEST)).unwrap()).unwrap();
+            assert!(retained["binding"]["manifest_sha256"].is_null());
+            let result=serde_json::to_value(outcome(&writer.job,&writer.directory,&writer.cancel).unwrap()).unwrap();
+            assert_eq!(result["state"],"interrupted");assert_eq!(result["excludedUnits"],serde_json::json!([2,0]));
+            preflight(&writer.lease.service,&writer.job,&writer.directory,&writer.cancel,&writer.segments,0).unwrap();
+        });
+    }
+    #[test]
+    fn overlap_crash_or_missing_proof_never_becomes_complete_on_restart() {
+        for mode in 0..7 {
+            with_diagnostic_writer(|writer| {
+                feed(writer,0,0,24);feed(writer,1,0,24);
+                feed(writer,0,12*u64::from(fmp4::fixtures::VIDEO_SCALE),4);
+                feed(writer,1,12*u64::from(fmp4::fixtures::AUDIO_SCALE),2);
+                finish(writer,false).unwrap();
+                let path=writer.directory.join("encoded-tail-overlap.json");
+                let mut proof:serde_json::Value=serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+                match mode {
+                    0=>fs::write(&path,b"").unwrap(),
+                    1=>fs::write(&path,b"{\"version\":1").unwrap(),
+                    2=>fs::remove_file(&path).unwrap(),
+                    3=>fs::remove_file(writer.directory.join(STOP)).unwrap(),
+                    4=>{proof["parentSha256"]=serde_json::json!("0".repeat(64));fs::write(&path,serde_json::to_vec(&proof).unwrap()).unwrap();},
+                    5=>{proof["resultSha256"]=serde_json::json!("0".repeat(64));fs::write(&path,serde_json::to_vec(&proof).unwrap()).unwrap();},
+                    _=>{proof["publicationAuthorized"]=serde_json::json!(true);fs::write(&path,serde_json::to_vec(&proof).unwrap()).unwrap();},
+                }
+                assert!(outcome(&writer.job,&writer.directory,&writer.cancel).is_err());
+                assert!(preflight(&writer.lease.service,&writer.job,&writer.directory,&writer.cancel,&writer.segments,0).is_err());
+                assert_eq!(writer.segments.len(),2);assert!(writer.directory.join(tail::BUNDLE).is_file());
+            });
+        }
+    }
+    #[test]
+    fn overlap_reservation_commit_failure_and_cancellation_preserve_originals() {
+        for mode in 0..3 {
+            with_diagnostic_writer(|writer| {
+                feed(writer,0,0,24);feed(writer,1,0,24);
+                feed(writer,0,12*u64::from(fmp4::fixtures::VIDEO_SCALE),4);
+                feed(writer,1,12*u64::from(fmp4::fixtures::AUDIO_SCALE),2);
+                let manifest=fs::read(writer.directory.join(MANIFEST)).unwrap();
+                let snapshot=writer.muxer.pending_snapshot().unwrap();tail::preserve(writer,&snapshot).unwrap();
+                let bundle=storage::hash(&writer.directory.join(tail::BUNDLE),&writer.cancel).unwrap();
+                if mode==0 {fs::write(writer.directory.join("encoded-tail-overlap.json"),b"existing").unwrap();}
+                if mode==1 {fs::write(writer.directory.join("e00000001.mp4"),b"existing").unwrap();}
+                if mode==2 {writer.cancel.store(true,Ordering::Release);}
+                assert!(tail::commit_overlap(writer,&snapshot).is_err());
+                writer.cancel.store(false,Ordering::Release);
+                assert_eq!(writer.segments.len(),1);assert_eq!(fs::read(writer.directory.join(MANIFEST)).unwrap(),manifest);
+                assert_eq!(storage::hash(&writer.directory.join(tail::BUNDLE),&writer.cancel).unwrap(),bundle);
+                assert!(outcome(&writer.job,&writer.directory,&writer.cancel).is_err());
+                if mode==0 {assert_eq!(fs::read(writer.directory.join("encoded-tail-overlap.json")).unwrap(),b"existing");}
+                if mode==1 {assert_eq!(fs::read(writer.directory.join("e00000001.mp4")).unwrap(),b"existing");}
+            });
+        }
+    }
+    #[test]
+    fn orphan_retention_artifacts_without_manifest_cannot_bypass_restart_guard() {
+        for file in [tail::BUNDLE,"encoded-pending-tail.mp4"] { for stop in [false,true] {
+            with_diagnostic_writer(|writer| {
+                feed(writer,0,0,24);feed(writer,1,0,24);
+                // Exactly12s has no following IDR to trigger push-time commit.
+                let prefix=writer.muxer.finish().unwrap();writer.commit(prefix).unwrap();
+                assert_eq!(writer.segments.len(),1);
+                if stop {mark(writer).unwrap();}
+                fs::write(writer.directory.join(file),b"orphan").unwrap();
+                assert!(outcome(&writer.job,&writer.directory,&writer.cancel).is_err());
+                assert!(preflight(&writer.lease.service,&writer.job,&writer.directory,&writer.cancel,&writer.segments,0).is_err());
+            });
+        }}
+    }
+    #[test]
+    fn actual_recording_durations_survive_json_roundtrip_identity() {
+        let durations: [f64; 10] = [
+            12.018333333333333, 12.023000000000003, 12.006333333333338,
+            12.011000000000003, 12.015666666666668, 12.020333333333326,
+            13.731666666666655, 12.727333333333334, 12.004666666666665, 10.0,
+        ];
+        let current: Vec<_> = durations.into_iter().enumerate()
+            .map(|(index, duration)| (format!("e{index:08}.mp4"), duration)).collect();
+        let saved: Vec<(String, f64)> = serde_json::from_str(
+            &serde_json::to_string(&current).unwrap(),
+        ).unwrap();
+        assert!(same_segments(&saved, &current));
+        assert!(same_segments(&current, &saved));
+        // Lock the observed boundary independently of future parser upgrades.
+        let original = 12.011000000000003_f64;
+        let one_ulp = f64::from_bits(original.to_bits() + 1);
+        assert!(same_segments(&[("e00000000.mp4".into(), original)],
+            &[("e00000000.mp4".into(), one_ulp)]));
+    }
+
+    #[test]
+    fn duration_identity_rejects_nonroundtrip_or_invalid_changes() {
+        let duration = 12.011000000000003_f64;
+        let original = vec![("e00000000.mp4".to_owned(), duration)];
+        for invalid in [
+            f64::from_bits(duration.to_bits() + 2), f64::from_bits(duration.to_bits() - 2),
+            duration + 0.001, f64::NAN, f64::INFINITY, f64::NEG_INFINITY,
+            0.0, -0.0, -duration, f64::from_bits(120_f64.to_bits() + 1),
+        ] {
+            let changed = vec![("e00000000.mp4".to_owned(), invalid)];
+            assert!(!same_segments(&original, &changed), "{invalid:?}");
+            assert!(!same_segments(&changed, &original), "{invalid:?}");
+            if !invalid.is_finite() || invalid <= 0.0 || invalid > 120.0 {
+                assert!(!same_segments(&changed, &changed), "{invalid:?}");
+            }
+        }
+        assert!(!same_segments(&original, &[]));
+        assert!(!same_segments(&original, &[("e00000001.mp4".into(), duration)]));
+        let mut two = original.clone();
+        two.push(("e00000001.mp4".into(), duration));
+        let mut reordered = two.clone();
+        reordered.reverse();
+        assert!(!same_segments(&two, &reordered));
+    }
 
     #[test]
     fn only_nonzero_exit_can_retry_and_only_once() {

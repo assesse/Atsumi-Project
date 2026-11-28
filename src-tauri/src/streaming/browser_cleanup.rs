@@ -627,7 +627,7 @@ pub(crate) fn remove_verified_sources(
 }
 
 #[cfg(windows)]
-pub(super) fn pin_directories(root: &Path) -> Result<Vec<File>, StreamError> {
+pub(crate) fn pin_directories(root: &Path) -> Result<Vec<File>, StreamError> {
     use std::os::windows::fs::OpenOptionsExt;
     let mut handles = Vec::new();
     // Pin every ancestor without DELETE sharing, preventing directory/junction
@@ -698,7 +698,7 @@ fn remove_one(path: &Path, source: &SourceProof, cancel: &AtomicBool) -> Result<
 // This desktop feature is Windows-only. Fail closed on another platform until
 // equivalent no-follow, directory-relative handle deletion is implemented.
 #[cfg(not(windows))]
-pub(super) fn pin_directories(_: &Path) -> Result<Vec<File>, StreamError> {
+pub(crate) fn pin_directories(_: &Path) -> Result<Vec<File>, StreamError> {
     Err(storage())
 }
 #[cfg(not(windows))]
@@ -781,6 +781,40 @@ mod tests {
     }
 
     #[test]
+    fn upload_lease_defers_cleanup_and_existing_cleanup_rejects_upload() {
+        let (_dir, store, recording) = fixture();
+        publish(&store);
+        let held = store.upload_source(&recording.id).unwrap();
+        assert!(store.take_cleanup_job().unwrap().is_none());
+        assert!(source(Path::new(&recording.output_dir), 0).exists());
+        drop(held);
+        let cleanup = store.take_cleanup_job().unwrap().unwrap();
+        assert!(matches!(store.upload_source(&recording.id), Err(ref error) if error.code == "BROWSER_UPLOAD_BUSY"));
+        assert!(source(Path::new(&recording.output_dir), 0).exists());
+        store.finish_cleanup(&cleanup, CleanupOutcome { deleted: 0, complete: false }).unwrap();
+    }
+
+    #[test]
+    fn uploaded_recording_retention_survives_lease_drop_and_restart() {
+        let (dir, store, recording) = fixture();
+        publish(&store);
+        let held = store.upload_source(&recording.id).unwrap();
+        let original = source(Path::new(&recording.output_dir), 0);
+        let bytes = fs::read(&original).unwrap();
+        store.preserve_recording_sources(&recording.id).unwrap();
+        drop(held);
+        assert!(store.take_cleanup_job().unwrap().is_none());
+        drop(store);
+        let reopened = BrowserCaptureStore::new(dir.path()).unwrap();
+        reopened.upload_source(&recording.id).unwrap();
+        assert!(reopened.take_cleanup_job().unwrap().is_none());
+        assert_eq!(fs::read(&original).unwrap(), bytes);
+        assert!(reopened.snapshot().unwrap()[0].preserve_sources);
+        // Retention is an automatic-cleanup policy, not a veto on explicit deletion.
+        assert!(reopened.prepare_delete(&recording.id).is_ok());
+    }
+
+    #[test]
     fn live_preemption_requeues_cleanup_but_shutdown_stays_blocked() {
         for preempted in [true, false] {
             let (_dir, store, recording) = fixture();
@@ -829,7 +863,11 @@ mod tests {
             fs::write(root.join(name), b"retain").unwrap();
         }
         let job = publish(&store);
-        let mut replay = store.replay_source(&recording.id).unwrap();
+        let replay = store.replay_source(&recording.id).unwrap();
+        assert!(store.take_cleanup_job().unwrap().is_none());
+        assert!(source(root, 0).is_file());
+        let mut playback_file = replay.media.try_clone().unwrap();
+        drop(replay);
         let result = clean(&store);
         assert!(result.complete);
         assert_eq!(result.deleted, 2);
@@ -854,9 +892,9 @@ mod tests {
             assert!(root.join(name).is_file());
         }
         let mut media = Vec::new();
-        replay.media.read_to_end(&mut media).unwrap();
+        playback_file.read_to_end(&mut media).unwrap();
         assert_eq!(media, WEBM);
-        drop(replay);
+        drop(playback_file);
         let reopened = BrowserCaptureStore::new(dir.path()).unwrap();
         let record = reopened.snapshot().unwrap().remove(0);
         assert_eq!(record.status, BrowserRecordingStatus::Stopped);

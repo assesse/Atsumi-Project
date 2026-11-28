@@ -1,5 +1,5 @@
 //! Only the trusted Atsumi main renderer may operate YouTube native receivers.
-use super::original::{AccountSnapshot, OriginalSnapshot, YouTubeOriginalHost};
+use super::original::{AccountSnapshot, OriginalSnapshot, YouTubeOriginalHost, VodClock, VodControlRequest};
 use crate::{interface::commands::AppState, platform_native_geometry::NativeViewport};
 use tauri::{AppHandle, Manager, Webview};
 fn trusted(view: &Webview) -> Result<AppHandle, String> {
@@ -56,6 +56,15 @@ pub async fn youtube_original_snapshot(
 ) -> Result<OriginalSnapshot, String> {
     let app = trusted(&window)?;
     app.state::<YouTubeOriginalHost>().snapshot(&token)
+}
+#[tauri::command]
+pub async fn youtube_original_vod_clock(window:Webview,token:String)->Result<Option<VodClock>,String>{
+    let app=trusted(&window)?;app.state::<YouTubeOriginalHost>().vod_clock(&token)
+}
+#[tauri::command]
+pub async fn youtube_original_vod_control(window:Webview,token:String,request:VodControlRequest)->Result<(),String>{
+    let app=trusted(&window)?;
+    tauri::async_runtime::spawn_blocking(move||app.state::<YouTubeOriginalHost>().vod_control(&app,&token,request)).await.map_err(|_|"영상 조작을 완료하지 못했습니다.".to_string())?
 }
 #[tauri::command]
 pub async fn youtube_original_viewport(

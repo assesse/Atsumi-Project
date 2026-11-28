@@ -471,6 +471,11 @@ select:focus-visible {
   animation: tag-catalog-refresh-pulse 1.2s ease-in-out infinite;
 }
 
+.auto-find-progress-count {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .catalog-refresh-spinner {
   width: 20px;
   height: 20px;
@@ -963,6 +968,35 @@ h2 {
   padding-left: 12px;
   font-weight: 650;
 }
+
+.explore-results-summary, .explore-visibility {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 12px;
+}
+.app-shell[data-hitomi-view="explore"] .gallery-viewport { position: relative; }
+.gallery-viewport[data-explore-refill]::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1px;
+  height: var(--explore-reading-end);
+  pointer-events: none;
+  overflow-anchor: none;
+}
+
+.explore-results-summary { margin-inline-start: auto; max-width: 100%; }
+@media (max-width: 919px) {
+  .app-shell[data-hitomi-view="explore"] { min-width: 0; }
+  .app-shell[data-hitomi-view="explore"] .context-row { flex-wrap: wrap; }
+}
+.related-section > .section-heading { flex-wrap: wrap; gap: 4px 12px; }
+.explore-results-summary .context-summary { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.explore-visibility label { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; cursor: pointer; color: var(--text-soft); font-size: 14px; }
+.explore-visibility input { margin: 0; width: 15px; height: 15px; accent-color: var(--primary); }
+.explore-visibility label:focus-within { color: var(--text); }
 
 .context-summary {
   color: var(--muted);
@@ -7318,7 +7352,7 @@ dialog::backdrop {
   padding: 16px;
   color: var(--text);
   text-align: center;
-  background: color-mix(in srgb, var(--canvas) 54%, transparent);
+  background: color-mix(in srgb, var(--canvas) 62%, transparent);
   pointer-events: none;
 }
 

@@ -2,17 +2,23 @@ import * as React from "react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import type { ReplayApi, ReplayMessage, ReplayPage, ReplaySession, ReplaySyncQuality } from "../../api/replay";
+import type { LiveReplayChzzkItem } from "../../api/cloudLiveReplay";
 import { boundedReplayMessages, formatReplayTime, replayAssetToken, replayMessageTime, replayVirtualRange, safeNicknameColor, visibleReplayWarnings, type ReplayTimeLabel } from "./RecordingReplayModel";
 import { ReplayNoticeHeading, ReplayUserCard } from "./ReplayUserCard";
 import { OriginalChzzkChatSurface } from "./OriginalChzzkChatSurface";
 import { createOriginalChatPresentation, type OriginalChatMessage } from "./generated/originalChatPresentation.js";
 import { createSurfaces } from "./generated/accepted/original-surfaces.js";
+import { useChatAssets } from "../platforms/PlatformChatParts";
 
-type Props = { api: ReplayApi; session: ReplaySession; time: number; seekVersion: number; onSeek: (time: number) => void; onIndexReady: (quality: ReplaySyncQuality) => void; onSetOffset?: (value: number) => Promise<string | null>; closeControl?: React.ReactNode };
+export type RecordingChatApi = Pick<ReplayApi, "chatAt" | "chatPage" | "chatSearch" | "mediaUrl"> & {
+  asset?(token: string, assetId: string): Promise<string | null>;
+};
+type Props = { api: RecordingChatApi; session: Pick<ReplaySession, "token" | "chatStatus" | "manualOffsetSeconds">; time: number; seekVersion: number; onSeek: (time: number) => void; onIndexReady: (quality: ReplaySyncQuality) => void; onSetOffset?: (value: number) => Promise<string | null>; closeControl?: React.ReactNode; active?: boolean; privacyMode?: boolean };
 const badgeLabels: Record<string, string> = { subscription: "구독", activity: "활동", profile: "배지", donation: "후원" };
 type Presentation = ReturnType<typeof createOriginalChatPresentation>;
-function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item: ReplayMessage; mode: ReplayTimeLabel; api: ReplayApi; sessionToken: string; onSeek: Props["onSeek"]; presentation: Presentation }) {
-  const stamp = replayMessageTime(item, mode);
+function Message({ item, mode, api, sessionToken, onSeek, presentation, images }: { item: ReplayMessage | LiveReplayChzzkItem; mode: ReplayTimeLabel; api?: Pick<RecordingChatApi, "mediaUrl">; sessionToken: string; onSeek?: Props["onSeek"]; presentation: Presentation; images?: ReadonlyMap<string, string> }) {
+  const mediaTime = item.syncQuality !== "unknown" && item.mediaTimeSeconds !== null && Number.isFinite(item.mediaTimeSeconds) && item.mediaTimeSeconds >= 0 ? item.mediaTimeSeconds : null;
+  const stamp = mediaTime === null ? null : replayMessageTime(item, mode);
   const rich = item.rich;
   const row = useRef<HTMLDivElement>(null);
   const [failedAssets, setFailedAssets] = useState<Set<string>>(new Set());
@@ -22,7 +28,7 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
   const normalized = useMemo(() => {
     const localAsset = (url: string) => {
       const token = replayAssetToken(item.assetIds?.[url]);
-      const src = token ? `${api.mediaUrl(sessionToken)}/asset/${token}` : null;
+      const src = token ? images ? images.get(token) ?? null : api ? `${api.mediaUrl(sessionToken)}/asset/${token}` : null : null;
       return src && !failedAssets.has(new URL(src, document.baseURI).href) ? src : null;
     };
     const badges = (rich?.badges ?? []).slice(0, 8).map((badge) => ({ src: localAsset(badge.imageUrl), label: badge.title || badgeLabels[badge.kind] || "배지" }));
@@ -42,7 +48,7 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
       displayBadgeList: badges.flatMap((badge) => badge.src ? [{ type: "ACTIVITY", imageSource: badge.src, title: badge.label, description: "" }] : []),
       displayNicknameColor: { light: nicknameColor, dark: nicknameColor } };
     return { message, badges, portrait: rich?.profileImageUrl ? localAsset(rich.profileImageUrl) : null, missing: badges.filter(badge => !badge.src) };
-  }, [item, rich, api, sessionToken, failedAssets]);
+  }, [item, rich, api, sessionToken, failedAssets, images]);
   useLayoutEffect(() => {
     row.current?.querySelectorAll("img").forEach(image => { image.referrerPolicy = "no-referrer"; });
     const button = row.current?.querySelector<HTMLButtonElement>('button[class*="_nickname_"]');
@@ -53,7 +59,7 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
     button.setAttribute("aria-label", `${item.sender} 사용자 정보`);
     button.title = "사용자 정보";
   }, [profileAnchor, item.sender, normalized]);
-  const tooltip = `${item.serverTime == null ? "서버 시각 확인되지 않음" : `서버 ${new Date(item.serverTime).toLocaleString("ko-KR")}`} · 수신 ${new Date(item.receivedAt).toLocaleString("ko-KR")} · ${item.syncQuality === "observed_media" ? "관측 영상 기준" : "수신 시각 기준·동기화 근사"}`;
+  const tooltip = `${item.serverTime == null ? "서버 시각 확인되지 않음" : `서버 ${new Date(item.serverTime).toLocaleString("ko-KR")}`} · 수신 ${new Date(item.receivedAt).toLocaleString("ko-KR")} · ${mediaTime === null ? "영상 위치 확인되지 않음" : item.syncQuality === "observed_media" ? "관측 영상 기준" : "수신 시각 기준·동기화 근사"}`;
   const { ChatRow } = presentation;
   return <div ref={row} className={`recording-replay-message${rich?.notice ? " recording-replay-notice" : ""}`} data-sequence={item.sequence} data-notice={rich?.notice?.kind} title={tooltip} style={{ "--replay-text-color": safeNicknameColor(rich?.textColor) } as CSSProperties} onErrorCapture={(event) => {
     if (event.target instanceof HTMLImageElement) { const src = event.target.src; setFailedAssets(previous => new Set([...previous, src])); }
@@ -64,15 +70,15 @@ function Message({ item, mode, api, sessionToken, onSeek, presentation }: { item
     <ChatRow chatMessage={normalized.message} onNicknameClick={openProfile} isCleanBotWorking={false} theme="dark" />
     {rich?.notice?.kind === "mission" && rich.notice.missionText && rich.notice.missionText !== item.text && <p className="recording-replay-mission-text">{rich.notice.missionText}</p>}
     {profileAnchor && <ReplayUserCard item={item} anchor={profileAnchor} portrait={normalized.portrait} badges={normalized.badges} onClose={closeProfile} />}
-    <button className="recording-replay-row-seek" type="button" aria-label={`${formatReplayTime(item.mediaTimeSeconds)} 영상 위치로 이동`} onClick={() => onSeek(item.mediaTimeSeconds)}>↗</button>
+    {mediaTime !== null && onSeek && <button className="recording-replay-row-seek" type="button" aria-label={`${formatReplayTime(mediaTime)} 영상 위치로 이동`} onClick={() => onSeek(mediaTime)}>↗</button>}
   </div>;
 }
 
 export const RecordingReplayChat = memo(function RecordingReplayChat(props: Props) {
   return <OriginalChzzkChatSurface>{surface => <ReplayChatContent key={props.session.token} {...props} surface={surface} />}</OriginalChzzkChatSurface>;
 });
-function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexReady, onSetOffset, closeControl, surface }: Props & { surface: ShadowRoot }) {
-  const presentation = useMemo(() => {
+function useOriginalPresentation(surface: ShadowRoot) {
+  return useMemo(() => {
     // Original badge images can appear in a child effect after the row commits.
     // Apply transport metadata at element creation, not in a one-time DOM pass.
     const createElement = ((...args: Parameters<typeof React.createElement>) => {
@@ -82,6 +88,40 @@ function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexRea
     }) as typeof React.createElement;
     return createOriginalChatPresentation({ ...React, createElement }, { createPortal: children => createPortal(children, surface) });
   }, [surface]);
+}
+
+/** Native Live receipt rows keep nullable timing and use the same original CHZZK UI. */
+export type LiveReplayChzzkChatProps = {
+  token: string; items: LiveReplayChzzkItem[];
+  asset(token: string, assetId: string): Promise<string | null>;
+  active?: boolean; privacyMode?: boolean; onSeek?: (seconds: number) => void;
+};
+export const LiveReplayChzzkChat = memo(function LiveReplayChzzkChat(props: LiveReplayChzzkChatProps) {
+  return <OriginalChzzkChatSurface>{surface => <LiveReplayChatContent key={props.token} {...props} surface={surface} />}</OriginalChzzkChatSurface>;
+});
+function LiveReplayChatContent({ token, items, asset, active = true, privacyMode = false, onSeek, surface }: LiveReplayChzzkChatProps & { surface: ShadowRoot }) {
+  const presentation = useOriginalPresentation(surface);
+  const { ReplayShell: ChatShell } = useMemo(() => createSurfaces(React,
+    { createPortal: (children: React.ReactNode) => createPortal(children, surface) }, null,
+    { title: "", channelName: "", profileImage: "", viewers: 0, uptime: "", messages: [] }, () => {}), [surface]);
+  const visible = active && !privacyMode;
+  const rows = visible ? items : [];
+  const assets = rows.map(item => ({ parts: Object.values(item.assetIds ?? {}).map(assetId => ({ type: "emoji" as const, assetId, alt: "" })) }));
+  const images = useChatAssets(token, assets, visible, asset);
+  const scroll = useRef<HTMLDivElement | null>(null);
+  const following = useRef(true);
+  const setScroll = useCallback((element: HTMLDivElement | null) => {
+    scroll.current = element;
+    if (element) { element.classList.add("recording-replay-chat-scroll"); element.tabIndex = 0; element.setAttribute("aria-label", "채팅 기록"); }
+  }, []);
+  useLayoutEffect(() => { if (following.current && scroll.current) scroll.current.scrollTop = 0; }, [items]);
+  return <ChatShell listRef={setScroll} onScroll={() => { following.current = !scroll.current || scroll.current.scrollTop >= -48; }}>
+    {rows.slice().reverse().map(item => <Message key={item.sequence} item={item} mode="hidden" sessionToken={token} presentation={presentation} images={images} onSeek={onSeek} />)}
+  </ChatShell>;
+}
+
+function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexReady, onSetOffset, closeControl, active = true, privacyMode = false, surface }: Props & { surface: ShadowRoot }) {
+  const presentation = useOriginalPresentation(surface);
   const { MenuIcon } = presentation;
   const { ReplayShell: ChatShell, ReplaySearch } = useMemo(() => createSurfaces(React,
     { createPortal: (children: React.ReactNode) => createPortal(children, surface) }, null,
@@ -141,6 +181,8 @@ function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexRea
   useEffect(() => { if (!searching) setFollowing(true); }, [seekVersion]);
   const items = page?.items;
   const virtual = useMemo(() => replayVirtualRange((items ?? []).map((item) => heights.get(item.sequence) ?? 44), viewport.top, viewport.height, following), [items, heights, viewport, following]);
+  const visibleAssets = (items ?? []).slice(virtual.start, virtual.end).map(item => ({ parts: Object.values(item.assetIds ?? {}).map(assetId => ({ type: "emoji" as const, assetId, alt: "" })) }));
+  const images = useChatAssets(session.token, visibleAssets, !!api.asset && active && !privacyMode, api.asset);
   useLayoutEffect(() => {
     const element = scroll.current;
     if (!element) return;
@@ -294,7 +336,7 @@ function ReplayChatContent({ api, session, time, seekVersion, onSeek, onIndexRea
     countText={loading ? "불러오는 중" : `${page?.items.length ?? 0}개 표시`}
     onQuery={changeQuery} /></>}>
     <div aria-hidden="true" style={{ height: virtual.after }} />
-    {page?.items.slice(virtual.start, virtual.end).reverse().map(item => <Message key={item.sequence} item={item} mode={mode} api={api} sessionToken={session.token} presentation={presentation} onSeek={target => { resume(); onSeek(target); }} />)}
+    {page?.items.slice(virtual.start, virtual.end).reverse().map(item => <Message key={item.sequence} item={item} mode={mode} api={api} sessionToken={session.token} presentation={presentation} images={api.asset ? images : undefined} onSeek={target => { resume(); onSeek(target); }} />)}
     <div aria-hidden="true" style={{ height: virtual.before }} />
     {hasChat && page?.previousCursor && !logMode ? <button className="recording-replay-older" type="button" onClick={() => void browse(page.previousCursor!)}>이전 채팅 더 보기</button> : null}
     {!page?.items.length ? <p className="recording-replay-empty">{!hasChat ? "이 녹화에는 채팅을 저장하지 않았습니다." : loading ? "채팅을 준비하고 있습니다…" : searching ? "검색 결과가 없습니다." : "이 위치에 표시할 채팅이 없습니다."}</p> : null}

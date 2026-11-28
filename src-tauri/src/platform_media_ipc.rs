@@ -3,12 +3,12 @@ use crate::{interface::commands::AppState, platform_media::*};
 use tauri::Manager;
 use std::sync::{Arc, OnceLock};
 
-fn replay_chat_slot() -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+pub(crate) fn replay_chat_slot() -> Result<tokio::sync::OwnedSemaphorePermit, String> {
     static SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
     SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2))).clone()
         .try_acquire_owned().map_err(|_| "다른 채팅 기록을 읽는 중입니다. 잠시 후 다시 시도해 주세요.".into())
 }
-fn chat_asset_slot() -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+pub(crate) fn chat_asset_slot() -> Result<tokio::sync::OwnedSemaphorePermit, String> {
     static SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
     SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))).clone().try_acquire_owned()
         .map_err(|_| "이모티콘 이미지를 읽는 중입니다.".into())
@@ -18,7 +18,7 @@ fn live_profile_slot() -> Result<tokio::sync::OwnedSemaphorePermit, String> {
     SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))).clone().try_acquire_owned()
         .map_err(|_| "프로필 이미지를 읽는 중입니다.".into())
 }
-fn current_profile_slot() -> Result<tokio::sync::OwnedSemaphorePermit, String> {
+pub(crate) fn current_profile_slot() -> Result<tokio::sync::OwnedSemaphorePermit, String> {
     static SLOTS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
     SLOTS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(2))).clone().try_acquire_owned()
         .map_err(|_| "채널 사진을 읽는 중입니다. 잠시 후 다시 시도해 주세요.".into())

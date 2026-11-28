@@ -19,6 +19,18 @@ use std::{
 use tungstenite::{
     client::IntoClientRequest, client_tls_with_config, protocol::WebSocketConfig, Message,
 };
+#[path = "chat_gift.rs"]
+pub(crate) mod gifts;
+#[path="chat_mission.rs"]
+pub(crate) mod missions;
+#[path = "chat_ogq.rs"]
+pub(crate) mod ogq;
+#[path = "chat_subscription.rs"]
+pub(crate) mod subscriptions;
+#[path = "chat_personalcon.rs"]
+pub(crate) mod personalcon;
+#[path="chat_portrait.rs"]
+pub(crate) mod portrait;
 
 const MAX_FRAME: usize = 1024 * 1024;
 const METADATA_LIMIT: u64 = 512 * 1024;
@@ -27,6 +39,8 @@ const ZERO_ID: &str = "00000000-0000-0000-0000-000000000000";
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatEvent {
+    #[serde(skip)]
+    pub received_monotonic: Instant,
     pub elapsed_ms: u64,
     pub received_at_ms: u64,
     pub message_id: Option<String>,
@@ -36,6 +50,20 @@ pub(crate) struct ChatEvent {
     pub flags: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extra: Option<Value>,
+    #[serde(skip)]
+    pub gift_asset: Option<gifts::assets::Request>,
+    #[serde(skip)]
+    pub mission_asset: Option<missions::Request>,
+    #[serde(skip)]
+    pub emoticon_assets: Vec<ogq::Request>,
+    #[serde(skip)]
+    pub subscription_assets: Vec<subscriptions::Request>,
+    #[serde(skip)]
+    pub personalcon_asset: Option<personalcon::Request>,
+    #[serde(skip)]
+    pub avatar_asset: Option<portrait::Request>,
+    #[serde(skip)]
+    presentation_partial: bool,
 }
 #[derive(Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +73,8 @@ pub(crate) struct ChatSummary {
     pub connections: u32,
     pub stopped: bool,
     pub broadcast_ended: bool,
+    pub unsupported_rich_events: u64,
+    pub malformed_rich_events: u64,
 }
 enum Failure {
     Network,
@@ -84,6 +114,10 @@ struct Endpoint {
     room: String,
     ticket: String,
     broadcast: String,
+    subscription_labels: [Option<String>; 2],
+    subscription_labels_partial: bool,
+    personalcon: personalcon::Context,
+    gift_assets: gifts::assets::Context,
 }
 fn integer(value: &Value) -> Option<i64> {
     value.as_i64().or_else(|| value.as_str()?.parse().ok())
@@ -152,6 +186,11 @@ fn endpoint_from_value(channel: &str, value: &Value) -> Result<Endpoint, Failure
         room: numeric(&row["CHATNO"]).ok_or(Failure::Protocol)?,
         ticket: ticket.into(),
         broadcast: numeric(&row["BNO"]).ok_or(Failure::Protocol)?,
+        personalcon: personalcon::Context::from_channel(row),
+        gift_assets: gifts::assets::Context::new(),
+        subscription_labels: ["TIER1_NICK", "TIER2_NICK"].map(|key|row[key].as_str().and_then(subscriptions::label)),
+        subscription_labels_partial: ["TIER1_NICK", "TIER2_NICK"].iter().any(|key|!row[*key].is_null()
+            && row[*key].as_str().is_none_or(|value|!value.is_empty() && subscriptions::label(value).is_none())),
     })
 }
 fn secure_chat_port(value: &Value) -> Result<u16, Failure> {
@@ -267,6 +306,7 @@ fn parse(bytes: &[u8]) -> Result<Frame<'_>, Failure> {
 }
 fn event(started: Instant, kind: &'static str, text: &str) -> ChatEvent {
     ChatEvent {
+        received_monotonic: Instant::now(),
         elapsed_ms: started.elapsed().as_millis() as u64,
         received_at_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -278,18 +318,83 @@ fn event(started: Instant, kind: &'static str, text: &str) -> ChatEvent {
         text: text.into(),
         flags: String::new(),
         extra: None,
+        gift_asset: None,
+        mission_asset: None,
+        emoticon_assets: Vec::new(),
+        subscription_assets: Vec::new(),
+        personalcon_asset: None,
+        avatar_asset: None,
+        presentation_partial: false,
     }
 }
 fn chat_event(frame: &Frame<'_>, started: Instant) -> Result<Option<ChatEvent>, Failure> {
-    // Never ingest whispers (9), user lists, tickets, moderation lists or raw
-    // protocol payloads. Rich donation/mission formats remain explicitly absent.
-    if frame.service != 5 {
+    chat_event_bound(frame, started, None)
+}
+fn chat_event_bound(frame: &Frame<'_>, started: Instant, channel: Option<&str>) -> Result<Option<ChatEvent>, Failure> {
+    chat_event_context(frame, started, channel, None)
+}
+fn chat_event_context(frame: &Frame<'_>, started: Instant, channel: Option<&str>, labels: Option<(&[Option<String>;2],bool)>) -> Result<Option<ChatEvent>, Failure> {
+    // Never ingest whispers (9), user lists, tickets or complete raw payloads.
+    // Public gifts use only their independently verified display-field schema.
+    if !matches!(frame.service, 5 | 18 | 33 | 91 | 93 | 105 | 109 | 121) {
         return Ok(None);
     }
     if frame.body.len() < 2 {
         return Err(Failure::Protocol);
     }
     let fields: Vec<_> = frame.body[1..frame.body.len() - 1].split('\x0c').collect();
+    if frame.service == 121 {
+        let public=missions::parse(&fields).map_err(|_|Failure::Protocol)?;
+        let mut row=event(started,public.metadata.row_kind(),&public.metadata.text());
+        row.message_id=frame.id.map(str::to_owned);
+        row.nickname=public.nickname;
+        row.presentation_partial=public.partial;
+        row.extra=Some(serde_json::json!({"service":121,"soopMission":public.metadata}));
+        return Ok(Some(row));
+    }
+    if matches!(frame.service,91|93) {
+        let public=subscriptions::parse(frame.service,&fields,labels.map(|value|value.0)).map_err(|_|Failure::Protocol)?;
+        let mut row=event(started,"membership","");
+        row.message_id=frame.id.map(str::to_owned);
+        row.nickname=public.nickname.into();
+        row.presentation_partial=public.partial || labels.is_some_and(|value|value.1);
+        row.subscription_assets=public.requests;
+        row.extra=Some(serde_json::json!({"service":frame.service,"soopSubscription":public.metadata}));
+        return Ok(Some(row));
+    }
+    if frame.service == 109 {
+        let Some(emote)=ogq::parse(&fields).map_err(|_|Failure::Protocol)? else{return Ok(None);};
+        let mut row=event(started,"chat",emote.text);
+        row.message_id=frame.id.map(str::to_owned);row.nickname=emote.nickname.into();row.flags=emote.flags.into();
+        row.presentation_partial=emote.partial;row.emoticon_assets=emote.requests;
+        let bounded=|index:usize|fields.get(index).copied().filter(|s|s.len()<=128).unwrap_or("");
+        row.extra=Some(serde_json::json!({"service":109,"soopEmoticon":emote.metadata,
+            "subscriptionMonth":bounded(12),"accSubscriptionMonth":bounded(15),"color":bounded(8),
+            "nicknameColorKey":ogq::nickname_key(&Value::String(bounded(13).into())),"repPersonalconMonth":bounded(16)}));
+        return Ok(Some(row));
+    }
+    if frame.service != 5 {
+        let gift = gifts::parse(frame.service, &fields).map_err(|_| Failure::Protocol)?;
+        let Some(gift) = gift else { return Ok(None); };
+        let mut row = event(started, "donation", "");
+        row.message_id = frame.id.map(str::to_owned);
+        row.nickname = gift.nickname.into();
+        row.gift_asset = channel.and_then(|channel| gifts::assets::Request::from_fields(frame.service, &fields, channel));
+        row.extra = Some(serde_json::json!({
+            "service": frame.service, "soopGift": gift.metadata, "fileName": gift.file_name
+        }));
+        if matches!(frame.service,18|33) {
+            let (language,modified)=if frame.service==18 {(12,13)} else {(13,14)};
+            let extra=row.extra.as_mut().unwrap().as_object_mut().unwrap();
+            if let Some(value)=fields.get(language).filter(|value|value.len()<=5 && value.bytes().all(|b|b.is_ascii_alphabetic() || b==b'_')) {
+                extra.insert("senderLanguage".into(),Value::String((*value).into()));
+            }
+            if let Some(value)=fields.get(modified).filter(|value|value.len()<=20 && value.bytes().all(|b|b.is_ascii_digit())) {
+                extra.insert("urlModify".into(),Value::String((*value).into()));
+            }
+        }
+        return Ok(Some(row));
+    }
     if !(7..=32).contains(&fields.len())
         || fields[0].len() > 16 * 1024
         || fields[5].len() > 512
@@ -304,10 +409,14 @@ fn chat_event(frame: &Frame<'_>, started: Instant) -> Result<Option<ChatEvent>, 
     row.message_id = frame.id.map(str::to_owned);
     row.nickname = fields[5].into();
     row.flags = fields[6].into();
-    // Public protocol metadata used by future replay renderers, not diagnostic
-    // output. Do not store the sender account ID; nickname already labels chat.
+    // Ordinary chat uses the same exact palette as OGQ. Packet[9] is not
+    // a separate replay-theme color; never retain an arbitrary class or ID.
+    let nickname_color_key = fields
+        .get(8)
+        .filter(|key| key.len() == 6)
+        .and_then(|key| ogq::nickname_key(&Value::String((*key).into())));
     row.extra = Some(
-        serde_json::json!({"service":5,"subscriptionMonth":fields.get(7).copied().unwrap_or(""),"accSubscriptionMonth":fields.get(10).copied().unwrap_or(""),"color":fields.get(2).copied().unwrap_or("")}),
+        serde_json::json!({"service":5,"subscriptionMonth":fields.get(7).copied().unwrap_or(""),"accSubscriptionMonth":fields.get(10).copied().unwrap_or(""),"color":fields.get(2).copied().unwrap_or(""),"nicknameColorKey":nickname_color_key,"repPersonalconMonth":fields.get(11).filter(|s|s.len()<=128).copied().unwrap_or(""),"messageType":match fields[3].parse::<f64>().ok(){Some(1.0)=>Some("staff"),Some(2.0)=>Some("police"),_=>None}}),
     );
     Ok(Some(row))
 }
@@ -321,6 +430,7 @@ impl Drop for ConnectionGuard {
 struct Seen {
     ids: HashSet<String>,
     order: VecDeque<String>,
+    rich_warning_emitted: bool,
 }
 impl Seen {
     fn accept(&mut self, id: Option<&str>) -> bool {
@@ -339,6 +449,103 @@ impl Seen {
         self.order.push_back(id.into());
         true
     }
+}
+fn receive_public(
+    frame: &Frame<'_>,
+    started: Instant,
+    sink: &mut impl FnMut(ChatEvent) -> Result<(), String>,
+    summary: &mut ChatSummary,
+    seen: &mut Seen,
+) -> Result<(), Failure> {
+    receive_public_bound(frame, started, sink, summary, seen, None)
+}
+fn receive_public_bound(
+    frame: &Frame<'_>, started: Instant, sink: &mut impl FnMut(ChatEvent)->Result<(),String>,
+    summary: &mut ChatSummary, seen: &mut Seen, channel: Option<&str>,
+) -> Result<(), Failure> {
+    receive_public_context(frame,started,sink,summary,seen,channel,None)
+}
+fn receive_public_context(
+    frame: &Frame<'_>, started: Instant, sink: &mut impl FnMut(ChatEvent)->Result<(),String>,
+    summary: &mut ChatSummary, seen: &mut Seen, channel: Option<&str>, labels:Option<(&[Option<String>;2],bool)>,
+) -> Result<(), Failure> {
+    receive_public_appearance(frame,started,sink,summary,seen,channel,labels,None)
+}
+fn receive_public_appearance(
+    frame:&Frame<'_>, started:Instant, sink:&mut impl FnMut(ChatEvent)->Result<(),String>,
+    summary:&mut ChatSummary, seen:&mut Seen, channel:Option<&str>, labels:Option<(&[Option<String>;2],bool)>, appearance:Option<&personalcon::Context>,
+)->Result<(),Failure>{
+    receive_public_assets(frame, started, sink, summary, seen, channel, labels, appearance, None)
+}
+fn receive_public_assets(
+    frame:&Frame<'_>, started:Instant, sink:&mut impl FnMut(ChatEvent)->Result<(),String>,
+    summary:&mut ChatSummary, seen:&mut Seen, channel:Option<&str>, labels:Option<(&[Option<String>;2],bool)>,
+    appearance:Option<&personalcon::Context>, gift_assets:Option<&gifts::assets::Context>,
+)->Result<(),Failure>{
+    let unsupported = gifts::known_unsupported(frame.service);
+    let mut parsed = if unsupported { Ok(None) } else { chat_event_context(frame, started, channel, labels) };
+    if let (Ok(Some(row)), Some(context), Some(channel)) = (&mut parsed, gift_assets, channel) {
+        if frame.service == 121 {
+            let fields:Vec<_>=frame.body[1..frame.body.len()-1].split('\x0c').collect();
+            if let Some(request)=context.mission(&fields) {
+                let extra=row.extra.as_mut().ok_or(Failure::Protocol)?;
+                let mut meta=missions::from_stored(&extra["soopMission"]).ok_or(Failure::Protocol)?;
+                if request.apply(&mut meta) {
+                    extra["soopMission"]=serde_json::to_value(meta).map_err(|_|Failure::Protocol)?;
+                    row.mission_asset=Some(request);
+                }
+            }
+        }
+        if row.kind == "donation" && frame.service != 121 {
+            let fields: Vec<_> = frame.body[1..frame.body.len()-1].split('\x0c').collect();
+            if let Some(request) = context.from_fields(frame.service, &fields, channel) {
+                let extra = row.extra.as_mut().ok_or(Failure::Protocol)?;
+                let mut gift = gifts::from_stored(&extra["soopGift"]).ok_or(Failure::Protocol)?;
+                if request.apply(&mut gift) {
+                    // Save the expected opaque ID before raw serialization; the
+                    // capability itself never crosses the serialized boundary.
+                    extra["soopGift"] = serde_json::to_value(gift).map_err(|_| Failure::Protocol)?;
+                    row.gift_asset = Some(request);
+                }
+            }
+        }
+    }
+    if let (Ok(Some(row)),Some(context))=(&mut parsed,appearance) {
+        if row.kind=="chat" && row.extra.as_ref().is_some_and(|v|v["messageType"].is_null()) {
+            let extra=row.extra.as_mut().unwrap();
+            let (request,partial)=context.select(&row.flags,extra["accSubscriptionMonth"].as_str().unwrap_or(""),extra["repPersonalconMonth"].as_str().unwrap_or(""));
+            if let Some(request)=channel.and_then(|c|context.portrait(c,frame.body[1..frame.body.len()-1].split('\x0c').nth(if frame.service==109{5}else{1}).unwrap_or(""),&row.flags,extra["repPersonalconMonth"].as_str().unwrap_or(""))){
+                extra["avatar"]=serde_json::to_value(request.metadata()).map_err(|_|Failure::Protocol)?;row.avatar_asset=Some(request);
+            }
+            row.presentation_partial |= partial;
+            if let Some(request)=request {extra["personalcon"]=serde_json::to_value(request.metadata()).map_err(|_|Failure::Protocol)?;row.personalcon_asset=Some(request);}
+        }
+    }
+    let malformed_gift = matches!(frame.service, 18 | 33 | 91 | 93 | 105 | 109 | 121) && parsed.is_err();
+    let partial_emote = matches!(frame.service,5|91|93|109|121) && parsed.as_ref().is_ok_and(|row|row.as_ref().is_none_or(|row|row.presentation_partial));
+    if unsupported || malformed_gift || partial_emote {
+        if unsupported || partial_emote { summary.unsupported_rich_events += 1; }
+        else { summary.malformed_rich_events += 1; }
+        // One bounded marker for the capture, not a row for every unsupported
+        // event. It marks archive coverage without pretending the socket died.
+        if !seen.rich_warning_emitted {
+            seen.rich_warning_emitted = true;
+            let mut row = event(started, "gap", gifts::COVERAGE_WARNING);
+            row.extra = Some(serde_json::json!({
+                "service": frame.service, "coverageWarning": "unsupportedSoopRichEvent",
+                "reason": if unsupported || partial_emote { "unsupported" } else { "malformed" }
+            }));
+            sink(row).map_err(|_| Failure::Sink)?;
+        }
+        if unsupported || malformed_gift || parsed.as_ref().is_ok_and(Option::is_none) {return Ok(());}
+    }
+    if let Some(row) = parsed? {
+        if seen.accept(row.message_id.as_deref()) {
+            sink(row).map_err(|_| Failure::Sink)?;
+            summary.messages += 1;
+        }
+    }
+    Ok(())
 }
 fn connect_read(
     channel: &str,
@@ -440,6 +647,11 @@ fn connect_read(
         match message {
             Message::Binary(bytes) => {
                 let frame = parse(&bytes)?;
+                #[cfg(test)]
+                if !gift_probe::observe(&frame, bytes.len()) {
+                    stop.store(true, Ordering::Release);
+                    break;
+                }
                 if frame.result != 0 {
                     return Err(Failure::Restricted);
                 }
@@ -477,13 +689,8 @@ fn connect_read(
                         }
                     }
                     3 | 88 => return Err(Failure::Ended),
-                    5 if joined => {
-                        if let Some(row) = chat_event(&frame, started)? {
-                            if seen.accept(row.message_id.as_deref()) {
-                                sink(row).map_err(|_| Failure::Sink)?;
-                                summary.messages += 1;
-                            }
-                        }
+                    service if joined && (service == 5 || gifts::is_public_rich(service)) => {
+                        receive_public_assets(&frame, started, sink, summary, seen, Some(channel),Some((&endpoint.subscription_labels,endpoint.subscription_labels_partial)),Some(&endpoint.personalcon),Some(&endpoint.gift_assets))?;
                     }
                     _ => {}
                 }
@@ -496,6 +703,10 @@ fn connect_read(
     let _ = socket.close(None);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "chat_gift_probe.rs"]
+mod gift_probe;
 /// Dedicated blocking worker. `sink` must be bounded and write only the caller's
 /// owned archive; its failure stops capture immediately without retrying disk I/O.
 /// elapsedMs is relative to this call, before metadata/handshake; receivedAtMs
@@ -757,6 +968,144 @@ mod tests {
             .flatten()
             .is_none());
     }
+    fn service5_palette_fixture(key: Option<&str>, message_type: &str) -> ChatEvent {
+        let mut fields = vec!["한글 <script>", "sender-private", "255", message_type, "0", "Public viewer", "32|262144", "7", key.unwrap_or(""), "C40F70", "9"];
+        if key.is_none() { fields.truncate(8); }
+        let bytes = frame(5, &fields);
+        chat_event(&parse(&bytes).ok().unwrap(), Instant::now()).ok().flatten().unwrap()
+    }
+    #[test]
+    fn ordinary_chat_captures_only_exact_official_nickname_palette() {
+        for key in ["E12E2E", "A90A0A", "EB500D", "C25111", "E07E0A", "B26C03", "648E0B", "119937", "158304", "047143", "0799B9", "0B6D82", "0C80D3", "0C61E1", "1915BF", "6518C8", "AD19E1", "DD32E0", "DC3585", "C40F70"] {
+            let row = service5_palette_fixture(Some(key), "0");
+            let value = serde_json::to_value(&row).unwrap();
+            assert_eq!(value["extra"]["nicknameColorKey"], key);
+            assert_eq!(row.text, "한글 <script>");
+            assert_eq!(row.nickname, "Public viewer");
+            assert_eq!(row.flags, "32|262144");
+            assert_eq!(value["extra"]["color"], "255");
+            assert_eq!(value["extra"]["subscriptionMonth"], "7");
+            assert_eq!(value["extra"]["accSubscriptionMonth"], "9");
+            assert!(!value.to_string().contains("sender-private"));
+            assert!(row.gift_asset.is_none() && row.emoticon_assets.is_empty());
+        }
+    }
+    #[test]
+    fn invalid_or_absent_nickname_palette_keeps_public_text_without_using_dark_field() {
+        let oversized = "E".repeat(1024);
+        for key in [None, Some(""), Some("e12e2e"), Some("#E12E2E"), Some("FFFFFF"), Some("random-color1 injected"), Some(oversized.as_str())] {
+            let row = service5_palette_fixture(key, "0");
+            let value = serde_json::to_value(&row).unwrap();
+            assert!(value["extra"]["nicknameColorKey"].is_null());
+            assert_eq!(row.kind, "chat");
+            assert_eq!(row.text, "한글 <script>");
+            assert_eq!(row.nickname, "Public viewer");
+            let serialized = value.to_string();
+            for excluded in ["sender-private", "C40F70", "randomNicknameColorDarkmode", "random-color1 injected"] { assert!(!serialized.contains(excluded)); }
+        }
+    }
+    #[test]
+    fn nickname_palette_capture_does_not_filter_existing_service5_message_types() {
+        for message_type in ["0", "1", "2", "3", "4", "", "unrecognized"] {
+            let row = service5_palette_fixture(Some("E12E2E"), message_type);
+            assert_eq!(row.kind, "chat");
+            assert_eq!(row.text, "한글 <script>");
+            assert_eq!(row.extra.as_ref().unwrap()["nicknameColorKey"], "E12E2E");
+        }
+    }
+    #[test]
+    fn public_gift_roundtrip_keeps_display_data_and_deduplicates() {
+        let bytes = frame(18, &["receiver-secret", "sender-secret", "Public viewer", "100", "0", "", "", "", "0", "0"]);
+        let mut decoded = parse(&bytes).ok().unwrap();
+        decoded.id = Some("fixture-event");
+        let mut rows = Vec::new();
+        let mut summary = ChatSummary::default();
+        let mut seen = Seen::default();
+        for _ in 0..2 {
+            receive_public(&decoded, Instant::now(), &mut |row| { rows.push(row); Ok(()) }, &mut summary, &mut seen).ok().unwrap();
+        }
+        assert_eq!(rows.len(), 1);
+        assert_eq!(summary.messages, 1);
+        assert_eq!(rows[0].kind, "donation");
+        assert!(rows[0].text.is_empty() && rows[0].flags.is_empty());
+        let encoded = serde_json::to_string(&rows[0]).unwrap();
+        assert!(!encoded.contains("receiver-secret") && !encoded.contains("sender-secret"));
+        assert!(gifts::from_raw(&serde_json::to_value(&rows[0]).unwrap()).is_some());
+    }
+    #[test]
+    fn custom_gift_request_is_bound_transient_and_malformed_selectors_preserve_donation() {
+        for file in ["50","../invalid"] {
+            let bytes=frame(18,&["fixture(1)","sender-secret","Public","50","0","","",file,"0","0","","","ja_JP","123"]);
+            let decoded=parse(&bytes).ok().unwrap();
+            let row=chat_event_bound(&decoded,Instant::now(),Some("fixture")).ok().unwrap().unwrap();
+            assert_eq!(row.kind,"donation");assert_eq!(row.extra.as_ref().unwrap()["soopGift"]["count"],50);
+            assert_eq!(row.gift_asset.is_some(),file=="50");
+            let encoded=serde_json::to_string(&row).unwrap();
+            for private in ["sender-secret","fixture(1)","https://","giftAsset","imageAssetId","../invalid"] {assert!(!encoded.contains(private));}
+            let wrong=chat_event_bound(&decoded,Instant::now(),Some("another")).ok().unwrap().unwrap();
+            assert!(wrong.gift_asset.is_none());assert_eq!(wrong.kind,"donation");
+        }
+    }
+    #[test]
+    fn ogq_native_receive_keeps_empty_public_rows_without_serializing_requests_or_accounts() {
+        let fields=["room-private","","gem_fixture","0","version-private","sender-private","Public <b>","32|262144","255","0","0","jpg","7","E12E2E","private-dark","9","7","1","-1"];
+        let bytes=frame(109,&fields);let mut decoded=parse(&bytes).ok().unwrap();decoded.id=Some("ogq-fixture");
+        let mut rows=Vec::new();let mut summary=ChatSummary::default();let mut seen=Seen::default();
+        for _ in 0..2 {receive_public(&decoded,Instant::now(),&mut|row|{rows.push(row);Ok(())},&mut summary,&mut seen).ok().unwrap();}
+        assert_eq!(summary.messages,1);assert_eq!(rows.len(),1);assert_eq!(rows[0].kind,"chat");assert!(rows[0].text.is_empty());
+        assert_eq!(rows[0].emoticon_assets.len(),4);assert_eq!(rows[0].extra.as_ref().unwrap()["nicknameColorKey"],"E12E2E");
+        let encoded=serde_json::to_string(&rows[0]).unwrap();
+        for private in ["room-private","sender-private","version-private","private-dark","https://","emoticonAssets","imageAssetId"] {assert!(!encoded.contains(private));}
+        for kind in ["1","2","4"] {
+            let mut changed=fields;changed[1]="readable text";changed[10]=kind;
+            let bytes=frame(109,&changed);let decoded=parse(&bytes).ok().unwrap();
+            receive_public(&decoded,Instant::now(),&mut|row|{rows.push(row);Ok(())},&mut summary,&mut seen).ok().unwrap();
+        }
+        assert_eq!(rows.iter().filter(|row|row.kind=="gap").count(),1);
+        assert_eq!(rows.iter().filter(|row|row.kind=="chat").count(),2);
+        assert_eq!(rows.last().unwrap().text,"readable text");assert!(rows.last().unwrap().emoticon_assets.is_empty());
+        assert_eq!(summary.gaps,0);
+    }
+    #[test]
+    fn unsupported_rich_and_malformed_gifts_warn_once_without_stopping_chat() {
+        let started = Instant::now();
+        let mut rows = Vec::new();
+        let mut summary = ChatSummary::default();
+        let mut seen = Seen::default();
+        let mut frames: Vec<_> = [20, 34, 45, 70, 71, 86, 87, 91, 92, 93, 102, 103, 107, 108, 109, 118, 120, 121, 125, 142, 143]
+            .into_iter().map(|service| frame(service, &["private-id", "do-not-store"])).collect();
+        frames.extend([frame(18, &["malformed"]), frame(9, &["private-whisper"]), frame(144, &["private receipt"]),
+            frame(5, &["public body", "private-account", "0", "0", "0", "Public viewer", "16"])]);
+        for bytes in frames {
+            let parsed = parse(&bytes).ok().unwrap();
+            receive_public(&parsed, started, &mut |row| { rows.push(row); Ok(()) }, &mut summary, &mut seen).ok().unwrap();
+        }
+        assert_eq!(summary.unsupported_rich_events, 17);
+        assert_eq!(summary.malformed_rich_events, 5);
+        assert_eq!(summary.gaps, 0, "unsupported rich data is not a socket disconnect");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].kind, "gap");
+        assert_eq!(rows[1].kind, "chat");
+        let encoded = serde_json::to_string(&rows).unwrap();
+        for private in ["private-id", "do-not-store", "private-whisper", "private-account"] { assert!(!encoded.contains(private)); }
+    }
+    #[test]
+    fn subscriptions_keep_public_fields_with_partial_assets_and_no_private_packet_data() {
+        let started=Instant::now();let mut summary=ChatSummary::default();let mut seen=Seen::default();let mut rows=Vec::new();
+        for (service,fields) in [(91,vec!["room-private","receiver-private","sender-private","Public","103","unused","unused","2","unused","ko_KR","1"]),
+            (93,vec!["channel-private","sender-private","Public","17","room-private","unused","999","2","unused","../bad","1"])] {
+            let bytes=frame(service,&fields);let decoded=parse(&bytes).ok().unwrap();
+            receive_public(&decoded,started,&mut |row| {rows.push(row);Ok(())},&mut summary,&mut seen).ok().unwrap();
+        }
+        assert_eq!(summary.messages,2);assert_eq!(summary.unsupported_rich_events,1);
+        let memberships=rows.iter().filter(|row|row.kind=="membership").collect::<Vec<_>>();assert_eq!(memberships.len(),2);
+        assert_eq!(memberships[0].subscription_assets.len(),2);assert_eq!(memberships[1].subscription_assets.len(),1);
+        assert!(memberships.iter().all(|row|row.text.is_empty() && row.gift_asset.is_none() && row.emoticon_assets.is_empty()));
+        let encoded=serde_json::to_string(&rows).unwrap();
+        for secret in ["room-private","receiver-private","sender-private","channel-private","subscriptionAssets","https://","../bad"] {assert!(!encoded.contains(secret));}
+        assert!(!crate::soop::chat::gifts::known_unsupported(91));
+        assert!(!crate::soop::chat::gifts::known_unsupported(121));
+    }
     #[test]
     fn malformed_frames_are_bounded() {
         assert!(parse(&[29, 9]).is_err());
@@ -831,3 +1180,15 @@ mod tests {
         println!("SOOP anonymous chat: connections={}, messages={}, gaps={}, video_requests=0, chat_messages_sent=0",summary.connections,summary.messages,summary.gaps);
     }
 }
+
+#[cfg(test)]
+#[path="chat_personalcon_capture_tests.rs"]
+mod personalcon_capture_tests;
+
+#[cfg(test)]
+#[path = "chat_standard_gift_capture_tests.rs"]
+mod standard_gift_capture_tests;
+
+#[cfg(test)]
+#[path="chat_mission_capture_tests.rs"]
+mod mission_capture_tests;

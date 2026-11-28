@@ -20,11 +20,11 @@ export function resolveGalleryColumns(
   return Math.min(safeMaximum, Math.max(1, fittingColumns));
 }
 
-export function resolveCompactGalleryColumns(availableWidth: number, previewWidth: number): number {
+export function resolveCompactGalleryColumns(availableWidth: number, previewWidth: number, gap = COMPACT_GALLERY_GAP): number {
   const safePreviewWidth = Math.max(1, Math.trunc(previewWidth));
   const fittingColumns = Math.floor(
-    (Math.max(0, availableWidth) + COMPACT_GALLERY_GAP)
-      / (safePreviewWidth + COMPACT_GALLERY_GAP),
+    (Math.max(0, availableWidth) + gap)
+      / (safePreviewWidth + gap),
   );
   return Math.min(COMPACT_LAYOUT_SAFETY_LIMIT, Math.max(1, fittingColumns));
 }

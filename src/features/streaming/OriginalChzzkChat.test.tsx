@@ -164,6 +164,16 @@ describe("isolated original CHZZK archived chat", () => {
     expect(row(1)).toHaveTextContent("{:wave:}");
   });
 
+  it("renders pinned live-history assets without a fabricated local recording or media URL fallback", async () => {
+    const url="https://ssl.pstatic.net/recorded-badge.png", data="data:image/png;base64,AAAA";
+    const api={...mockApi([message(1,{assetIds:{[url]:asset},rich:{badges:[{kind:'subscription',title:'저장 배지',imageUrl:url}],emojis:[]}})]),asset:vi.fn(async()=>data)};
+    await act(async()=>root.render(<RecordingReplayChat api={api} session={{token,chatStatus:'recorded',manualOffsetSeconds:0}} time={10} seekVersion={0} onSeek={onSeek} onIndexReady={onIndexReady}/>));
+    expect(api.asset).toHaveBeenCalledWith(token,asset);expect(api.mediaUrl).not.toHaveBeenCalled();expect(row(1).querySelector('img')).toHaveAttribute('src',data);
+    const next={...api,asset:vi.fn(async()=>null)};
+    await act(async()=>root.render(<RecordingReplayChat api={next} session={{token:'new-history',chatStatus:'recorded',manualOffsetSeconds:0}} time={10} seekVersion={0} onSeek={onSeek} onIndexReady={onIndexReady}/>));
+    expect(next.asset).toHaveBeenCalledWith('new-history',asset);expect(row(1).querySelector('img')).toBeNull();expect(row(1)).toHaveTextContent('저장 배지');expect(api.mediaUrl).not.toHaveBeenCalled();
+  });
+
   it("keeps profile portraits offline and substitutes a readable avatar after failure", async () => {
     const url = "https://nng-phinf.pstatic.net/portrait.png";
     const api = mockApi([message(1, { assetIds: { [url]: asset }, rich: { profileImageUrl: url, badges: [], emojis: [] } })]);

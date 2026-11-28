@@ -9,7 +9,7 @@ export type GroupEdition = DownloadOverlapContainmentItem & {
   canBatchExclude: boolean;
   evidence: string;
 };
-export type OverlapReviewGroup = { keeper: DownloadOverlapGalleryRef; editions: GroupEdition[]; confirmed: boolean; relations: GroupDirectRelation[] };
+export type OverlapReviewGroup = { keeper: DownloadOverlapGalleryRef; editions: GroupEdition[]; confirmed: boolean; relations: GroupDirectRelation[]; reviews?: readonly DownloadOverlapReview[] };
 
 /** Revision can advance after another candidate's decision. Selection follows the
  * actual immutable evidence, never the ordinal or an unrelated review revision. */
@@ -78,7 +78,7 @@ export function buildOverlapReviewGroup(
     if(!prior||source.incoming.entryId===keeper.entryId)relations.set(identity,{key,review:source,candidate,evidence:overlapEvidenceKey(source,candidate)});
   }
 
-  return { keeper, relations: [...relations.values()], confirmed: Boolean(containment) || [...editions.values()].some((item) => item.status === "contained"),
+  return { keeper, relations: [...relations.values()], reviews: [...reviews.values()], confirmed: Boolean(containment) || [...editions.values()].some((item) => item.status === "contained"),
     editions: [...editions.values()].sort((a, b) => Number(a.excluded.galleryId) - Number(b.excluded.galleryId)) };
 }
 

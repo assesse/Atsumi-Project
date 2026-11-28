@@ -1,0 +1,86 @@
+{
+  "schemaVersion": 1,
+  "reference": "SOOP official LIVE chat, observed 2026-11-17 KST",
+  "shadowDomOnly": true,
+  "generatedBy": "tools/soop-official-chat-assets.mjs",
+  "sources": {
+    "chat": {
+      "url": "https://res.sooplive.com/css/global/chat/chat.css",
+      "snapshot": "official-chat.css",
+      "sha256": "3922faf09623f891d977dce38133fd4a4d74dbd83a9c15a505cf0ab9d6371ae9"
+    },
+    "webplayer": {
+      "url": "https://res.sooplive.com/css/global/soop_webplayer/webplayer.css",
+      "snapshot": "official-live-webplayer.css",
+      "sha256": "3d21cb2f640353e68bd64707dff0e67d03a0cc1066092a8ccf64dd027f3064d0"
+    }
+  },
+  "font": "Existing local /fonts/pretendard/PretendardVariable.woff2; parent adapter supplies font-family. Teko donation font is excluded.",
+  "transformations": {
+    "chat": {
+      "removedFontFaces": 1,
+      "removedExternalUrls": [
+        "/ceremony/basic_subscription.png",
+        "/ceremony/random_basic_subscription.png",
+        "/ceremony/plus_subscription.png",
+        "/ceremony/random_plus_subscription.png",
+        "/ceremony/quickview.png",
+        "/ceremony/random_quickview.png",
+        "/ceremony/quickview_plus.png",
+        "/ceremony/random_quickview_plus.png",
+        "/images/chatting/item/fire10minute.png",
+        "/images/flashplayer/btn_close_emo.gif",
+        "/images/flashplayer/icon_arr_link.gif",
+        "/images/flashplayer/bul_poll.png",
+        "/images/studio/ic_starballoon.svg",
+        "/images/studio/ic_adballoon.svg",
+        "/images/studio/ic_sub.svg",
+        "/images/studio/ic_sticker.svg",
+        "/images/studio/ic_item.svg",
+        "/images/chat/emoticon/ic_subscribe.svg",
+        "/images/chat/emoticon/ic_emoticon.svg",
+        "//res.afreecatv.com/images/webplayer/live/gem_deco.png",
+        "/images/chat/ico_sarsa.png"
+      ],
+      "rootSelectors": 2,
+      "darkBodySelectors": 600,
+      "preservedInlineSvgUrls": 253
+    },
+    "badges": {
+      "removedFontFaces": 0,
+      "removedExternalUrls": [],
+      "rootSelectors": 1,
+      "darkBodySelectors": 0,
+      "preservedInlineSvgUrls": 10
+    }
+  },
+  "badgeSelectors": [
+    "[class^=grade-badge-]",
+    "[class^=grade-badge-].grade-badge-streamer",
+    "[class^=grade-badge-].grade-badge-manager",
+    "[class^=grade-badge-].grade-badge-vip",
+    "[class^=grade-badge-].grade-badge-fan",
+    "[class^=grade-badge-].grade-badge-support",
+    "[class^=grade-badge-].grade-badge-subscribe",
+    "[class^=grade-badge-].grade-badge-subscribe-tier2",
+    "[class^=grade-badge-].grade-badge-streamer-global",
+    "[class^=grade-badge-].grade-badge-manager-global",
+    ":root:not([lang=ko-KR]) [class^=grade-badge-].grade-badge-vip"
+  ],
+  "excluded": [
+    "All official scripts and account/payment handlers",
+    "All remote CSS/image/font requests",
+    "All webplayer CSS except the 11 original core grade-badge rules",
+    "CSS source-map requests"
+  ],
+  "outputs": {
+    "official-chat.css": {
+      "bytes": 463426,
+      "sha256": "98aaeda050512571ae08354aa821f86b8e244d3b0cd854f85a03f3aca56b15cd"
+    },
+    "official-badges.css": {
+      "bytes": 17065,
+      "sha256": "e9d089e7a026a5d3e58306b276755c249e1a6db0cf1f54be249bdb1c16558f5b"
+    }
+  }
+}

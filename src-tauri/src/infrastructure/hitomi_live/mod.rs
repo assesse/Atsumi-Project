@@ -90,7 +90,7 @@ impl Default for HitomiLiveConfig {
             gg_cache_ttl: Duration::from_secs(60 * 60),
             // 64 open Explore tabs plus refreshes/in-flight search headroom.
             query_cache_capacity: 128,
-            max_candidate_ids: 1_000,
+            max_candidate_ids: 4_000,
             related_gallery_limit: 8,
         }
     }

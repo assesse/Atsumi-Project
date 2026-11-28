@@ -1,0 +1,55 @@
+{
+  "id": "hitomi-progressive-preview-20261122",
+  "status": "implemented_pending_native_verification",
+  "source": {
+    "threadId": "01a089ee-56ed-7322-a750-c034423826c2",
+    "snapshot": ".runtime/hitomi-progressive-preview-20261122/messages-delta.json",
+    "line": 53086,
+    "attachment": "C:/Users/JJH/AppData/Local/Temp/codex-clipboard-a5fc4981-85ce-464f-8358-7f71b29de388.png"
+  },
+  "audit": {
+    "inventory": ".runtime/hitomi-progressive-preview-20261122/inventory.json",
+    "sourceCoverage": ".runtime/hitomi-progressive-preview-20261122/source-coverage.json",
+    "specCoverage": ".runtime/hitomi-progressive-preview-20261122/spec-coverage.json",
+    "specCount": 494,
+    "reusedSources": 7,
+    "changesRead": "Latest request and all other-main appended commentary; newly added download-preview contract fully read. Remaining specifications exact-hash reused."
+  },
+  "finding": "ProgressivePagePreview mounts GalleryThumbnail only when original.kind is failed. Preparing/prepared originals deliberately replace even an already resolved matching preview with a spinner. The original backend bypasses the thumbnail cache; this is a presentation regression, not proof of corrupt or missing cache.",
+  "decisions": [
+    "Mount the exact page thumbnail immediately and keep it visible while original preparation, media loading or decoding is pending. Promote only the matching successfully decoded original.",
+    "Use the shared thumbnail coordinator to reuse ready/in-flight pages and canonical disk cache rather than a second image cache or direct image URL manipulation.",
+    "Remote page one can reuse its known cover only when an exact page preview is not already present. Never show a cover as a placeholder for a later page. Completed local albums use an artifact-page fallback, preserving local original priority and avoiding a new source thumbnail download.",
+    "Keep a thumbnail underneath a displayed original so a display error can reveal it without a second loading gap; at most the visible one/two pages subscribe. Preserve the bounded two-reader original pool and neighbouring prefetch range.",
+    "Fence late original and decode results by request and image identity. Warm already-complete original images must promote without depending solely on a fresh load event. Original dimensions supersede later thumbnail dimensions.",
+    "Preserve the previous always-visible counts, Downloads double-click and Q/E navigation changes, original file quality, privacy, page identity, close/disposal and all recording/download jobs. No release requested."
+  ],
+  "supersedes": [
+    "Original-first failure-only thumbnail presentation is replaced by thumbnail-first display while the full original is prepared; the original download/quality and pool limits remain unchanged."
+  ],
+  "acceptance": [
+    "Reproduce a warm cached page plus delayed original before fixing.",
+    "Cached preview remains during preparation and image decoding; original errors keep preview; uncached pages resolve through the existing coordinator.",
+    "Pool-backed real Detail path, page/album switching, stale responses, local artifact fallback, cover versus non-cover page, already-complete image, and cleanup tests.",
+    "Headless browser with synthetic media verifies actual pixels/visibility before and after delayed original decoding; no user media transmitted.",
+    "Run affected tests/typecheck/build. Native application verification remains pending if active-work normal-exit gate refuses restart; never drain/kill jobs."
+  ],
+  "implementation": [
+    "src/components/ProgressivePagePreview.tsx",
+    "src/components/ProgressivePagePreview.test.tsx",
+    "src/components/ProgressivePagePreview.progressive.test.tsx",
+    "src/components/DetailWorkspace.test.tsx"
+  ],
+  "verification": ".runtime/hitomi-progressive-preview-20261122/verification.json",
+  "nativeVerification": {
+    "file": "normal-exit.txt",
+    "pid": 27092,
+    "accepted": false,
+    "status": 409,
+    "reason": "active_work_confirmation_required"
+  },
+  "notes": [
+    "The preview remains underneath the original during its existing opacity transition, with an opaque original background, avoiding a black frame during crossfade.",
+    "No backend/network-original algorithm was changed. Test-only DetailWorkspace selectors now distinguish the bounded contact sheet from the additional enlarged-preview fallback."
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "id": "browser-vpn-20261115",
+  "status": "implemented_with_verification_limits",
+  "requestId": "01a1df63-934d-74a3-8053-4d2e16be5e32",
+  "originals": [
+    "01a1df47-4bca-7e22-9822-64fa14148068",
+    "01a1df5d-957a-74a3-96ce-3aaee54de0ab"
+  ],
+  "requirements": [
+    "Separate Atsumi browser window with normal tabs/address/back/forward/reload, retained browser profile, no shared platform sessions.",
+    "Proton Free standard WireGuard import; native control on/off; only user performs account creation and config issuance.",
+    "Browser-only local proxy and userspace WireGuard process. No global proxy/DNS/routes/services, app DB, download queues, recordings or existing network clients changed.",
+    "Optional browser-local TLS ClientHello SNI fragmentation; do not represent it as country/IP change.",
+    "Fail closed while VPN selected/connecting/failed; actual HTTPS exit-IP probe before connected. No direct fallback or direct DNS for browser target names in VPN.",
+    "Config parser rejects hooks/includes/unknown sections; keys never logged/returned to UI. Windows DPAPI persistence and bounded local engine configuration transfer.",
+    "Remote pages cannot invoke native IPC, navigate to local privileged origins or launch external protocols.",
+    "Network changes close browser connections; do not silently interrupt browser downloads.",
+    "No release, commit, push or PC shutdown requested."
+  ],
+  "acceptance": [
+    "Native config/proxy/fragmentation/failure/transition tests",
+    "Frontend interaction/types/build",
+    "Real isolated browser operation and transport inspection",
+    "Human Proton account/config/tunnel verification remains explicitly pending until supplied"
+  ],
+  "audit": {
+    "reuse": ".runtime/chzzk-live-recovery-20261114/preedit.json",
+    "otherChatRevisions": "All Atsumi revisions match Nov13/14 baseline; Codex 28 active/3 archived, ChatGPT 74 active/0 archived, complete inventory pagination. Current 8-turn page overlaps fully-read Nov14 snapshot.",
+    "specificationDelta": "Nov11 baseline checked by SHA256: docs/RELEASING.md changed; recording-batch, x-ui-polish, chzzk-live-recovery added; fully read. Others unchanged.",
+    "inaccessible": "Retain baseline unavailable/deleted sources, no claim of reading unavailable attachments.",
+    "currentApp": "No atsumi or ffmpeg process found before edits; recheck before startup."
+  },
+  "verification": {
+    "nativeTests": {
+      "passed": 12,
+      "failed": 0,
+      "evidence": "native-final-tests.log",
+      "includes": [
+        "actual HTTPS through local gateway with SNI on/off",
+        "blocked connection and unavailable SOCKS engine never fall back to direct",
+        "Windows named-pipe engine startup with synthetic keys",
+        "DPAPI round trip",
+        "untrusted config hooks and local navigation rejected",
+        "corrupt preference restore remains blocked"
+      ]
+    },
+    "frontendTests": {
+      "passed": 19,
+      "failed": 0,
+      "evidence": "frontend-tests.log"
+    },
+    "build": {
+      "native": "passed",
+      "frontendAndTypecheck": "passed",
+      "evidence": [
+        "native-build.log",
+        "frontend-build.log"
+      ]
+    },
+    "actualNativeApp": {
+      "initialDocument": "loaded browser.html, independent process, own profiles",
+      "networkPanel": "opened; import action and config-less disabled Proton switch present in accessibility tree",
+      "sniToggle": "UI invocation persisted fragment=true; VPN remains off; no encrypted profile yet",
+      "visualScreenshot": "unreliable: capture showed occluding other window instead of target browser",
+      "input": "activation/geometry failures, then explicit user-input detection; stopped further input",
+      "pending": [
+        "address navigation, multiple tabs, back/forward/reload and keyboard shortcuts in real native window",
+        "narrow window layout visual inspection",
+        "human file import and real Proton connection/exit country/failure recovery"
+      ]
+    },
+    "isolation": {
+      "source": "browser process exits into separate builder before AppState/DB/recording/download supervisors; browser-owned proxy only, no system routes/DNS/proxy setters",
+      "systemNetworkHashCheck": "inconclusive: snapshot changed while user independently opened/installed Proton VPN; no system setting changed by this implementation or verification",
+      "existingRecordingOrDownloadStopped": false,
+      "mainAppStarted": false
+    },
+    "humanSteps": [
+      "Create/sign in to a Proton Free account",
+      "Downloads > WireGuard configuration: generate/download a Free-server .conf",
+      "Atsumi Browser > VPN button > import config, then enable Proton VPN"
+    ],
+    "contradictionCheck": {
+      "separateWindow": true,
+      "onlyBrowserNetworking": true,
+      "noSharedPlatformSessions": true,
+      "sniOptionalAndDoesNotChangeCountry": true,
+      "noPlaintextPersistedPrivateKey": true,
+      "noReleaseOrCommit": true,
+      "noClaimOfRealProtonConnection": true
+    }
+  },
+  "localEvidence": ".runtime/browser-vpn-20261115/verification.json"
+}

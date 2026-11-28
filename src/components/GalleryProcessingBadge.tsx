@@ -9,7 +9,7 @@ export function processingSurfaceAttributes(download: Gallery["download"], softe
   const status = galleryProcessingStatus(download, options);
   return {
     "data-processing-tone": status?.tone,
-    "data-processing-muted": soften && status?.state === "completed" ? true : undefined,
+    "data-processing-muted": soften && (status?.state === "completed" || status?.state === "duplicate") ? true : undefined,
     "data-processing-excluded": status?.state === "excluded" || status?.state === "quarantined" ? true : undefined,
   };
 }

@@ -5,9 +5,13 @@ import bridgeSource from "../../../src-tauri/src/streaming/browser_capture.js?ra
 // Keep the fixture independent of DOM and browser codecs. A computed built-in
 // import avoids adding Node ambient types to this browser-only application.
 const vmModule = "node:vm";
-const { runInNewContext } = await import(vmModule) as {
+const { Script, runInNewContext } = await import(vmModule) as {
+  Script: new (source: string, options?: { filename?: string }) => unknown;
   runInNewContext(source: string, context: Record<string, unknown>): unknown;
 };
+it("parses the entire unmodified production bridge before any page fixture runs", () => {
+  expect(() => new Script(bridgeSource, { filename: "browser_capture.js" })).not.toThrow();
+});
 const CHANNEL = "b3e262a2795f17734c149afc738ad250";
 const REQUEST = "10000000-0000-4000-8000-000000000001";
 const RECORDING = "20000000-0000-4000-8000-000000000001";

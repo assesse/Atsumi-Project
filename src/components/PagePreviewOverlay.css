@@ -25,12 +25,37 @@
 .page-preview-dialog .page-preview-controls {
   bottom: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   padding-top: 24px;
+  padding-bottom: 38px;
   background: linear-gradient(transparent, #0b0c1180 30%, #0b0c11e8);
 }
-.page-preview-dialog .page-preview-navigation { margin: 0; justify-self: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.page-preview-dialog .page-preview-navigation {
+  position: absolute;
+  z-index: 8;
+  inset: auto auto 8px 50%;
+  grid-column: auto;
+  justify-self: auto;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  margin: 0;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: #101116b8;
+  color: #f8f8fa;
+  font-size: var(--font-size-min);
+  line-height: 1.4;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+}
+.page-preview-album-position { color: #e6c5cd; }
 .page-preview-dialog .page-preview-toolbar { display: flex; justify-self: end; align-items: center; gap: 7px; }
 .page-preview-dialog .page-preview-pin { justify-self: start; width: 34px; height: 34px; padding: 6px; }
 .page-preview-pin svg { width: 22px; height: 22px; transition: transform 160ms ease; }

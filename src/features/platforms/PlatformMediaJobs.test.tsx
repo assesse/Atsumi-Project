@@ -4,6 +4,30 @@ import { expect, it, vi } from 'vitest';
 import { PlatformMediaJobs } from './PlatformMediaJobs';
 import type { MediaJob } from './platformMedia';
 
+it('opens archive selection only for the exact SOOP live recording and respects stale, privacy and busy states', async () => {
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const host = document.createElement('div'), root = createRoot(host);
+  const onArchive = vi.fn(), onCancel = vi.fn(), onRetry = vi.fn();
+  const live: MediaJob = { jobId: 'soop-current', requestId: 'capture-request', reference: { provider: 'soop', kind: 'live', externalId: 'streamer/123' }, revision: 4, state: 'recording', title: 'Current recording', channelName: '', createdAt: 1, receivedBytes: 300 };
+  const jobs: MediaJob[] = [live, { ...live, jobId: 'soop-vod', reference: { ...live.reference, kind: 'video' } }, { ...live, jobId: 'youtube-live', reference: { ...live.reference, provider: 'youtube' } }];
+  const render = async (privacyMode = false, stale = false, busy = false) => act(async () => root.render(<PlatformMediaJobs jobs={jobs} privacyMode={privacyMode} stale={stale} busy={busy} onCancel={onCancel} onRetry={onRetry} onArchive={onArchive} />));
+  const archiveButtons = () => Array.from(host.querySelectorAll('button')).filter(button => button.textContent === 'YouTube 보관');
+  try {
+    await render();
+    expect(onArchive).not.toHaveBeenCalled();
+    expect(archiveButtons()).toHaveLength(1);
+    await act(async () => archiveButtons()[0]!.click());
+    expect(onArchive).toHaveBeenCalledExactlyOnceWith(live);
+    expect(onCancel).not.toHaveBeenCalled(); expect(onRetry).not.toHaveBeenCalled();
+    for (const flags of [[true, false, false], [false, true, false], [false, false, true]]) {
+      await render(...flags);
+      expect(archiveButtons()[0]).toBeDisabled();
+      await act(async () => archiveButtons()[0]!.click());
+    }
+    expect(onArchive).toHaveBeenCalledTimes(1);
+  } finally { await act(async () => root.unmount()); vi.unstubAllGlobals(); }
+});
+
 it('animates only actual new settlement, not initial, stale, re-scoped or reduced-motion counts', async () => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   const descriptor = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'animate');

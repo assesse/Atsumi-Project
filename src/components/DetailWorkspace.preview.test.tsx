@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockGalleries } from "../data/mockGalleries";
@@ -26,7 +26,7 @@ afterEach(async () => {
   }
 });
 
-async function mount(start = 1, count = 5) {
+async function mount(start = 1, count = 5, options: Partial<ComponentProps<typeof DetailWorkspace>> = {}) {
   const gallery = { ...mockGalleries[0]!, pages: count, relatedIds: [], download: undefined,
     pageDimensions: Array.from({ length: count }, (_, i) => ({ sourcePage: i + 1, width: i === 2 ? 1800 : 800, height: 1200 })) };
   const resolve = vi.fn((_request: ThumbnailRequest) => ({ kind: "missing" as const, reason: "offline fixture" }));
@@ -36,18 +36,21 @@ async function mount(start = 1, count = 5) {
   const container = document.createElement("div"); document.body.append(container);
   const root = createRoot(container);
   dispose.push(async () => { await act(async () => root.unmount()); container.remove(); client.dispose(); });
-  await act(async () => root.render(<PersonalLibraryProvider api={api}><DetailWorkspace
+  let overrides = options;
+  const render = () => root.render(<PersonalLibraryProvider api={api}><DetailWorkspace
     tabs={[gallery.id]} activeId={gallery.id} minimized={false} galleries={new Map([[gallery.id, gallery]])}
     favoriteMetadata={new Set()} thumbnailClient={client} pageOpenRequest={{ galleryId: gallery.id, page: start, sequence: 1 }}
     onActivate={vi.fn()} onClose={vi.fn()} onCloseAll={vi.fn()} onMinimize={vi.fn()} onRestore={vi.fn()}
-    onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} />
-  </PersonalLibraryProvider>));
+    onOpenRelated={vi.fn()} onQueue={vi.fn()} onMetadataSearch={vi.fn()} onMetadataFavorite={vi.fn()} {...overrides} />
+  </PersonalLibraryProvider>);
+  await act(async () => render());
   const dialog = container.querySelector<HTMLDialogElement>(".page-preview-dialog")!;
   const button = (label: string) => dialog.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!;
   const click = async (label: string) => { await act(async () => button(label).click()); };
   const key = async (key: string, target: EventTarget = window) => { await act(async () => target.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }))); };
   const pages = () => [...dialog.querySelectorAll<HTMLButtonElement>(".bookmark-toggle")].map((b) => b.querySelector(".bookmark-page-icon > span")?.textContent?.replace(/p$/, ""));
-  return { dialog, button, click, key, pages, resolve };
+  return { dialog, button, click, key, pages, resolve, container, gallery,
+    update: async (props: Partial<ComponentProps<typeof DetailWorkspace>>) => { overrides = {...overrides, ...props}; await act(async()=>render()); } };
 }
 
 describe("page preview overlay and resilient spread", () => {
@@ -65,7 +68,7 @@ describe("page preview overlay and resilient spread", () => {
     await f.key("d");
     expect(f.pages()).toEqual(["5"]);
     expect(f.dialog.querySelector(".page-preview-media-stage")?.lastElementChild).toHaveClass("page-preview-empty-slot");
-    expect(f.dialog.querySelector(".page-preview-navigation")).toHaveTextContent("5 / 5");
+    expect(f.dialog.querySelector(".page-preview-navigation")).toHaveTextContent("5/5");
     expect(f.button("다음 페이지")).toBeDisabled();
     await f.key("d");
     expect(f.pages()).toEqual(["5"]);
@@ -139,4 +142,51 @@ describe("page preview overlay and resilient spread", () => {
     expect(document.activeElement).toBe(document.querySelector('.detail-tabs [aria-selected="true"]'));
     inactiveLibrary.remove();
   });
+});
+
+it("keeps the album and page count outside the controls that auto-hide", async () => {
+  const f = await mount(11,130,{ previewOnly:true, previewAlbumPosition:{ index:10,total:12,label:"Artist" } });
+  expect(f.container.querySelector(".detail-workspace")).toBeNull();
+  expect(f.dialog).toHaveAttribute("open");
+  expect(f.dialog).toHaveAttribute("data-controls-visible","false");
+  const count=f.dialog.querySelector(".page-preview-navigation")!;
+  expect(count.closest(".page-preview-controls")).toBeNull();
+  expect(count).toHaveTextContent("[10/12]11/130");
+  await f.click("두쪽 보기");
+  expect(count).toHaveTextContent("[10/12]11–12/130");
+});
+
+it("handles Q/E only in the foreground reader and keeps page shortcuts separate", async () => {
+  const navigate=vi.fn();
+  const f=await mount(1,5,{onPreviewNavigateAlbum:navigate,previewOnly:true});
+  await f.key("q"); await f.key("E");
+  await act(async()=>window.dispatchEvent(new KeyboardEvent("keydown",{key:"ㄷ",code:"KeyE",cancelable:true})));
+  expect(navigate.mock.calls).toEqual([[-1],[1],[1]]);
+  await f.key("d"); expect(f.pages()).toEqual(["2"]);
+  const editor=document.createElement("input");f.dialog.append(editor);
+  await f.key("e",editor);editor.remove();
+  for (const modifier of ["ctrlKey","shiftKey","altKey","metaKey","isComposing"]) {
+    await act(async()=>window.dispatchEvent(new KeyboardEvent("keydown",{key:"e",[modifier]:true,cancelable:true})));
+  }
+  const modal=document.createElement("dialog");modal.open=true;document.body.append(modal);
+  await f.key("q");modal.remove();
+  expect(navigate).toHaveBeenCalledTimes(3);
+});
+
+it("switches a long album to a shorter one without closing, dropping spread mode, or losing the original detail tabs", async () => {
+  const close=vi.fn();
+  const f=await mount(120,130,{previewOnly:true,onPreviewClose:close,previewAlbumPosition:{index:12,total:12,label:"A"}});
+  await f.click("두쪽 보기");
+  const next={...mockGalleries[1]!,pages:3,relatedIds:[],download:undefined,pageDimensions:[]};
+  await f.update({activeId:next.id,galleries:new Map([[f.gallery.id,f.gallery],[next.id,next]]),
+    pageOpenRequest:{galleryId:next.id,page:1,sequence:2},previewAlbumPosition:{index:1,total:2,label:"B"}});
+  expect(f.dialog).toHaveAttribute("open");
+  expect(f.pages()).toEqual(["1","2"]);
+  expect(f.button("두쪽 보기")).toHaveAttribute("aria-pressed","true");
+  expect(f.dialog.querySelector(".page-preview-navigation")).toHaveTextContent("[1/2]1–2/3");
+  await f.click("페이지 미리보기 닫기");
+  expect(close).toHaveBeenCalledOnce();
+  expect(f.dialog).not.toHaveAttribute("open");
+  await f.update({previewOnly:false,onPreviewClose:undefined,pageOpenRequest:null,activeId:f.gallery.id});
+  expect(f.container.querySelector(".detail-tabs [aria-selected='true']")).toHaveTextContent(f.gallery.title);
 });

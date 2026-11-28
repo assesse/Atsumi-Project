@@ -20,16 +20,40 @@ export async function getQueueSnapshot(query: QueueQuery): Promise<QueueSnapshot
   const response = await backend.downloadEntriesList({ page: 1, pageSize: 200 });
   if (!response.ok) throw new Error(response.error.message);
   const counts: QueueSnapshot["counts"] = {};
-  const rows = response.data.entries.map((entry): QueueRow => {
+  const entries = [...response.data.entries];
+  for (let page = 2; entries.length < response.data.totalItems; page++) {
+    const more = await backend.downloadEntriesList({ page, pageSize: 200 });
+    if (!more.ok) throw new Error(more.error.message);
+    if (!more.data.entries.length) break;
+    entries.push(...more.data.entries);
+  }
+  const rows = entries.map((entry): QueueRow => {
     if (!query.observedSince || runningDownloadStates.has(entry.state) || (entry.updatedAt ?? "") >= query.observedSince) counts[entry.state] = (counts[entry.state] ?? 0) + 1;
-    return { ...entry, title: `앨범 #${entry.galleryId}`, artist: "", sequence: 1, errorCode: entry.errorCode ?? null, progress: entry.progress ?? 0, updatedAt: entry.updatedAt ?? "" };
+    return { ...entry, title: "", artist: "", sequence: 1, errorCode: entry.errorCode ?? null, progress: entry.progress ?? 0, updatedAt: entry.updatedAt ?? "" };
   });
   const active = rows.filter((row) => runningDownloadStates.has(row.state));
   const filtered = query.after ? [] : query.includeSettled && !query.cancellationPreview ? rows : active;
   const page = query.page ?? 1;
   const offset = query.offset ?? (page - 1) * 100;
+  const visible = query.cancellationPreview ? filtered : filtered.slice(offset, offset + 100);
+  const items = await Promise.all(visible.map(async (row) => {
+    const metadata = await backend.gallerySummaryGet(row.galleryId);
+    return metadata.ok ? { ...row, title: metadata.data.title, artist: metadata.data.artist } : row;
+  }));
   return { queriedAt: new Date().toISOString(), counts: query.after ? {} : counts, globalActive: active.length, totalRows: filtered.length, page, pageSize: 100,
-    items: query.cancellationPreview ? filtered : filtered.slice(offset, offset + 100), offset, batches: [{ sequence: 1, requestId: "browser-preview", requested: rows.length, owned: rows.length, active: active.length, label: "미리보기 큐", createdAt: null }], etaSeconds: null, recentCompleted: 0, lastProgressAt: null };
+    items, offset, batches: [{ sequence: 1, requestId: "browser-preview", requested: rows.length, owned: rows.length, active: active.length, label: "미리보기 큐", createdAt: null }], etaSeconds: null, recentCompleted: 0, lastProgressAt: null };
+}
+
+export async function getQueueSelectionRange(query: QueueQuery, anchor: string, target: string): Promise<string[]> {
+  if (backend.runtime === "tauri") return invoke("work_queue_selection_range", { query, anchor, target });
+  const { items } = await getQueueSnapshot({ ...query, cancellationPreview: true });
+  return queueRangeInWindow(items, anchor, target);
+}
+
+export function queueRangeInWindow(rows: readonly QueueRow[], anchor: string, target: string): string[] {
+  const start = rows.findIndex(row => row.entryId === anchor);
+  const end = rows.findIndex(row => row.entryId === target);
+  return start < 0 || end < 0 ? [] : rows.slice(Math.min(start, end), Math.max(start, end) + 1).map(row => row.entryId);
 }
 
 /** Freeze explicit IDs for the confirmation dialog. Jobs added after preview are not cancelled. */

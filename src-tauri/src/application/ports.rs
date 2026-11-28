@@ -1,5 +1,5 @@
 use crate::domain::{
-    ArtifactBundle, AutoFindCandidateRecord, AutoFindCutoffEvidence, AutoFindExclusionResult,
+    ArtifactBundle, AutoFindCandidateChanges, AutoFindCandidateRecord, AutoFindCutoffEvidence, AutoFindExclusionResult,
     AutoFindHistoryMode, AutoFindRun, AutoFindRunState, AutoFindSnapshot, AutoFindTruncation,
     DownloadEntry, DownloadEntryId, DownloadJobDescriptor, DownloadJobProjection,
     DownloadLibraryPage, DownloadListRequest, DownloadPage, DuplicateCandidateRecord,
@@ -82,6 +82,16 @@ pub trait GallerySummaryCache: Send + Sync {
 pub trait SearchRepository: Send + Sync {
     fn search_submit(&self, request: &SearchRequest) -> Result<SearchSubmission, RepositoryError>;
 
+    fn search_submit_visible(&self, request: &SearchRequest, omitted_ids: &[u64]) -> Result<SearchSubmission, RepositoryError> {
+        let mut submission = self.search_submit(request)?;
+        if !omitted_ids.is_empty() {
+            submission.first_page = self.search_page_get_cancellable(
+                &submission.query_id, 1, omitted_ids, &crate::thumbnail::CancellationToken::new(),
+            )?.ok_or_else(|| RepositoryError::Other("submitted query expired".into()))?;
+        }
+        Ok(submission)
+    }
+
     fn search_page_get(
         &self,
         query_id: &str,
@@ -92,8 +102,12 @@ pub trait SearchRepository: Send + Sync {
         &self,
         query_id: &str,
         page: u32,
+        omitted_ids: &[u64],
         cancellation: &crate::thumbnail::CancellationToken,
     ) -> Result<Option<GalleryPage>, RepositoryError> {
+        if !omitted_ids.is_empty() {
+            return Err(RepositoryError::Other("search visibility is unsupported by this repository".into()));
+        }
         if cancellation.is_cancelled() {
             return Err(RepositoryError::Source(
                 crate::source::SourceContractError::cancelled(),
@@ -260,6 +274,16 @@ pub trait AutomationRepository: Send + Sync {
         history_mode: AutoFindHistoryMode,
         policy_version: u32,
         full_rescan_max_age_days: u32,
+    ) -> Result<Vec<AutoFindIncrementalCheckpoint>, RepositoryError> {
+        self.auto_find_checkpoints(targets, Some(history_mode), policy_version, Some(full_rescan_max_age_days))
+    }
+
+    fn auto_find_checkpoints(
+        &self,
+        targets: &[FavoriteKey],
+        history_mode: Option<AutoFindHistoryMode>,
+        policy_version: u32,
+        full_rescan_max_age_days: Option<u32>,
     ) -> Result<Vec<AutoFindIncrementalCheckpoint>, RepositoryError>;
 
     fn auto_find_cached_candidates(
@@ -285,6 +309,16 @@ pub trait AutomationRepository: Send + Sync {
         total_favorites: u32,
         history_mode: AutoFindHistoryMode,
         cutoff_evidence: &[AutoFindCutoffEvidence],
+    ) -> Result<AutoFindRun, RepositoryError> {
+        self.auto_find_start_with_pending(total_favorites, history_mode, cutoff_evidence, false)
+    }
+
+    fn auto_find_start_with_pending(
+        &self,
+        total_favorites: u32,
+        history_mode: AutoFindHistoryMode,
+        cutoff_evidence: &[AutoFindCutoffEvidence],
+        retain_pending: bool,
     ) -> Result<AutoFindRun, RepositoryError>;
 
     fn auto_find_truncation_add(
@@ -320,6 +354,8 @@ pub trait AutomationRepository: Send + Sync {
 
     fn auto_find_is_running(&self, run_id: &str) -> Result<bool, RepositoryError>;
 
+    fn auto_find_run_get(&self, run_id: &str) -> Result<Option<AutoFindRun>, RepositoryError>;
+    fn auto_find_candidate_changes(&self, run_id: &str, after: i64) -> Result<AutoFindCandidateChanges, RepositoryError>;
     fn auto_find_snapshot(&self) -> Result<AutoFindSnapshot, RepositoryError>;
 
     fn auto_find_exclude(

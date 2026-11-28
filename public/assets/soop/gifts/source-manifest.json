@@ -1,0 +1,72 @@
+{
+  "capturedAt": "2026-11-16T17:34:22.111Z",
+  "originalReference": "SOOP LiveView.js balloon and videoBalloon renderers, offsets 648048 and 651773",
+  "originalSourceSha256": "8bc69eec552513aca821d3c5dcb4065b2a2fdb3e75c40d716385da44d6015198",
+  "verificationArtifact": ".runtime/requirements-audit/20261117-cloud-goal-resume/soop-donation-protocol-evidence.json",
+  "transforms": "None; original PNG bytes. Runtime uses only pinned local paths. Historical custom images are not reconstructed.",
+  "assets": [
+    {
+      "file": "public/assets/soop/gifts/ba_step1.png",
+      "sourceUrl": "https://res.sooplive.com/new_player/items/ba_step1.png",
+      "bytes": 6477,
+      "width": 184,
+      "height": 108,
+      "sha256": "bfe9558489fdadded6ed74ab3a296203e89a1c8f6be97894c8e68dd69aa510b1",
+      "contentType": "image/png"
+    },
+    {
+      "file": "public/assets/soop/gifts/ba_step2.png",
+      "sourceUrl": "https://res.sooplive.com/new_player/items/ba_step2.png",
+      "bytes": 10673,
+      "width": 184,
+      "height": 108,
+      "sha256": "98a9e284507abe9ce99704a74fe3a332738be673f32c9f08be2ea1710cfa563e",
+      "contentType": "image/png"
+    },
+    {
+      "file": "public/assets/soop/gifts/ba_step3.png",
+      "sourceUrl": "https://res.sooplive.com/new_player/items/ba_step3.png",
+      "bytes": 12390,
+      "width": 184,
+      "height": 108,
+      "sha256": "a313419399b83a52d9fec64ef6d7d5c8d79ca5fb773ff8f31b19a56a9ae898d1",
+      "contentType": "image/png"
+    },
+    {
+      "file": "public/assets/soop/gifts/ba_step4.png",
+      "sourceUrl": "https://res.sooplive.com/new_player/items/ba_step4.png",
+      "bytes": 16008,
+      "width": 184,
+      "height": 108,
+      "sha256": "4a4e14f1c92d71ea82a0c42b868987bdac19b806128d6f4aaa53920d1a53df0d",
+      "contentType": "image/png"
+    },
+    {
+      "file": "public/assets/soop/gifts/ba_step5.png",
+      "sourceUrl": "https://res.sooplive.com/new_player/items/ba_step5.png",
+      "bytes": 16795,
+      "width": 184,
+      "height": 108,
+      "sha256": "abe5d5a1925dbf62e9dd48d752657ff826b395b79764bd3d5fd804d00c5d3638",
+      "contentType": "image/png"
+    },
+    {
+      "file": "public/assets/soop/gifts/ba_step6.png",
+      "sourceUrl": "https://res.sooplive.com/new_player/items/ba_step6.png",
+      "bytes": 22234,
+      "width": 184,
+      "height": 108,
+      "sha256": "3d937ff0ee1b277ed3fca19cad3010a2367680822ee01ec85dd4705573bc0a33",
+      "contentType": "image/png"
+    },
+    {
+      "file": "public/assets/soop/gifts/m_video_balloon.png",
+      "sourceUrl": "https://res.sooplive.com/new_player/items/m_video_balloon.png",
+      "bytes": 11226,
+      "width": 293,
+      "height": 248,
+      "sha256": "74be50787251e9750644a1499e6d81c14886c2dbe49bc409a04323cbfd19e9be",
+      "contentType": "image/png"
+    }
+  ]
+}

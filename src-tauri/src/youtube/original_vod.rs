@@ -1,23 +1,56 @@
 //! Watch-only sessions share YouTube's original account profile, not live capture authority.
 use super::{
-    lock, policy, profile, Envelope, OriginalSnapshot, YouTubeOriginalHost, STALE, UNAVAILABLE,
+    lock, policy, profile, Envelope, OriginalSnapshot, VodPlayability, YouTubeOriginalHost, STALE, UNAVAILABLE,
 };
 use crate::platform_native_geometry::{self, NativeViewport};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::HashMap,
+    time::{Duration, Instant},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex,
     },
 };
 use tauri::{AppHandle, Emitter, Manager, Webview, WebviewBuilder, WebviewUrl};
+#[path = "original_vod_frames.rs"]
+mod frames;
+pub(crate) use frames::NativeFrameWindow;
+#[path = "original_vod_owned.rs"]
+mod owned;
+pub(crate) use owned::OwnedVodLease;
 
 const PREFIX: &str = "ATSUMI_YOUTUBE_VOD_V1:";
 const TOKEN_PREFIX: &str = "youtube-vod-";
 const SITE_ERROR: &str =
     "YouTube에서 이 영상을 재생할 수 없습니다. 공식 플레이어의 안내를 확인해 주세요.";
+const LOGIN_ERROR: &str = "이 영상을 볼 수 있는 YouTube 계정으로 로그인해 주세요.";
 const IDENTITY_ERROR: &str = "다른 영상으로의 자동 전환을 차단했습니다. 선택한 영상을 다시 열어 주세요.";
+const CLOCK_MAX_AGE: Duration = Duration::from_millis(1500);
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct VodClockFields {
+    pub video_id: String, pub source_id: String, pub source_generation: u64,
+    pub sequence: u64, pub seek_generation: u64, pub current_time: Option<f64>,
+    pub duration: Option<f64>, pub paused: bool, pub seeking: bool, pub playback_rate: f64,
+    pub buffering: bool, pub ended: bool, pub ad_state: String, pub valid: bool,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all="camelCase")]
+pub struct VodClock {
+    pub token: String, pub document_epoch: u64, pub age_ms: u64,
+    #[serde(flatten)] pub fields: VodClockFields,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all="camelCase", deny_unknown_fields)]
+pub struct VodControlRequest {
+    pub request_id: String, pub document_epoch: u64, pub source_id: String,
+    pub source_generation: u64, pub action: String, pub seconds: Option<f64>, pub rate: Option<f64>,
+}
+struct ClockState { epoch:u64, fields:VodClockFields, received:Instant }
+struct ControlBusy<'a>(&'a AtomicBool);
+impl Drop for ControlBusy<'_> {fn drop(&mut self){self.0.store(false,Ordering::Release);}}
 pub(super) fn is_token(token: &str) -> bool {
     token.starts_with(TOKEN_PREFIX)
 }
@@ -28,6 +61,7 @@ struct Registry {
     requests: HashMap<String, (String, String)>,
 }
 struct Session {
+    owned_by: Option<uuid::Uuid>,
     token: String,
     label: String,
     video: String,
@@ -40,6 +74,11 @@ struct Session {
     viewport: Mutex<Option<NativeViewport>>,
     sequences: Mutex<HashMap<String, u64>>,
     fullscreen_grant: Mutex<Option<super::Grant>>,
+    clock: Mutex<Option<ClockState>>,
+    control_busy: AtomicBool,
+    frame_busy: AtomicBool,
+    presentation_owner: Mutex<Option<String>>,
+    close_enabled: AtomicBool,
 }
 #[derive(Clone, Default)]
 pub(super) struct WatchHost {
@@ -81,6 +120,10 @@ impl WatchHost {
         request: String,
         can_create_document: bool,
     ) -> Result<OriginalSnapshot, String> {
+        self.open_inner(app,host,video,request,can_create_document,None)
+    }
+    fn open_inner(&self,app:&AppHandle,host:YouTubeOriginalHost,video:String,request:String,
+        can_create_document:bool,owned_by:Option<uuid::Uuid>)->Result<OriginalSnapshot,String>{
         if !policy::valid_channel(&video) || uuid::Uuid::parse_str(&request).is_err() {
             return Err(STALE.into());
         }
@@ -92,7 +135,8 @@ impl WatchHost {
         // Give it its own viewer token while retaining the exact same official document.
         {
             let mut registry = lock(&self.registry);
-            if let Some(session) = reuse_or_admit(&registry, &video, can_create_document)? {
+            if let Some(session) = if owned_by.is_none(){reuse_or_admit(&registry,&video,can_create_document)?}
+                else if can_create_document{None}else{return Err("YouTube 영상은 최대 4개까지 열 수 있습니다.".into());} {
                 registry.tokens.insert(token.clone(), session.token.clone());
                 registry.requests.insert(request, (video, token.clone()));
                 let mut value = lock(&session.status).clone();
@@ -101,6 +145,7 @@ impl WatchHost {
             }
         }
         let session = Arc::new(Session {
+            owned_by,
             label: format!("youtube-original-vod-{}", uuid::Uuid::new_v4().simple()),
             token: token.clone(),
             video: video.clone(),
@@ -116,6 +161,7 @@ impl WatchHost {
                 canonical_channel_id: None,
                 state: "loading".into(),
                 authenticated: None,
+                playability: None,
                 chat_visible: false,
                 capture_ready: false,
                 capture_unavailable_reason: Some(
@@ -129,6 +175,8 @@ impl WatchHost {
             viewport: Mutex::new(None),
             sequences: Mutex::new(HashMap::new()),
             fullscreen_grant: Mutex::new(None),
+            clock: Mutex::new(None), control_busy: AtomicBool::new(false), frame_busy: AtomicBool::new(false),
+            presentation_owner: Mutex::new(None), close_enabled: AtomicBool::new(false),
         });
         lock(&self.registry)
             .sessions
@@ -160,6 +208,42 @@ impl WatchHost {
         value.token = token.into();
         Ok(value)
     }
+    pub fn clock(&self,token:&str)->Result<Option<VodClock>,String>{
+        let session=self.session(token)?;
+        Ok(clock_snapshot(&session,token))
+    }
+    pub(crate) fn sample_frames(&self,app:&AppHandle,token:&str,video:&str,cancel:&AtomicBool)->Result<NativeFrameWindow,String>{
+        frames::sample(self,app,token,video,cancel)
+    }
+    fn publish_clock(&self,app:&AppHandle,session:&Session){
+        if session.owned_by.is_some(){return;}
+        let tokens=lock(&self.registry).tokens.iter().filter(|(_,id)|*id==&session.token).map(|(token,_)|token.clone()).collect::<Vec<_>>();
+        for token in tokens {if let Some(value)=clock_snapshot(session,&token){let _=app.emit_to("main","youtube-original:vod-clock",value);}}
+    }
+    pub fn control(&self,app:&AppHandle,token:&str,request:VodControlRequest)->Result<(),String>{
+        let session=self.session(token)?;
+        validate_control(&session,&request)?;
+        if session.control_busy.compare_exchange(false,true,Ordering::AcqRel,Ordering::Acquire).is_err(){return Err("이전 영상 조작을 확인 중입니다.".into());}
+        let _busy=ControlBusy(&session.control_busy);
+        let view=app.get_webview(&session.label).ok_or(UNAVAILABLE)?;
+        let (tx,rx)=std::sync::mpsc::sync_channel(1);
+        let mut payload=json!(request);
+        payload["expiresAtMs"]=json!(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|_|STALE)?.as_millis()+2500);
+        view.eval_with_callback(format!("window.__atsumiYouTubeVod?.control({payload})"),move|value|{let _=tx.try_send(value);}).map_err(|_|UNAVAILABLE)?;
+        let raw=rx.recv_timeout(Duration::from_secs(3)).map_err(|_|"영상 조작 응답을 확인하지 못했습니다.".to_string())?;
+        if !Arc::ptr_eq(&session,&self.session(token)?) || session.closed.load(Ordering::Acquire) || session.identity_blocked.load(Ordering::Acquire) || session.epoch.load(Ordering::Acquire)!=request.document_epoch{return Err(STALE.into());}
+        let value:serde_json::Value=serde_json::from_str(&raw).map_err(|_|UNAVAILABLE)?;
+        if value["requestId"].as_str()!=Some(&request.request_id)||value["accepted"].as_bool()!=Some(true){return Err("현재 영상 상태에서는 이 조작을 실행할 수 없습니다.".into());}
+        let current=clock_snapshot(&session,token).ok_or(STALE)?;
+        if current.fields.source_id!=request.source_id||current.fields.source_generation!=request.source_generation{return Err(STALE.into());}
+        Ok(())
+    }
+    pub fn controls(&self,app:&AppHandle,token:&str,can_close:bool)->Result<(),String>{
+        let session=self.session(token)?;
+        if session.identity_blocked.load(Ordering::Acquire)||lock(&session.presentation_owner).as_deref()!=Some(token){return Ok(());}
+        session.close_enabled.store(can_close,Ordering::Release);
+        app.get_webview(&session.label).ok_or(UNAVAILABLE)?.eval(format!("window.__atsumiYouTubeVod?.controls({})",json!({"epoch":session.epoch.load(Ordering::Acquire),"canClose":can_close}))).map_err(|_|UNAVAILABLE.into())
+    }
     pub fn viewport(
         &self,
         app: &AppHandle,
@@ -178,6 +262,8 @@ impl WatchHost {
             return Ok(());
         }
         *sequence = viewport.sequence;
+        *lock(&session.presentation_owner)=Some(token.into());
+        session.close_enabled.store(false,Ordering::Release);
         *lock(&session.viewport) = Some(viewport.clone());
         viewport.muted |= tray_muted;
         paint(app, &session, viewport)
@@ -201,6 +287,7 @@ impl WatchHost {
             return;
         }
         session.paint.fetch_add(1, Ordering::AcqRel);
+        *lock(&session.clock)=None;
         if lock(&session.status).fullscreen {
             let _ = fullscreen(app, session, false);
         }
@@ -255,12 +342,14 @@ impl WatchHost {
             }
             session.account_revision.store(revision, Ordering::Release);
             session.epoch.fetch_add(1, Ordering::AcqRel);
+            *lock(&session.clock)=None;
             let _ = fullscreen(app, &session, false);
             {
                 let mut status = lock(&session.status);
                 if session.identity_blocked.load(Ordering::Acquire) { continue; }
                 status.authenticated = None;
                 status.state = "loading".into();
+                status.playability = None;
             }
             if !app
                 .get_webview(&session.label)
@@ -292,7 +381,7 @@ impl WatchHost {
                 if navigation.identity_blocked.load(Ordering::Acquire) { return next.as_str() == "about:blank"; }
                 if next.as_str() == "about:blank" { return navigation.epoch.load(Ordering::Acquire) == 0; }
                 if policy::matches_document(next, &navigation.video, false) { return true; }
-                if policy::account_url(next) { lock(&navigation.status).error = Some("방송 조작 창에서 YouTube 로그인을 진행해 주세요.".into()); }
+                if policy::account_url(next) { let mut status = lock(&navigation.status); status.error = Some(LOGIN_ERROR.into()); status.playability = Some(VodPlayability::LoginRequired); }
                 false
             })
             .on_new_window({ let app = app.clone(); move |url, features| super::open_popup(&app, url, features, 0) })
@@ -303,7 +392,8 @@ impl WatchHost {
                 if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
                     let _=fullscreen(&page_app,&page,false);
                     page.epoch.fetch_add(1, Ordering::AcqRel); page.account_revision.store(lock(&page_host.authenticated).revision, Ordering::Release);
-                    let mut status = lock(&page.status); status.state = "loading".into(); status.authenticated = None; status.error = None;
+                    *lock(&page.clock)=None;page.close_enabled.store(false,Ordering::Release);
+                    let mut status = lock(&page.status); status.state = "loading".into(); status.authenticated = None; status.error = None; status.playability = None;
                 } else {
                     configure(&view, &page);
                     let mut viewport = lock(&page.viewport).clone().unwrap_or_else(super::hidden_viewport); viewport.muted |= page_host.tray_muted.load(Ordering::Acquire);
@@ -336,6 +426,7 @@ fn release_viewer(registry: &mut Registry, token: &str) -> Option<Arc<Session>> 
     registry.requests.retain(|_, (_, bound)| bound != token);
     if let Some(session) = registry.sessions.get(&id) {
         lock(&session.sequences).remove(token);
+        let mut owner=lock(&session.presentation_owner);if owner.as_deref()==Some(token){*owner=None;session.close_enabled.store(false,Ordering::Release);}
     }
     if registry.tokens.values().any(|value| value == &id) {
         None
@@ -344,7 +435,7 @@ fn release_viewer(registry: &mut Registry, token: &str) -> Option<Arc<Session>> 
     }
 }
 fn reusable(session: &Session) -> bool {
-    !session.closed.load(Ordering::Acquire) && !session.identity_blocked.load(Ordering::Acquire)
+    session.owned_by.is_none() && !session.closed.load(Ordering::Acquire) && !session.identity_blocked.load(Ordering::Acquire)
 }
 fn reuse_or_admit(registry: &Registry, video: &str, can_create_document: bool) -> Result<Option<Arc<Session>>, String> {
     if let Some(session) = registry.sessions.values().find(|session| session.video == video && reusable(session)) {
@@ -437,10 +528,14 @@ fn publish_fullscreen(app: &AppHandle, session: &Session, grant: super::Grant, e
     if let Some(view) = app.get_webview(&session.label) {
         let _ = view.eval(&format!("window.__atsumiYouTubeVod?.fullscreen({enabled})"));
     }
-    let _ = app.emit(
-        "youtube-original:fullscreen",
-        json!({"channelId":session.video,"enabled":enabled}),
-    );
+    let (event,payload)=fullscreen_notice(session,enabled);
+    let _ = app.emit(event,payload);
+}
+fn fullscreen_notice(session:&Session,enabled:bool)->(&'static str,serde_json::Value){
+    match session.owned_by {
+        Some(owner)=>("youtube-owned-vod:fullscreen",json!({"owner":owner,"enabled":enabled})),
+        None=>("youtube-original:fullscreen",json!({"channelId":session.video,"enabled":enabled})),
+    }
 }
 fn escape_binding(session:&Session)->Option<super::escape_intent::Binding> {
     if session.closed.load(Ordering::Acquire)||session.identity_blocked.load(Ordering::Acquire){return None;}
@@ -457,10 +552,45 @@ fn accepts(source: &str, label: &str, session: &Session, message: &Envelope) -> 
         && uuid::Uuid::parse_str(&message.id).is_ok()
         && message.epoch > 0
         && message.epoch == session.epoch.load(Ordering::Acquire)
-        && matches!(message.kind.as_str(), "status" | "fullscreen")
+        && matches!(message.kind.as_str(), "status" | "fullscreen" | "clock" | "viewer_close")
         && tauri::Url::parse(source)
             .ok()
             .is_some_and(|url| policy::matches_document(&url, &session.video, false))
+}
+fn valid_clock(fields:&VodClockFields,video:&str)->bool{
+    let safe=|value:u64|value>0&&value<=9_007_199_254_740_991;
+    fields.video_id==video&&uuid::Uuid::parse_str(&fields.source_id).is_ok()
+        &&safe(fields.source_generation)&&safe(fields.sequence)&&safe(fields.seek_generation)
+        &&fields.playback_rate.is_finite()&&(0.1..=16.).contains(&fields.playback_rate)
+        &&if fields.valid {fields.ad_state=="content"&&matches!((fields.current_time,fields.duration),(Some(t),Some(d)) if t.is_finite()&&d.is_finite()&&t>=0.&&d>0.&&d<=604800.&&t<=d+2.)}
+          else {matches!(fields.ad_state.as_str(),"ad"|"unknown")&&fields.current_time.is_none()&&fields.duration.is_none()&&!fields.ended}
+}
+fn update_clock(session:&Session,message:&Envelope)->bool{
+    let Ok(fields)=serde_json::from_value::<VodClockFields>(message.fields.clone()) else{return false;};
+    if !valid_clock(&fields,&session.video){return false;}
+    let mut current=lock(&session.clock);
+    if session.closed.load(Ordering::Acquire)||session.identity_blocked.load(Ordering::Acquire)||message.epoch!=session.epoch.load(Ordering::Acquire){return false;}
+    if let Some(old)=current.as_ref().filter(|old|old.epoch==message.epoch){
+        if fields.sequence<=old.fields.sequence||fields.source_generation<old.fields.source_generation||fields.seek_generation<old.fields.seek_generation
+            ||fields.source_generation==old.fields.source_generation&&fields.source_id!=old.fields.source_id{return false;}
+    }
+    *current=Some(ClockState{epoch:message.epoch,fields,received:Instant::now()});true
+}
+fn clock_snapshot(session:&Session,token:&str)->Option<VodClock>{
+    let current=lock(&session.clock);let value=current.as_ref()?;
+    if session.closed.load(Ordering::Acquire)||session.identity_blocked.load(Ordering::Acquire)||value.epoch!=session.epoch.load(Ordering::Acquire)||value.received.elapsed()>CLOCK_MAX_AGE{return None;}
+    Some(VodClock{token:token.into(),document_epoch:value.epoch,age_ms:value.received.elapsed().as_millis().min(u64::MAX as u128) as u64,fields:value.fields.clone()})
+}
+fn validate_control(session:&Session,request:&VodControlRequest)->Result<(),String>{
+    let clock=clock_snapshot(session,&session.token).ok_or(STALE)?;
+    if uuid::Uuid::parse_str(&request.request_id).is_err()||request.document_epoch!=clock.document_epoch||request.source_id!=clock.fields.source_id||request.source_generation!=clock.fields.source_generation{return Err(STALE.into());}
+    match request.action.as_str(){
+        "pause" if request.seconds.is_none()&&request.rate.is_none()=>Ok(()),
+        "resume" if request.seconds.is_none()&&request.rate.is_none()&&clock.fields.valid&&lock(&session.viewport).as_ref().is_some_and(|v|v.visible&&!v.muted&&v.player.is_some())=>Ok(()),
+        "seek" if request.rate.is_none()&&clock.fields.valid&&matches!((request.seconds,clock.fields.duration),(Some(t),Some(d)) if t.is_finite()&&t>=0.&&t<=d)=>Ok(()),
+        "rate" if request.seconds.is_none()&&clock.fields.valid&&request.rate.is_some_and(|rate|rate.is_finite()&&(0.1..=16.).contains(&rate))=>Ok(()),
+        _=>Err("현재 영상 상태에서는 이 조작을 실행할 수 없습니다.".into())
+    }
 }
 fn update_status(session: &Session, message: &Envelope) {
     if message.epoch != session.epoch.load(Ordering::Acquire)
@@ -478,9 +608,11 @@ fn update_status(session: &Session, message: &Envelope) {
     }
     status.authenticated = message.fields["authenticated"].as_bool();
     if message.fields["unavailable"].as_bool() == Some(true) {
-        status.error = Some(SITE_ERROR.into());
-    } else if status.error.as_deref() == Some(SITE_ERROR) {
-        status.error = None;
+        status.playability = Some(if message.fields["playability"] == "LOGIN_REQUIRED" { VodPlayability::LoginRequired } else { VodPlayability::Unavailable });
+        status.error = Some(if status.playability == Some(VodPlayability::LoginRequired) { LOGIN_ERROR } else { SITE_ERROR }.into());
+    } else if matches!(status.state.as_str(), "playing" | "ended") {
+        status.playability = None;
+        if matches!(status.error.as_deref(), Some(SITE_ERROR | LOGIN_ERROR)) { status.error = None; }
     }
 }
 /// A committed SPA source change bypasses NavigationStarting. Keep its original
@@ -494,8 +626,9 @@ fn block_changed_source(session: &Session, source: &str) -> bool {
     if session.identity_blocked.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() { return false; }
     session.paint.fetch_add(1, Ordering::AcqRel);
     session.epoch.fetch_add(1, Ordering::AcqRel);
+    *lock(&session.clock)=None;session.close_enabled.store(false,Ordering::Release);
     let mut status = lock(&session.status);
-    status.state = "error".into(); status.error = Some(IDENTITY_ERROR.into());
+    status.state = "error".into(); status.error = Some(IDENTITY_ERROR.into()); status.playability = None;
     true
 }
 #[cfg(windows)]
@@ -583,6 +716,15 @@ fn attach_bridge(
                             lock(&host.authenticated)
                                 .observe(session.account_revision.load(Ordering::Acquire), value);
                         }
+                    } else if message.kind=="clock" {
+                        if update_clock(&session,&message){host.watch_only.publish_clock(&app,&session);}
+                    } else if message.kind=="viewer_close" {
+                        if message.fields.as_object().is_some_and(|v|v.len()==1)&&message.fields["inputKey"].as_i64()==Some(1)
+                            &&session.close_enabled.load(Ordering::Acquire)&&platform_native_geometry::trusted_input_gate(root,pane,1).allowed()
+                            &&lock(&session.viewport).as_ref().is_some_and(|v|v.visible&&v.player.is_some()) {
+                            if let Some(owner)=session.owned_by {let _=app.emit_to("main","youtube-owned-vod:close",json!({"owner":owner}));}
+                            else if let Some(token)=lock(&session.presentation_owner).clone(){let _=app.emit_to("main","youtube-original:action",json!({"token":token,"action":"viewer_close"}));}
+                        }
                     } else {
                         let key = message.fields["inputKey"].as_i64().unwrap_or(0) as i32;
                         if !matches!(key, 1 | 0x46 | 0x1B) {
@@ -619,8 +761,9 @@ fn attach_bridge(_: &Webview, _: Arc<Session>, _: YouTubeOriginalHost) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn session() -> Session {
+    pub(super) fn session() -> Session {
         Session {
+            owned_by: None,
             token: "youtube-vod-test".into(),
             label: "youtube-original-vod-test".into(),
             video: "M7lc1UVf-VE".into(),
@@ -636,6 +779,7 @@ mod tests {
                 canonical_channel_id: None,
                 state: "loading".into(),
                 authenticated: None,
+                playability: None,
                 chat_visible: false,
                 capture_ready: false,
                 capture_unavailable_reason: None,
@@ -647,10 +791,38 @@ mod tests {
             fullscreen_grant: Mutex::new(None),
             viewport: Mutex::new(None),
             sequences: Mutex::new(HashMap::new()),
+            clock: Mutex::new(None),control_busy:AtomicBool::new(false),frame_busy:AtomicBool::new(false),presentation_owner:Mutex::new(None),close_enabled:AtomicBool::new(false),
         }
     }
     fn message(kind: &str) -> Envelope {
         serde_json::from_value(json!({"id":uuid::Uuid::new_v4(),"epoch":2,"type":kind,"state":"ended","authenticated":true,"captureReady":true,"recordingJob":"forged"})).unwrap()
+    }
+    fn clock_message()->Envelope{
+        serde_json::from_value(json!({"id":uuid::Uuid::new_v4(),"epoch":2,"type":"clock","videoId":"M7lc1UVf-VE","sourceId":uuid::Uuid::new_v4(),"sourceGeneration":1,"sequence":1,"seekGeneration":1,"currentTime":15.25,"duration":100.5,"paused":false,"seeking":false,"playbackRate":1.,"buffering":false,"ended":false,"adState":"content","valid":true})).unwrap()
+    }
+    #[test]
+    fn vod_clock_has_closed_schema_and_content_ad_separation(){
+        let s=session();let m=clock_message();assert!(update_clock(&s,&m));let value=clock_snapshot(&s,"alias").unwrap();assert_eq!(value.token,"alias");assert_eq!(value.fields.current_time,Some(15.25));
+        for (field,value) in [("extra",json!(true)),("videoId",json!("abcdefghijk")),("sourceId",json!("invalid")),("sequence",json!(0)),("duration",json!(-1)),("currentTime",json!(1000)),("adState",json!("ad")),("playbackRate",json!(0))]{let mut invalid=clock_message();invalid.fields[field]=value;assert!(!update_clock(&session(),&invalid),"{field}");}
+        let mut ad=clock_message();ad.fields["sequence"]=json!(2);ad.fields["sourceGeneration"]=json!(2);ad.fields["valid"]=json!(false);ad.fields["adState"]=json!("ad");ad.fields["currentTime"]=json!(null);ad.fields["duration"]=json!(null);assert!(update_clock(&s,&ad));assert!(clock_snapshot(&s,"alias").unwrap().fields.current_time.is_none());
+    }
+    #[test]
+    fn vod_clock_rejects_stale_epoch_source_sequence_and_expiry(){
+        let s=session();let mut m=clock_message();assert!(update_clock(&s,&m));assert!(!update_clock(&s,&m));m.fields["sequence"]=json!(2);let id=m.fields["sourceId"].clone();m.fields["sourceId"]=json!(uuid::Uuid::new_v4());assert!(!update_clock(&s,&m));m.fields["sourceId"]=id;m.epoch=1;assert!(!update_clock(&s,&m));m.epoch=2;assert!(update_clock(&s,&m));
+        lock(&s.clock).as_mut().unwrap().received=Instant::now()-Duration::from_secs(2);assert!(clock_snapshot(&s,"alias").is_none());
+        m.fields["sequence"]=json!(3);assert!(update_clock(&s,&m));s.epoch.store(3,Ordering::Release);assert!(clock_snapshot(&s,"alias").is_none());m.epoch=3;m.fields["sequence"]=json!(1);assert!(update_clock(&s,&m));s.closed.store(true,Ordering::Release);assert!(clock_snapshot(&s,"alias").is_none());
+    }
+    #[test]
+    fn vod_control_requires_exact_source_and_content_for_seek_or_resume(){
+        let s=session();let m=clock_message();assert!(update_clock(&s,&m));
+        let mut request=VodControlRequest{request_id:uuid::Uuid::new_v4().to_string(),document_epoch:2,source_id:m.fields["sourceId"].as_str().unwrap().into(),source_generation:1,action:"seek".into(),seconds:Some(60.),rate:None};
+        assert!(validate_control(&s,&request).is_ok());for value in [-1.,101.,f64::NAN,f64::INFINITY]{request.seconds=Some(value);assert!(validate_control(&s,&request).is_err());}
+        request.seconds=None;request.action="pause".into();assert!(validate_control(&s,&request).is_ok());request.action="resume".into();assert!(validate_control(&s,&request).is_err());
+        let mut viewport=super::super::hidden_viewport();viewport.visible=true;viewport.muted=false;viewport.player=Some(crate::platform_native_geometry::Rect{x:0.,y:0.,width:640.,height:360.});*lock(&s.viewport)=Some(viewport);assert!(validate_control(&s,&request).is_ok());
+        request.source_generation=2;assert!(validate_control(&s,&request).is_err());request.source_generation=1;lock(&s.clock).as_mut().unwrap().fields.valid=false;assert!(validate_control(&s,&request).is_err());request.action="pause".into();assert!(validate_control(&s,&request).is_ok());
+        request.action="rate".into();request.rate=Some(1.5);assert!(validate_control(&s,&request).is_err());lock(&s.clock).as_mut().unwrap().fields.valid=true;assert!(validate_control(&s,&request).is_ok());
+        for rate in [0.,-1.,17.,f64::NAN,f64::INFINITY]{request.rate=Some(rate);assert!(validate_control(&s,&request).is_err());}
+        request.rate=Some(1.5);request.seconds=Some(0.);assert!(validate_control(&s,&request).is_err());request.action="seek".into();assert!(validate_control(&s,&request).is_err());request.seconds=None;request.action="pause".into();assert!(validate_control(&s,&request).is_err());
     }
     #[test]
     fn watch_only_bridge_rejects_live_capture_and_foreign_sources() {
@@ -695,6 +867,31 @@ mod tests {
         m.fields["unavailable"] = json!(false);
         update_status(&s, &m);
         assert!(lock(&s.status).error.is_none());
+    }
+    #[test]
+    fn login_required_is_typed_and_clears_without_certifying_the_upload_account() {
+        let s = session();
+        let mut m = message("status");
+        m.fields["state"] = json!("error"); m.fields["unavailable"] = json!(true);
+        m.fields["playability"] = json!("LOGIN_REQUIRED"); m.fields["authenticated"] = json!(false);
+        update_status(&s, &m);
+        let status = lock(&s.status).clone();
+        assert_eq!(status.playability, Some(VodPlayability::LoginRequired));
+        assert_eq!(status.error.as_deref(), Some(LOGIN_ERROR));
+        assert_eq!(serde_json::to_value(status).unwrap()["playability"], "LOGIN_REQUIRED");
+        m.fields["unavailable"] = json!(false); m.fields["state"] = json!("loading");
+        update_status(&s, &m); assert_eq!(lock(&s.status).playability, Some(VodPlayability::LoginRequired));
+        m.fields["unavailable"] = json!(true);
+        m.fields["playability"] = json!("forged-other-reason"); m.fields["authenticated"] = json!(true);
+        update_status(&s, &m);
+        assert_eq!(lock(&s.status).playability, Some(VodPlayability::Unavailable));
+        assert_eq!(lock(&s.status).error.as_deref(), Some(SITE_ERROR));
+        m.fields["unavailable"] = json!(false); m.fields["state"] = json!("playing");
+        update_status(&s, &m);
+        assert!(lock(&s.status).playability.is_none()); assert!(lock(&s.status).error.is_none());
+        // Stale account-page status must not reintroduce a recovery action.
+        m.epoch = 1; m.fields["unavailable"] = json!(true); m.fields["playability"] = json!("LOGIN_REQUIRED");
+        update_status(&s, &m); assert!(lock(&s.status).playability.is_none());
     }
     #[test]
     fn late_viewer_close_cannot_dispose_replacement_or_another_session() {

@@ -9,7 +9,7 @@ export const formatReplayTime = (value: number) => {
   const seconds = Math.max(0, Math.floor(Number.isFinite(value) ? value : 0));
   return `${Math.floor(seconds / 3600).toString().padStart(2, "0")}:${Math.floor(seconds / 60 % 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
 };
-export function replayMessageTime(message: ReplayMessage, mode: ReplayTimeLabel): string | null {
+export function replayMessageTime(message: Pick<ReplayMessage, "offsetSeconds" | "broadcastOffsetSeconds">, mode: ReplayTimeLabel): string | null {
   if (mode === "hidden") return null;
   if (mode === "broadcast" && message.broadcastOffsetSeconds == null) return "—";
   return formatReplayTime(mode === "broadcast" ? message.broadcastOffsetSeconds! : message.offsetSeconds);

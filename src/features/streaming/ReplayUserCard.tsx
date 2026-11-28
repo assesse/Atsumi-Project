@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { ReplayMessage } from "../../api/replay";
 
 export function ReplayUserCard({ item, anchor, portrait, badges, onClose }: {
-  item: ReplayMessage; anchor: HTMLButtonElement; portrait: string | null;
+  item: Pick<ReplayMessage, "sender" | "rich">; anchor: HTMLButtonElement; portrait: string | null;
   badges: { src: string | null; label: string }[]; onClose(): void;
 }) {
   const card = useRef<HTMLDivElement>(null);
@@ -51,7 +51,7 @@ export function ReplayUserCard({ item, anchor, portrait, badges, onClose }: {
 
 const noticeLabels = { donation: "후원", video_donation: "영상 후원", mission: "미션", subscription: "구독" };
 const missionLabels: Record<string, string> = { PENDING: "대기", OPEN: "진행 중", ACCEPTED: "수락", REJECTED: "거절", COMPLETED: "종료", SUCCESS: "성공", FAILURE: "실패", FAILED: "실패", CANCELED: "취소", EXPIRED: "시간 만료" };
-export function ReplayNoticeHeading({ item }: { item: ReplayMessage }) {
+export function ReplayNoticeHeading({ item }: { item: Pick<ReplayMessage, "rich"> }) {
   const notice = item.rich?.notice;
   if (!notice || !(notice.kind in noticeLabels)) return null;
   return <div className="recording-replay-notice-heading">

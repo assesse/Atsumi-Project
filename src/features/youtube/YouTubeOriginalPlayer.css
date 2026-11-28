@@ -5,6 +5,7 @@
 .youtube-original-actions button{display:flex;gap:6px;align-items:center;color:var(--text-primary);background:transparent;border:0;padding:5px 8px;cursor:pointer}
 .youtube-original-actions button[aria-pressed=true]{color:#ff738b}.youtube-original-actions button:disabled{opacity:.5;cursor:default}
 .youtube-original-notice{position:absolute;z-index:7;max-width:min(90%,400px);height:max-content;inset:50% auto auto 50%;transform:translate(-50%,-50%);background:var(--surface-raised,#242129);padding:12px;border-radius:10px}
+.youtube-original-notice.has-account-recovery{display:flex;flex-wrap:wrap;gap:10px;box-sizing:border-box}.youtube-original-notice.has-account-recovery>span{flex:1 0 100%;overflow-wrap:anywhere;line-height:1.5}.youtube-original-notice.has-account-recovery>button{flex:0 0 auto}
 .youtube-surface:has(.youtube-original-pair.is-native-fullscreen){container-type:normal;overflow:visible}
 html body .youtube-original-pair.is-native-fullscreen{position:fixed!important;inset:0!important;width:100vw!important;height:100vh!important;display:flex!important;flex-direction:row!important;z-index:30!important;background:#000}
 html body .youtube-original-pair.is-native-fullscreen>.platform-live-player{display:block!important;flex:1!important;min-width:0!important;grid-area:auto!important}

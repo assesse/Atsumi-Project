@@ -74,7 +74,7 @@ export default defineConfig({
   },
   build: {
     assetsInlineLimit: file => file.endsWith(".dat.gz") ? false : undefined,
-    rollupOptions: { output: { assetFileNames: readingAssetName } },
+    rollupOptions: { input: ["index.html", "browser.html"], output: { assetFileNames: readingAssetName } },
     target: "es2021",
     minify: environment.TAURI_DEBUG ? false : "esbuild",
     sourcemap: Boolean(environment.TAURI_DEBUG),

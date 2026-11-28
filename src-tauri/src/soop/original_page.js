@@ -5,7 +5,7 @@
   const match = /^\/([A-Za-z0-9_-]{1,40})\/(?:([0-9]+)\/)?embed\/?$/.exec(location.pathname);
   if (!match) return;
   const channel = match[1].toLowerCase();
-  let epoch = 0, booted = false, nativeReady = false, layout = null;
+  let epoch = 0, booted = false, nativeReady = false, layout = null, officialReady = false;
   let controlsObserver = null, controlsFrame = 0, controlsUntil = 0, lastOpacity = -1;
   let nativeFullscreen = false;
   let ui=null,uiPending=false,pointerDiagnostics=0;
@@ -30,6 +30,9 @@
     }
   }
   const pending = new Map();
+  // Native-armed relay traffic never borrows the archive/control pending map.
+  const relayPending = new Map();
+  let relaySession = null, pageAlive = true;
   const binding=()=>{try{const value=window.livePlayer?.liveAPI?.getResponse?.()?.CHANNEL;return {actualChannel:typeof value?.BJID==="string"?value.BJID.toLowerCase():null,actualBroadcast:value?.BNO===undefined?null:String(value.BNO)};}catch{return {actualChannel:null,actualBroadcast:null};}};
   const bound=()=>{const value=binding();return value.actualChannel===channel&&value.actualBroadcast===match[2];};
   const requests = (type, fields = {}) => new Promise((resolve, reject) => {
@@ -40,7 +43,62 @@
     try { window.chrome.webview.postMessage("ATSUMI_SOOP_V1:" + JSON.stringify({id,epoch,type,...fields,...binding()})); }
     catch { clearTimeout(timer);pending.delete(id);reject(Object.assign(new Error("bridge_post_failed"),{code:"BRIDGE_POST_FAILED"})); }
   });
+  const rejectRelayData = session => {
+    session.cancelled = true; relayClockObserver?.stop();
+    for (const [id, item] of relayPending) if (item.session === session && item.lane === "data") {
+      relayPending.delete(id); clearTimeout(item.timer); item.reject(Object.assign(new Error("relay_cancelled"), {code:"RELAY_CANCELLED"}));
+    }
+  };
+  const relayRequest = (session, type, fields) => new Promise((resolve, reject) => {
+    const lane = type === "relay_finish" ? "control" : "data";
+    const actual = binding();
+    if (!pageAlive || !epoch || epoch !== session.epoch || !["relay_begin","relay_append","relay_finish"].includes(type) ||
+        !window.chrome?.webview?.postMessage || [...relayPending.values()].some(item => item.lane === lane) ||
+        lane === "data" && (session.cancelled || relaySession !== session || actual.actualChannel !== session.actualChannel || actual.actualBroadcast !== session.actualBroadcast)) {
+      reject(Object.assign(new Error("relay_bridge_unavailable"), {code:"BRIDGE_BUSY"})); return;
+    }
+    const id = crypto.randomUUID();
+    const timer = setTimeout(() => { relayPending.delete(id); reject(Object.assign(new Error("relay_ack_timeout"), {code:"BROWSER_ACK_TIMEOUT"})); }, 3000);
+    relayPending.set(id, {session,lane,resolve,reject,timer});
+    try { window.chrome.webview.postMessage("ATSUMI_SOOP_V1:" + JSON.stringify({...fields,id,epoch:session.epoch,type,
+      actualChannel:session.actualChannel,actualBroadcast:session.actualBroadcast})); }
+    catch { relayPending.delete(id); clearTimeout(timer); reject(Object.assign(new Error("relay_post_failed"), {code:"BRIDGE_POST_FAILED"})); }
+  }).finally(() => { if (type === "relay_finish" && relaySession === session) { relayClockObserver?.stop(); relaySession = null; } });
   const notify = (type, fields = {}) => { if(epoch) try { window.chrome.webview.postMessage("ATSUMI_SOOP_V1:"+JSON.stringify({id:crypto.randomUUID(),epoch,type,...fields})); } catch {} };
+  const appearance = window.__atsumiSoopAppearanceObserver?.create({binding,emit:(fields,observedEpoch)=>{
+    if(!pageAlive||!epoch||observedEpoch!==epoch||!bound())return false;
+    try{window.chrome.webview.postMessage("ATSUMI_SOOP_V1:"+JSON.stringify({id:crypto.randomUUID(),epoch,type:"appearance",...fields}));return true;}catch{return false;}
+  }});
+  // Independent optional metadata lane; never sends chat text or drives playback.
+  const relayClockObserver = window.__atsumiSoopChatClockObserver?.create({
+    current: ({socket,runId,sourceId,epoch:observedEpoch}) => pageAlive && epoch===observedEpoch && bound()
+      && relaySession?.runId===runId && !relaySession.cancelled && window.livePlayer?.chatSocket===socket
+      && window.__atsumiSoopEncodedCapture?.getRelayClock?.(runId)?.sourceId===sourceId,
+    readClock: runId => window.__atsumiSoopEncodedCapture?.getRelayClock?.(runId),
+    readVisibility: () => {
+      try {
+        const player=window.livePlayer, video=document.getElementById('livePlayer');
+        const ad=player?.externalInterface?.getAdInfo?.();
+        if(typeof ad?.isAdViewing!=='boolean'||typeof player?.getMainMedia!=='function'||typeof player?.getLiveMainMedia!=='function')return null;
+        if(!layout?.visible||!layout.player||!video?.getBoundingClientRect||typeof getComputedStyle!=='function')return null;
+        const rect=video.getBoundingClientRect(),style=getComputedStyle(video);
+        if(!(rect.width>0&&rect.height>0)||style.display==='none'||style.visibility==='hidden')return false;
+        const modal=document.getElementById('layer_high_quality');
+        if(modal){const box=modal.getBoundingClientRect(),css=getComputedStyle(modal);if(box.width>0&&box.height>0&&css.display!=='none'&&css.visibility!=='hidden')return false;}
+        return !ad.isAdViewing && player.getMainMedia()===video && player.getLiveMainMedia()===video;
+      } catch { return null; }
+    },
+    emit: event => {
+      if(!pageAlive||!bound()||event.documentEpoch!==epoch||relaySession?.runId!==event.runId||relaySession.cancelled)return false;
+      try { window.chrome.webview.postMessage('ATSUMI_SOOP_V1:'+JSON.stringify({id:crypto.randomUUID(),epoch,type:'relay_chat_clock',
+        runId:event.runId,sourceId:event.sourceId,event,...binding()}));return true; } catch {return false;}
+    },
+  });
+  const armRelayClock = session => {
+    if(relaySession!==session||session.cancelled||session.epoch!==epoch||!bound())return;
+    const clock=window.__atsumiSoopEncodedCapture?.getRelayClock?.(session.runId);
+    if(clock)relayClockObserver?.arm({socket:window.livePlayer?.chatSocket,runId:session.runId,sourceId:clock.sourceId,epoch});
+  };
   const css = () => {
     let style=document.getElementById("atsumi-soop-original-layout");
     if(!style){style=document.createElement("style");style.id="atsumi-soop-original-layout";(document.head||document.documentElement).appendChild(style);}
@@ -66,6 +124,7 @@
     booted=true;
     try {
       await window.liveView.isLoaded();
+      officialReady=true;appearance?.sample(true);
       // The official fromApi document intentionally has not called loadBroad.
       // This is its own supported message method, not a replacement receiver.
       window.postMessage({cmd:"Pload",id:channel,no:Number(match[2]||0),showChat:true,autoPlay:true,mutePlay:false,isAdShow:true,showQualityBox:true,fromApi:1},location.origin);
@@ -92,7 +151,7 @@
     const chat=document.getElementById("chatting_area"),rect=chat?.getBoundingClientRect();
     return {state:active?(video.ended?"ended":"playing"):booted?"loading":"preparing",authenticated,chatVisible:Boolean(rect&&rect.width>0&&rect.height>0),captureReady:bound()&&!!capture?.getStatus?.().ready,recording:!!capture?.getStatus?.().recording,recordingId:capture?.getStatus?.().recordingId??null,...binding()};
   }
-  const heartbeat=setInterval(()=>{void boot();notify("status",status());},1500);
+  const heartbeat=setInterval(()=>{void boot();notify("status",status());appearance?.sample(officialReady);if(relaySession)armRelayClock(relaySession);},1500);
   const playerInput = event => event.isTrusted && event.target?.closest?.("#player") && !event.target?.closest?.('#chatting_area,input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"],[role="combobox"],[role="menu"]');
   document.addEventListener("pointerdown", event => {
     if(pointerDiagnostics<16&&event.isTrusted&&event.button===0&&epoch&&bound()&&event.target?.closest?.('#player')){
@@ -109,15 +168,36 @@
     if(key==="f"||key==="escape"&&nativeFullscreen){event.preventDefault();event.stopImmediatePropagation();notify("fullscreen",{enabled:key==="escape"?false:!nativeFullscreen,input:key});}
     else if(key==="s"&&!event.target?.closest?.("button,a")){event.preventDefault();event.stopImmediatePropagation();notify("screenshot_shortcut",{input:"s"});}
   },true);
-  window.addEventListener("pagehide",()=>{clearInterval(heartbeat);controlsObserver?.disconnect();if(controlsFrame)cancelAnimationFrame(controlsFrame);for(const item of pending.values()){clearTimeout(item.timer);item.reject(new Error("page_changed"));}pending.clear();});
+  window.addEventListener("pagehide",()=>{pageAlive=false;relayClockObserver?.stop();appearance?.dispose();clearInterval(heartbeat);controlsObserver?.disconnect();if(controlsFrame)cancelAnimationFrame(controlsFrame);for(const item of pending.values()){clearTimeout(item.timer);item.reject(new Error("page_changed"));}pending.clear();for(const item of relayPending.values()){clearTimeout(item.timer);item.reject(new Error("page_changed"));}relayPending.clear();relaySession=null;});
   Object.defineProperty(window,"__atsumiSoopOriginal",{value:Object.freeze({
-    configure(value){if(!value||!Number.isSafeInteger(value.epoch)||value.epoch<1||value.channel!==channel)return false;epoch=value.epoch;nativeReady=true;void boot();return true;},
+    configure(value){if(!value||!Number.isSafeInteger(value.epoch)||value.epoch<1||value.channel!==channel)return false;
+      if(epoch&&epoch!==value.epoch){const previous=relaySession;if(previous){rejectRelayData(previous);void window.__atsumiSoopEncodedCapture?.stopRelay?.(previous.runId,"page_changed",true).catch(()=>{});}for(const item of relayPending.values()){clearTimeout(item.timer);item.reject(new Error("page_changed"));}relayPending.clear();relaySession=null;}
+      epoch=value.epoch;nativeReady=true;appearance?.configure(epoch);appearance?.sample(officialReady);void boot();return true;},
     layout(value){layout=value;applyLayout();},
     controls(value){if(!epoch||value?.epoch!==epoch)return false;ui={canClose:value.canClose===true,captureBusy:value.captureBusy===true,canRecord:value.canRecord===true,recording:value.recording===true,recordBusy:value.recordBusy===true};renderControls();return true;},
     resume(value){if(value!==epoch||!bound()||!layout?.visible||!layout.player)return false;const video=document.getElementById('livePlayer');if(video?.tagName==='VIDEO'&&video.paused&&!video.ended)void video.play().catch(()=>notify('status',{...status(),error:'원본 플레이어에서 재생을 눌러 주세요.'}));return true;},
     fullscreen(enabled){nativeFullscreen=enabled===true;const button=document.querySelector?.(".btn_fullScreen_mode");if(button){button.setAttribute("aria-pressed",String(nativeFullscreen));button.setAttribute("title",nativeFullscreen?"전체화면 종료 (F)":"전체화면 (F)");}},
     reply(id,result){const item=pending.get(id);if(!item)return;pending.delete(id);clearTimeout(item.timer);if(result?.ok)item.resolve(result.value);else item.reject(Object.assign(new Error(result?.error||"native_rejected"),{code:result?.code||"NATIVE_REJECTED"}));},
-    start(requestId){if(!bound())return Promise.reject(new Error("broadcast_changed"));const video=document.getElementById("livePlayer");return window.__atsumiSoopEncodedCapture?.start({requestId,channelId:channel,rightsAcknowledged:true,video},{request:requests,onStatus:()=>notify("status",status())}).catch(()=>notify("status",{...status(),error:"원본 영상 저장을 시작하지 못했습니다."}));},
+    relayReply(id,result,replyEpoch){const item=relayPending.get(id);if(!item||replyEpoch!==epoch||replyEpoch!==item.session.epoch)return false;relayPending.delete(id);clearTimeout(item.timer);if(result?.ok)item.resolve(result.value);else item.reject(Object.assign(new Error(result?.error||"relay_rejected"),{code:result?.code||"NATIVE_REJECTED"}));return true;},
+    relayClockProbe(nonce,runId,commandEpoch){
+      if(!pageAlive||!epoch||commandEpoch!==epoch||!bound()||relaySession?.runId!==runId||relaySession.cancelled||
+          typeof nonce!=="string"||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(nonce))return false;
+      const clock=window.__atsumiSoopEncodedCapture?.getRelayClock?.(runId);if(!clock)return false;
+      notify("relay_clock",{nonce,runId,...clock,...binding()});return true;
+    },
+    relayStart(requestId,commandEpoch){
+      if(!pageAlive||!epoch||commandEpoch!==epoch||!bound()||relaySession)return Promise.reject(new Error("relay_unavailable"));
+      appearance?.sample(officialReady);
+      const source=binding(),session={runId:requestId,epoch,...source,cancelled:false};relaySession=session;
+      const capture=window.__atsumiSoopEncodedCapture;
+      if(!capture?.startRelay){relaySession=null;return Promise.reject(new Error("relay_unavailable"));}
+      return capture.startRelay({requestId,channelId:channel,video:document.getElementById("livePlayer")},
+        {request:(type,fields)=>relayRequest(session,type,fields),cancelData:()=>rejectRelayData(session)})
+        .then(result=>{armRelayClock(session);return result;})
+        .catch(error=>{relayClockObserver?.stop();if(capture.getRelayStatus?.().runId!==requestId&&relaySession===session)relaySession=null;throw error;});
+    },
+    relayStop(runId,commandEpoch){if(!pageAlive||commandEpoch!==epoch||relaySession?.runId!==runId)return Promise.reject(new Error("relay_not_active"));return window.__atsumiSoopEncodedCapture.stopRelay(runId,"user_stop",false);},
+    start(requestId){if(!bound())return Promise.reject(new Error("broadcast_changed"));appearance?.sample(officialReady);const video=document.getElementById("livePlayer");return window.__atsumiSoopEncodedCapture?.start({requestId,channelId:channel,rightsAcknowledged:true,video},{request:requests,onStatus:()=>notify("status",status())}).catch(()=>notify("status",{...status(),error:"원본 영상 저장을 시작하지 못했습니다."}));},
     stop(){return window.__atsumiSoopEncodedCapture?.stop("user_stop",false);},
     status,
   }),configurable:false});

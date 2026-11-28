@@ -1,3 +1,4 @@
+import type { GalleryId } from "../core/types";
 import type { ApiError, ApiResult, GalleryPage } from "../api/contracts";
 
 let nextSessionId = 0;
@@ -28,12 +29,13 @@ type InFlightPage = {
 };
 
 export type ExplorePageSessionOptions = {
-  fetchPage: (queryId: string, page: number, requestId: string) => Promise<ApiResult<GalleryPage>>;
+  fetchPage: (queryId: string, page: number, requestId: string, omittedIds?: readonly GalleryId[]) => Promise<ApiResult<GalleryPage>>;
   cancelPage?: (requestId: string) => void | Promise<unknown>;
   warmPage?: (page: GalleryPage, priority: Exclude<ExplorePagePriority, "foreground">) => void | (() => void);
   retainPage?: (page: GalleryPage) => void | (() => void);
   promotePage?: (queryId: string, page: number) => void;
   maxSettledPages?: number;
+  prefetchSecondNext?: boolean;
   now?: () => number;
 };
 
@@ -47,6 +49,7 @@ export class ExplorePageSession {
   private readonly promotePage?: ExplorePageSessionOptions["promotePage"];
   private readonly maxSettledPages: number;
   private readonly now: () => number;
+  private readonly prefetchSecondNext: boolean;
   private generation = 0;
   private foregroundIntent = 0;
   private requestSequence = 0;
@@ -58,6 +61,7 @@ export class ExplorePageSession {
   private inFlight = new Map<number, InFlightPage>();
   private scrollPositions = new Map<number, number>();
   private parked = false;
+  private omittedIds: readonly GalleryId[] = [];
   private releaseRetainedPageLease?: () => void;
 
   constructor(options: ExplorePageSessionOptions) {
@@ -68,18 +72,38 @@ export class ExplorePageSession {
     this.promotePage = options.promotePage;
     this.maxSettledPages = options.maxSettledPages ?? 5;
     this.now = options.now ?? Date.now;
+    this.prefetchSecondNext = options.prefetchSecondNext ?? false;
     if (!Number.isInteger(this.maxSettledPages) || this.maxSettledPages < 1) {
       throw new RangeError("Explore page cache capacity must be a positive integer");
     }
   }
 
-  start(queryId: string, firstPage: GalleryPage): void {
+  start(queryId: string, firstPage: GalleryPage, omittedIds: readonly GalleryId[] = []): void {
     this.reset();
+    this.omittedIds = omittedIds;
     this.generation += 1;
     this.queryId = queryId;
     this.currentPage = firstPage.page;
     this.totalPages = firstPage.totalPages;
     this.pages.set(firstPage.page, { page: firstPage, lastAccessed: this.now() });
+  }
+
+  matchesVisibility(ids: readonly GalleryId[]): boolean {
+    return this.omittedIds === ids || (this.omittedIds.length === ids.length && this.omittedIds.every((id, i) => id === ids[i]));
+  }
+
+  openWithVisibility(
+    queryId: string, page: number, omittedIds: readonly GalleryId[], preserveScroll = false,
+  ): Promise<ExplorePageLoadResult> {
+    const sameSearch = preserveScroll && this.queryId === queryId;
+    const knownPages = sameSearch ? this.totalPages : 0;
+    this.reset(sameSearch);
+    this.generation += 1;
+    this.queryId = queryId;
+    this.omittedIds = omittedIds;
+    // The old page stays on screen during a library refresh. Its pager remains usable.
+    this.totalPages = Math.max(page, knownPages);
+    return this.open(page);
   }
 
   clear(): void {
@@ -115,7 +139,7 @@ export class ExplorePageSession {
   }
 
   recordScroll(page: number, scrollTop: number): void {
-    if (!this.queryId || !this.pages.has(page) || !Number.isInteger(page) || page < 1) return;
+    if (!this.queryId || (!this.pages.has(page) && !this.scrollPositions.has(page)) || !Number.isInteger(page) || page < 1) return;
     this.scrollPositions.set(page, Math.max(0, Number.isFinite(scrollTop) ? scrollTop : 0));
   }
 
@@ -141,7 +165,18 @@ export class ExplorePageSession {
     const next = this.currentPage + 1;
     const previous = this.currentPage - 1;
     // Forward navigation is intentionally submitted before back navigation.
-    if (next <= this.totalPages) void this.load(next, "prefetch-next");
+    if (next <= this.totalPages) {
+      const generation = this.generation;
+      const first = this.load(next, "prefetch-next");
+      if (this.prefetchSecondNext && !this.parked && next < this.totalPages) {
+        void first.then(result => {
+          if (result.status === "ready" && this.generation === generation && !this.parked
+            && this.currentPage === next - 1 && next < this.totalPages) {
+            void this.load(next + 1, "prefetch-next");
+          }
+        });
+      }
+    }
     if (previous >= 1) void this.load(previous, "prefetch-previous");
   }
 
@@ -213,7 +248,10 @@ export class ExplorePageSession {
     try {
       // Record the in-flight entry before an immediately resolving fetch can
       // settle it, so concurrent callers always coalesce.
-      result = await Promise.resolve().then(() => this.fetchPage(queryId, pageNumber, request.requestId));
+      const ids = this.omittedIds;
+      result = await Promise.resolve().then(() => ids.length
+        ? this.fetchPage(queryId, pageNumber, request.requestId, ids)
+        : this.fetchPage(queryId, pageNumber, request.requestId));
     } catch {
       result = {
         ok: false,
@@ -281,6 +319,9 @@ export class ExplorePageSession {
 
   private evictSettledPages(): void {
     if (!this.currentPage) return;
+    for (const page of this.scrollPositions.keys()) {
+      if (Math.abs(page - this.currentPage) > 2) this.scrollPositions.delete(page);
+    }
     const candidates = [...this.pages.entries()]
       .filter(([page]) => page !== this.currentPage)
       .sort(([leftPage, left], [rightPage, right]) => {
@@ -315,7 +356,7 @@ export class ExplorePageSession {
     }
   }
 
-  private reset(): void {
+  private reset(preserveScroll = false): void {
     this.releaseRetainedPage();
     this.releaseWarmups();
     if (this.cancelPage) {
@@ -324,12 +365,13 @@ export class ExplorePageSession {
       }
     }
     this.queryId = null;
+    this.omittedIds = [];
     this.currentPage = 0;
     this.totalPages = 0;
     this.pages.clear();
     this.failures.clear();
     this.inFlight.clear();
-    this.scrollPositions.clear();
+    if (!preserveScroll) this.scrollPositions.clear();
     this.parked = false;
   }
 

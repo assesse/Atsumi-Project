@@ -3,7 +3,8 @@ import type { DownloadOverlapDecisionRequest, DownloadOverlapMergeRequest, Downl
 import { buildGroupAlignment, groupEditionStatus, relationDisplayPairs, visibleGroupRelations, type GroupEdition, type OverlapReviewGroup } from "../downloadOverlap/groupReview";
 import { emptyMergeSelection, mergeOutputPages, selectMergePages, type MergeSelection } from "../downloadOverlap/mergeSelection";
 import { keepEditions, planEditionDisposition, type EditionDisposition, type EditionDispositions } from "../downloadOverlap/editionDisposition";
-import { orderEditionBatch, type EditionBatchHandler, type EditionBatchOperation, type EditionBatchProgress } from '../downloadOverlap/editionBatch';
+import { type EditionBatchHandler, type EditionBatchProgress } from '../downloadOverlap/editionBatch';
+import { planGroupEditionBatch } from '../downloadOverlap/groupEditionDisposition';
 import { FluentIcon } from "./FluentIcon";
 import "./OverlapGroupReview.css";
 import { routeOverlapWheel } from "./overlapReviewViewport";
@@ -19,7 +20,9 @@ export type GroupPageRender = {
   label: string; visible: boolean; displayMatch: { matched: boolean; reordered?: boolean; counterparts?: string[]; pending?: boolean; unverified?: boolean }; selection?: GroupPageSelection; canSelect: boolean;
   onToggle: (side: Side, page: number, pair?: DownloadOverlapPagePair, range?: boolean) => void;
 };
+type KeeperDraft = { evidence: string; mode: EditionDisposition; pages: number[]; anchor?: number };
 export type GroupReviewDraft = {
+  keeper?: KeeperDraft;
   shown: string[]; activeKey: string | null;
   selections: Record<string, GroupPageSelection>;
   dispositions: Record<string, { evidence: string; modes: EditionDispositions }>;
@@ -51,12 +54,27 @@ export function OverlapGroupReview({ initialDraft, onDraftChange, group, disable
   const [activeKey, setActiveKey] = useState<string | null>(initialDraft?.activeKey ?? null);
   const [selections, setSelections] = useState<Record<string, GroupPageSelection>>(initialDraft?.selections ?? {});
   const [dispositions, setDispositions] = useState<Record<string, { evidence: string; modes: EditionDispositions }>>(initialDraft?.dispositions ?? {});
+  const keeperProof = group.editions.find(item => item.keeperCompatible);
+  const keeperEvidence = JSON.stringify([group.keeper.entryId, group.keeper.galleryId, group.keeper.pageCount,
+    keeperProof?.keeperIsIncoming ? keeperProof.review.incomingFingerprint : keeperProof?.candidate.existingFingerprint,
+    keeperProof?.review.profileVersion, keeperProof?.review.policyVersion]);
+  const [keeperDraft, setKeeperDraft] = useState<KeeperDraft | undefined>(() => {
+    if (initialDraft?.keeper) return initialDraft.keeper;
+    const item = group.editions.find(e => e.key === initialDraft?.activeKey) ?? keeperProof;
+    if (!item || !initialDraft) return undefined;
+    const side = item.keeperIsIncoming ? 'incoming' : 'existing';
+    const disposition = initialDraft.dispositions[item.key], selection = initialDraft.selections[item.key];
+    return { evidence: keeperEvidence, mode: disposition?.evidence === item.evidence ? disposition.modes[side] : 'keep',
+      pages: selection?.evidence === item.evidence ? selection.pages[side] : [],
+      anchor: selection?.evidence === item.evidence && selection.anchor.side === side ? selection.anchor.page : undefined };
+  });
+  const validKeeper = keeperDraft?.evidence === keeperEvidence ? keeperDraft : undefined;
   const [excludeOverrides, setExcludeOverrides] = useState<Record<string, boolean>>(initialDraft?.excludeOverrides ?? {});
   const [submitted, setSubmitted] = useState<string[]>([]);
   const [visibility, setVisibility] = useState(initialDraft?.visibility ?? { matched: true, unique: true, gap: false });
   const draftSink = useRef(onDraftChange); draftSink.current = onDraftChange;
-  useEffect(() => { draftSink.current?.({ shown:[...shown], activeKey, selections, dispositions, excludeOverrides, visibility }); },
-    [shown, activeKey, selections, dispositions, excludeOverrides, visibility]);
+  useEffect(() => { draftSink.current?.({ shown:[...shown], activeKey, selections, dispositions, keeper:keeperDraft, excludeOverrides, visibility }); },
+    [shown, activeKey, selections, dispositions, keeperDraft, excludeOverrides, visibility]);
   const [editionProgress, setEditionProgress] = useState<EditionBatchProgress | null>(null);
   const [batchBusy, setBatchBusy] = useState(false);
   disabled ||= batchBusy;
@@ -72,11 +90,23 @@ export function OverlapGroupReview({ initialDraft, onDraftChange, group, disable
   const allPairsKnown = relations.length === compared.length * (compared.length + 1) / 2;
   const pairsFor = (item: GroupEdition) => relationDisplayPairs({key:item.key,review:item.review,candidate:item.candidate,evidence:item.evidence}, evidence.supplements[item.key]);
   const active = compared.find((item) => item.key === activeKey) ?? compared[0];
-  const validSelection = (item: GroupEdition) => selections[item.key]?.evidence === item.evidence ? selections[item.key] : undefined;
-  const modesFor = (item: GroupEdition) => dispositions[item.key]?.evidence === item.evidence ? dispositions[item.key]!.modes : keepEditions();
+  const validSelection = (item: GroupEdition): GroupPageSelection | undefined => {
+    const saved = selections[item.key], side = item.keeperIsIncoming ? 'incoming' : 'existing';
+    if (saved && saved.evidence !== item.evidence) return undefined;
+    if (!saved && !validKeeper?.pages.length) return undefined;
+    return { evidence:item.evidence, reviewId:item.review.reviewId, reviewRevision:item.review.revision,
+      candidateId:item.candidate.candidateId, anchor:saved?.anchor ?? {side,page:validKeeper?.anchor ?? 1},
+      pages:{...(saved?.pages ?? emptyMergeSelection()), [side]:validKeeper?.pages ?? []} };
+  };
+  const modesFor = (item: GroupEdition): EditionDispositions => ({
+    ...(dispositions[item.key]?.evidence === item.evidence ? dispositions[item.key]!.modes : keepEditions()),
+    [item.keeperIsIncoming ? 'incoming' : 'existing']:validKeeper?.mode ?? 'keep',
+  });
   const setMode = (item: GroupEdition, side: Side, mode: EditionDisposition) => {
     setActiveKey(item.key); setHint(null);
-    setDispositions(current => ({...current,[item.key]: {evidence:item.evidence,modes:{...(current[item.key]?.evidence===item.evidence?current[item.key]!.modes:keepEditions()),[side]:mode}}}));
+    if (side === (item.keeperIsIncoming ? 'incoming' : 'existing')) {
+      setKeeperDraft({evidence:keeperEvidence, mode, pages:validKeeper?.pages ?? [], anchor:validKeeper?.anchor});
+    } else setDispositions(current => ({...current,[item.key]: {evidence:item.evidence,modes:{...(current[item.key]?.evidence===item.evidence?current[item.key]!.modes:keepEditions()),[side]:mode}}}));
   };
   const activeSelection = active ? validSelection(active) : undefined;
   const appliedKeys = new Set(editionProgress?.completedKeys ?? []);
@@ -87,7 +117,7 @@ export function OverlapGroupReview({ initialDraft, onDraftChange, group, disable
   const selectedExclusions = group.editions.filter((item) => item.canBatchExclude && !processed.has(item.key) && excludeOverrides[item.key] !== false);
   const pending = group.editions.filter((item) => !isDone(item) && !processed.has(item.key));
   const done = group.editions.filter((item) => isDone(item) || processed.has(item.key));
-  const selectionCount = group.editions.reduce((sum, item) => sum + count(validSelection(item)), 0);
+  const selectionCount = group.editions.reduce((sum, item) => sum + (validSelection(item)?.pages[item.keeperIsIncoming ? 'existing' : 'incoming'].length ?? 0), validKeeper?.pages.length ?? 0);
   const invalidSelections = group.editions.filter((item) => selections[item.key] && !validSelection(item));
   const rows = useMemo(() => suspended ? [] : buildGroupAlignment(group.keeper, compared, relations, evidence.supplements), [suspended, group.keeper, compared, relations, evidence.supplements]);
   const kind = (page: number | undefined, matched: boolean | undefined) => page ? matched ? "matched" : "unique" : "gap";
@@ -130,20 +160,36 @@ export function OverlapGroupReview({ initialDraft, onDraftChange, group, disable
     if (disabled || !item.canDecide || !onMerge) return;
     try { mergeOutputPages(item.candidate, item.review.incoming.pageCount, { sourceSide: side, selectedPages: emptyMergeSelection() }); }
     catch { setHint("#" + item.excluded.galleryId + " · 페이지 대응 다시 확인"); return; }
-    setMode(item, side, "partial");
-    setSelections((current) => {
-      const saved = current[item.key]?.evidence === item.evidence ? current[item.key] : undefined;
-      const pages = selectMergePages({...item.candidate, pagePairs:pairsFor(item)}, saved?.pages ?? emptyMergeSelection(), side, page, saved?.anchor, range);
-      if (pages.existing.length + pages.incoming.length > 4000) { setHint("최대 4,000장 선택"); return current; }
-      return { ...current, [item.key]: { evidence: item.evidence, reviewId: item.review.reviewId,
-        reviewRevision: item.review.revision, candidateId: item.candidate.candidateId,
-        pages, anchor: range && saved ? saved.anchor : { side, page } } };
+    const keeperSide: Side = item.keeperIsIncoming ? 'incoming' : 'existing';
+    const saved = validSelection(item);
+    const anchor = side === keeperSide && validKeeper?.anchor ? {side,page:validKeeper.anchor} : saved?.anchor;
+    const pages = selectMergePages({...item.candidate, pagePairs:pairsFor(item)}, saved?.pages ?? emptyMergeSelection(), side, page, anchor, range);
+    if (pages.existing.length + pages.incoming.length > 4000) { setHint('최대 4,000장 선택'); return; }
+    setMode(item, side, 'partial');
+    setKeeperDraft({evidence:keeperEvidence, mode:side === keeperSide ? 'partial' : validKeeper?.mode ?? 'keep',
+      pages:pages[keeperSide], anchor:side === keeperSide ? range && validKeeper?.anchor ? validKeeper.anchor : page : validKeeper?.anchor});
+    setSelections(current => {
+      const next = {...current};
+      // One baseline selection is shared. Selecting its page deselects only directly
+      // corresponding peer pages; no indirect/transitive page mapping is invented.
+      if (side === keeperSide) for (const other of group.editions) {
+        const prior = current[other.key];
+        if (!prior || prior.evidence !== other.evidence) continue;
+        const own: Side = other.keeperIsIncoming ? 'incoming' : 'existing', peer: Side = own === 'incoming' ? 'existing' : 'incoming';
+        const selected = new Set(pages[keeperSide]);
+        const replaced = new Set(pairsFor(other).filter(p => selected.has(own === 'incoming' ? p.incomingSourcePage : p.existingSourcePage))
+          .map(p => peer === 'incoming' ? p.incomingSourcePage : p.existingSourcePage));
+        next[other.key] = {...prior,pages:{...prior.pages,[own]:pages[keeperSide],[peer]:prior.pages[peer].filter(p => !replaced.has(p))}};
+      }
+      next[item.key] = {evidence:item.evidence,reviewId:item.review.reviewId,reviewRevision:item.review.revision,candidateId:item.candidate.candidateId,
+        pages,anchor:range && anchor ? anchor : {side,page}};
+      return next;
     });
     setHint(null);
   };
   const applySingleDisposition = () => {
     if (!active || disabled || !active.canDecide) return;
-    if (selections[active.key] && !activeSelection) { setHint('페이지가 변경되어 다시 선택해야 합니다.'); return; }
+    if ((selections[active.key] && !activeSelection) || (keeperDraft && !validKeeper)) { setHint('페이지가 변경되어 다시 선택해야 합니다.'); return; }
     const keeperSide: Side = active.keeperIsIncoming ? 'incoming' : 'existing';
     const galleryFor = (side:Side) => side === keeperSide ? group.keeper : active.excluded;
     try {
@@ -173,25 +219,13 @@ export function OverlapGroupReview({ initialDraft, onDraftChange, group, disable
     if (!onApplyEditions) { applySingleDisposition(); return; }
     if (disabled || !applyScope.length) return;
     try {
-      const operations: EditionBatchOperation[] = applyScope.map(item => {
+      if (keeperDraft && !validKeeper) throw Error('기준 판본이 변경되어 다시 선택해야 합니다.');
+      const ordered = planGroupEditionBatch(group, applyScope.map(item => {
         const selection = validSelection(item);
         if ((selections[item.key] && !selection) || (dispositions[item.key] && dispositions[item.key]!.evidence !== item.evidence))
           throw Error('#'+item.excluded.galleryId+' · 페이지가 변경되어 다시 선택해야 합니다.');
-        const keeperSide: Side = item.keeperIsIncoming ? 'incoming' : 'existing';
-        const plan = planEditionDisposition(modesFor(item),selection?.pages ?? emptyMergeSelection(),keeperSide);
-        const common = {key:item.key,evidence:item.evidence,galleryId:Number(item.excluded.galleryId),incomingEntryId:item.review.incoming.entryId,existingEntryId:item.candidate.existing.entryId};
-        const identity = {reviewId:item.review.reviewId,expectedRevision:item.review.revision,candidateId:item.candidate.candidateId};
-        if(plan.kind === 'decision') return {...common,kind:'decision',request:{...identity,action:plan.action}};
-        const originalPairs = new Set(item.candidate.pagePairs.map(p=>p.incomingSourcePage+':'+p.existingSourcePage));
-        if(pairsFor(item).some(p=>!originalPairs.has(p.incomingSourcePage+':'+p.existingSourcePage)
-          && (plan.selectedPages.incoming.includes(p.incomingSourcePage)||plan.selectedPages.existing.includes(p.existingSourcePage))))
-          throw Error('순서가 다른 선택 페이지는 병합할 수 없습니다. 선택은 유지됩니다.');
-        const {kind:_,...composition}=plan;
-        const request:DownloadOverlapMergeRequest={...identity,...composition,excludeSource:true};
-        if(!mergeOutputPages(item.candidate,item.review.incoming.pageCount,request).length)throw Error('남길 페이지를 하나 이상 선택해 주세요.');
-        return {...common,kind:'merge',request};
-      });
-      const ordered=orderEditionBatch(operations);
+        return {edition:item,modes:modesFor(item),pages:selection?.pages ?? emptyMergeSelection(),displayPairs:pairsFor(item)};
+      }));
       const descriptions=ordered.map(item=>'#'+item.galleryId+' '+(item.kind==='merge'?'선택 병합':item.request.action==='keep_both_continue'?'남기기':'제거'));
       if(!window.confirm(descriptions.join(' · ')+'\n'+ordered.length+'개 판본에 적용할까요? 원본 파일은 보존됩니다.'))return;
       setHint(null);setBatchBusy(true);setEditionProgress({completedKeys:[],total:ordered.length});
@@ -295,7 +329,7 @@ export function OverlapGroupReview({ initialDraft, onDraftChange, group, disable
         <strong>{onApplyEditions ? applyScope.length+"개 판본" : "#"+active?.excluded.galleryId}</strong>
         <span>#{group.keeper.galleryId}와 비교</span>
         {editionProgress ? <span role="status">{editionProgress.completedKeys.length}/{editionProgress.total} 처리</span> : null}
-        {count(activeSelection)>0?<><span>{count(activeSelection)}장 선택</span><button type="button" className="text-button" disabled={disabled} onClick={()=>setSelections(current=>{const next={...current};if(active)delete next[active.key];return next;})}>선택 해제</button></>:null}
+        {count(activeSelection)>0?<><span>{count(activeSelection)}장 선택</span><button type="button" className="text-button" disabled={disabled} onClick={()=>{setSelections(current=>{const next={...current};if(active)delete next[active.key];return next;});setKeeperDraft(current=>current?{...current,pages:[],anchor:undefined}:current);}}>선택 해제</button></>:null}
         {active?.canDecide ? <button type="button" className="text-button" disabled={disabled || selectionCount > 0} onClick={() => onDecision({ reviewId:active.review.reviewId, expectedRevision:active.review.revision, candidateId:active.candidate.candidateId, action:"false_positive_continue" })}>중복 아님</button> : null}
         <button type="button" className="primary-button" disabled={disabled || (Boolean(onApplyEditions) && !applyScope.length)} onClick={()=>void applyDisposition()}>{onApplyEditions ? applyScope.length+"개 적용" : "적용"}</button>
       </footer> : null}

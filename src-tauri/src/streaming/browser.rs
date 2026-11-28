@@ -40,6 +40,14 @@ mod diagnostics;
 pub(crate) mod encoded;
 #[path = "browser_ending.rs"]
 mod ending;
+#[path = "browser_relay.rs"]
+mod relay;
+pub(crate) use relay::{ChzzkRelaySource, ChzzkSelectedRelayHandle};
+#[cfg(all(test, windows, debug_assertions))]
+#[path = "browser_relay_actual.rs"]
+mod relay_actual;
+#[path = "browser_recovery.rs"]
+mod recovery;
 #[path = "browser_host.rs"]
 mod host_view;
 #[path = "browser_multiview.rs"]
@@ -89,6 +97,8 @@ pub struct OfficialBrowser {
     inner: Arc<Inner>,
 }
 struct Inner {
+    relay_id: String,
+    relay: relay::Slot,
     data_dir: PathBuf,
     label: String,
     detached: AtomicBool,
@@ -249,6 +259,7 @@ struct ViewState {
     video_paused: bool,
     capture_diagnostics: Option<Value>,
     page_generation: u64,
+    receiver_reload: Option<u64>,
     account_busy: bool,
     viewport_epoch: u64,
     pending_control: Option<PendingControl>,
@@ -297,6 +308,7 @@ impl Default for ViewState {
             video_paused: true,
             capture_diagnostics: None,
             page_generation: 0,
+            receiver_reload: None,
             account_busy: false,
             viewport_epoch: 0,
             pending_control: None,
@@ -355,6 +367,7 @@ struct Envelope {
     rename_all_fields = "camelCase"
 )]
 enum BrowserMessage {
+    Relay { #[serde(flatten)] wire: relay::Wire },
     ViewIntent {
         channel_id: String,
         action: String,
@@ -650,6 +663,7 @@ impl OfficialBrowser {
             || self.inner.closing.load(Ordering::Acquire)
             || self.inner.reserved.load(Ordering::Acquire)
             || state.account_busy
+            || state.receiver_reload.is_some()
             || state.extension_connecting
             || self.multiview_active()
         {
@@ -738,6 +752,7 @@ impl OfficialBrowser {
             || self.inner.contexts.reconfiguring.load(Ordering::Acquire) != 0
             || self.inner.reserved.load(Ordering::Acquire)
             || state.account_busy
+            || state.receiver_reload.is_some()
             || state.extension_connecting
             || self.multiview_active()
         {
@@ -1035,6 +1050,8 @@ impl OfficialBrowser {
         let view = ViewState::default();
         let host = Self {
             inner: Arc::new(Inner {
+                relay_id: uuid::Uuid::new_v4().to_string(),
+                relay: relay::Slot::default(),
                 auto_record: Arc::new(auto_record::AutoRecorder::load(&data_dir)),
                 favorites: Arc::new(live_channels::Favorites::load(&data_dir)),
                 data_dir,
@@ -1287,6 +1304,9 @@ impl OfficialBrowser {
                     "BROWSER_EXTENSION_CONNECTING",
                     "네이버 확장 연결이 끝난 뒤 녹화를 시작해 주세요.",
                 ));
+            }
+            if state.receiver_reload.is_some() {
+                return Err(error("BROWSER_RECONNECTING", "방송 화면을 다시 연결 중입니다. 잠시 후 다시 시도해 주세요."));
             }
             if state.recording.is_some() || state.arm.is_some() {
                 return Err(error(
@@ -1693,7 +1713,9 @@ impl OfficialBrowser {
                 state.arm = None;
             }
             if state.recording.is_none() && state.arm.is_none() {
-                state.status = if detail == "original_unavailable" {
+                state.status = if state.receiver_reload.is_some() {
+                    "reconnecting"
+                } else if detail == "original_unavailable" {
                     "error"
                 } else if ready {
                     "ready"
@@ -2372,6 +2394,10 @@ fn bridge_worker(
         .spawn(move || {
             let mut last_sample = Instant::now();
             while let Ok((channel, generation, envelope, queued)) = receiver.recv() {
+                if let BrowserMessage::Relay { wire } = envelope.message {
+                    relay::dispatch(&worker_host, &worker_window, &channel, envelope.id, wire);
+                    continue;
+                }
                 let began = Instant::now();
                 let queued_ms = queued.elapsed().as_millis();
                 let packet = diagnostics::packet(&envelope.message);
@@ -2467,6 +2493,9 @@ fn attach_native(window: &Webview, host: OfficialBrowser) -> Result<(), StreamEr
     use windows::core::PWSTR;
     let sender = bridge_worker(window, &host, 4, "chzzk-browser-writer")?;
     let chat_sender = bridge_worker(window, &host, 4, "chzzk-chat-writer")?;
+    let relay_sender = bridge_worker(window, &host, 8, "chzzk-relay-bridge")?;
+    let relay_control = bridge_worker(window, &host, 2, "chzzk-relay-control")?;
+    let relay_chat = bridge_worker(window, &host, 4, "chzzk-relay-chat-bridge")?;
     let status_sender = bridge_worker(window, &host, 1, "chzzk-capture-status")?;
     // PNG validation/fsync never delays recorder chunks; both queues stay bounded.
     let screenshot_sender = bridge_worker(window, &host, 2, "chzzk-screenshot-writer")?;
@@ -2514,7 +2543,9 @@ fn attach_native(window: &Webview, host: OfficialBrowser) -> Result<(), StreamEr
                                         return Ok(());
                                     }
                                 };
-                                let queue = if envelope.message.screenshot_lane() {
+                                let queue = if let BrowserMessage::Relay { wire } = &envelope.message {
+                                    match &wire.packet { relay::Packet::Finish { .. } | relay::Packet::Clock { .. } | relay::Packet::ChatGap => &relay_control, relay::Packet::Chat { .. } => &relay_chat, _ => &relay_sender }
+                                } else if envelope.message.screenshot_lane() {
                                     &screenshot_sender
                                 } else if envelope.message.chat() {
                                     &chat_sender
@@ -2526,6 +2557,10 @@ fn attach_native(window: &Webview, host: OfficialBrowser) -> Result<(), StreamEr
                                 match queue.try_send((channel, generation, envelope, Instant::now())) {
                                     Ok(()) => {}
                                     Err(std::sync::mpsc::TrySendError::Full((_, _, envelope, _))) => {
+                                        if let BrowserMessage::Relay { wire } = &envelope.message {
+                                            if matches!(&wire.packet, relay::Packet::Clock { .. }) { source_host.inner.relay.clock_lost(&wire.run_id); }
+                                            else { source_host.inner.relay.cancel_busy(&wire.run_id); }
+                                        }
                                         if !matches!(
                                             envelope.message,
                                             BrowserMessage::Status { .. }

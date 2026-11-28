@@ -832,8 +832,8 @@ export function SettingsDialog({
                   <div className="setting-row" hidden={activeTab !== "hitomi"}>
                     <SettingCopy
                       title="Auto Find 기록 기준"
-                      summary="후보를 찾기 시작할 기록 범위를 선택합니다."
-                      detail="변경한 기준은 다음 Auto Find 실행부터 적용됩니다. ‘가장 최근 소유 작품 이후’는 작가·그룹별 검증 완료·격리 소유본 중 가장 높은 작품번호 이후만 찾습니다. 다운로드한 시각은 기준이 아니며, 보유본이 없는 대상은 전체 범위를 탐색합니다."
+                      summary="처음 탐색하는 작가·그룹의 시작점을 정합니다."
+                      detail="‘새 작품만 추가’의 첫 탐색과 자동 재탐색에 적용됩니다. ‘가장 최근 소유 작품 이후’는 검증 완료·격리 소유본 중 가장 높은 작품번호를 기준으로 하며, 보유본이 없으면 전체 기간을 확인합니다."
                     />
                     <div className="settings-select-control">
                       <select

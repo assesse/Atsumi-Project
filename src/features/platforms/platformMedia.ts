@@ -31,8 +31,74 @@ export type MediaGroupMembersPage = { status: 'ready'; group: MediaRecordingGrou
   | { status: 'changed'; groupRevision: string } | { status: 'missing' };
 export type MediaChatPart = { type: 'text'; text: string } | { type: 'emoji'; assetId: string; alt: string };
 export interface MediaChatAsset { state: 'pending' | 'ready' | 'missing'; dataUrl: string | null }
-export interface MediaReplayChatItem { id: string; timeMs: number | null; kind: string; author: string; text: string; parts?: MediaChatPart[]; amount: string | null; badges: string[]; color: string | null }
-export interface MediaReplayChatPage { items: MediaReplayChatItem[]; state: 'missing' | 'empty' | 'unmapped' | 'ready' | 'indexing'; preparation?: { scannedBytes: number; totalBytes: number }; timelineQuality: string; nextAtMs: number | null; cursor: string | null; previousCursor: string | null; total: number; malformedLines: number; unsupportedItems: number; reordered: number; duplicates: number; partialFile: boolean }
+export interface SoopDisplayValues {
+  theme: 'light' | 'dark' | null; fontLevel: number | null;
+  randomNicknameColor: boolean | null; fanMessageColor: boolean | null;
+  showEmoticons: boolean | null; animateEmoticons: boolean | null; smallOgq: boolean | null;
+}
+export type SoopPaletteRole = 'normal' | 'streamer' | 'manager' | 'vip' | 'subscribe' | 'fan' | 'support' | 'nightbot';
+export interface SoopDisplayPalette {
+  version: 1; basis: 'computed-css-variable';
+  nickname: (string | null)[];
+  roles: Record<SoopPaletteRole, string | null>;
+}
+export interface SoopDisplayState {
+  version: 1; values: SoopDisplayValues;
+  basis: Record<keyof SoopDisplayValues, 'dom' | 'saved-option' | null>;
+  palette?: SoopDisplayPalette | null;
+  paletteIncomplete?: boolean;
+  surface?: SoopDisplaySurface | null;
+  surfaceIncomplete?: boolean;
+  documentEpoch: number; sequence: number; observedAtMs: number | null; timeMs: number | null;
+  timingQuality: 'receive-time-approximate' | 'unmapped';
+}
+export interface SoopDisplaySurface {
+  version: 1; basis: 'computed-dom'; foreground: string | null; background: string | null;
+}
+export type SoopRowDisplay = Pick<SoopDisplayValues, 'fanMessageColor' | 'showEmoticons' | 'smallOgq'>;
+export interface SoopChatMetadata {
+  flag1: number; flag2: number;
+  role: 'streamer' | 'manager' | 'vip' | 'subscribe' | 'fan' | 'support' | 'nightbot' | 'normal';
+  badge: 'streamer' | 'manager' | 'vip' | 'fan' | 'support' | 'nightbot' | 'normal';
+  subscriptionTier: 1 | 2 | 3 | null;
+  subscriptionMonths: number | null; accumulatedSubscriptionMonths: number | null;
+  messageColor?: string | null;
+  nicknameColorKey?: string | null;
+  messageType?: 'staff' | 'police' | null;
+  personalcon?: SoopPersonalconMetadata | null;
+  avatar?: SoopAvatarMetadata | null;
+}
+export interface SoopAvatarMetadata { imageAssetId: string; kind: 'broadcaster'; source: 'connectionMetadata' }
+export interface SoopPersonalconMetadata {
+  imageAssetId: string; tierNickname?: string | null;
+  tier: 1 | 2 | 3; months: number; source: 'connectionMetadata';
+}
+export interface SoopEmoticonMetadata {
+  kind: 'ogq' | 'gem'; animated: boolean;
+  staticImageAssetId?: string | null; smallStaticImageAssetId?: string | null;
+  animatedImageAssetId?: string | null; smallAnimatedImageAssetId?: string | null;
+}
+export type SoopMissionNotice = { result:'draw' } | { result:'winner'; winner:string }
+  | { result:'rank'; rank:number; team:string } | { result:'challenge'; title:string; successful:boolean };
+export interface SoopMissionMetadata {
+  kind:'battle'|'challenge'; event:'gift'|'settle'|'notice'; count?:number|null; relay?:boolean|null;
+  fanOrder?:number|null; topFan?:boolean|null; notice?:SoopMissionNotice|null; imageAssetId?:string|null;
+}
+export interface SoopGiftMetadata {
+  kind: 'balloon' | 'videoBalloon';
+  count: number; relay: boolean; isDefault: boolean;
+  fanOrder?: number | null; topFan?: boolean | null;
+  imageAssetId?: string | null;
+}
+export interface SoopSubscriptionMetadata {
+  event: 'new' | 'renewal'; displayTier: 1 | 2;
+  tierNickname?: string | null;
+  fromVod?: boolean | null; productMonths?: number | null;
+  months?: number | null;
+  imageAssetId?: string | null; fallbackAssetId?: string | null;
+}
+export interface MediaReplayChatItem { id: string; timeMs: number | null; kind: string; author: string; text: string; parts?: MediaChatPart[]; amount: string | null; badges: string[]; color: string | null; soop?: SoopChatMetadata; soopGift?: SoopGiftMetadata; soopMission?: SoopMissionMetadata; soopEmoticon?: SoopEmoticonMetadata; soopSubscription?: SoopSubscriptionMetadata; soopDisplay?: SoopRowDisplay }
+export interface MediaReplayChatPage { items: MediaReplayChatItem[]; state: 'missing' | 'empty' | 'unmapped' | 'ready' | 'indexing'; preparation?: { scannedBytes: number; totalBytes: number }; timelineQuality: string; nextAtMs: number | null; cursor: string | null; previousCursor: string | null; total: number; malformedLines: number; unsupportedItems: number; reordered: number; duplicates: number; partialFile: boolean; displayMetadataUnavailable?: boolean; soopDisplay?: SoopDisplayState; soopDisplayIncomplete?: boolean }
 export interface MediaLiveSnapshot { token: string; url: string; reference: MediaRef; state: 'queued' | 'resolving' | 'playing' | 'ended' | 'failed'; title: string; channelName: string; receivedBytes: number; recordingJob: string | null; recordingStopping: boolean; chatStatus: string; error: string | null }
 export interface PlatformLiveApi {
   open(reference: MediaRef, requestId: string): Promise<MediaLiveSnapshot>;

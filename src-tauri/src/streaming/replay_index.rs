@@ -182,6 +182,12 @@ fn build_fresh(session: &Session) -> Result<IndexStatus, StreamError> {
                 continue;
             }
             let observed_time = observed_media_time(&transaction, &raw);
+            if matches!(&session.source, ReplaySource::RemoteChat(_))
+                && ((observed_clock(&raw).is_some() && observed_time.is_none())
+                    || !session.contains_time(observed_time.unwrap_or(message.offset_seconds)))
+            {
+                continue;
+            }
             let media_time = observed_time.unwrap_or(message.offset_seconds);
             let quality = if observed_time.is_some() {
                 "observed_media"
@@ -294,7 +300,7 @@ fn load_timeline(session: &Session, connection: &mut Connection) -> Result<(), S
     let mut reader = BufReader::with_capacity(MAX_LINE_BYTES, file);
     let transaction = connection.transaction().map_err(|_| storage())?;
     let mut ordinal = 0u64;
-    let mut previous_end = 0.0;
+    let mut previous_end = session.timeline_start;
     while let Some(line) = bounded_line(&mut reader, &session.cancel)? {
         if line.oversized || !line.terminated || ordinal >= MAX_TIMELINE_ROWS {
             return Err(storage());
@@ -317,7 +323,7 @@ fn load_timeline(session: &Session, connection: &mut Connection) -> Result<(), S
             || (start - previous_end).abs() > 0.1
             || start < 0.0
             || row.get("chatRewritten").and_then(Value::as_bool) != Some(false)
-            || row.get("segmentIndex").and_then(Value::as_u64) != Some(ordinal)
+            || row.get("segmentIndex").and_then(Value::as_u64) != Some(session.first_segment + ordinal)
         {
             return Err(storage());
         }

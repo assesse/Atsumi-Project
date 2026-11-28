@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { markUi } from "../../diagnostics/uiDiagnostics";
 import { readNavigationCheckpoint, writeNavigationCheckpoint } from "../../state/navigationCheckpoint";
 import type { BackgroundOpenOptions } from "../../state/downloadStatus";
@@ -18,6 +18,7 @@ import { useAppShell } from "../../app/AppShell";
 import { DownloadProgressContext, DownloadProgressStore } from "../../state/downloadProgress";
 import type {
   AutoFindRun,
+  AutoFindRefreshMode,
   AutoFindSnapshot,
   DownloadChangedEvent,
   DownloadEntry,
@@ -57,6 +58,7 @@ import {
   type DanbooruSessionActivity,
   type SessionDownloadActivity,
 } from "../../components/ActivityDrawer";
+import { AutoFindRefreshDialog } from "../../components/AutoFindRefreshDialog";
 import { AutoFindPager } from "../../components/AutoFindPager";
 import { DetailWorkspace } from "../../components/DetailWorkspace";
 import { DownloadArtistFolderGrid } from "../../components/DownloadArtistFolderGrid";
@@ -85,6 +87,7 @@ import { workspaceRegistry } from "../../app/workspaceRegistry";
 import { SideRail } from "../../components/SideRail";
 import { ViewHeader, type SearchSuggestion } from "../../components/ViewHeader";
 import { galleryId, retryableDownloadStates, type DownloadFilter, type DownloadState, type Gallery, type GalleryDisplayMode, type GalleryId, type Language, type SearchSort, type ViewId } from "../../core/types";
+import { useAutoFindResults } from "../../hooks/useAutoFindResults";
 import { useSavedGalleryPreviews } from "../../hooks/useSavedGalleryPreviews";
 import { useProgressiveGalleryWindow } from "../../hooks/useProgressiveGalleryWindow";
 import { resolveCompactGalleryColumns, resolveGalleryColumns } from "../../layout/galleryColumns";
@@ -106,9 +109,12 @@ import {
 } from "../../state/duplicateProjection";
 import { mergeDownloadEntries, mergeDownloadLibraryPage, mergeGalleryDetail, mergeGalleryPage } from "../../state/galleryProjection";
 import { galleryQueryReducer, initialGalleryQueryState, type GalleryQueryState } from "../../state/galleryQuery";
+import { GalleryVisibilityControls } from "../../components/GalleryVisibilityControls";
+import { type ExploreVisibility, omittedExploreIds, readExploreVisibility, saveExploreVisibility } from "../../state/exploreVisibility";
 import { ExplorePageSession } from "../../state/explorePageSession";
 import { isPendingAutoFindCandidate, visibleGalleries } from "../../state/selectors";
 import { useVisibleGalleries } from "../../hooks/useVisibleGalleries";
+import { downloadPreviewItems, nextDownloadPreviewIndex, type DownloadPreviewSession } from "../../state/downloadPreviewNavigation";
 import {
   galleryGroupStorageKey,
   groupGalleries,
@@ -192,6 +198,8 @@ type ClosedNavigation = { at: number } & (
 type ExploreContext = {
   origin?: NavigationOrigin;
   resumePage?: { queryId: string | null; page: number };
+  visibilityChoice?: string;
+  refreshingVisibility?: GalleryQueryState;
   id: string;
   label: string;
   session: ExplorePageSession;
@@ -210,6 +218,10 @@ type ExploreContext = {
 };
 
 const maximumExploreContexts = 64;
+const getExploreSearchPage = (queryId: string, page: number, requestId: string, omittedIds?: readonly GalleryId[]) =>
+  omittedIds?.length ? backend.searchPageGet(queryId, page, requestId, omittedIds) : backend.searchPageGet(queryId, page, requestId);
+const submitExploreQuery = (request: SearchRequest, omittedIds: readonly GalleryId[]) =>
+  omittedIds.length ? backend.searchSubmit(request, omittedIds) : backend.searchSubmit(request);
 
 const cloneSearchRequest = (request: SearchRequest): SearchRequest => ({
   ...request,
@@ -318,6 +330,20 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   const [personalLibraryOpen, setPersonalLibraryOpen] = useState(false);
   const [personalLibraryVisited, setPersonalLibraryVisited] = useState(false);
   const [savedPageRequest, setSavedPageRequest] = useState<{ galleryId: GalleryId; page: number; sequence: number } | null>(null);
+  const [downloadPreview, setDownloadPreview] = useState<DownloadPreviewSession | null>(null);
+  const downloadPreviewRef = useRef<DownloadPreviewSession | null>(null);
+  const pageOpenRequestSequence = useRef(0);
+  const downloadPreviewOpener = useRef<HTMLElement | null>(null);
+  const closeDownloadPreview = useCallback(() => {
+    downloadPreviewRef.current = null;
+    setDownloadPreview(null);
+    setSavedPageRequest(null);
+    const target = downloadPreviewOpener.current;
+    downloadPreviewOpener.current = null;
+    window.requestAnimationFrame(() => {
+      if (target?.isConnected && !target.closest('dialog:not([open])')) target.focus({ preventScroll: true });
+    });
+  }, []);
   const {
     showToast, privacyModePending, togglePrivacyMode,
     openExitConfirm, setActivityOpen, setSettingsOpen, toggleRail, selectSource,
@@ -339,6 +365,13 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   const [query, dispatchQuery] = useReducer(galleryQueryReducer, initialGalleryQueryState);
   const [galleries, setGalleries] = useState<ReadonlyMap<GalleryId, Gallery>>(() => new Map());
   const [exploreIds, setExploreIds] = useState<GalleryId[]>([]);
+  const [exploreVisibility, setExploreVisibility] = useState(readExploreVisibility);
+  const changeExploreVisibility = useCallback((key: keyof ExploreVisibility, checked: boolean) => {
+    setExploreVisibility(current => ({ ...current, [key]: checked }));
+  }, []);
+  const searchOmissions = useRef<readonly GalleryId[]>([]);
+  const visibilityChoice = JSON.stringify(exploreVisibility);
+  useEffect(() => saveExploreVisibility(exploreVisibility), [exploreVisibility]);
   const [downloadIds, setDownloadIds] = useState<GalleryId[]>([]);
   const popularity = useDownloadPopularity(shell.backgroundReady, downloadIds);
   const [duplicateHiddenGalleryIds, setDuplicateHiddenGalleryIds] = useState<ReadonlySet<GalleryId>>(() => new Set());
@@ -367,12 +400,16 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   const [randomOpenPending, setRandomOpenPending] = useState(false);
   const [tagSuggestions, setTagSuggestions] = useState<TagSuggestion[]>([]);
   const tagSuggestionSequence = useRef(0);
-  const [autoFindSnapshot, setAutoFindSnapshot] = useState<AutoFindSnapshot>({ candidates: [], cutoffEvidence: [], truncations: [] });
-  const [autoFindIds, setAutoFindIds] = useState<GalleryId[]>([]);
+  const mergeAutoFindGalleries = useCallback((items: AutoFindSnapshot["candidates"]) => {
+    if (items.length) setGalleries(current => mergeGalleryPage(current, { page: 1, totalPages: 1, items }).galleries);
+  }, []);
+  const { snapshot: autoFindSnapshot, error: autoFindError, setError: setAutoFindError, loading: autoFindLoading,
+    loadSnapshot: hydrateAutoFind, acceptRun: acceptAutoFindRun, replaceSnapshot: applyAutoFindSnapshot,
+  } = useAutoFindResults(backend, active && ui.view === "auto-find", mergeAutoFindGalleries);
+  const autoFindIds = useMemo(() => autoFindSnapshot.candidates.map(candidate => candidate.id), [autoFindSnapshot.candidates]);
   const [autoFindPage, setAutoFindPage] = useState(1);
   const autoFindPageContext = useRef<string | null>(null);
-  const [autoFindLoading, setAutoFindLoading] = useState(true);
-  const [autoFindError, setAutoFindError] = useState<string | null>(null);
+  const [refreshChoiceOpen, setRefreshChoiceOpen] = useState(false);
   const [autoFindPending, setAutoFindPending] = useState(false);
   const [duplicateSnapshot, setDuplicateSnapshot] = useState<DuplicateSnapshot | null>(null);
   const [duplicateRun, setDuplicateRun] = useState<DuplicateScanRun | undefined>(undefined);
@@ -443,9 +480,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   const [danbooruSessionActivities, setDanbooruSessionActivities] = useState<DanbooruSessionActivity[]>([]);
   const [unreadActivityCount, setUnreadActivityCount] = useState(0);
   const searchToken = useRef(0);
-  const autoFindHydrationToken = useRef(0);
-  const autoFindHydrationTask = useRef<Promise<void> | null>(null);
-  const autoFindHydrationAgain = useRef(false);
   const duplicateHydrationToken = useRef(0);
   const duplicateReviewToken = useRef(0);
   const duplicateRunRef = useRef<DuplicateScanRun | undefined>(undefined);
@@ -521,6 +555,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   const visibleIdsRef = useRef<GalleryId[]>([]);
   const activityOpener = useRef<HTMLElement | null>(null);
   const galleryViewport = useRef<HTMLElement>(null);
+  const exploreReadingExtent = useRef<{ key: string; bottom: number } | null>(null);
   const artistFolderViewport = useRef<HTMLElement>(null);
   const [folderGalleryColumns, setFolderGalleryColumns] = useState(1);
   const explorePageSession = useRef<ExplorePageSession | null>(null);
@@ -534,7 +569,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   const keyboardFocusIdRef = useRef(keyboardFocusId);
   const uiRef = useRef(ui);
   const exploreLifetime = useRef(0);
-  const exploreNavigationToken = useRef(0);
+  const pendingPageScroll = useRef<{ contextId: string; query: GalleryQueryState; top: number } | null>(null);
   const exploreRestoreFrame = useRef<number | null>(null);
   exploreContextIdsRef.current = exploreContextIds;
   activeExploreContextIdRef.current = activeExploreContextId;
@@ -542,6 +577,15 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   exploreIdsRef.current = exploreIds;
   keyboardFocusIdRef.current = keyboardFocusId;
   uiRef.current = ui;
+
+  useLayoutEffect(() => {
+    const restore = pendingPageScroll.current;
+    if (!restore) return;
+    pendingPageScroll.current = null;
+    if (ui.view === "explore" && activeExploreContextId === restore.contextId && query === restore.query && galleryViewport.current) {
+      galleryViewport.current.scrollTop = restore.top;
+    }
+  }, [activeExploreContextId, query, ui.view]);
 
   const createExplorePageSession = useCallback(() => {
     const subscribePage = (page: GalleryPage, resolvedOnly: boolean) => {
@@ -562,7 +606,8 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
       return () => releases.forEach((release) => release());
     };
     return new ExplorePageSession({
-      fetchPage: (queryId, page, requestId) => backend.searchPageGet(queryId, page, requestId),
+      prefetchSecondNext: true,
+      fetchPage: getExploreSearchPage,
       cancelPage: (requestId) => backend.searchPageCancel(requestId),
       warmPage: (page) => subscribePage(page, false),
       retainPage: (page) => subscribePage(page, true),
@@ -587,9 +632,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
 
   useEffect(() => () => {
     checkpointRestored.current = false;
-    autoFindHydrationTask.current = null;
-    autoFindHydrationAgain.current = false;
-    ++autoFindHydrationToken.current;
     ++exploreLifetime.current;
     ++automationSequenceToken.current;
     ++downloadOverlapReviewToken.current;
@@ -795,6 +837,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
 
   const hydrateRestoredContext = useCallback(async (context: ExploreContext) => {
     const resume=context.resumePage;
+    const omitted = searchOmissions.current;
     if (!resume || !context.request) return;
     delete context.resumePage;
     const lifetime=exploreLifetime.current;
@@ -808,27 +851,32 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     const loading=context.query;
     publish();
     try {
-      let result=resume.queryId ? await backend.searchPageGet(resume.queryId,resume.page,`restore-${context.id}`) : null;
+      let result=resume.queryId ? await getExploreSearchPage(resume.queryId,resume.page,`restore-${context.id}`,omitted) : null;
       let queryId=resume.queryId;
       if (!result || (!result.ok && result.error.code==="QUERY_NOT_FOUND")) {
-        const submitted=await backend.searchSubmit(context.request);
+        const submitted=await submitExploreQuery(context.request,omitted);
         if (!submitted.ok) result=submitted;
         else {
           queryId=submitted.data.queryId;
-          result=resume.page > 1 ? await backend.searchPageGet(queryId, resume.page, `restore-${context.id}`) : { ok:true,data:submitted.data.firstPage };
+          result=resume.page > 1 ? await getExploreSearchPage(queryId, resume.page, `restore-${context.id}`,omitted) : { ok:true,data:submitted.data.firstPage };
         }
       }
       if (lifetime!==exploreLifetime.current || exploreContexts.current.get(context.id)!==context || context.query!==loading) return;
+      if (!result.ok && result.error.code === "VALIDATION_ERROR" && resume.page > 1 && queryId) {
+        result = await getExploreSearchPage(queryId, 1, `restore-${context.id}`, omitted);
+        if (lifetime!==exploreLifetime.current || exploreContexts.current.get(context.id)!==context || context.query!==loading) return;
+        context.scrollTop=0;
+      }
       if (!result.ok) { context.query={ ...context.query,phase:"error",error:result.error,pendingPage:null }; publish(); return; }
       context.query={ ...initialGalleryQueryState,phase:"ready",queryId,page:result.data };
       context.exploreIds=result.data.items.map((item)=>item.id);
-      context.session.start(queryId!,result.data); context.session.recordScroll(result.data.page,context.scrollTop);
+      context.session.start(queryId!,result.data,omitted); context.session.recordScroll(result.data.page,context.scrollTop);
       if (activeExploreContextIdRef.current!==context.id) context.session.park();
       setGalleries((current)=>mergeGalleryPage(current,result.data).galleries);
+      if (activeExploreContextIdRef.current === context.id && uiRef.current.view === "explore") {
+        pendingPageScroll.current = { contextId: context.id, query: context.query, top: context.scrollTop };
+      }
       publish();
-      window.requestAnimationFrame(()=>{
-        if (activeExploreContextIdRef.current===context.id && galleryViewport.current) galleryViewport.current.scrollTop=context.scrollTop;
-      });
     } catch {
       if (lifetime!==exploreLifetime.current || exploreContexts.current.get(context.id)!==context || context.query!==loading) return;
       context.query={ ...context.query,phase:"error",pendingPage:null,error:{ code:"BACKEND_UNAVAILABLE",message:"검색 탭을 복구하지 못했습니다. 새로고침으로 다시 시도할 수 있습니다.",retryable:true,action:"retry" } }; publish();
@@ -861,7 +909,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     setKeyboardFocusId(context.keyboardFocusId);
     if (context.resumePage) void hydrateRestoredContext(context);
     exploreRestoreFrame.current = window.requestAnimationFrame(() => {
-      if (activeExploreContextIdRef.current === context.id && galleryViewport.current) {
+      if (activeExploreContextIdRef.current === context.id && uiRef.current.view === "explore" && galleryViewport.current) {
         galleryViewport.current.scrollTop = context.scrollTop;
       }
       context.session.releaseRetainedPage();
@@ -930,7 +978,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
       restoreExploreContext(target);
       return;
     }
-    exploreNavigationToken.current += 1;
     snapshotActiveExploreContext(true);
     restoreExploreContext(target);
   }, [restoreExploreContext, snapshotActiveExploreContext]);
@@ -948,7 +995,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     exploreContexts.current.delete(id);
     replaceExploreContextIds(nextIds);
     if (activeExploreContextIdRef.current !== id) return;
-    exploreNavigationToken.current += 1;
     const fallbackId = nextIds[Math.max(0, closingIndex - 1)] ?? nextIds[0];
     const fallback = fallbackId ? exploreContexts.current.get(fallbackId) : undefined;
     if (fallback) restoreExploreContext(fallback);
@@ -1176,16 +1222,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     }
   }, [thumbnailClient]);
 
-  const applyAutoFindSnapshot = useCallback((snapshot: AutoFindSnapshot) => {
-    setAutoFindSnapshot(snapshot);
-    setAutoFindIds(snapshot.candidates.map((candidate) => candidate.id));
-    setGalleries((current) => mergeGalleryPage(current, {
-      page: 1,
-      totalPages: snapshot.candidates.length ? 1 : 0,
-      items: snapshot.candidates,
-    }).galleries);
-  }, []);
-
   const hydrateFavorites = useCallback(async () => {
     try {
       const result = await backend.favoritesList();
@@ -1240,31 +1276,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     } catch { showToast(tagCatalogStatus?.entryCount ? "자동완성 최신화에 실패했지만 기존 데이터를 유지했습니다." : "자동완성 데이터가 없습니다."); }
     finally { setTagCatalogRefreshing(false); }
   }, [showToast, tagCatalogStatus?.entryCount]);
-
-  const hydrateAutoFind = useCallback(async (showLoading = false) => {
-    if (showLoading) setAutoFindLoading(true);
-    autoFindHydrationAgain.current=true;
-    if (autoFindHydrationTask.current) return autoFindHydrationTask.current;
-    const lifetime=exploreLifetime.current;
-    const task=(async()=>{
-      do {
-        autoFindHydrationAgain.current=false;
-        const token=++autoFindHydrationToken.current;
-        try {
-          const result=await backend.autoFindSnapshot();
-          if (lifetime!==exploreLifetime.current || token!==autoFindHydrationToken.current) return;
-          if (!result.ok) setAutoFindError(result.error.message);
-          else { setAutoFindError(null); applyAutoFindSnapshot(result.data); }
-        } catch {
-          if (lifetime===exploreLifetime.current) setAutoFindError("자동 탐색 backend에 연결하지 못했습니다.");
-        }
-      } while (autoFindHydrationAgain.current && lifetime===exploreLifetime.current);
-    })();
-    autoFindHydrationTask.current=task;
-    try { await task; } finally {
-      if (autoFindHydrationTask.current===task) { autoFindHydrationTask.current=null; setAutoFindLoading(false); }
-    }
-  }, [applyAutoFindSnapshot]);
 
   const autoFindRulesKey = JSON.stringify([settings.searchIncludeTags, settings.searchExcludeTags]);
   const appliedAutoFindRules = useRef(autoFindRulesKey);
@@ -1444,27 +1455,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   useEffect(() => {
     let disposed = false;
     let unsubscribe: (() => void) | undefined;
-    void backend.on("auto-find:changed", (run) => {
-      setAutoFindSnapshot((current) => {
-        if (current.run?.runId === run.runId && current.run.revision > run.revision) return current;
-        return { ...current, run };
-      });
-      void hydrateAutoFind();
-    }).then((cleanup) => {
-      if (disposed) cleanup();
-      else unsubscribe = cleanup;
-    }).catch(() => {
-      if (!disposed) setAutoFindError("자동 탐색 상태 event stream에 연결하지 못했습니다.");
-    });
-    return () => {
-      disposed = true;
-      unsubscribe?.();
-    };
-  }, [hydrateAutoFind]);
-
-  useEffect(() => {
-    let disposed = false;
-    let unsubscribe: (() => void) | undefined;
     void backend.on("duplicate:changed", (run) => {
       if (!validDuplicateRun(run)) return;
       const previous = duplicateRunRef.current;
@@ -1583,7 +1573,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     const target = context;
     const token = ++searchToken.current;
     const lifetime = exploreLifetime.current;
-    if (!options.background) exploreNavigationToken.current += 1;
     if (!options.background && exploreRestoreFrame.current !== null) {
       window.cancelAnimationFrame(exploreRestoreFrame.current);
       exploreRestoreFrame.current = null;
@@ -1633,7 +1622,8 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
       target.query = { ...target.query, phase: "error", error };
       publishExploreContext(target);
     };
-    void backend.searchSubmit(request).then((result) => {
+    const omitted = searchOmissions.current;
+    void submitExploreQuery(request, omitted).then((result) => {
       if (!isCurrent()) return;
       if (!result.ok) {
         fail(result.error);
@@ -1651,7 +1641,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
       target.query = ready;
       target.exploreIds = resultIds;
       target.scrollTop = 0;
-      target.session.start(result.data.queryId, result.data.firstPage);
+      target.session.start(result.data.queryId, result.data.firstPage, omitted);
       publishExploreContext(target);
       setGalleries((current) => mergeGalleryPage(current, result.data.firstPage).galleries);
       if (activeExploreContextIdRef.current === target.id && uiRef.current.view === "explore") {
@@ -1847,16 +1837,39 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     }),
   ), [autoFindSearchState, displayGalleries, pendingAutoFindIds]);
 
+  const duplicateCandidateCounts = useMemo(() => {
+    const counts = new Map<GalleryId, number>();
+    for (const candidate of duplicateSnapshot?.candidates ?? []) {
+      counts.set(candidate.parent.galleryId, (counts.get(candidate.parent.galleryId) ?? 0) + 1);
+      counts.set(candidate.candidate.galleryId, (counts.get(candidate.candidate.galleryId) ?? 0) + 1);
+    }
+    return counts;
+  }, [duplicateSnapshot?.candidates]);
+  const excludedForDisplay = useMemo(() => new Set([...explorationExcludedGalleryIds, ...duplicateHiddenGalleryIds]),
+    [explorationExcludedGalleryIds, duplicateHiddenGalleryIds]);
+  const omittedIds = useMemo(() => omittedExploreIds(exploreVisibility, galleries, excludedForDisplay, duplicateCandidateCounts),
+    [exploreVisibility, galleries, excludedForDisplay, duplicateCandidateCounts]);
+  searchOmissions.current = omittedIds;
+  const omittedSet = useMemo(() => new Set(omittedIds), [omittedIds]);
+
   const scopedGalleries = useMemo(() => {
     const ids = ui.view === "explore" ? exploreIds : ui.view === "downloads" ? downloadIds : pendingAutoFindIds;
     return ids.flatMap((id) => {
       const gallery = displayGalleries.get(id);
-      return gallery ? [gallery] : [];
+      return gallery && (ui.view !== "explore" || !omittedSet.has(id)) ? [gallery] : [];
     });
-  }, [displayGalleries, downloadIds, exploreIds, pendingAutoFindIds, ui.view]);
+  }, [displayGalleries, downloadIds, exploreIds, omittedSet, pendingAutoFindIds, ui.view]);
   // Explore is a submitted server query. Draft language/sort controls must not
   // filter or reorder the existing response before the next search is submitted.
   const visible = useVisibleGalleries(ui, scopedGalleries, popularity.ranks);
+  const exploreViewportKey = ui.view === "explore" && query.page
+    ? `${activeExploreContextId}/${query.submitToken}/${query.page.page}` : null;
+  const refillingExploreCards = exploreViewportKey !== null && query.phase === "ready"
+    && omittedSet.size > 0 && visible.length < exploreIds.length;
+  // A batch may hide an entire page before replacements arrive. Keep the scrolled
+  // portion tall enough that the browser cannot clamp the reader back to the top.
+  const readingExtent = exploreReadingExtent.current;
+  const refillHeight = refillingExploreCards && readingExtent?.key === exploreViewportKey ? readingExtent.bottom : 0;
   const actionableVisibleIds = useMemo(
     () => visible
       .filter((gallery) => gallery.download?.state !== "quarantined"
@@ -1910,14 +1923,6 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
   const priorityContainmentGroups = useMemo(() => buildDownloadOverlapContainmentGroups(currentOverlapInventory)
     .filter(group => group.items.length >= 2)
     .sort((a,b) => b.items.length - a.items.length || b.keeper.pageCount - a.keeper.pageCount), [currentOverlapInventory]);
-  const duplicateCandidateCounts = useMemo(() => {
-    const counts = new Map<GalleryId, number>();
-    for (const candidate of duplicateSnapshot?.candidates ?? []) {
-      counts.set(candidate.parent.galleryId, (counts.get(candidate.parent.galleryId) ?? 0) + 1);
-      counts.set(candidate.candidate.galleryId, (counts.get(candidate.candidate.galleryId) ?? 0) + 1);
-    }
-    return counts;
-  }, [duplicateSnapshot?.candidates]);
   const internalDuplicateResultCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const group of internalSnapshot.groups) {
@@ -2057,7 +2062,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
       return next;
     });
     openDetail(saved.id);
-    setSavedPageRequest((current) => ({ galleryId: saved.id, page: options?.detailOnly ? 0 : item.page, sequence: (current?.sequence ?? 0) + 1 }));
+    setSavedPageRequest({ galleryId: saved.id, page: options?.detailOnly ? 0 : item.page, sequence: ++pageOpenRequestSequence.current });
   }, [openDetail]);
   const openSelectedDetails = useCallback((ids: GalleryId[]) => {
     const origin = captureNavigationOrigin();
@@ -3644,24 +3649,24 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     }
   }, [reconcilingArtifacts, showToast]);
 
-  const refreshAutoFind = useCallback(async () => {
+  const refreshAutoFind = useCallback(async (mode: AutoFindRefreshMode) => {
+    setRefreshChoiceOpen(false);
     if (autoFindPending || autoFindSnapshot.run?.state === "running") return;
     const finishTutorialAction = beginTutorialAction("auto-find-refresh");
     setAutoFindPending(true);
     setAutoFindError(null);
     try {
-      const result = await backend.autoFindRefresh();
+      const result = await backend.autoFindRefresh(mode);
       if (!result.ok) {
         finishTutorialAction(result.error.message);
         setAutoFindError(result.error.message);
         showToast(result.error.message);
         return;
       }
-      setAutoFindSnapshot((current) => ({ ...current, run: result.data }));
+      acceptAutoFindRun(result.data);
       finishTutorialAction(result.data.state === "failed" || result.data.state === "cancelled"
         ? result.data.errorMessage || "탐색이 시작되지 않았습니다. 다시 갱신해 주세요."
         : undefined);
-      await hydrateAutoFind();
     } catch {
       const message = "자동 탐색을 시작하지 못했습니다.";
       finishTutorialAction(message);
@@ -3670,7 +3675,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     } finally {
       setAutoFindPending(false);
     }
-  }, [autoFindPending, autoFindSnapshot.run?.state, hydrateAutoFind, showToast]);
+  }, [acceptAutoFindRun, autoFindPending, autoFindSnapshot.run?.state, setAutoFindError, showToast]);
 
   const cancelAutoFind = useCallback(async () => {
     if (autoFindPending || autoFindSnapshot.run?.state !== "running") return;
@@ -3681,15 +3686,14 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
         showToast(result.error.message);
         return;
       }
-      setAutoFindSnapshot((current) => ({ ...current, run: result.data }));
-      await hydrateAutoFind();
+      acceptAutoFindRun(result.data);
       showToast("자동 탐색을 취소했습니다. 지금까지 찾은 후보는 보존됩니다.");
     } catch {
       showToast("자동 탐색 취소 요청을 전달하지 못했습니다.");
     } finally {
       setAutoFindPending(false);
     }
-  }, [autoFindPending, autoFindSnapshot.run?.state, hydrateAutoFind, showToast]);
+  }, [acceptAutoFindRun, autoFindPending, autoFindSnapshot.run?.state, setAutoFindError, showToast]);
 
   const excludeAutoFindCandidates = useCallback(async (ids: GalleryId[]) => {
     const candidateIds = [...new Set(ids)].filter((id) => autoFindIds.includes(id));
@@ -3861,62 +3865,87 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     }
   }, [duplicateRun?.state, hydrateDuplicateSnapshot, showToast]);
 
-  const loadExplorePage = useCallback(async (page: number) => {
+  const loadExplorePage = useCallback(async (
+    page: number, visibility?: { ids: readonly GalleryId[]; source: "filter" | "library" },
+  ) => {
     const contextId = activeExploreContextIdRef.current;
     const context = contextId ? exploreContexts.current.get(contextId) : undefined;
     const currentQuery = queryRef.current;
     if (!context || !currentQuery.queryId || page < 1) return;
-    const navigationToken = ++exploreNavigationToken.current;
-    if (exploreRestoreFrame.current !== null) {
-      window.cancelAnimationFrame(exploreRestoreFrame.current);
-      exploreRestoreFrame.current = null;
-    }
-    if (currentQuery.page && galleryViewport.current) {
-      context.session.recordScroll(currentQuery.page.page, galleryViewport.current.scrollTop);
+
+    const background = visibility?.source === "library";
+    const ownsViewport = () => activeExploreContextIdRef.current === contextId && uiRef.current.view === "explore";
+    if (currentQuery.page && ownsViewport() && galleryViewport.current && exploreRestoreFrame.current === null) {
       context.scrollTop = galleryViewport.current.scrollTop;
+      context.session.recordScroll(currentQuery.page.page, context.scrollTop);
     }
-    const loading: GalleryQueryState = {
-      ...currentQuery,
-      phase: "loading-page",
-      pendingPage: page,
-      error: null,
+    const pending: GalleryQueryState = background ? currentQuery : {
+      ...currentQuery, phase: "loading-page", pendingPage: page, error: null,
     };
-    context.query = loading;
-    queryRef.current = loading;
-    dispatchQuery({ type: "restore", state: loading });
-    const result = await context.session.open(page);
-    if (
-      result.status === "stale"
-      || exploreContexts.current.get(context.id) !== context
-      || context.query !== loading
-    ) return;
+    if (background) {
+      // Keep the displayed page interactive and coalesce changes until this refill finishes.
+      context.refreshingVisibility = pending;
+    } else {
+      if (exploreRestoreFrame.current !== null) {
+        window.cancelAnimationFrame(exploreRestoreFrame.current);
+        exploreRestoreFrame.current = null;
+      }
+      context.query = pending;
+      queryRef.current = pending;
+      dispatchQuery({ type: "restore", state: pending });
+    }
+
+    const isCurrent = () => exploreContexts.current.get(context.id) === context && context.query === pending;
+    let result = visibility
+      ? await context.session.openWithVisibility(currentQuery.queryId, page, visibility.ids, background)
+      : await context.session.open(page);
+    if (page > 1 && result.status === "failed" && isCurrent() && (result.error.code === "PAGE_OUT_OF_RANGE"
+      || (result.error.code === "VALIDATION_ERROR" && result.error.details?.field === "page"))) {
+      // Filtering can remove the current last page. Land on the nearest surviving page.
+      result = await context.session.open(1);
+      if (result.status === "ready" && isCurrent()) {
+        const nearest = Math.min(page, result.page.totalPages);
+        if (nearest > 1) result = await context.session.open(nearest);
+      }
+    }
+    if (background && context.refreshingVisibility === pending) delete context.refreshingVisibility;
+    if (result.status === "stale" || !isCurrent()) return;
     if (result.status === "failed") {
-      const failed: GalleryQueryState = { ...loading, phase: "error", pendingPage: null, error: result.error };
-      context.query = failed;
+      context.query = { ...pending, phase: "error", pendingPage: null, error: result.error };
       publishExploreContext(context);
       return;
     }
-    const ready: GalleryQueryState = {
-      ...loading,
-      phase: "ready",
-      page: result.page,
-      pendingPage: null,
-      error: null,
-    };
-    const resultIds = result.page.items.map((item) => item.id);
-    context.query = ready;
-    context.exploreIds = resultIds;
-    context.scrollTop = result.scrollTop;
+    context.query = { ...pending, phase: "ready", page: result.page, pendingPage: null, error: null };
+    context.exploreIds = result.page.items.map((item) => item.id);
+    if (background) {
+      // The user may have scrolled or parked this tab since the request started.
+      if (ownsViewport() && galleryViewport.current && exploreRestoreFrame.current === null) {
+        context.scrollTop = galleryViewport.current.scrollTop;
+      }
+      context.session.recordScroll(result.page.page, context.scrollTop);
+    } else {
+      context.scrollTop = result.scrollTop;
+      if (ownsViewport()) pendingPageScroll.current = { contextId: context.id, query: context.query, top: result.scrollTop };
+    }
     publishExploreContext(context);
     setGalleries((current) => mergeGalleryPage(current, result.page).galleries);
-    if (activeExploreContextIdRef.current !== contextId || uiRef.current.view !== "explore") return;
-    exploreRestoreFrame.current = window.requestAnimationFrame(() => {
-      if (navigationToken === exploreNavigationToken.current && galleryViewport.current) {
-        galleryViewport.current.scrollTop = result.scrollTop;
-      }
-      exploreRestoreFrame.current = null;
-    });
   }, [publishExploreContext]);
+
+  useEffect(() => {
+    const context = activeExploreContextId ? exploreContexts.current.get(activeExploreContextId) : null;
+    if (ui.view !== "explore" || !context || !query.queryId || !query.page || query.phase === "error") return;
+    const choiceChanged = context.visibilityChoice !== undefined && context.visibilityChoice !== visibilityChoice;
+    context.visibilityChoice = visibilityChoice;
+    if (context.session.matchesVisibility(omittedIds)) return;
+    if (!choiceChanged) {
+      if (query.phase === "loading-page" || context.refreshingVisibility === query) return;
+      // The saved library streams in batches. Refill once after hydration.
+      if (downloadsLoading && (!exploreVisibility.completed || !exploreVisibility.duplicate)) return;
+    }
+    void loadExplorePage(choiceChanged ? 1 : query.page.page, {
+      ids: omittedIds, source: choiceChanged ? "filter" : "library",
+    });
+  }, [activeExploreContextId, ui.view, query, visibilityChoice, exploreVisibility, downloadsLoading, omittedIds, loadExplorePage]);
 
   const requestTagSuggestions = useCallback((query: string, namespace?: TagNamespace) => {
     const sequence = ++tagSuggestionSequence.current;
@@ -4100,6 +4129,33 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     previousDownloadGroups.current = shared;
     return shared;
   }, [autoFindDiscoveryDates, autoFindMatchedFavoriteTokens, favoriteMetadata, renderedVisible, ui.grouping, ui.view]);
+  const downloadReadingItems = useMemo(() => ui.view === "downloads"
+    ? downloadPreviewItems(visible, ui.grouping.downloads === "all" ? undefined : groupedVisible)
+    : [], [visible, groupedVisible, ui.view, ui.grouping.downloads]);
+  const showDownloadPreview = useCallback((items: DownloadPreviewSession["items"], index: number) => {
+    const item = items[index];
+    if (!item) return;
+    if (!downloadPreviewRef.current) downloadPreviewOpener.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const session: DownloadPreviewSession = { items, index,
+      request: { galleryId: item.galleryId, page: 1, sequence: ++pageOpenRequestSequence.current } };
+    downloadPreviewRef.current = session;
+    setSavedPageRequest(null);
+    setDownloadPreview(session);
+  }, []);
+  const openDownloadPreview = useCallback((id: GalleryId) => {
+    const index = downloadReadingItems.findIndex(item => item.galleryId === id);
+    if (index >= 0) showDownloadPreview(downloadReadingItems, index);
+  }, [downloadReadingItems, showDownloadPreview]);
+  const navigateDownloadPreview = useCallback((direction: -1 | 1) => {
+    const session = downloadPreviewRef.current;
+    const items = session?.items ?? downloadReadingItems;
+    const index = session?.index ?? items.findIndex(item => item.galleryId === uiRef.current.detail.activeId);
+    const next = nextDownloadPreviewIndex(items, index, direction, displayGalleries);
+    if (next !== null) showDownloadPreview(items, next);
+  }, [displayGalleries, downloadReadingItems, showDownloadPreview]);
+  const readingItem = downloadPreview?.items[downloadPreview.index]
+    ?? (!personalLibraryOpen ? downloadReadingItems.find(item => item.galleryId === ui.detail.activeId) : undefined);
+
   const artistDetailPreloadKey = useMemo(() => active && ui.view === "downloads" && ui.grouping.downloads === "artist"
     ? JSON.stringify([...new Set(groupedVisible.flatMap((group) => group.items
       .filter((gallery) => gallery.tagsKnown === false).map((gallery) => gallery.id)))])
@@ -4533,6 +4589,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
           onKeyboardFocus={setKeyboardFocusId}
           onSelect={selectGallery}
           onOpenDetail={openDetail}
+          onOpenPreview={ui.view === "downloads" ? openDownloadPreview : undefined}
           onOpenArtifact={openArtifact}
           onOpenDownloadFolder={openDownloadFolder}
           onOpenReview={openReview}
@@ -4560,7 +4617,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
     </GalleryGrid>
   ), [galleryColumns, previewWidth, multiSelectionMode, currentGalleryDisplayMode, ui.view, ui.selection.ids,
     duplicateHiddenGalleryIds, explorationExcludedGalleryIds, favoriteMetadataForDisplay, duplicateCandidateCounts,
-    internalDuplicateResultCounts, internalArtifactProgress, effectiveKeyboardFocusId, selectGallery, openDetail,
+    internalDuplicateResultCounts, internalArtifactProgress, effectiveKeyboardFocusId, selectGallery, openDetail, openDownloadPreview,
     openArtifact, openDownloadFolder, openReview, openInternalReview, openStatusDetail, searchMetadata,
     toggleMetadataFavorite, restoringExclusions, pendingDownloadEntries, queueGalleryFromMenu, excludeGalleryFromMenu,
     inspectExclusion, restoreExclusionFromMenu, nearbyDownloadIds]);
@@ -4580,7 +4637,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
       {children({
         workspace: active ? (
         <>
-      <div className={`app-shell${shell.railCollapsed ? " sidebar-collapsed" : ""}`}>
+      <div className={`app-shell${shell.railCollapsed ? " sidebar-collapsed" : ""}`} data-hitomi-view={ui.view}>
         <SideRail
           view={ui.view}
           collapsed={shell.railCollapsed}
@@ -4693,8 +4750,14 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
                 <>
                   <button type="button" data-tour="hitomi-auto-find-refresh" data-running={autoFindSnapshot.run?.state === "running"} className="text-button" aria-busy={autoFindPending || autoFindSnapshot.run?.state === "running"} disabled={autoFindPending}
                     title={autoFindSnapshot.run?.state === "running" ? "다시 누르면 갱신을 취소합니다." : "즐겨찾기한 작가·그룹의 신규 작품을 찾습니다."}
-                    onClick={() => void (autoFindSnapshot.run?.state === "running" ? cancelAutoFind() : refreshAutoFind())}>
+                    aria-haspopup={autoFindSnapshot.run?.state === "running" ? undefined : "dialog"}
+                    onClick={() => autoFindSnapshot.run?.state === "running" ? void cancelAutoFind() : setRefreshChoiceOpen(true)}>
                     {autoFindPending || autoFindSnapshot.run?.state === "running" ? <span className="spinner catalog-refresh-spinner" aria-hidden="true" /> : <FluentIcon glyph="\uE72C" />} 신규 작품 갱신
+                    {autoFindSnapshot.run?.state === "running" ? (
+                      <span className="auto-find-progress-count" aria-label={`작가·그룹 ${autoFindSnapshot.run.totalFavorites}개 중 ${autoFindSnapshot.run.completedFavorites}개 확인`}>
+                        {autoFindSnapshot.run.completedFavorites} / {autoFindSnapshot.run.totalFavorites}
+                      </span>
+                    ) : autoFindPending ? <span className="auto-find-progress-count">준비 중</span> : null}
                   </button>
                 </>
               ) : ui.view === "downloads" ? (
@@ -4819,7 +4882,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
               error={!!autoFindError || autoFindSnapshot.run?.state === "failed"}>
               <p role="status">{currentAutoFindStatus}</p>
               {autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== settings.autoFindHistoryMode ? (
-                <p>표시된 결과는 이전 기준입니다. 다음 실행부터 ‘{autoFindHistoryModeLabel(settings.autoFindHistoryMode)}’ 기준을 적용합니다.</p>
+                <p>이번 탐색의 기록 범위 · {autoFindHistoryModeLabel(autoFindSnapshot.run.historyMode)}</p>
               ) : null}
               {((autoFindSnapshot.run && autoFindSnapshot.run.historyMode !== "include_all_history" && autoFindSnapshot.cutoffEvidence.length)
                 || autoFindSnapshot.truncations.length) ? <details>
@@ -4851,7 +4914,10 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
               </details> : null}
               {duplicateError ? <button type="button" className="text-button compact" onClick={() => void hydrateDuplicateSnapshot(true)}>결과 다시 불러오기</button> : null}
               {internalError ? <button type="button" className="text-button compact" onClick={() => void hydrateInternalSnapshot(true)}>내부 결과 다시 불러오기</button> : null}
-            </ResultDetails> : <div className="context-summary">{visible.length}개 결과</div>}
+            </ResultDetails> : <div className="explore-results-summary">
+              <GalleryVisibilityControls label="탐색 결과 표시" visibility={exploreVisibility} onChange={changeExploreVisibility} />
+              <span className="context-summary">{visible.length}개 결과</span>
+            </div>}
           </section>
           <SelectionToolbar
             active={multiSelectionMode}
@@ -4877,13 +4943,21 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
                 ? void excludeAutoFindCandidates(selectedIds)
                 : showToast("후보 제외는 Auto Find 화면에서 사용할 수 있습니다.")}
           />
-          <section id="gallery-viewport" data-tour="hitomi-albums" ref={galleryViewport} className="gallery-viewport" tabIndex={-1}>
+          <section id="gallery-viewport" data-tour="hitomi-albums" ref={galleryViewport} className="gallery-viewport" tabIndex={-1}
+            data-explore-refill={refillHeight > 0 || undefined}
+            style={refillHeight > 0 ? { "--explore-reading-end": `${refillHeight}px` } as CSSProperties : undefined}
+            onScroll={exploreViewportKey === null ? undefined : (event) => {
+              const viewport = event.currentTarget;
+              exploreReadingExtent.current = { key: exploreViewportKey, bottom: viewport.scrollTop + viewport.clientHeight };
+            }}
+          >
             {settingsLoading ? (
               <div className="loading-state" role="status"><span className="spinner" /> 저장된 화면 설정을 불러오는 중</div>
-            ) : ((ui.view === "explore" && query.phase === "submitting" && !visible.length)
+            ) : ((ui.view === "explore" && (query.phase === "submitting" || query.phase === "loading-page" || refillingExploreCards) && !visible.length)
               || (ui.view === "downloads" && downloadsLoading && !visible.length)
               || (ui.view === "auto-find" && autoFindLoading && !visible.length)) ? (
-              <GalleryGridSkeleton columns={galleryColumns} previewWidth={previewWidth} displayMode={currentGalleryDisplayMode} />
+              <GalleryGridSkeleton columns={galleryColumns} previewWidth={previewWidth} displayMode={currentGalleryDisplayMode}
+                rows={refillingExploreCards ? Math.ceil(exploreIds.length / Math.max(1, galleryColumns)) : undefined} />
             ) : ui.view === "explore" && query.phase === "idle" ? (
               <div className="empty-state"><FluentIcon glyph="\uE721" /><h2>검색을 시작해 주세요</h2><p>검색어와 언어·정렬 필터를 정한 뒤 검색 버튼을 눌러 주세요.</p></div>
             ) : ui.view === "explore" && query.error && !query.page ? (
@@ -4918,7 +4992,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
                         displayMode={currentGalleryDisplayMode}
                         maximumColumns={3}
                         onColumnsChange={setFolderGalleryColumns}
-                        suspended={(!ui.detail.minimized && ui.detail.activeId !== null) || shell.settingsOpen || shell.activityOpen}
+                        suspended={Boolean(downloadPreview) || (!ui.detail.minimized && ui.detail.activeId !== null) || shell.settingsOpen || shell.activityOpen}
                       />
                     : <GalleryAccordionGroups
                         groups={groupedVisible}
@@ -4972,14 +5046,20 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
       </div>
 
       <DetailWorkspace
-        pageOpenRequest={savedPageRequest}
+        pageOpenRequest={downloadPreview?.request ?? savedPageRequest}
+        previewOnly={downloadPreview !== null}
+        onPreviewClose={downloadPreview ? closeDownloadPreview : undefined}
+        onPreviewNavigateAlbum={downloadPreview || (ui.view === "downloads" && !personalLibraryOpen) ? navigateDownloadPreview : undefined}
+        previewAlbumPosition={readingItem?.folder}
         tabs={ui.detail.tabs}
-        activeId={ui.detail.activeId}
-        minimized={ui.detail.minimized}
+        activeId={downloadPreview?.request.galleryId ?? ui.detail.activeId}
+        minimized={downloadPreview ? false : ui.detail.minimized}
         galleries={displayGalleries}
         duplicateExcludedGalleryIds={duplicateHiddenGalleryIds}
         explorationExcludedGalleryIds={explorationExcludedGalleryIds}
         duplicateCandidateCounts={duplicateCandidateCounts}
+        visibilityControls={{ visibility: exploreVisibility, onChange: changeExploreVisibility }}
+        omittedExploreIds={omittedSet}
         favoriteMetadata={favoriteMetadataForDisplay}
         previewWidth={previewWidth}
         relatedPreviewWidth={settings.relatedPreviewWidth}
@@ -5014,7 +5094,7 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
         queueEstimate={workQueue.snapshot}
         queueError={workQueue.error}
         queueSummary={<QueueSummary snapshot={workQueue.snapshot} scoped={workQueue.query.sequence !== undefined} error={workQueue.error} />}
-        queuePanel={<WorkQueuePanel snapshot={workQueue.snapshot} query={workQueue.query} error={workQueue.error} onQuery={workQueue.setQuery} onRefresh={workQueue.refresh} onCancelEntries={cancelQueueEntries} onOpen={(id, options) => { if (!options?.background) closeActivity(); openDetail(id, options); }} />}
+        queuePanel={<WorkQueuePanel previewWidth={previewWidth} galleries={displayGalleries} snapshot={workQueue.snapshot} query={workQueue.query} error={workQueue.error} onQuery={workQueue.setQuery} onRefresh={workQueue.refresh} onCancelEntries={cancelQueueEntries} onOpen={(id, options) => { if (!options?.background) closeActivity(); openDetail(id, options); }} />}
         containmentGroups={priorityContainmentGroups}
         containmentLoading={overlapInventoryLoading}
         onReviewContainment={(keeperId, reviewId) => {
@@ -5055,6 +5135,8 @@ function HitomiFeatureContent({ active, children, navigationRequest, supportedLi
         pendingEntryIds={pendingDownloadEntries}
       />
 
+      {refreshChoiceOpen && ui.view === "auto-find" ? <AutoFindRefreshDialog onClose={() => setRefreshChoiceOpen(false)}
+        onChoose={mode => void refreshAutoFind(mode)} /> : null}
       <SettingsDialog
         onChooseDownloadRoot={() => backend.downloadRootChoose()}
         open={shell.settingsOpen}

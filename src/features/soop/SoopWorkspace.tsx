@@ -17,6 +17,7 @@ import "./SoopLiveShell.css";
 import { SoopOriginalPlayer } from "./SoopOriginalPlayer";
 import { soopOriginalApi, type SoopAccountSnapshot } from "../../api/soopOriginal";
 import type { SupportedLinkRequest } from "../../app/supportedLinkNavigation";
+import { CloudAutomaticChannelsDialog } from '../cloudRecording/CloudAutoUploadControls';
 
 export type SoopWorkspaceProps = {
   active: boolean; runtime: "tauri" | "browser-mock"; privacyMode: boolean;
@@ -78,6 +79,8 @@ export function SoopWorkspace({ active, runtime, privacyMode, view: requestedVie
   useEffect(() => { if (active && requestedView === "favorites") onViewChange?.("explore"); }, [active, requestedView, onViewChange]);
   const api = useMemo(() => suppliedApi ?? createSoopApi(runtime), [runtime, suppliedApi]);
   const reservations = useSoopAutoRecord(autoRecordApi ?? (runtime === "tauri" ? soopAutoRecordApi : null), active, onNotice);
+  const [archiveManagement, setArchiveManagement] = useState(false);
+  useEffect(() => { if (!active || view !== 'live') setArchiveManagement(false); }, [active, view]);
   const [rows, setRows] = useState<Row[]>([{ key: 0, input: "" }]);
   const [rowStates, setRowStates] = useState<Record<number, RowState>>({});
   const [favorites, setFavorites] = useState<SoopFavorite[]>(readSoopFavorites);
@@ -200,7 +203,7 @@ export function SoopWorkspace({ active, runtime, privacyMode, view: requestedVie
     try { localStorage.setItem(ARRANGEMENT_KEY, arrangement); } catch { /* Layout preference is optional. */ }
     if (liveRows.length < entered.length) onNotice?.("종료된 방송을 제외하고 시청합니다.");
   }
-  const favoritePanel = <section className="soop-channel-picker"><div className="soop-channel-picker-title"><strong>즐겨찾기</strong><span>자동 녹화 ◉</span><button type="button" className="soop-channel-manage" disabled title="SOOP은 채널 옆 녹화 아이콘에서 예약을 설정합니다." aria-label="자동 녹화 관리">⋯</button></div><div className="soop-favorites" aria-label="즐겨찾기 채널">
+  const favoritePanel = <section className="soop-channel-picker"><div className="soop-channel-picker-title"><strong>즐겨찾기</strong><span>자동 녹화 ◉</span><button type="button" className="soop-channel-manage" disabled={runtime !== 'tauri' || privacyMode} title="선택한 채널의 녹화를 YouTube에 일부 공개 보관" aria-label="채널 보관 관리" onClick={() => setArchiveManagement(true)}>⋯</button></div><div className="soop-favorites" aria-label="즐겨찾기 채널">
     {visibleFavorites.length === 0 ? <p className="soop-favorites-empty">별표를 눌러 채널을 저장하세요.</p> : visibleFavorites.map(favorite => {
       const channel = profiles[favorite.channelId], label = privacyMode ? "즐겨찾기 채널" : channel?.name || favorite.name;
       const selected = rows.some(row => normalizeSoopChannel(row.input) === favorite.channelId);
@@ -219,6 +222,7 @@ export function SoopWorkspace({ active, runtime, privacyMode, view: requestedVie
     })}
   </div>{reservations.error && !privacyMode ? <p className="soop-inline-error" role="alert">{reservations.error}</p> : null}</section>;
   return <section className={`soop-workspace${view === "live" ? " is-live-view" : ""}`} data-tour="soop-content" aria-label="SOOP" hidden={!active} inert={!active}>
+    {archiveManagement ? <CloudAutomaticChannelsDialog provider="soop" active={active && view === 'live'} privacy={privacyMode} channels={visibleFavorites.map(channel => ({ id: channel.channelId, name: profiles[channel.channelId]?.name || channel.name }))} onClose={() => setArchiveManagement(false)} /> : null}
     <div hidden={view !== "explore"}>
       <SoopDiscovery api={api} active={active && view === "explore"} legacyFavoritesView={requestedView === "favorites"} privacyMode={privacyMode} onNotice={onNotice} previewWidth={previewWidth} supportedLinkRequest={supportedLinkRequest}
         isChannelFavorite={id => favorites.some(item => item.channelId === id)} onFavoriteChannel={item => toggleFavorite({ channelId: item.channelId, name: item.channelName })}

@@ -1,0 +1,19 @@
+{
+  "capturedAt": "2026-11-16T21:08:44.361380+00:00",
+  "originalReference": "Original SOOP LiveView getDomStringSubscription / getDomStringSubscriptionItemEffect fallback, offsets764546/766402",
+  "originalSourceSha256": "8bc69eec552513aca821d3c5dcb4065b2a2fdb3e75c40d716385da44d6015198",
+  "verificationArtifact": ".runtime/requirements-audit/20261117-cloud-goal-resume/soop-subscription-source-proof.json",
+  "transforms": "None. Generic Korean official fallback, not a reconstruction of historical/custom/month-specific or non-Korean artwork. Captured primary/fallback local assets take precedence. Replay performs no web fetch.",
+  "assets": [
+    {
+      "file": "public/assets/soop/subscriptions/gudok_1.png",
+      "sourceUrl": "https://static.file.sooplive.com/subscription_ceremony/m/gudok_1.png",
+      "bytes": 6922,
+      "width": 293,
+      "height": 248,
+      "sha256": "50fa5dc071fab76c0d77ae18d5410a16e0698cc287014e3ba281525221de14f7",
+      "contentType": "image/png",
+      "validation": "Exact official HTTPS path; redirects refused; response size cap1MiB; PNG signature/dimensions/all chunk CRCs/end marker checked."
+    }
+  ]
+}

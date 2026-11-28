@@ -115,6 +115,7 @@
 .recording-broadcast-selected > span { font-variant-numeric: tabular-nums; }
 .recording-library-heading-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .recording-library-retry-all { min-width: 175px; }
+.recording-library .recording-library-cloud { margin-top: 10px; }
 .recording-library-retry-progress { margin: -10px 0 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--workspace); font-size: var(--font-size-min); }
 .recording-library-retry-progress > div[role=status] { display: flex; gap: 12px; flex-wrap: wrap; align-items: baseline; }
 .recording-library-retry-progress > progress { display: block; width: 100%; height: 4px; margin-top: 8px; accent-color: var(--accent, #d68ca0); }

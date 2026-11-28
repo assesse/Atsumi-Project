@@ -979,6 +979,12 @@ impl OfficialBrowser {
                 return;
             }
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                if let Some(capture) = &page.capture {
+                    let recovered = recovery::finished(&mut capture.inner.view.lock().unwrap_or_else(|p| p.into_inner()));
+                    if recovered && capture.label().starts_with("chzzk-auto-") {
+                        let _ = view.eval("window.__atsumiAutoReceiver?.prepareRecording();");
+                    }
+                }
                 let _ = view.eval(include_str!("browser_multiview.js"));
                 let _ = view.eval(chat_header_script(&page));
                 if page.capture.is_some() {

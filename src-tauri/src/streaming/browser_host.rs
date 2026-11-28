@@ -591,7 +591,7 @@ impl OfficialBrowser {
                 return;
             }
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Started) {
-                let generation = {
+                let (generation, recovering) = {
                     let mut s = page_host
                         .inner
                         .view
@@ -600,10 +600,11 @@ impl OfficialBrowser {
                     s.page_generation = s.page_generation.wrapping_add(1);
                     s.ready = false;
                     s.status = "loading".into();
-                    s.page_generation
+                    (s.page_generation, s.receiver_reload.is_some())
                 };
                 let host = page_host.clone();
-                thread::spawn(move || {
+                if !recovering {
+                    thread::spawn(move || {
                     if host
                         .inner
                         .view
@@ -613,8 +614,10 @@ impl OfficialBrowser {
                     {
                         host.interrupt("page_hidden");
                     }
-                });
+                    });
+                }
             } else if live_channel(payload.url()).is_some() {
+                recovery::finished(&mut page_host.inner.view.lock().unwrap_or_else(|p| p.into_inner()));
                 let _ = view.eval(include_str!("browser_page_chat.js"));
                 let _ = view.eval(include_str!("browser_encoded_capture.js"));
                 let _ = view.eval(include_str!("browser_quality.js"));

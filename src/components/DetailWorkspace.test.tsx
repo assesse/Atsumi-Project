@@ -10,7 +10,7 @@ import { communityApi } from "../features/community/api";
 import { detailPreviewWindowSize } from "./detailPreviewWindow";
 import { backend as defaultBackend } from "../api/backend";
 
-beforeEach(() => { sessionStorage.clear(); localStorage.removeItem("atsumi.pagePreview.readingDirection"); localStorage.removeItem("atsumi.pagePreview.controlsPinned"); });
+beforeEach(() => { vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true); sessionStorage.clear(); localStorage.removeItem("atsumi.pagePreview.readingDirection"); localStorage.removeItem("atsumi.pagePreview.controlsPinned"); });
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -469,7 +469,7 @@ describe("DetailWorkspace page previews", () => {
 
       expect(container.querySelectorAll(".preview-thumb").length).toBeGreaterThan(0);
       expect(container.querySelectorAll(".preview-thumb").length).toBeLessThan(gallery.pages);
-      expect(container.querySelectorAll('[data-thumbnail-kind="source-page"]')).toHaveLength(container.querySelectorAll(".preview-thumb").length);
+      expect(container.querySelectorAll('.preview-grid [data-thumbnail-kind="source-page"]')).toHaveLength(container.querySelectorAll(".preview-thumb").length);
       expect(container.querySelector(".preview-grid")).toHaveAttribute("data-preview-columns", "3");
       expect(container.querySelector(".preview-grid")).toHaveAttribute("data-preview-orientation", "portrait");
       expect(container.querySelector(".detail-cover")).toHaveAttribute("data-thumbnail-kind", "gallery-cover");
@@ -479,8 +479,9 @@ describe("DetailWorkspace page previews", () => {
       });
       expect(container.querySelector(".page-preview-dialog")).toHaveAttribute("open");
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("1페이지");
-      expect(container.querySelectorAll('[data-thumbnail-kind="source-page"]')).toHaveLength(container.querySelectorAll(".preview-thumb").length);
+      expect(container.querySelectorAll('.preview-grid [data-thumbnail-kind="source-page"]')).toHaveLength(container.querySelectorAll(".preview-thumb").length);
       expect(container.querySelector('.page-preview-original')).not.toBeNull();
+      expect(container.querySelectorAll('.page-preview-fallback')).toHaveLength(1);
 
       await act(async () => render({ ...gallery, pages: 0 }));
 
@@ -754,8 +755,8 @@ describe("DetailWorkspace page previews", () => {
       expect(container.querySelector(".page-preview-media-stage")).toHaveAttribute("data-page-preview-count", "2");
       expect(container.querySelectorAll(".page-preview-media")).toHaveLength(2);
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("1–2페이지");
-      expect(container.querySelector(".page-preview-navigation")).toHaveTextContent("1–2 / 6");
-      expect(Array.from(container.querySelectorAll<HTMLImageElement>(".page-preview-media img")).map((image) => image.alt)).toEqual([
+      expect(container.querySelector(".page-preview-navigation")).toHaveTextContent(/1–2\s*\/\s*6/);
+      expect(Array.from(container.querySelectorAll<HTMLImageElement>(".page-preview-media .page-preview-original")).map((image) => image.alt)).toEqual([
         expect.stringContaining("1페이지"),
         expect.stringContaining("2페이지"),
       ]);
@@ -765,7 +766,7 @@ describe("DetailWorkspace page previews", () => {
         window.dispatchEvent(new KeyboardEvent("keydown", { key: "d", code: "KeyD", bubbles: true }));
       });
       expect(container.querySelector("#page-preview-title")).toHaveTextContent("3–4페이지");
-      expect(container.querySelector(".page-preview-navigation")).toHaveTextContent("3–4 / 6");
+      expect(container.querySelector(".page-preview-navigation")).toHaveTextContent(/3–4\s*\/\s*6/);
       expect(container.querySelector<HTMLButtonElement>(".preview-thumb")?.textContent).toBe(backgroundStart);
 
       await act(async () => {
@@ -797,7 +798,7 @@ describe("DetailWorkspace page previews", () => {
       const dialog=container.querySelector<HTMLDialogElement>('.page-preview-dialog')!;
       expect(dialog).toHaveAttribute('data-reading-direction','rtl');
       expect(localStorage.getItem('atsumi.pagePreview.readingDirection')).toBe('rtl');
-      expect(Array.from(container.querySelectorAll<HTMLImageElement>('.page-preview-media img')).map(img=>img.alt)).toEqual([
+      expect(Array.from(container.querySelectorAll<HTMLImageElement>('.page-preview-media .page-preview-original')).map(img=>img.alt)).toEqual([
         expect.stringContaining('2페이지'),expect.stringContaining('1페이지'),
       ]);
       expect(dialog.querySelector('.page-preview-arrow.is-left')).toHaveAttribute('aria-label','다음 페이지');

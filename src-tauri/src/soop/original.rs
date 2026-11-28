@@ -3,6 +3,15 @@
 mod documents;
 #[path = "original_policy.rs"]
 mod policy;
+#[path = "original_relay.rs"]
+mod relay;
+pub(crate) use relay::{Inspection as SoopRelayInspection, SelectedRelayHandle, SoopRelaySource};
+#[cfg(all(test, windows))]
+#[path = "original_relay_actual.rs"]
+mod relay_actual;
+#[cfg(all(test, windows))]
+#[path = "original_appearance_actual.rs"]
+mod appearance_actual;
 #[path = "original_vod.rs"]
 mod vod;
 use crate::platform_media::{
@@ -100,6 +109,7 @@ struct Session {
     fullscreen_grant: Mutex<Option<Grant>>,
     arm: Mutex<Option<(policy::Arm, RecordingOwner)>>,
     archive: Mutex<Option<EncodedArchive>>,
+    relay: relay::Slot,
     source: Mutex<Option<String>>,
     owner: Mutex<Option<RecordingOwner>>,
     lease: OfficialReceiverLease,
@@ -262,6 +272,7 @@ impl SoopOriginalHost {
                 fullscreen_grant: Mutex::new(None),
                 arm: Mutex::new(None),
                 archive: Mutex::new(None),
+                relay: relay::Slot::default(),
                 source: Mutex::new(None),
                 owner: Mutex::new(None),
                 lease,
@@ -652,7 +663,7 @@ impl SoopOriginalHost {
                         revision,
                     );
                 }
-                if lock(&session.archive).is_none() && lock(&session.arm).is_none() {
+                if lock(&session.archive).is_none() && lock(&session.arm).is_none() && !session.relay.active() {
                     self.dispose(app, &session);
                 }
             }
@@ -660,9 +671,13 @@ impl SoopOriginalHost {
         Ok(())
     }
     fn dispose(&self, app: &AppHandle, session: &Arc<Session>) {
+        let approval = lock(&session.arm);
+        // A receiver remains owned until both relay threads have actually joined.
+        if session.relay.active() { return; }
         if session.closed.swap(true, Ordering::AcqRel) {
             return;
         }
+        drop(approval);
         if lock(&session.status).fullscreen {
             let _ = set_fullscreen(app, session, false);
         }
@@ -862,6 +877,7 @@ impl SoopOriginalHost {
             let archive = lock(&session.archive);
             if arm.is_some()
                 || archive.is_some()
+                || session.relay.active()
                 || session.capture_busy.load(Ordering::Acquire)
                 || session.closed.load(Ordering::Acquire)
             {
@@ -901,6 +917,7 @@ impl SoopOriginalHost {
             .cloned()
             .collect::<Vec<_>>();
         for session in &sessions {
+            session.relay.request_shutdown(app.get_webview(&session.label));
             lock(&session.arm).take();
             if let Some(view) = app.get_webview(&session.label) {
                 let _ = view.eval("window.__atsumiSoopOriginal?.stop()");
@@ -950,7 +967,7 @@ impl SoopOriginalHost {
                     revision,
                 );
             }
-            if lock(&session.archive).is_none() && lock(&session.arm).is_none() {
+            if lock(&session.archive).is_none() && lock(&session.arm).is_none() && !session.relay.active() {
                 self.dispose(app, &session);
             }
         }
@@ -1000,7 +1017,7 @@ impl SoopOriginalHost {
         let focus_nonce = uuid::Uuid::new_v4().to_string();
         let builder=WebviewBuilder::new(&session.label,WebviewUrl::External("about:blank".parse().unwrap())).data_directory(profile(app)?).focused(false).browser_extensions_enabled(false)
             .initialization_script(platform_native_geometry::pointer_script(url.as_str(),&focus_nonce))
-            .initialization_script(include_str!("original_capture.js")).initialization_script(include_str!("original_page.js"))
+            .initialization_script(include_str!("original_capture.js")).initialization_script(include_str!("original_appearance.js")).initialization_script(include_str!("original_chat_clock.js")).initialization_script(include_str!("original_page.js"))
             .additional_browser_args("--autoplay-policy=no-user-gesture-required --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows")
             .on_navigation(move|next|next.as_str()=="about:blank"&&navigation.epoch.load(Ordering::Acquire)==0||policy::matches_player(next,&navigation.channel,&navigation.broadcast))
             .on_new_window(move|url,features|open_popup(&popup_app,url,features,0))
@@ -1013,6 +1030,8 @@ impl SoopOriginalHost {
                     let account_flow=lock(&host.account_flow);
                     let mut approval=lock(&page.arm);
                     let epoch=page.epoch.fetch_add(1,Ordering::AcqRel)+1;page.ui_intent.document(epoch);
+                    page.lease.reset_soop_display(epoch);
+                    page.relay.cancel();
                     page.account_revision.store(account_flow.observation_revision(),Ordering::Release);
                     // Detach old ownership before the new document can be configured.
                     // Only finalization is asynchronous; it cannot clear a later owner.
@@ -1520,6 +1539,7 @@ fn attach_bridge(
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
+            worker_session.lease.flush_soop_display();
             {
                 let mut slot = lock(&worker_session.archive);
                 let timeout = capture_timeout(*lock(&worker_session.pending_begin), *lock(&worker_session.stop_requested), Instant::now());
@@ -1555,7 +1575,7 @@ fn attach_bridge(
             if worker_session.account_refresh_pending.load(Ordering::Acquire)
                 && !lock(&worker_session.viewers).is_empty() && !worker_session.capture_busy.load(Ordering::Acquire) {
                 let arm=lock(&worker_session.arm);let archive=lock(&worker_session.archive);
-                if arm.is_none()&&archive.is_none()&&worker_session.account_refresh_pending.swap(false,Ordering::AcqRel){
+                if arm.is_none()&&archive.is_none()&&!worker_session.relay.active()&&worker_session.account_refresh_pending.swap(false,Ordering::AcqRel){
                     worker_session.account_refreshing.store(true,Ordering::Release);
                     {let mut status=lock(&worker_session.status);status.capture_ready=false;status.authenticated=None;status.state="loading".into();}
                     drop(archive);drop(arm);
@@ -1566,9 +1586,11 @@ fn attach_bridge(
                     }
                 }
             }
+            worker_session.relay.reap();
             if !worker_session.opening.load(Ordering::Acquire) && lock(&worker_session.viewers).is_empty()
                 && lock(&worker_session.archive).is_none()
                 && lock(&worker_session.arm).is_none()
+                && !worker_session.relay.active()
             {
                 host.dispose(&app, &worker_session);
                 break;
@@ -1624,6 +1646,21 @@ fn attach_bridge(
                         )
                     {
                         return Ok(());
+                    }
+                    // Separate, native-armed lane after the exact original
+                    // document gate; never competes with archive queue credits.
+                    if relay::is_message(&message.kind) {
+                        relay::dispatch(&session, &native_view, message);
+                        return Ok(());
+                    }
+                    // Read-only numeric display observation. This stores only
+                    // bounded memory; the existing background writer flushes.
+                    if message.kind=="appearance" {
+                        session.lease.observe_soop_display(message.epoch,message.fields);
+                        return Ok(());
+                    }
+                    if message.kind=="status"&&(message.fields["actualChannel"].as_str()!=Some(&session.channel)||message.fields["actualBroadcast"].as_str()!=Some(&session.broadcast)){
+                        session.lease.reset_soop_display(message.epoch);
                     }
                     // Diagnostic-only category: cannot enter the action/recording queue.
                     if message.kind=="ui_pointer" {if let Some(category)=pointer_category(&message.fields){ui_diagnostic(&session,"soop_live_pointer",category,true);}return Ok(());}

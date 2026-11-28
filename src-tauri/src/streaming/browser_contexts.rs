@@ -113,6 +113,8 @@ impl OfficialBrowser {
         };
         let child = Self {
             inner: Arc::new(Inner {
+                relay_id: uuid::Uuid::new_v4().to_string(),
+                relay: relay::Slot::default(),
                 data_dir: self.inner.data_dir.clone(),
                 label: label.into(),
                 detached: AtomicBool::new(false),

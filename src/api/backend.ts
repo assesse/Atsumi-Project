@@ -14,9 +14,12 @@ import type {
   AppQuitRequest,
   AppQuitResult,
   ApiResult,
+  AutoFindCandidate,
+  AutoFindCandidateChanges,
   AutoFindHistoryMode,
   AutoFindExclusionResult,
   AutoFindRun,
+  AutoFindRefreshMode,
   AutoFindSnapshot,
   DownloadChangedEvent,
   DanbooruAutocompleteItem,
@@ -105,6 +108,7 @@ import { applyGlobalSearchRules, matchesGlobalSearchRules } from "../search/glob
 import { strictCandidateEvaluation } from "../state/downloadOverlapAuto";
 import {
   galleryDetailFixture,
+  gallerySummaryFixture,
   normalizeSearchRequest,
   runSearchFixture,
   searchFixturePage,
@@ -151,8 +155,8 @@ export interface BackendClient {
     placement: WindowPlacement,
     expectedRevision: number,
   ): Promise<ApiResult<WindowPlacementSnapshot>>;
-  searchSubmit(request: SearchRequest): Promise<ApiResult<SearchSubmission>>;
-  searchPageGet(queryId: string, page: number, requestId: string): Promise<ApiResult<GalleryPage>>;
+  searchSubmit(request: SearchRequest, omittedIds?: readonly GalleryId[]): Promise<ApiResult<SearchSubmission>>;
+  searchPageGet(queryId: string, page: number, requestId: string, omittedIds?: readonly GalleryId[]): Promise<ApiResult<GalleryPage>>;
   searchPageCancel(requestId: string): Promise<ApiResult<boolean>>;
   galleryDetailGet(galleryId: GalleryDetail["id"], includeRelated?: boolean): Promise<ApiResult<GalleryDetail>>;
   gallerySummaryGet(galleryId: GalleryId): Promise<ApiResult<GallerySummary>>;
@@ -162,7 +166,8 @@ export interface BackendClient {
   searchHistoryRemove(historyId: number): Promise<ApiResult<number>>;
   searchHistoryClear(): Promise<ApiResult<number>>;
   autoFindSnapshot(): Promise<ApiResult<AutoFindSnapshot>>;
-  autoFindRefresh(): Promise<ApiResult<AutoFindRun>>;
+  autoFindCandidateChanges(runId: string, after: number): Promise<ApiResult<AutoFindCandidateChanges>>;
+  autoFindRefresh(mode?: AutoFindRefreshMode): Promise<ApiResult<AutoFindRun>>;
   autoFindCancel(): Promise<ApiResult<AutoFindRun>>;
   autoFindExclude(galleryIds: GalleryId[], reason: string): Promise<ApiResult<AutoFindExclusionResult>>;
   explorationExclusionsList(): Promise<ApiResult<ExplorationExclusion[]>>;
@@ -524,17 +529,21 @@ const cloneSearchHistory = (entry: SearchHistoryEntry): SearchHistoryEntry => ({
 
 const cloneAutoFindRun = (run: AutoFindRun): AutoFindRun => ({ ...run });
 
+const cloneAutoFindCandidate = (candidate: AutoFindCandidate): AutoFindCandidate => ({
+  ...candidate,
+  ...(candidate.artists ? { artists: [...candidate.artists] } : {}),
+  tags: [...candidate.tags],
+  series: [...(candidate.series ?? [])],
+  characters: [...(candidate.characters ?? [])],
+  matchedFavorite: { ...candidate.matchedFavorite },
+  ...(candidate.matchedFavorites ? { matchedFavorites: candidate.matchedFavorites.map((favorite) => ({ ...favorite })) } : {}),
+
+});
+
 const cloneAutoFindSnapshot = (snapshot: AutoFindSnapshot): AutoFindSnapshot => ({
   ...(snapshot.run ? { run: cloneAutoFindRun(snapshot.run) } : {}),
-  candidates: snapshot.candidates.map((candidate) => ({
-    ...candidate,
-    ...(candidate.artists ? { artists: [...candidate.artists] } : {}),
-    tags: [...candidate.tags],
-    series: [...(candidate.series ?? [])],
-    characters: [...(candidate.characters ?? [])],
-    matchedFavorite: { ...candidate.matchedFavorite },
-    ...(candidate.matchedFavorites ? { matchedFavorites: candidate.matchedFavorites.map((favorite) => ({ ...favorite })) } : {}),
-  })),
+  matchCursor: snapshot.matchCursor ?? 0,
+  candidates: snapshot.candidates.map(cloneAutoFindCandidate),
   cutoffEvidence: snapshot.cutoffEvidence.map((evidence) => ({ ...evidence })),
   truncations: snapshot.truncations.map((truncation) => ({ ...truncation })),
 });
@@ -947,11 +956,14 @@ class BrowserMockBackend implements BackendClient {
   private favorites = new Map<string, FavoriteRecord>();
   private searchHistory = new Map<string, SearchHistoryEntry>();
   private nextSearchHistoryId = 1;
+  private autoFindMatches: GalleryId[] = [];
   private autoFind: AutoFindSnapshot = { candidates: [], cutoffEvidence: [], truncations: [] };
   private autoFindExclusions = new Map<GalleryId, { reason: string; createdAt: string; title: string; artist: string }>();
   private excludedAutoFindCandidates = new Map<GalleryId, AutoFindSnapshot["candidates"][number]>();
   private explorationRestoredGalleryIds = new Set<GalleryId>();
   private autoFindGeneration = 0;
+  private readonly autoFindPendingHistory = new Map<GalleryId, AutoFindCandidate>();
+  private readonly autoFindWatermarks = new Map<string, number>();
   private nextAutoFindRunId = 1;
   private duplicateSnapshotState: DuplicateSnapshot = {
     profile: { ...duplicateProfile },
@@ -1300,7 +1312,7 @@ class BrowserMockBackend implements BackendClient {
     return ok({ ...this.placement });
   }
 
-  async searchSubmit(request: SearchRequest): Promise<ApiResult<SearchSubmission>> {
+  async searchSubmit(request: SearchRequest, omittedIds?: readonly GalleryId[]): Promise<ApiResult<SearchSubmission>> {
     const invalid = searchRequestValidationError(request);
     if (invalid) return validationError(invalid.field, invalid.reason);
 
@@ -1313,11 +1325,11 @@ class BrowserMockBackend implements BackendClient {
     const fixture = runSearchFixture(effectiveRequest);
     this.searchQueries.set(queryId, fixture);
     this.recordSearchHistory(request);
-    const firstPage = searchFixturePage(fixture, 1);
+    const firstPage = searchFixturePage(fixture, 1, omittedIds);
     return ok({ queryId, firstPage });
   }
 
-  async searchPageGet(queryId: string, page: number, requestId: string): Promise<ApiResult<GalleryPage>> {
+  async searchPageGet(queryId: string, page: number, requestId: string, omittedIds?: readonly GalleryId[]): Promise<ApiResult<GalleryPage>> {
     const normalizedQueryId = queryId.trim();
     const normalizedRequestId = requestId.trim();
     if (!normalizedRequestId || new TextEncoder().encode(normalizedRequestId).length > 200) {
@@ -1336,7 +1348,7 @@ class BrowserMockBackend implements BackendClient {
         { queryId: normalizedQueryId },
       );
     }
-    const pageResult = searchFixturePage(fixture, page);
+    const pageResult = searchFixturePage(fixture, page, omittedIds);
     if ((pageResult.totalPages === 0 && page !== 1) || (pageResult.totalPages > 0 && page > pageResult.totalPages)) {
       return validationError("page", "must not exceed the available search pages");
     }
@@ -1367,9 +1379,8 @@ class BrowserMockBackend implements BackendClient {
 
   async gallerySummaryGet(galleryId: GalleryId): Promise<ApiResult<GallerySummary>> {
     if (!Number.isInteger(galleryId) || galleryId <= 0) return validationError("galleryId", "must be a positive integer");
-    const detail = galleryDetailFixture(galleryId);
-    if (!detail) return notFoundError("SOURCE_NOT_FOUND", "The gallery could not be found in the current source", { galleryId });
-    const { related: _related, pageDimensions: _dimensions, ...summary } = detail;
+    const summary = gallerySummaryFixture(galleryId);
+    if (!summary) return notFoundError("SOURCE_NOT_FOUND", "The gallery could not be found in the current source", { galleryId });
     return ok(this.composedPageCounts.has(galleryId) ? { ...summary, pages: this.composedPageCounts.get(galleryId)! } : summary);
   }
 
@@ -1395,6 +1406,7 @@ class BrowserMockBackend implements BackendClient {
     const mapKey = `${normalized.namespace}:${normalized.value}`;
     if (!enabled) {
       this.favorites.delete(mapKey);
+      this.autoFindWatermarks.delete(mapKey);
       return ok({ enabled: false });
     }
 
@@ -1443,16 +1455,27 @@ class BrowserMockBackend implements BackendClient {
     return ok(snapshot);
   }
 
-  async autoFindRefresh(): Promise<ApiResult<AutoFindRun>> {
+  async autoFindCandidateChanges(runId: string, after: number): Promise<ApiResult<AutoFindCandidateChanges>> {
+    const matches = this.autoFind.run?.runId === runId ? this.autoFindMatches : [];
+    const batch = matches.slice(after, after + 200);
+    const ids = new Set(batch);
+    const matchCursor = after + batch.length;
+    const candidates = this.autoFind.candidates.filter(candidate => ids.has(candidate.id)
+      && matchesGlobalSearchRules(candidate, this.settings.searchIncludeTags, this.settings.searchExcludeTags));
+    return ok({ matchCursor, more: matchCursor < matches.length, changedIds: [...ids], candidates: candidates.map(cloneAutoFindCandidate), truncations: this.autoFind.truncations.map(item => ({ ...item })) });
+  }
+
+  async autoFindRefresh(mode?: AutoFindRefreshMode): Promise<ApiResult<AutoFindRun>> {
     if (this.autoFind.run?.state === "running") return ok(cloneAutoFindRun(this.autoFind.run));
 
     const artists = [...this.favorites.values()].filter((favorite) => favorite.namespace === "artist" || favorite.namespace === "group");
     const now = new Date().toISOString();
     const generation = ++this.autoFindGeneration;
-    const historyMode = this.settings.autoFindHistoryMode;
+    const historyMode = mode === "full" ? "include_all_history" : this.settings.autoFindHistoryMode;
+    const firstScan = artists.filter(f => !this.autoFindWatermarks.has(f.namespace + ":" + f.value));
     const completedOwned = [...this.downloadEntries.values()]
       .filter((entry) => entry.state === "completed" || entry.state === "quarantined");
-    const cutoffEvidence = artists.map((favorite) => {
+    const cutoffEvidence = (mode === "full" ? [] : mode === "incremental" ? firstScan : artists).map((favorite) => {
       const ownedIds = runSearchFixture({
         text: `${favorite.namespace}:${favorite.value.replaceAll(" ", "_")}`,
         includeTags: [],
@@ -1485,11 +1508,21 @@ class BrowserMockBackend implements BackendClient {
       historyMode,
       ...(!artists.length ? { finishedAt: now } : {}),
     };
-    this.autoFind = { run, candidates: [], cutoffEvidence, truncations: [] };
+    const inDownloads = new Set([...this.downloadEntries.values()].map(entry => entry.galleryId));
+    if (this.autoFind.run?.state === "completed") this.autoFindPendingHistory.clear();
+    for (const candidate of this.autoFind.candidates) this.autoFindPendingHistory.set(candidate.id, candidate);
+    const pending = mode === "incremental" ? [...this.autoFindPendingHistory.values()].flatMap(candidate => {
+      if (inDownloads.has(candidate.id) || this.autoFindExclusions.has(candidate.id) || this.isDuplicateExplorationExcluded(candidate.id)) return [];
+      const matches = (candidate.matchedFavorites ?? [candidate.matchedFavorite]).filter(f => this.favorites.has(f.namespace + ":" + f.value));
+      return matches.length ? [{ ...candidate, runId: run.runId, matchedFavorite: matches[0]!, matchedFavorites: matches }] : [];
+    }) : [];
+    run.candidatesFound = pending.length;
+    this.autoFindMatches = pending.map(candidate => candidate.id);
+    this.autoFind = { run, matchCursor: this.autoFindMatches.length, candidates: pending, cutoffEvidence, truncations: [] };
     queueMicrotask(() => this.emit("auto-find:changed", cloneAutoFindRun(run)));
 
     artists.forEach((favorite, index) => {
-      window.setTimeout(() => this.runAutoFindFixture(generation, favorite, index === artists.length - 1), 60 * (index + 1));
+      window.setTimeout(() => this.runAutoFindFixture(generation, favorite, index === artists.length - 1, mode), 60 * (index + 1));
     });
     return ok(cloneAutoFindRun(run));
   }
@@ -3119,6 +3152,8 @@ class BrowserMockBackend implements BackendClient {
       autoFindExclusionsRemoved: this.autoFindExclusions.size,
     };
     this.autoFindGeneration += 1;
+    this.autoFindWatermarks.clear();
+    this.autoFindPendingHistory.clear();
     this.favorites.clear();
     this.searchHistory.clear();
     this.autoFindExclusions.clear();
@@ -3349,6 +3384,7 @@ class BrowserMockBackend implements BackendClient {
     generation: number,
     favorite: FavoriteRecord,
     finalFavorite: boolean,
+    mode?: AutoFindRefreshMode,
   ): void {
     const current = this.autoFind.run;
     if (generation !== this.autoFindGeneration || !current || current.state !== "running") return;
@@ -3372,6 +3408,7 @@ class BrowserMockBackend implements BackendClient {
       const matches = candidate.matchedFavorites ?? [candidate.matchedFavorite];
       if (!matches.some((match) => match.namespace === favorite.namespace && match.value === favorite.value)) {
         candidate.matchedFavorites = [...matches, { namespace: favorite.namespace, value: favorite.value }];
+        this.autoFindMatches.push(candidate.id);
       }
     }
     const candidateLimit = 200;
@@ -3384,7 +3421,10 @@ class BrowserMockBackend implements BackendClient {
         limit: candidateLimit,
       }
       : null;
+    const targetKey = favorite.namespace + ":" + favorite.value;
+    const watermark = mode === "incremental" ? this.autoFindWatermarks.get(targetKey) : undefined;
     const candidates = eligible
+      .filter(gallery => watermark === undefined || gallery.id > watermark)
       .slice(0, candidateLimit)
       .filter((gallery) => !downloaded.has(gallery.id))
       .filter((gallery) => !this.isDuplicateExplorationExcluded(gallery.id))
@@ -3397,6 +3437,10 @@ class BrowserMockBackend implements BackendClient {
         matchedFavorites: [{ namespace: favorite.namespace, value: favorite.value }],
         discoveredAt,
       }));
+    if (!truncation && fixture.items.length) {
+      const newest = Math.max(...fixture.items.map(gallery => Number(gallery.id)));
+      this.autoFindWatermarks.set(targetKey, Math.max(watermark ?? 0, newest));
+    }
     const allCandidates = [...this.autoFind.candidates, ...candidates];
     const completedFavorites = current.completedFavorites + 1;
     const completed = finalFavorite || completedFavorites >= current.totalFavorites;
@@ -3413,7 +3457,8 @@ class BrowserMockBackend implements BackendClient {
     const truncations = this.autoFind.truncations.filter((item) =>
       item.artist !== favorite.value || (item.namespace ?? "artist") !== favorite.namespace);
     if (truncation) truncations.push(truncation);
-    this.autoFind = { ...this.autoFind, run, candidates: allCandidates, truncations };
+    this.autoFindMatches.push(...candidates.map(candidate => candidate.id));
+    this.autoFind = { ...this.autoFind, run, matchCursor: this.autoFindMatches.length, candidates: allCandidates, truncations };
     this.emit("auto-find:changed", cloneAutoFindRun(run));
   }
 
@@ -3540,12 +3585,12 @@ class TauriBackend implements BackendClient {
     return invoke("window_placement_update", { placement, expectedRevision });
   }
 
-  searchSubmit(request: SearchRequest): Promise<ApiResult<SearchSubmission>> {
-    return invoke("search_submit", { request });
+  searchSubmit(request: SearchRequest, omittedIds?: readonly GalleryId[]): Promise<ApiResult<SearchSubmission>> {
+    return invoke("search_submit", { request, ...(omittedIds?.length ? { omittedIds } : {}) });
   }
 
-  searchPageGet(queryId: string, page: number, requestId: string): Promise<ApiResult<GalleryPage>> {
-    return invoke("search_page_get", { queryId, page, requestId });
+  searchPageGet(queryId: string, page: number, requestId: string, omittedIds?: readonly GalleryId[]): Promise<ApiResult<GalleryPage>> {
+    return invoke("search_page_get", { queryId, page, requestId, ...(omittedIds?.length ? { omittedIds } : {}) });
   }
 
   searchPageCancel(requestId: string): Promise<ApiResult<boolean>> {
@@ -3584,8 +3629,12 @@ class TauriBackend implements BackendClient {
     return invoke("auto_find_snapshot");
   }
 
-  autoFindRefresh(): Promise<ApiResult<AutoFindRun>> {
-    return invoke("auto_find_refresh");
+  autoFindCandidateChanges(runId: string, after: number): Promise<ApiResult<AutoFindCandidateChanges>> {
+    return invoke("auto_find_candidate_changes", { runId, after });
+  }
+
+  autoFindRefresh(mode?: AutoFindRefreshMode): Promise<ApiResult<AutoFindRun>> {
+    return invoke("auto_find_refresh", mode ? { mode } : undefined);
   }
 
   autoFindCancel(): Promise<ApiResult<AutoFindRun>> {

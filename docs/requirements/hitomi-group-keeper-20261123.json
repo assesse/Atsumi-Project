@@ -1,0 +1,50 @@
+{
+  "id": "hitomi-group-keeper-20261123",
+  "status": "implemented_running_native_interaction_unverified",
+  "source": {
+    "thread": "01a089ee-56ed-7322-a750-c034423826c2",
+    "line": 53372,
+    "request": "이렇게 처리가 안되는 이유 분석 후 개선",
+    "attachment": "C:/Users/JJH/AppData/Local/Temp/codex-clipboard-d7deef11-bba6-4475-8403-e10529953cf0.png"
+  },
+  "audit": ".runtime/hitomi-group-keeper-20261123/preedit.json",
+  "findings": [
+    "The pair planner rejects baseline #2776471 remove plus #2776792 remove before checking retained #3053713.",
+    "Baseline disposition is incorrectly owned by the active pair instead of the displayed baseline edition.",
+    "Read-only SQLite confirms pending direct comparisons between all three editions; preserving #3053713 can use its two remove_existing_continue decisions."
+  ],
+  "decisions": [
+    "Freeze group intent; resolve a surviving edition before making pair operations. Every removal must reference a direct current comparison with an edition retained by the batch. No transitive inferred evidence or relaxed preservation guards.",
+    "Make baseline disposition and its explicit page choices consistent across active comparisons, while keeping each peer selection and Shift anchor. Preserve drafts through hide/filter/reopen; invalidate changed evidence.",
+    "Keep actual removed gallery IDs in confirmations/errors, execute every requested exclusion once and reload current revisions. Preflight entire batch before mutation, preserve partial success and remaining choices on failure.",
+    "Retain existing one-merge-per-batch limit, asynchronous background workflow, original backups/quarantine, privacy and previous preview/navigation changes.",
+    "No real album exclusions/merges for verification. Do not interrupt recording/download jobs, force-exit or publish.",
+    "Compound baseline replacement with partial page merges remains blocked before writes; apply a partial merge against the intended retained baseline separately. Existing baseline-kept single trailing merge and single-pair behavior remain supported."
+  ],
+  "acceptance": [
+    "Reproduce screenshot combination before the fix.",
+    "Test any kept edition regardless of baseline or active row; all-remove guard remains.",
+    "Test missing/stale direct evidence, reverse relations, duplicate or changing decisions, full group execution and partial-failure retry.",
+    "Test Ctrl/Shift selections across activation/hide/reopen/filter, partial merge restrictions and stale fingerprint invalidation.",
+    "Run related regression/type/build and isolated production React browser verification. Native restart only through default graceful gate; leave active work intact and report any blocked installed-app verification."
+  ],
+  "implementation": [
+    "src/components/OverlapGroupReview.tsx",
+    "src/downloadOverlap/groupReview.ts",
+    "src/downloadOverlap/groupEditionDisposition.ts",
+    "src/downloadOverlap/groupEditionDisposition.test.ts",
+    "src/components/OverlapGroupReview.keeper.test.tsx",
+    "src/test/groupKeeperFixture.ts"
+  ],
+  "verification": ".runtime/hitomi-group-keeper-20261123/verification.json",
+  "native": {
+    "oldPid": 27092,
+    "normalExit": "accepted/exited",
+    "newPid": 37884,
+    "executable": "C:/Users/JJH/.codex/worktrees/2849/Atsumi Project/src-tauri/target/debug/atsumi.exe",
+    "health": "native responsive, renderer pulse current, reloadPending false",
+    "servedSource": "served-source.json",
+    "bgd": "hostAlive=false,agentReachable=false",
+    "physicalInteraction": "unverified; no main desktop input"
+  }
+}

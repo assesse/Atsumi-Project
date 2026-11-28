@@ -1,0 +1,108 @@
+{
+  "id": "browser-ui-onboarding-20261115",
+  "requestId": "01a1df90-d9f0-78f1-8600-c6e33fb1fb17",
+  "request": "Choose and proceed with the user's open Proton download setup; explain each choice clearly for future users; redesign uneven browser UI to established Atsumi style.",
+  "revisions": [
+    {
+      "id": "01a089ee-56ed-7322-a750-c034423826c2",
+      "updatedAt": 1794752593
+    },
+    {
+      "id": "01a05948-cd33-7c23-a67c-17509e6ae5ab",
+      "updatedAt": 1793318688
+    },
+    {
+      "id": "01a0493b-9ff4-7c20-bd54-47122b18d211",
+      "updatedAt": 1793109867
+    },
+    {
+      "id": "01a09a9d-849a-7220-b908-2d9cbfe97fb1",
+      "updatedAt": 1792074984
+    },
+    {
+      "id": "01a05b3f-ad34-7091-9b8b-dc4bf2e39afe",
+      "updatedAt": 1792073766
+    },
+    {
+      "id": "01a0f226-e719-7ac2-b1ec-03db9f670da0",
+      "updatedAt": 1790968298
+    },
+    {
+      "id": "6aa57969-6bc0-83e8-ab5c-2d9890e9323b",
+      "updatedAt": 1789276840.078
+    },
+    {
+      "id": "6a87a2b2-3c0c-83e9-b787-346afa2a39ad",
+      "updatedAt": 1787625472.885
+    },
+    {
+      "id": "6a8715a6-a77c-83e8-9a9e-74c7d11949b4",
+      "updatedAt": 1787593015.235
+    }
+  ],
+  "coverage": {
+    "codex": 28,
+    "codexArchived": 3,
+    "chatgpt": 74,
+    "chatgptArchived": 0,
+    "allInventoryPages": true,
+    "currentPageOverlaps": "01a1df63-92a0-7e22-8a56-f08fe5f5c3c9",
+    "reuse": ".runtime/browser-vpn-20261115/preedit.json; .runtime/x-ui-polish-20261113/preedit.json",
+    "inaccessible": "Carry forward previous explicitly inaccessible/deleted source limitations."
+  },
+  "decisions": [
+    "Reuse Atsumi logo, Fluent icons, Ink palette, minimum 14px body/helper text, consistent 40px toolbar targets and aligned tabs.",
+    "Detailed first-use guide names WireGuard section, Windows platform, readable config name, VPN Accelerator on, Port Forwarding off, Free server/country/load selection, Generate then Download .conf then import then connect.",
+    "Country is chosen by config server, not SNI. Show actual confirmed exit country/IP; do not claim connected before native confirmation.",
+    "Preserve independent browser profile, proxy isolation, fail-closed route, settings native-child occlusion, tab identity and keyboard shortcuts.",
+    "Open provider guide in a new tab; allow return to local setup without losing other pages. Disable native-changing actions during busy state/browser downloads.",
+    "User approved creation, registration and connection testing of Atsumi Browser JP / JP-FREE#1 in call_e78d4ade9d094e9dbd740e675ae850f7; this was completed without printing credential contents.",
+    "No main app restart, recordings interruption, release, commit, push, or shutdown.",
+    "Native QA found Ctrl+Tab could return to the same tab; use native accelerator path exclusively in Tauri, retain DOM shortcuts only for browser preview/tests. Avoid duplicate handling."
+  ],
+  "acceptance": [
+    "Frontend guide/state/error/tab/shortcut/bounds regression tests",
+    "Typecheck and frontend build",
+    "Real browser layout on minimum and normal widths, button alignment/overflow",
+    "Actual native app operation and Proton config import/connect upon approval; clearly retain any unverified checks"
+  ],
+  "status": "implemented-and-verified",
+  "specAudit": {
+    "previous": 474,
+    "current": 475,
+    "unchanged": 474,
+    "addedRead": [
+      "docs/requirements/browser-vpn-20261115.json"
+    ]
+  },
+  "verification": {
+    "automated": {
+      "frontendTests": 16,
+      "layoutViewports": [
+        "1200x850",
+        "960x640",
+        "720x500"
+      ],
+      "typecheck": "passed",
+      "frontendBuild": "passed",
+      "diffWhitespace": "passed"
+    },
+    "native": [
+      "Created approved WireGuard config on Proton account downloads page, Windows / Accelerator on / Port Forwarding off / JP-FREE#1.",
+      "Imported downloaded .conf through native file picker; Windows DPAPI profile present.",
+      "Native connection confirmed Japan; HTTPS example.com and IANA page navigation passed.",
+      "Address shortcut, new tab, tab close, next/previous tab, back/forward verified through native UI.",
+      "VPN off and reconnect to Japan passed; Windows default routes, DNS and proxy fingerprints unchanged at both transitions.",
+      "Final connected settings screenshot verified native layout, aligned controls and readable connection details."
+    ],
+    "evidence": ".runtime/browser-ui-onboarding-20261115/verification.json",
+    "limitations": [
+      "Country-specific site access is subject to each site and was not exhaustively tested.",
+      "SNI fragmentation is preserved from the existing implementation; an actual filtered-network bypass was not tested in this UI/onboarding task."
+    ],
+    "notPerformed": [
+      "No main Atsumi restart or recording/download cancellation.",
+      "No commit, push, release or PC shutdown."
+    ]
+  }
+}

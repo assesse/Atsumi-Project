@@ -74,8 +74,39 @@ impl QueryCache {
 
 struct QuerySnapshot {
     request: SearchRequest,
+    source: Arc<QuerySequence>,
+    filtered: Mutex<Option<(Vec<u64>, Arc<QuerySequence>)>>,
+}
+
+struct QuerySequence {
     candidate_ids: Vec<u64>,
     progress: Mutex<QueryProgress>,
+}
+
+impl QuerySequence {
+    fn new(candidate_ids: Vec<u64>) -> Self {
+        Self { candidate_ids, progress: Mutex::new(QueryProgress::default()) }
+    }
+}
+
+impl QuerySnapshot {
+    fn sequence(&self, omitted_ids: &[u64]) -> Arc<QuerySequence> {
+        if omitted_ids.is_empty() {
+            return Arc::clone(&self.source);
+        }
+        let mut cached = unpoison(self.filtered.lock());
+        if let Some((ids, sequence)) = cached.as_ref() {
+            if ids == omitted_ids {
+                return Arc::clone(sequence);
+            }
+        }
+        // Apply local visibility to the original ordered IDs before requesting metadata.
+        let ids = self.source.candidate_ids.iter().copied()
+            .filter(|id| omitted_ids.binary_search(id).is_err()).collect();
+        let sequence = Arc::new(QuerySequence::new(ids));
+        *cached = Some((omitted_ids.to_vec(), Arc::clone(&sequence)));
+        sequence
+    }
 }
 
 #[derive(Default)]
@@ -183,8 +214,8 @@ impl HitomiLiveAdapter {
 
         Ok(Arc::new(QuerySnapshot {
             request: request.clone(),
-            candidate_ids: ordered,
-            progress: Mutex::new(QueryProgress::default()),
+            source: Arc::new(QuerySequence::new(ordered)),
+            filtered: Mutex::new(None),
         }))
     }
 
@@ -317,13 +348,14 @@ impl HitomiLiveAdapter {
         snapshot: &QuerySnapshot,
         page: u32,
     ) -> Result<GalleryPage, SourceContractError> {
-        self.query_page_with_cancellation(snapshot, page, None)
+        self.query_page_with_cancellation(snapshot, page, &[], None)
     }
 
     fn query_page_with_cancellation(
         &self,
         snapshot: &QuerySnapshot,
         page: u32,
+        omitted_ids: &[u64],
         cancellation: Option<&CancellationToken>,
     ) -> Result<GalleryPage, SourceContractError> {
         if page == 0 {
@@ -334,13 +366,14 @@ impl HitomiLiveAdapter {
         }
         let page_size = snapshot.request.page_size as usize;
         let wanted = page as usize * page_size;
-        let mut progress = unpoison(snapshot.progress.lock());
-        while progress.matches.len() < wanted && progress.cursor < snapshot.candidate_ids.len() {
+        let sequence = snapshot.sequence(omitted_ids);
+        let mut progress = unpoison(sequence.progress.lock());
+        while progress.matches.len() < wanted && progress.cursor < sequence.candidate_ids.len() {
             if let Some(cancellation) = cancellation {
                 check_cancelled(cancellation)?;
             }
             let rank = progress.cursor;
-            let id = snapshot.candidate_ids[rank];
+            let id = sequence.candidate_ids[rank];
             match self.fetch_metadata_and_cache_summary(id, cancellation) {
                 Ok(metadata) => {
                     if let Some(cancellation) = cancellation {
@@ -358,11 +391,11 @@ impl HitomiLiveAdapter {
             }
         }
 
-        let complete = progress.cursor == snapshot.candidate_ids.len();
+        let complete = progress.cursor == sequence.candidate_ids.len();
         let total_items = if complete {
             progress.matches.len()
         } else {
-            snapshot.candidate_ids.len()
+            sequence.candidate_ids.len()
         };
         let total_pages = if total_items == 0 {
             0
@@ -387,8 +420,12 @@ impl HitomiLiveAdapter {
 
 impl SearchRepository for HitomiLiveAdapter {
     fn search_submit(&self, request: &SearchRequest) -> Result<SearchSubmission, RepositoryError> {
+        self.search_submit_visible(request, &[])
+    }
+
+    fn search_submit_visible(&self, request: &SearchRequest, omitted_ids: &[u64]) -> Result<SearchSubmission, RepositoryError> {
         let snapshot = self.build_query_snapshot(request)?;
-        let first_page = self.query_page(&snapshot, 1)?;
+        let first_page = self.query_page_with_cancellation(&snapshot, 1, omitted_ids, None)?;
         let query_id = format!("hitomi-{}", Uuid::new_v4());
         unpoison(self.queries.lock()).insert(query_id.clone(), snapshot);
         Ok(SearchSubmission {
@@ -415,13 +452,14 @@ impl SearchRepository for HitomiLiveAdapter {
         &self,
         query_id: &str,
         page: u32,
+        omitted_ids: &[u64],
         cancellation: &CancellationToken,
     ) -> Result<Option<GalleryPage>, RepositoryError> {
         check_cancelled(cancellation)?;
         let snapshot = unpoison(self.queries.lock()).get(query_id);
         snapshot
             .map(|snapshot| {
-                self.query_page_with_cancellation(&snapshot, page, Some(cancellation))
+                self.query_page_with_cancellation(&snapshot, page, omitted_ids, Some(cancellation))
                     .map_err(RepositoryError::Source)
             })
             .transpose()

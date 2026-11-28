@@ -37,6 +37,7 @@ describe("community app composition", () => {
       const initialSearches = search.mock.calls.length;
       await act(async () => { host.querySelector<HTMLElement>('[data-gallery-id="9123456"]')!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })); await settle(); });
       expect(host.querySelector('.detail-workspace')).toBeInTheDocument();
+      const detailCallsAfterOpen = detail.mock.calls.length;
       // Let the newly mounted window's next-frame focus finish before the next
       // gesture. Otherwise jsdom can focus its tab after opening the popover.
       await act(async () => { await new Promise<void>(resolve => requestAnimationFrame(() => resolve())); });
@@ -57,7 +58,7 @@ describe("community app composition", () => {
       expect(host.querySelector('.page-preview-dialog[open]')).toBeInTheDocument();
       await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="페이지 미리보기 닫기"]')!.click(); await settle(); });
       expect(host.querySelector('.detail-workspace [role="tab"][aria-selected="true"]')).toHaveTextContent("보존되는 탐색 결과");
-      expect(detail).toHaveBeenCalledTimes(1);
+      expect(detail).toHaveBeenCalledTimes(detailCallsAfterOpen);
       await act(async () => { host.querySelector<HTMLButtonElement>('[aria-label="커뮤니티"]')!.click(); await settle(); });
       expect(host.querySelector('[aria-label="커뮤니티 화면"]')).toHaveAttribute("data-review-work", "none");
       await act(async () => { [...host.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === "탐색으로")!.click(); await settle(); });

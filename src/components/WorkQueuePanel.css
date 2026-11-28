@@ -1,4 +1,4 @@
-.work-queue-panel { display:flex; flex:1; flex-direction:column; gap:8px; min-height:0; padding:8px; }
+.work-queue-panel { display:flex; flex:1; flex-direction:column; gap:4px; min-height:0; padding:3px; }
 .activity-panel-content:has(> .work-queue-panel) { display:flex; flex:1; overflow:hidden; }
 .queue-summary { flex:none; min-width:0; margin:0; padding:6px 0; }
 .queue-summary-heading { display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:4px 12px; margin-bottom:9px; font-size:var(--font-size-min); color:var(--text); }
@@ -34,13 +34,20 @@
 }
 .queue-actions { display:flex; justify-content:flex-end; flex:none; }
 .queue-items { flex:1; min-height:0; overflow:auto; overflow-anchor:none; scrollbar-gutter:stable; }
-.queue-item { box-sizing:border-box; display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:center; gap:8px; padding:8px 0; border-bottom:1px solid var(--line); }
-.queue-item-title { display:grid; gap:4px; border:0; background:transparent; color:var(--text); text-align:left; padding:0; min-width:0; cursor:pointer; }
-.queue-item-title strong,.queue-item-title small { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.queue-item { box-sizing:border-box; display:grid; grid-template-columns:18px minmax(0,1fr) auto; align-items:center;
+  gap:8px; padding:0 5px; border-bottom:1px solid color-mix(in srgb,var(--line) 65%,transparent); user-select:none; cursor:pointer; }
+.queue-item:hover { background:var(--surface-hover); }
+.queue-item[data-selected="true"] { background:color-mix(in srgb,var(--primary) 15%,var(--surface)); box-shadow:inset 2px 0 var(--primary); }
+.queue-item-title { justify-self:start; display:grid; grid-template-columns:minmax(0,1fr); gap:3px; max-width:100%; min-width:0;
+  border:0; background:transparent; padding:2px 0; color:var(--text); text-align:left; font:inherit; cursor:pointer; }
+.queue-item-title strong,.queue-item-artist,.queue-item-status small { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .queue-item-title strong { font-size:var(--font-size-min); }
-.queue-item-title small { font-size:var(--font-size-min); color:var(--muted); }
-.queue-item-status { display:flex; align-items:center; gap:6px; }
-.queue-item-status small { font-size:var(--font-size-min); color:var(--muted); }
+.queue-item-title small,.queue-item-status small { font-size:var(--font-size-min); color:var(--muted); }
+.queue-item-title small { display:flex; align-items:baseline; gap:4px; min-width:0; }
+.queue-item-number { flex:none; font-variant-numeric:tabular-nums; }
+.queue-item-status { display:inline-flex; align-items:center; gap:5px; min-width:0; }
+.queue-item-status small { max-width:7em; }
+.queue-item button:focus-visible { outline:2px solid var(--primary); outline-offset:2px; }
 .queue-error,.queue-empty { margin:4px 0; font-size:var(--font-size-min); color:var(--muted); }
 .queue-summary.is-stale .queue-progress-track { opacity:.5; }
 .queue-actions button { min-height:30px; color:var(--text); background:var(--surface-soft); border:1px solid var(--line); border-radius:4px; padding:5px 9px; font:inherit; font-size:var(--font-size-min); cursor:pointer; }
@@ -50,3 +57,12 @@
 .activity-button .queue-progress-ring { position:absolute; inset:1px; width:calc(100% - 2px); height:calc(100% - 2px); transform:rotate(-90deg); pointer-events:none; }
 .queue-progress-ring circle { fill:none; stroke:var(--success); stroke-width:4; }
 .queue-progress-ring .queue-ring-track { stroke:var(--muted); opacity:.2; }
+
+.queue-album-preview { position:fixed; z-index:1000; pointer-events:none; box-sizing:border-box; aspect-ratio:2 / 3;
+  overflow:hidden; border-radius:6px; background:var(--thumbnail-frame); color:white;
+  box-shadow:0 6px 22px #0007,0 0 0 1px color-mix(in srgb,var(--line) 65%,transparent); }
+.queue-album-cover { width:100%; height:100%; }
+.queue-album-caption { position:absolute; inset:auto 0 0; padding:24px 8px 8px;
+  background:linear-gradient(transparent,rgba(9,9,13,.8) 65%,rgba(9,9,13,.94)); }
+.queue-album-caption strong { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  overflow-wrap:anywhere; font-size:max(var(--font-size-min),var(--card-title-size)); line-height:1.3; }

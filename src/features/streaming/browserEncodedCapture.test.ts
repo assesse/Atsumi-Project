@@ -8,7 +8,7 @@ const REQUEST = "30000000-0000-4000-8000-000000000001";
 const RECORDING = "40000000-0000-4000-8000-000000000001";
 type Message = { kind: string; [key: string]: unknown };
 type Status = { active: boolean; starting: boolean; stopping: boolean; recordingId: string | null; ready: boolean; detail: string; rateControlAllowed: boolean };
-type Bridge = { canStart(video: unknown): boolean; canChangePlaybackRate(video: unknown): boolean; getStatus(): Status;
+type Bridge = { startRelay(command: Record<string, unknown>, options: Record<string, unknown>): Promise<unknown>; stopRelay(runId: string, interrupted?: boolean): Promise<unknown>; getRelayClock(runId: string): unknown; canStart(video: unknown): boolean; canChangePlaybackRate(video: unknown): boolean; getStatus(): Status;
   getDiagnostics(): { reason: string; appendCount: number; sources: unknown[] };
   getReplayClock(video: unknown): null | { clock: string; sourceId: string; sourceTimeSeconds: number };
   start(command: Record<string, unknown>, options: Record<string, unknown>): Promise<unknown>; stop(reason?: string, interrupted?: boolean): Promise<unknown> };
@@ -365,5 +365,69 @@ describe("already-received encoded MSE capture", () => {
       const failure = await f.start({}, { request: reply }).catch((error: unknown) => error) as { nativeAttempted: boolean; allowLegacyFallback?: boolean };
       expect(failure.nativeAttempted).toBe(true); expect(failure.allowLegacyFallback).toBeUndefined();
     }
+  });
+});
+
+
+describe("independent same-source relay consumer", () => {
+  const RELAY = "50000000-0000-4000-8000-000000000001";
+  function relay(f: ReturnType<typeof fixture>, rejectAppend = false) {
+    const messages: Message[] = [];
+    const request = async (kind: string, fields: Record<string, unknown>) => {
+      messages.push({kind,...fields});
+      if (kind === "encoded_append" && rejectAppend) throw Object.assign(new Error("busy"), {code:"BRIDGE_BUSY"});
+      return kind === "encoded_begin" ? {id:RELAY,mode:"encoded",nativeApproved:true} : kind === "encoded_finish" ? {stopped:true} : {};
+    };
+    return {messages, start:()=>f.bridge().startRelay({channelId:CHANNEL,requestId:RELAY,rightsAcknowledged:true},{request})};
+  }
+  it("copies one original append into two independent consumers and stopping recording preserves relay", async () => {
+    const f=fixture();f.load();await f.start();const r=relay(f);await r.start();
+    const original=media();f.v.appendBuffer(original);await flush();
+    expect(f.nativeCalls).toHaveLength(3);
+    expect(f.ofKind("encoded_append")).toHaveLength(1);
+    expect(f.ofKind("encoded_append")[0]!.data).toBe(r.messages.find(m=>m.kind==="encoded_append")?.data);
+    await f.bridge().stop();f.v.appendBuffer(media());await flush();
+    expect(f.ofKind("encoded_append")).toHaveLength(1);
+    expect(r.messages.filter(m=>m.kind==="encoded_append")).toHaveLength(2);
+    await f.bridge().stopRelay(RELAY);
+  });
+  it("relay stop leaves recording forwarding and playback-rate authority unchanged", async () => {
+    const f=fixture();f.load();const r=relay(f);await r.start();
+    expect(f.bridge().getStatus().active).toBe(false);
+    expect(f.bridge().canChangePlaybackRate(f.video)).toBe(false);
+    expect(f.bridge().getRelayClock(RELAY)).toMatchObject({clock:"mse_presentation_v1",sourceTimeSeconds:100,currentTime:100,timestampOffset:0,trackIndex:0});
+    await f.start();await f.bridge().stopRelay(RELAY);f.v.appendBuffer(media());await flush();
+    expect(f.ofKind("encoded_append")).toHaveLength(1);expect(f.bridge().getStatus().active).toBe(true);
+    await f.bridge().stop();
+  });
+  it("samples actual relay playback state without changing direct event clocks or player behavior", async () => {
+    const f=fixture();f.load();const r=relay(f);await r.start();
+    const before=f.nativeCalls.length;
+    const direct=f.bridge().getReplayClock(f.video);
+    expect(f.bridge().getRelayClock(RELAY)).toMatchObject({paused:false,seeking:false,readyState:4,ended:false,playbackRate:1});
+    f.video.paused=true;f.video.playbackRate=1.25;
+    expect(f.bridge().getRelayClock(RELAY)).toMatchObject({paused:true,seeking:false,readyState:4,ended:false,playbackRate:1.25});
+    expect(f.bridge().getReplayClock(f.video)).toEqual(direct);
+    expect(f.nativeCalls).toHaveLength(before);
+    expect(f.video.paused).toBe(true);expect(f.video.playbackRate).toBe(1.25);
+    f.video.seeking=true;expect(f.bridge().getRelayClock(RELAY)).toBeNull();f.video.seeking=false;
+    f.video.readyState=1;expect(f.bridge().getRelayClock(RELAY)).toBeNull();f.video.readyState=4;
+    f.video.currentSrc="blob:foreign-source";expect(f.bridge().getRelayClock(RELAY)).toBeNull();
+    await f.bridge().stopRelay(RELAY);
+  });
+  it("relay bridge failure has no retry and does not stop the archive", async () => {
+    const f=fixture();f.load();await f.start();const r=relay(f,true);await r.start();
+    f.v.appendBuffer(media());await flush();await vi.advanceTimersByTimeAsync(1000);await flush();
+    expect(r.messages.filter(m=>m.kind==="encoded_append")).toHaveLength(1);
+    expect(f.bridge().getStatus().active).toBe(true);
+    f.v.appendBuffer(media());await flush();expect(f.ofKind("encoded_append")).toHaveLength(2);
+    await f.bridge().stop();
+  });
+  it("a relay joining inside an existing media box waits for the next complete moof", async () => {
+    const f=fixture();f.load();const piece=media(32);f.v.appendBuffer(piece.subarray(0,20));
+    const r=relay(f);await r.start();f.v.appendBuffer(piece.subarray(20));await flush();
+    expect(r.messages.filter(m=>m.kind==="encoded_append")).toHaveLength(0);
+    f.v.appendBuffer(media());await flush();expect(r.messages.filter(m=>m.kind==="encoded_append")).toHaveLength(1);
+    await f.bridge().stopRelay(RELAY);
   });
 });

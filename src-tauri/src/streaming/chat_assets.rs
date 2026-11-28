@@ -40,6 +40,10 @@ static CACHE: OnceLock<Mutex<AssetCache>> = OnceLock::new();
 static NETWORK_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 static DNS_ACTIVE: AtomicUsize = AtomicUsize::new(0);
 
+#[cfg(test)]
+#[path = "chat_assets_png_tests.rs"]
+mod png_tests;
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatAsset {
@@ -378,6 +382,19 @@ fn animation_frames(
         let start = offset + 8;
         let end = start.checked_add(length).ok_or_else(invalid_asset)?;
         let data = bytes.get(start..end).ok_or_else(invalid_asset)?;
+        if png && kind == b"IEND" {
+            // IEND terminates the PNG datastream, not necessarily its enclosing
+            // HTTP response. Keep the complete bounded response unchanged; its
+            // trailer is not another PNG/APNG chunk (PNG 11.2.4).
+            let crc_end = end.checked_add(4).ok_or_else(invalid_asset)?;
+            if length != 0
+                || bytes.get(end..crc_end) != Some(&[0xae, 0x42, 0x60, 0x82][..])
+                || declared_frames.unwrap_or(0) != frames
+            {
+                return Err(invalid_asset());
+            }
+            return Ok(frames);
+        }
         if png && kind == b"acTL" {
             if data.len() != 8 || declared_frames.is_some() {
                 return Err(invalid_asset());
@@ -421,7 +438,8 @@ fn animation_frames(
             .checked_add(if png { 4 } else { length & 1 })
             .ok_or_else(invalid_asset)?;
     }
-    if offset != bytes.len() || (png && declared_frames.unwrap_or(0) != frames) {
+    // A PNG must reach a complete IEND above. WebP retains its exact extent.
+    if png || offset != bytes.len() {
         return Err(invalid_asset());
     }
     Ok(frames)

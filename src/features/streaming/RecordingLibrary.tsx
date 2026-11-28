@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import type { BrowserDeleteReport, BrowserRecording } from "../../api/officialBrowser";
 import { hasCompletedMerge, hasReplayableRanges, RecordingPlayback } from "./RecordingPlayback";
 import "./RecordingLibrary.css";
@@ -12,6 +12,7 @@ import { emptyRecordingSelection, retainRecordingSelection, selectRecording, tog
 import { canRetryStoppedRecording, readRetryBatch, recoveryRevision, retryBatchSubmitting, subscribeRetryBatch, submitRetryBatch, summarizeRecovery, type RecordingRetryBatch, type RetryEntry } from "./recordingRecovery";
 
 const expansionStorageKey = "atsumi.recording-library.expanded.v1";
+const CloudRecordingDialog = lazy(() => import('../cloudRecording/CloudRecordingDialog').then(module => ({ default: module.CloudRecordingDialog })));
 function readExpandedGroups(): Record<string, boolean> {
   try {
     const saved: unknown = JSON.parse(localStorage.getItem(expansionStorageKey) ?? "null");
@@ -71,7 +72,7 @@ function BroadcastGroup({ group, expanded, onToggle, onSelectGroup, selectedCoun
   const root = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!expanded) return;
-    const outside = (event: PointerEvent) => { if ((event.ctrlKey || event.metaKey) && (event.target as Element)?.closest('.recording-broadcast-heading')) return; if (!root.current?.contains(event.target as Node) && !(event.target as Element)?.closest('.recording-library-selection,.recording-library-detail,.recording-library-delete-dialog,[data-card-context-menu]')) onToggle(); };
+    const outside = (event: PointerEvent) => { if ((event.ctrlKey || event.metaKey) && (event.target as Element)?.closest('.recording-broadcast-heading')) return; if (!root.current?.contains(event.target as Node) && !(event.target as Element)?.closest('.recording-library-selection,.recording-library-detail,.recording-library-delete-dialog,[data-card-context-menu],[aria-modal="true"]')) onToggle(); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented && !(event.target as Element)?.closest('[data-card-context-menu],dialog[open]')) onToggle(); };
     document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); };
@@ -104,6 +105,7 @@ type Props = {
 
 /** Metadata-only browsing: entering the library never opens every video for a thumbnail. */
 export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, privacy, retrying, openingFolder, onFolder, onReplay, onRetryMerge, onRetryBatchItem = onRetryMerge, onDelete, stopControl, recoveryScope = "chzzk" }: Props) {
+  const [cloudSource, setCloudSource] = useState<BrowserRecording | null>(null);
   const menu = useCardContextMenu();
   const [menuIds, setMenuIds] = useState<string[]>([]);
   const openMenu = (event: MouseEvent<HTMLElement>, items: BrowserRecording[]) => {
@@ -293,6 +295,7 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       <p className="official-browser-muted" title={recordingChatNote(selected).text}>{displayDuration(selected)} · {selected.mediaRemovedAt != null ? "영상 없음" : bytes(hasCompletedMerge(selected) ? selected.merge!.bytes! : selected.bytesWritten)} <span className={`recording-library-state is-${cardState(selected).tone}`} title={recordingEndDetail(selected) || undefined}>{cardState(selected).label}</span> <ChatWarning recording={selected} /></p>
       {selected.partial && selected.mediaRemovedAt == null ? <p className="official-browser-note">영상 일부가 저장되지 않았을 수 있습니다.</p> : null}
       {selected.deletionPending ? <p className="official-browser-note">삭제 미완료 · 선택 삭제로 다시 시도해 주세요.</p> : <RecordingPlayback key={selected.id} recording={selected} disabled={busy} privacyMode={privacy} retrying={retrying || resuming} onReplay={onReplay} onRetryMerge={onRetryMerge} />}
+      <button type="button" className="recording-library-cloud" disabled={busy || privacy || selected.deletionPending} onClick={() => setCloudSource(selected)}>YouTube 보관</button>
       {checked.length === 1 && checked[0] === selected.id ? <div className="recording-library-single-actions"><span role="status">1개 선택</span><button ref={deleteTrigger} type="button" className="recording-library-delete" disabled={busy || !canDelete(selected)} onClick={() => requestDelete([selected.id])}>녹화 삭제</button></div> : null}
     </section> : <div className="recording-library-detail-placeholder" aria-hidden="true" />}
     </div>
@@ -302,6 +305,7 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       const prefix = menuIds.length > 1 ? `파일 ${index + 1} · ` : "";
       return [
         { id: `play-${id}`, label: prefix + "재생", icon: "play", disabled: busy || privacy || !(hasCompletedMerge(item) || hasReplayableRanges(item)), action: () => onReplay(id) },
+        { id: `cloud-${id}`, label: prefix + "YouTube 보관", icon: "folder", disabled: busy || privacy || !!item.deletionPending, action: () => setCloudSource(item) },
         { id: `folder-${id}`, label: prefix + "폴더 열기", icon: "folder", disabled: busy || openingFolder, action: () => onFolder(id) },
         { id: `delete-${id}`, label: prefix + "삭제", icon: "remove", danger: true, disabled: busy || !canDelete(item), action: () => requestDelete([id]) },
       ];
@@ -313,6 +317,7 @@ export function RecordingLibrary({ recordings, selectedId, onSelect, disabled, p
       {deleteError ? <p role="alert" className="official-browser-error">{deleteError}</p> : null}
       <footer><button ref={cancel} type="button" disabled={deleting} onClick={() => setConfirmIds(null)}>취소</button><button type="button" className="recording-library-delete" disabled={disabled || deleting || !confirmIds?.length} onClick={() => void confirmDelete()}>{deleting ? "삭제 중…" : "삭제"}</button></footer>
     </dialog>
+    {cloudSource ? <Suspense fallback={null}><CloudRecordingDialog source={{ provider: 'chzzk', recordingId: cloudSource.id }} title={cloudSource.title || cloudSource.channelId} pendingRecording={(recordings.find(item => item.id === cloudSource.id) ?? cloudSource).status === 'recording' || ['queued', 'merging'].includes((recordings.find(item => item.id === cloudSource.id) ?? cloudSource).merge?.status ?? '')} privacyMode={privacy} onClose={() => setCloudSource(null)} /></Suspense> : null}
   </section>;
 }
 

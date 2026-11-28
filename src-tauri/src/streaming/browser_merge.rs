@@ -47,6 +47,10 @@ const POLL: Duration = Duration::from_millis(40);
 // user operations never wait for this archive-only startup grace period.
 const HISTORY_RECOVERY_GRACE: Duration = Duration::from_secs(20);
 
+#[path = "browser_cloud_upload.rs"]
+mod cloud_upload;
+pub(crate) use cloud_upload::{cloud_upload_cuts, cloud_upload_remux};
+
 /// The host supplies verified, application-managed executables. Never resolve
 /// executables through PATH or the media directory. Missing tools are retryable.
 #[derive(Clone, Debug)]
@@ -80,6 +84,8 @@ pub struct BrowserMergeWorker {
     handle: Arc<Mutex<Option<JoinHandle<()>>>>,
 }
 impl BrowserMergeWorker {
+    /// Reuse the managed startup tools; optional relay analysis never resolves PATH.
+    pub(crate) fn relay_media_tools(&self) -> Option<MediaTools> { self.shared.tools.clone() }
     pub fn start(
         store: Arc<Mutex<BrowserCaptureStore>>,
         tools: Option<MediaTools>,
@@ -616,16 +622,21 @@ struct PacketClock {
     end: f64,
     count: u64,
     invalid: bool,
+    presentation_end: Option<f64>,
+    presentation_overlap: bool,
+    presentation_gap: bool,
 }
 impl PacketClock {
     fn line(&mut self, line: &str) {
         let mut pts = None;
         let mut dts = None;
         let mut duration = None;
+        let mut discarded = false;
         for field in line.trim().split('|') {
             let Some((key, value)) = field.split_once('=') else {
                 continue;
             };
+            if key == "flags" { discarded = value.contains('D'); continue; }
             let value = value.parse::<f64>().ok().filter(|v| v.is_finite());
             match key {
                 "pts_time" => pts = value,
@@ -643,6 +654,15 @@ impl PacketClock {
             self.first = Some(self.first.map_or(at, |v| v.min(at)));
             self.end = self.end.max(at + duration);
             self.count += 1;
+            // Optional diagnostic for a single audio stream. Existing mixed
+            // A/V duration probing deliberately does not use these fields.
+            if !discarded && at >= 0.0 && duration > 0.0 {
+                if let Some(previous) = self.presentation_end {
+                    self.presentation_overlap |= at < previous - 0.000_002;
+                    self.presentation_gap |= at > previous + 0.000_002;
+                }
+                self.presentation_end = Some(at + duration);
+            }
         }
     }
     fn duration(&self) -> Result<f64, StreamError> {
@@ -667,10 +687,20 @@ fn run_tool(
     packets: bool,
     output_limit: Option<(&Path, u64)>,
 ) -> Result<ToolOutput, StreamError> {
+    run_tool_observed(command, cancel, timeout, packets, output_limit, None)
+}
+fn run_tool_observed(
+    mut command: Command,
+    cancel: &AtomicBool,
+    timeout: Duration,
+    packets: bool,
+    output_limit: Option<(&Path, u64)>,
+    observer: Option<Arc<dyn Fn(f64) + Send + Sync>>,
+) -> Result<ToolOutput, StreamError> {
     check_cancel(cancel)?;
     let reports_progress = command.get_args().any(|arg| arg == "-progress");
     command
-        .stdin(Stdio::null())
+        .stdin(if observer.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     #[cfg(windows)]
@@ -687,10 +717,12 @@ fn run_tool(
     let last_advance = Arc::new(AtomicU64::new(0));
     let reader_advance = last_advance.clone();
     let progress_entry = browser_store::work_progress::current();
+    let progress_observer = observer.clone();
     let read_out = thread::spawn(move || -> Result<ToolOutput, ()> {
         let mut reader = BufReader::new(stdout);
         if packets {
             let mut stats = PacketClock::default();
+            let mut reported = Instant::now();
             loop {
                 let mut line = Vec::new();
                 let n = (&mut reader)
@@ -704,6 +736,10 @@ fn run_tool(
                     stats.invalid = true;
                 } else {
                     stats.line(std::str::from_utf8(&line).map_err(|_| ())?);
+                    if reported.elapsed() >= Duration::from_secs(1) {
+                        if let Some(observer) = &progress_observer { observer(stats.end); }
+                        reported = Instant::now();
+                    }
                 }
             }
             Ok(ToolOutput::Packets(stats))
@@ -724,6 +760,7 @@ fn run_tool(
                         last_micros = micros;
                         reader_advance.store(started.elapsed().as_secs(), Ordering::Relaxed);
                         browser_store::work_progress::tool_progress(&progress_entry, micros);
+                        if let Some(observer) = &progress_observer { observer(micros as f64 / 1_000_000.0); }
                     }
                 }
                 bytes.extend_from_slice(&line);
@@ -794,6 +831,14 @@ fn run_tool(
             Ok(())
         });
         if let Err(error) = guard {
+            if observer.is_some() {
+                if let Some(mut stdin) = child.stdin.take() { let _ = stdin.write_all(b"q\n"); }
+                let until = Instant::now() + Duration::from_millis(750);
+                while Instant::now() < until {
+                    if child.try_wait().ok().flatten().is_some() { break; }
+                    thread::sleep(POLL);
+                }
+            }
             let _ = child.kill();
             let _ = child.wait();
             break Err(error);

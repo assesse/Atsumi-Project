@@ -449,6 +449,7 @@ mod tests {
             title: "same title".into(),
             channel_name: "fixture".into(),
             created_at: time,
+            started_at_ms: None,
             received_bytes: 10,
             total_bytes: Some(10),
             error: None,

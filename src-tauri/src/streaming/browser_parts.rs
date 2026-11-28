@@ -4,6 +4,7 @@ use super::*;
 use sha2::{Digest, Sha256};
 
 const TARGET_SECONDS: f64 = 180.0;
+pub(super) const MAX_PART_BYTES: u64 = 256 * 1024 * 1024;
 const TARGET_BYTES: u64 = 48 * 1024 * 1024;
 const MAX_PARTS: usize = 4096;
 const INDEX_LIMIT: u64 = 4 * 1024 * 1024;
@@ -99,7 +100,7 @@ pub(crate) fn load(record: &BrowserRecording) -> Result<Vec<Part>, StreamError> 
             || part.duration <= 0.0
             || part.duration > TARGET_SECONDS + MAX_DURATION + 1.0
             || part.bytes == 0
-            || part.bytes > 256 * 1024 * 1024
+            || part.bytes > MAX_PART_BYTES
             || !part_name(
                 &part.file,
                 if record.mime_type.starts_with("video/webm") {
@@ -526,6 +527,9 @@ pub(crate) fn timeline_rows(
 }
 
 pub(crate) fn replay_source(record: &BrowserRecording) -> Result<BrowserReplaySource, StreamError> {
+    replay_source_cancellable(record,None)
+}
+pub(crate) fn replay_source_cancellable(record: &BrowserRecording,cancel:Option<&std::sync::atomic::AtomicBool>) -> Result<BrowserReplaySource, StreamError> {
     let parts = load(record)?;
     if parts.is_empty() {
         return Err(invalid());
@@ -535,6 +539,7 @@ pub(crate) fn replay_source(record: &BrowserRecording) -> Result<BrowserReplaySo
     let mut combined = Vec::new();
     let resolver = archive::offload::Resolver::new(record)?;
     for part in &parts {
+        if cancel.is_some_and(|v|v.load(std::sync::atomic::Ordering::Acquire)) { return Err(inactive()); }
         let media_path = resolver.resolve(&part.file)?;
         let part_root = media_path.parent().ok_or_else(invalid)?;
         let file = open_regular(&media_path, 256 * 1024 * 1024)?;

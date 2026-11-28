@@ -1,3 +1,4 @@
+import { BrowserLauncher } from "../features/browser/BrowserLauncher";
 import atsumiLogo from "../assets/atsumi.svg";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -172,6 +173,7 @@ export function SideRail<Source extends ContentSource>({
         {common && hasCommunity(source) ? <button type="button" data-tour="community-nav" className={`nav-item community-nav${common.communityOpen ? " is-active" : ""}`} aria-label="커뮤니티" aria-current={common.communityOpen ? "page" : undefined} onClick={() => common.openCommunity()}><FluentIcon glyph="\uE8F2" /><span className="nav-label">커뮤니티</span></button> : null}
       </nav>
 
+      <div className="browser-launcher-slot"><BrowserLauncher /></div>
       <div className="sidebar-foot">
         {footer}
         <button type="button" className="nav-item" title="오류·의견 보내기" aria-label="오류·의견 보내기" onClick={() => window.dispatchEvent(new Event(OPEN_FEEDBACK))}><FluentIcon glyph="\uE8F2" /><span className="nav-label">오류·의견 보내기</span></button>

@@ -468,6 +468,19 @@ fn preparation_problem(diagnostics: Option<&Value>) -> &'static str {
     }
 }
 
+impl AutoRecorder {
+    pub(super) fn live_recovery_allowed(&self, channel: &str, key: &str, now: u64) -> bool {
+        let core = self.core.lock().unwrap_or_else(|p| p.into_inner());
+        core.config.channels.iter().any(|c| {
+            c.channel_id == channel && c.enabled && !c.hold_until_offline && !suppressed(c, key)
+        }) && core.observations.get(channel).is_some_and(|o| {
+            o.can_start(now)
+                && now.saturating_sub(o.checked_at) <= POLL_MS * 2
+                && o.live_key().as_deref() == Some(key)
+        })
+    }
+}
+
 struct Session {
     host: OfficialBrowser,
     owns_view: bool,
@@ -476,6 +489,7 @@ struct Session {
     started: Instant,
     stop_at: Option<Instant>,
     attempted: bool,
+    recovery_attempted: bool,
     recording_id: Option<String>,
     request_id: Option<String>,
 }
@@ -767,7 +781,7 @@ impl OfficialBrowser {
                         s.status = "error".into();
                     }
                     (
-                        s.ready,
+                        s.ready && s.receiver_reload.is_none(),
                         s.recording.is_some() || s.arm.is_some(),
                         s.recording.clone(),
                         s.status.clone(),
@@ -948,6 +962,22 @@ impl OfficialBrowser {
                         retry.insert(id.clone(), now_ms() + start_retry_delay(count, 60_000));
                         completed.push(id.clone());
                     }
+                } else if !session.recovery_attempted
+                    && session.started.elapsed() >= Duration::from_secs(30)
+                    && session
+                        .host
+                        .reload_empty_live_receiver(app, id, &session.live_key)
+                        .unwrap_or(false)
+                {
+                    // One refresh per attempt, not a page reload on every polling tick.
+                    session.recovery_attempted = true;
+                    session.started = Instant::now();
+                    auto.publish(
+                        id,
+                        "reconnecting",
+                        None,
+                        Some("방송 중 · 영상 화면을 다시 연결하고 있습니다.".into()),
+                    );
                 } else if session.started.elapsed() > Duration::from_secs(90) {
                     let state = session
                         .host
@@ -964,15 +994,29 @@ impl OfficialBrowser {
                         "player_prepare",
                         message,
                     );
-                    auto.publish(id, "retry", None, Some(message.into()));
                     let count = attempts
                         .get(&(id.clone(), session.live_key.clone()))
                         .copied()
                         .unwrap_or(0);
+                    auto.publish(
+                        id,
+                        if count >= 5 { "attention" } else { "retry" },
+                        None,
+                        Some(message.into()),
+                    );
                     retry.insert(id.clone(), now_ms() + start_retry_delay(count, 120_000));
                     completed.push(id.clone());
                 } else {
-                    auto.publish(id, "starting", None, None);
+                    auto.publish(
+                        id,
+                        if session.recovery_attempted {
+                            "reconnecting"
+                        } else {
+                            "starting"
+                        },
+                        None,
+                        Some("방송 중 · 영상 연결 중".into()),
+                    );
                 }
             }
             for id in completed {
@@ -1076,6 +1120,7 @@ impl OfficialBrowser {
                                 started: Instant::now(),
                                 stop_at: None,
                                 attempted: false,
+                                recovery_attempted: false,
                                 recording_id: None,
                                 request_id: None,
                             },
@@ -1271,6 +1316,45 @@ mod tests {
             chat_channel_id: None,
             notice: None,
         }
+    }
+    #[test]
+    fn receiver_recovery_requires_fresh_same_broadcast_and_current_opt_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let auto = AutoRecorder::load(dir.path());
+        auto.add(CHANNEL.into(), "test".into()).unwrap();
+        assert!(!auto.live_recovery_allowed(CHANNEL, "id:42", 100));
+        let mut observed = Observation::default();
+        observed.accept(Ok(live("42", LiveStatus::Live)), 100);
+        auto.core
+            .lock()
+            .unwrap()
+            .observations
+            .insert(CHANNEL.into(), observed.clone());
+        assert!(auto.live_recovery_allowed(CHANNEL, "id:42", 100));
+        assert!(!auto.live_recovery_allowed(CHANNEL, "id:43", 100));
+        assert!(!auto.live_recovery_allowed(CHANNEL, "id:42", 60_101));
+        observed.accept(Err(error("NETWORK", "failed")), 200);
+        auto.core
+            .lock()
+            .unwrap()
+            .observations
+            .insert(CHANNEL.into(), observed.clone());
+        assert!(!auto.live_recovery_allowed(CHANNEL, "id:42", 200));
+        observed.accept(Ok(live("42", LiveStatus::Offline)), 300);
+        auto.core
+            .lock()
+            .unwrap()
+            .observations
+            .insert(CHANNEL.into(), observed.clone());
+        assert!(!auto.live_recovery_allowed(CHANNEL, "id:42", 300));
+        observed.accept(Ok(live("42", LiveStatus::Live)), 400);
+        auto.core
+            .lock()
+            .unwrap()
+            .observations
+            .insert(CHANNEL.into(), observed);
+        auto.suppress(CHANNEL).unwrap();
+        assert!(!auto.live_recovery_allowed(CHANNEL, "id:42", 400));
     }
     #[test]
     fn registrations_chat_preference_and_stop_survive_restart() {

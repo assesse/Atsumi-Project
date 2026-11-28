@@ -26,7 +26,7 @@ export const replayTime = (value: number) => {
   const hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds / 60) % 60;
   return `${hours ? `${hours}:${String(minutes).padStart(2, '0')}` : minutes}:${String(seconds % 60).padStart(2, '0')}`;
 };
-type MediaEvents = Pick<VideoHTMLAttributes<HTMLVideoElement>, 'onPlay' | 'onPause' | 'onEnded' | 'onLoadedMetadata' | 'onTimeUpdate' | 'onError'>;
+type MediaEvents = Pick<VideoHTMLAttributes<HTMLVideoElement>, 'onPlay' | 'onPause' | 'onEnded' | 'onSeeked' | 'onLoadedMetadata' | 'onTimeUpdate' | 'onError'>;
 export interface PlatformReplayPlayerProps {
   provider: MediaProvider; url: string; videoRef: RefObject<HTMLVideoElement | null>; mediaEvents: MediaEvents;
   active: boolean; privacyMode: boolean; title: ReactNode; paused: boolean; ended: boolean;

@@ -1,0 +1,25 @@
+{
+  "id": "chzzk-live-recovery-20261114",
+  "status": "implemented_automatic_tests_passed_live_recording_verified",
+  "requestId": "01a1d8e1-66db-7911-ba1a-5c124eba5435",
+  "evidence": ".runtime/chzzk-live-recovery-20261114/preedit.json",
+  "requirements": [
+    "Refresh only freshly confirmed live, same channel/episode, stale empty player after grace; once per preparation attempt and existing backoff.",
+    "Reserve exact document before navigation; no reload of playable/paused or armed/recording/continuing capture, login/reconfiguration or pending controls.",
+    "Preserve one receiver, official access checks, manual suppression, files and other changes.",
+    "Accurate reconnecting/retry/attention states; no release, cleanup or storage path changes."
+  ],
+  "acceptance": [
+    "Stale empty player + fresh same broadcast -> one same-view recovery after grace.",
+    "Block working/paused/recording/armed/continuing/account/pending controls/stale metadata and changed generation; prevent starts during reload.",
+    "Manual suppression and retry limits preserved; live failure never shown as offline waiting.",
+    "Targeted native/frontend tests and build; real app status; unobserved live transition explicitly unverified.",
+    "D disk-full reported separately; no data deletion."
+  ],
+  "verification": ".runtime/chzzk-live-recovery-20261114/verification.json",
+  "pending": [
+    "Future real offline-to-live transition not reproduced; exact recovery eligibility and reservation covered by native tests.",
+    "Desktop visual status check remains deferred; UI states verified by automated rendering tests.",
+    "D: free 0.58GB; three existing archive transfers remain disk-full deferred. No originals removed."
+  ]
+}

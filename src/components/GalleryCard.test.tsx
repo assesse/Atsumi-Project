@@ -1825,3 +1825,30 @@ describe("GalleryCard event projection", () => {
     container.remove();
   });
 });
+
+it.each(["detail","compact"] as const)("routes a completed download double-click to reading, with independent detail menu (%s)", async displayMode => {
+  const container=document.createElement("div");document.body.append(container);const root=createRoot(container);
+  const preview=vi.fn(),detail=vi.fn();
+  const gallery={...mockGalleries[0]!,download:{entryId:"local",state:"completed" as const}};
+  const render=(view:"downloads"|"explore",state:"completed"|"downloading"="completed")=>root.render(<GalleryCard {...callbacks}
+    gallery={{...gallery,download:{...gallery.download,state}}} view={view} displayMode={displayMode}
+    selected={false} selectionContext={false} favoriteMetadata={new Set()} onOpenDetail={detail} onOpenPreview={preview} />);
+  try {
+    await act(async()=>render("downloads"));
+    const article=container.querySelector("article")!;
+    await act(async()=>article.dispatchEvent(new MouseEvent("dblclick",{bubbles:true,detail:2})));
+    expect(preview).toHaveBeenCalledWith(gallery.id);expect(detail).not.toHaveBeenCalled();
+    await act(async()=>article.dispatchEvent(new MouseEvent("contextmenu",{bubbles:true,cancelable:true})));
+    const open=[...document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')].find(b=>b.textContent?.includes("상세 열기"))!;
+    expect(open).toBeDefined();await act(async()=>open.click());expect(detail).toHaveBeenCalledWith(gallery.id);
+    detail.mockClear();preview.mockClear();
+    await act(async()=>article.dispatchEvent(new MouseEvent("dblclick",{bubbles:true,detail:2,ctrlKey:true})));
+    expect(preview).not.toHaveBeenCalled();expect(detail).not.toHaveBeenCalled();
+    await act(async()=>render("downloads","downloading"));
+    await act(async()=>article.dispatchEvent(new MouseEvent("dblclick",{bubbles:true,detail:2})));
+    expect(detail).toHaveBeenCalledOnce();expect(preview).not.toHaveBeenCalled();
+    await act(async()=>render("explore"));
+    await act(async()=>article.dispatchEvent(new MouseEvent("dblclick",{bubbles:true,detail:2})));
+    expect(detail).toHaveBeenCalledTimes(2);expect(preview).not.toHaveBeenCalled();
+  } finally {await act(async()=>root.unmount());container.remove();}
+});

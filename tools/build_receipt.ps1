@@ -11,7 +11,7 @@ function Get-AtsumiBuildSourceManifest([string]$Root) {
   $trees = @('src','public','shared','tools','src-tauri/src','src-tauri/vendor','src-tauri/icons','src-tauri/capabilities','.github/workflows','docs/releases')
   $single = @('package.json','pnpm-lock.yaml','pnpm-workspace.yaml','.npmrc','index.html','vite.config.ts','tsconfig.json','tsconfig.app.json','tsconfig.node.json','src-tauri/Cargo.toml','src-tauri/Cargo.lock','src-tauri/build.rs','src-tauri/tauri.conf.json','THIRD_PARTY_NOTICES.md')
   $optionalTrees = @('.cargo','src-tauri/.cargo')
-  $optionalFiles = @('rust-toolchain','rust-toolchain.toml','src-tauri/rust-toolchain','src-tauri/rust-toolchain.toml','src-tauri/tauri.windows.conf.json','src-tauri/tauri.windows.conf.json5')
+  $optionalFiles = @('browser.html','rust-toolchain','rust-toolchain.toml','src-tauri/rust-toolchain','src-tauri/rust-toolchain.toml','src-tauri/tauri.windows.conf.json','src-tauri/tauri.windows.conf.json5')
   foreach ($config in Get-ChildItem -LiteralPath $rootPath -File -Force) {
     if ($config.Name -match '^tsconfig.*\.json$' -and $config.Name -notin $single) { $optionalFiles += $config.Name }
     if ($config.Name -match '^vite\.config\.' -and $config.Name -cne 'vite.config.ts') { throw 'Unexpected frontend build configuration; source inventory requires review.' }
@@ -107,6 +107,11 @@ function Get-AtsumiBuildResources([string]$Root) {
   $approved = @{}
   $approved[(Get-AtsumiPackageDirectoryPath $media.package)] = $media.manifest
   $approved[(Get-AtsumiPackageDirectoryPath $platform.package)] = $platform.manifest
+  $browserScript = Join-Path $Root 'tools/prepare_browser_tools.ps1'
+  if (Test-Path -LiteralPath $browserScript -PathType Leaf) {
+    $browser = & $browserScript -VerifyOnly -ReturnManifest
+    $approved[(Get-AtsumiPackageDirectoryPath $browser.package)] = $browser.manifest
+  }
   $result = @()
   foreach ($mapping in $config.bundle.resources.PSObject.Properties) {
     $source = Get-AtsumiPackageDirectoryPath (Join-Path (Join-Path $Root 'src-tauri') $mapping.Name)
@@ -115,7 +120,7 @@ function Get-AtsumiBuildResources([string]$Root) {
     $target = ConvertTo-AtsumiPackagePath (([string]$mapping.Value).TrimEnd('/'))
     $result += [pscustomobject]@{path=$relative;target=$target;manifest=$approved[$source]}
   }
-  if ($result.Count -ne 2 -or @($result.path|Sort-Object -Unique).Count -ne 2) { throw 'Build requires the two approved resource mappings.' }
+  if ($result.Count -ne $approved.Count -or @($result.path|Sort-Object -Unique).Count -ne $approved.Count) { throw 'Build requires the approved resource mappings.' }
   return @($result | Sort-Object path)
 }
 

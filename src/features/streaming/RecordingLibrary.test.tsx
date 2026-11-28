@@ -44,6 +44,18 @@ describe("recording library", () => {
     await act(async () => document.body.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))); expect(cards()).toHaveLength(0);
     expect(callbacks.onDelete).not.toHaveBeenCalled(); expect(callbacks.onReplay).not.toHaveBeenCalled();
   });
+  it("keeps expanded recording groups when an archive dialog is operated", async () => {
+    await render([merged('a')]);
+    const heading = container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!;
+    expect(heading).toHaveAttribute('aria-expanded', 'true');
+    const modal = document.createElement('div'); modal.setAttribute('aria-modal', 'true');
+    const action = document.createElement('button'); modal.append(action); document.body.append(modal);
+    try {
+      await act(async () => action.dispatchEvent(new Event('pointerdown', { bubbles: true })));
+      expect(heading).toHaveAttribute('aria-expanded', 'true');
+      expect(cards()).toHaveLength(1);
+    } finally { modal.remove(); }
+  });
   it("Ctrl selects folded groups, preserves previous groups, and toggles mixed groups without opening them", async () => {
     const records = [...["a", "b"].map(id => ({ ...merged(id), channelId: "one", broadcastKey: "id:1" })), merged("c"), item("live", { status: "recording" })];
     localStorage.setItem(expansionStorageKey, "{}"); await render(records);
@@ -346,6 +358,7 @@ describe("recording library", () => {
     expect(button("재생")).toBeUndefined();
     expect(button("병합 다시 시도")).toBeUndefined();
     expect(button("저장 폴더 열기")).toBeEnabled();
+    expect(button("YouTube 보관")).toBeEnabled();
     expect(callbacks.onDelete).not.toHaveBeenCalled();
   });
   it("shows the saved outcome of cached history, with loading only for missing summaries", async () => {
@@ -597,7 +610,7 @@ describe("recording card context menu",()=>{
    const a={...merged("a"),channelId:"shared",broadcastKey:"id:1"},b={...merged("b"),channelId:"shared",broadcastKey:"id:1",workProgress:{phase:"verifying",completed:1,total:10,unit:"seconds",updatedAt:1}};
    await render([a,b]);await act(async()=>container.querySelector<HTMLButtonElement>('.recording-broadcast-heading')!.click());
    await context(container.querySelector('[data-recording-id="b"]')!);
-   expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(3);
+    expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(4);
    expect(menuButton("삭제")).toBeDisabled();
    expect(container.querySelector('[role="progressbar"]')).toHaveAttribute("aria-valuenow","10");
  });

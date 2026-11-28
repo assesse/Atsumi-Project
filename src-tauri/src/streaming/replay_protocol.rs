@@ -109,6 +109,9 @@ impl ReplayService {
                 _ => response(StatusCode::NOT_FOUND, vec![], None, None, origin),
             };
         }
+        let ReplaySource::LocalMedia { file, stamp: main_stamp } = &session.source else {
+            return response(StatusCode::FORBIDDEN, vec![], None, None, origin);
+        };
         let (media_file, stamp) = if parts.len() == 3 {
             let Some(index) = (parts[1] == "part")
                 .then(|| decimal(parts[2]))
@@ -122,7 +125,7 @@ impl ReplayService {
             };
             (&part.file, &part.stamp)
         } else {
-            (&session.media, &session.media_stamp)
+            (file, main_stamp)
         };
         let mut media = match media_file.lock() {
             Ok(media) => media,

@@ -5,9 +5,10 @@ import { AutoRecordingPanel } from "./AutoRecordingPanel";
 import { FluentIcon } from "../../components/FluentIcon";
 
 /** Advanced controls stay reachable without restoring a separate workspace tab. */
-export function AutoRecordingManagerDialog({ runtime, privacy, api, onChange, onClose }: {
+export function AutoRecordingManagerDialog({ runtime, privacy, api, onChange, onClose, archiveChannels }: {
   runtime: "tauri" | "browser-mock"; privacy: boolean; api: AutoRecordingApi;
   onChange(snapshot: AutoRecordingSnapshot): void; onClose(): void;
+  archiveChannels?: { id: string; name: string }[];
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
@@ -28,7 +29,7 @@ export function AutoRecordingManagerDialog({ runtime, privacy, api, onChange, on
     onClose={onClose}>
     <div className="auto-record-manager-surface" data-native-dialog-surface="true">
       <button ref={closeButton} type="button" className="auto-record-manager-close" aria-label="자동 녹화 관리 닫기" onClick={onClose}><FluentIcon glyph="\uE711" /></button>
-      <AutoRecordingPanel runtime={runtime} privacy={privacy} api={api} embedded onChange={onChange} />
+      <AutoRecordingPanel runtime={runtime} privacy={privacy} api={api} embedded onChange={onChange} archiveChannels={archiveChannels} />
     </div>
   </dialog>, document.body);
 }

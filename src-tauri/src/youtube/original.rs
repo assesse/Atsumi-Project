@@ -11,6 +11,9 @@ mod input_diagnostics;
 mod policy;
 #[path = "original_vod.rs"]
 mod vod;
+pub use vod::{VodClock, VodControlRequest};
+pub(crate) use vod::NativeFrameWindow;
+pub(crate) use vod::OwnedVodLease;
 use crate::platform_media::{
     encoded::{EncodedAppend, EncodedArchive, EncodedTrack, OfficialReceiverLease, RawInitDecision, YouTubeRawArchive},
     live::RecordingOwner,
@@ -122,6 +125,9 @@ impl From<&str> for ScheduledStartError {
         Self::Other(error.into())
     }
 }
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VodPlayability { LoginRequired, Unavailable }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OriginalSnapshot {
@@ -132,6 +138,9 @@ pub struct OriginalSnapshot {
     pub canonical_channel_id: Option<String>,
     pub state: String,
     pub authenticated: Option<bool>,
+    /// VOD-only recovery hint; never an OAuth or website-account identity proof.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub playability: Option<VodPlayability>,
     pub chat_visible: bool,
     pub capture_ready: bool,
     pub capture_unavailable_reason: Option<String>,
@@ -485,6 +494,14 @@ fn profile(app: &AppHandle) -> Result<PathBuf, String> {
     crate::browser_identity::profile(app).map_err(|_| UNAVAILABLE.into())
 }
 impl YouTubeOriginalHost {
+    /// Native replay owner only. Never aliases an ordinary/upload VOD viewer.
+    pub(crate) fn open_owned_vod(&self,app:&AppHandle,video:String,owner:uuid::Uuid)->Result<OwnedVodLease,String>{
+        if self.closing.load(Ordering::Acquire)||owner.is_nil()||!policy::valid_channel(&video){return Err(STALE.into());}
+        let _admission=lock(&self.admission);
+        if self.closing.load(Ordering::Acquire){return Err(STALE.into());}
+        if lock(&self.registry).sessions.len()+self.watch_only.count()>=4{return Err("YouTube 영상은 최대 4개까지 열 수 있습니다.".into());}
+        self.watch_only.open_owned(app,self.clone(),video,owner)
+    }
     pub fn open_vod(
         &self,
         app: &AppHandle,
@@ -610,6 +627,7 @@ impl YouTubeOriginalHost {
                     canonical_channel_id: None,
                     state: "loading".into(),
                     authenticated: None,
+                    playability: None,
                     chat_visible: false,
                     capture_ready: false,
                     capture_unavailable_reason: None,
@@ -682,6 +700,19 @@ impl YouTubeOriginalHost {
             return self.watch_only.snapshot(token);
         }
         self.snapshot_locked(&lock(&self.registry), token)
+    }
+    pub fn vod_clock(&self,token:&str)->Result<Option<VodClock>,String>{
+        if !vod::is_token(token){return Err(STALE.into());}self.watch_only.clock(token)
+    }
+    /// Native archive verifier only; no renderer command grants frame authority.
+    pub(crate) fn vod_sample_frames(&self,app:&AppHandle,token:&str,video:&str,cancel:&AtomicBool)->Result<NativeFrameWindow,String>{
+        if !vod::is_token(token)||self.closing.load(Ordering::Acquire){return Err(STALE.into());}
+        self.watch_only.sample_frames(app,token,video,cancel)
+    }
+    pub fn vod_control(&self,app:&AppHandle,token:&str,request:VodControlRequest)->Result<(),String>{
+        if !vod::is_token(token)||self.closing.load(Ordering::Acquire){return Err(STALE.into());}
+        if request.action=="resume"&&self.tray_muted.load(Ordering::Acquire){return Err(STALE.into());}
+        self.watch_only.control(app,token,request)
     }
     pub fn fullscreen(&self, app: &AppHandle, token: &str, enabled: bool) -> Result<(), String> {
         if vod::is_token(token) {
@@ -999,6 +1030,7 @@ impl YouTubeOriginalHost {
         self.snapshot(token)
     }
     pub fn controls(&self, app:&AppHandle, token:&str, can_close:bool, capture_busy:bool)->Result<(),String>{
+        if vod::is_token(token){return self.watch_only.controls(app,token,can_close);}
         let session=self.session(token)?;
         let Some(binding)=ui_binding(&session) else{return Ok(());};
         if binding.token!=token{return Ok(());}
@@ -2555,11 +2587,12 @@ mod chat_availability_tests {
     fn snapshot_projects_nullable_canonical_identity_without_changing_job() {
         let mut snapshot = OriginalSnapshot {
             token: "viewer".into(), channel_id: "abcdefghijk".into(), broadcast_id: "abcdefghijk".into(),
-            canonical_channel_id: None, state: "playing".into(), authenticated: None,
+            canonical_channel_id: None, state: "playing".into(), authenticated: None, playability: None,
             chat_visible: false, capture_ready: true, capture_unavailable_reason: None,
             recording_job: Some("job".into()), recording_stopping: false, fullscreen: false, error: None,
         };
         assert!(serde_json::to_value(&snapshot).unwrap()["canonicalChannelId"].is_null());
+        assert!(serde_json::to_value(&snapshot).unwrap().get("playability").is_none());
         snapshot.canonical_channel_id = Some("UCabcdefghijklmnopqrstuv".into());
         let encoded = serde_json::to_value(&snapshot).unwrap();
         assert_eq!(encoded["canonicalChannelId"], "UCabcdefghijklmnopqrstuv");

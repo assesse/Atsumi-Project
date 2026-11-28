@@ -7,9 +7,10 @@ type Section = 'queued' | 'active' | 'settled';
 const sectionOf = (job: MediaJob): Section => job.state === 'queued' ? 'queued' : mediaJobActive(job) ? 'active' : 'settled';
 
 /** Reuse presentation only; media jobs never become Hitomi queue records. */
-export function PlatformMediaJobs({ jobs, privacyMode, stale, busy, onCancel, onRetry }: {
+export function PlatformMediaJobs({ jobs, privacyMode, stale, busy, onCancel, onRetry, onArchive }: {
   jobs: MediaJob[]; privacyMode: boolean; stale: boolean; busy: boolean;
   onCancel(job: MediaJob): void; onRetry(job: MediaJob): void;
+  onArchive?(job: MediaJob): void;
 }) {
   const [section, setSection] = useState<Section>('active');
   const waiting = jobs.filter(job => sectionOf(job) === 'queued').length;
@@ -52,7 +53,7 @@ export function PlatformMediaJobs({ jobs, privacyMode, stale, busy, onCancel, on
           {job.state === 'downloading' && job.receivedBytes > 0 ? <small>{(job.receivedBytes / 1e6).toFixed(1)} MB{job.totalBytes && job.totalBytes > 0 ? ` / ${(job.totalBytes / 1e6).toFixed(1)} MB` : ''} 다운로드</small> : null}
           {job.error && !privacyMode ? <small className="platform-media-error">{job.error}</small> : null}
         </div>
-        <div className="platform-media-job-state">{mediaJobActive(job) ? <button type="button" disabled={busy || stale} onClick={() => onCancel(job)}>취소</button> : ['failed', 'interrupted', 'cancelled'].includes(job.state) ? <button type="button" disabled={busy || stale} onClick={() => onRetry(job)}>{job.reference.kind === 'live' ? '병합 재시도' : '다시 시도'}</button> : <span className="platform-media-job-action-space" aria-hidden="true" />}<span>{job.state === 'completed' ? capturePresentation(job.library)?.label ?? mediaStateLabel[job.state] : mediaStateLabel[job.state]}</span></div>
+        <div className="platform-media-job-state">{onArchive && job.reference.provider === 'soop' && job.reference.kind === 'live' && job.state !== 'deleted' ? <button type="button" disabled={busy || stale || privacyMode} onClick={() => onArchive(job)}>YouTube 보관</button> : null}{mediaJobActive(job) ? <button type="button" disabled={busy || stale} onClick={() => onCancel(job)}>취소</button> : ['failed', 'interrupted', 'cancelled'].includes(job.state) ? <button type="button" disabled={busy || stale} onClick={() => onRetry(job)}>{job.reference.kind === 'live' ? '병합 재시도' : '다시 시도'}</button> : <span className="platform-media-job-action-space" aria-hidden="true" />}<span>{job.state === 'completed' ? capturePresentation(job.library)?.label ?? mediaStateLabel[job.state] : mediaStateLabel[job.state]}</span></div>
       </div>)}
       {!jobs.some(job => sectionOf(job) === section) ? <p className="platform-media-work-empty">{section === 'queued' ? '대기 중인 작업이 없습니다.' : section === 'active' ? '진행 중인 작업이 없습니다.' : '완료된 작업이 없습니다.'}</p> : null}
     </div>

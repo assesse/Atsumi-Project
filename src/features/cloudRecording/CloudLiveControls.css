@@ -1,0 +1,20 @@
+.cloud-live-controls { margin:14px 0;border:1px solid var(--border,#39343f);border-radius:8px; }
+.cloud-live-controls>summary { padding:12px 14px;font-size:14px;font-weight:600;cursor:pointer; }
+.cloud-live-body { display:grid;gap:12px;padding:0 14px 14px; }
+.cloud-live-body label { display:grid;grid-template-columns:100px minmax(0,1fr);align-items:center;gap:10px;font-size:13px; }
+.cloud-live-body input,.cloud-live-body select { min-width:0;width:100%;box-sizing:border-box;padding:8px;border:1px solid var(--border,#49424f);border-radius:7px;background:var(--surface,#29252f);color:var(--text-primary,#eeeaf2);font:inherit; }
+.cloud-live-body button { padding:7px 12px;border:1px solid var(--border,#49424f);border-radius:7px;background:var(--surface,#29252f);color:var(--text-primary,#eeeaf2);font:inherit;cursor:pointer; }
+.cloud-live-body button:disabled,.cloud-live-body input:disabled,.cloud-live-body select:disabled { opacity:.45;cursor:default; }
+.cloud-live-account { display:grid;gap:10px;font-size:13px; }
+.cloud-live-account>div { display:flex;gap:8px;flex-wrap:wrap; }
+.cloud-live-caption { margin:0;color:var(--text-secondary,#aaa5b3);font-size:12px; }
+.cloud-live-start { justify-self:end; }
+.cloud-live-body p[role=alert] { margin:0;font-size:13px;color:#edb1b7; }
+.cloud-live-operations { display:grid;gap:10px;list-style:none;padding:0;margin:0;border-top:1px solid var(--border,#39343f); }
+.cloud-live-operations li { display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding-top:12px; }
+.cloud-live-operations li>div { display:grid;gap:4px;min-width:0; }
+.cloud-live-operations strong { font-size:13px;overflow-wrap:anywhere; }
+.cloud-live-operations span { font-size:12px;color:var(--text-secondary,#aaa5b3); }
+.cloud-live-operations p { flex-basis:100%; }
+.cloud-live-operations .cloud-live-record-warning { color:#e6c396; }
+@media(max-width:600px) { .cloud-live-body label { grid-template-columns:1fr;gap:5px; } }

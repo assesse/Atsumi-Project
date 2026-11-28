@@ -5,7 +5,7 @@ import type { BackendClient } from "../api/backend";
 import type { DetailOriginalPrepareRequest } from "../api/contracts";
 import type { Gallery } from "../core/types";
 import { mockGalleries } from "../data/mockGalleries";
-import { ThumbnailClient } from "../thumbnail";
+import { ThumbnailClient, sourcePageThumbnailKey } from "../thumbnail";
 import { ProgressivePagePreview } from "./ProgressivePagePreview";
 
 describe("ProgressivePagePreview", () => {
@@ -82,7 +82,7 @@ describe("ProgressivePagePreview", () => {
       expect(media).toHaveAttribute("data-page-orientation", "landscape");
       expect(media).toHaveStyle({ aspectRatio: "1600 / 900" });
       expect(container.querySelector(".page-preview-original")).not.toBeNull();
-      expect(container.querySelector(".page-preview-fallback")).toBeNull();
+      expect(container.querySelector(".page-preview-fallback")).not.toBeNull();
     } finally {
       await act(async () => root.unmount());
       client.dispose();
@@ -126,7 +126,7 @@ describe("ProgressivePagePreview", () => {
     }
   });
 
-  it("disposes a rejected preparation and keeps the source thumbnail fallback", async () => {
+  it("disposes a rejected preparation and keeps the matching thumbnail fallback", async () => {
     const gallery: Gallery = {
       ...mockGalleries[0]!,
       download: { entryId: "completed-entry", state: "completed", progress: 100 },
@@ -154,4 +154,32 @@ describe("ProgressivePagePreview", () => {
       container.remove();
     }
   });
+
+  it("shows an already cached page while the original is still preparing", async () => {
+    const gallery: Gallery = { ...mockGalleries[0]!, download: undefined };
+    const resolve = vi.fn(() => ({ kind: "image" as const, url: "https://images.example.test/page18.webp", width: 600, height: 900 }));
+    const client = new ThumbnailClient({ resolve });
+    const unsubscribe = client.subscribe({ key: sourcePageThumbnailKey(gallery, 18), consumer: "detail", priority: "visible" }, () => undefined);
+    await Promise.resolve();
+    const backend = {
+      detailOriginalPrepare: vi.fn(() => new Promise(() => undefined)),
+      detailOriginalDispose: vi.fn(async () => ({ ok: true, data: true })),
+    } as unknown as BackendClient;
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(async () => root.render(<ProgressivePagePreview gallery={gallery} page={18} client={client} backend={backend} />));
+      expect(container.querySelector(".page-preview-media")).toHaveAttribute("data-original-state", "preparing");
+      expect(container.querySelector(".page-preview-fallback img")).toHaveAttribute("src", "https://images.example.test/page18.webp");
+      expect(resolve).toHaveBeenCalledTimes(1);
+      expect(container.querySelector(".page-preview-original-loading")).toBeNull();
+    } finally {
+      await act(async () => root.unmount());
+      unsubscribe();
+      client.dispose();
+      container.remove();
+    }
+  });
+
 });

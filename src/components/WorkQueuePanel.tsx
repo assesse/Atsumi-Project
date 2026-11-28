@@ -1,10 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { getQueueSelectionRange, queueRangeInWindow } from "../api/workConsole";
+import { backend } from "../api/backend";
+import { QueueAlbumPreview } from "./QueueAlbumPreview";
 import type { QueueQuery, QueueRow, QueueSnapshot } from "../api/workConsole";
 import { runningDownloadStates } from "../state/downloadCancellation";
 import { downloadStatus } from "../state/downloadStatus";
 import { GalleryStatusIcon } from "./GalleryStatusIcon";
+import { DEFAULT_GALLERY_PREVIEW_WIDTH } from "../layout/galleryPreviewPresets";
 import { splitGalleryTitle } from "./galleryCardLayout";
-import type { GalleryId } from "../core/types";
+import type { Gallery, GalleryId } from "../core/types";
 import "./GalleryProcessingBadge.css";
 import "./WorkQueuePanel.css";
 
@@ -96,10 +100,20 @@ export function QueueSummary({ snapshot, scoped = false, error }: { snapshot: Qu
 
 const ROW_HEIGHT = 62;
 type Props = { snapshot: QueueSnapshot | null; query: QueueQuery; error: string | null; onQuery: (query: QueueQuery) => void; onRefresh: () => void;
+  previewWidth?: number;
+  galleries?: ReadonlyMap<GalleryId, Gallery>;
   onCancelEntries: (ids: string[]) => Promise<string>; onOpen: (id: GalleryId, options?: { background?: boolean }) => void };
 
-export function WorkQueuePanel({ snapshot, query, error, onQuery, onRefresh, onCancelEntries, onOpen }: Props) {
-  const [selected, setSelected] = useState(new Map<string, QueueRow>());
+export function WorkQueuePanel({ snapshot, query, error, onQuery, onRefresh, onCancelEntries, onOpen, galleries, previewWidth = DEFAULT_GALLERY_PREVIEW_WIDTH }: Props) {
+  const [selected, setSelected] = useState(new Set<string>());
+  const anchor = useRef<string | null>(null);
+  const selectionIntent = useRef(0);
+  const [rangePending, setRangePending] = useState(false);
+  const [preview, setPreview] = useState<{ id: string; element: HTMLElement } | null>(null);
+  const previewId = useId();
+  const hoverPointer = useRef({ x: -1, y: -1, scrolled: false });
+  const [resolved, setResolved] = useState(new Map<GalleryId, { title: string; artist: string }>());
+  const lookup = useRef(new Map<GalleryId, ReturnType<typeof backend.gallerySummaryGet>>());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const list = useRef<HTMLDivElement>(null);
@@ -107,12 +121,47 @@ export function WorkQueuePanel({ snapshot, query, error, onQuery, onRefresh, onC
   const pageSize = snapshot?.pageSize ?? 100;
   const total = snapshot?.totalRows ?? 0;
   const rows = snapshot?.items.filter((row) => runningDownloadStates.has(row.state)) ?? [];
+  const titleOf = (row: QueueRow) => [row.title, galleries?.get(row.galleryId)?.title, resolved.get(row.galleryId)?.title]
+    .find(title => title?.trim() && title !== "#" + row.galleryId && title !== "앨범 #" + row.galleryId) ?? "";
+  const previewRow = preview && rows.find(row => row.entryId === preview.id);
+  const missingTitleId = previewRow && !titleOf(previewRow) ? previewRow.galleryId : null;
+  useEffect(() => {
+    if (!missingTitleId) return;
+    let current = true;
+    const timer = window.setTimeout(() => {
+      let request = lookup.current.get(missingTitleId);
+      if (!request) {
+        request = backend.gallerySummaryGet(missingTitleId);
+        lookup.current.set(missingTitleId, request);
+        void request.finally(() => lookup.current.delete(missingTitleId)).catch(() => {});
+      }
+      void request.then(result => {
+        if (!current || !result.ok || result.data.id !== missingTitleId || !result.data.title.trim()) return;
+        setResolved(previous => {
+          const next = new Map(previous);
+          if (next.size >= 200) next.delete(next.keys().next().value!);
+          next.set(missingTitleId, { title: result.data.title, artist: result.data.artist });
+          return next;
+        });
+      }).catch(() => {});
+    }, 180);
+    return () => { current = false; window.clearTimeout(timer); };
+  }, [missingTitleId]);
+
+  useEffect(() => {
+    anchor.current = null;
+    setSelected(new Set());
+    setRangePending(false);
+    setPreview(null);
+    return () => { selectionIntent.current++; };
+  }, [query.sequence, query.after]);
+
   useEffect(() => {
     if (!snapshot) return;
     const visible = new Map(snapshot.items.map((row) => [row.entryId, row]));
     setSelected((previous) => {
-      const next = new Map(previous);
-      for (const [id] of previous) {
+      const next = new Set(previous);
+      for (const id of previous) {
         if (visible.has(id) && !runningDownloadStates.has(visible.get(id)!.state)) next.delete(id);
         else if (total === 0 || (offset === 0 && total <= pageSize && !visible.has(id))) next.delete(id);
       }
@@ -125,46 +174,113 @@ export function WorkQueuePanel({ snapshot, query, error, onQuery, onRefresh, onC
     }
   }, [snapshot, total, pageSize, offset, query.offset, onQuery]);
 
+  const selectRow = async (row: QueueRow, keys: { ctrlKey: boolean; metaKey: boolean; shiftKey: boolean }, checkbox = false) => {
+    if (busy) return;
+    const intent = ++selectionIntent.current;
+    const additive = keys.ctrlKey || keys.metaKey;
+    setRangePending(false);
+    setMessage("");
+    if (keys.shiftKey && anchor.current) {
+      let ids = queueRangeInWindow(rows, anchor.current, row.entryId);
+      if (!ids.length) {
+        setRangePending(true);
+        try { ids = await getQueueSelectionRange(query, anchor.current, row.entryId); }
+        catch { if (intent === selectionIntent.current) setMessage("선택 범위를 불러오지 못했습니다."); return; }
+        finally { if (intent === selectionIntent.current) setRangePending(false); }
+      }
+      if (intent !== selectionIntent.current) return;
+      if (ids.length) {
+        setSelected(previous => additive ? new Set([...previous, ...ids]) : new Set(ids));
+        return;
+      }
+      // The old anchor settled while scrolling. Start a new range at the clicked row.
+    }
+    anchor.current = row.entryId;
+    setSelected(previous => {
+      if (!checkbox && !additive) return new Set([row.entryId]);
+      const next = new Set(previous);
+      if (next.has(row.entryId)) next.delete(row.entryId); else next.add(row.entryId);
+      return next;
+    });
+  };
+
+  function previewAtPointer(id: string, event: ReactMouseEvent<HTMLButtonElement>) {
+    const pointer = hoverPointer.current;
+    // Chromium can send mouseenter when a new row scrolls beneath a stationary pointer.
+    if (pointer.scrolled && pointer.x === event.clientX && pointer.y === event.clientY) return;
+    pointer.x = event.clientX;
+    pointer.y = event.clientY;
+    pointer.scrolled = false;
+    if (preview?.id !== id || preview.element !== event.currentTarget) {
+      setPreview({ id, element: event.currentTarget });
+    }
+  }
+
   const cancelSelected = async () => {
-    if (busy || error || !selected.size) return;
-    const ids = [...selected.keys()]; // Never include later selections or arrivals.
+    if (busy || rangePending || error || !selected.size) return;
+    const ids = [...selected]; // Never include later selections or arrivals.
     setBusy(true); setMessage("");
     try {
       await onCancelEntries(ids);
-      setSelected((previous) => { const next = new Map(previous); ids.forEach((id) => next.delete(id)); return next; });
+      setSelected((previous) => { const next = new Set(previous); ids.forEach((id) => next.delete(id)); return next; });
       onRefresh();
     } catch (e) { setMessage(String(e)); }
     finally { setBusy(false); }
   };
 
   return <section className="work-queue-panel" aria-label="대기 큐 관리">
-    <p className="queue-empty">현재 대기·다운로드·검증·재시도 중인 작업입니다. 검토 대기·종료된 작업은 빠집니다.</p>
-    <div className="queue-actions"><button type="button" disabled={!selected.size || busy || Boolean(error)} onClick={() => void cancelSelected()}>
-      {busy ? "취소 중…" : "선택 " + selected.size + "개 취소"}
-    </button></div>
     {message ? <p className="queue-error" role="alert">{message}</p> : null}
     <div ref={list} className="queue-items" role="list" aria-label="남은 대기 큐" aria-busy={!snapshot || busy}
-      onScroll={(event) => {
-        const topRow = Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT);
-        const next = Math.min(Math.max(0, total - pageSize), Math.max(0, Math.floor(topRow / 50) * 50 - 25));
+      onScroll={event => {
+        hoverPointer.current.scrolled = true;
+        setPreview(null);
+        const first = Math.floor(event.currentTarget.scrollTop / ROW_HEIGHT);
+        const half = Math.max(1, Math.floor(pageSize / 2));
+        const next = Math.min(Math.max(0, total - pageSize), Math.max(0, Math.floor(first / half) * half - Math.floor(half / 2)));
         if (next !== (query.offset ?? 0)) onQuery({ offset: next });
       }}>
-      {total > 0 ? <div aria-hidden="true" style={{ height: offset * ROW_HEIGHT }} /> : null}
-      {rows.map((row) => <article className="queue-item" key={row.entryId} role="listitem" style={{ height: ROW_HEIGHT }}>
-        <input type="checkbox" aria-label={row.title + " 선택"} disabled={busy} checked={selected.has(row.entryId)} onChange={(event) => {
-          const checked = event.target.checked;
-          setSelected((previous) => { const next = new Map(previous); if (checked) next.set(row.entryId, row); else next.delete(row.entryId); return next; });
-        }} />
-        <button type="button" className="queue-item-title" title={row.title} onClick={(event) => onOpen(row.galleryId, { background: event.ctrlKey || event.metaKey })}>
-          <strong>{splitGalleryTitle(row.title).primary}</strong><small>{row.artist} · #{row.galleryId}</small>
-        </button>
-        <span className="queue-item-status" title={queueRowStatus(row) + " · " + Math.floor(row.progress) + "%"}>
-          <span className={"gallery-processing-badge tone-" + downloadStatus[row.state].tone} role="img" aria-label={queueRowStatus(row)}><GalleryStatusIcon kind={row.postprocessing === "waiting" ? "queued" : row.state} /></span>
-          {row.postprocessing ? <small>{queueRowStatus(row)}</small> : null}
-        </span>
-      </article>)}
-      {total > 0 ? <div aria-hidden="true" style={{ height: Math.max(0, total - offset - rows.length) * ROW_HEIGHT }} /> : null}
+      {offset > 0 && <div aria-hidden="true" style={{ height: offset * ROW_HEIGHT }} />}
+      {rows.map((row, index) => {
+        const fullTitle = titleOf(row);
+        const title = fullTitle ? splitGalleryTitle(fullTitle).primary : "제목 미확인";
+        const artist = row.artist || galleries?.get(row.galleryId)?.artist || resolved.get(row.galleryId)?.artist;
+        const status = queueRowStatus(row);
+        return <article className="queue-item" key={row.entryId} role="listitem"
+          aria-posinset={offset + index + 1} aria-setsize={total} data-selected={selected.has(row.entryId)}
+          style={{ height: ROW_HEIGHT }} onClick={event => void selectRow(row, event)}>
+          <input type="checkbox" aria-label={(fullTitle || "#" + row.galleryId) + " 선택"} checked={selected.has(row.entryId)} disabled={busy}
+            onClick={event => event.stopPropagation()} onChange={event => {
+              const keys = event.nativeEvent instanceof MouseEvent ? event.nativeEvent : { ctrlKey: false, metaKey: false, shiftKey: false };
+              void selectRow(row, keys, true);
+            }} />
+          <button type="button" className="queue-item-title" aria-describedby={preview?.id === row.entryId ? previewId : undefined}
+            onMouseEnter={event => previewAtPointer(row.entryId, event)} onMouseMove={event => previewAtPointer(row.entryId, event)}
+            onMouseLeave={() => setPreview(null)}
+            onFocus={event => setPreview({ id: row.entryId, element: event.currentTarget })} onBlur={() => setPreview(null)}
+            onClick={event => {
+              event.stopPropagation();
+              if (event.shiftKey || event.ctrlKey || event.metaKey) void selectRow(row, event);
+              else { setPreview(null); onOpen(row.galleryId); }
+            }}>
+            <strong>{title}</strong>
+            <small>{artist && <><span className="queue-item-artist">{artist}</span><span aria-hidden="true">·</span></>}
+              <span className="queue-item-number">#{row.galleryId}</span></small>
+          </button>
+          <span className="queue-item-status" title={status + " · " + Math.floor(row.progress) + "%"}>
+            <span role="img" aria-label={status} className={"gallery-processing-badge tone-" + downloadStatus[row.state].tone}>
+              <GalleryStatusIcon kind={row.postprocessing === "waiting" ? "queued" : row.state} />
+            </span>
+            {row.postprocessing && <small>{status}</small>}
+          </span>
+        </article>;
+      })}
+      {total > offset + rows.length && <div aria-hidden="true" style={{ height: (total - offset - rows.length) * ROW_HEIGHT }} />}
       {snapshot && !total ? <p className="queue-empty">남은 작업이 없습니다.</p> : null}
     </div>
+    {selected.size > 0 && <div className="queue-actions"><button type="button" disabled={rangePending || busy || Boolean(error)} onClick={() => void cancelSelected()}>
+      {busy ? "취소 중…" : "선택 " + selected.size + "개 취소"}
+    </button></div>}
+    {preview && previewRow ? <QueueAlbumPreview key={preview.id} id={previewId} element={preview.element}
+      width={previewWidth} row={previewRow} title={titleOf(previewRow)} gallery={galleries?.get(previewRow.galleryId)} /> : null}
   </section>;
 }

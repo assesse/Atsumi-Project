@@ -216,6 +216,72 @@ pub(super) fn owned_file(job: &MediaJob, item: &LibraryItem) -> Result<PathBuf, 
     Ok(path)
 }
 
+/// A read-only sidecar guard. Parent directories are pinned by its owning
+/// session before opening this file; this never substitutes for owned_file.
+pub(super) struct SidecarPin {
+    pub(super) file: File,
+    path: PathBuf,
+    identity: SidecarIdentity,
+}
+#[derive(Clone, PartialEq, Eq)]
+struct SidecarIdentity { length: u64, modified: u128, file_id: (u64, u64) }
+fn sidecar_identity(file: &File) -> Result<SidecarIdentity, String> {
+    let metadata = file.metadata().map_err(|_| "저장된 기록을 확인하지 못했습니다.")?;
+    #[cfg(windows)]
+    let file_id = {
+        use std::os::windows::io::AsRawHandle;
+        use windows::Win32::{Foundation::HANDLE, Storage::FileSystem::{GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION}};
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        unsafe { GetFileInformationByHandle(HANDLE(file.as_raw_handle()), &mut info) }
+            .map_err(|_| "저장된 기록을 확인하지 못했습니다.")?;
+        if info.dwFileAttributes & 0x400 != 0 || info.nNumberOfLinks != 1 || info.dwFileAttributes & 0x10 != 0 {
+            return Err("연결된 기록 파일은 사용할 수 없습니다.".into());
+        }
+        (info.dwVolumeSerialNumber as u64, ((info.nFileIndexHigh as u64) << 32) | info.nFileIndexLow as u64)
+    };
+    #[cfg(unix)]
+    let file_id = {
+        use std::os::unix::fs::MetadataExt;
+        if metadata.nlink() != 1 { return Err("연결된 기록 파일은 사용할 수 없습니다.".into()); }
+        (metadata.dev(), metadata.ino())
+    };
+    #[cfg(not(any(windows, unix)))]
+    let file_id = (0, 0);
+    if !metadata.is_file() { return Err("일반 기록 파일이 아닙니다.".into()); }
+    Ok(SidecarIdentity { length: metadata.len(), file_id,
+        modified: metadata.modified().map_err(|_| "기록 시각을 확인하지 못했습니다.")?
+            .duration_since(std::time::UNIX_EPOCH).map_err(|_| "기록 시각이 올바르지 않습니다.")?.as_nanos() })
+}
+impl SidecarPin {
+    pub(super) fn open(path: &Path, limit: u64) -> Result<Option<Self>, String> {
+        safe_path(path)?;
+        let mut options = OpenOptions::new(); options.read(true);
+        #[cfg(windows)] {
+            use std::os::windows::fs::OpenOptionsExt;
+            options.share_mode(1).custom_flags(0x00200000);
+        }
+        let file = match options.open(path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err("저장된 기록을 잠그지 못했습니다.".into()),
+        };
+        let identity = sidecar_identity(&file)?;
+        if identity.length > limit { return Err("저장된 기록이 표시 한도를 넘었습니다.".into()); }
+        Ok(Some(Self { file, path: path.into(), identity }))
+    }
+    pub(super) fn valid(&self) -> Result<(), String> {
+        if sidecar_identity(&self.file)? != self.identity { return Err("저장된 기록이 변경됐습니다.".into()); }
+        // Denied delete/write sharing keeps a Windows path bound to this file.
+        // Other targets also compare the currently named inode on every use.
+        #[cfg(not(windows))] {
+            let current = Self::open(&self.path, self.identity.length)?.ok_or("저장된 기록이 이동됐습니다.")?;
+            if current.identity != self.identity { return Err("저장된 기록이 교체됐습니다.".into()); }
+        }
+        Ok(())
+    }
+    pub(super) fn length(&self) -> u64 { self.identity.length }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,6 +300,7 @@ mod tests {
             title: String::new(),
             channel_name: String::new(),
             created_at: 0,
+            started_at_ms: None,
             received_bytes: 0,
             total_bytes: None,
             error: None,

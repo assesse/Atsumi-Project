@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [switch]$CheckOnly
 )
@@ -67,7 +67,8 @@ if ($CheckOnly) {
   exit 0
 }
 
-$runningApp = Get-Process -Name "atsumi" -ErrorAction SilentlyContinue
+$browserProcessIds = @(Get-CimInstance Win32_Process -Filter "Name = 'atsumi.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match '(?:^|\s)--atsumi-browser(?:\s|$)' } | ForEach-Object ProcessId)
+$runningApp = @(Get-Process -Name "atsumi" -ErrorAction SilentlyContinue | Where-Object { $_.Id -notin $browserProcessIds })
 if ($runningApp) {
   $expectedDebugExecutable = Join-Path $projectRoot "src-tauri\target\debug\atsumi.exe"
   $differentBuild = @($runningApp | Where-Object {

@@ -40,6 +40,11 @@ pub(super) fn load(session: &Session, connection: &mut Connection) -> Result<(),
         let raw = serde_json::to_value(&sample).map_err(|_| storage())?;
         let mapped = observed_media_time(&transaction, &raw);
         let time = mapped.unwrap_or(sample.offset_seconds);
+        if matches!(&session.source, ReplaySource::RemoteChat(_))
+            && ((observed_clock(&raw).is_some() && mapped.is_none()) || !session.contains_time(time))
+        {
+            continue;
+        }
         let hold = sample.hold_seconds(mapped.is_some());
         if !time.is_finite() || time < 0.0 || time > session.duration + MAX_HOLD_SECONDS {
             malformed += 1;

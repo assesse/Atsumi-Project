@@ -159,6 +159,7 @@ mod tests {
             title: "synthetic".into(),
             channel_name: "fixture".into(),
             created_at: 0,
+            started_at_ms: None,
             received_bytes: 3,
             total_bytes: None,
             error: None,

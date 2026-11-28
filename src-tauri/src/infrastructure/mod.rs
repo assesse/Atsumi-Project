@@ -5,6 +5,7 @@ mod download_tuning_repository;
 mod excluded_artifacts;
 mod fixture_search;
 mod gallery_summary_cache;
+pub(crate) use gallery_summary_cache::decode_persisted_summary;
 mod hitomi_live;
 mod internal_duplicate_repository;
 mod migrations;

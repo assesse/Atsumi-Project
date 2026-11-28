@@ -148,7 +148,7 @@ impl OfficialReceiverLease {
         let job = MediaJob {
             broadcast_id: Some(self.receiver.broadcast_id.clone()), job_id: uuid::Uuid::new_v4().to_string(), request_id,
             reference: self.receiver.reference.clone(), revision: 1, state: "recording".into(),
-            title: clean(Some(&title), 500), channel_name: clean(Some(&channel_name), 200), created_at: now(),
+            title: clean(Some(&title), 500), channel_name: clean(Some(&channel_name), 200), created_at: now(), started_at_ms: None,
             received_bytes: 0, total_bytes: None, error: None, library: None, download_root: self.receiver.download_root.clone(),
         };
         let identity = spool::SpoolIdentity {

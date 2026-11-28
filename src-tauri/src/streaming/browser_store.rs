@@ -29,8 +29,12 @@ pub use archive::ArchiveStatus;
 pub(crate) mod ssd;
 #[path = "browser_startup_index.rs"]
 mod startup_index;
+#[path = "browser_cloud_automatic.rs"]
+mod cloud_automatic;
 #[path = "browser_work_progress.rs"]
 pub mod work_progress;
+#[path = "browser_chat_source.rs"]
+pub(crate) mod chat_source;
 
 const MAX_CHUNK: usize = 1024 * 1024;
 const MAX_SEGMENT: u64 = 64 * 1024 * 1024;
@@ -230,6 +234,17 @@ struct CatalogEntry {
     deletion_pending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     media_removed_at: Option<u64>,
+}
+
+impl BrowserRecording {
+    /// Legacy captures archive after merging; rolling captures merge after archiving.
+    fn notify_if_published(&self) {
+        if self.merge.as_ref().is_some_and(|m| m.status == BrowserMergeStatus::Complete)
+            && self.archive.as_ref().is_none_or(|a| a.status == archive::ArchiveStatus::Complete)
+            && self.media_removed_at.is_none() && !self.deletion_pending {
+            crate::desktop_notifications::recording_saved(self.status != BrowserRecordingStatus::Stopped || self.partial.is_some());
+        }
+    }
 }
 
 impl CatalogEntry {
@@ -475,6 +490,7 @@ impl BrowserCaptureStore {
         }
         let base = checked_directory(download_root)?;
         ensure_space(&base, 0)?;
+        if archive_root.is_some() { ssd::check_staging_space(&state, &base, progressive)?; }
         let chzzk = child_directory(&base, "CHZZK")?;
         let parent = child_directory(&chzzk, "BrowserCapture")?;
         let id = uuid::Uuid::new_v4().simple().to_string();
@@ -497,7 +513,6 @@ impl BrowserCaptureStore {
         if let Some(archive) = &mut recording.archive {
             archive.rolling = progressive;
         }
-        ssd::ensure_headroom(&state, &recording)?;
         recording.progressive = progressive.then(ProgressiveSummary::default);
         let journal = OpenOptions::new()
             .read(true)
@@ -1107,6 +1122,26 @@ impl BrowserCaptureStore {
     }
 
     pub(crate) fn replay_source(&self, id: &str) -> Result<BrowserReplaySource, StreamError> {
+        self.replay_source_for(id, false, false, None)
+    }
+
+    /// Uploads hold the existing replay storage lease but may never bind to a
+    /// still-recording progressive prefix as if it were the complete recording.
+    pub(crate) fn upload_source(&self, id: &str) -> Result<BrowserReplaySource, StreamError> {
+        self.replay_source_for(id, true, false, None)
+    }
+
+    /// A queued part keeps its original identity even if final merging completes
+    /// later. Upload retention preserves these verified parts across restarts.
+    pub(crate) fn upload_part_source(&self, id: &str) -> Result<BrowserReplaySource, StreamError> {
+        self.replay_source_for(id, true, true, None)
+    }
+    pub(crate) fn upload_source_cancellable(&self, id: &str, prefer_parts: bool, cancel: &std::sync::atomic::AtomicBool) -> Result<BrowserReplaySource,StreamError> {
+        self.replay_source_for(id,true,prefer_parts,Some(cancel))
+    }
+
+    fn replay_source_for(&self, id: &str, require_stopped: bool, prefer_parts: bool, cancel: Option<&std::sync::atomic::AtomicBool>) -> Result<BrowserReplaySource, StreamError> {
+        if cancel.is_some_and(|v|v.load(std::sync::atomic::Ordering::Acquire)) { return Err(inactive()); }
         validate_id(id)?;
         self.ensure_recovered(id)?;
         let mut state = self.lock()?;
@@ -1117,13 +1152,6 @@ impl BrowserCaptureStore {
                 true,
             ));
         }
-        let storage_lease = Some(
-            state
-                .replay_leases
-                .entry(id.to_owned())
-                .or_default()
-                .clone(),
-        );
         let recording = state
             .recordings
             .iter()
@@ -1131,6 +1159,19 @@ impl BrowserCaptureStore {
             .cloned()
             .ok_or_else(invalid)?;
         let active = state.active.contains_key(id);
+        if require_stopped && (active || recording.status == BrowserRecordingStatus::Recording) {
+            return Err(error("BROWSER_UPLOAD_ACTIVE", "녹화가 끝난 뒤 업로드할 수 있습니다.", false));
+        }
+        if require_stopped && state.merge_job.as_ref().is_some_and(|(running, _)| running == id) {
+            return Err(error("BROWSER_UPLOAD_BUSY", "녹화 파일 처리가 끝난 뒤 업로드해 주세요.", true));
+        }
+        let storage_lease = Some(
+            state
+                .replay_leases
+                .entry(id.to_owned())
+                .or_default()
+                .clone(),
+        );
         // The lease fences deletion/publication while slower archive opens and
         // timeline reads happen without blocking capture append acknowledgments.
         drop(state);
@@ -1138,12 +1179,12 @@ impl BrowserCaptureStore {
             .progressive
             .as_ref()
             .is_some_and(|p| p.part_count > 0)
-            && recording
+            && (prefer_parts || recording
                 .merge
                 .as_ref()
-                .is_none_or(|m| m.status != BrowserMergeStatus::Complete)
+                .is_none_or(|m| m.status != BrowserMergeStatus::Complete))
         {
-            let mut source = parts::replay_source(&recording)?;
+            let mut source = parts::replay_source_cancellable(&recording,cancel)?;
             source.storage_lease = storage_lease;
             return Ok(source);
         }
@@ -1253,6 +1294,7 @@ impl BrowserCaptureStore {
             state.merge_job = None;
             return Err(error);
         }
+        recording.notify_if_published();
         state.merge_job = None;
         Ok(())
     }
@@ -2319,6 +2361,44 @@ mod tests {
             duration_seconds: 15.0,
             cleanup: None,
         }
+    }
+
+    #[test]
+    fn cloud_upload_rejects_capture_before_opening_or_registering_a_lease() {
+        let (_directory, store, recording) = fixture();
+        let result = store.upload_source(&recording.id);
+        assert!(matches!(result, Err(ref cause) if cause.code == "BROWSER_UPLOAD_ACTIVE"));
+        assert!(!store.lock().unwrap().replay_leases.contains_key(&recording.id));
+        assert_eq!(store.snapshot().unwrap()[0].status, BrowserRecordingStatus::Recording);
+    }
+
+    #[test]
+    fn retained_upload_parts_keep_identity_after_final_merge_and_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = BrowserCaptureStore::new(directory.path()).unwrap();
+        let recording = store.begin_progressive(directory.path(), CHANNEL, "retained upload", "video/webm").unwrap();
+        for first in [0, 3] {
+            for index in first..first + 3 {
+                store.append(&recording.id, index, 0, WEBM).unwrap();
+                store.finish_segment(&recording.id, index, 60.0).unwrap();
+            }
+            let part = store.take_part_job().unwrap().unwrap();
+            parts::tests::publish_fixture(&store, &part);
+        }
+        store.finish(&recording.id, false, None).unwrap();
+        let before = store.upload_part_source(&recording.id).unwrap();
+        let identities: Vec<_> = before.parts.iter().map(|(_, part)| (part.file.clone(), part.duration, part.offset)).collect();
+        assert_eq!(identities.len(), 2);
+        store.preserve_recording_sources(&recording.id).unwrap();
+        drop(before);
+        let job = store.take_merge_job().unwrap().unwrap();
+        store.complete_merge(&job, fake_merged(&job)).unwrap();
+        assert!(store.replay_source(&recording.id).unwrap().parts.is_empty());
+        drop(store);
+        let reopened = BrowserCaptureStore::new(directory.path()).unwrap();
+        let after = reopened.upload_part_source(&recording.id).unwrap();
+        assert_eq!(after.parts.iter().map(|(_, part)| (part.file.clone(), part.duration, part.offset)).collect::<Vec<_>>(), identities);
+        assert!(after.recording.preserve_sources);
     }
 
     #[test]

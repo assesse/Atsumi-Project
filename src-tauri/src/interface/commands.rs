@@ -21,7 +21,7 @@ use crate::{
         ReconcileReport,
     },
     domain::{
-        AutoFindExclusionResult, AutoFindRun, AutoFindSnapshot, DownloadChangedEvent,
+        AutoFindCandidateChanges, AutoFindExclusionResult, AutoFindRun, AutoFindSnapshot, DownloadChangedEvent,
         DownloadEntry, DownloadLibraryPage, DownloadListRequest,
         DownloadOverlapAutomationHistoryItem, DownloadOverlapAutomationHistoryListRequest,
         DownloadOverlapAutomationHistoryPage, DownloadOverlapDecisionRequest,
@@ -71,6 +71,7 @@ struct ManagedWorkGateInner {
     // Keep admission closed separately from whether a quit is being dispatched.
     maintenance_stopped: AtomicBool,
     platform_initializers: AtomicUsize,
+    relay_owners: Mutex<HashMap<uuid::Uuid, uuid::Uuid>>,
 }
 
 #[derive(Default)]
@@ -87,12 +88,56 @@ impl Default for ManagedWorkGate {
                 quitting: AtomicBool::new(false),
                 maintenance_stopped: AtomicBool::new(false),
                 platform_initializers: AtomicUsize::new(0),
+                relay_owners: Mutex::new(HashMap::new()),
             }),
         }
     }
 }
 
 impl ManagedWorkGate {
+    fn begin_relay_work<T>(
+        &self,
+        receiver_id: &str,
+        run_id: &str,
+        operation: impl FnOnce(RelayWorkRegistration) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let receiver = uuid::Uuid::parse_str(receiver_id)
+            .ok().filter(|id| !id.is_nil()).ok_or("방송 수신기 식별자가 올바르지 않습니다.")?;
+        let run = uuid::Uuid::parse_str(run_id)
+            .ok().filter(|id| !id.is_nil()).ok_or("전송 작업 식별자가 올바르지 않습니다.")?;
+        // Arm the existing native receiver while the same admission lock used by
+        // quit/update remains held. The callback must not reenter this gate.
+        let control = self.inner.control.lock().map_err(|_| "작업 상태를 확인하지 못했습니다.")?;
+        if self.admission_closed() || control.updating {
+            return Err("종료·업데이트 중에는 전송 작업을 시작할 수 없습니다.".into());
+        }
+        {
+            let mut owners = self.inner.relay_owners.lock()
+                .map_err(|_| "전송 작업 상태를 확인하지 못했습니다.")?;
+            if owners.contains_key(&run) || owners.values().any(|id| *id == receiver) {
+                return Err("이 방송의 이전 전송 작업이 아직 종료되지 않았습니다.".into());
+            }
+            owners.insert(run, receiver);
+        }
+        operation(RelayWorkRegistration {
+            gate: self.clone(), run, receiver, started: false, released: false,
+        })
+    }
+
+    fn relay_snapshot(&self) -> Result<Vec<(uuid::Uuid, uuid::Uuid)>, ApplicationError> {
+        let owners = self.inner.relay_owners.lock().map_err(|_| {
+            crate::application::RepositoryError::Other("relay work registry was poisoned".into())
+        })?;
+        let mut snapshot: Vec<_> = owners.iter().map(|(run, receiver)| (*run, *receiver)).collect();
+        snapshot.sort_unstable();
+        Ok(snapshot)
+    }
+
+    fn relay_pending(&self) -> bool {
+        // Unknown state must never permit exit through an active native worker.
+        self.inner.relay_owners.lock().map_or(true, |owners| !owners.is_empty())
+    }
+
     fn begin_platform_initialization(&self) -> Result<PlatformInitialization, String> {
         let control = self.inner.control.lock().map_err(|_| "작업 상태를 확인하지 못했습니다.")?;
         if self.admission_closed() || control.updating {
@@ -186,6 +231,43 @@ impl ManagedWorkGate {
         control.accepted_quit = Some(accepted.clone());
         self.inner.quitting.store(true, Ordering::Release);
         (accepted, true)
+    }
+}
+
+/// Kept beside the native relay manager's JoinHandle until that handle joins.
+/// Dropping a started owner is not proof that its work has stopped.
+pub(crate) struct RelayWorkRegistration {
+    gate: ManagedWorkGate,
+    run: uuid::Uuid,
+    receiver: uuid::Uuid,
+    started: bool,
+    released: bool,
+}
+
+impl RelayWorkRegistration {
+    pub(crate) fn mark_started(&mut self) {
+        self.started = true;
+    }
+
+    pub(crate) fn release_after_join(mut self) {
+        self.remove();
+    }
+
+    fn remove(&mut self) {
+        let mut owners = self.gate.inner.relay_owners.lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if owners.get(&self.run) == Some(&self.receiver) {
+            owners.remove(&self.run);
+        }
+        self.released = true;
+    }
+}
+
+impl Drop for RelayWorkRegistration {
+    fn drop(&mut self) {
+        if !self.started && !self.released {
+            self.remove();
+        }
     }
 }
 
@@ -363,6 +445,22 @@ fn display_work_counts(ids: &[String]) -> (AppActiveDownloadsSnapshot, Option<Ap
     )
 }
 
+fn display_work_counts_with_relays(
+    ids: &[String],
+    relays: &[(uuid::Uuid, uuid::Uuid)],
+) -> (AppActiveDownloadsSnapshot, Option<AppActiveLiveReceiversSnapshot>) {
+    let relay_ids: HashSet<_> = relays.iter().map(|(run, _)| format!("relay:{run}")).collect();
+    let mut display_ids: Vec<_> = ids.iter().filter(|id| !relay_ids.contains(*id)).cloned().collect();
+    for (_, receiver) in relays {
+        let official_id = format!("platform-official:{receiver}");
+        let live_id = format!("platform-live:{receiver}");
+        if !display_ids.contains(&official_id) && !display_ids.contains(&live_id) {
+            display_ids.push(official_id);
+        }
+    }
+    display_work_counts(&display_ids)
+}
+
 fn active_work_status_error(source_code: &str) -> ApiError {
     ApiError {
         code: "APP_ACTIVE_WORK_STATUS_UNAVAILABLE".into(),
@@ -429,6 +527,7 @@ pub struct AppState {
 
     browser: crate::streaming::startup::DeferredBrowser,
     platform_media: Arc<OnceLock<Result<crate::platform_media::PlatformMediaService, String>>>,
+    cloud_recording: Arc<OnceLock<Result<Arc<crate::cloud_recording::CloudService>, String>>>,
     soop_auto_recorder: Arc<crate::soop::auto_record::SoopAutoRecorder>,
     youtube_auto_recorder: Arc<crate::youtube::auto_record::YouTubeAutoRecorder>,
     download_root_picker: Arc<dyn DownloadRootPicker>,
@@ -553,6 +652,7 @@ impl AppState {
 
             browser: crate::streaming::startup::DeferredBrowser::default(),
             platform_media: Arc::new(OnceLock::new()),
+            cloud_recording: Arc::new(OnceLock::new()),
             soop_auto_recorder: Arc::new(crate::soop::auto_record::SoopAutoRecorder::new(data_dir.clone())),
             youtube_auto_recorder: Arc::new(crate::youtube::auto_record::YouTubeAutoRecorder::new(data_dir.clone())),
             download_root_picker,
@@ -701,6 +801,80 @@ impl AppState {
 
     pub(crate) fn existing_platform_media(&self) -> Option<crate::platform_media::PlatformMediaService> {
         self.platform_media.get().and_then(|value| value.as_ref().ok()).cloned()
+    }
+
+    /// Admission reserves only bounded registration. Initialization and all disk
+    /// work occur on the calling blocking worker, outside the control mutex.
+    pub(crate) fn cloud_recording(&self, app: &AppHandle) -> Result<Arc<crate::cloud_recording::CloudService>, String> {
+        if self.is_quitting() { return Err("앱을 종료하는 중입니다.".into()); }
+        if let Some(service) = self.cloud_recording.get() { return service.clone(); }
+        let _initialization = self.managed_work.begin_platform_initialization()?;
+        let result = self.cloud_recording.get_or_init(|| {
+            let source_app = app.clone();
+            let plan_app = app.clone();
+            let candidate_app = app.clone();
+            // OAuth/config initialization does not start unrelated media jobs.
+            // Native catalogs are opened lazily for an actual selected source.
+            let service = crate::cloud_recording::CloudService::new_with_planner(
+                self.data_dir.clone(),
+                Arc::new(move |source, context| {
+                    let state = source_app.try_state::<AppState>().ok_or("앱을 준비 중입니다.")?;
+                    let platform = state.platform_media(&source_app)?;
+                    crate::cloud_recording::source::resolve(&state.deferred_browser(), &platform, &state.data_dir, source, context)
+                }),
+                Arc::new(crate::cloud_recording::commands::open_authorization_browser),
+                Arc::new(move |source, context| {
+                    let state = plan_app.try_state::<AppState>().ok_or("앱을 준비 중입니다.")?;
+                    let platform = state.platform_media(&plan_app)?;
+                    crate::cloud_recording::source::prepare_plan(&state.deferred_browser(), &platform, &state.data_dir, source, context)
+                }),
+            ).map_err(|error| error.to_string())?;
+            let started = service.start_automatic(Arc::new(move |rules| {
+                let state = candidate_app.try_state::<AppState>().ok_or("앱을 준비 중입니다.")?;
+                if state.is_quitting() { return Err("앱을 종료하는 중입니다.".into()); }
+                let mut candidates = Vec::new();
+                if rules.iter().any(|rule| rule.target.provider() == "soop") {
+                    candidates.extend(state.platform_media(&candidate_app)?.automatic_upload_candidates(rules)?);
+                }
+                if rules.iter().any(|rule| rule.target.provider() == "chzzk") {
+                    let browser = state.deferred_browser().get().map_err(|error| error.message)?;
+                    let store = browser.capture_store().lock().map_err(|_| "녹화 상태를 확인하지 못했습니다.")?.clone();
+                    candidates.extend(store.automatic_upload_candidates(rules).map_err(|error| error.message)?);
+                }
+                Ok(candidates)
+            }));
+            if let Err(error) = started {
+                let _ = service.shutdown_and_wait();
+                return Err(error.to_string());
+            }
+            Ok(service)
+        }).clone();
+        if self.is_quitting() {
+            if let Ok(service) = &result { let _ = service.shutdown_and_wait(); }
+            return Err("앱을 종료하는 중입니다.".into());
+        }
+        result
+    }
+
+    pub(crate) fn existing_cloud_recording(&self) -> Option<Arc<crate::cloud_recording::CloudService>> {
+        self.cloud_recording.get().and_then(|value| value.as_ref().ok()).cloned()
+    }
+    pub(crate) fn cloud_recording_data_dir(&self) -> &std::path::Path { &self.data_dir }
+
+    /// An operation permit survives slow storage/API admission work without
+    /// retaining the quit mutex. The normal drain waits for admitted operations.
+    pub(crate) fn begin_cloud_work(&self) -> Result<impl Send, String> {
+        self.managed_work.begin_platform_initialization()
+    }
+
+    /// Native receiver owners only; this does not authorize a page to start work.
+    pub(crate) fn begin_relay_work<T>(
+        &self,
+        receiver_id: &str,
+        run_id: &str,
+        operation: impl FnOnce(RelayWorkRegistration) -> Result<T, String>,
+    ) -> Result<T, String> {
+        self.managed_work.begin_relay_work(receiver_id, run_id, operation)
     }
 
     pub(crate) fn soop_auto_recorder(&self) -> Arc<crate::soop::auto_record::SoopAutoRecorder> {
@@ -880,14 +1054,19 @@ impl AppState {
             let skip = idle_platform_id.map(|id| format!("platform-media:{id}"));
             active_download_ids.extend(service.active_ids().into_iter().filter(|id| Some(id) != skip.as_ref()));
         }
+        if let Some(service) = self.existing_cloud_recording() {
+            active_download_ids.extend(service.active_ids().into_iter().map(|id| format!("cloud-recording:{id}")));
+        }
         if self.managed_work.platform_initializing() {
             active_download_ids.push("platform-media:initializing".into());
         }
         active_download_ids.extend(self.soop_auto_recorder.active_ids());
         active_download_ids.extend(self.youtube_auto_recorder.active_ids());
+        let relays = self.managed_work.relay_snapshot()?;
+        active_download_ids.extend(relays.iter().map(|(run, _)| format!("relay:{run}")));
         active_download_ids.sort();
         active_download_ids.dedup();
-        let (downloads, live_receivers) = display_work_counts(&active_download_ids);
+        let (downloads, live_receivers) = display_work_counts_with_relays(&active_download_ids, &relays);
         let auto_find = self.auto_find.active_run_snapshot()?;
         let duplicate_scan = self.duplicates.active_run_snapshot()?;
         let internal_duplicate_scan = self.internal_duplicates.active_run_snapshot()?;
@@ -998,6 +1177,7 @@ impl AppState {
         let soop_auto_recorder = self.soop_auto_recorder.clone();
         let youtube_auto_recorder = self.youtube_auto_recorder.clone();
         let platform_slot = self.platform_media.clone();
+        let cloud_slot = self.cloud_recording.clone();
         let gate = self.managed_work.clone();
         let browser = self.browser.clone();
         let downloads = self.downloads.clone();
@@ -1008,6 +1188,13 @@ impl AppState {
             let platform_media = settled_platform_service(&gate, &platform_slot, || {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }).and_then(Result::ok);
+            let cloud_recording = settled_platform_service(&gate, &cloud_slot, || {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }).and_then(Result::ok);
+            // Always drain the other workers even if the upload checkpoint fails;
+            // otherwise normal exit could interrupt an unrelated active recording.
+            let cloud_error = cloud_recording.as_ref()
+                .and_then(|service| service.shutdown_and_wait().err());
             drain_managed_workers(
             || {
                 soop_auto_recorder.shutdown();
@@ -1034,16 +1221,48 @@ impl AppState {
                 crate::pixiv::cancel_all_downloads();
                 crate::x_feed::archive::cancel_all();
                 crate::x_feed::archive_ipc::clear_cache();
-                if let Some(service) = &platform_media { service.shutdown(); }
+                // Relay media and its independent chat/assets must drain before
+                // global source shutdown clears the shared asset fetch queue.
+                // Admission is already closed; retain the same real-join gate
+                // used below instead of treating a stop request as completion.
+                if let Ok(source_browser) = browser.get() {
+                    source_browser.request_relay_shutdown_all(&app);
+                }
+                while gate.relay_pending() {
+                    if let Some(host) = app.try_state::<crate::soop::original::SoopOriginalHost>() {
+                        host.poll_relay_join(&app);
+                    }
+                    if let Ok(source_browser) = browser.get() {
+                        source_browser.poll_relay_join_all(&app);
+                    }
+                    if gate.relay_pending() {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
+                }
+                if let Some(service) = &platform_media {
+                    service.drain_soop_archive_assets_before_shutdown();
+                    service.shutdown();
+                }
                 browser.shutdown_and_wait(&app);
             },
-            || crate::pinterest::active_download_count() > 0
+            || {
+                // Reap the manager even when another pending predicate is true.
+                // Its registration survives cancellation and join timeouts.
+                if let Some(host) = app.try_state::<crate::soop::original::SoopOriginalHost>() {
+                    host.poll_relay_join(&app);
+                }
+                if let Ok(source_browser) = browser.get() {
+                    source_browser.poll_relay_join_all(&app);
+                }
+                gate.relay_pending()
+                    || crate::pinterest::active_download_count() > 0
                     || crate::pixiv::active_download_count() > 0
                     || !crate::x_feed::archive::active_ids().is_empty()
                     || crate::x_feed::surface::search::busy()
                     || !soop_auto_recorder.active_ids().is_empty()
                     || !youtube_auto_recorder.active_ids().is_empty()
-                    || platform_media.as_ref().is_some_and(|service| !service.active_ids().is_empty()),
+                    || platform_media.as_ref().is_some_and(|service| !service.active_ids().is_empty())
+            },
             || std::thread::sleep(std::time::Duration::from_millis(50)),
             || {
                 crate::shutdown_all_then_exit(
@@ -1054,6 +1273,9 @@ impl AppState {
                     || {},
                 );
             });
+            if let Some(error) = cloud_error {
+                return Err(crate::application::RepositoryError::Other(error.to_string()).into());
+            }
             if let Some(error) = platform_media.and_then(|service| service.shutdown_error()) {
                 return Err(crate::application::RepositoryError::Other(error).into());
             }
@@ -1310,7 +1532,20 @@ pub async fn tag_suggestions_search(
 pub async fn auto_find_snapshot(
     state: State<'_, AppState>,
 ) -> Result<ApiResult<AutoFindSnapshot>, ApiError> {
-    Ok(state.service.auto_find_snapshot().into())
+    let service = state.service.clone();
+    Ok(run_application_blocking("auto_find_snapshot", move || service.auto_find_snapshot()).await)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub async fn auto_find_candidate_changes(
+    state: State<'_, AppState>,
+    run_id: String,
+    after: i64,
+) -> Result<ApiResult<AutoFindCandidateChanges>, ApiError> {
+    let service = state.service.clone();
+    Ok(run_application_blocking("auto_find_candidate_changes", move || {
+        service.auto_find_candidate_changes(&run_id, after)
+    }).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -1328,13 +1563,14 @@ pub async fn exploration_data_reset(
 #[tauri::command]
 pub async fn auto_find_refresh(
     state: State<'_, AppState>,
+    mode: Option<crate::application::AutoFindRefreshMode>,
 ) -> Result<ApiResult<AutoFindRun>, ApiError> {
     let managed_work = state.managed_work();
     let auto_find = state.auto_find.clone();
     Ok(run_application_blocking("auto_find_refresh", move || {
         prepare_then_commit_managed_work(
             &managed_work,
-            || auto_find.prepare_refresh(),
+            || auto_find.prepare_refresh(mode),
             |prepared| auto_find.commit_refresh(prepared),
         )
     })
@@ -1900,9 +2136,10 @@ pub async fn window_placement_update(
 pub async fn search_submit(
     state: State<'_, AppState>,
     request: SearchRequest,
+    omitted_ids: Option<Vec<u64>>,
 ) -> Result<ApiResult<SearchSubmission>, ApiError> {
     let service = state.service.clone();
-    Ok(run_application_blocking("search_submit", move || service.search_submit(request)).await)
+    Ok(run_application_blocking("search_submit", move || service.search_submit_visible(request, omitted_ids.unwrap_or_default())).await)
 }
 
 #[tauri::command(rename_all = "camelCase")]
@@ -2468,7 +2705,7 @@ pub async fn maintenance_execute(
                     .then(|| internal_duplicates.prepare_start_all())
                     .transpose()?;
                 let auto_find_prepared = rebuild_auto_find_results
-                    .then(|| auto_find.prepare_refresh())
+                    .then(|| auto_find.prepare_refresh(None))
                     .transpose()?;
                 managed_work.run(|| {
                     downloads.resume_after_reconcile(&mut report)?;
@@ -2565,6 +2802,7 @@ pub async fn search_page_get(
     query_id: String,
     page: u32,
     request_id: String,
+    omitted_ids: Option<Vec<u64>>,
 ) -> Result<ApiResult<GalleryPage>, ApiError> {
     let request_id = request_id.trim().to_owned();
     if request_id.is_empty() || request_id.len() > 200 {
@@ -2579,7 +2817,7 @@ pub async fn search_page_get(
     let cancellation = state.search_pages.start(&request_id);
     let service = state.service.clone();
     let result = run_application_blocking("search_page_get", move || {
-        service.search_page_get_cancellable(query_id, page, &cancellation)
+        service.search_page_get_cancellable(query_id, page, omitted_ids.unwrap_or_default(), &cancellation)
     })
     .await;
     state.search_pages.finish(&request_id);
@@ -3166,6 +3404,100 @@ mod tests {
             gate.run(|| Ok::<_, ApplicationError>(8)),
             Err(ApplicationError::AppQuitInProgress)
         ));
+    }
+
+    #[test]
+    fn relay_work_registration_rolls_back_before_start_but_retains_started_owner() {
+        let gate = ManagedWorkGate::default();
+        let receiver = uuid::Uuid::new_v4().to_string();
+        let run = uuid::Uuid::new_v4().to_string();
+        let rejected = gate.begin_relay_work(&receiver, &run, |_registration| {
+            Err::<(), _>("fixture arm failure".into())
+        });
+        assert!(rejected.is_err());
+        assert!(!gate.relay_pending());
+        let mut registration = gate.begin_relay_work(&receiver, &run, Ok).unwrap();
+        assert!(gate.inner.control.try_lock().is_ok());
+        registration.mark_started();
+        drop(registration);
+        assert!(gate.relay_pending(), "Drop is not evidence of a joined worker");
+        assert_eq!(gate.relay_snapshot().unwrap().len(), 1);
+        assert!(gate.begin_relay_work(&receiver, &uuid::Uuid::new_v4().to_string(), Ok).is_err());
+    }
+
+    #[test]
+    fn relay_work_registration_rejects_duplicate_or_closed_admission() {
+        let gate = ManagedWorkGate::default();
+        let receiver = uuid::Uuid::new_v4().to_string();
+        let other_receiver = uuid::Uuid::new_v4().to_string();
+        let run = uuid::Uuid::new_v4().to_string();
+        let mut registration = gate.begin_relay_work(&receiver, &run, |owner| {
+            assert!(gate.inner.control.try_lock().is_err(), "arm must be atomic with quit");
+            Ok(owner)
+        }).unwrap();
+        assert!(gate.begin_relay_work(&other_receiver, &run, Ok).is_err());
+        assert!(gate.begin_relay_work(&receiver, &uuid::Uuid::new_v4().to_string(), Ok).is_err());
+        registration.mark_started();
+        registration.release_after_join();
+        assert!(!gate.relay_pending());
+        assert!(gate.begin_relay_work("invalid", &run, Ok).is_err());
+        assert!(gate.begin_relay_work(&receiver, &uuid::Uuid::nil().to_string(), Ok).is_err());
+        gate.inner.control.lock().unwrap().updating = true;
+        assert!(gate.begin_relay_work(&receiver, &run, Ok).is_err());
+        gate.inner.control.lock().unwrap().updating = false;
+        let reset = gate.reserve_factory_reset().unwrap();
+        assert!(gate.begin_relay_work(&receiver, &run, Ok).is_err());
+        drop(reset);
+        assert!(gate.begin_relay_work(&receiver, &run, Ok).is_err());
+    }
+
+    #[test]
+    fn relay_work_snapshot_counts_receiver_once_and_tracks_run_identity() {
+        let receiver = uuid::Uuid::new_v4();
+        let run = uuid::Uuid::new_v4();
+        let another_run = uuid::Uuid::new_v4();
+        let relay = [(run, receiver)];
+        let mut ids = vec![format!("relay:{run}"), format!("platform-official:{receiver}"), "download".into()];
+        let (downloads, receivers) = display_work_counts_with_relays(&ids, &relay);
+        assert_eq!(downloads.active_count, 1);
+        assert_eq!(receivers.unwrap().active_count, 1);
+        let previous = active_work_fingerprint(ids.iter().map(String::as_str), None, None, None);
+        ids[0] = format!("relay:{another_run}");
+        assert_ne!(previous, active_work_fingerprint(ids.iter().map(String::as_str), None, None, None));
+        let (downloads, receivers) = display_work_counts_with_relays(&[format!("relay:{run}")], &relay);
+        assert_eq!(downloads.active_count, 0);
+        assert_eq!(receivers.unwrap().active_count, 1, "relay remains visible after its view is gone");
+    }
+
+    #[test]
+    fn relay_work_drain_retains_registration_until_real_thread_join() {
+        let gate = ManagedWorkGate::default();
+        let mut owner = gate.begin_relay_work(&uuid::Uuid::new_v4().to_string(), &uuid::Uuid::new_v4().to_string(), Ok).unwrap();
+        let (stop_tx, stop_rx) = mpsc::channel();
+        let worker = thread::spawn(move || stop_rx.recv().unwrap());
+        owner.mark_started();
+        assert!(gate.relay_pending());
+        let mut worker = Some(worker);
+        let mut owner = Some(owner);
+        let mut saw_pending = false;
+        drain_managed_workers(
+            || { assert!(gate.relay_pending()); },
+            || {
+                if worker.as_ref().is_some_and(|worker| worker.is_finished()) {
+                    worker.take().unwrap().join().unwrap();
+                    owner.take().unwrap().release_after_join();
+                }
+                gate.relay_pending()
+            },
+            || {
+                if !saw_pending { stop_tx.send(()).unwrap(); saw_pending = true; }
+                thread::yield_now();
+            },
+            || assert!(!gate.relay_pending()),
+        );
+        assert!(saw_pending);
+        assert!(worker.is_none());
+        assert!(owner.is_none());
     }
 
     #[test]

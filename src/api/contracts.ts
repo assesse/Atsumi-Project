@@ -523,6 +523,7 @@ export type SearchHistoryEntry = {
 
 export type AutoFindRunState = "running" | "completed" | "failed" | "cancelled";
 
+export type AutoFindRefreshMode = "incremental" | "full";
 export type AutoFindHistoryMode = "include_all_history" | "newer_than_latest_owned" | "newer_than_oldest_downloaded";
 
 export type AutoFindCutoffEvidence = {
@@ -565,7 +566,16 @@ export type AutoFindCandidate = GallerySummary & {
   discoveredAt: string;
 };
 
+export type AutoFindCandidateChanges = {
+  matchCursor: number;
+  more: boolean;
+  changedIds: GalleryId[];
+  candidates: AutoFindCandidate[];
+  truncations: AutoFindTruncation[];
+};
+
 export type AutoFindSnapshot = {
+  matchCursor?: number;
   run?: AutoFindRun;
   candidates: AutoFindCandidate[];
   cutoffEvidence: AutoFindCutoffEvidence[];

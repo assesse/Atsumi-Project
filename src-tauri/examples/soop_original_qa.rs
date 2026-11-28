@@ -5,6 +5,8 @@ use serde_json::{json,Value};
 use std::{path::PathBuf,sync::{Arc,atomic::{AtomicBool,AtomicI32,Ordering}},thread,time::{Duration,Instant}};
 use tauri::{Manager,Webview};
 static RESULT:AtomicI32=AtomicI32::new(2);
+#[path = "support/soop_rich_capture_qa.rs"]
+mod rich_capture;
 fn inspect(view:&Webview)->Value {
     let (tx,rx)=std::sync::mpsc::sync_channel(1);
     let code=r#"(()=>{const v=document.getElementById('livePlayer'),p=document.getElementById('player'),c=document.getElementById('chatting_area');const box=e=>{const r=e?.getBoundingClientRect();return r?{x:r.x,y:r.y,width:r.width,height:r.height}:null};return {readyState:v?.readyState,currentTime:v?.currentTime,decodedFrames:v?.getVideoPlaybackQuality?.().totalVideoFrames,paused:v?.paused,player:box(p),chat:box(c),capture:window.__atsumiSoopEncodedCapture?.getDiagnostics?.()??null}})()"#;
@@ -43,6 +45,12 @@ fn run(app:&tauri::AppHandle,root:&std::path::Path,channel:String)->Result<Value
     result
 }
 fn main()->Result<(),Box<dyn std::error::Error>>{
+    if std::env::args().nth(1).as_deref() == Some("--recover-rich-qa") {
+        return rich_capture::recover_main();
+    }
+    if std::env::args().nth(1).as_deref() == Some("--public-rich-qa") {
+        return rich_capture::run_main();
+    }
     let channel=std::env::args().nth(1).unwrap_or_else(||"phonics1".into());
     if channel.is_empty()||channel.len()>40||!channel.bytes().all(|b|b.is_ascii_alphanumeric()||matches!(b,b'_'|b'-')){return Err("invalid public channel id".into());}
     let workspace=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_owned();

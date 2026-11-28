@@ -7,6 +7,7 @@ const CHANNEL = "b3e262a2795f17734c149afc738ad250";
 const RECORDING = "10000000000040008000000000000001";
 type EventValue = Record<string, unknown>;
 type ChatApi = {
+  startRelay(options: Parameters<ChatApi["start"]>[0]): boolean;
   start(options: { recordingId: string; channelId: string; getVideo?: () => unknown; sendBatch(events: EventValue[], batchId?: number): Promise<unknown>; onStatus(detail: string, dropped: number): void }): boolean;
   stop(recordingId: string): Promise<void>;
   pulse(): void;
@@ -437,5 +438,37 @@ describe("official page chat receive bridge", () => {
     await harness.api.stop(RECORDING);
     expect(harness.batches.flat().map((event) => event.msg)).toEqual(["current channel"]);
     expect(harness.status.at(-1)?.detail).toBe("stopped");
+  });
+});
+
+
+describe("one public socket with independent recording and relay sinks", () => {
+  const RELAY="20000000-0000-4000-8000-000000000002";
+  const attach=(h:ReturnType<typeof fixture>,rows:EventValue[][],send?:(events:EventValue[])=>Promise<unknown>)=>h.api.startRelay({recordingId:RELAY,channelId:CHANNEL,getVideo:()=>h.video,sendBatch:send??(async events=>{rows.push(events);}),onStatus:()=>{}});
+  it("relay alone creates no viewer metadata request and preserves native socket delivery", async()=>{
+    const h=fixture();h.window.fetch=vi.fn();const socket=h.socket();const rows:EventValue[][]=[];expect(attach(h,rows)).toBe(true);
+    let native=0;socket.onmessage=()=>{native++;};socket.emit(envelope([message()]));await flush();h.api.pulse();await flush();await h.api.stop(RELAY);
+    expect(rows.flat()).toHaveLength(1);expect(native).toBe(1);expect(socket.sent).toEqual([]);expect(h.window.fetch).not.toHaveBeenCalled();
+  });
+  it("both sinks receive exactly the same public projection and hash while archive stop preserves relay",async()=>{
+    const h=fixture();const socket=h.socket();h.begin();const rows:EventValue[][]=[];attach(h,rows);
+    socket.emit(envelope([{...message(),profile:{nickname:"viewer",userIdHash:"bounded_sender"}}]));await flush();h.api.pulse();await flush();await h.api.stop(RECORDING);
+    h.api.pulse();await flush();expect(rows.flat()).toHaveLength(1);
+    expect(rows.flat()).toEqual(h.batches.flat());const first=rows.flat()[0];
+    socket.emit(envelope([{...message("after archive"),profile:{nickname:"viewer",userIdHash:"bounded_sender"}}]));await flush();await h.api.stop(RELAY);
+    expect(rows.flat()).toHaveLength(2);expect(h.batches.flat()).toHaveLength(1);expect(first).toBeDefined();expect(rows.flat()[1]!.senderKey).toBe(first!.senderKey);
+  });
+  it("shared source clock generation never decreases when recording joins a relay after seek",async()=>{
+    const h=fixture();const socket=h.socket();const rows:EventValue[][]=[];attach(h,rows);
+    socket.emit(envelope([message("first")]));await flush();h.video.dispatchEvent(new Event("seeking"));h.video.dispatchEvent(new Event("loadedmetadata"));
+    socket.emit(envelope([message("second")]));await flush();h.begin();socket.emit(envelope([message("third")]));await flush();await h.api.stop(RECORDING);await h.api.stop(RELAY);
+    const generations=rows.flat().map(r=>(r.replayClock as {sourceGeneration:number}).sourceGeneration);
+    expect(generations).toHaveLength(3);expect(generations[1]).toBeGreaterThan(generations[0]!);expect(generations[2]).toBeGreaterThanOrEqual(generations[1]!);
+  });
+  it("failed relay storage does not retry or interrupt archive persistence",async()=>{
+    const h=fixture();const socket=h.socket();h.begin();const send=vi.fn().mockRejectedValue(Object.assign(new Error("busy"),{code:"BRIDGE_BUSY"}));attach(h,[],send);
+    socket.emit(envelope([message()]));await flush();h.api.pulse();await flush();await h.api.stop(RELAY);
+    socket.emit(envelope([message("still recording")]));await flush();await h.api.stop(RECORDING);
+    expect(send).toHaveBeenCalledTimes(1);expect(h.batches.flat()).toHaveLength(2);
   });
 });

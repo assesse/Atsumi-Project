@@ -118,6 +118,16 @@ impl<'de> Deserialize<'de> for CaptureOutcome {
     }
 }
 impl CaptureOutcome {
+    pub(super) fn is_complete(&self) -> bool { self.state == State::Complete }
+
+    /// Reporting only: a playable finalized file does not imply complete capture.
+    pub(crate) fn warning(&self) -> Option<&'static str> {
+        match self.state {
+            State::Complete => None,
+            State::Partial => Some("일부 수신 구간이 녹화에 포함되지 않았습니다. 저장된 구간만 보관되어 있습니다."),
+            State::Interrupted => Some("녹화가 정상적으로 마무리되지 않았습니다. 저장된 구간만 보관되어 있습니다."),
+        }
+    }
     /// The stop proof grants reporting only, never publication/cleanup authority.
     pub(super) fn soop_interrupted() -> Self {
         Self {
