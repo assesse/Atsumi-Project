@@ -110,8 +110,14 @@ fn classify(url: &Url) -> Option<(&'static str, &'static str, String, String)> {
                 parts.remove(0);
             }
             let (kind, id) = match parts.as_slice() {
-                ["artworks", id] if decimal(id) => ("artwork", (*id).to_owned()),
-                ["users", id] if decimal(id) => ("artist", (*id).to_owned()),
+                ["artworks", id] | ["i", id] if decimal(id) => ("artwork", (*id).to_owned()),
+                ["users", id]
+                | ["u", id]
+                | ["users", id, "artworks" | "illustrations" | "manga"]
+                    if decimal(id) =>
+                {
+                    ("artist", (*id).to_owned())
+                }
                 ["member_illust.php"] => ("artwork", query_id(url, "illust_id")?),
                 ["member.php"] => ("artist", query_id(url, "id")?),
                 _ => return None,
@@ -504,7 +510,31 @@ mod tests {
                 "144440262",
             ),
             (
+                "https://www.pixiv.net/artworks/151270214",
+                "pixiv",
+                "artwork",
+                "151270214",
+            ),
+            (
+                "https://www.pixiv.net/i/151270214",
+                "pixiv",
+                "artwork",
+                "151270214",
+            ),
+            (
                 "https://pixiv.net/en/users/4912/?from=profile#works",
+                "pixiv",
+                "artist",
+                "4912",
+            ),
+            (
+                "https://www.pixiv.net/u/4912",
+                "pixiv",
+                "artist",
+                "4912",
+            ),
+            (
+                "https://www.pixiv.net/users/4912/illustrations",
                 "pixiv",
                 "artist",
                 "4912",

@@ -775,7 +775,7 @@ it('opens a validated external context target only after a fresh trusted unchang
     if(mode==='source-hidden')link.setAttribute('hidden','');
     if(mode==='removed')link.remove();
     handler!.call(menu.querySelector('button')!,{isTrusted:mode!=='synthetic',preventDefault:vi.fn(),stopImmediatePropagation:vi.fn()} as unknown as Event);
-    expect(bridgeEntries(a)).toEqual(mode==='unchanged'?[['externalLink','https://example.org/observed']]:[]);spy.mockRestore();
+    expect(bridgeEntries(a)).toEqual(mode==='unchanged'?[['externalLinkBrowser','https://example.org/observed']]:[]);spy.mockRestore();
   }
 });
 it('routes an observed author or repost actor profile into the independent preview',()=>{

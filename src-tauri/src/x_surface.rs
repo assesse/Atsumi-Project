@@ -571,7 +571,7 @@ fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
         return None;
     }
     let (kind, value) = (pairs[0].1.to_string(), pairs[1].1.to_string());
-    if !matches!(kind.as_str(), "status" | "previewPresentation" | "preview" | "previewBackground" | "videoSourcePreview" | "close" | "external" | "externalLink" | "play" | "focus" | "wheel" | "key" | "archive" | "archiveCancel" | "archiveStatus" | "archiveChoose" | "search" | "routeIntent")
+    if !matches!(kind.as_str(), "status" | "previewPresentation" | "preview" | "previewBackground" | "videoSourcePreview" | "close" | "external" | "externalLink" | "externalLinkBrowser" | "play" | "focus" | "wheel" | "key" | "archive" | "archiveCancel" | "archiveStatus" | "archiveChoose" | "search" | "routeIntent")
         && !(cfg!(debug_assertions) && matches!(kind.as_str(), "routeProbe" | "photoProbe" | "presentationProbe" | "videoProbe")) {
         return None;
     }
@@ -590,7 +590,7 @@ fn signal(url: &Url, nonce: &str) -> Option<(String, String)> {
         return None;
     }
     if kind == "videoSourcePreview" && !actions::base_post_path(&value) && !profile_path(&value) { return None; }
-    if kind == "externalLink" && external_link_url(&value).is_none() { return None; }
+    if matches!(kind.as_str(), "externalLink" | "externalLinkBrowser") && external_link_url(&value).is_none() { return None; }
     if matches!(kind.as_str(), "close" | "focus" | "wheel") && !value.is_empty() {
         return None;
     }
@@ -1183,9 +1183,157 @@ fn external(path: &str) {
     }
     open_browser_url(&format!("https://x.com{path}"));
 }
-fn external_link(value: &str) {
+fn is_tco_short_url(url: &Url) -> bool {
+    if !matches!(url.scheme(), "https" | "http")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+        || !url
+            .host_str()
+            .is_some_and(|host| host.trim_end_matches('.').eq_ignore_ascii_case("t.co"))
+    {
+        return false;
+    }
+    let token = url.path().trim_start_matches('/');
+    !token.is_empty()
+        && token.len() <= 64
+        && token
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+}
+fn resolved_tco_target(base: &Url, raw: &str) -> Option<Url> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 2048
+        || trimmed
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+    {
+        return None;
+    }
+    let url = base.join(trimmed).ok()?;
+    if !matches!(url.scheme(), "https" | "http")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.as_str().len() > 2048
+    {
+        return None;
+    }
+    let host = url.host_str()?.trim_end_matches('.').to_ascii_lowercase();
+    if host.is_empty()
+        || !host.contains('.')
+        || host.contains(':')
+        || host.contains('[')
+        || host.parse::<std::net::IpAddr>().is_ok()
+        || matches!(host.as_str(), "localhost")
+        || [".localhost", ".local", ".internal", ".test", ".invalid"]
+            .iter()
+            .any(|suffix| host.ends_with(suffix))
+    {
+        return None;
+    }
+    Some(url)
+}
+fn extract_tco_html_redirect(body: &str) -> Option<String> {
+    let lower = body.to_ascii_lowercase();
+    if let Some(meta_at) = lower
+        .find("http-equiv=\"refresh\"")
+        .or_else(|| lower.find("http-equiv='refresh'"))
+        .or_else(|| lower.find("http-equiv=refresh"))
+    {
+        let rest = &body[meta_at..];
+        let rest_lower = &lower[meta_at..];
+        if let Some(url_at) = rest_lower.find("url=") {
+            let after = rest[url_at + 4..].trim_start_matches(|c| matches!(c, ' ' | '\t' | '"' | '\''));
+            let end = after
+                .find(|c| matches!(c, '"' | '\'' | '>' | ' ' | '\t' | '\r' | '\n'))
+                .unwrap_or(after.len());
+            let candidate = after[..end].replace("&amp;", "&");
+            if !candidate.is_empty() {
+                return Some(candidate);
+            }
+        }
+    }
+    if let Some(rep_at) = lower.find("location.replace(") {
+        let after = body[rep_at + "location.replace(".len()..].trim_start();
+        let quote = after.bytes().next()?;
+        if quote == b'"' || quote == b'\'' {
+            let tail = &after[1..];
+            let end = tail.find(quote as char)?;
+            let candidate = tail[..end].replace("\\/", "/").replace("&amp;", "&");
+            if !candidate.is_empty() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+fn resolve_tco_destination(start: &Url) -> Option<Url> {
+    use std::io::Read;
+    if !is_tco_short_url(start) {
+        return None;
+    }
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(5))
+        .build()
+        .ok()?;
+    let mut current = start.clone();
+    for _ in 0..2 {
+        if !is_tco_short_url(&current) {
+            return Some(current);
+        }
+        let mut next: Option<Url> = None;
+        if let Ok(head) = client.head(current.as_str()).send() {
+            if head.status().is_redirection() {
+                next = head
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|loc| resolved_tco_target(&current, loc));
+            }
+        }
+        if next.is_none() {
+            if let Ok(get) = client.get(current.as_str()).send() {
+                if get.status().is_redirection() {
+                    next = get
+                        .headers()
+                        .get(reqwest::header::LOCATION)
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|loc| resolved_tco_target(&current, loc));
+                } else if get.status().is_success() {
+                    let mut bytes = Vec::new();
+                    if get.take(16 * 1024).read_to_end(&mut bytes).is_ok() {
+                        if let Ok(body) = std::str::from_utf8(&bytes) {
+                            next = extract_tco_html_redirect(body)
+                                .and_then(|loc| resolved_tco_target(&current, &loc));
+                        }
+                    }
+                }
+            }
+        }
+        current = next?;
+    }
+    (!is_tco_short_url(&current)).then_some(current)
+}
+fn open_supported_or_browser(app: &AppHandle, value: &str) {
+    if crate::media_search_navigation::open_supported_or_external(app, value).is_err() {
+        open_browser_url(value);
+    }
+}
+fn external_link_browser(value: &str) {
     let Some(url) = external_link_url(value) else { return; };
     open_browser_url(url.as_str());
+}
+fn external_link(app: &AppHandle, value: &str) {
+    let Some(url) = external_link_url(value) else { return; };
+    let owned = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let resolved = is_tco_short_url(&url).then(|| resolve_tco_destination(&url)).flatten();
+        let destination = resolved.as_ref().unwrap_or(&url);
+        open_supported_or_browser(&owned, destination.as_str());
+    });
 }
 fn open_browser_url(value: &str) {
     #[cfg(windows)]
@@ -1412,7 +1560,8 @@ fn handle_signal(session: &XSession, app: &AppHandle, pane: &Arc<Pane>, kind: &s
         }
         "key" => dispatch_key(session, app, pane, value),
         "external" => external(value),
-        "externalLink" => external_link(value),
+        "externalLink" => external_link(app, value),
+        "externalLinkBrowser" => external_link_browser(value),
         "close" if pane.feed == "preview" => {
             let old = {
                 let mut data = session.surfaces.lock().unwrap_or_else(|p| p.into_inner());
@@ -2247,6 +2396,85 @@ mod tests {
         assert!(bridge_message(current.as_str(), &current, &body, "stale").is_none());
         packet.query_pairs_mut().append_pair("kind", "externalLink");
         assert!(signal(&packet, "nonce").is_none());
+    }
+    #[test]
+    fn external_link_browser_bridge_keeps_same_validation_as_external_link() {
+        let current = Url::parse("https://x.com/home").unwrap();
+        let mut packet = Url::parse("https://x.com/__atsumi_surface__/nonce").unwrap();
+        packet
+            .query_pairs_mut()
+            .append_pair("kind", "externalLinkBrowser")
+            .append_pair("value", "https://www.pixiv.net/artworks/151270214");
+        let body = format!("ATSUMI_X_SURFACE_V1:{packet}");
+        assert_eq!(
+            bridge_message(current.as_str(), &current, &body, "nonce"),
+            Some((
+                "externalLinkBrowser".into(),
+                "https://www.pixiv.net/artworks/151270214".into()
+            ))
+        );
+        assert!(bridge_message(current.as_str(), &current, &body, "stale").is_none());
+        let mut bad = Url::parse("https://x.com/__atsumi_surface__/nonce").unwrap();
+        bad.query_pairs_mut()
+            .append_pair("kind", "externalLinkBrowser")
+            .append_pair("value", "javascript:alert(1)");
+        assert!(signal(&bad, "nonce").is_none());
+    }
+    #[test]
+    fn tco_short_url_and_redirect_helpers_stay_bounded_to_public_web_targets() {
+        for value in ["https://t.co/AbC123", "http://t.co/abc-1_2", "https://T.CO/xyz"] {
+            let parsed = Url::parse(value).unwrap();
+            assert!(is_tco_short_url(&parsed), "{value}");
+        }
+        for value in [
+            "https://t.co/",
+            "https://t.co/a/b",
+            "https://t.co:8443/abc",
+            "https://not-t.co/abc",
+            "https://user@t.co/abc",
+            "https://www.pixiv.net/artworks/151270214",
+        ] {
+            let parsed = Url::parse(value).unwrap();
+            assert!(!is_tco_short_url(&parsed), "{value}");
+        }
+        let base = Url::parse("https://t.co/AbC123").unwrap();
+        for value in [
+            "https://www.pixiv.net/artworks/151270214",
+            "https://x.com/creator/status/123456",
+            "https://t.co/NextHop",
+        ] {
+            assert_eq!(
+                resolved_tco_target(&base, value).map(|url| url.to_string()),
+                Some(value.to_string()),
+                "{value}"
+            );
+        }
+        for value in [
+            "javascript:alert(1)",
+            "file:///C:/secret",
+            "http://localhost/admin",
+            "http://127.0.0.1/admin",
+            "http://[::1]/admin",
+            "https://user:pass@www.pixiv.net/artworks/151270214",
+            "https://www.pixiv.net/artworks/151270214\\x",
+            "https://www.pixiv.net/artworks/151270214\nx",
+            "https://intranet.local/secret",
+        ] {
+            assert!(resolved_tco_target(&base, value).is_none(), "{value}");
+        }
+        assert!(resolved_tco_target(&base, &format!("https://www.pixiv.net/{}", "a".repeat(2048))).is_none());
+        assert_eq!(
+            extract_tco_html_redirect(
+                r#"<html><head><META http-equiv="refresh" content="0;URL=https://www.pixiv.net/artworks/151270214"></head></html>"#
+            ),
+            Some("https://www.pixiv.net/artworks/151270214".into())
+        );
+        assert_eq!(
+            extract_tco_html_redirect(
+                r#"<script>location.replace("https:\/\/www.pixiv.net\/artworks\/151270214?ref=a&amp;b=1")</script>"#
+            ),
+            Some("https://www.pixiv.net/artworks/151270214?ref=a&b=1".into())
+        );
     }
     #[test]
     fn profile_navigation_is_exact_and_excludes_site_actions() {

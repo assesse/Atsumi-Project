@@ -671,7 +671,7 @@
       const currentAnchor=target.closest('a[href]');
       if(external){
         if(!document.hidden && routeOwnerCurrent() && target.ownerDocument===document && !target.closest('[hidden],[aria-hidden="true"],[inert]')
-          && currentAnchor===anchor && externalLink(currentAnchor?.getAttribute('href'))===external)signal('externalLink',external);
+          && currentAnchor===anchor && externalLink(currentAnchor?.getAttribute('href'))===external)signal('externalLinkBrowser',external);
         return;
       }
       const currentPath=currentAnchor?navigationPath(currentAnchor.getAttribute('href')):
